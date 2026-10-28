@@ -43,6 +43,7 @@
     "tests/unit/benchmarks/sregym/test_memory_cli.py::test_reads_stored_outcomes_through_the_cli": 1.5,
     "tests/unit/scripts/test_go_cost_plan.py::test_real_compiled_inventory_reaches_real_runner": 3.1,
     "tests/unit/scripts/test_go_cost_plan.py::test_test_compilation_checks_packages_without_test_files": 0.9,
+    "tests/unit/scripts/test_link_cache.py::test_real_go_toolchain_reuses_links_and_still_relinks_changed_source": 8.0,
     "tests/unit/sdo/operator/test_ci_speed.py::test_generated_packages_share_only_equal_source_archives": 2.25,
     "tests/unit/test_operator_binary_identity.py::test_binary_guard_rejects_cross_source_cache_and_unstamped_binary": 2.25,
     "tests/unit/test_operator_binary_identity.py::test_build_settings_are_part_of_cache_identity": 2.25,

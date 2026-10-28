@@ -116,14 +116,23 @@ def test_any_changed_linker_input_relinks(harness: Harness, change: str):
     assert (harness.dir / "after").read_text() == harness.archive.read_text()
 
 
-def test_content_addressed_dependencies_are_keyed_by_name(harness: Harness):
-    addressed = harness.dir / ("a" * 64 + "-d")
-    addressed.write_text("one")
-    harness.write_importcfg(addressed)
+def test_archives_are_identified_by_stamped_build_id_not_location(harness: Harness):
+    """Go compiles an archive into a temp dir, then reads it back from its cache."""
+
+    def archive(path: Path, build_id: str) -> Path:
+        path.write_text(f'!<arch>\n__.PKGDEF  go object linux amd64\nbuild id "{build_id}"\npayload\n')
+        return path
+
+    first = archive(harness.dir / "fresh.a", "action/content-1")
+    harness.write_importcfg(first)
     harness.link("one")
-    addressed.write_text("two")  # the name is the content hash in Go's cache
+    moved = archive(harness.dir / "cached-d", "action/content-1")
+    harness.write_importcfg(moved)
     harness.link("two")
     assert harness.real_links == 1
+    harness.write_importcfg(archive(harness.dir / "other-d", "action/content-2"))
+    harness.link("three")
+    assert harness.real_links == 2
 
 
 def test_failed_links_are_not_cached(harness: Harness):

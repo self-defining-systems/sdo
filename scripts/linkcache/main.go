@@ -5,8 +5,9 @@
 // detector workspace links the controller and several test binaries. Tests
 // validate the same few workspaces hundreds of times, so identical links are
 // the shared cost. The key covers every linker input: its arguments, the
-// importcfg, the main archive and any file the importcfg names that is not
-// already content-addressed by Go's own cache. Without SDO_LINK_CACHE, or on
+// importcfg, the main archive and every archive the importcfg names, each
+// identified by its stamped build ID (a content hash if unstamped). Without
+// SDO_LINK_CACHE, or on
 // any cache error, the real linker runs; the cache can only skip equal work.
 package main
 
@@ -21,8 +22,6 @@ import (
 	"regexp"
 	"strings"
 )
-
-var contentAddressed = regexp.MustCompile(`^[0-9a-f]{64}-d$`)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -90,14 +89,14 @@ func linkKey(tool string, args []string) (out, key string, ok bool) {
 		}
 		if arg == "-importcfg" && i+1 < len(args) {
 			i++
-			if !hashImportConfig(tool, field, args[i]) {
+			if !hashImportConfig(field, args[i]) {
 				return "", "", false
 			}
 			continue
 		}
 		if !strings.HasPrefix(arg, "-") {
 			if info, err := os.Stat(arg); err == nil && info.Mode().IsRegular() {
-				sum, err := fileIdentity(tool, arg)
+				sum, err := fileIdentity(arg)
 				if err != nil {
 					return "", "", false
 				}
@@ -113,7 +112,7 @@ func linkKey(tool string, args []string) (out, key string, ok bool) {
 	return out, hex.EncodeToString(h.Sum(nil)), true
 }
 
-func hashImportConfig(tool string, field func(kind, value string), path string) bool {
+func hashImportConfig(field func(kind, value string), path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
@@ -128,11 +127,7 @@ func hashImportConfig(tool string, field func(kind, value string), path string) 
 		if !found {
 			return false
 		}
-		if contentAddressed.MatchString(filepath.Base(file)) {
-			field("packagefile", name+"="+filepath.Base(file))
-			continue
-		}
-		sum, err := fileIdentity(tool, file)
+		sum, err := fileIdentity(file)
 		if err != nil {
 			return false
 		}
@@ -141,15 +136,23 @@ func hashImportConfig(tool string, field func(kind, value string), path string) 
 	return true
 }
 
-// fileIdentity names a file by what Go itself trusts. An archive just compiled
-// in a temporary directory and the same archive read back from Go's cache
-// differ only in how the toolchain stamped its build ID; the build ID's content
-// half is the identity Go compares. Other files are hashed by content.
-func fileIdentity(tool, path string) (string, error) {
-	if output, err := exec.Command(filepath.Join(filepath.Dir(tool), "buildid"), path).Output(); err == nil {
-		if id := strings.TrimSpace(string(output)); id != "" {
-			return "buildid:" + id, nil
-		}
+// buildIDHeader finds the build ID Go stamps in the first bytes of an archive.
+var buildIDHeader = regexp.MustCompile(`build id "([^"\n]+)"`)
+
+// fileIdentity names a file by what Go itself trusts. The same archive read
+// from a temporary directory just after compilation and from Go's cache later
+// has the same stamped build ID, whose content half identifies the bytes; so
+// the identity is location independent. Files without a stamp are hashed.
+func fileIdentity(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	header := make([]byte, 4096)
+	n, _ := io.ReadFull(file, header)
+	if match := buildIDHeader.FindSubmatch(header[:n]); match != nil {
+		return "buildid:" + string(match[1]), nil
 	}
 	return fileSum(path)
 }
