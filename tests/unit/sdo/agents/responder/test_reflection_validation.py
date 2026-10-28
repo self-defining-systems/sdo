@@ -295,3 +295,25 @@ sys.exit(0 if source == "package fixture\\n\\nfunc Diagnose() {\\n\\tx := 1\\n\\
     assert json.loads(block.text)["exit_code"] == 0
     assert accepted.read_text() == "package fixture\nfunc  Accepted() {}\n", "accepted bytes are never rewritten"
     assert outside.read_text() == "package main\nfunc  main() {}\n", "only operational memory is formatted"
+
+
+@pytest.mark.parametrize(("exit_code", "expected"), [(0, "passed"), (1, "fix each diagnostic")])
+async def test_check_memory_reply_leads_with_the_next_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int, expected: str
+) -> None:
+    """Replay notes ride along with a pass; the reply says plainly they are not work."""
+    _validator(
+        tmp_path,
+        f'import sys\nprint(\'{{"diagnostics": [], "mitigation_replay_notes": [1]}}\')\nsys.exit({exit_code})\n',
+        monkeypatch,
+    )
+    server = validation_server(tmp_path)
+    (block,) = await server.call_tool(
+        "check_memory", {"learning_decision": "updated", "summary": "s", "proposed_artifact_ids": ["book"]}
+    )
+    reply = json.loads(block.text)
+    assert next(iter(reply)) == "next", "the instruction leads so a capped reply keeps it"
+    assert expected in reply["next"]
+    assert "information" in reply["next"]
+    if exit_code == 0:
+        assert '"updated"' in reply["next"] and '["book"]' in reply["next"]

@@ -11,6 +11,7 @@ import math
 import os
 import signal
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -95,6 +96,34 @@ class _TextToolServer(FastMCP):
         return result if bounded == text else [TextContent(type="text", text=bounded)]
 
 
+@dataclass(frozen=True)
+class CheckMemoryReply:
+    """A check result led by the next step, so a capped reply keeps it."""
+
+    next: str
+    exit_code: int
+    timed_out: bool
+    stdout: str
+    stderr: str
+
+    @classmethod
+    def after(cls, result: ValidationResult, decision: str | None, ids: list[str]) -> CheckMemoryReply:
+        if result.exit_code == 0 and not result.timed_out:
+            returned = (
+                f"learning_decision {json.dumps(decision)} with proposed_artifact_ids {json.dumps(ids)}"
+                if decision
+                else "the same decision"
+            )
+            step = (
+                f"passed: return {returned} now. mitigation_replay_notes and coverage_gaps are information, not work."
+            )
+        elif result.timed_out:
+            step = "timed out: check again once; replay notes are information, not work."
+        else:
+            step = "fix each diagnostic as its hint says, then check again; mitigation_replay_notes and coverage_gaps are information, not work."
+        return cls(step, result.exit_code, result.timed_out, result.stdout, result.stderr)
+
+
 def validation_server(
     root: Path,
     *,
@@ -124,12 +153,13 @@ def validation_server(
         decline_reason: Literal["", "no_recorded_repair"] = "",
         proposed_artifact_ids: list[str] | None = None,
         sdk_gaps: list[SdkGap] | None = None,
-    ) -> ValidationResult:
+    ) -> CheckMemoryReply:
         """Run the complete memory check and wait for final diagnostics (at most 300s).
 
         Supply the typed decision fields directly; this tool writes the result
         JSON outside the authored tree. Return the same decision and logical IDs.
-        It first gofmt-formats Go files changed under .sdo/.
+        It first gofmt-formats Go files changed under .sdo/. The reply's next
+        field says what to do: return on a pass, else fix the diagnostics.
         Legacy decision_path files are also supported. One call waits for final
         diagnostics. Compile/import/format/provenance checks remain required;
         replay verdicts are information and never block saving. The broker repeats the check.
@@ -152,8 +182,9 @@ def validation_server(
                         }
                     )
                 )
-                return await run_check(str(decision))
-        return await run_check(decision_path)
+                result = await run_check(str(decision))
+            return CheckMemoryReply.after(result, learning_decision, proposed_artifact_ids or [])
+        return CheckMemoryReply.after(await run_check(decision_path), None, [])
 
     async def run_check(decision_path: str | None) -> ValidationResult:
         await _format_changed_memory_go(checkout)
