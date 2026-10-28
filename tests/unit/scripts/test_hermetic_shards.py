@@ -8,7 +8,9 @@ import pytest
 
 
 @pytest.mark.parametrize("jobs", [4, 8])
-@pytest.mark.parametrize("failure", ["none", "first_runtime", "second_runtime", "reflection", "shared_memory", "python"])
+@pytest.mark.parametrize(
+    "failure", ["none", "first_runtime", "second_runtime", "reflection", "shared_memory", "python"]
+)
 def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: str, jobs: int) -> None:
     root = Path(__file__).resolve().parents[3]
     commands = tmp_path / "bin"
