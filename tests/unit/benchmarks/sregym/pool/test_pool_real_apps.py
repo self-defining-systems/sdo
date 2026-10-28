@@ -69,7 +69,8 @@ def test_relay_carries_bidirectional_streams_and_survives_failed_clients():
             )
         )
         try:
-            for _ in range(100):
+            deadline = asyncio.get_running_loop().time() + 10
+            while asyncio.get_running_loop().time() < deadline:
                 try:
                     reader, writer = await asyncio.open_connection("127.0.0.1", port)
                     break
