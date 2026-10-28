@@ -10,6 +10,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sync"
+	"time"
 )
 
 func objectiveDigest(objective string) string {
@@ -77,24 +78,88 @@ func keepRecordedExclusions(b, earlier *servicehealth.ReachabilityBaseline) {
 	b.Exclusions = kept
 }
 
-// errBaselineDeferred marks a refresh that could not be authorized now. The old
-// record stays and the next gate tries again.
-var errBaselineDeferred = errors.New("reachability baseline refresh deferred")
+// While no current record is bound, the gate checks the goal again after
+// reachabilityBaselineCheck. A measurement that ran and failed blocks the
+// controller loop for its probe rounds, so it is repeated only after
+// reachabilityBaselineRetry.
+const (
+	reachabilityBaselineCheck = 5 * time.Second
+	reachabilityBaselineRetry = 30 * time.Second
+)
+
+// errBaselineNotAuthorized marks a goal that refused before any probe ran.
+var errBaselineNotAuthorized = errors.New("healthy baseline goal not met")
+
+// BaselineUnavailableError says the gate could not bind a current baseline. It is
+// a state, never a controller failure: the record is recomputable, so the
+// controller keeps observing, reports never-served targets unknown, and measures
+// again once the application is healthy.
+type BaselineUnavailableError struct{ Cause error }
+
+func (e *BaselineUnavailableError) Error() string {
+	return fmt.Sprintf("reachability baseline unavailable; never-served targets are unknown until a healthy measurement: %v", e.Cause)
+}
+
+func (e *BaselineUnavailableError) Unwrap() error { return e.Cause }
 
 // ReachabilityReference is this cluster's reachability baseline together with
-// the accepted health inputs the detector compares it against. The startup gate
+// the accepted health inputs the detector compares it against. The gate
 // replaces it in place, so a running controller judges against its own new
 // record without a restart. The zero value holds no record.
 type ReachabilityReference struct {
 	mu                            sync.RWMutex
 	baseline                      *servicehealth.ReachabilityBaseline
 	sourceInputs, objectiveDigest string
+	unavailable                   *BaselineUnavailableError
+	retry                         time.Time
 }
 
 func (r *ReachabilityReference) set(b *servicehealth.ReachabilityBaseline, revision memory.HealthRevision) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.baseline, r.sourceInputs, r.objectiveDigest = b, revision.SourceInputs, objectiveDigest(revision.Objective)
+	r.unavailable, r.retry = nil, time.Time{}
+}
+
+// await keeps whatever record is bound (its still-current exclusions apply),
+// marks the baseline unavailable, and schedules the next attempt.
+func (r *ReachabilityReference) await(cause error, retry time.Time) *BaselineUnavailableError {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.unavailable, r.retry = &BaselineUnavailableError{Cause: cause}, retry
+	return r.unavailable
+}
+
+// postpone moves a due attempt the gate skipped (an incident is open) to retry.
+func (r *ReachabilityReference) postpone(retry time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.unavailable != nil {
+		r.retry = retry
+	}
+}
+
+// Unavailable is why no current baseline is bound, or nil.
+func (r *ReachabilityReference) Unavailable() *BaselineUnavailableError {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.unavailable
+}
+
+// retryAt is when the gate should measure again, or zero when a current record is bound.
+func (r *ReachabilityReference) retryAt() time.Time {
+	if r == nil {
+		return time.Time{}
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.unavailable == nil {
+		return time.Time{}
+	}
+	return r.retry
 }
 
 func (r *ReachabilityReference) bind(w *servicehealth.ReachabilityWindow) {
@@ -104,6 +169,7 @@ func (r *ReachabilityReference) bind(w *servicehealth.ReachabilityWindow) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	w.Baseline, w.SourceInputs, w.ObjectiveDigest = r.baseline, r.sourceInputs, r.objectiveDigest
+	w.BaselinePending = r.unavailable != nil
 }
 
 // captureReachabilityBaseline is reached only from the trusted, opt-in startup
@@ -115,7 +181,7 @@ func captureReachabilityBaseline(ctx context.Context, stateRoot string, existing
 		return existing, nil
 	}
 	if _, err := healthyBaselineGoal(ctx, detectors, snapshot); err != nil {
-		return nil, fmt.Errorf("%w: %w", errBaselineDeferred, err)
+		return nil, err
 	}
 	baseline, err := servicehealth.CaptureReachabilityBaseline(snapshot, servicehealth.BaselineAuthorization{SourceInputs: revision.SourceInputs, ObjectiveDigest: objectiveDigest(revision.Objective), Reason: "healthy-baseline", GoalHealthy: true})
 	if err != nil {
@@ -134,18 +200,44 @@ func captureReachabilityBaseline(ctx context.Context, stateRoot string, existing
 // baseline opt-in, fresh probes, and independent goal checks throughout capture.
 // A restored investigation/active closure can only consume the recorded state,
 // never learn an exclusion from its incident state. It runs at controller
-// startup and on resume, so each cluster measures against the accepted head it
-// runs and never shares the record with another cluster.
-func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root, stateRoot string, enabled bool, observer *ServiceReachabilityObserver, provider SnapshotProvider, reference *ReachabilityReference, detectors []sdk.Detector) error {
+// startup, on resume, and while no current record is bound, so each cluster
+// measures against the accepted head it runs and never shares the record with
+// another cluster. It cannot fail the controller: when no current record can be
+// measured (the goal is firing, the application is still changing, a read
+// failed) the reference is marked unavailable and the next pass measures again.
+func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root, stateRoot string, enabled bool, observer *ServiceReachabilityObserver, provider SnapshotProvider, reference *ReachabilityReference, detectors []sdk.Detector) {
 	if !enabled || stateRoot == "" || observer == nil || reference == nil {
-		return nil
+		return
 	}
 	c.mu.Lock()
 	busy := c.incidentOpen || c.currentIncidentRequest != nil || c.closureBlocksNextLocked()
 	c.mu.Unlock()
 	if busy {
-		return nil
+		return
 	}
+	if err := measureReachabilityBaseline(ctx, c, root, stateRoot, observer, provider, reference, detectors); err != nil && ctx.Err() == nil {
+		spacing := reachabilityBaselineRetry
+		if errors.Is(err, errBaselineNotAuthorized) {
+			spacing = reachabilityBaselineCheck
+		}
+		unavailable := reference.await(err, c.clock().Add(spacing))
+		if c.OnError != nil {
+			c.OnError(unavailable)
+		}
+	}
+}
+
+// retryReachabilityBaseline runs the gate again once a scheduled attempt is due.
+func retryReachabilityBaseline(ctx context.Context, c *Controller, root, stateRoot string, enabled bool, observer *ServiceReachabilityObserver, provider SnapshotProvider, reference *ReachabilityReference, detectors []sdk.Detector) {
+	now := c.clock()
+	if at := reference.retryAt(); at.IsZero() || now.Before(at) {
+		return
+	}
+	reference.postpone(now.Add(reachabilityBaselineCheck))
+	acceptStartupReachabilityBaseline(ctx, c, root, stateRoot, enabled, observer, provider, reference, detectors)
+}
+
+func measureReachabilityBaseline(ctx context.Context, c *Controller, root, stateRoot string, observer *ServiceReachabilityObserver, provider SnapshotProvider, reference *ReachabilityReference, detectors []sdk.Detector) error {
 	revision, err := memory.HealthInputs(ctx, root, "HEAD")
 	if err != nil {
 		return err
@@ -165,6 +257,10 @@ func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root,
 	if baselineMatches(existing, revision, current) {
 		reference.set(existing, revision)
 		return nil
+	}
+	// A firing goal cannot authorize a record; keep the observer's window.
+	if _, err := healthyBaselineGoal(ctx, detectors, current); err != nil {
+		return fmt.Errorf("%w: %w", errBaselineNotAuthorized, err)
 	}
 	observer.Stop()
 	observer.Reset()
@@ -190,7 +286,7 @@ func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root,
 		_, err = healthyBaselineGoal(ctx, detectors, snapshot)
 		return err
 	}); err != nil {
-		return c.deferStaleBaseline(ctx, existing, revision, fmt.Errorf("reachability healthy baseline not accepted: %w", err))
+		return fmt.Errorf("reachability healthy baseline not accepted: %w", err)
 	}
 	snapshot, err := provider.Snapshot(ctx)
 	if err != nil {
@@ -198,27 +294,9 @@ func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root,
 	}
 	baseline, err := captureReachabilityBaseline(ctx, stateRoot, existing, revision, detectors, snapshot)
 	if err != nil {
-		if errors.Is(err, errBaselineDeferred) {
-			return c.deferStaleBaseline(ctx, existing, revision, err)
-		}
 		return err
 	}
 	reference.set(baseline, revision)
-	return nil
-}
-
-// deferStaleBaseline keeps a record that is current except for a stale exclusion
-// when its refresh cannot be authorized now (the goal is firing, the application
-// is still changing). Failing the controller would crash-loop until the goal heals,
-// and the same record is consumed meanwhile exactly as before this refresh existed.
-// Every other record, and a cancelled context, still fails the gate.
-func (c *Controller) deferStaleBaseline(ctx context.Context, existing *servicehealth.ReachabilityBaseline, revision memory.HealthRevision, cause error) error {
-	if ctx.Err() != nil || !stalenessOnly(existing, revision) {
-		return cause
-	}
-	if c.OnError != nil {
-		c.OnError(fmt.Errorf("%w; keeping the recorded exclusions and retrying at the next gate", cause))
-	}
 	return nil
 }
 

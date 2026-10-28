@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -319,5 +320,31 @@ func TestNativeBrokerCompileRejectionAdvancesAttempt(t *testing.T) {
 	}
 	if len(ledger.ReflectionRejections) != 1 || ledger.ReflectionRejections[0].Attempt != 1 {
 		t.Fatalf("compile rejection not durable: %+v", ledger.ReflectionRejections)
+	}
+}
+
+// A rejected reflection's correction turn is a separate step on the closure
+// timeline; it must not be charged to the next first-seen phase.
+func TestNativeBrokerClosureTimelineSeparatesReflectionRetry(t *testing.T) {
+	h := newRejectionHarness(t, "inc-timeline", func(call int, w IncidentWorkspace) (ReflectionDecision, error) {
+		if call == 1 {
+			return writeBadPlaybook(w)
+		}
+		return writeGoodPlaybook(w)
+	})
+	if _, err := h.native.ProcessClosure(context.Background(), h.closure); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := h.native.readLedger("inc-timeline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var previous time.Time
+	for _, phase := range []string{"reflection_dispatch", "worker_result_picked_up", "reflection_rejected", "reflection_retry_dispatch", "retry_worker_result_picked_up"} {
+		at := controllerTime(ledger.ClosurePhaseTimestamps[phase])
+		if at.IsZero() || at.Before(previous) {
+			t.Fatalf("phase %s is missing or out of order: %v", phase, ledger.ClosurePhaseTimestamps)
+		}
+		previous = at
 	}
 }

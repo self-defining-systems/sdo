@@ -17,7 +17,7 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    (`repair_actions`, `plan_applications`). Each needs an executable step: the typed action matching what
    ran, or `RunScript` with the recorded bytes. README text and `sdk_gaps` never replace
    a step; work not encoded yet is not an SDK gap. One playbook per failure mechanism; partial coverage is fine.
-3. **Copy the closest worked example** from [assets/examples](assets/examples/) (`playbooks/<id>/` and
+3. **Copy the closest worked example** from `assets/examples/` (`playbooks/<id>/` and
    its `corpus/<id>/`, each passing the memory check): `deployment-source-drift`, `webhook-ca-sync`,
    `database-user-recovery`, `crashloop-script-repair` (RunScript). Exact signatures are on the
    [SDK card](references/sdk-card.md), grouped by fault.

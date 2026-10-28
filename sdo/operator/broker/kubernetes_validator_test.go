@@ -391,24 +391,36 @@ func TestKubernetesValidatorRunsNetworkControlsBeforeReadOnlyBuild(t *testing.T)
 }
 
 func TestKubernetesValidatorFailsClosedWhenNetworkControlFails(t *testing.T) {
-	root := repository(t)
-	client := fake.NewSimpleClientset()
-	var jobs int
-	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
-		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
-		jobs++
-		job.Status.Failed = 1
-		if err := client.Tracker().Create(batchv1.SchemeGroupVersion.WithResource("jobs"), job, "sdo"); err != nil {
-			t.Fatal(err)
-		}
-		return true, job, nil
-	})
-	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test", RepositoryPVC: "repository", RepositoryMountPath: filepath.Dir(root), SchemaIdentity: "schema", PollInterval: time.Millisecond}
-	if err := JobValidator(launcher)(context.Background(), root, []string{"app.txt"}); err == nil {
-		t.Fatal("failed network positive control accepted")
-	}
-	if jobs != 1 {
-		t.Fatalf("detector ran after a failed network control: %d jobs", jobs)
+	for _, failing := range []string{"allow", "deny"} {
+		t.Run(failing, func(t *testing.T) {
+			root := repository(t)
+			client := fake.NewSimpleClientset()
+			var validators int
+			client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+				job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+				canary := job.Spec.Template.Labels["sdo.dev/validator-canary"]
+				if canary == "" {
+					validators++
+				}
+				if canary == failing {
+					job.Status.Failed = 1
+				} else {
+					now := metav1.Now()
+					job.Status.Succeeded, job.Status.CompletionTime = 1, &now
+				}
+				if err := client.Tracker().Create(batchv1.SchemeGroupVersion.WithResource("jobs"), job, "sdo"); err != nil {
+					t.Fatal(err)
+				}
+				return true, job, nil
+			})
+			launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test", RepositoryPVC: "repository", RepositoryMountPath: filepath.Dir(root), SchemaIdentity: "schema", PollInterval: time.Millisecond}
+			if err := JobValidator(launcher)(context.Background(), root, []string{"app.txt"}); err == nil {
+				t.Fatalf("failed %s network control accepted", failing)
+			}
+			if validators != 0 {
+				t.Fatalf("detector ran after a failed %s network control", failing)
+			}
+		})
 	}
 }
 
@@ -663,5 +675,49 @@ func TestKubernetesValidatorUsesFrozenControllerBaselineWithoutLegacyOptIn(t *te
 	candidate := validated.Spec.Template.Spec.Containers[0].VolumeMounts[0]
 	if candidate.Name != "application" || !candidate.ReadOnly || !strings.HasPrefix(candidate.SubPath, "tenant/") || candidate.MountPath != "/workspace" || candidate.SubPath == "tenant/.sdo-runtime/sessions/fixture/corpus/healthy" {
 		t.Fatalf("baseline override changed the candidate projection: %+v", candidate)
+	}
+}
+
+// The allow and deny canaries are independent controls under one long-lived
+// policy; each costs a Pod start, so they run together, and the timeline marks
+// when they start so earlier closure work is never charged to them.
+func TestKubernetesValidatorRunsCanariesConcurrentlyBetweenPhaseMarks(t *testing.T) {
+	root := repository(t)
+	client := fake.NewSimpleClientset()
+	var created []string
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		created = append(created, action.(ktesting.CreateAction).GetObject().(*batchv1.Job).Name)
+		return false, nil, nil
+	})
+	client.PrependReactor("get", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		name := action.(ktesting.GetAction).GetName()
+		object, err := client.Tracker().Get(batchv1.SchemeGroupVersion.WithResource("jobs"), "sdo", name)
+		if err != nil {
+			return true, nil, err
+		}
+		job := object.(*batchv1.Job).DeepCopy()
+		// A canary completes only once both canaries exist at the same time.
+		if job.Spec.Template.Labels["sdo.dev/validator-canary"] != "" && len(created) < 2 {
+			job.Status.Active = 1
+			return true, job, nil
+		}
+		now := metav1.Now()
+		job.Status.Succeeded, job.Status.CompletionTime = 1, &now
+		return true, job, nil
+	})
+	var phases []string
+	launcher := KubernetesValidationJobClient{
+		Client: client, Namespace: "sdo", Image: "validator:test", RepositoryPVC: "repository", RepositoryMountPath: filepath.Dir(root),
+		SchemaIdentity: "schema", PollInterval: time.Millisecond, Timeout: 2 * time.Second,
+		OnPhase: func(_ context.Context, phase string) error {
+			phases = append(phases, phase)
+			return nil
+		},
+	}
+	if err := JobValidator(launcher)(context.Background(), root, []string{"app.txt"}); err != nil {
+		t.Fatalf("canaries did not run concurrently: %v", err)
+	}
+	if len(phases) < 3 || phases[0] != "network_canaries_started" || phases[1] != "network_canaries_passed" || phases[2] != "validator_job_created" {
+		t.Fatalf("canary phases are not marked at start and end: %v", phases)
 	}
 }
