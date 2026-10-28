@@ -146,6 +146,25 @@ def test_recorded_scale_questions_and_repairs_reach_the_real_session_prompt(monk
     work_file = Path(os.path.expandvars(json.loads(work)["full_work_path"]))
     assert work_file in prompt.context_files
     assert len(json.loads(work_file.read_text())["causes"]) == 20
+    from sdo.agents.lifecycle.agents import _first_repository_escape
+
+    for evidence_file in (outcome_file, work_file):
+        assert (
+            _first_repository_escape(
+                [f"cat {evidence_file}"],
+                Path("/synthetic-application"),
+                context_files=frozenset(prompt.context_files),
+            )
+            is None
+        )
+    assert (
+        _first_repository_escape(
+            [f"cat {tmp_path}/context/unrelated.txt"],
+            Path("/synthetic-application"),
+            context_files=frozenset(prompt.context_files),
+        )
+        is not None
+    )
     assert len(prompt) <= budget_for("session_context.reflection_first")
 
 
