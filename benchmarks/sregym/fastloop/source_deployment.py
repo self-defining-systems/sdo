@@ -20,9 +20,9 @@ def configure_source_deployment(app: Any) -> None:
     if not workspace:
         raise ValueError("eval: source deployment requires an accepted application repository")
     application = app.name.lower().replace(" ", "-")
-    source = AcceptedSource(Path(workspace), app.namespace, manifest_paths_for(application))
 
     def deploy() -> None:
+        source = AcceptedSource(Path(workspace), app.namespace, manifest_paths_for(application))
         # Resolve the revision before any build or Kubernetes write. Never let
         # a modified worktree or an old capture supply desired application bytes.
         manifests = source.manifests

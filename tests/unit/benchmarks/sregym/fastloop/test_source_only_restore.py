@@ -96,3 +96,17 @@ def test_native_deploy_consumes_the_same_accepted_render(
     assert applied == list(source.manifests)
     assert accepted_restore_baselines(source, (ApplicationBaseline(namespace, []),))[0].objects == applied
     assert "SREGYM_ACCEPTED_RENDER" not in __import__("os").environ
+
+    # Reusing an app object must select the newly accepted revision per deploy.
+    newer = list(source.manifests)
+    newer[0]["data"]["value"] = "new accepted revision"
+    (tmp_path / "repo/build-input").write_text("accepted build input")
+    current = commit_accepted_source(
+        tmp_path / "repo",
+        newer,
+        namespace=namespace,
+        path="kubernetes/astronomy-shop.yaml" if module == "astronomy_shop" else "kubernetes/app.yaml",
+    )
+    applied.clear()
+    app.deploy()
+    assert applied == list(current.manifests)
