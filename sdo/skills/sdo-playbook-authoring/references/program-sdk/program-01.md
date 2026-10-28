@@ -9,6 +9,9 @@ package program // import "sdo.dev/operator/sdk/program"
 CONSTANTS
 
 const DefaultScriptTimeout = time.Minute
+const MaxAdmissionWebhooks = 16
+    MaxAdmissionWebhooks bounds one AdmissionWebhooksFor answer.
+
 const MaxScriptBytes = 64 << 10
 const MaxScriptOutputBytes = 64 << 10
 const MaxScriptTimeout = 5 * time.Minute
@@ -129,6 +132,30 @@ type Action interface {
 	// Has unexported methods.
 }
 
+type AdmissionWebhook struct {
+	Configuration  sdk.ObjectRef      `json:"configuration"`
+	Webhook        string             `json:"webhook"`
+	FailurePolicy  string             `json:"failure_policy"`
+	Service        *sdk.ObjectRef     `json:"service,omitempty"`
+	Port           int32              `json:"port,omitempty"`
+	ReadyEndpoints int                `json:"ready_endpoints"`
+	ServingSecrets []WebhookSecretKey `json:"serving_secrets,omitempty"`
+	CABundle       string             `json:"ca_bundle,omitempty"`
+}
+    AdmissionWebhook is one webhook entry that admits Pod creation in the
+    asked namespace, with its backend: the Service, its ready endpoint count
+    and the Secrets its Pods mount. CABundle is a digest, never certificate
+    bytes. To repair a broken admission webhook, bind the failing Namespace
+    or workload (not the webhook configuration or Secret), read it with
+    ReadView.AdmissionWebhooksFor, and repair with SyncWebhookCA for the CA,
+    PatchObject for failurePolicy or the service reference, or DeleteObject for
+    an orphaned entry.
+
+func (w AdmissionWebhook) CATarget(secret WebhookSecretKey) WebhookCA
+    CATarget names this entry and one serving Secret key for SyncWebhookCA and
+    WebhookCAMatchesSecret. An empty secret.Key means the Pod mounts the whole
+    Secret; set the key the serving certificate uses.
+
 type ApplyObject struct {
 	Ref    sdk.ObjectRef
 	Object map[string]any
@@ -224,34 +251,4 @@ type DatabaseRole struct {
 	Database string `json:"database"`
 	Name     string `json:"name"`
 }
-
-type DatabaseTarget struct {
-	Engine    string        `json:"engine"`
-	Pod       sdk.ObjectRef `json:"pod"`
-	Container string        `json:"container"`
-	Database  string        `json:"database"`
-	Auth      *DatabaseAuth `json:"auth,omitempty"`
-	Shell     string        `json:"shell,omitempty"`
-}
-    DatabaseTarget selects one MongoDB catalog on a named application Pod. Shell
-    is mongo (default) or mongosh. Connections are local to that container.
-
-func (t DatabaseTarget) Validate() error
-
-type DatabaseUser struct {
-	Name  string         `json:"name"`
-	Roles []DatabaseRole `json:"roles"`
-}
-    DatabaseUser contains only catalog identity and directly granted roles.
-    Password hashes, credentials and authentication restrictions are excluded.
-
-func ApplyEnsureDatabaseUser(users []DatabaseUser, a EnsureDatabaseUser) ([]DatabaseUser, error)
-    ApplyEnsureDatabaseUser projects a typed catalog mutation on a recorded open
-    catalog. It never reads credentials or invents an unavailable observation.
-
-func NormalizeDatabaseUsers(users []DatabaseUser) ([]DatabaseUser, error)
-    NormalizeDatabaseUsers validates, sorts and defensively copies nonsecret
-    catalog observations. Duplicate users or roles are refused.
-
-func (u DatabaseUser) Validate() error
 ```
