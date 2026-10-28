@@ -479,14 +479,26 @@ def test_existing_scripted_program_reports_actual_checkout_diff(
     assert checked == ([] if change == "empty" else [expected_ids])
 
 
-@pytest.mark.parametrize("health_finding", [False, True])
+@pytest.mark.parametrize("health", ["drift-only", "same-object", "selecting-service", "other-service"])
 def test_scripted_health_repair_is_not_suppressed_by_unsure_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, health_finding: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, health: str
 ) -> None:
     ref = {"api_version": "apps/v1", "kind": "Deployment", "namespace": "demo", "name": "catalog"}
+    service = {"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "catalog"}
     findings = [{"detector_id": "drift.unexplained", "primary_resource": ref}]
-    if health_finding:
+    if health == "same-object":
         findings.append({"detector_id": "workload-health", "primary_resource": ref})
+    elif health != "drift-only":
+        # The usual first signal: the Service has no ready endpoints before the Pod reports its image error.
+        findings.append({"detector_id": "health-objective", "primary_resource": service})
+    selector = {"app": "other" if health == "other-service" else "catalog"}
+    accepted = {
+        "Service/demo/catalog": {"kind": "Service", "spec": {"selector": selector}},
+        "Deployment/demo/catalog": {
+            "kind": "Deployment",
+            "spec": {"template": {"metadata": {"labels": {"app": "catalog"}}}},
+        },
+    }
     request = from_dict(
         IncidentRequest,
         {
@@ -507,14 +519,20 @@ def test_scripted_health_repair_is_not_suppressed_by_unsure_drift(
     patches: list[dict[str, str]] = []
     monkeypatch.delenv("SDO_SCRIPTED_SOURCE_REPAIR", raising=False)
     monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, resource: patches.append(resource))
-    monkeypatch.setattr(
-        scripted_worker,
-        "_tool",
-        lambda op, *_args: {"program_runs": []} if op == "diagnose" else {"healthy": bool(patches)},
-    )
+
+    def tool(op: str, *args: str) -> dict[str, object]:
+        if op == "diagnose":
+            return {"program_runs": []}
+        if op == "source":
+            return {"source": accepted[args[0]]}
+        # Only restoring the faulted Deployment returns health; patching the Service alone does not.
+        return {"healthy": ref in patches}
+
+    monkeypatch.setattr(scripted_worker, "_tool", tool)
     response = scripted_worker.scripted_responder(request)
-    assert patches == ([ref] if health_finding else [])
-    assert response.status == ("completed" if health_finding else "failed")
+    authorized = health in {"same-object", "selecting-service"}
+    assert (ref in patches) == authorized
+    assert response.status == ("completed" if authorized else "failed")
     assert response.drift_events[0].investigation_verdict == "unsure"
 
 
