@@ -12,6 +12,7 @@ from benchmarks.sregym.fastloop import shared_memory
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.parallel import Encounter, ParallelPlan
 
+# A pre-move cluster capture committed into seed memory; lanes never write their own now.
 CAPTURE = ".sdo/diagnostics/detectors/health/service-reachability/baseline.json"
 
 
@@ -276,9 +277,9 @@ def test_late_cohort_joins_running_memory_without_touching_running_lanes_or_hist
     _environments(tmp_path, joining)
     lanes = {
         # Prepared before the running lane published its reflection.
-        "kind-b": _lane_repository(tmp_path, "b", accepted, base, {CAPTURE: "cluster-b\n"}),
+        "kind-b": _lane_repository(tmp_path, "b", accepted, base, {}),
         # Prepared at the current head.
-        "kind-c": _lane_repository(tmp_path, "c", accepted, learned, {CAPTURE: "cluster-c\n"}),
+        "kind-c": _lane_repository(tmp_path, "c", accepted, learned, {}),
     }
     cluster = _Cluster(monkeypatch, tmp_path, lanes)
     history = _git(accepted, "rev-list", "HEAD")
@@ -301,7 +302,7 @@ def test_late_cohort_joins_running_memory_without_touching_running_lanes_or_hist
     saved = json.loads(report.read_text())
     assert (saved["phase"], saved["cohort"], saved["accepted_commit"]) == ("attached", "late", learned)
     assert {row["cluster"]: row["matched_commit"] for row in saved["lanes"]} == {"kind-b": base, "kind-c": learned}
-    assert all(row["discarded_cluster_captures"] == [CAPTURE] for row in saved["lanes"])
+    assert not any("discarded_cluster_captures" in row for row in saved["lanes"])
 
 
 def test_late_cohort_with_private_memory_is_refused_before_any_writer_stops(monkeypatch, tmp_path):
@@ -337,34 +338,34 @@ def test_initial_cohort_owns_the_checkout_and_matches_the_current_head(monkeypat
     _environments(tmp_path, selected)
     lanes = {
         "kind-a": _lane_repository(tmp_path, "a", accepted, head, {}),
-        "kind-b": _lane_repository(tmp_path, "b", accepted, head, {CAPTURE: "cluster-b\n"}),
+        "kind-b": _lane_repository(tmp_path, "b", accepted, head, {}),
     }
     cluster = _Cluster(monkeypatch, tmp_path, lanes)
     shared_memory.attach_shared_memory(selected, tmp_path / "attachment.json")
     assert any(" chown " in command for command in cluster.touched("docker"))
     saved = json.loads((tmp_path / "attachment.json").read_text())
     assert (saved["cohort"], saved["accepted_commit"]) == ("initial", head)
-    assert {row["cluster"]: row["discarded_cluster_captures"] for row in saved["lanes"]} == {
-        "kind-a": [],
-        "kind-b": [CAPTURE],
-    }
+    assert {row["cluster"]: row["matched_commit"] for row in saved["lanes"]} == {"kind-a": head, "kind-b": head}
 
 
+# Cluster-local captures are controller state now, so no path is exempt: a lane
+# whose tree differs from every accepted commit is refused, capture or not.
 @pytest.mark.parametrize(
     "files",
     [
         {".sdo/playbooks/fix/README.md": "private\n"},
+        {CAPTURE: "cluster-b\n"},
         {CAPTURE: "cluster-b\n", ".sdo/outcomes/x.json": "{}\n"},
         {".sdo/diagnostics/detectors/health/a/b/baseline.json": "nested\n"},
     ],
 )
-def test_any_lane_divergence_beyond_cluster_captures_is_refused(monkeypatch, tmp_path, files):
+def test_any_lane_divergence_is_refused(monkeypatch, tmp_path, files):
     accepted, base, learned = _live_memory(tmp_path)
     lane = _lane_repository(tmp_path, "b", accepted, learned, files)
     monkeypatch.setattr(shared_memory, "lane_git_command", lambda _e, _v, _a, *git: ("git", "-C", str(lane), *git))
     with pytest.raises(ValueError, match="merge through the broker"):
-        shared_memory.lane_divergence(object(), "/opt/sdo-parallel/lanes/b", accepted, learned)
-    # The same lane matches when only its cluster capture differs.
-    clean = _lane_repository(tmp_path, "c", accepted, base, {CAPTURE: "cluster-c\n"})
+        shared_memory.lane_match(object(), "/opt/sdo-parallel/lanes/b", accepted, learned)
+    # An unchanged lane prepared before peers published matches its accepted commit.
+    clean = _lane_repository(tmp_path, "c", accepted, base, {})
     monkeypatch.setattr(shared_memory, "lane_git_command", lambda _e, _v, _a, *git: ("git", "-C", str(clean), *git))
-    assert shared_memory.lane_divergence(object(), "/x", accepted, learned) == (base, [CAPTURE])
+    assert shared_memory.lane_match(object(), "/x", accepted, learned) == base

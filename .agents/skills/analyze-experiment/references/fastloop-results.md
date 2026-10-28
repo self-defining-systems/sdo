@@ -132,8 +132,9 @@ incident inputs. A commit rewind is an eval error.
 Lanes overlap but each lane stays sequential, preserving grade-at-closure and
 paused recovery. Oracle values never enter memory. Shared mode rejects seeding,
 archive copy-back and reset. The attachment report records phase, cohort, matched
-commits, discarded captures and original Jobs. Lanes must match accepted
-history except health captures; roots stay private. Scripted scheduling, broker
+commits and original Jobs. Lanes must match a commit of accepted history
+exactly (cluster baselines are per-lane controller state, not memory); roots
+stay private. Reports from older runs also list `discarded_cluster_captures`. Scripted scheduling, broker
 and lock tests prove plumbing; live runs establish learning and speedup.
 
 Install-time pending namespace inventory records pre-existing environment UID/configuration/ownership digests independently of healthy onboarding. A rejected health window preserves only matching captured observations; replacement or changed objects remain unexplained presence drift. Check the immutable pending snapshot and install boundary; source-declared faults, health/reachability checks and objects added after that boundary remain active. This rule does not label, delete or recreate environment objects.
