@@ -99,3 +99,17 @@ def test_cumulative_export_does_not_subtract_peer_or_reflection_waits(tmp_path: 
     evidence = read_provider_waits(tmp_path, incident_id="ours")
     assert not evidence.intervals
     assert not evidence.exhausted
+
+
+def test_outer_deadline_after_recorded_wait_is_infrastructure_but_other_errors_are_not() -> None:
+    from benchmarks.sregym.protocol.provider_capacity import (
+        ProviderWaitEvidence,
+        ProviderWaitInterval,
+        capacity_prevented_completion,
+    )
+
+    interval = ProviderWaitInterval(kind="rate_limit", started_at=T0, finished_at=T0 + timedelta(seconds=30))
+    evidence = ProviderWaitEvidence((interval,))
+    assert capacity_prevented_completion(evidence, "context deadline exceeded")
+    assert not capacity_prevented_completion(evidence, "invalid agent result")
+    assert not capacity_prevented_completion(ProviderWaitEvidence(), "context deadline exceeded")

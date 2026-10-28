@@ -151,6 +151,57 @@ def test_pool_default_capacity_and_shared_capacity_must_agree(tmp_path: Path) ->
     handle.close()
 
 
+def test_admission_wait_is_separate_and_bounded(tmp_path: Path) -> None:
+    clock = Clock()
+    root = tmp_path / "pool"
+    held = OpusPool(root, capacity=1).try_acquire()
+    assert held is not None
+    manager = ProviderCapacity(
+        environment={
+            "SDO_OPUS_POOL_DIR": str(root),
+            "SDO_OPUS_MAX_SESSIONS": "1",
+            "SDO_PROVIDER_WAIT_LOG": str(tmp_path / "provider-waits.jsonl"),
+        },
+        policy=RateLimitPolicy(initial_delay_seconds=1, max_delay_seconds=1, max_wait_seconds=3),
+        monotonic=clock.monotonic,
+        now=clock.now,
+        sleep=clock.sleep,
+    )
+    try:
+        with pytest.raises(ProviderRateLimited, match="admission budget exhausted"):
+            with manager.opus_session("opus"):
+                pytest.fail("full pool admitted a session")
+    finally:
+        held.close()
+    assert manager.concurrency_wait_seconds == 3
+    assert manager.rate_limit_wait_seconds == 0
+    events = [json.loads(line) for line in (tmp_path / "provider-waits.jsonl").read_text().splitlines()]
+    assert events[-1]["kind"] == "concurrency"
+    assert events[-1]["state"] == "exhausted"
+
+
+def test_tool_output_mentioning_a_rate_limit_is_not_a_provider_error(tmp_path: Path) -> None:
+    from agentshim.testing import FakeRun
+
+    tool_frame = {"type": "user", "message": {"content": [{"type": "tool_result", "content": LIMITS[1]}]}}
+    agent = ScriptedAgent(
+        lambda _: FakeRun(stdout=[json.dumps(tool_frame)], stderr=["invalid local settings"], returncode=1)
+    )
+    with pytest.raises(StructuredTurnError, match="invalid local settings") as raised:
+        run_structured_turn(
+            "claude",
+            "prompt",
+            output_schema=SCHEMA,
+            cwd=tmp_path,
+            access="read-only",
+            model="sonnet",
+            executor=agent.executor,
+            provider_capacity=capacity(tmp_path, Clock()),
+        )
+    assert not isinstance(raised.value, ProviderRateLimited)
+    assert len(agent.requests) == 1
+
+
 def test_opus_refuses_to_run_without_shared_pool(tmp_path: Path) -> None:
     agent = ScriptedAgent(lambda _: reply("claude", {"answer": "ok"}, session_id="s-1"))
     with pytest.raises(ProviderRateLimited, match="shared.*pool"):

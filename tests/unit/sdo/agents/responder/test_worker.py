@@ -47,15 +47,35 @@ def _result() -> IncidentResult:
 
 
 def test_worker_preserves_rate_limit_through_typed_transport(tmp_path: Path) -> None:
-    from libs.agent_cli.errors import ProviderRateLimited
+    from libs.agent_cli.provider_capacity import ProviderCapacity, RateLimitPolicy
+    from libs.agent_cli.structured import run_structured_turn
     from sdo.contracts import validate
+    from tests.structured_turns import ScriptedAgent, failure
 
     path = tmp_path / "agent-task.json"
     _task(path)
     publisher = RecordingPublisher()
+    seconds = [0.0]
+    capacity = ProviderCapacity(
+        environment={},
+        policy=RateLimitPolicy(initial_delay_seconds=1, max_delay_seconds=1, max_wait_seconds=1),
+        monotonic=lambda: seconds[0],
+        sleep=lambda value: seconds.__setitem__(0, seconds[0] + value),
+    )
+    cli = ScriptedAgent(lambda _: failure(stderr="You've hit your limit · resets 5pm (America/Los_Angeles)"))
 
     def limited(_request):
-        raise ProviderRateLimited("retry budget exhausted", retryable=False)
+        run_structured_turn(
+            "claude",
+            "prompt",
+            output_schema={"type": "object"},
+            cwd=tmp_path,
+            model="sonnet",
+            access="read-only",
+            executor=cli.executor,
+            provider_capacity=capacity,
+        )
+        pytest.fail("exhausted Claude call returned")
 
     result = run_worker_task(path, "result-map", publisher, executor=limited)
     validate(result)
