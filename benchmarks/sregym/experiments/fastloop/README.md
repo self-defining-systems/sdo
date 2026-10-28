@@ -265,10 +265,16 @@ Each SDO `fastloop run` writes `checkpoints/<incident-number>/<stage>/` under
 ProtoJSON, its logical memory snapshot or accepted commit in the task, the
 matching broker ledger when settled, and redacted namespace snapshots and
 recordings from the incident corpus. Capture files are stored once by SHA-256
-under `checkpoints/blobs/`. Tasks and results have a 1 MiB checkpoint limit,
+under `checkpoints/blobs/`. Tasks have a 512 KiB limit and results a 1 MiB checkpoint limit,
 so an oversized worker result remains available to debug its transport failure.
-Corpus snapshots have the SDK's 4 MiB per-file limit and a
-32 MiB bundle limit. Keep the run directory private because exact agent
+Corpus evidence has a 4 MiB per-file limit and a 32 MiB bundle limit.
+Oversized parts are omitted with an `unrecorded_captures` name-to-reason map
+in the stage manifest; exact worker results, the broker ledger and other captures
+remain recorded. Replay reports these stages as `not replayable` with the reason.
+Optional export failures leave `checkpoints/<incident-number>/unrecorded.json`
+with a reason that replay reports, including when older partial stages exist.
+Recording failures never discard completed resolution or learning metrics.
+Keep the run directory private because exact agent
 requests and results can contain incident text.
 
 Replay from the repository root, with the results run directory rather than

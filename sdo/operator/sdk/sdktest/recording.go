@@ -92,7 +92,28 @@ type ReplayReadView struct {
 	mu    sync.Mutex
 }
 
+// UnrecordedError names a read a replay was asked for that no recording holds.
+type UnrecordedError struct {
+	Method    string
+	Arguments json.RawMessage
+}
+
+func (e *UnrecordedError) Error() string {
+	return fmt.Sprintf("unrecorded %s call with arguments %s", e.Method, e.Arguments)
+}
+
 func (v *ReplayReadView) replay(method string, arguments any, result any) error {
+	return v.lookup(method, arguments, result, true)
+}
+
+// Recorded answers a state read from the first matching recorded reply without
+// consuming it: a live read view freezes such reads per snapshot, so repeated
+// identical reads see the same answer. Missing replies are *UnrecordedError.
+func (v *ReplayReadView) Recorded(method string, arguments any, result any) error {
+	return v.lookup(method, arguments, result, false)
+}
+
+func (v *ReplayReadView) lookup(method string, arguments any, result any, consume bool) error {
 	args, err := json.Marshal(arguments)
 	if err != nil {
 		return err
@@ -100,19 +121,21 @@ func (v *ReplayReadView) replay(method string, arguments any, result any) error 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	for index, call := range v.Calls {
-		if v.used[index] || call.Method != method || !sameJSON(call.Arguments, args) {
+		if (consume && v.used[index]) || call.Method != method || !sameJSON(call.Arguments, args) {
 			continue
 		}
-		if v.used == nil {
-			v.used = make(map[int]bool)
+		if consume {
+			if v.used == nil {
+				v.used = make(map[int]bool)
+			}
+			v.used[index] = true
 		}
-		v.used[index] = true
 		if call.Error != "" {
 			return errors.New(call.Error)
 		}
 		return json.Unmarshal(call.Result, result)
 	}
-	return fmt.Errorf("unrecorded %s call with arguments %s", method, args)
+	return &UnrecordedError{Method: method, Arguments: args}
 }
 
 func sameJSON(left, right []byte) bool {
@@ -140,12 +163,12 @@ func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (pr
 }
 func (v *ReplayReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
 	var result program.Diff
-	err := v.replay("DiffAgainstSource", []any{ref}, &result)
+	err := v.Recorded("DiffAgainstSource", []any{ref}, &result)
 	return result, err
 }
 func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error) {
 	var result program.Diff
-	err := v.replay("DiffAgainstBaseline", []any{ref}, &result)
+	err := v.Recorded("DiffAgainstBaseline", []any{ref}, &result)
 	return result, err
 }
 
@@ -320,6 +343,16 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 			_, _ = recorder.WebhookCAMatchesSecret(target)
 			continue
 
+		case "DatabaseUsers":
+			if len(args) != 1 {
+				return nil, errors.New("invalid DatabaseUsers arguments")
+			}
+			var target program.DatabaseTarget
+			if err := json.Unmarshal(args[0], &target); err != nil {
+				return nil, err
+			}
+			_, _ = recorder.DatabaseUsers(target)
+			continue
 		case "ExternalEffect", "JobCompletion", "KubernetesEffect", "RunScriptReceipt", "RepairReceipt":
 			// Effects are historical write evidence, never repeat mutations.
 			continue

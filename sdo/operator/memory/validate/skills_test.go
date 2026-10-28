@@ -153,7 +153,7 @@ func exampleTree(t *testing.T) string {
 	write(t, root, ".sdo/goal.md", "---\nschema_version: 1\nowner: human\napplication: demo\n---\nKeep the application healthy.\n")
 	write(t, root, ".sdo/arch.md", "---\nschema_version: 1\ngenerated_at_commit: base\napplication: demo\n---\nA small application.\n")
 	write(t, root, ".sdo/schema-version", strconv.Itoa(layout.CurrentSchemaVersion)+"\n")
-	write(t, root, ".sdo/playbooks/README.md", "# Playbooks\n\n- [restart-loop](restart-loop/README.md)\n")
+	generateIndex(t, root)
 	return root
 }
 
