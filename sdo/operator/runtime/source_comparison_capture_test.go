@@ -32,12 +32,27 @@ func (v flagSourceView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, erro
 	return program.Diff{Changed: true}, nil
 }
 
+func (v flagSourceView) AdmissionWebhooksFor(sdk.ObjectRef) ([]program.AdmissionWebhook, error) {
+	ready := 0
+	if v.flag() == "off" {
+		ready = 1
+	}
+	return []program.AdmissionWebhook{{Webhook: "policy.example", ReadyEndpoints: ready}}, nil
+}
+
+func (v flagSourceView) flag() string {
+	for _, cm := range v.snapshot.ConfigMaps() {
+		return cm.Data["flag"]
+	}
+	return ""
+}
+
 func flagSnapshot(value string) sdktest.Snapshot {
 	return sdktest.Snapshot{NamespaceName: "demo", ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "flags", Namespace: "demo"}, Data: map[string]string{"flag": value}}}}
 }
 
-// The controller records every object's source comparison at detect and
-// repeats it on the live fixed-boundary snapshot, so a drift program replays
+// The controller records every object's source comparison and the admission
+// webhooks at detect and repeats them on the live fixed-boundary snapshot, so a drift program replays
 // Match on the fault and NoMatch once fixed whatever the responder touched.
 func TestControllerRecordsSourceComparisonsOnLiveSnapshots(t *testing.T) {
 	root := t.TempDir()
@@ -70,25 +85,34 @@ func TestControllerRecordsSourceComparisonsOnLiveSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "demo", Name: "flags"}
-	comparison := func(phase string) *program.Diff {
+	recorded := func(phase, method string, argument, result any) bool {
 		raw, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
 		if err != nil {
-			return nil
+			return false
 		}
 		var calls []sdktest.PrimitiveCall
 		if json.Unmarshal(raw, &calls) != nil {
-			return nil
+			return false
 		}
-		args, _ := json.Marshal([]any{ref})
+		args, _ := json.Marshal([]any{argument})
 		for _, call := range calls {
-			if call.Method == "DiffAgainstSource" && call.Phase == phase && string(call.Arguments) == string(args) {
-				var diff program.Diff
-				if json.Unmarshal(call.Result, &diff) == nil {
-					return &diff
-				}
+			if call.Method == method && call.Phase == phase && string(call.Arguments) == string(args) {
+				return json.Unmarshal(call.Result, result) == nil
 			}
 		}
-		return nil
+		return false
+	}
+	comparison := func(phase string) *program.Diff {
+		var diff program.Diff
+		if !recorded(phase, "DiffAgainstSource", ref, &diff) {
+			return nil
+		}
+		return &diff
+	}
+	webhooks := func(phase string) []program.AdmissionWebhook {
+		var webhooks []program.AdmissionWebhook
+		recorded(phase, "AdmissionWebhooksFor", sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: "demo"}, &webhooks)
+		return webhooks
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for comparison("") == nil && time.Now().Before(deadline) {
@@ -96,6 +120,9 @@ func TestControllerRecordsSourceComparisonsOnLiveSnapshots(t *testing.T) {
 	}
 	if diff := comparison(""); diff == nil || !diff.Changed {
 		t.Fatalf("detect recorded no faulted comparison for an untouched object: %+v", diff)
+	}
+	if w := webhooks(""); len(w) != 1 || w[0].ReadyEndpoints != 0 {
+		t.Fatalf("detect recorded no admission webhook backends: %+v", w)
 	}
 	provider.snapshot = flagSnapshot("off")
 	awaitDispatchCompletionQueued(t, controller)
@@ -106,5 +133,8 @@ func TestControllerRecordsSourceComparisonsOnLiveSnapshots(t *testing.T) {
 	}
 	if diff := comparison("fixed"); diff == nil || diff.Changed {
 		t.Fatalf("fixed comparison was not read from the live repaired snapshot: %+v", diff)
+	}
+	if w := webhooks("fixed"); len(w) != 1 || w[0].ReadyEndpoints != 1 {
+		t.Fatalf("fixed boundary did not repeat the admission webhook read: %+v", w)
 	}
 }

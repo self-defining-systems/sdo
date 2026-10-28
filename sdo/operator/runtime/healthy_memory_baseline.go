@@ -78,7 +78,7 @@ func (c *Controller) recordHealthyMemoryObservation(ctx context.Context, referen
 	}
 	if view != nil {
 		budget, cancel := context.WithTimeout(ctx, sourceComparisonCaptureBudget)
-		captured.Readings = append(captured.Readings, sourceInventoryComparisons(budget, snapshot, view)...)
+		captured.Readings = append(captured.Readings, boundaryObservations(budget, snapshot, view)...)
 		cancel()
 	}
 	if live, ok := routingLiveView(view); ok && live.Prober != nil {

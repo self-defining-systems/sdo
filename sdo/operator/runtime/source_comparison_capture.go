@@ -13,8 +13,23 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// sourceComparisonCaptureBudget bounds one boundary's source comparisons.
+// sourceComparisonCaptureBudget bounds one boundary's recorded observations.
 const sourceComparisonCaptureBudget = 20 * time.Second
+
+// boundaryObservations records what any program may read at one capture
+// boundary without naming it first: every object's source comparison and the
+// admission webhooks (with backend readiness) that admit the namespace's Pods.
+// Reads that need a program-chosen target (database catalogs, probes) are
+// recorded when a program or the responder makes them.
+func boundaryObservations(ctx context.Context, snapshot sdk.DetectionContext, view program.ReadView) []sdktest.PrimitiveCall {
+	if snapshot == nil || view == nil {
+		return nil
+	}
+	calls := sourceInventoryComparisons(ctx, snapshot, view)
+	recorder := &sdktest.RecordingReadView{ReadView: view}
+	_, _ = recorder.AdmissionWebhooksFor(sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: snapshot.Namespace()})
+	return append(calls, recorder.RecordedReads()...)
+}
 
 // sourceInventoryComparisons records, at one capture boundary, the accepted
 // source comparison of every object a program may compare: each namespace

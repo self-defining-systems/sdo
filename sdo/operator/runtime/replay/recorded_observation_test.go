@@ -75,8 +75,16 @@ func (recordedWebhookBackendProgram) Diagnose(_ context.Context, v program.ReadV
 	if !observed || admission.Error != "" {
 		return program.Verdict{Result: program.Unknown}, nil
 	}
-	if !admission.Admitted && strings.Contains(admission.Rejection, "failed calling webhook") && strings.Contains(admission.Rejection, "not found") {
-		return program.Verdict{Result: program.Match}, nil
+	for range 2 {
+		webhooks, err := v.AdmissionWebhooksFor(sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: v.Namespace()})
+		if err != nil {
+			return program.Verdict{}, err
+		}
+		for _, w := range webhooks {
+			if w.ReadyEndpoints == 0 && !admission.Admitted && strings.Contains(admission.Rejection, "failed calling webhook") {
+				return program.Verdict{Result: program.Match}, nil
+			}
+		}
 	}
 	return program.Verdict{Result: program.NoMatch}, nil
 }
@@ -174,11 +182,18 @@ func TestDiagnoseJudgesRecordedDatabaseCatalog(t *testing.T) {
 	}
 }
 
-func TestDiagnoseJudgesRecordedPodAdmission(t *testing.T) {
+func TestDiagnoseJudgesRecordedAdmissionWebhooks(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: "policy"}
 	open := sdktest.Snapshot{NamespaceName: "app", Admission: &sdk.PodAdmissionResult{Rejection: `failed calling webhook "policy.example": service "policy" not found`}}
 	healthy := sdktest.Snapshot{NamespaceName: "app", Admission: &sdk.PodAdmissionResult{Admitted: true}}
-	c := Case{ID: "backend", Corpus: sdktest.CorpusCase{Open: open, Fixed: healthy, Healthy: healthy, RootCauseProgramIDs: []string{"recorded-webhook-backend"}, Bindings: program.Bindings{Objects: program.ObjectBindings{"configuration": ref}}}}
+	namespace := sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: "app"}
+	backend := func(ready int) []program.AdmissionWebhook {
+		return []program.AdmissionWebhook{{Configuration: ref, Webhook: "policy.example", FailurePolicy: "Fail", Service: &sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "policy", Name: "policy"}, ReadyEndpoints: ready}}
+	}
+	c := Case{ID: "backend", Corpus: sdktest.CorpusCase{Open: open, Fixed: healthy, Healthy: healthy, RootCauseProgramIDs: []string{"recorded-webhook-backend"}, Bindings: program.Bindings{Objects: program.ObjectBindings{"configuration": ref}}, Recordings: []sdktest.PrimitiveCall{
+		recordedCall(t, "", "AdmissionWebhooksFor", namespace, backend(0)),
+		recordedCall(t, "fixed", "AdmissionWebhooksFor", namespace, backend(1)),
+	}}}
 	r := Check(context.Background(), recordedWebhookBackendProgram{}, nil, nil, c)
 	if r.Faulted.Result != program.Match || r.Healthy.Result != program.NoMatch {
 		t.Fatalf("faulted=%s healthy=%s errors=%v", r.Faulted.Result, r.Healthy.Result, r.Errors)

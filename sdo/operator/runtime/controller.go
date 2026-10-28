@@ -832,7 +832,7 @@ func (c *Controller) captureOpenDetect(ctx context.Context, snapshot sdk.Detecti
 	view := c.drift.View(snapshot)
 	c.goBackground(func() {
 		budget, cancel := context.WithTimeout(ctx, sourceComparisonCaptureBudget)
-		comparisons := sourceInventoryComparisons(budget, snapshot, view)
+		comparisons := boundaryObservations(budget, snapshot, view)
 		cancel()
 		if err := memory.AppendCapturedRecordings(c.config.CorpusSessionRoot, request.IncidentID, "open@detect", comparisons); err != nil {
 			report(fmt.Errorf("capture incident source comparisons: %w", err))

@@ -24,7 +24,8 @@ func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdk
 }
 
 // AppendCapturedRecordings adds calls to one open phase's recordings in one
-// write. A state read (source comparison, database catalog) keeps its first
+// write. A state read (source comparison, database catalog, admission
+// webhooks) keeps its first
 // observation per phase: a live view freezes such reads per snapshot, and
 // replay answers every repeated read from that first reply.
 func AppendCapturedRecordings(repositoryMount, incidentID, phase string, added []sdktest.PrimitiveCall) error {
@@ -115,7 +116,7 @@ func firstObservationKey(call sdktest.PrimitiveCall) (string, bool, error) {
 			return "", false, err
 		}
 		return identity, true, nil
-	case "DiffAgainstSource", "DiffAgainstBaseline":
+	case "DiffAgainstSource", "DiffAgainstBaseline", "AdmissionWebhooksFor", "WebhookCAMatchesSecret":
 		return phase + "\x00" + recordedReadKey(call), true, nil
 	}
 	return "", false, nil

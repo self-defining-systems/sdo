@@ -47,6 +47,7 @@ or failed reads remain Unknown, not a refused connection.
 Source comparisons: from REPLAY1 the controller records `DiffAgainstSource` for
 every non-derived namespace object and every accepted-source object at detect and
 pre-apply (into the phase recordings) and in the healthy baseline's `readings`,
+plus `AdmissionWebhooksFor` on the app Namespace,
 capped at 20 s per boundary. Fixed observations repeat every open read on the
 live repaired snapshot. Older captures recomputed fixed comparisons from the
 redacted `fixed.json`, so a ConfigMap reads `changed: true` there even after a
