@@ -47,7 +47,7 @@ def test_bridge_delivery_then_in_node_tag_publishes_the_declared_ref(monkeypatch
     def run() -> int:
         for app in ("Hotel Reservation", "Social Network"):
             with source.plan_for_app(SimpleNamespace(name=app), node_architectures={"amd64"}) as plan:
-                assert plan.helm_extra_args == ()
+                assert plan.manifest_path.is_file()
         return 0
 
     worker = SimpleNamespace(FastloopWorker=Worker, main=run, probe_pod_manifest=lambda *args: {})
@@ -94,4 +94,4 @@ def test_astronomy_source_plan_preserves_seed_manifest(monkeypatch, tmp_path):
         SimpleNamespace(name="OpenTelemetry Demo Astronomy Shop"), node_architectures={"amd64"}
     ) as plan:
         assert plan.manifest_path == manifest
-        assert plan.helm_extra_args == ()
+        assert plan.manifest_path.is_file()
