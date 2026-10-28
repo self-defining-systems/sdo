@@ -354,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         "--remeasure", action="store_true", help="rerun only the check and replay of finished runs under --out"
     )
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument("--table-only", action="store_true", help="only rebuild the label's table under --out")
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--model", default=DEFAULT_MODEL)
@@ -373,9 +374,11 @@ def main(argv: list[str] | None = None) -> int:
         scenarios = [path for path in scenarios if path.name in set(args.only)]
     if not scenarios:
         parser.error("no scenarios selected")
-    for image in sorted({Scenario.load(path).image for path in scenarios}):
+    for image in sorted({Scenario.load(path).image for path in scenarios} if not args.table_only else ()):
         prepare_toolchain(image, args.toolchain_cache)
     jobs = [(path, index) for index in range(1, args.repeat + 1) for path in scenarios]
+    if args.table_only:
+        jobs = []
     if args.remeasure:
         jobs = [
             (path, int(run.name.rsplit("-r", 1)[1]))
@@ -418,8 +421,14 @@ def main(argv: list[str] | None = None) -> int:
         return row
 
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
-        rows = [row for row in pool.map(launch, jobs) if row]
+        finished = [row for row in pool.map(launch, jobs) if row]
     args.out.mkdir(parents=True, exist_ok=True)
+    # Tabulate every run of this label under --out, so a subset run extends the table.
+    rows = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(args.out.glob(f"*/{args.label}-r*/metrics.json"))
+    ]
+    print(f"{len(finished)} of {len(jobs)} runs finished in this invocation", file=sys.stderr)
     report = args.out / f"{args.label}-summary.json"
     report.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
     rendered = table(sorted(rows, key=lambda row: (row["scenario"], row["label"])))
