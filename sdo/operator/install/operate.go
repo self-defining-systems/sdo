@@ -17,6 +17,7 @@ import (
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/shellpath"
+	"sdo.dev/operator/worker_registry"
 )
 
 const PreparedCommitAnnotation = "sdo.dev/prepared-commit"
@@ -188,6 +189,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if devmount.Enabled() {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)
+	}
+	if err := worker_registry.ApplyProviderCapacity(pod, worker_registry.ProviderCapacityEnvironment()); err != nil {
+		return nil, err
 	}
 	return job, nil
 }

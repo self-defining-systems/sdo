@@ -19,7 +19,7 @@ depends_on = []
 
 [[modules]]
 path = "benchmarks.sregym.protocol"
-depends_on = ["sdo.contracts"]
+depends_on = ["sdo.contracts", "libs.agent_cli"]
 
 [[modules]]
 path = "sdo.contracts"
@@ -59,6 +59,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.adapter"
 depends_on = [
+    "libs.agent_cli",
     "sdo.agents.health_judge",
     "benchmarks.sregym.protocol",
     "sdo.contracts",
@@ -68,6 +69,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.fastloop"
 depends_on = [
+    "libs.agent_cli",
     "benchmarks.sregym.faults",
     "benchmarks.sregym.adapter",
     "benchmarks.sregym.protocol",

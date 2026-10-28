@@ -43,6 +43,12 @@ from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, Recov
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
 from benchmarks.sregym.protocol.injection import ensure_incident_follows_injection
+from benchmarks.sregym.protocol.provider_capacity import (
+    RateLimitedRun,
+    capacity_prevented_completion,
+    read_provider_waits,
+)
+from libs.agent_cli.errors import rate_limit_failure
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -317,15 +323,33 @@ class SdoPersistentAgent:
             if self._on_verified is not None:
                 self._on_verified(ResolutionGradePoint(incident_id, verified_at))
 
-        resolution = run_persistent_stage(
-            self.stage_inputs(f"fastloop-{index:03d}", receipt_dir, lifecycle.fingerprint),
-            ops=self._ops,
-            run_lifecycle=lambda: self._run_lifecycle(lifecycle.context),
-            inject=gated_inject,
-            clock=self._clock,
-            pause_after_verified=not self._keep_running,
-            on_verified=measure_verified,
-        )
+        try:
+            resolution = run_persistent_stage(
+                self.stage_inputs(f"fastloop-{index:03d}", receipt_dir, lifecycle.fingerprint),
+                ops=self._ops,
+                run_lifecycle=lambda: self._run_lifecycle(lifecycle.context),
+                inject=gated_inject,
+                clock=self._clock,
+                pause_after_verified=not self._keep_running,
+                on_verified=measure_verified,
+            )
+        except RuntimeError as exc:
+            try:
+                self._ops.export_runtime_artifacts(
+                    replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
+                )
+            except (OSError, RuntimeError):
+                logger.exception("could not export provider wait evidence")
+            evidence = read_provider_waits(receipt_dir, after=windows[0].started_at if windows else None)
+            # Stable worker-owned diagnostics, or an interrupted/exhausted wait,
+            # survive controller wrapping and hard worker deadlines.
+            if (
+                rate_limit_failure(exc) is not None
+                or "rate_limited:" in str(exc)
+                or capacity_prevented_completion(evidence, str(exc))
+            ):
+                raise RateLimitedRun(evidence) from exc
+            raise
         self._checkpoint(index, str(resolution["incident_id"]), receipt_dir)
         if not windows:
             raise RuntimeError("the controller verified an incident without the fault being injected")
@@ -343,6 +367,7 @@ class SdoPersistentAgent:
         drift_tokens = TokenCounts()
         return AgentOutcome(
             injection=windows[0],
+            provider_waits=read_provider_waits(receipt_dir, incident_id=str(resolution["incident_id"])).intervals,
             detected_at=detected,
             responder_started_at=_timestamp(resolution.get("responder_started_at")),
             responder_finished_at=_timestamp(resolution.get("responder_finished_at")),

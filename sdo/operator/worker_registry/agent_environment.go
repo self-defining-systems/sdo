@@ -16,12 +16,13 @@ var ModelEnvironments = []string{"SDO_RESPONDER_MODEL", "SDO_REFLECTION_MODEL", 
 // nothing; an unknown one is an error.
 func AgentEnvironment(provider, model string) (map[string]string, error) {
 	if provider == "" {
-		return map[string]string{}, nil
+		return ProviderCapacityEnvironment(), nil
 	}
 	if provider != "codex" && provider != "claude" {
 		return nil, fmt.Errorf("unsupported responder backend %q: must be codex or claude", provider)
 	}
-	environment := map[string]string{ProviderEnvironment: provider}
+	environment := ProviderCapacityEnvironment()
+	environment[ProviderEnvironment] = provider
 	if model != "" {
 		for _, name := range ModelEnvironments {
 			environment[name] = model

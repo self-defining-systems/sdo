@@ -58,6 +58,13 @@ def image_build_source(tmp_path: Path) -> Path:
     return source
 
 
+@pytest.fixture(autouse=True)
+def _isolated_opus_pool(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Fake-agent tests share a real temporary lock pool, never the live account pool."""
+    monkeypatch.setenv("SDO_OPUS_POOL_DIR", str(tmp_path / "provider-capacity"))
+    monkeypatch.setenv("SDO_OPUS_MAX_SESSIONS", "8")
+
+
 @pytest.fixture(scope="session")
 def operator_binary() -> Path:
     repository = Path(__file__).resolve().parents[1]

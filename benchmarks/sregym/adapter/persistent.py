@@ -77,6 +77,7 @@ from benchmarks.sregym.adapter.runtime import (
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
 from benchmarks.sregym.protocol.injection import IncidentOpenBeforeInjectionError, InvalidInjectionError
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
+from libs.agent_cli.errors import ProviderRateLimited
 from sdo.contracts import (
     ControllerObservation,
     ControllerObservationFailure,
@@ -1883,6 +1884,8 @@ def _observe_state(
 
 def _raise_observation_failure(observed: ControllerObservation, state: dict[str, Any]) -> None:
     if observed.failure.code == ControllerObservationFailure.CODE_CLOSURE_FAILED:
+        if "rate_limited:" in observed.failure.message:
+            raise ProviderRateLimited("worker reported provider throttling", retryable=False)
         raise ClosureFailedError(observed.failure.message)
 
 

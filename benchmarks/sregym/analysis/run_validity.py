@@ -71,6 +71,7 @@ from benchmarks.sregym.analysis.incident_cost import (
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
 from benchmarks.sregym.protocol.infrastructure import has_injection_evidence, infrastructure_error
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
+from benchmarks.sregym.protocol.provider_capacity import capacity_prevented_completion, read_provider_waits
 from sdo.contracts import ReceiptFailure, RejectedProductionReceipt
 
 Classification = Literal["valid", "invalid_infra", "agent_failure"]
@@ -663,6 +664,9 @@ def classify_problem_run(
     checks.append(result_check)
     receipt: dict[str, Any] | None = None
     terminal_infra = infrastructure_error(row) if row is not None else None
+    capacity = read_provider_waits(results)
+    if capacity_prevented_completion(capacity, str((row or {}).get("agent_error") or (row or {}).get("error") or "")):
+        terminal_infra = "rate_limited"
     if terminal_infra is not None:
         checks.append(Check("infrastructure", "fail", f"infra_error={terminal_infra}"))
         if terminal_infra == "injection_invalid" and not has_injection_evidence(row or {}):

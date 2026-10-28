@@ -73,7 +73,7 @@ import math
 import re
 import sys
 from dataclasses import asdict, dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +82,7 @@ from agentshim import TokenUsage as NormalizedUsage
 from agentshim.providers.claude import ClaudeStreamParser
 
 from benchmarks.sregym.detector_manifests import workspace_detector_manifests
+from benchmarks.sregym.protocol.provider_capacity import ProviderWaitEvidence, read_provider_waits, wait_seconds_between
 
 
 def incident_worktree_dirname(incident_id: str) -> str:
@@ -404,6 +405,10 @@ class Verdict:
     faults_diagnosed: int | None = None
     composite_valid: bool | None = None
     per_fault_details: dict[str, str | None] = field(default_factory=dict)
+    rate_limit_wait_seconds: float = 0.0
+    concurrency_wait_seconds: float = 0.0
+    provider_wait_seconds: float = 0.0
+    provider_wait_before_last_mitigation_seconds: float = 0.0
 
     @property
     def passed(self) -> bool:
@@ -415,7 +420,7 @@ class Verdict:
 
         if self.raw_incl_judge_seconds is None or self.grading_wait_seconds is None:
             return None
-        return self.raw_incl_judge_seconds - self.grading_wait_seconds
+        return max(0.0, self.raw_incl_judge_seconds - self.grading_wait_seconds - self.provider_wait_seconds)
 
     @property
     def ttm_seconds(self) -> float | None:
@@ -431,7 +436,7 @@ class Verdict:
             return None
         if self.last_mitigation_seconds is None:
             return excluded
-        return max(excluded, self.last_mitigation_seconds)
+        return max(excluded, self.last_mitigation_seconds - self.provider_wait_before_last_mitigation_seconds)
 
 
 @dataclass(frozen=True)
@@ -609,17 +614,20 @@ def read_verdict(results_dir: Path) -> Verdict | None:
         # defer_diagnosis_grading opens the mitigation stage at the diagnosis POST and grades
         # it in the background, so the mitigation POST never waits on the judge.
         grading_wait = 0.0
-    return Verdict(
-        diagnosis=_truthy(row.get("Diagnosis.success")),
-        mitigation=_truthy(row.get("Mitigation.success")),
-        raw_incl_judge_seconds=raw,
-        grading_wait_seconds=grading_wait,
-        diagnosis_seconds=diagnosed - injected if injected is not None and diagnosed is not None else None,
-        faults_total=_integer(row.get("Mitigation.faults_total") or row.get("Diagnosis.faults_total")),
-        faults_fixed=_integer(row.get("Mitigation.faults_fixed")),
-        faults_diagnosed=_integer(row.get("Diagnosis.faults_diagnosed")),
-        composite_valid=_truthy(row.get("Injection.composite_valid") or row.get("Mitigation.composite_valid")),
-        per_fault_details={key: value for key, value in row.items() if ".fault_" in key},
+    return with_provider_waits(
+        Verdict(
+            diagnosis=_truthy(row.get("Diagnosis.success")),
+            mitigation=_truthy(row.get("Mitigation.success")),
+            raw_incl_judge_seconds=raw,
+            grading_wait_seconds=grading_wait,
+            diagnosis_seconds=diagnosed - injected if injected is not None and diagnosed is not None else None,
+            faults_total=_integer(row.get("Mitigation.faults_total") or row.get("Diagnosis.faults_total")),
+            faults_fixed=_integer(row.get("Mitigation.faults_fixed")),
+            faults_diagnosed=_integer(row.get("Diagnosis.faults_diagnosed")),
+            composite_valid=_truthy(row.get("Injection.composite_valid") or row.get("Mitigation.composite_valid")),
+            per_fault_details={key: value for key, value in row.items() if ".fault_" in key},
+        ),
+        results_dir,
     )
 
 
@@ -811,13 +819,57 @@ def with_mitigation_applied(verdict: Verdict, results_dir: Path, rollouts: list[
     injected = _float(row.get("fault_injected_at"))
     submitted = _float(row.get("mitigation_submitted_at"))
     if injected is None or not rollouts:
-        return verdict
+        return with_provider_waits(verdict, results_dir)
     applied = first_mutation_at(rollouts, after=injected)
     last = last_mutation_done_at(rollouts, after=injected, before=submitted) if submitted is not None else None
+    return with_provider_waits(
+        replace(
+            verdict,
+            mitigation_applied_seconds=applied - injected if applied is not None else None,
+            last_mitigation_seconds=last - injected if last is not None else None,
+        ),
+        results_dir,
+    )
+
+
+def with_provider_waits(
+    verdict: Verdict,
+    results_dir: Path,
+    *,
+    evidence: ProviderWaitEvidence | None = None,
+) -> Verdict:
+    """Exclude the union of provider and judge waits, retaining the raw clock."""
+    row = read_result_row(results_dir) or {}
+    injected = _float(row.get("fault_injected_at"))
+    submitted = _float(row.get("mitigation_submitted_at"))
+    if injected is None or submitted is None:
+        return verdict
+    start, end = datetime.fromtimestamp(injected, timezone.utc), datetime.fromtimestamp(submitted, timezone.utc)
+    incident_id: str | None = None
+    resolutions = sorted(results_dir.rglob(RESOLUTION_NAME))
+    if resolutions:
+        record = json.loads(resolutions[-1].read_text(encoding="utf-8"))
+        incident_id = record.get("incident_id")
+    waits = (evidence or read_provider_waits(results_dir, incident_id=incident_id)).intervals
+    excluded = wait_seconds_between(waits, start, end)
+    diagnosed, ttl = _float(row.get("diagnosis_submitted_at")), _float(row.get("TTL"))
+    if diagnosed is not None and ttl is not None and verdict.grading_wait_seconds:
+        excluded -= wait_seconds_between(
+            waits,
+            max(start, datetime.fromtimestamp(diagnosed, timezone.utc)),
+            min(end, datetime.fromtimestamp(injected + ttl, timezone.utc)),
+        )
+    floor_end = (
+        datetime.fromtimestamp(injected + verdict.last_mitigation_seconds, timezone.utc)
+        if verdict.last_mitigation_seconds is not None
+        else None
+    )
     return replace(
         verdict,
-        mitigation_applied_seconds=applied - injected if applied is not None else None,
-        last_mitigation_seconds=last - injected if last is not None else None,
+        provider_wait_seconds=max(0.0, excluded),
+        rate_limit_wait_seconds=wait_seconds_between(waits, start, end, kind="rate_limit"),
+        concurrency_wait_seconds=wait_seconds_between(waits, start, end, kind="concurrency"),
+        provider_wait_before_last_mitigation_seconds=wait_seconds_between(waits, start, floor_end),
     )
 
 
@@ -847,6 +899,8 @@ def _sum_usage_jsonl(paths: list[Path], *, incident_id: str | None = None) -> tu
             if not line.strip():
                 continue
             record = json.loads(line)
+            if record.get("schema_version") == "sdo.provider-wait/v1":
+                continue
             if worktree is not None and Path(str(record.get("cwd") or "")).name != worktree:
                 continue
             usage = usage + TokenUsage.from_mapping(record.get("usage"))

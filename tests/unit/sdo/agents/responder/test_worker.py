@@ -46,6 +46,26 @@ def _result() -> IncidentResult:
     return parse_json((FIXTURES / "incident_result.json").read_text(), IncidentResult())
 
 
+def test_worker_preserves_rate_limit_through_typed_transport(tmp_path: Path) -> None:
+    from libs.agent_cli.errors import ProviderRateLimited
+    from sdo.contracts import validate
+
+    path = tmp_path / "agent-task.json"
+    _task(path)
+    publisher = RecordingPublisher()
+
+    def limited(_request):
+        raise ProviderRateLimited("retry budget exhausted", retryable=False)
+
+    result = run_worker_task(path, "result-map", publisher, executor=limited)
+    validate(result)
+    assert result.status == "failed"
+    assert result.failure_reason == "rate_limited"
+    assert not result.HasField("response")
+    assert publisher.published is not None
+    assert parse_json(publisher.published[2], AgentResult()).failure_reason == "rate_limited"
+
+
 def test_worker_uses_typed_envelope_and_returns_typed_response(tmp_path: Path) -> None:
     path = tmp_path / "agent-task.json"
     _task(path)

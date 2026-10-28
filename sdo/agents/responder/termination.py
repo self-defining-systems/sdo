@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from libs.agent_cli.errors import rate_limit_failure
+
 TERMINATION_LOG = Path("/dev/termination-log")
 MAX_MESSAGE_CHARS = 200
 
@@ -25,6 +27,8 @@ _SECRET_SHAPES = re.compile(
 
 def failure_line(exc: BaseException) -> str:
     """Return `ClassName: first line of the message`, redacted and bounded."""
+    if rate_limit_failure(exc) is not None:
+        return "ProviderRateLimited: rate_limited: provider capacity exhausted"
     lines = str(exc).strip().splitlines()
     message = _SECRET_SHAPES.sub("[redacted]", lines[0] if lines else "")
     if len(message) > MAX_MESSAGE_CHARS:
