@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, assert_host_disk_headroom, assert_host_headroom, kubectl, wait_for
-from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for
+from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for_environment
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
     accepted_restore_baselines,
@@ -577,7 +577,7 @@ def _sdo_agent(
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
         validator_image=environment.images.validator,
-        deployed_manifest_paths=manifest_paths_for(environment.application),
+        deployed_manifest_paths=manifest_paths_for_environment(environment),
         repository_pvc="sdo-application-repository",
         credentials_secret=getattr(args, "credentials_secret", "sdo-agent-credentials"),
         model=args.model,
@@ -1418,11 +1418,22 @@ def _parallel(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.parallel import ParallelPlan, run_parallel
 
     plan = ParallelPlan.model_validate_json(args.plan.read_text())
+    if args.output.exists():
+        # Checked again by run_parallel; here it saves a whole preparation from a reused path.
+        raise ValueError(f"eval: output already exists: {args.output}")
     if args.prepare:
         from benchmarks.sregym.fastloop.shared_memory import prepare_shared_lanes
 
         prepare_shared_lanes(plan, args.output.resolve().with_suffix(".attachment.json"))
     run_parallel(plan, args.output.resolve())
+    return 0
+
+
+def _parallel_prepare_lane(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.parallel import ParallelPlan
+    from benchmarks.sregym.fastloop.shared_memory import prepare_lane
+
+    prepare_lane(ParallelPlan.model_validate_json(args.plan.read_text()), args.lane)
     return 0
 
 
@@ -1696,11 +1707,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parallel.set_defaults(handler=_parallel)
     attach = commands.add_parser(
-        "parallel-attach", help="bind accepted memory into idle prepared lanes; retains private PVC roots"
+        "parallel-attach",
+        help="bind accepted memory into idle prepared lanes (a later cohort once live); retains private PVC roots",
     )
     attach.add_argument("--plan", type=Path, required=True)
     attach.add_argument("--report", type=Path, required=True, help="external durable attachment/recovery report")
     attach.set_defaults(handler=_parallel_attach)
+    prepare_lane = commands.add_parser(
+        "parallel-prepare-lane", help="one lane's no-fault native preparation; parallel --prepare runs one per lane"
+    )
+    prepare_lane.add_argument("--plan", type=Path, required=True)
+    prepare_lane.add_argument("--lane", required=True)
+    prepare_lane.set_defaults(handler=_parallel_prepare_lane)
 
     replay = commands.add_parser("replay", help="re-execute one checkpointed stage without a cluster")
     replay.add_argument("--run-dir", type=Path, required=True, help="one fastloop results run directory")

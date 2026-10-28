@@ -292,3 +292,79 @@ def test_native_broker_entrypoint_rejects_oversized_request(tmp_path: Path, repl
     )
     assert completed.returncode != 0
     assert f"dispatch request exceeds {NATIVE_REQUEST_BYTES} bytes" in completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("cause", "reason"),
+    [("oversized", "32 MiB"), ("symlink", "symlink"), ("unknown-base", "returned non-zero exit status")],
+)
+def test_unrecordable_reflection_edits_still_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cause: str, reason: str
+) -> None:
+    """No benchmark recording failure discards a finished production reflection."""
+    checkout = tmp_path / "accepted"
+    checkout.mkdir()
+    (checkout / "README.md").write_text("Synthetic accepted source.\n")
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "seed"],
+    ):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    base = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
+    wire = to_canonical_json(reflection_task(checkout, "0" * 40 if cause == "unknown-base" else base))
+    receipt = tmp_path / "receipt"
+    session = receipt / "sdo_runtime/sessions/synthetic"
+    task_path = tmp_path / "task.json"
+    task_path.write_text(wire)
+    for name, value in {
+        "SDO_NAMESPACE": "synthetic",
+        "SDO_RESULT_CONFIGMAP": "result",
+        "SDO_TASK_PATH": str(task_path),
+        "SDO_SESSION_SCRATCH": str(session / "scratch"),
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("SDO_STANDBY_CLAIM_PATH", raising=False)
+    monkeypatch.delenv("SDO_WORKSPACE_ALIAS", raising=False)
+    monkeypatch.setattr(recording_worker, "await_standby_claim", lambda: None)
+    monkeypatch.setattr(recording_worker, "prepare_codex_home", lambda **_: None)
+    monkeypatch.setattr(recording_worker, "prepare_claude_home", lambda **_: None)
+    published: list[str] = []
+
+    class Publisher:
+        def publish_payload(self, name: str, key: str, payload: str) -> None:
+            published.append(payload)
+
+    class Reflector:
+        def resume(self, **_: object) -> ReflectionTurn:
+            if cause == "oversized":
+                # A sparse file reports a size beyond every benchmark evidence limit.
+                with (checkout / "oversized.bin").open("wb") as stream:
+                    stream.truncate(64 << 20)
+            elif cause == "symlink":
+                (checkout / "linked").symlink_to(tmp_path, target_is_directory=True)
+            return ReflectionTurn(
+                summary="Synthetic oversized edit set",
+                learning_decision="no_change",
+                no_change_reason="No independently verified new learning",
+                playbook_ids=[],
+            )
+
+    monkeypatch.setattr(recording_worker, "KubernetesResultPublisher", lambda **_: Publisher())
+    monkeypatch.setattr(recording_worker, "SessionReflector", lambda *_, **__: Reflector())
+
+    assert recording_worker.main(["reflection"]) == 0
+    assert len(published) == 1
+    assert json.loads(published[0])["status"] == "completed"
+    recorded = session / "checkpoints" / hashlib.sha256(wire.encode()).hexdigest()
+    assert (recorded / "result.json").read_text() == published[0]
+    assert not (recorded / "file_edits.json").exists()
+    store = replay.CheckpointStore(tmp_path / "run")
+    replay.capture_checkpoints(store, 0, _closure().request.incident_id, receipt, [])
+    checkpoint = store.load(0, "reflection")
+    assert checkpoint.result == published[0]
+    assert checkpoint.file_edits is None
+    assert checkpoint.unrecorded_file_edits is not None
+    assert reason in checkpoint.unrecorded_file_edits
+    with pytest.raises(replay.CheckpointError, match="not replayable: file edits not recorded"):
+        replay.replay_broker_result(checkpoint, source=checkout, operator_root=ROOT / "sdo/operator")

@@ -113,7 +113,7 @@ func withOnboardingReference(snapshot sdk.DetectionContext, reference *servicehe
 	if !ok {
 		return snapshot
 	}
-	window.Baseline = reference
+	window.Baseline, window.BaselinePending = reference, false
 	window.SourceInputs = reference.Authorization.SourceInputs
 	window.ObjectiveDigest = reference.Authorization.ObjectiveDigest
 	if view, ok := snapshot.(program.ReadView); ok {

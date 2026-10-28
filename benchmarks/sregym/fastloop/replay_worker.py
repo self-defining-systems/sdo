@@ -369,6 +369,8 @@ def replay_live_worker(
         if stage == "reflection":
             # Recorded provider streams do not execute their original file writes.
             # Restore final authored bytes before the worker's mandatory check.
+            if checkpoint.unrecorded_file_edits is not None:
+                raise CheckpointError(f"not replayable: file edits not recorded: {checkpoint.unrecorded_file_edits}")
             if checkpoint.file_edits is None:
                 raise CheckpointError("reflection recording has no direct file edits; record a new dispatch")
             apply_file_edits(checkout, checkpoint.file_edits)

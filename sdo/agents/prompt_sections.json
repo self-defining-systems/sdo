@@ -22,6 +22,7 @@
     "previous_payload": "template_data.health_judge-health_judge-previous_payload",
     "feedback": "template_data.health_judge-health_judge-feedback",
     "watch_list": "template_data.health_judge-health_judge-watch_list",
+    "skills_root": "template_data.health_judge-health_judge-skills_root",
     "round_index_2": "template_data.health_judge-health_judge-round_index_2",
     "covered_kinds": "template_data.health_judge-health_judge-covered_kinds",
     "traffic_authoring": "template_data.health_judge-health_judge-traffic_authoring",

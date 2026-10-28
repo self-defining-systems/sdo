@@ -60,6 +60,7 @@ Open only the topic needed for the current edit.
 - [program-01](references/program-sdk/program-01.md)
 - [program-02](references/program-sdk/program-02.md)
 - [program-03](references/program-sdk/program-03.md)
+- [program-04](references/program-sdk/program-04.md)
 - [routing-01](references/program-sdk/routing-01.md)
 - [acceptance](references/programs/acceptance.md)
 - [database-catalogs](references/programs/database-catalogs.md)

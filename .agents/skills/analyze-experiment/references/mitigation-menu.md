@@ -15,7 +15,7 @@ The version 1 `MitigationSelectionSet` contains `options`, each with `option_id`
 `bindings`, `parameters` and `finding_fingerprints`. The controller prepares all
 options before writes. Same-object write sets are refused together with typed
 `write_set_conflict` naming both options and the object; no option is half-applied
-because of a detected conflict. One selection set consumes one mitigation round.
+because of a detected conflict. A selection set writes within the current response loop.
 Each option still uses ordinary ownership, identity and conditional-write checks.
 
 Responses retain `option_reports` in selection order, a combined `report`, and
@@ -42,8 +42,11 @@ Ordinary executor compensation is reported separately. No raw pre-image or crede
 value is required to interpret these facts.
 
 Reports return into the same responder session. A failed option may be followed by
-another option or direct repair. Up to five rounds share the incident allowance across
-options and ordinary plan batches; smaller configured limits remain effective.
+another option or direct repair. Up to five response loops share the incident allowance across
+options and ordinary plan batches; smaller configured limits remain effective. A loop is one
+act→verify cycle: every write before the next `verify` (or the controller's check after a
+turn) shares one loop, and a call that fails before writing spends none. Runs before LOOP1 counted every
+mitigate call as a loop, including planning failures.
 Session identity, reports, repair receipts and counters use the existing tool-state snapshot. Immutable plan/application repair receipts persist at completion, before continuation feedback exists.
 Session/checkpoint messages remain presentation state, not mutation authority. There is no
 menu ledger, report outbox or automatic replay; historical ledger fields are retired on this path.
