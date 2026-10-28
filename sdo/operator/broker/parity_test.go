@@ -235,7 +235,6 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			for _, id := range []string{"large-a", "large-b", "large-c"} {
 				put(t, r, ".sdo/playbooks/"+id+"/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: incident\n---\nRepair <RESOURCE_NAME>.\n"+strings.Repeat("Verified guidance paragraph.\n", 7000), 0644)
 			}
-			replaceParityText(t, r, ".sdo/playbooks/README.md", "# Playbooks", "# Playbooks\n- [large-a](large-a/README.md)\n- [large-b](large-b/README.md)\n- [large-c](large-c/README.md)")
 		}, []string{validate.RuleSnapshotBudget}, false},
 		{"always firing on healthy baseline", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", strings.Replace(parityDetector(t, "cache"), "return nil, nil", `return []sdk.Finding{{DetectorID:"cache",RuleID:"always",Status:sdk.FindingActive}}, nil`, 1), 0644)
@@ -278,7 +277,6 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 		"playbook-missing-readme":       validate.RulePlaybookNoReadme,
 		"playbook-owner":                validate.RulePlaybookOwner,
 		"playbook-originating-incident": validate.RulePlaybookIncident,
-		"index-missing":                 validate.RuleIndexMissing,
 		"script-unreferenced":           validate.RuleScriptUnreferenced,
 		"script-syntax":                 validate.RuleScriptSyntax,
 		"physical-path":                 validate.RulePhysicalPath,
@@ -328,7 +326,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", strings.Repeat("x", 300*1024)+"Repair")
 		}, want: []string{validate.RuleTooLarge}, allowAdditional: true},
 		{name: "initial judge needs manifest", actor: validate.HealthJudge, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
-			replaceParityText(t, r, ".sdo/playbooks/README.md", "# Playbooks", "# Playbooks\nMore")
+			put(t, r, ".sdo/playbooks/health-objective/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: health-objective-failure\noriginating_incident: lifecycle-bootstrap\n---\n# Health objective\n\nRepair <AFFECTED_RESOURCE>.\n", 0644)
 		}, want: []string{validate.RuleInitialNeedsDetectors}},
 		{name: "initial judge health only", actor: validate.HealthJudge, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
 			if err := os.RemoveAll(filepath.Join(r, ".sdo/diagnostics/detectors")); err != nil {
@@ -1078,12 +1076,7 @@ func parityProgram(t *testing.T, root string) {
 	if err := os.WriteFile(labels, data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	index := filepath.Join(root, ".sdo/playbooks/README.md")
-	data, err = os.ReadFile(index)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
+	if _, err := layout.WritePlaybookIndex(root); err != nil {
 		t.Fatal(err)
 	}
 	parityCaptures(t, root)

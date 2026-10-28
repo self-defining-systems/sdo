@@ -29,6 +29,7 @@ func TestRetiredPlaybookMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			write(t, root, ".sdo/playbooks/base/README.md", strings.Replace(string(data), "schema_version: 1\n", "schema_version: 1\n"+tc.fields, 1))
+			generateIndex(t, root)
 			got := diagnose(t, Request{Root: root, Layers: Structural | Semantic})
 			if tc.valid && len(got) != 0 {
 				t.Fatalf("valid metadata rejected: %v", got)

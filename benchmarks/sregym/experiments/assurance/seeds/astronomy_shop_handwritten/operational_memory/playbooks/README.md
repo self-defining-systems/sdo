@@ -1,3 +1,3 @@
 # Playbooks
 
-- [Health objective](health-objective/README.md)
+- [Health objective failure](health-objective/README.md)

@@ -20,7 +20,7 @@ func TestCheckRejectsPublicationContentGaps(t *testing.T) {
 			for _, id := range []string{"large-a", "large-b", "large-c"} {
 				write(t, r, ".sdo/playbooks/"+id+"/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: incident\n---\nRepair <RESOURCE_NAME>.\n"+strings.Repeat("Verified guidance paragraph.\n", 7000))
 			}
-			write(t, r, ".sdo/playbooks/README.md", readGap(t, r, ".sdo/playbooks/README.md")+"\n- [large-a](large-a/README.md)\n- [large-b](large-b/README.md)\n- [large-c](large-c/README.md)\n")
+			generateIndex(t, r)
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
