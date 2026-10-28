@@ -168,7 +168,11 @@ def test_hosted_expensive_nonbuilder_work_shares_existing_runners() -> None:
         "TestNewCLIBehavior",
     ]
     source[shards.PREFIX + "worker_registry"] = [
-        "TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent",
+        *(
+            full.removeprefix(shards.PREFIX + "worker_registry/")
+            for full in shards.MOVED_TESTS
+            if full.startswith(shards.PREFIX + "worker_registry/")
+        ),
         "FuzzWorker",
     ]
     groups = shards.partition(source)

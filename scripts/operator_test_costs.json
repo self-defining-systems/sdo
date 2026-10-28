@@ -12,7 +12,8 @@
     "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": "remaining",
     "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": "compiler-replay",
     "sdo.dev/operator/memory/validate/TestPartialPlaybookPublication": "broker",
-    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnUnobservableDetectorLocator": "remaining"
+    "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnUnobservableDetectorLocator": "remaining",
+    "sdo.dev/operator/worker_registry/TestIncidentJobCompilerMountsRunLearnedProgramTestsAndReplay": "acceptance-second"
   },
   "costs": {
     "sdo.dev/operator/apihistory/FuzzHistoryStorageSchedule": 0.021,
