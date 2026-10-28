@@ -5,6 +5,7 @@ package broker
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,6 +162,29 @@ func (b *Broker) CreateProposal(ctx context.Context, incidentID string) (Proposa
 	return b.CreateProposalForPhase(ctx, incidentID, ProposalPhase)
 }
 
+// CreateProposalAt prepares an incident from the immutable accepted revision
+// bound at detection. It never takes the publication lock: a peer may be
+// validating or publishing newer memory while this incident starts repairing.
+func (b *Broker) CreateProposalAt(ctx context.Context, incidentID, base string) (Proposal, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return Proposal{}, err
+	}
+	if _, err := hex.DecodeString(base); err != nil || (len(base) != 40 && len(base) != 64) {
+		return Proposal{}, errors.New("proposal base must be a full accepted commit ID")
+	}
+	commit, err := gitText(ctx, b.target, "rev-parse", "--verify", base+"^{commit}")
+	if err != nil {
+		return Proposal{}, fmt.Errorf("resolve proposal base %s: %w", base, err)
+	}
+	if commit != base {
+		return Proposal{}, fmt.Errorf("proposal base %q is not a canonical commit ID", base)
+	}
+	if _, err := runGit(ctx, b.target, "merge-base", "--is-ancestor", base, "HEAD"); err != nil {
+		return Proposal{}, fmt.Errorf("proposal base %s is not in accepted ancestry: %w", base, err)
+	}
+	return b.createProposal(ctx, incidentID, ProposalPhase, base)
+}
+
 // CreateProposalForPhase starts a fresh isolated checkout for each lifecycle
 // phase. Reflection starts from the accepted outcome commit with the responder's
 // isolated working playbook changes carried forward for validation.
@@ -174,19 +198,36 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 	var proposal Proposal
 	err := b.locked(func() error {
 		var err error
+		proposal, err = b.createProposal(ctx, incidentID, phase, "")
+		return err
+	})
+	return proposal, err
+}
+
+func (b *Broker) createProposal(ctx context.Context, incidentID string, phase Phase, base string) (Proposal, error) {
+	var proposal Proposal
+	// Deduplicate only this proposal. This lock is independent of publication
+	// and shared by both bound incident creation and ordinary lifecycle phases.
+	err := b.lockedAt(b.proposalRoot(incidentID, phase)+".lock", func() error {
+		var err error
 		proposal, err = b.proposal(incidentID, phase)
 		if err == nil {
+			if base != "" && proposal.BaseCommit != base {
+				return fmt.Errorf("existing proposal base %s differs from bound commit %s", proposal.BaseCommit, base)
+			}
 			return nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := b.requireClean(ctx); err != nil {
-			return err
-		}
-		base, err := gitText(ctx, b.target, "rev-parse", "HEAD")
-		if err != nil {
-			return err
+		if base == "" {
+			if err := b.requireClean(ctx); err != nil {
+				return err
+			}
+			base, err = gitText(ctx, b.target, "rev-parse", "HEAD")
+			if err != nil {
+				return err
+			}
 		}
 		parent := b.proposalRoot(incidentID, phase)
 		if err := os.RemoveAll(parent); err != nil {
@@ -473,7 +514,11 @@ func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
 	if err := checkIncidentID(incidentID); err != nil {
 		return err
 	}
-	return b.locked(func() error { return os.RemoveAll(b.proposalRoot(incidentID, phase)) })
+	return b.locked(func() error {
+		return b.lockedAt(b.proposalRoot(incidentID, phase)+".lock", func() error {
+			return os.RemoveAll(b.proposalRoot(incidentID, phase))
+		})
+	})
 }
 
 // RecordOutcome writes an authoritative immutable outcome in a private broker
@@ -581,10 +626,14 @@ func (b *Broker) requireClean(ctx context.Context) error {
 }
 
 func (b *Broker) locked(fn func() error) error {
-	if err := os.MkdirAll(b.workspaceRoot, 0o700); err != nil {
+	return b.lockedAt(b.lockPath, fn)
+}
+
+func (b *Broker) lockedAt(path string, fn func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(b.lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
