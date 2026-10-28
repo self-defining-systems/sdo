@@ -19,10 +19,10 @@ const maxCompileOutput = 4096
 // not part of a diagnostic's identity.
 var goTestDuration = regexp.MustCompile(`(?m)(?:\t(?:[0-9]+\.[0-9]+s|\(cached\))| \([0-9]+\.[0-9]+s\))$`)
 
-// goLocation matches a compiler or vet position inside a detector workspace,
-// whose layout mirrors the diagnostics directory. With -trimpath, cached vet
+// goLocation matches a compiler or vet position inside the complete memory
+// workspace. With -trimpath, cached vet
 // output can retain a relative or absolute path to an earlier isolated build.
-var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?(?:(?:[^\r\n:]*/)?sdo-operator-build-[^/\s:]+/)?((?:detectors|traffic)/[^\s:]+\.go):(\d+)(?::\d+)?: (.+)$`)
+var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?(?:(?:[^\r\n:]*/)?sdo-operator-build-[^/\s:]+/)?((?:detectors|traffic|playbooks|lib|generated)/[^\s:]+\.go):(\d+)(?::\d+)?: (.+)$`)
 
 // compile builds the detectors against the SDK in an isolated workspace, then
 // vets and tests them. It executes detector code: the broker invokes it in
@@ -110,7 +110,10 @@ func (s *run) compile(ctx context.Context) error {
 		}
 		line, _ := strconv.Atoi(m[2])
 		path := layout.DiagnosticsDir + "/" + m[1]
-		if strings.HasPrefix(m[1], "generated/") {
+		switch {
+		case strings.HasPrefix(m[1], "playbooks/"), strings.HasPrefix(m[1], "lib/"):
+			path = layout.Dir + "/" + m[1]
+		case strings.HasPrefix(m[1], "generated/"):
 			path = m[1]
 		}
 		s.add(Compile, Diagnostic{Rule: rule, Path: path, Line: line, Message: strings.TrimSpace(m[3]), Hint: "go " + stage.Stage + " failed"})
