@@ -6,6 +6,7 @@ import ipaddress
 import json
 import subprocess
 import time
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -143,6 +144,39 @@ class PriorClosureIncompleteError(ValueError):
         self.evidence = evidence
 
 
+@dataclass(frozen=True)
+class ControllerProcess:
+    """Which controller process runs the lane: its Job and how many of the Job's pods have failed.
+
+    The Job's pods never restart in place (restart policy Never) and the supervisor relaunches a rebuilt
+    controller inside the same pod, so a new failed pod or a new Job is exactly a controller process that exited.
+    """
+
+    job_uid: str
+    failed_pods: int
+
+    def exit_since(self, current: ControllerProcess | None) -> str | None:
+        """How the process this one names exited by *current*, or None while it still runs."""
+        if current is None:
+            return "controller Job is gone"
+        if current.job_uid != self.job_uid:
+            return "controller Job was replaced"
+        failed = current.failed_pods - self.failed_pods
+        if failed > 0:
+            return f"{failed} controller pod{'s' if failed > 1 else ''} failed"
+        return None
+
+
+class ControllerExitedError(StabilizationError):
+    """The controller process admission was observing exited; no later row of it can prove health."""
+
+    reason = "controller_exited"
+
+    def __init__(self, message: str, evidence: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.evidence = evidence
+
+
 class _IncidentWorkStarted(Exception):
     """SDO opened incident work during stabilization; admission waits for it to close, then restarts the clock."""
 
@@ -260,6 +294,24 @@ class LaneAdmission:
             ).stdout
         )
 
+    def _controller_job(self, control: str) -> dict[str, Any] | None:
+        """The controller Job, or None when it does not exist."""
+        output = kubectl(
+            ["get", "job/sdo-controller-run", "-o", "json", "--ignore-not-found=true"],
+            namespace=control,
+            kubeconfig=self.environment.kubeconfig,
+        ).stdout
+        return json.loads(output) if output.strip() else None
+
+    def _controller_process(self, control: str) -> ControllerProcess | None:
+        """Name the controller process the lane runs now; None when it has no controller Job."""
+        job = self._controller_job(control)
+        if job is None:
+            return None
+        return ControllerProcess(
+            str(job.get("metadata", {}).get("uid", "")), int(job.get("status", {}).get("failed", 0))
+        )
+
     def _onboarding(self, control: str) -> dict[str, dict[str, Any] | None]:
         """Read the controller's pending, completed and rejected onboarding records."""
         records: dict[str, dict[str, Any] | None] = {}
@@ -279,15 +331,7 @@ class LaneAdmission:
                 records[key] = {"reason": json.loads(output)["data"]["reason"]}
             else:
                 records[key] = json.loads(json.loads(output)["data"]["onboarding.json"])
-        job = json.loads(
-            kubectl(
-                ["get", "job/sdo-controller-run", "-o", "json", "--ignore-not-found=true"],
-                namespace=control,
-                kubeconfig=self.environment.kubeconfig,
-            ).stdout
-            or "{}"
-        )
-        status = job.get("status", {})
+        status = (self._controller_job(control) or {}).get("status", {})
         failed = [c for c in status.get("conditions", []) if c.get("type") == "Failed"]
         if failed:
             records["controller_failed"] = {"reason": f"{failed[0].get('reason')}: {failed[0].get('message')}"}
@@ -297,8 +341,8 @@ class LaneAdmission:
             records["controller_failed"] = None
         return records
 
-    def _keep_onboarding_log(self, control: str) -> None:
-        """Save the logs of every controller pod of a failed onboarding: the Job and its pods are gone after the row."""
+    def _keep_controller_log(self, control: str, name: str) -> None:
+        """Save the logs of every controller pod of a failed wait: the Job and its pods are gone after the row."""
         try:
             log = kubectl(
                 ["logs", "-l", "job-name=sdo-controller-run", "-c", "controller", "--prefix", "--tail=2000"],
@@ -307,7 +351,7 @@ class LaneAdmission:
             ).stdout
         except (RuntimeError, ValueError) as exc:
             log = f"controller log unavailable: {exc}\n"
-        (self.directory / "onboarding-controller.log").write_text(log)
+        (self.directory / name).write_text(log)
 
     def await_onboarding(self, control: str) -> dict[str, Any]:
         """Wait, on a separate recorded budget, until the lane's SDO onboarding has finished.
@@ -350,7 +394,7 @@ class LaneAdmission:
             time.sleep(min(2, max(0, started + self.onboarding_timeout_seconds - time.monotonic())))
         destination.write_text(json.dumps(evidence, indent=2) + "\n")
         if not done:
-            self._keep_onboarding_log(control)
+            self._keep_controller_log(control, "onboarding-controller.log")
         if not done and crashed and not rejected:
             raise ValueError(
                 f"eval: SDO controller Job failed during onboarding after {evidence['seconds']:g}s ({crashed}); "
@@ -448,6 +492,7 @@ class LaneAdmission:
         # the previous row's closure are awaited: admission never waits for a re-evaluation that already ran.
         boundary = datetime.now(timezone.utc).isoformat()
         self.check_resources("entry")
+        process = self._controller_process(control)
         self._policy()
         # Onboarding has its own budget: the stabilization clock below must never
         # contain install-existing or the first health refresh of a fresh seed.
@@ -459,21 +504,42 @@ class LaneAdmission:
             self.before_proof(control, onboarding)
         for _ in range(MAX_STABILIZATION_RESTARTS):
             try:
-                return self._stabilize(control, fresh=fresh, boundary=boundary)
+                boundary, process = self._live_boundary(control, boundary, process)
+                return self._stabilize(control, fresh=fresh, boundary=boundary, process=process)
             except _IncidentWorkStarted:
                 # Work SDO opened during stabilization gets the closure wait's derived budget,
                 # never the fixed stabilization budget; evidence must then postdate that work.
                 self.await_prior_closure(control)
                 boundary = datetime.now(timezone.utc).isoformat()
         try:
-            return self._stabilize(control, fresh=fresh, boundary=boundary)
+            boundary, process = self._live_boundary(control, boundary, process)
+            return self._stabilize(control, fresh=fresh, boundary=boundary, process=process)
         except _IncidentWorkStarted as exc:
             raise StabilizationError(
                 f"eval: SDO opened incident work during each of {MAX_STABILIZATION_RESTARTS + 1} stabilization "
                 f"windows ({exc}); no injection"
             ) from exc
 
-    def _stabilize(self, control: str, *, fresh: bool, boundary: str) -> dict[str, Any]:
+    def _live_boundary(
+        self, control: str, boundary: str, process: ControllerProcess | None
+    ) -> tuple[str, ControllerProcess]:
+        """Bind the window's evidence to the controller process running as it opens.
+
+        Rows a process wrote after the boundary and then exited with (during onboarding or the previous
+        closure) do not speak for its replacement, so a changed process moves the boundary to now. A lane with
+        no controller Job cannot produce evidence at all.
+        """
+        current = self._controller_process(control)
+        if current is None:
+            raise ControllerExitedError(
+                "eval: SDO controller process exited during admission (controller Job is gone); no injection",
+                {"boundary": boundary, "controller_process": None},
+            )
+        if process is None or process.exit_since(current) is not None:
+            return datetime.now(timezone.utc).isoformat(), current
+        return boundary, process
+
+    def _stabilize(self, control: str, *, fresh: bool, boundary: str, process: ControllerProcess) -> dict[str, Any]:
         from benchmarks.sregym.fastloop.rbac import verify_rbac
 
         deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
@@ -497,6 +563,18 @@ class LaneAdmission:
                 raise ValueError(f"{exc}; SDO incident work active before injection: {incident}") from exc
 
         def sample() -> dict[str, Any]:
+            # Only the process running when the window opened can refresh its rows; once it exits, waiting
+            # out the budget for fresh observations only delays the same failure.
+            exited = process.exit_since(self._controller_process(control))
+            if exited is not None:
+                evidence = {"passed": False, "controller_exited": exited, "controller_process": asdict(process)}
+                record(evidence)
+                self._keep_controller_log(control, "controller.log")
+                raise ControllerExitedError(
+                    f"eval: SDO controller process exited during admission ({exited}); its observations "
+                    "stopped before they could prove health; see controller.log; no injection",
+                    evidence,
+                )
             assert_clean_baseline(env.kubeconfig, namespace=env.namespace)
             if self.progress:
                 self.progress("probe_placement", namespace="sregym")
