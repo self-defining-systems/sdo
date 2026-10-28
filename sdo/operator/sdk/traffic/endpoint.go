@@ -220,14 +220,16 @@ func (p Params) Generate(rng *rand.Rand, state State) (map[string]string, error)
 var placeholderPattern = regexp.MustCompile(`\{([A-Za-z0-9_.-]+)\}`)
 
 // HTTPEndpoint is the SDK's declarative Endpoint: a method and path, generated
-// query and form parameters, and response expectations. Build it with GET,
-// POST, PUT, or DELETE and refine it with the chainable methods. Path segments
-// written {key} are filled from State.
+// query and form parameters or a JSON body, and response expectations. Build
+// it with GET, POST, PUT, or DELETE and refine it with the chainable methods.
+// Path segments written {key} are filled from State.
 type HTTPEndpoint struct {
 	Method       string
 	Path         string
 	Query        Params
 	Form         Params
+	JSON         string
+	JSONParams   Params
 	Headers      map[string]string
 	ExpectStatus []int
 	ExpectBody   []string
@@ -256,6 +258,16 @@ func DELETE(path string, query Params) *HTTPEndpoint {
 
 // WithForm adds a URL-encoded form body.
 func (e *HTTPEndpoint) WithForm(form Params) *HTTPEndpoint { e.Form = form; return e }
+
+// WithJSON adds a JSON body, for the many write APIs that take one. template
+// is the JSON document; each {key} in it is replaced by the generated value of
+// params[key] or, failing that, the State value an earlier step saved, escaped
+// for a JSON string. Write "{key}" for a string and {key} for a number. The
+// filled body must be valid JSON.
+func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint {
+	e.JSON, e.JSONParams = template, params
+	return e
+}
 
 // WithHeader sets a request header.
 func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint {
@@ -302,6 +314,20 @@ func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Re
 			request.Headers[name] = value
 		}
 	}
+	if e.JSON != "" {
+		if len(e.Form) > 0 {
+			return Request{}, fmt.Errorf("%s %s: an endpoint sends a form or a JSON body, not both", e.Method, e.Path)
+		}
+		body, err := e.jsonBody(rng, state)
+		if err != nil {
+			return Request{}, err
+		}
+		request.Body = body
+		if request.Headers == nil {
+			request.Headers = map[string]string{}
+		}
+		request.Headers["Content-Type"] = "application/json"
+	}
 	if len(e.Form) > 0 {
 		form, err := e.Form.Generate(rng, state)
 		if err != nil {
@@ -318,6 +344,33 @@ func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Re
 		request.Headers["Content-Type"] = "application/x-www-form-urlencoded"
 	}
 	return request, nil
+}
+
+func (e *HTTPEndpoint) jsonBody(rng *rand.Rand, state State) (string, error) {
+	generated, err := e.JSONParams.Generate(rng, state)
+	if err != nil {
+		return "", err
+	}
+	var missing string
+	body := placeholderPattern.ReplaceAllStringFunc(e.JSON, func(match string) string {
+		key := match[1 : len(match)-1]
+		value, ok := generated[key]
+		if !ok {
+			value, ok = state[key]
+		}
+		if !ok && missing == "" {
+			missing = key
+		}
+		encoded, _ := json.Marshal(value)
+		return string(encoded[1 : len(encoded)-1])
+	})
+	if missing != "" {
+		return "", fmt.Errorf("%s %s: JSON body placeholder %q is neither a parameter nor saved by an earlier step", e.Method, e.Path, missing)
+	}
+	if !json.Valid([]byte(body)) {
+		return "", fmt.Errorf("%s %s: filled JSON body is not valid JSON: %s", e.Method, e.Path, bounded(body))
+	}
+	return body, nil
 }
 
 // Check implements Endpoint.

@@ -53,19 +53,24 @@ def _run(argv: list[str], *, cwd: Path, timeout: float, env: dict[str, str] | No
     }
 
 
-def _incident_cases(checkout: Path, incident_id: str, destination: Path) -> list[str]:
-    """Copy the corpus cases captured from this incident into a replay fixtures directory."""
+def _incident_cases(checkout: Path, incident_id: str, destination: Path) -> tuple[list[str], list[str]]:
+    """Copy this incident's snapshot cases into a replay fixtures directory; return copied and all its cases."""
 
     copied: list[str] = []
+    every: list[str] = []
     for labels in sorted((checkout / ".sdo" / "corpus").glob("*/labels.json")):
         try:
             provenance = json.loads(labels.read_text(encoding="utf-8")).get("provenance") or {}
         except (OSError, ValueError):
             continue
-        if provenance.get("incident_id") == incident_id:
+        if provenance.get("incident_id") != incident_id:
+            continue
+        every.append(labels.parent.name)
+        # sdo-replay runs snapshot cases; operator-corpus cases (no open.json) only the production check replays.
+        if (labels.parent / "open.json").is_file():
             shutil.copytree(labels.parent, destination / labels.parent.name)
             copied.append(labels.parent.name)
-    return copied
+    return copied, every
 
 
 def _reflect() -> dict[str, object]:
@@ -136,7 +141,7 @@ def main() -> int:
     fixtures = OUT / "replay-fixtures"
     shutil.rmtree(fixtures, ignore_errors=True)
     fixtures.mkdir()
-    cases = _incident_cases(checkout, task["request"]["outcome"]["incident_id"], fixtures)
+    cases, summary["incident_cases"] = _incident_cases(checkout, task["request"]["outcome"]["incident_id"], fixtures)
     summary["replay_cases"] = cases
     if cases and REPLAY_BINARY.is_file():
         summary["replay"] = _replay(checkout, fixtures)

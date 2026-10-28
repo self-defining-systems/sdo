@@ -66,6 +66,9 @@ type ReflectionEffect struct {
 	Paths          []string
 	DispatchAt     *timestamppb.Timestamp
 	NoRepairCount  uint32
+	// Final marks a reset after the last allowed rejection. A non-final reset
+	// keeps the rejected work for the correction attempt.
+	Final bool
 }
 
 func ReflectionFeedback(ledger *contracts.BrokerLedger) (uint32, []*contracts.MemoryDiagnostic) {
@@ -135,7 +138,7 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 	identity := reflectionIdentity(next, kind)
 	if event.Kind == ReflectionDrive {
 		attempt, diagnostics := ReflectionFeedback(next)
-		effect := ReflectionEffect{IncidentID: next.GetIncidentId(), ProposalCommit: next.GetProposalCommit(), OutcomeCommit: next.GetOutcomeCommit(), Kind: kind, ID: identity, Attempt: attempt, Diagnostics: diagnostics, Paths: slices.Clone(next.ReflectionPaths), NoRepairCount: next.GetReflectionNoRepairCount()}
+		effect := ReflectionEffect{IncidentID: next.GetIncidentId(), ProposalCommit: next.GetProposalCommit(), OutcomeCommit: next.GetOutcomeCommit(), Kind: kind, ID: identity, Attempt: attempt, Diagnostics: diagnostics, Paths: slices.Clone(next.ReflectionPaths), NoRepairCount: next.GetReflectionNoRepairCount(), Final: next.GetReflectionRejected()}
 		if next.ReflectionWorkspace != nil {
 			effect.Workspace = proto.Clone(next.ReflectionWorkspace).(*contracts.ProposalWorkspace)
 		}
