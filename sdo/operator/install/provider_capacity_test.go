@@ -32,3 +32,50 @@ func TestProviderCapacitySurvivesInstallerControllerAndWorkerBoundary(t *testing
 		}
 	}
 }
+
+func TestHostProviderCapacitySurvivesInstallerControllerAndWorkerBoundary(t *testing.T) {
+	t.Setenv("SDO_OPUS_POOL_MODE", "per_host")
+	t.Setenv("SDO_OPUS_POOL_HOST_ID", "chelan5")
+	t.Setenv("SDO_OPUS_POOL_HOST_PATH", "/opt/sdo-parallel/opus-pool")
+	plan, err := Resources(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operate, err := OperateJob(testConfig(), "healthy", "operation", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pod := range []*corev1.PodSpec{&plan.Job.Spec.Template.Spec, &operate.Spec.Template.Spec} {
+		inherited := map[string]string{}
+		for _, value := range pod.Containers[0].Env {
+			inherited[value.Name] = value.Value
+		}
+		worker := &corev1.PodSpec{Containers: []corev1.Container{{Name: "cold"}, {Name: "warm"}}}
+		if err := worker_registry.ApplyProviderCapacity(worker, inherited); err != nil {
+			t.Fatal(err)
+		}
+		for _, spec := range []*corev1.PodSpec{pod, worker} {
+			if len(spec.Volumes) == 0 {
+				t.Fatal("host pool missing")
+			}
+			found := false
+			for _, volume := range spec.Volumes {
+				if volume.Name == "opus-pool" {
+					found = volume.HostPath != nil && volume.HostPath.Path == "/opt/sdo-parallel/opus-pool" && *volume.HostPath.Type == corev1.HostPathDirectory
+				}
+			}
+			if !found {
+				t.Fatalf("host pool lost: %+v", spec.Volumes)
+			}
+			for _, container := range spec.Containers {
+				env := map[string]string{}
+				for _, value := range container.Env {
+					env[value.Name] = value.Value
+				}
+				if env["SDO_OPUS_POOL_DIR"] != "/sdo/opus-pool" || env["SDO_OPUS_MAX_SESSIONS"] != "4" || env["SDO_OPUS_POOL_HOST_ID"] != "chelan5" || env["SDO_OPUS_POOL_MODE"] != "per_host" {
+					t.Fatalf("host allocation lost: %+v", env)
+				}
+			}
+		}
+	}
+}
