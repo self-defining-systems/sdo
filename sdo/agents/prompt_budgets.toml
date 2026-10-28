@@ -412,8 +412,8 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.lifecycle-memory_conflict-conflict_json]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+max_chars = 768
+reason = "CTXFAIL1: a recorded broker retry carries 487 characters of required conflict identity and peer-intent metadata; preserve the full correction rather than summarizing it."
 
 [template_data.lifecycle-render_validation_feedback_01-validation_attempt]
 max_chars = 256
