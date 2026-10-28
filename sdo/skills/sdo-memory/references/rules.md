@@ -16,6 +16,8 @@ Every rule names the validator rule IDs that enforce it. The detector and playbo
   unique. Enforced by: `id.pattern`, `id.duplicate`.
 - Memory carries no cluster-local values (object UIDs, resource versions, allocated IPs, live probe times) outside
   captured corpus cases; each controller measures its own. Enforced by: `memory.cluster-local`.
+- Memory, captured corpus cases included, never holds Kubernetes Secret data; reference a Secret by kind and name.
+  Enforced by: `memory.secret-data`.
 
 ## Ownership
 

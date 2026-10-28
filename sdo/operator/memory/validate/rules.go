@@ -17,6 +17,7 @@ const (
 	RuleSnapshotBudget              = "memory.snapshot-budget"
 	RuleSnapshotProjection          = "memory.snapshot"
 	RuleClusterLocal                = "memory.cluster-local"
+	RuleSecretData                  = "memory.secret-data"
 
 	// Structural.
 	RuleUnknownPath      = "layout.unknown-path"
