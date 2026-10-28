@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,8 @@ func (d sharedMemoryResponder) Dispatch(_ context.Context, r IncidentRequest) (I
 
 // The cluster edge is synthetic; controller detection, workspaces, registered
 // reflection tasks, independent compilation, native ledgers and Git are real.
+var conflictBlock = regexp.MustCompile(`(?s)<<<<<<< [^\n]*\n.*?\n>>>>>>> [^\n]*\n`)
+
 func TestHermeticSharedMemoryControllers(t *testing.T) {
 	for _, conflict := range []bool{false, true} {
 		t.Run(fmt.Sprintf("same-playbook=%t", conflict), func(t *testing.T) {
@@ -121,6 +124,16 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 						// Both edit the same original line to force a real three-way conflict.
 						if conflict {
 							data = []byte(strings.ReplaceAll(string(data), "Repair <RESOURCE_NAME>. Run fix.sh to restart it.", "Repair <RESOURCE_NAME> with "+name+" intent. Run fix.sh to restart it."))
+							if lane == 1 {
+								extra := filepath.Join(task.Workspace.CheckoutPath, ".sdo/playbooks/alpha/README.md")
+								prior, err := os.ReadFile(extra)
+								if err != nil {
+									return nil, err
+								}
+								if err := os.WriteFile(extra, append(prior, []byte("lane-1 extra learning\n")...), 0644); err != nil {
+									return nil, err
+								}
+							}
 						} else {
 							data = append(data, []byte(name+" learning\n")...)
 						}
@@ -141,14 +154,27 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 						if detail == nil || len(detail.GetAcceptedChanges()) == 0 || detail.GetAcceptedChanges()[0].GetIncidentId() != incidents[0] {
 							return nil, fmt.Errorf("typed conflict lost accepted incident provenance")
 						}
-						if !strings.Contains(string(data), "lane-0 intent") {
-							return nil, fmt.Errorf("retry lost peer learning")
+						// The correction starts from its own rejected work on the newest
+						// accepted memory: the clean hunk is kept and only the collision
+						// is marked, with both incidents' sides.
+						extra, err := os.ReadFile(filepath.Join(task.Workspace.CheckoutPath, ".sdo/playbooks/alpha/README.md"))
+						if err != nil || !strings.Contains(string(extra), "lane-1 extra learning") {
+							return nil, fmt.Errorf("retry lost its own clean learning: %s %v", extra, err)
 						}
-						if err := os.WriteFile(path, append(data, []byte("Preserve lane-1 intent for <RESOURCE_NAME>.\n")...), 0644); err != nil {
+						marked := conflictBlock.FindString(string(data))
+						if !strings.Contains(marked, "lane-0 intent") || !strings.Contains(marked, "lane-1 intent") {
+							return nil, fmt.Errorf("retry lacks the marked collision: %s", data)
+						}
+						data = []byte(strings.Replace(string(data), marked, "Repair <RESOURCE_NAME> with lane-0 intent and lane-1 intent. Run fix.sh to restart it.\n", 1))
+						if err := os.WriteFile(path, data, 0644); err != nil {
 							return nil, err
 						}
 					}
-					response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{book}})
+					books := []string{book}
+					if conflict && lane == 1 {
+						books = append(books, "alpha")
+					}
+					response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: books})
 					return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 				})
 				worker := RegisteredReflectionWorker{Executor: executor, AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(root), Catalog: memory.OpenCatalogReader(root), Timeout: time.Minute, SessionMode: "resume", SessionExecutor: func(string) (ReflectionTaskExecutor, error) { return executor, nil }}
@@ -254,6 +280,11 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 				data, err := os.ReadFile(filepath.Join(root, ".sdo/playbooks", book, "README.md"))
 				if err != nil || !strings.Contains(string(data), needle) {
 					t.Fatalf("lost accepted learning %q: %s %v", needle, data, err)
+				}
+				if conflict && lane == 1 {
+					if data, err := os.ReadFile(filepath.Join(root, ".sdo/playbooks/alpha/README.md")); err != nil || !strings.Contains(string(data), "lane-1 extra learning") {
+						t.Fatalf("carried learning not accepted: %s %v", data, err)
+					}
 				}
 			}
 			if compiles.Load() < 4 {

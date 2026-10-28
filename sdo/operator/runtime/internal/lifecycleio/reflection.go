@@ -85,12 +85,18 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 		event.Kind = lifecyclecore.ReflectionPublished
 		event.Commit, event.Paths = accepted.Commit, accepted.ChangedPaths
 		event.CoverageGaps = validate.ProtoDiagnostics(accepted.CoverageGaps)
-	case lifecyclecore.ResetReflection, lifecyclecore.CleanupReflection:
-		err = d.Repository.ReleaseProposal(id, broker.ReflectionPhase)
-		event.Kind = lifecyclecore.ReflectionReset
-		if effect.Kind == lifecyclecore.CleanupReflection {
-			event.Kind = lifecyclecore.ReflectionCleaned
+	case lifecyclecore.ResetReflection:
+		// A correction continues from its rejected work carried onto the newest
+		// accepted memory; only colliding hunks are left for it to resolve.
+		if effect.Final {
+			err = d.Repository.ReleaseProposal(id, broker.ReflectionPhase)
+		} else {
+			_, err = d.Repository.RebaseProposal(ctx, id, broker.ReflectionPhase)
 		}
+		event.Kind = lifecyclecore.ReflectionReset
+	case lifecyclecore.CleanupReflection:
+		err = d.Repository.ReleaseProposal(id, broker.ReflectionPhase)
+		event.Kind = lifecyclecore.ReflectionCleaned
 	default:
 		return event, fmt.Errorf("unknown reflection effect %d", effect.Kind)
 	}
