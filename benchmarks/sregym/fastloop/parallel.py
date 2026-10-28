@@ -38,6 +38,8 @@ class ParallelPlan(BaseModel):
     # Same lane stream settings the other experiment streams carry.
     capability_mode: Literal["strict", "permissive"] = "strict"
     permissive_responder: bool = False
+    # Hotel problems have no SREGym LLM diagnosis oracle, so a judged lane exits 1 after a correct closure.
+    diagnosis_grading: Literal["off", "deferred", "inline"] = "off"
 
     def worker_arguments(self) -> list[str]:
         """One worker configuration for admission and every encounter in the proof."""
@@ -103,7 +105,7 @@ def execute_lane(
         json.dumps(
             {
                 "incidents": [[e.problem] for e in encounters],
-                "diagnosis_grading": "inline",
+                "diagnosis_grading": plan.diagnosis_grading,
                 "capability_mode": plan.capability_mode,
                 "permissive_responder": plan.permissive_responder,
             }
