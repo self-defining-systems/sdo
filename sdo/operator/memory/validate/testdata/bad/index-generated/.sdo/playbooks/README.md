@@ -1,4 +1,4 @@
 # Playbooks
 
 - [base](base/README.md)
-- [ghost](ghost/README.md)
+- [Base repair](base/README.md)

@@ -28,6 +28,8 @@ from benchmarks.sregym.fastloop.reset_provenance import RESET_GENERATION, read_r
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from benchmarks.sregym.fastloop.records import IncidentRecord
+
 
 class SequenceRow(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -162,6 +164,15 @@ class NeverInjectedRetry(RuntimeError):
     """Durable pre-injection evidence permits a fresh row attempt, never a hold."""
 
 
+def never_injected(record: IncidentRecord) -> bool:
+    """Durable proof that no fault reached the cluster, so a fresh attempt is safe."""
+    return (
+        record.injection.state == "not_injected"
+        and record.injection.stage == "pre_injection"
+        and record.infra_error == "never_injected_retry"
+    )
+
+
 def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object]:
     if not results.exists():
         raise RuntimeError(f"eval: row {index} incomplete; recover native work, never reinject an uncertain row")
@@ -177,11 +188,7 @@ def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object
         "gpt-6-luna",
     ):
         raise RuntimeError(f"eval: row {index} native result identity differs")
-    if (
-        record.injection.state == "not_injected"
-        and record.injection.stage == "pre_injection"
-        and record.infra_error == "never_injected_retry"
-    ):
+    if never_injected(record):
         raise NeverInjectedRetry(f"eval: row {index} never_injected_retry: baseline observation unavailable")
     if (
         record.injection.state != "injected"

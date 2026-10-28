@@ -24,7 +24,7 @@ Retiring or scaling a current revision or an unowned ReplicaSet is refused as `r
 program's credit for it. Prose in the README never runs.
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
-fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
+fault class and originating incident. Preserve accepted provenance; SDO lists it in the generated playbook index.
 The authoring reference tool supplies the routing example.
 
 ## Topics

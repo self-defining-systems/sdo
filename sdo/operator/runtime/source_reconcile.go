@@ -14,8 +14,9 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-// SourceReconcilePartialError means the write landed, but direct readback
-// still names work. It never requests compensation of useful applied writes.
+// SourceReconcilePartialError carries unresolved readback evidence after a
+// write. At settlement, observed residual paths are partial work; missing
+// observations alone remain pending. Neither requests compensation.
 type SourceReconcilePartialError struct {
 	Results []*contracts.SourceReconcileResult
 }
@@ -44,8 +45,20 @@ func terminalSourceResiduals(result *PlanApplicationResult, err error) error {
 	var partial *SourceReconcilePartialError
 	if errors.As(err, &partial) {
 		result.VerificationPassed = false
+		observedResidual := false
+		for _, report := range partial.Results {
+			observedResidual = observedResidual || len(report.ResidualPaths) > 0
+		}
+		if !observedResidual {
+			pending := &contracts.RolloutPending{Reason: "source readback is unavailable; writes remain applied and unverified"}
+			for _, report := range partial.Results {
+				pending.Blockers = append(pending.Blockers, &contracts.RolloutBlocker{Ref: report.Ref, Reason: report.ObservationError})
+			}
+			result.RolloutPending = pending
+			return &RolloutPendingError{Pending: pending}
+		}
 		for i := range result.ActionReports {
-			if report := result.ActionReports[i].SourceReconcile; report != nil && !report.Converged {
+			if report := result.ActionReports[i].SourceReconcile; report != nil && len(report.ResidualPaths) > 0 {
 				result.ActionReports[i].Status = "partial"
 				result.ActionReports[i].FailureReason = "source_residual"
 			}
@@ -254,7 +267,8 @@ func (e PlanExecutor) waitSourceConvergence(waitCtx, readCtx context.Context, in
 		if !rolling || observeCtx == readCtx {
 			// Preserve the last measured residual, even when the final API read can
 			// no longer run under the original deadline.
-			return nil, terminalSourceResiduals(result, err)
+			err = terminalSourceResiduals(result, err)
+			return result.RolloutPending, err
 		}
 		if e.PollRollouts {
 			pending := &contracts.RolloutPending{Reason: "source rollout is settling; writes remain applied and are not independently verified"}

@@ -32,7 +32,7 @@ func PlaybookScriptPath(playbookID, name string) string {
 }
 
 // WritePlaybook stores a playbook's document and scripts below root. Scripts
-// are executable. It does not touch the playbook index; see IndexPlaybook.
+// are executable. The playbook index is generated; see GeneratePlaybookIndex.
 func WritePlaybook(root string, playbook Playbook) error {
 	readme, err := PlaybookPath(playbook.ID)
 	if err != nil {
@@ -52,27 +52,98 @@ func WritePlaybook(root string, playbook Playbook) error {
 	return nil
 }
 
-// IndexPlaybook appends a playbook's link to the playbook index, creating the
-// index when it does not exist. It is idempotent.
-func IndexPlaybook(root, id string) error {
-	if !ValidPlaybookID(id) {
-		return fmt.Errorf("invalid playbook ID %q", id)
-	}
-	target := filepath.Join(root, filepath.FromSlash(PlaybookIndexFile))
-	existing, err := os.ReadFile(target)
+// GeneratePlaybookIndex renders the playbook index from the playbook
+// directories below root: one line per active playbook, sorted by ID, titled
+// by the README's first heading (the ID when it has none). It returns nil when
+// memory holds no playbook README. The index is derived, never authored.
+func GeneratePlaybookIndex(root string) ([]byte, error) {
+	entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(PlaybooksDir)))
 	if errors.Is(err, fs.ErrNotExist) {
-		existing = []byte("# Playbooks\n\n")
-	} else if err != nil {
-		return err
+		return nil, nil
 	}
-	link := fmt.Sprintf("- [%s](%s/%s)\n", id, id, PlaybookFileName)
-	if strings.Contains(string(existing), link) {
-		return nil
+	if err != nil {
+		return nil, err
 	}
-	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
-		existing = append(existing, '\n')
+	var lines []string
+	found := false
+	for _, entry := range entries {
+		id := entry.Name()
+		if !entry.IsDir() || !ValidPlaybookID(id) {
+			continue
+		}
+		readme := filepath.Join(root, filepath.FromSlash(PlaybookDir(id)), PlaybookFileName)
+		info, err := os.Lstat(readme)
+		if errors.Is(err, fs.ErrNotExist) || err == nil && !info.Mode().IsRegular() {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		data, err := readCapped(readme)
+		if err != nil {
+			return nil, err
+		}
+		found = true
+		// Malformed lifecycle metadata stays listed; document validation reports it.
+		if retired, err := ParsePlaybookRetirement(data); err == nil && retired {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- [%s](%s/%s)\n", indexTitle(data, id), id, PlaybookFileName))
 	}
-	return writeMemoryFile(root, PlaybookIndexFile, append(existing, link...), 0o644)
+	if !found {
+		return nil, nil
+	}
+	index := "# Playbooks\n"
+	if len(lines) > 0 {
+		index += "\n" + strings.Join(lines, "")
+	}
+	return []byte(index), nil
+}
+
+// WritePlaybookIndex replaces the playbook index with its generated form and
+// reports whether the file changed.
+func WritePlaybookIndex(root string) (bool, error) {
+	generated, err := GeneratePlaybookIndex(root)
+	if err != nil || generated == nil {
+		return false, err
+	}
+	existing, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(PlaybookIndexFile)))
+	if err == nil && string(existing) == string(generated) {
+		return false, nil
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, err
+	}
+	return true, writeMemoryFile(root, PlaybookIndexFile, generated, 0o644)
+}
+
+var indexTitleEscaper = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`)
+
+func indexTitle(readme []byte, id string) string {
+	text := string(readme)
+	if rest, ok := strings.CutPrefix(text, "---\n"); ok {
+		if _, body, closed := strings.Cut(rest, "---\n"); closed {
+			text = body
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if title, ok := strings.CutPrefix(line, "# "); ok {
+			if title = strings.TrimSpace(title); title != "" {
+				return indexTitleEscaper.Replace(title)
+			}
+			break
+		}
+	}
+	return id
+}
+
+func readCapped(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, MaxArtifactBytes))
 }
 
 func writeMemoryFile(root, rel string, content []byte, mode fs.FileMode) error {
