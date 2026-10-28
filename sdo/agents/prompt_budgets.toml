@@ -152,8 +152,8 @@ max_chars = 270
 reason = "Compact high-level continuation principles; instructions and real ten-receipt data together must fit 1500 characters."
 
 [continuation.incident_data]
-max_chars = 1230
-reason = "Production-rendered three-finding ten-receipt continuation, including two failures; full typed evidence stays in a private local JSON reference."
+max_chars = 1600
+reason = "CTXFAIL1: required ten-receipt progress with a verification error and a rollback renders to 1444 characters; preserve every row rather than silently summarizing away completed or failed repairs. The normal ten-receipt case still fits 1500 including instructions."
 
 [tool_stdout.act]
 max_chars = 2048
