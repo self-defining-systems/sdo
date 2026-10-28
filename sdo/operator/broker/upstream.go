@@ -46,7 +46,7 @@ func SSHEnv(dir string) []string {
 		return nil
 	}
 	identity, hosts := filepath.Join(dir, "identity"), filepath.Join(dir, "known_hosts")
-	return []string{"GIT_SSH_COMMAND=ssh -F /dev/null -i " + identity + " -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=" + hosts}
+	return []string{"GIT_SSH_COMMAND=ssh -F /dev/null -i " + identity + " -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=" + hosts}
 }
 
 func (u Upstream) validate() error {
