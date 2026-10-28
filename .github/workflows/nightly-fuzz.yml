@@ -222,6 +222,8 @@ jobs:
         with:
           name: nightly-test-plan
           path: .fastloop/test-bin
+      - name: Share linked binaries between tests
+        run: bash scripts/link_cache.sh >> "$GITHUB_ENV"
       - name: Run every deferred assertion
         run: |
           if [[ '${{ matrix.needs_uv }}' == true ]]; then

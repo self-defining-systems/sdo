@@ -62,6 +62,16 @@ func (e *StageError) Error() string {
 
 func (e *StageError) Unwrap() error { return e.Err }
 
+// lean returns a Go build that links without symbol tables or DWARF. Linking a
+// controller is the dominant fixed cost of every validation, it is never
+// cached, and DWARF about doubles it. Only builds whose binary is discarded or
+// executed locally use it; the controller image binary keeps its debug data.
+// Test commands do not: go test skips the link entirely on a cached result,
+// and any -ldflags forces it.
+func lean(args ...string) []string {
+	return append([]string{args[0], "-ldflags=-s -w"}, args[1:]...)
+}
+
 func (workspace *Workspace) runGo(ctx context.Context, args ...string) error {
 	command := exec.CommandContext(ctx, "go", args...)
 	command.Dir = workspace.Directory
@@ -100,10 +110,10 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 	binary := filepath.Join(workspace.Directory, "sdo-controller")
 	stages := [][]string{{"mod", "tidy"}}
 	if vet {
-		stages = append(stages, []string{"build", "-buildvcs=false", "./..."}, []string{"vet", "./..."})
+		stages = append(stages, lean("build", "-buildvcs=false", "./..."), []string{"vet", "./..."})
 	}
 	if workspace.compileOnly {
-		stages = append(stages, []string{"build", "-buildvcs=false", "./..."})
+		stages = append(stages, lean("build", "-buildvcs=false", "./..."))
 	} else {
 		// Vet already compiles source and tests. Launch-only builds still
 		// compile tests without executing their behavioral assertions.
