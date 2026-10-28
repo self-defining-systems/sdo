@@ -22,14 +22,17 @@ request across that edge.
 ## Latency and saturation
 
 A path is healthy only while it is also fast. A saturated service (CPU at its limit, a cache out of memory) usually
-slows its path many times over before any request fails: a 10 ms read measured 750 ms at p90 on a CPU-throttled
-service, still under the 1.5 s default bound.
+slows its path many times over before any request fails: a CPU-throttled service moved one read's median from 7 ms to
+350 ms, still under the 1.5 s default bound.
 
-- Give each health-probe scenario its own `slo.maxLatency` (or set one on the workload). The bound covers the whole
-  scenario, every step together. Base it on what the path does: a read that crosses one or two in-cluster services
-  normally answers in tens of milliseconds, so a bound of a few hundred milliseconds leaves room for a loaded cluster
-  and still sees a service slowed many times over. Give multi-service writes (an order, a booking) more. Keep the
-  bound below the request `timeout`.
+- Give each health-probe scenario its own latency bound (`slo.maxLatency`, per scenario or on the workload). The
+  bound covers the whole scenario, every step together; keep it below the request `timeout`.
+- Bound the median: set `latencyPercentile: 50`. Over the default five-sample window p90 is the slowest sample, so a
+  single pause fires a tight p90 bound, and a write journey's healthy tail can cross even the default (an order took
+  40 ms to 1.8 s while healthy, median 170 ms). Saturation moves the median; one pause does not.
+- Base the bound on what the path does: a read that crosses one or two in-cluster services has a median of tens of
+  milliseconds, so a median bound of 100 to 250 ms leaves room for a loaded cluster and still sees a service slowed
+  many times over. Give multi-service writes about a second.
 - `sdo-operator memory check` lists each health-probe scenario left on the default bound as a
   `traffic.default-latency` coverage gap. It never fails the check.
 - Memory saturation that kills a container (OOMKilled, restarts) is already reported by `workload-health`. Latency

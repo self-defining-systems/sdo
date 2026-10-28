@@ -34,6 +34,7 @@ func DefaultLatencyScenarios(workloads []Workload) []string {
 // DefaultLatencyNote is the non-blocking memory-check note for a scenario
 // DefaultLatencyScenarios returns.
 func DefaultLatencyNote(id string) string {
-	return fmt.Sprintf("health-probe scenario %s keeps the default p%d latency bound of %s: set slo.maxLatency near "+
-		"its healthy latency so a slowed or saturated service on its path fires", id, DefaultLatencyPercentile, DefaultMaxLatency)
+	return fmt.Sprintf("health-probe scenario %s keeps the default p%d latency bound of %s: bound its median "+
+		"(slo.latencyPercentile 50, slo.maxLatency) near its healthy latency so a slowed or saturated service on its "+
+		"path fires", id, DefaultLatencyPercentile, DefaultMaxLatency)
 }
