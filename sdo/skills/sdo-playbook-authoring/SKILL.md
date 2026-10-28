@@ -13,7 +13,7 @@ failure context for the report returned to the same responder session.
 Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse, generalization and retirement; that skill also defines ownership and logical IDs.
 
 1. First judge whether all accepted memory already covers the incident: applied playbooks, matching detectors and unchanged source. Read across unrelated memory as needed. Only when existing playbooks match well may you return `no_change` with a short reason and finish; cover every recorded hand repair with an executable typed SDK or `RunScript` step, and update or retire applied playbooks that failed, left findings unresolved or needed later hand repair; otherwise make the smallest useful addition.
-   Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps.
+   Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. For source repairs, separate independent causes as described in [source restoration](references/programs/source-restoration.md).
 2. For deterministic programs, read [program authoring](references/programs.md) before editing and the
    [generated program SDK](references/program-sdk.md) before choosing API types. The
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
@@ -69,5 +69,4 @@ Open only the topic needed for the current edit.
 - [recorded-repair-coverage](references/programs/recorded-repair-coverage.md)
 - [removing-one-service-port](references/programs/removing-one-service-port.md)
 - [routing](references/programs/routing.md)
-- [source-restoration](references/programs/source-restoration.md)
 - [values-and-runtime-actions](references/programs/values-and-runtime-actions.md)

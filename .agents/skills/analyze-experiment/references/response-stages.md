@@ -45,7 +45,8 @@ still get their fresh diagnosis and may unblock it. Only a failed application
 (`apply_error`, `rollout_failed`) ends the pass; matches after it have no stage
 entry. Runs before this rule ended the pass at the first pending handoff. A nonmatching or
 unavailable diagnosis gets one deferred turn after the other candidates, within
-the same 45 s budget. Each applied mitigation has its own `apply_receipt` and
+the same 45 s budget. A pending stage snapshot is superseded for reflection staleness only by a later verified final application with the same ID, plan, program IDs and start time. Missing, failed, rolled-back or ambiguous final receipts cannot excuse it; unresolved own findings and later hand repairs still require refinement.
+Each applied mitigation has its own `apply_receipt` and
 `application_id`; `plan_action_start` is zero and `plan_action_count` covers its
 plan. Historical merged-stage runs share one application ID and use the action
 range to select each mitigation's actions. Recorded stage `apply`

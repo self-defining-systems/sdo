@@ -44,6 +44,17 @@ per probe and two seconds total. Open recordings live in the existing protected
 `*-routing.done` files prevent resampling an immutable capture. Missing, capped,
 or failed reads remain Unknown, not a refused connection.
 
+Source comparisons: from REPLAY1 the controller records `DiffAgainstSource` for
+every non-derived namespace object and every accepted-source object at detect and
+pre-apply (into the phase recordings) and in the healthy baseline's `readings`,
+plus `AdmissionWebhooksFor` on the app Namespace,
+capped at 20 s per boundary. Fixed observations repeat every open read on the
+live repaired snapshot. Older captures recomputed fixed comparisons from the
+redacted `fixed.json`, so a ConfigMap reads `changed: true` there even after a
+correct repair; prefer the `readings` inside `fixed.json`, which come from the
+live snapshot. Replay answers repeated state reads from the first recorded reply
+and reports `unrecorded <Method> call with arguments ...` for a read no phase holds.
+
 The builder emits the isolated prober even when an application has no traffic
 generators or traffic-consuming detectors. Startup awaits its readiness before
 incident capture; disabling synthetic workloads still leaves routing primitives

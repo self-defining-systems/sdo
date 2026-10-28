@@ -163,6 +163,18 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Prepare Python adapter executables
+        if: matrix.mode == 'normal'
+        run: bash scripts/python_go_tools.sh prepare
+      - name: Publish prepared Python Go tools
+        if: matrix.mode == 'normal'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-python-go-tools
+          path: .fastloop/python-go-tools.tar
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Collect all Go-backed Python contracts once
         if: matrix.mode == 'normal'
         id: python-plan
@@ -224,7 +236,7 @@ jobs:
         include:
           - name: static analysis
             shard: fastloop
-            run: bash scripts/format_code.sh --check && bash scripts/check_errors.sh && ./scripts/test_python.sh -m "not go_integration"
+            run: ./scripts/test_python.sh -m "not go_integration"
           - name: unit tests
             shard: core
             run: ./scripts/test_python.sh -m "not go_integration"
@@ -281,15 +293,24 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
-      # The detector-sandbox unit tests really compile Go in an isolated
-      # workspace. tests/conftest.py points them at the runner's default Go
-      # caches; persisting those across runs turns the first sandbox build warm
-      # (keyed on the controller module graph) instead of a cold stdlib+SDK
-      # rebuild every run. Only the leg that runs pytest needs it.
-      - name: Build and verify the source-bound test CLI
-        if: matrix.name == 'unit tests'
-        run: uv run python scripts/operator_test_binary.py
-      - run: ${{ matrix.run }}
+      - name: Download prepared Python Go tools
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: prepared-python-go-tools
+          path: ${{ runner.temp }}
+      - name: Verify and select prepared Python Go tools
+        run: |
+          mkdir -p .fastloop/python-go-tools
+          tar -xf "$RUNNER_TEMP/python-go-tools.tar" -C .fastloop/python-go-tools
+          bash scripts/python_go_tools.sh env >> "$GITHUB_ENV"
+      - name: Check formatting
+        if: matrix.name == 'static analysis'
+        run: bash scripts/format_code.sh --check
+      - name: Check static contracts
+        if: matrix.name == 'static analysis'
+        run: bash scripts/check_errors.sh
+      - name: Run Python shard
+        run: ${{ matrix.run }} --durations=20
         env:
           SDO_PYTEST_SHARD: ${{ matrix.shard }}
           COVERAGE_FILE: .coverage.${{ matrix.shard }}
