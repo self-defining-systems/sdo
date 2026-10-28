@@ -60,7 +60,7 @@ def test_operator_only_refresh_preserves_runtime_profile(tmp_path: Path, monkeyp
     runtime = profiles / "runtime_test_costs.json"
     runtime.write_text("unchanged runtime profile")
     operator = profiles / "operator_test_costs.json"
-    operator.write_text(json.dumps({"costs": {"Old": 1}, "placements": {"Old": "remaining"}}))
+    operator.write_text(json.dumps({"costs": {"Old": 1}}))
     log = tmp_path / "events.log"
     done = event("pass", 8, Elapsed=8)
     done["Package"] = "sdo.dev/operator/broker"
@@ -72,7 +72,6 @@ def test_operator_only_refresh_preserves_runtime_profile(tmp_path: Path, monkeyp
     costs.main()
     assert runtime.read_text() == "unchanged runtime profile"
     result = json.loads(operator.read_text())
-    assert result["placements"] == {"Old": "remaining"}
     assert result["costs"]["sdo.dev/operator/broker/TestParent"] == 8
 
 

@@ -202,7 +202,10 @@ def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
     modules = {str(ROOT / "sdo/operator" / name) for name in ("sdk", "core", "runtime", "contracts")} | {
         str(ROOT / "sdo/operator")
     }
-    tested = {str(ROOT / item["directory"]) for item in controller["strategy"]["matrix"]["include"]}
+    # The generated inventory covers both production Go modules. Foundation
+    # module graphs are still prepared alongside them.
+    assert "needs.prepare-go.outputs.test_matrix" in controller["strategy"]["matrix"]
+    tested = {str(ROOT / "sdo/operator"), str(ROOT / "sdo/operator/runtime")}
     foundation = (ROOT / "scripts/test_go_foundation.sh").read_text()
     tested |= {str(ROOT / module) for module in re.findall(r"\b(benchmarks/\S+_go)\b", foundation)}
     modules |= {str(ROOT / "benchmarks/sregym/protocol" / name) for name in ("native_receipt_go", "submission_go")}
@@ -217,15 +220,7 @@ def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
     assert images["env"]["SDO_SOURCE_REVISION"] == "${{ github.sha }}"
     assert images["env"]["SDO_VALIDATOR_SCHEMA_IDENTITY"] == "${{ needs.prepare-go.outputs.schema_identity }}"
     assert set(images["strategy"]["matrix"]["family"]) == {"controller", "validator", "responder", "benchmark"}
-    partitions = [row["operator"] for row in jobs["controller"]["strategy"]["matrix"]["include"] if "operator" in row]
-    assert sorted(partitions) == [
-        "acceptance",
-        "acceptance-second",
-        "broker",
-        "compiler",
-        "compiler-replay",
-        "remaining",
-    ]
+    assert jobs["prepare-go"]["outputs"]["test_matrix"] == "${{ steps.cost-plan.outputs.matrix }}"
 
 
 @pytest.mark.parametrize("mode", ["normal", "race"])
@@ -258,12 +253,12 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
             assert commands[:1] == expected
         else:
             assert commands[:1] == expected
-            assert commands[1][:3] == ["test", "-c", "-o"]
+            assert commands[1] == ["test", "-list", ".", "-json", "./..."]
             assert commands[1][-1] == "./..."
             if module.endswith("/runtime"):
                 assert commands[2] == ["build", "./..."]
             else:
-                assert all(args[0] != "test" or "-c" in args for args in commands)
+                assert all(args[0] != "test" or "-list" in args for args in commands)
 
 
 def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
@@ -462,7 +457,7 @@ def test_pr_ci_replays_fuzz_seeds_without_coverage_guided_campaigns() -> None:
 def test_nightly_fuzz_campaigns_cover_each_target_within_one_job_budget() -> None:
     configuration = nightly_fuzz()
     assert "schedule" in configuration[True]  # YAML 1.1 reads the bare `on` key as True.
-    (job,) = configuration["jobs"].values()
+    job = configuration["jobs"]["fuzz"]
     assert 0 < job["timeout-minutes"] <= 5
     rows = job["strategy"]["matrix"]["include"]
     assert {row["directory"]: set(row["targets"].split()) for row in rows} == NIGHTLY_FUZZ_TARGETS

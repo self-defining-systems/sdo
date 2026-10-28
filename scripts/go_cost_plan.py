@@ -9,6 +9,7 @@ import math
 import re
 import subprocess
 from pathlib import Path
+from typing import TypedDict
 
 ROOT = Path(__file__).resolve().parents[1]
 JOB_SECONDS = 300.0
@@ -16,6 +17,21 @@ SETUP_MARGIN = 90.0
 BUDGET = JOB_SECONDS - SETUP_MARGIN
 DEFAULT_COST = 180.0
 DEDICATED = re.compile(r"^Test(?:Replay|Chaos|Exhaustive|Explorer)")
+
+
+class CostPlan(TypedDict):
+    scope: str
+    bins: list[list[str]]
+    nightly: list[str]
+    packages: dict[str, list[str]]
+    costs: dict[str, float]
+
+
+def validate_costs(costs: dict[str, float]) -> None:
+    if any(
+        isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(c) or c <= 0 for c in costs.values()
+    ):
+        raise ValueError("cost must be finite positive seconds")
 
 
 def check_budget(names: list[str], costs: dict[str, float], *, budget: float = BUDGET) -> None:
@@ -28,10 +44,7 @@ def pack(names: list[str], costs: dict[str, float], *, budget: float = BUDGET) -
     """First-fit decreasing grows capacity, never a job deadline or placement list."""
     if not math.isfinite(budget) or budget <= 0:
         raise ValueError("budget must be finite and positive")
-    if any(
-        isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(c) or c <= 0 for c in costs.values()
-    ):
-        raise ValueError("cost must be finite positive seconds")
+    validate_costs(costs)
     if len(names) != len(set(names)):
         raise ValueError("inventory contains duplicate names")
     bins: list[list[str]] = []
@@ -73,8 +86,9 @@ def inventory(module: str, *, prepared: bool = False) -> dict[str, list[str]]:
     return result
 
 
-def plan(scope: str, source: dict[str, list[str]]) -> dict:
+def plan(scope: str, source: dict[str, list[str]]) -> CostPlan:
     profile = json.loads((ROOT / f"scripts/{scope}_test_costs.json").read_text())["costs"]
+    validate_costs(profile)
     # Equal names stay together: go test's union regex applies to every package.
     packages: dict[str, list[str]] = {}
     costs: dict[str, float] = {}
@@ -168,7 +182,7 @@ def run_main(scope: str) -> None:
     )
 
 
-def go_command(data: dict, names: list[str]) -> list[str]:
+def go_command(data: CostPlan, names: list[str]) -> list[str]:
     """A whole-name union preserves all subtests and seeds in their owner bin."""
     scope = data["scope"]
     packages = sorted({p for n in names for p in data["packages"][n]})

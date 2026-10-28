@@ -66,6 +66,7 @@ def test_removed_cost_entries_do_not_create_tests(tmp_path, monkeypatch):
     assert data["costs"]["TestNew"] == planner.DEFAULT_COST
 
 
+@pytest.mark.go_integration
 def test_real_compiled_inventory_reaches_real_runner(tmp_path, monkeypatch):
     """The Go producer and selection consumer run together; no fake inventory."""
     import json
@@ -98,3 +99,16 @@ func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string)
     restored = json.loads(path.read_text())["operator"]
     for members in restored["bins"]:
         run_tests(planner.go_command(restored, members), started=time.monotonic(), cwd=module)
+
+
+def test_profiles_fit_work_budget_with_setup_margin():
+    import json
+
+    for scope in ("operator", "runtime"):
+        profile = json.loads((planner.ROOT / f"scripts/{scope}_test_costs.json").read_text())["costs"]
+        bins, nightly = planner.pack(list(profile), profile)
+        assert sorted(n for b in bins for n in b) + sorted(nightly) != []
+        for members in bins:
+            assert sum(profile[n] for n in members) <= planner.JOB_SECONDS - planner.SETUP_MARGIN
+            planner.check_budget(members, profile)
+        assert all(profile[n] > planner.BUDGET for n in nightly)
