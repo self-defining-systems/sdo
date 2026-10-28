@@ -38,6 +38,7 @@ def main() -> None:
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--bin")
     parser.add_argument("--nightly-index", type=int)
+    parser.add_argument("--inventory-only", action="store_true")
     args = parser.parse_args()
     if args.output:
         inventory = args.output.with_suffix(".inventory.json")
@@ -71,15 +72,6 @@ def main() -> None:
         for index, members in enumerate(data["bins"]):
             print(f"python-{index}: {sum(data['costs'][n] for n in members):.2f}s, {len(members)} tests")
         print(f"Python nightly: {data['nightly']}")
-        print(
-            "python_matrix="
-            + json.dumps(
-                {"include": [{"bin": str(i)} for i in range(len(data["bins"]))] or [{"bin": "none"}]},
-                separators=(",", ":"),
-            )
-        )
-        overflow = [{"bin": str(i)} for i, _ in enumerate(data["nightly"])] or [{"bin": "0"}]
-        print("python_nightly_matrix=" + json.dumps({"include": overflow}, separators=(",", ":")))
         return
     if not args.plan or args.bin is None:
         parser.error("--output or both --plan/--bin required")

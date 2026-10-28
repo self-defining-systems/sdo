@@ -1,43 +1,43 @@
 # CI tooling map
 
-- `prepare_go_ci.sh`: compiles the normal and race graphs, downloads modules,
-  builds the source-verified CLI, and records the compiled race test inventory.
-- `go_cost_plan.py`: deterministic first-fit decreasing allocation of that inventory
-  using `operator_test_costs.json` and `runtime_test_costs.json`. Each bin gets 210
-  seconds of measured work inside the unchanged five-minute job, leaving 90
-  seconds for setup. Unknown tests reserve the full work budget and run in isolation. Capacity grows through
-  the generated Actions matrix; no test placement lists are maintained. A single
-  test above the work budget is included in the nightly overflow suite.
-- `test_operator_shard.py`, `test_runtime_shard.py`: run a numbered computed bin
-  (or `nightly`), validating its budget before executing the real race suite.
-  Without `--plan`, they compile the inventory and compute a local plan.
-- `go_test_timing.py`: streams Go JSON and reports actual active costs, including
-  parallel children and excluding pauses. Actual assertion failures still fail.
-- `update_go_test_costs.py`: refreshes costs from hosted JSON logs, with run/head
-  provenance, retaining fast completions and skipped race-only/process helpers. Use `--log <log> --run <run-id> --head <sha> --write`. Fresh hosted
-  costs change capacity automatically on the next run. Removed names are harmless.
+PR CI has **four fixed test jobs**: two exhaustive non-Go Python parts and two
+native contract jobs. The two compile/cache preparation jobs finish before tests;
+only `Required PR CI` is required. Preparation is capped at four minutes, test jobs
+at their unchanged five minutes, and the aggregate gate at one minute. The maximum
+executed critical path is ten minutes; runner queue time is outside that bound.
 
-`tests/unit/scripts/test_go_cost_plan.py` guards assignment, conservative defaults,
-coverage, deterministic output and the over-budget negative control. The workflow
-contract tests live in `tests/unit/sdo/operator/test_runtime_shards.py`.
+- `check_ci_budget.py` structurally checks the workflow: no computed PR matrices,
+  at most four test jobs, dependency critical path <=600 seconds, and contract
+  work plus setup margin within the job cap. It runs before test fanout and in
+  `check_errors.sh`. Its negative controls add a fifth job or extend the path.
+- `ci_policy.json` owns the two contract buckets' fixed capacity (180 seconds of
+  measured work each, 90 seconds reserved for setup). Inventory growth never adds
+  a PR job. `pr_test_plan.py` keeps the broadest cheap regression set within that
+  capacity; every other test is assigned to nightly. Both sets are exhaustive
+  and disjoint, and a generated Markdown artifact lists every deferred test.
+- `prepare_go_ci.sh` compiles each normal/race test graph once. It no longer first
+  builds/discards every production executable too. The portable graph warms only
+  `runtime/prober`, the generated traffic binary's dependency, rather than the
+  whole Kubernetes runtime. The CLI and bootstrap fixture are cached once.
+- `go_cost_plan.py` collects the real race inventory, including test/fuzz/example
+  names and bounded chaos/explorer cases. `python_cost_plan.py` collects exact
+  pytest node IDs. Same-run artifacts bind consumers to those inventories.
+- `run_ci_contracts.py` executes a fixed PR bucket or a nightly bucket with the
+  real Go and pytest commands. `go_test_timing.py` streams timing diagnostics;
+  assertion failures always fail. `pytest_ci.py` records every pytest phase.
+- `update_go_test_costs.py` refreshes observed costs from `--log <hosted-log>` or
+  structured `--pytest-costs <reports...>`, with `--run <id> --head <sha> --write`.
+  It retains subsecond/skip observations. `--local-log` stores raw Go bootstrap
+  timings separately; max(10s, 10x local) is reserved until hosted data exists.
+  Genuinely unmeasured names reserve 210 seconds and therefore go nightly until
+  measured. No test-name or file-name placement list is maintained.
+- `test_go_integration.sh all` retains standalone prerequisite/compile warming;
+  prepared CI buckets reuse builds instead. Legacy per-module shard scripts are
+  local conveniences, not PR matrix inputs.
 
-The race preparation publishes the plan as a workflow artifact. Consumers download
-that artifact from the same run; the independent normal cache carries only the CLI
-and normal build graph. Discovery and execution both use `-race`, preserving tests
-with build tags and excluding normal-only latency probes from the race inventory.
-
-Go replay tests use the same computed runtime bins. Go-backed Python contracts
-(including recorded provider reflection) use `python_cost_plan.py` and the same
-`pack`/budget guard. Normal preparation collects exact pytest node IDs through
-`pytest_ci.py` and publishes a separate same-run artifact. Consumers run numeric
-bins through `test_go_integration.sh`; `all` remains the exhaustive local mode.
-Every report records all pytest phases in a JSON timing artifact. Refresh the
-Python cost profile with `update_go_test_costs.py --pytest-costs <reports...>
---run <id> --head <sha> --write`. Unknown and oversized nodes follow the same
-isolation/nightly rules as Go tests. No file-name placement list is maintained.
-
-Measured local Go tests can bootstrap missing hosted costs with `--local-log`
-(instead of `--log`/`--run`) and `--head <sha>`. Raw local values are retained
-separately; until a hosted observation exists, each reserves max(10 seconds,
-10 times the local duration). This avoids one setup-heavy job per already
-measured tiny test while preserving isolation for genuinely unmeasured tests.
+Nightly owns deferred real-compiler/provider/simulation tests, image builds/smokes,
+proto toolchain/lint/codegen drift, full SDK/core compatibility at Go 1.24.5 and
+1.26.8, full race protocol contracts, and the existing coverage-guided fuzz campaigns.
+The extra short schedule/fuzz replay invocation was deleted: its seeds already run
+in the one ordinary test inventory. Nightly does not rerun the same cheap Go/native
+nodes selected for PR CI.

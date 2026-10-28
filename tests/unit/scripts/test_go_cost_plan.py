@@ -69,7 +69,7 @@ def test_removed_cost_entries_do_not_create_tests(tmp_path, monkeypatch):
 
 
 @pytest.mark.go_integration
-def test_real_compiled_inventory_reaches_real_runner(tmp_path, monkeypatch):
+def test_real_compiled_inventory_reaches_real_runner(tmp_path, monkeypatch, capsys):
     """The Go producer and selection consumer run together; no fake inventory."""
     import json
     import sys
@@ -80,7 +80,6 @@ def test_real_compiled_inventory_reaches_real_runner(tmp_path, monkeypatch):
     (module / "plan_test.go").write_text("""package ci
 import "testing"
 func TestFirst(t *testing.T) {}
-func TestSecond(t *testing.T) {}
 func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string) {}) }
 """)
     (module / "race_only_test.go").write_text(
@@ -99,9 +98,9 @@ func TestNormalOnly(t *testing.T) { t.Fatal("normal-only test cannot enter a rac
     (profiles / "operator_test_costs.json").write_text('{"costs":{}}')
     monkeypatch.setattr(planner, "ROOT", tmp_path)
     source = planner.inventory("")
-    assert source == {"synthetic.example/ci": ["TestFirst", "TestSecond", "TestRaceOnly", "FuzzSeed"]}
+    assert source == {"synthetic.example/ci": ["TestFirst", "TestRaceOnly", "FuzzSeed"]}
     data = planner.plan("operator", source)
-    assert len(data["bins"]) == 4
+    assert len(data["bins"]) == 3
     path = tmp_path / "plan.json"
     path.write_text(json.dumps({"operator": data}))
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
@@ -110,8 +109,17 @@ func TestNormalOnly(t *testing.T) { t.Fatal("normal-only test cannot enter a rac
     from go_test_timing import run_tests
 
     restored = json.loads(path.read_text())["operator"]
-    for members in restored["bins"]:
-        run_tests(planner.go_command(restored, members), started=time.monotonic(), cwd=module)
+    members = [name for bucket in restored["bins"] for name in bucket]
+    run_tests(planner.go_command(restored, members), started=time.monotonic(), cwd=module)
+    events = []
+    for line in capsys.readouterr().out.splitlines():
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+    passed = {event["Test"] for event in events if event.get("Action") == "pass" and event.get("Test")}
+    assert {name for name in passed if "/" not in name} == set(members)
+    assert any(name.startswith("FuzzSeed/") for name in passed)
 
 
 def test_profiles_fit_work_budget_with_setup_margin():
@@ -158,3 +166,20 @@ def test_local_measurements_have_conservative_bounds_until_hosted_costs_exist(tm
     assert data["costs"]["TestLocal"] == 10
     assert data["costs"]["TestHosted"] == 2
     assert data["costs"]["TestUnmeasured"] == planner.BUDGET
+
+
+@pytest.mark.go_integration
+def test_test_compilation_checks_packages_without_test_files(tmp_path):
+    import subprocess
+
+    (tmp_path / "go.mod").write_text("module synthetic.example/nontest\n\ngo 1.24\n")
+    (tmp_path / "main.go").write_text("package main\nfunc main() { undefinedCompilerControl() }\n")
+    result = subprocess.run(
+        ["go", "test", "-c", "-o", str(tmp_path / "out"), "./..."],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "undefinedCompilerControl" in result.stderr

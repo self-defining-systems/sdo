@@ -44,21 +44,49 @@ def check_budget(names: list[str], costs: dict[str, float], *, budget: float = B
         raise ValueError(f"shard cost {total:.2f}s exceeds {budget:.2f}s work budget; regenerate the CI plan")
 
 
-def pack(names: list[str], costs: dict[str, float], *, budget: float = BUDGET) -> tuple[list[list[str]], list[str]]:
+def pack(
+    names: list[str],
+    costs: dict[str, float],
+    *,
+    budget: float = BUDGET,
+    max_bins: int | None = None,
+    max_test_seconds: float | None = None,
+) -> tuple[list[list[str]], list[str]]:
     """First-fit decreasing grows capacity, never a job deadline or placement list."""
     check_budget([], costs, budget=budget)
     if len(names) != len(set(names)):
         raise ValueError("inventory contains duplicate names")
-    bins: list[list[str]] = []
-    totals: list[float] = []
+    if max_bins is not None and (isinstance(max_bins, bool) or max_bins <= 0):
+        raise ValueError("fixed bin count must be positive")
+    bins: list[list[str]] = [[] for _ in range(max_bins or 0)]
+    totals: list[float] = [0.0 for _ in bins]
     nightly: list[str] = []
-    for name in sorted(names, key=lambda n: (-costs.get(n, DEFAULT_COST), n)):
+    candidates = names
+    if max_bins is not None:
+        # Keep the broadest cheap regression set; growing cost becomes nightly
+        # work, never another PR job. Pack that set longest-first afterwards.
+        remaining = max_bins * budget
+        candidates = []
+        for name in sorted(names, key=lambda n: (costs.get(n, DEFAULT_COST), n)):
+            cost = costs.get(name, DEFAULT_COST)
+            if cost > budget or cost > remaining or (max_test_seconds is not None and cost > max_test_seconds):
+                nightly.append(name)
+            else:
+                candidates.append(name)
+                remaining -= cost
+    for name in sorted(candidates, key=lambda n: (-costs.get(n, DEFAULT_COST), n)):
         cost = costs.get(name, DEFAULT_COST)
-        if cost > budget:
+        if cost > budget or (max_test_seconds is not None and cost > max_test_seconds):
             nightly.append(name)
             continue
-        target = next((i for i, total in enumerate(totals) if total + cost <= budget), len(bins))
-        if target == len(bins):
+        available = [i for i, total in enumerate(totals) if total + cost <= budget]
+        if available:
+            target = min(available, key=lambda i: (totals[i], i))
+        elif max_bins is not None:
+            nightly.append(name)
+            continue
+        else:
+            target = len(bins)
             bins.append([])
             totals.append(0.0)
         bins[target].append(name)
@@ -88,7 +116,9 @@ def inventory(module: str, *, prepared: bool = False) -> dict[str, list[str]]:
     return result
 
 
-def plan(scope: str, source: dict[str, list[str]], *, replay_only: bool = False) -> CostPlan:
+def plan(
+    scope: str, source: dict[str, list[str]], *, replay_only: bool = False, include_dedicated: bool = False
+) -> CostPlan:
     recorded = json.loads((ROOT / f"scripts/{scope}_test_costs.json").read_text())
     profile = recorded["costs"]
     local = recorded.get("local_costs", {})
@@ -101,7 +131,7 @@ def plan(scope: str, source: dict[str, list[str]], *, replay_only: bool = False)
         for name in names:
             if replay_only and (scope != "runtime" or not name.startswith("TestReplay")):
                 continue
-            if scope == "runtime" and DEDICATED.match(name):
+            if scope == "runtime" and DEDICATED.match(name) and not include_dedicated:
                 continue
             packages.setdefault(name, []).append(package)
             key = name if scope == "runtime" else package + "/" + name
@@ -118,43 +148,21 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--prepared", action="store_true", help="use the inventory compiled by prepare_go_ci.sh")
     parser.add_argument("--replay-only", action="store_true", help="preserve Python-only PR Go replay coverage")
+    parser.add_argument("--inventory-only", action="store_true")
+    parser.add_argument("--include-dedicated", action="store_true")
     args = parser.parse_args()
     plans = {
-        scope: plan(scope, inventory(module, prepared=args.prepared), replay_only=args.replay_only)
+        scope: plan(
+            scope,
+            inventory(module, prepared=args.prepared),
+            replay_only=args.replay_only,
+            include_dedicated=args.include_dedicated,
+        )
         for scope, module in [("operator", ""), ("runtime", "runtime")]
     }
-    matrix = (
-        []
-        if args.replay_only
-        else [
-            {"module": "foundation-sdk", "go-version": "1.24.5", "foundation": "stable"},
-            {"module": "foundation-contracts", "go-version": "1.26.8", "foundation": "contracts"},
-        ]
-    )
-    for scope, data in plans.items():
-        for index, members in enumerate(data["bins"]):
-            matrix.append(
-                {"module": f"{scope}-{index}", "go-version": "1.26.8", "cost_scope": scope, "cost_bin": str(index)}
-            )
-            print(f"{scope}-{index}: {sum(data['costs'][n] for n in members):.2f}s, {len(members)} tests")
-        print(f"{scope} nightly: {data['nightly']}")
-    if not matrix:
-        matrix = [{"module": "no-go-replay-tests", "go-version": "1.26.8"}]
-    if len(matrix) > 256:
-        raise ValueError("plan exceeds GitHub matrix capacity; reduce test cost before publication")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(plans, sort_keys=True) + "\n")
-    print("matrix=" + json.dumps({"include": matrix}, separators=(",", ":")))
-    overflow = [
-        {"cost_scope": scope, "nightly_index": str(index)}
-        for scope, data in plans.items()
-        for index, _ in enumerate(data["nightly"])
-    ]
-    # GitHub rejects an empty matrix: one explicit no-op keeps the workflow valid.
-    print(
-        "nightly_matrix="
-        + json.dumps({"include": overflow or [{"cost_scope": "operator", "nightly_index": "0"}]}, separators=(",", ":"))
-    )
+    print("Recorded compiled inventory; PR execution has fixed ci_policy.json capacity")
 
 
 def run_main(scope: str) -> None:
