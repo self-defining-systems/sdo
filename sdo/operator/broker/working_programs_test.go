@@ -64,6 +64,7 @@ func TestWorkingProgramDraftSurvivesIntoReflectionWithoutPublication(t *testing.
 }
 
 func TestSourcePublicationValidatesRepairsAndDefersWorkingPlaybooks(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := repository(t)
 	if err := os.CopyFS(filepath.Join(root, ".sdo"), os.DirFS("../memory/validate/testdata/good/.sdo")); err != nil {

@@ -240,6 +240,7 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 }
 
 func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
 	if out, err := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
