@@ -12,7 +12,6 @@ import (
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/internal/testutil"
 )
 
 // TestUpstreamCrossHostLane is one lane of a scripted multi-host check against
@@ -34,7 +33,9 @@ func TestUpstreamCrossHostLane(t *testing.T) {
 		return
 	}
 	root := filepath.Join(t.TempDir(), "accepted")
-	testutil.CloneGit(t, url, root, "--branch", branch)
+	if err := cloneGit(ctx, url, root, "--branch", branch); err != nil {
+		t.Fatal(err)
+	}
 	b := sharedMemoryBroker(t, root, func(context.Context, string, []string) error { return nil })
 	if err := b.SetUpstream(Upstream{URL: url, Branch: branch}); err != nil {
 		t.Fatal(err)
