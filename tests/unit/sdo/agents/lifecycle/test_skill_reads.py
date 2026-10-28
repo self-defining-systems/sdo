@@ -129,7 +129,7 @@ def test_renderer_overflow_is_readable_but_other_context_files_are_not(tmp_path)
     from sdo.agents.lifecycle.agents import _first_repository_escape
     from sdo.agents.prompt_templates import named_prompt
 
-    prompt = named_prompt("health_judge.active_payload", "evidence " * 20000)
+    prompt = named_prompt("health_judge.active_payload", "evidence " * 20000, required=False)
     assert prompt.context_files
     path = prompt.context_files[0]
     assert _first_repository_escape([f"cat {path}"], REPOSITORY, context_files=frozenset(prompt.context_files)) is None

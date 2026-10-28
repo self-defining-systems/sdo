@@ -8,3 +8,6 @@ Controller outcome at ${outcome_commit}:
 ${outcome_json}
 
 ${history_section}
+
+Per-cause work:
+${work_section}

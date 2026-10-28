@@ -263,7 +263,8 @@
     "memory_view_json": "reflection.memory",
     "outcome_commit": "template_data.responder-reflection_shell-outcome_commit",
     "outcome_json": "reflection.outcome",
-    "history_section": "template_data.responder-reflection_shell-history_section"
+    "history_section": "template_data.responder-reflection_shell-history_section",
+    "work_section": "reflection.cause_work"
   },
   "responder/reflection_shell_fresh": {
     "request": "template_data.responder-reflection_shell_fresh-request"

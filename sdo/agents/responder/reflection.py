@@ -4,7 +4,7 @@ import json
 import os
 import re
 import time
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
 from agentshim import SessionResumeError
 from google.protobuf import json_format
@@ -17,9 +17,9 @@ from libs.agent_cli.structured import (
     turn_usage,
 )
 from sdo.agents.code_paths import agent_guidance
-from sdo.agents.context_output import save_context
+from sdo.agents.context_output import ContextText, save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
-from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
+from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 from sdo.agents.responder.credentials import SKILLS_ROOT
@@ -188,6 +188,73 @@ def reflection_budget_seconds() -> float:
 _GENERALIZING_GUIDANCE = ("generalize", "generalize-spec")
 
 
+def reflection_work_view(work_json: str) -> RenderedPrompt:
+    """Keep every question and its scope; settled evaluation details are optional.
+
+    The full controller-owned work is retained independently. Counting omitted
+    metadata is explicit so a compact view cannot imply that it did not exist.
+    """
+    work = json.loads(work_json)
+    work_file, full_path = save_context(work_json)
+    fields = {"question", "disposition", "reason", "program_id", "resources"}
+
+    def questions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                **{key: value for key, value in item.items() if key in fields},
+                "detail_fields_omitted": sum(key not in fields for key in item),
+            }
+            for item in items
+            if item.get("question")
+        ]
+
+    causes = [
+        {
+            "cause_index": cause.get("cause_index", 0),
+            "resources": cause.get("resources", []),
+            "items": questions(cause.get("items", [])),
+            "settled_items_omitted": sum(not item.get("question") for item in cause.get("items", [])),
+        }
+        for cause in work["causes"]
+    ]
+    required = {
+        "causes": causes,
+        "unassigned": questions(work["unassigned"]),
+        "unassigned_settled_items_omitted": sum(not item.get("question") for item in work["unassigned"]),
+        "full_work_path": full_path,
+    }
+
+    def details(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "item_index": index,
+                **({key: value for key, value in item.items() if key not in fields} if item.get("question") else item),
+            }
+            for index, item in enumerate(items)
+        ]
+
+    return join_prompts(
+        "\n",
+        [
+            named_prompt("reflection.cause_work", ContextText(json.dumps(required, separators=(",", ":")), work_file)),
+            named_prompt(
+                "reflection.cause_details",
+                json.dumps(
+                    {
+                        "causes": [
+                            {"cause_index": cause.get("cause_index", 0), "items": details(cause.get("items", []))}
+                            for cause in work["causes"]
+                        ],
+                        "unassigned": details(work["unassigned"]),
+                    }
+                ),
+                required=False,
+            ),
+        ],
+        part="reflection.cause_work",
+    )
+
+
 def _logical_learning_request(
     *,
     outcome: OutcomeRecord,
@@ -209,7 +276,7 @@ def _logical_learning_request(
     linked.update(match.playbook_id for match in closure.request.playbook_coverage.matches)
     memory_index = reflection_memory_view(snapshot, outcome, linked_ids=linked)
     _, memory_path = save_context(json.dumps(memory_index, indent=2))
-    _, outcome_path = save_context(json_format.MessageToJson(outcome, preserving_proto_field_name=True))
+    outcome_file, outcome_path = save_context(json_format.MessageToJson(outcome, preserving_proto_field_name=True))
     outcome_view = current_outcome_view(outcome)
     outcome_summary = {
         key: outcome_view[key]
@@ -229,18 +296,26 @@ def _logical_learning_request(
     }
     outcome_summary["full_current_outcome_path"] = outcome_path
     memory_index["full_index_path"] = memory_path
-    if agent_guidance() == "shell":
-        return render_prompt(
-            "responder",
-            "reflection_shell",
-            part="reflection.instructions",
-            skills_root=SKILLS_ROOT,
-            branch_instruction=branch_instruction("reflection"),
-            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2)),
-            outcome_commit=outcome_commit,
-            outcome_json=named_prompt("reflection.outcome", json.dumps(outcome_summary, indent=2)),
-            history_section=named_prompt("reflection.history", _history_section(outcome, history)),
-        )
+    required_outcome = {
+        "incident_id": outcome.incident_id,
+        "classification": outcome.classification,
+        "repair_actions": [
+            {**json_format.MessageToDict(action, preserving_proto_field_name=True), "success": action.success}
+            for action in outcome.repair_actions
+        ],
+        "full_current_outcome_path": outcome_path,
+    }
+    optional_outcome = {key: value for key, value in outcome_summary.items() if key not in required_outcome}
+    outcome_prompt = join_prompts(
+        "\n",
+        [
+            named_prompt(
+                "reflection.outcome", ContextText(json.dumps(required_outcome, separators=(",", ":")), outcome_file)
+            ),
+            named_prompt("reflection.outcome_details", json.dumps(optional_outcome, indent=2), required=False),
+        ],
+        part="reflection.outcome",
+    )
     work_section = ""
     if cause_work or unassigned_work:
         work_json = json.dumps(
@@ -250,19 +325,42 @@ def _logical_learning_request(
                     json_format.MessageToDict(item, preserving_proto_field_name=True) for item in unassigned_work
                 ],
             },
-            indent=2,
+            separators=(",", ":"),
         )
-        work_section = render_prompt("responder", "learning_01", part="reflection.instructions", work_json=work_json)
+        work_data = reflection_work_view(work_json)
+        work_section = (
+            work_data
+            if agent_guidance() == "shell"
+            else render_prompt(
+                "responder",
+                "learning_01",
+                part="reflection.cause_work",
+                work_json=work_data,
+            )
+        )
+    if agent_guidance() == "shell":
+        return render_prompt(
+            "responder",
+            "reflection_shell",
+            part="reflection.instructions",
+            skills_root=SKILLS_ROOT,
+            branch_instruction=branch_instruction("reflection"),
+            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2), required=False),
+            outcome_commit=outcome_commit,
+            outcome_json=outcome_prompt,
+            work_section=work_section,
+            history_section=named_prompt("reflection.history", _history_section(outcome, history)),
+        )
     prompt = render_prompt(
         "responder",
         "reflection",
         part="reflection.instructions",
         skills_root=SKILLS_ROOT,
         branch_instruction=branch_instruction("reflection"),
-        work_section=named_prompt("reflection.cause_work", work_section),
+        work_section=work_section,
         outcome_commit=outcome_commit,
-        memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2)),
-        current_outcome_view_json=named_prompt("reflection.outcome", json.dumps(outcome_summary, indent=2)),
+        memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2), required=False),
+        current_outcome_view_json=outcome_prompt,
         history_section=named_prompt("reflection.history", _history_section(outcome, history)),
     )
     if closure.request.HasField("namespace_onboarding"):
@@ -270,8 +368,10 @@ def _logical_learning_request(
             "responder",
             "namespace_onboarding",
             part="reflection.outcome",
-            onboarding_json=json_format.MessageToJson(
-                closure.request.namespace_onboarding, preserving_proto_field_name=True
+            onboarding_json=named_prompt(
+                "template_data.responder-namespace_onboarding-onboarding_json",
+                json_format.MessageToJson(closure.request.namespace_onboarding, preserving_proto_field_name=True),
+                required=False,
             ),
         )
     return prompt
@@ -301,7 +401,10 @@ def _history_section(outcome: OutcomeRecord, history: list[OutcomeRecord]) -> st
     if not prior:
         return render_prompt("responder", "history_section_01", part="reflection.instructions")
     return render_prompt(
-        "responder", "history_section_02", part="reflection.instructions", prior_json=json.dumps(prior, indent=2)
+        "responder",
+        "history_section_02",
+        part="reflection.instructions",
+        prior_json=named_prompt("reflection.history", json.dumps(prior, indent=2), required=False),
     )
 
 

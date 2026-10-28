@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.responder import tool_output
 
@@ -79,7 +80,7 @@ class ContinuationFeedback(BaseModel):
     verification_blockers: list[VerificationBlocker] = Field(default_factory=list)
 
 
-MAX_CONTINUATION_CHARS = 1500
+MAX_CONTINUATION_CHARS = budget_for("continuation.instructions") + budget_for("continuation.incident_data")
 
 
 def _brief(value: str, limit: int) -> str:
@@ -136,7 +137,7 @@ def _status(repair: CompletedRepair) -> str:
 def _action(repair: CompletedRepair, width: int) -> str:
     detail = repair.receipt.failure_reason or repair.error or repair.summary or repair.receipt.summary
     detail_width = max(width, 32) if repair.receipt.failure_reason else width
-    return f"{_brief(repair.action_id, 48)} {_status(repair)} {_brief(detail, detail_width)}"
+    return f"{repair.action_id} {_status(repair)} {_brief(detail, detail_width)}"
 
 
 def continuation_prompt(payload: str) -> RenderedPrompt:
@@ -159,7 +160,7 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
         width: int, broken_count: int, done_count: int, unmatched_count: int, blocker_count: int
     ) -> RenderedPrompt:
         broken_lines = [
-            f"- {_brief(finding.fingerprint, 64)} {_brief(finding.summary, width)}; "
+            f"- {finding.fingerprint} {_brief(finding.summary, width)}; "
             + ("last=" + _action(last, width) if last else "last=none")
             for finding, last in rows[:broken_count]
         ]

@@ -189,11 +189,18 @@ def test_all_template_placeholders_on_live_scale_values(monkeypatch, tmp_path):
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
     original = "synthetic live evidence " * 8500
     manifest = json.loads((ROOT / "sdo/agents/prompt_sections.json").read_text())
+    from sdo.agents.prompt_templates import PromptBudgetError
+
     for key, placeholders in manifest.items():
         role, name = key.split("/")
-        prompt = render_prompt(role, name, part=role + ".instructions", **dict.fromkeys(placeholders, original))
-        totals = {}
-        for part in prompt.parts:
-            totals[part.name] = totals.get(part.name, 0) + len(part.text)
-        for section, size in totals.items():
-            assert size <= budget_for(section), key
+        if placeholders:
+            # A required value cannot be replaced by a summary or file pointer.
+            # Enumerate each placeholder so a later one cannot hide behind the first error.
+            for placeholder, budget in placeholders.items():
+                values = dict.fromkeys(placeholders, "synthetic")
+                values[placeholder] = original
+                with pytest.raises(PromptBudgetError, match=budget + ".*required"):
+                    render_prompt(role, name, part="health_judge.instructions", **values)
+        else:
+            prompt = render_prompt(role, name, part="health_judge.instructions")
+            assert len(prompt) <= budget_for("health_judge.instructions"), key
