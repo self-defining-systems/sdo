@@ -120,6 +120,21 @@ def _config(tmp_path: Path, count: int, problems: tuple[str, ...] = ("p1",)) -> 
     return LoopConfig(run_id="run-1", problems=problems, incidents=count, results_path=tmp_path / "incidents.jsonl")
 
 
+@pytest.mark.parametrize("fail", [False, True])
+def test_each_row_records_the_run_host_allocation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool) -> None:
+    monkeypatch.setenv("SDO_OPUS_POOL_MODE", "per_host")
+    monkeypatch.setenv("SDO_OPUS_POOL_HOST_ID", "chelan4")
+    monkeypatch.setenv("SDO_OPUS_MAX_SESSIONS", "4")
+    config = _config(tmp_path, 1)
+    clock = FakeClock()
+    records = run_incidents(
+        FakeAgent(clock, fail_on={0} if fail else set()), FakeDriver(clock), config, monotonic=clock.monotonic
+    )
+    row = json.loads(config.results_path.read_text())
+    assert row["opus_pool"] == {"mode": "per_host", "capacity": 4, "host_id": "chelan4"}
+    assert load_records(config.results_path)[0].opus_pool == records[0].opus_pool
+
+
 def test_rate_limited_agent_is_not_graded_and_cleanup_still_runs(tmp_path: Path) -> None:
     from libs.agent_cli.errors import ProviderRateLimited
 

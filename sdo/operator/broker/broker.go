@@ -198,9 +198,6 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 	}
 	var proposal Proposal
 	err := b.locked(func() error {
-		if err := b.syncUpstream(ctx); err != nil {
-			return err
-		}
 		var err error
 		proposal, err = b.createProposal(ctx, incidentID, phase, "")
 		return err
@@ -225,6 +222,9 @@ func (b *Broker) createProposal(ctx context.Context, incidentID string, phase Ph
 			return err
 		}
 		if base == "" {
+			if err := b.syncUpstream(ctx); err != nil {
+				return err
+			}
 			if err := b.requireClean(ctx); err != nil {
 				return err
 			}

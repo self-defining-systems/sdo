@@ -1,9 +1,4 @@
-"""Bounded provider backoff and an account-wide, crash-releasing Opus pool.
-
-The pool directory must be the SAME lock-capable shared filesystem on every
-host and worker. No local fallback is allowed. Kubernetes workers mount a
-configured NFS export; host callers point SDO_OPUS_POOL_DIR at that export.
-"""
+"""Bounded provider backoff and crash-releasing shared or static host Opus pools."""
 
 from __future__ import annotations
 
@@ -17,7 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, cast
+from typing import IO, TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
@@ -26,12 +21,16 @@ from uuid import uuid4
 from libs.agent_cli.errors import ProviderRateLimited
 
 DEFAULT_OPUS_SESSIONS = 8
+DEFAULT_OPUS_HOST_SHARE = 4
 MAX_PROVIDER_WAIT_SECONDS = 1800.0
 OPUS_POOL_ENVIRONMENT = (
     "SDO_OPUS_POOL_DIR",
     "SDO_OPUS_MAX_SESSIONS",
     "SDO_OPUS_POOL_NFS_SERVER",
     "SDO_OPUS_POOL_NFS_PATH",
+    "SDO_OPUS_POOL_MODE",
+    "SDO_OPUS_POOL_HOST_ID",
+    "SDO_OPUS_POOL_HOST_PATH",
 )
 _LIMIT = re.compile(
     r"rate_limit_error|overloaded_error|API Error:\s*(?:429|529)\b|"
@@ -79,30 +78,69 @@ class RateLimitPolicy:
 
 
 @dataclass(frozen=True)
+class OpusPoolAllocation:
+    """Run-owned static allocation; host shares must sum to the account cap."""
+
+    mode: Literal["shared", "per_host"]
+    capacity: int
+    host_id: str = ""
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("shared", "per_host"):
+            raise ValueError("Opus pool mode must be shared or per_host")
+        if type(self.capacity) is not int or self.capacity <= 0:
+            raise ValueError("Opus pool capacity must be a positive integer")
+        if self.mode == "per_host" and not self.host_id.strip():
+            raise ValueError("per_host Opus pool requires SDO_OPUS_POOL_HOST_ID")
+
+    @classmethod
+    def from_environment(cls, environment: Mapping[str, str]) -> OpusPoolAllocation:
+        mode = environment.get("SDO_OPUS_POOL_MODE", "shared")
+        if mode not in ("shared", "per_host"):
+            raise ValueError("Opus pool mode must be shared or per_host")
+        default = DEFAULT_OPUS_HOST_SHARE if mode == "per_host" else DEFAULT_OPUS_SESSIONS
+        return cls(
+            mode,
+            int(environment.get("SDO_OPUS_MAX_SESSIONS", str(default))),
+            environment.get("SDO_OPUS_POOL_HOST_ID", ""),
+        )
+
+
+@dataclass(frozen=True)
 class OpusPool:
     directory: Path
     capacity: int = DEFAULT_OPUS_SESSIONS
+    create: bool = True
 
     def __post_init__(self) -> None:
         if type(self.capacity) is not int or self.capacity <= 0:
             raise ValueError("Opus pool capacity must be a positive integer")
 
     def try_acquire(self) -> IO[str] | None:
-        self.directory.mkdir(parents=True, exist_ok=True)
+        if self.create:
+            self.directory.mkdir(parents=True, exist_ok=True)
+        else:
+            # Host pools must be provisioned once, including aliases for each
+            # existing kind extraMount. Never silently create a private pool.
+            for name in ("capacity", *(f"slot-{slot}.lock" for slot in range(self.capacity))):
+                if not (self.directory / name).is_file():
+                    raise FileNotFoundError(f"host Opus pool is not provisioned: {self.directory / name}")
         # Never unlink lock files, including during release. Replacing an inode
         # would let a second host acquire a different lock for the same token.
-        with (self.directory / "capacity").open("a+", encoding="utf-8") as metadata:
+        with (self.directory / "capacity").open("a+" if self.create else "r+", encoding="utf-8") as metadata:
             fcntl.flock(metadata, fcntl.LOCK_EX)
             metadata.seek(0)
             recorded = metadata.read().strip()
             if recorded and recorded != str(self.capacity):
                 raise ValueError("shared Opus pool capacity differs between callers")
+            if not recorded and not self.create:
+                raise ValueError("host Opus pool capacity is not provisioned")
             if not recorded:
                 metadata.write(f"{self.capacity}\n")
                 metadata.flush()
                 os.fsync(metadata.fileno())
         for slot in range(self.capacity):
-            handle = (self.directory / f"slot-{slot}.lock").open("a", encoding="utf-8")
+            handle = (self.directory / f"slot-{slot}.lock").open("a" if self.create else "r+", encoding="utf-8")
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -110,6 +148,31 @@ class OpusPool:
                 continue
             return handle
         return None
+
+
+def prepare_host_pool(directory: Path, aliases: list[Path], *, capacity: int = DEFAULT_OPUS_HOST_SHARE) -> None:
+    """Provision one host's inodes into existing app-specific extraMount roots.
+
+    Hard links preserve flock exclusion across different node-visible paths.
+    Existing independent files and cross-filesystem aliases fail closed; live
+    files are never replaced. Use a shared writable umask for the worker UID.
+    """
+    pool = OpusPool(directory, capacity)
+    handle = pool.try_acquire()  # Also validates immutable capacity metadata.
+    if handle is not None:
+        handle.close()
+    names = ["capacity", *(f"slot-{slot}.lock" for slot in range(capacity))]
+    for name in names[1:]:
+        (directory / name).touch(exist_ok=True)
+    for alias in aliases:
+        alias.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            source, destination = directory / name, alias / name
+            try:
+                os.link(source, destination)
+            except FileExistsError:
+                if not source.samefile(destination):
+                    raise ValueError(f"Opus pool alias uses a different inode: {destination}") from None
 
 
 def _now() -> datetime:
@@ -223,7 +286,8 @@ class ProviderCapacity:
         root = Path(directory).resolve()
         if workspace is not None and root.is_relative_to(workspace.resolve()):
             raise self.exhausted("Opus pool must be outside the agent workspace", kind="concurrency")
-        pool = OpusPool(root, int(self.environment.get("SDO_OPUS_MAX_SESSIONS", "8")))
+        allocation = OpusPoolAllocation.from_environment(self.environment)
+        pool = OpusPool(root, allocation.capacity, create=allocation.mode != "per_host")
         try:
             handle = pool.try_acquire()
             if handle is None:

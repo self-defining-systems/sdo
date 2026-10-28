@@ -164,7 +164,7 @@ func (b *Broker) mergeDiverged(ctx context.Context, local, remote string) (strin
 		peer[path] = true
 	}
 	for _, path := range nulPaths(ours) {
-		if peer[path] && path != layout.PlaybookIndexFile {
+		if path != layout.PlaybookIndexFile && peer[path] {
 			side := b.upstream.Branch + "-unmerged-" + local[:12]
 			if err := b.pushRef(ctx, b.target, local, side); err != nil {
 				b.upstreamUnavailable("preserve diverged memory", err)
@@ -186,22 +186,25 @@ func (b *Broker) mergeDiverged(ctx context.Context, local, remote string) (strin
 	}
 	message := fmt.Sprintf("sdo(sync): merge accepted memory %s\n\nSDO-Actor: controller\nSDO-Phase: sync", local[:12])
 	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "merge", "--no-ff", "--no-commit", "--quiet", local); err != nil {
-		unmerged, inspectErr := runGit(ctx, stage, "diff", "--name-only", "--diff-filter=U", "-z")
-		if inspectErr != nil || len(nulPaths(unmerged)) != 1 || nulPaths(unmerged)[0] != layout.PlaybookIndexFile {
+		unmerged, listErr := runGit(ctx, stage, "diff", "--name-only", "--diff-filter=U", "-z")
+		if listErr != nil {
+			return "", listErr
+		}
+		paths := nulPaths(unmerged)
+		if len(paths) != 1 || paths[0] != layout.PlaybookIndexFile {
 			return "", fmt.Errorf("merge diverged accepted memory: %w", err)
 		}
-		if _, err := runGit(ctx, stage, "checkout", "--ours", "--", layout.PlaybookIndexFile); err != nil {
-			return "", err
-		}
 	}
+	// The index is derived from the combined playbooks, just as it is when a
+	// concurrent local proposal is replayed. It is never authored conflict data.
 	if _, err := layout.WritePlaybookIndex(stage); err != nil {
-		return "", fmt.Errorf("regenerate shared playbook index: %w", err)
+		return "", fmt.Errorf("regenerate upstream playbook index: %w", err)
 	}
-	if _, err := runGit(ctx, stage, "add", "-A"); err != nil {
+	if _, err := runGit(ctx, stage, "add", "--all", "--", "."); err != nil {
 		return "", err
 	}
 	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "-m", message); err != nil {
-		return "", err
+		return "", fmt.Errorf("commit diverged accepted memory: %w", err)
 	}
 	merged, err := gitText(ctx, stage, "rev-parse", "HEAD")
 	if err != nil {
