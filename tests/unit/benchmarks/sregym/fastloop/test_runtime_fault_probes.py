@@ -751,13 +751,14 @@ def test_every_kafka_cli_observation_starts_without_the_broker_jvm_options(tmp_p
         script.chmod(0o755)
     kafka_operations = [operation for operation, script in _EXEC_SCRIPTS.items() if "/opt/kafka/bin/" in script]
     assert {"kafka_offsets", "kafka_progress"} <= set(kafka_operations)
+    captured = []
+
+    def run(command, **kwargs):
+        captured.append(command)
+        return subprocess.CompletedProcess(command, 0, "")
+
     for operation in kafka_operations:
-        captured = []
-
-        def run(command, **kwargs):
-            captured.append(command)
-            return subprocess.CompletedProcess(command, 0, "")
-
+        captured.clear()
         KubectlObservationTransport(namespace="app", run=run)(ReadOnlyObservation(operation, "kafka-pod", "kafka"))
         script = captured[0][captured[0].index("-c", 10) + 1].replace("/opt/kafka/bin/", f"{tools}/")
         completed = subprocess.run(
