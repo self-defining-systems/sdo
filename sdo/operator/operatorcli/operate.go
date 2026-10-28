@@ -58,6 +58,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	model := flags.String("model", "", "agent model")
 	provider := flags.String("agent-provider", "codex", "agent provider")
+	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
 	worktreeRoot := flags.String("worktree-root", "", "broker proposal and ledger root")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "read-only agent registration ConfigMap")
@@ -176,7 +177,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, ValidatorImage: *validatorImage, RepositoryPVC: *repositoryPVC,
-			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider,
+			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,

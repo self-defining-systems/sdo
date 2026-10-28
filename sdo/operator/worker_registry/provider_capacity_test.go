@@ -36,7 +36,7 @@ func TestProviderCapacityRefusesPartialMountConfiguration(t *testing.T) {
 func TestAgentEnvironmentCarriesSharedCapacityForEveryRole(t *testing.T) {
 	t.Setenv("SDO_OPUS_POOL_NFS_SERVER", "server")
 	t.Setenv("SDO_OPUS_POOL_NFS_PATH", "/pool")
-	env, err := AgentEnvironment("claude", "opus")
+	env, err := AgentEnvironment("claude", "opus", "medium")
 	if err != nil {
 		t.Fatal(err)
 	}

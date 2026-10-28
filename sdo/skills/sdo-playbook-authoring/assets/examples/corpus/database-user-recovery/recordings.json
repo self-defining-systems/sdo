@@ -1,0 +1,149 @@
+[
+ {
+  "method": "DatabaseUsers",
+  "arguments": [
+   {
+    "engine": "mongodb",
+    "pod": {
+     "api_version": "v1",
+     "kind": "Pod",
+     "namespace": "demo",
+     "name": "mongo-app"
+    },
+    "container": "mongo",
+    "database": "app",
+    "auth": {
+     "database": "admin",
+     "username": {
+      "env": "MONGO_INITDB_ROOT_USERNAME"
+     },
+     "password": {
+      "env": "MONGO_INITDB_ROOT_PASSWORD"
+     }
+    }
+   }
+  ],
+  "result": [
+   {
+    "name": "root",
+    "roles": [
+     {
+      "database": "admin",
+      "name": "root"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "phase": "fixed",
+  "method": "DatabaseUsers",
+  "arguments": [
+   {
+    "engine": "mongodb",
+    "pod": {
+     "api_version": "v1",
+     "kind": "Pod",
+     "namespace": "demo",
+     "name": "mongo-app"
+    },
+    "container": "mongo",
+    "database": "app",
+    "auth": {
+     "database": "admin",
+     "username": {
+      "env": "MONGO_INITDB_ROOT_USERNAME"
+     },
+     "password": {
+      "env": "MONGO_INITDB_ROOT_PASSWORD"
+     }
+    }
+   }
+  ],
+  "result": [
+   {
+    "name": "root",
+    "roles": [
+     {
+      "database": "admin",
+      "name": "root"
+     }
+    ]
+   },
+   {
+    "name": "app",
+    "roles": [
+     {
+      "database": "app",
+      "name": "readWrite"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "phase": "healthy",
+  "method": "DatabaseUsers",
+  "arguments": [
+   {
+    "engine": "mongodb",
+    "pod": {
+     "api_version": "v1",
+     "kind": "Pod",
+     "namespace": "demo",
+     "name": "mongo-app"
+    },
+    "container": "mongo",
+    "database": "app",
+    "auth": {
+     "database": "admin",
+     "username": {
+      "env": "MONGO_INITDB_ROOT_USERNAME"
+     },
+     "password": {
+      "env": "MONGO_INITDB_ROOT_PASSWORD"
+     }
+    }
+   }
+  ],
+  "result": [
+   {
+    "name": "root",
+    "roles": [
+     {
+      "database": "admin",
+      "name": "root"
+     }
+    ]
+   },
+   {
+    "name": "app",
+    "roles": [
+     {
+      "database": "app",
+      "name": "readWrite"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "method": "RepairReceipt",
+  "arguments": {},
+  "result": {
+   "id": "example-act-3",
+   "incident_id": "worked-example",
+   "success": true,
+   "started_at": "2026-01-01T00:00:30Z",
+   "completed_at": "2026-01-01T00:00:31Z",
+   "resources": [
+    {
+     "api_version": "v1",
+     "kind": "Pod",
+     "namespace": "demo",
+     "name": "mongo-app"
+    }
+   ]
+  }
+ }
+]

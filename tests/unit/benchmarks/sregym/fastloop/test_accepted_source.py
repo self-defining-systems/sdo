@@ -261,18 +261,6 @@ def test_hotel_bootstrap_source_matches_harness_and_remains_restorable(
         assert restored == accepted[name]
 
 
-def test_no_caller_keys_manifests_by_the_renamed_application() -> None:
-    offenders = [
-        f"{path.relative_to(ROOT)}:{node.lineno}"
-        for path in (BENCHMARK / "fastloop").rglob("*.py")
-        for node in ast.walk(ast.parse(path.read_text()))
-        if isinstance(node, ast.Call)
-        and getattr(node.func, "id", "") == "manifest_paths_for"
-        and any(isinstance(a, ast.Attribute) and a.attr == "application" for a in node.args)
-    ]
-    assert offenders == []
-
-
 def test_plain_manifests_also_use_the_production_renderer(tmp_path, monkeypatch):
     from benchmarks.sregym.fastloop import accepted_source
 
@@ -297,3 +285,15 @@ def test_plain_manifests_also_use_the_production_renderer(tmp_path, monkeypatch)
             },
         )
     ]
+
+
+def test_no_caller_keys_manifests_by_the_renamed_application() -> None:
+    offenders = [
+        f"{path.relative_to(ROOT)}:{node.lineno}"
+        for path in (BENCHMARK / "fastloop").rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "manifest_paths_for"
+        and any(isinstance(a, ast.Attribute) and a.attr == "application" for a in node.args)
+    ]
+    assert offenders == []

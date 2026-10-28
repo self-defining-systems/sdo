@@ -34,6 +34,8 @@ var Watch = sdk.WatchKind{ ... }
 func BuildHTTPRequest(ctx context.Context, baseURL string, request Request) (*http.Request, error)
 func CheckCatalog(ctx context.Context, catalog Catalog) []error
 func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) error
+func DefaultLatencyNote(id string) string
+func DefaultLatencyScenarios(workloads []Workload) []string
 func FromSeedPair(key string, count int, first func(index int) string, ...) (Param, Param)
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, ...) (sdk.Finding, bool)
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector

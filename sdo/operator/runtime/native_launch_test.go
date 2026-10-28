@@ -181,11 +181,11 @@ func TestNativeReflectionExecutorsCarryConfiguredStorageAndCredentials(t *testin
 }
 
 func TestWithAgentEnvironmentOverridesResponderEnv(t *testing.T) {
-	merged, err := withAgentEnvironment(map[string]string{"SDO_AGENT_PROVIDER": "codex", "KEEP": "1"}, &contracts.ControllerConfig{ResponderBackend: "claude", ResponderModel: "m"})
+	merged, err := withAgentEnvironment(map[string]string{"SDO_AGENT_PROVIDER": "codex", "SDO_AGENT_EFFORT": "high", "KEEP": "1"}, &contracts.ControllerConfig{ResponderBackend: "claude", ResponderModel: "m", AgentEffort: "medium"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if merged["SDO_AGENT_PROVIDER"] != "claude" || merged["SDO_RESPONDER_MODEL"] != "m" || merged["KEEP"] != "1" {
+	if merged["SDO_AGENT_PROVIDER"] != "claude" || merged["SDO_RESPONDER_MODEL"] != "m" || merged["SDO_AGENT_EFFORT"] != "medium" || merged["KEEP"] != "1" {
 		t.Fatalf("launch config must be authoritative: %v", merged)
 	}
 	if untouched, err := withAgentEnvironment(map[string]string{"A": "b"}, nil); err != nil || untouched["A"] != "b" {

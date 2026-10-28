@@ -35,6 +35,12 @@ type IncidentBroker interface {
 	AcknowledgeClosure(context.Context, ClosureReceipt) error
 }
 
+// revisionBoundIncidentBroker is the native workspace boundary. Other embedded
+// transports may retain their own workspace preparation implementation.
+type revisionBoundIncidentBroker interface {
+	PrepareIncidentAt(context.Context, string, string) (IncidentWorkspace, error)
+}
+
 type workspaceCompletion struct {
 	workspace IncidentWorkspace
 	err       error

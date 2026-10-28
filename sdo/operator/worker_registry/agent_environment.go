@@ -1,6 +1,9 @@
 package worker_registry
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // ProviderEnvironment names the variable that selects a worker's agent provider.
 // Workers default to Codex when it is absent, so a configured provider must
@@ -11,17 +14,32 @@ const ProviderEnvironment = "SDO_AGENT_PROVIDER"
 // names the same set for the Python workers; a test keeps the two equal.
 var ModelEnvironments = []string{"SDO_RESPONDER_MODEL", "SDO_REFLECTION_MODEL", "SDO_LIFECYCLE_MODEL", "SDO_DEPLOYMENT_MODEL"}
 
-// AgentEnvironment is the provider and model a controller was configured with,
-// as the environment every agent worker Job reads. An unconfigured provider adds
-// nothing; an unknown one is an error.
-func AgentEnvironment(provider, model string) (map[string]string, error) {
+// EffortEnvironment names the variable that sets the reasoning effort of every
+// agent worker (deployer, health judge, responder, reflection).
+const EffortEnvironment = "SDO_AGENT_EFFORT"
+
+// AgentEfforts are the efforts a worker accepts; sdo/contracts/agent_env.json
+// names the same list for the Python workers; a test keeps the two equal.
+var AgentEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+// AgentEnvironment is the provider, model and effort a controller was configured
+// with, as the environment every agent worker Job reads. An unconfigured provider
+// adds nothing; an unknown provider or effort is an error, so no worker runs at an
+// effort other than the configured one.
+func AgentEnvironment(provider, model, effort string) (map[string]string, error) {
+	if effort != "" && !slices.Contains(AgentEfforts, effort) {
+		return nil, fmt.Errorf("unsupported agent effort %q: must be one of %v", effort, AgentEfforts)
+	}
+	environment := ProviderCapacityEnvironment()
+	if effort != "" {
+		environment[EffortEnvironment] = effort
+	}
 	if provider == "" {
-		return ProviderCapacityEnvironment(), nil
+		return environment, nil
 	}
 	if provider != "codex" && provider != "claude" {
 		return nil, fmt.Errorf("unsupported responder backend %q: must be codex or claude", provider)
 	}
-	environment := ProviderCapacityEnvironment()
 	environment[ProviderEnvironment] = provider
 	if model != "" {
 		for _, name := range ModelEnvironments {
