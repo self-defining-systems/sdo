@@ -155,3 +155,19 @@ func TestRawMergePatchRequiresMatchingKnownSchema(t *testing.T) {
 		})
 	}
 }
+
+func TestRawWebhookMergePatchUsesBuiltInSchema(t *testing.T) {
+	for _, kind := range []string{"validating", "mutating"} {
+		t.Run(kind, func(t *testing.T) {
+			request := program.KubernetesRequest{Method: "PATCH", Path: "/apis/admissionregistration.k8s.io/v1/" + kind + "webhookconfigurations/policy", ContentType: "application/merge-patch+json", Body: []byte(`{"metadata":{"labels":{"repaired":"true"}}}`)}
+			if err := request.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			request.Body = []byte(`{"webhooks":[{"name":"policy.example"}]}`)
+			var replacement *program.KeyedListReplacementError
+			if err := request.Validate(); !errors.As(err, &replacement) || replacement.Path != "/webhooks" {
+				t.Fatalf("webhook keyed-list replacement escaped validation: %v", err)
+			}
+		})
+	}
+}

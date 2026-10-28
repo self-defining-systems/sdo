@@ -11,6 +11,7 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -219,7 +220,7 @@ func (w WaitFor) Validate() error {
 
 var patchScheme = func() *runtime.Scheme {
 	s := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, autoscalingv2.AddToScheme, batchv1.AddToScheme, networkingv1.AddToScheme, policyv1.AddToScheme, rbacv1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, admissionv1.AddToScheme, appsv1.AddToScheme, autoscalingv2.AddToScheme, batchv1.AddToScheme, networkingv1.AddToScheme, policyv1.AddToScheme, rbacv1.AddToScheme} {
 		_ = add(s)
 	}
 	return s
