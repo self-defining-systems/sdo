@@ -53,12 +53,16 @@ def pack(
     budget: float = BUDGET,
     max_bins: int | None = None,
     max_test_seconds: float | None = None,
+    required: frozenset[str] = frozenset(),
     priority: frozenset[str] = frozenset(),
+    priority_seconds: float = 0.0,
 ) -> tuple[list[list[str]], list[str]]:
     """First-fit decreasing grows capacity, never a job deadline or placement list.
 
-    With a fixed bin count, `priority` names are admitted before all others
-    (cheapest first within each class), so cheap filler cannot displace them."""
+    With a fixed bin count, `required` names (no recorded cost yet) are admitted
+    first, then the cheapest `priority` names up to `priority_seconds`, then
+    everything else cheapest first. The share keeps guards from being displaced
+    by cheap filler without letting them displace the broad regression set."""
     check_budget([], costs, budget=budget)
     if len(names) != len(set(names)):
         raise ValueError("inventory contains duplicate names")
@@ -73,7 +77,14 @@ def pack(
         # work, never another PR job. Pack that set longest-first afterwards.
         remaining = max_bins * budget
         candidates = []
-        for name in sorted(names, key=lambda n: (n not in priority, costs.get(n, DEFAULT_COST), n)):
+        reserved: set[str] = set()
+        spent = 0.0
+        for name in sorted(priority - required, key=lambda n: (costs.get(n, DEFAULT_COST), n)):
+            if name in names and spent + costs.get(name, DEFAULT_COST) <= priority_seconds:
+                reserved.add(name)
+                spent += costs.get(name, DEFAULT_COST)
+        rank = dict.fromkeys(required, 0) | dict.fromkeys(reserved, 1)
+        for name in sorted(names, key=lambda n: (rank.get(n, 2), costs.get(n, DEFAULT_COST), n)):
             cost = costs.get(name, DEFAULT_COST)
             if cost > budget or cost > remaining or (max_test_seconds is not None and cost > max_test_seconds):
                 nightly.append(name)

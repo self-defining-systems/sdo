@@ -60,8 +60,15 @@ class Harness:
             environment.pop("SDO_LINK_CACHE", None)
         return subprocess.run(
             [
-                str(self.wrapper), str(self.linker), "-o", str(self.dir / out), "-importcfg", str(self.importcfg),
-                "-buildmode=exe", *extra, str(self.archive),
+                str(self.wrapper),
+                str(self.linker),
+                "-o",
+                str(self.dir / out),
+                "-importcfg",
+                str(self.importcfg),
+                "-buildmode=exe",
+                *extra,
+                str(self.archive),
             ],
             env=environment,
             capture_output=True,

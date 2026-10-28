@@ -45,6 +45,22 @@ Its negative controls run alongside it in `scripts/check_errors.sh`, so an unsaf
 new fixture fails the static gate. Run the whole helper suite with
 `go -C sdo/operator test -race ./internal/testutil`.
 
+## Shared links for memory and compile tests
+
+Every memory check and detector validation links the generated controller and
+its test binaries. Go caches compilation but never links, so tests that validate
+the same workspaces repeat the same multi-second link. CI and local runs share
+them through `scripts/linkcache` (a `go -toolexec` wrapper keyed by the linker
+arguments and every input archive's build ID):
+
+```bash
+eval "$(bash scripts/link_cache.sh --shell)"   # exports GOFLAGS and SDO_LINK_CACHE
+```
+
+Validation-only builds also link without debug data (`builder.lean`); the
+controller that ships keeps it. Both are exercised by `tests/unit/scripts/test_link_cache.py`
+and `sdo/operator/builder/lean_link_test.go`.
+
 ## Waiting in Go tests
 
 `Execute` polls until its context ends, so running it under a fixed short

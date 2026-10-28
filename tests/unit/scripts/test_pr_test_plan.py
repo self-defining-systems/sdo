@@ -42,15 +42,15 @@ def test_new_expensive_test_never_creates_an_extra_job():
 def test_unmeasured_tests_run_in_the_pr_instead_of_hiding_in_nightly():
     source = {
         "operator": {
-            "packages": {f"TestCheap{i}": ["pkg"] for i in range(30)} | {"TestNew": ["pkg"]},
-            "costs": {f"TestCheap{i}": 11 for i in range(30)} | {"TestNew": 15.0},
+            "packages": {f"TestCheap{i}": ["pkg"] for i in range(35)} | {"TestNew": ["pkg"]},
+            "costs": {f"TestCheap{i}": 11 for i in range(35)} | {"TestNew": 15.0},
             "unmeasured": ["TestNew"],
         }
     }
     plan = planner.build(source, {"costs": {}}, {"contract_work_seconds": 180, "contract_jobs": 2})
     assert "go:operator:TestNew" in {n for b in plan["bins"] for n in b}
     assert plan["items"]["go:operator:TestNew"]["priority"]
-    assert len(plan["nightly"]) == 30 - 21  # 360s capacity: the new test, then 21 cheap ones
+    assert len(plan["nightly"]) == 4  # 360s capacity: the new test, then 31 cheap ones
 
 
 def test_protected_guards_displace_cheaper_filler_when_capacity_is_short():
@@ -62,18 +62,19 @@ def test_protected_guards_displace_cheaper_filler_when_capacity_is_short():
         }
     }
     policy = {
-        "contract_work_seconds": 90,
+        "contract_work_seconds": 110,
         "contract_jobs": 2,
+        "protected_share": 0.6,
         "protected_patterns": [r"sdo\.dev/operator/memory"],
     }
-    plan = planner.build(source, {"costs": {}}, {**policy, "contract_work_seconds": 110})
+    plan = planner.build(source, {"costs": {}}, policy)
     admitted = {n for b in plan["bins"] for n in b}
     assert "go:operator:TestMemoryGuard" in admitted
     assert not any(n.startswith("go:operator:TestMemory") for n in plan["nightly"])
 
 
 def test_committed_profiles_keep_every_protected_guard_that_fits_in_the_pr():
-    """Cheap filler must never push a memory/broker/compile guard to nightly."""
+    """Memory, broker, compile and publication guards are never deferred while they fit."""
     import json
 
     policy = json.loads((planner.ROOT / "scripts/ci_policy.json").read_text())
@@ -83,19 +84,18 @@ def test_committed_profiles_keep_every_protected_guard_that_fits_in_the_pr():
         packages: dict[str, list[str]] = {}
         costs: dict[str, float] = {}
         for key, seconds in profile.items():
-            package, _, name = key.rpartition("/") if scope == "operator" else ("sdo.dev/operator/runtime", "", key)
+            package, name = key.rsplit("/", 1) if scope == "operator" else ("sdo.dev/operator/runtime", key)
             packages.setdefault(name, []).append(package)
             costs[name] = costs.get(name, 0) + seconds
         go[scope] = {"packages": packages, "costs": costs}
     python = json.loads((planner.ROOT / "scripts/python_integration_test_costs.json").read_text())
     plan = planner.build(go, python, policy)
-    protected = [k for k, item in plan["items"].items() if item["priority"]]
-    budget = policy["contract_work_seconds"] * policy["contract_jobs"]
-    fitting = sum(plan["items"][k]["seconds"] for k in protected if plan["items"][k]["seconds"] <= policy["contract_work_seconds"])
-    deferred = [k for k in protected if k in set(plan["nightly"])]
-    if fitting <= budget:
-        assert deferred == [] or all(plan["items"][k]["seconds"] > policy["contract_work_seconds"] for k in deferred)
-    # Otherwise the protected set itself outgrew PR capacity: shrink its cost.
-    # Deferral is then by cost only, never displaced by unprotected tests.
-    unprotected_admitted = [k for b in plan["bins"] for k in b if not plan["items"][k]["priority"]]
-    assert not (deferred and unprotected_admitted and min(plan["items"][k]["seconds"] for k in deferred) < 5)
+    protected = {k for k, item in plan["items"].items() if item["priority"]}
+    assert protected, "ci_policy.json protected_patterns select nothing"
+    capacity = policy["contract_work_seconds"] * policy["contract_jobs"]
+    total = sum(plan["items"][k]["seconds"] for k in protected)
+    deferred = sorted(protected & set(plan["nightly"]))
+    # Bin packing may strand a little capacity. Beyond that slack the guards
+    # outgrew the PR: cut their cost (shared fixtures, fewer cases), do not hide them.
+    if total <= 0.9 * capacity:
+        assert deferred == [], deferred
