@@ -19,6 +19,6 @@ def test_local_python_version_matches_every_ci_job() -> None:
     assert versions, "CI must declare its Python version"
     assert {version for _, version in versions} == {pinned}, f".python-version={pinned}, CI={versions}"
 
-    filter_step = next(step for step in workflow["jobs"]["changes"]["steps"] if step.get("id") == "filter")
-    filters = yaml.safe_load(filter_step["with"]["filters"])
-    assert ".python-version" in filters["python"], "Python pin changes must run the parity check in CI"
+    # All fixed regression jobs run on every PR, including pin-only changes.
+    assert "if" not in workflow["jobs"]["python"]
+    assert "if" not in workflow["jobs"]["contracts"]
