@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from sdo.agents.provider import AGENT_EFFORTS, DEFAULT_AGENT_EFFORT
 
 if TYPE_CHECKING:
     from sdo.contracts import ControllerObservation
@@ -48,6 +49,7 @@ class NativeInstallConfig:
     model: str
     kubeconfig: Path | None = None
     agent_provider: str = "codex"
+    agent_effort: str = DEFAULT_AGENT_EFFORT
     repair_policy: str = "recorded-actions"
     late_findings: str = "off"
     reflection_session: str = "resume"
@@ -94,6 +96,8 @@ class NativeInstallConfig:
                 raise ValueError(f"{field} must be non-empty")
         if self.agent_provider not in ("codex", "claude"):
             raise ValueError("agent_provider must be codex or claude")
+        if self.agent_effort not in AGENT_EFFORTS:
+            raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
         if self.repair_policy not in ("commit", "recorded-actions"):
             raise ValueError("repair_policy must be commit or recorded-actions")
 
@@ -140,6 +144,8 @@ class NativeInstallConfig:
             self.model,
             "--agent-provider",
             self.agent_provider,
+            "--agent-effort",
+            self.agent_effort,
         ]
         if self.kubeconfig is not None:
             args.extend(("--kubeconfig", str(self.kubeconfig)))

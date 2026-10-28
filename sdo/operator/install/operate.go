@@ -117,7 +117,7 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--responder-image", cfg.ResponderImage, "--validator-image", cfg.ValidatorImage,
 		"--repository-pvc", cfg.RepositoryPVC, "--repository-mount-path", "/workspace",
 		"--credentials-secret", cfg.CredentialsSecret, "--model", cfg.Model,
-		"--agent-provider", provider(cfg), "--worktree-root", "/workspace/worktrees",
+		"--agent-provider", provider(cfg), "--agent-effort", cfg.AgentEffort, "--worktree-root", "/workspace/worktrees",
 		"--buildkit-image", cfg.BuildKitImage, "--registry-push-secret", cfg.RegistryPushSecret,
 		"--repair-policy", defaultRepairPolicy(cfg), "--response-timeout", fmt.Sprintf("%ds", cfg.TimeoutSeconds),
 		"--verification-timeout", fmt.Sprintf("%ds", verificationTimeout(cfg)),

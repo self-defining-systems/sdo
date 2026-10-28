@@ -64,3 +64,62 @@ def test_every_role_variable_the_controller_sets_resolves_for_its_role() -> None
     environ = {"SDO_AGENT_PROVIDER": "claude", **{name: f"model-for-{role}" for role, name in MODEL_ENV.items()}}
     for role in MODEL_ENV:
         assert resolve_agent("worker", role, environ).model == f"model-for-{role}"
+
+
+def test_the_configured_effort_is_resolved_recorded_and_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    environ = {
+        "SDO_AGENT_PROVIDER": "claude",
+        "SDO_RESPONDER_MODEL": "claude-opus-5-5",
+        "SDO_AGENT_EFFORT": " High ",
+        "SDO_SESSION_DIR": str(tmp_path),
+    }
+
+    assert resolve_agent("responder", "responder", environ) == ResolvedAgent(
+        "responder", "claude", "claude-opus-5-5", "high"
+    )
+    assert capsys.readouterr().err.strip().endswith("effort=high")
+    (record,) = [json.loads(line) for line in (tmp_path / "agent-resolved.jsonl").read_text().splitlines()]
+    assert (record["provider"], record["model"], record["effort"]) == ("claude", "claude-opus-5-5", "high")
+
+
+def test_an_unconfigured_effort_is_the_one_shared_default() -> None:
+    from sdo.agents.provider import DEFAULT_AGENT_EFFORT
+
+    assert DEFAULT_AGENT_EFFORT == "medium"
+    assert resolve_agent("deployment", "deployment", {}).effort == DEFAULT_AGENT_EFFORT
+
+
+@pytest.mark.parametrize("effort", ["extreme", "", "medium-ish"])
+def test_an_unknown_configured_effort_refuses_to_run(effort: str) -> None:
+    environ = {"SDO_AGENT_EFFORT": effort}
+    if not effort:
+        assert resolve_agent("responder", "responder", environ).effort == "medium"
+        return
+    with pytest.raises(ValueError, match="unsupported agent effort"):
+        resolve_agent("responder", "responder", environ)
+
+
+def test_every_agent_turn_takes_its_effort_from_the_resolved_agent() -> None:
+    """No SDO agent may hard-code an effort: each turn's effort comes from ``resolve_agent``."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[4] / "sdo"
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text("utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.keyword) and node.arg == "reasoning_effort":
+                if isinstance(node.value, ast.Constant):
+                    offenders.append(f"{path.relative_to(root)}:{node.value.lineno} literal {node.value.value!r}")
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "run_structured_turn":
+                if not any(keyword.arg == "reasoning_effort" for keyword in node.keywords):
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno} turn without reasoning_effort")
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                positional = list(zip(reversed(node.args.args), reversed(node.args.defaults), strict=False))
+                for argument, default in [*positional, *zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True)]:
+                    if argument.arg == "reasoning_effort" and isinstance(default, ast.Constant):
+                        offenders.append(f"{path.relative_to(root)}:{node.lineno} default {default.value!r}")
+    assert offenders == []

@@ -50,27 +50,51 @@ class _PersistedModel(BaseModel):
 
 
 class TokenCounts(_PersistedModel):
-    """Provider-reported token usage; ``input_tokens`` already includes cached input."""
+    """Provider-reported token usage; ``input_tokens`` already includes cache reads and writes.
+
+    Every class a price table weights is kept, so a row prices completely for Claude (cache writes) as for Codex.
+    ``cached_input_tokens`` is cache reads only.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     input_tokens: int = Field(default=0, ge=0)
     cached_input_tokens: int = Field(default=0, ge=0)
+    cache_write_input_tokens: int = Field(default=0, ge=0)
+    cache_write_1h_input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
+    reasoning_output_tokens: int = Field(default=0, ge=0)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
 
+    def __add__(self, other: TokenCounts) -> TokenCounts:
+        return TokenCounts(
+            **{name: getattr(self, name) + getattr(other, name) for name in TokenCounts.model_fields}
+        )
+
     @classmethod
     def from_usage(cls, usage: object) -> TokenCounts:
         if not isinstance(usage, dict):
             return cls()
+
+        def count(name: str, proto: str, *fallbacks: str) -> int:
+            for key in (name, proto, *fallbacks):
+                if usage.get(key):
+                    return int(usage[key])
+            return 0
+
         return cls(
-            input_tokens=int(usage.get("input_tokens") or usage.get("inputTokens") or 0),
-            cached_input_tokens=int(usage.get("cached_input_tokens") or usage.get("cachedInputTokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or usage.get("outputTokens") or 0),
+            input_tokens=count("input_tokens", "inputTokens"),
+            cached_input_tokens=count(
+                "cache_read_input_tokens", "cacheReadInputTokens", "cached_input_tokens", "cachedInputTokens"
+            ),
+            cache_write_input_tokens=count("cache_write_input_tokens", "cacheWriteInputTokens"),
+            cache_write_1h_input_tokens=count("cache_write_1h_input_tokens", "cacheWrite1hInputTokens"),
+            output_tokens=count("output_tokens", "outputTokens"),
+            reasoning_output_tokens=count("reasoning_output_tokens", "reasoningOutputTokens"),
         )
 
 
@@ -191,7 +215,10 @@ class IncidentRecord(_PersistedModel):
     index: int = Field(ge=0)
     agent: AgentName
     problem_id: str = Field(min_length=1)
+    #: The provider, model and reasoning effort the row's agents were configured with; ``None`` on older rows.
+    provider: str | None = None
     model: str
+    reasoning_effort: str | None = None
     injection: InjectionState
     #: First detector firing (SDO only; the raw baseline has no detector).
     detected_at: AwareDatetime | None = None

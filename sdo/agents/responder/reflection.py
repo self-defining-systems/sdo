@@ -19,6 +19,7 @@ from libs.agent_cli.structured import (
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.context_output import save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
+from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.responder.credentials import SKILLS_ROOT
@@ -149,10 +150,6 @@ class StatefulResponderBackend(Protocol):
 class ResponderSessionUnavailable(RuntimeError):
     """The provider cannot continue the responder's incident session."""
 
-
-#: Reasoning effort of the incident agents (responder and reflection). A
-#: benchmark comparing SDO against a stock agent declares the same effort.
-INCIDENT_REASONING_EFFORT = "medium"
 
 #: Absolute Unix time of the controller's frozen reflection task deadline. The
 #: worker binds it from the task; the Job and any claimed standby end no earlier.
@@ -447,7 +444,7 @@ class CodexSessionBackend:
         self,
         *,
         model: str | None = None,
-        reasoning_effort: str = INCIDENT_REASONING_EFFORT,
+        reasoning_effort: str = DEFAULT_AGENT_EFFORT,
         timeout_seconds: float | None = None,
         executor: CommandExecutor | None = None,
         memory_checker: Callable[[Path, ReflectionResult, float], ValidationResult] = check_reflection_result,

@@ -96,7 +96,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		return lifecycle.Result{}, err
 	}
 	readiness.AcceptedRoot = config.ApplicationRoot
-	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model)
+	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort)
 	if err != nil {
 		return lifecycle.Result{}, err
 	}

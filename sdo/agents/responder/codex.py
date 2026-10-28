@@ -13,12 +13,11 @@ from libs.agent_cli.usage_checkpoint import UsageCheckpoint
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
-from sdo.agents.provider import MODEL_ENV, resolve_agent
+from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.incident_context import prepared_incident_data
-from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import parse_incident_result
 from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
 from sdo.agents.responder.session_turn import (
@@ -102,17 +101,17 @@ def _execute_incident(
     provider: str | None = None,
     executor: CommandExecutor | None = None,
 ) -> IncidentResult:
-    if provider is None:
-        try:
+    try:
+        if provider is None:
             resolved = resolve_agent("responder", "responder")
-        except ValueError as exc:
-            raise ResponderExecutionError(str(exc)) from exc
-        selected_provider, model = resolved.provider, model or resolved.model
-    else:
-        selected_provider = provider.strip().lower()
-        if selected_provider not in AGENT_PROVIDERS:
-            raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
-        model = model or os.getenv(MODEL_ENV["responder"]) or None
+            selected_provider, model, effort = resolved.provider, model or resolved.model, resolved.effort
+        else:
+            selected_provider = provider.strip().lower()
+            if selected_provider not in AGENT_PROVIDERS:
+                raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
+            model, effort = model or os.getenv(MODEL_ENV["responder"]) or None, agent_effort()
+    except ValueError as exc:
+        raise ResponderExecutionError(str(exc)) from exc
     prompt = _responder_prompt(request, incident_data=incident_data)
     try:
         recovery = open_recovery(request.incident_id, selected_provider)
@@ -155,7 +154,7 @@ def _execute_incident(
                 cwd=request.repository_worktree,
                 access="danger-full-access",
                 model=model,
-                reasoning_effort=INCIDENT_REASONING_EFFORT,
+                reasoning_effort=effort,
                 timeout_seconds=recovery.remaining_seconds() if recovery is not None else None,
                 resume_session_id=resume_session_id,
                 executor=executor,

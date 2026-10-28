@@ -153,6 +153,15 @@ class IncidentAgent(Protocol):
     def close(self) -> None: ...
 
 
+def _model_setting(agent: IncidentAgent) -> dict[str, str | None]:
+    """The provider, model and effort a row records; an agent without a provider or effort setting records ``None``."""
+    return {
+        "provider": getattr(agent, "provider", None),
+        "model": agent.model,
+        "reasoning_effort": getattr(agent, "reasoning_effort", None),
+    }
+
+
 class DiagnosisGrader(Protocol):
     def grade(self, problem_ids: tuple[str, ...], diagnosis: str) -> DiagnosisGrade: ...
 
@@ -526,7 +535,7 @@ def _run_one(
                 index=index,
                 agent=agent.name,
                 problem_id=problem_id,
-                model=agent.model,
+                **_model_setting(agent),
                 injection=Injected(started_at=windows[0].started_at, finished_at=windows[0].finished_at),
                 oracle=oracle,
                 diagnosis_grade=diagnosis_grade,
@@ -564,7 +573,7 @@ def _run_one(
             index=index,
             agent=agent.name,
             problem_id=problem_id,
-            model=agent.model,
+            **_model_setting(agent),
             injection=_injection_state(windows, attempted=injection_attempted),
             fault_components=getattr(driver, "last_components", []),
             infra_error=exc.infra_error,
@@ -654,7 +663,7 @@ def _run_one(
         index=index,
         agent=agent.name,
         problem_id=problem_id,
-        model=agent.model,
+        **_model_setting(agent),
         injection=_injection_state(windows, attempted=injection_attempted),
         fault_components=getattr(driver, "last_components", []),
         infra_error=infra_error,

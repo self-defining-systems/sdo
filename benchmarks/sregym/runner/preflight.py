@@ -121,7 +121,7 @@ class ModelPolicy:
     judge use only Codex gpt-6-luna; the Codex baselines use gpt-6-luna; the
     SREGym judge is only ``codex-gpt-6-luna`` at ``xhigh``. ``agent_effort`` is
     the effort SDO pins its incident agents to in code
-    (``sdo.agents.responder.INCIDENT_REASONING_EFFORT``; a test keeps
+    (``sdo.agents.provider.DEFAULT_AGENT_EFFORT``; a test keeps
     the two equal), so every compared arm declares it.
     """
 
