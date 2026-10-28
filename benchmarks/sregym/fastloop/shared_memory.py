@@ -431,10 +431,9 @@ def prepare_shared_lanes(plan: ParallelPlan, report: Path) -> None:
                 "--no-checkpoints",
                 "--timeout",
                 str(plan.timeout_seconds),
+                *plan.worker_arguments(),
             ]
         )
-        if plan.agent_registrations:
-            args.agent_registrations = plan.agent_registrations.resolve()
         directory = environment.run_dir / "parallel-setup" / plan.run_id
         directory.mkdir(parents=True, exist_ok=True)
         with lane_environment(environment), cli._worker(environment) as worker:

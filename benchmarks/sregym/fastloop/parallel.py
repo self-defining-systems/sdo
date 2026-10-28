@@ -9,7 +9,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path  # noqa: TC003 - Pydantic resolves this annotation at runtime.
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -33,6 +33,15 @@ class ParallelPlan(BaseModel):
     encounters: list[Encounter] = Field(min_length=1)
     timeout_seconds: int = Field(default=3600, gt=0)
     agent_registrations: Path | None = None
+    provider: Literal["codex", "claude"] = "codex"
+    model: str = Field(default="gpt-6-luna", min_length=1)
+
+    def worker_arguments(self) -> list[str]:
+        """One worker configuration for admission and every encounter in the proof."""
+        arguments = ["--provider", self.provider, "--model", self.model]
+        if self.agent_registrations:
+            arguments.extend(["--agent-registrations", str(self.agent_registrations.resolve())])
+        return arguments
 
     @model_validator(mode="after")
     def distinct_lanes(self) -> Self:
@@ -111,8 +120,7 @@ def execute_lane(
         "--cleanup-passes",
         "2",
     ]
-    if plan.agent_registrations:
-        command.extend(["--agent-registrations", str(plan.agent_registrations.resolve())])
+    command.extend(plan.worker_arguments())
     jobs = max(1, 8 // len(plan.lanes))
     child_environment = {
         **os.environ,

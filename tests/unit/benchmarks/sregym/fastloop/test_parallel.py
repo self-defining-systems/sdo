@@ -152,12 +152,13 @@ def test_parallel_prepare_runs_before_any_lane_preflight(monkeypatch, tmp_path):
     assert calls == ["prepare", "run"]
 
 
-def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monkeypatch, tmp_path):
+@pytest.mark.parametrize(("provider", "model"), [("codex", "gpt-6-luna"), ("claude", "claude-sonnet-5-5")])
+def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monkeypatch, tmp_path, provider, model):
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
     from benchmarks.sregym.fastloop.parallel import execute_lane
     from benchmarks.sregym.fastloop.records import write_records
 
-    selected = plan(tmp_path)
+    selected = ParallelPlan(**{**plan(tmp_path).model_dump(), "provider": provider, "model": model})
     for name, run_dir in selected.lanes.items():
         FastloopEnvironment(
             run_dir=run_dir,
@@ -172,6 +173,10 @@ def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monk
     monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", "/wrong-lane")
 
     def command(argv, **kwargs):
+        from benchmarks.sregym.fastloop.cli import build_parser
+
+        args = build_parser().parse_args(argv[3:])
+        assert (args.provider, args.model) == (provider, model)
         assert kwargs["env"]["SREGYM_BASE_KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["GOMAXPROCS"] == "4"
@@ -276,3 +281,60 @@ def test_two_scripted_lanes_use_real_loop_grading_and_paused_recovery(tmp_path):
     for name in selected.lanes:
         assert events[name][:6] == ["inject", "closure", "oracle", "learn", "pause", "recover"]
     assert all(row.memory_before_commit == row.memory_after_commit for row in rows)
+
+
+@pytest.mark.parametrize(("provider", "model"), [("codex", "gpt-6-luna"), ("claude", "claude-sonnet-5-5")])
+def test_parallel_prepare_passes_plan_model_to_real_run_parser(monkeypatch, tmp_path, provider, model):
+    from contextlib import nullcontext
+
+    from benchmarks.sregym.fastloop import cli, shared_memory
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    selected = ParallelPlan(**{**plan(tmp_path).model_dump(), "provider": provider, "model": model})
+    for name, run_dir in selected.lanes.items():
+        FastloopEnvironment(
+            run_dir=run_dir,
+            cluster=name,
+            kubeconfig=run_dir / "config",
+            namespace="app",
+            application=f"app-{name}",
+            workspace=run_dir / "application",
+            sregym_dir=tmp_path / "sregym",
+            private_tmp=run_dir / "tmp",
+            parallel_root=tmp_path,
+        ).save()
+    monkeypatch.setattr(shared_memory, "lane_nodes", lambda *_: [])
+    monkeypatch.setattr(shared_memory, "repository_volume_path", lambda *_: "/synthetic")
+    monkeypatch.setattr(cli, "_worker", lambda *_: nullcontext(object()))
+    monkeypatch.setattr(cli, "check_host_capacity", lambda *_: None)
+
+    class Prepared(Exception):
+        pass
+
+    def agent(args, *_args, **_kwargs):
+        assert (args.provider, args.model) == (provider, model)
+        raise Prepared
+
+    monkeypatch.setattr(cli, "_sdo_agent", agent)
+    with pytest.raises(Prepared):
+        shared_memory.prepare_shared_lanes(selected, tmp_path / "attachment.json")
+
+
+@pytest.mark.parametrize("fields", [{"provider": "unknown"}, {"model": ""}])
+def test_parallel_plan_rejects_invalid_worker_settings(tmp_path, fields):
+    with pytest.raises(ValueError, match="provider|model"):
+        ParallelPlan(**{**plan(tmp_path).model_dump(), **fields})
+
+
+def test_parallel_plan_defaults_and_worker_registration_round_trip(tmp_path):
+    selected = plan(tmp_path)
+    assert (selected.provider, selected.model) == ("codex", "gpt-6-luna")
+    registrations = tmp_path / "registrations"
+    selected = ParallelPlan(**{**selected.model_dump(), "agent_registrations": registrations})
+    restored = ParallelPlan.model_validate_json(selected.model_dump_json())
+    from benchmarks.sregym.fastloop.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["run", "--agent", "sdo", "--run-dir", str(tmp_path), *restored.worker_arguments()]
+    )
+    assert (args.provider, args.model, args.agent_registrations) == ("codex", "gpt-6-luna", registrations)
