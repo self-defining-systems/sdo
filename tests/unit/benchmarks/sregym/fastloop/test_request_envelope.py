@@ -294,8 +294,14 @@ def test_native_broker_entrypoint_rejects_oversized_request(tmp_path: Path, repl
     assert f"dispatch request exceeds {NATIVE_REQUEST_BYTES} bytes" in completed.stderr
 
 
-def test_oversized_reflection_edits_still_publish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Benchmark evidence limits never discard a finished production reflection."""
+@pytest.mark.parametrize(
+    ("cause", "reason"),
+    [("oversized", "32 MiB"), ("symlink", "symlink"), ("unknown-base", "returned non-zero exit status")],
+)
+def test_unrecordable_reflection_edits_still_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cause: str, reason: str
+) -> None:
+    """No benchmark recording failure discards a finished production reflection."""
     checkout = tmp_path / "accepted"
     checkout.mkdir()
     (checkout / "README.md").write_text("Synthetic accepted source.\n")
@@ -306,7 +312,7 @@ def test_oversized_reflection_edits_still_publish(tmp_path: Path, monkeypatch: p
     ):
         subprocess.run(["git", "-C", str(checkout), *args], check=True)
     base = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
-    wire = to_canonical_json(reflection_task(checkout, base))
+    wire = to_canonical_json(reflection_task(checkout, "0" * 40 if cause == "unknown-base" else base))
     receipt = tmp_path / "receipt"
     session = receipt / "sdo_runtime/sessions/synthetic"
     task_path = tmp_path / "task.json"
@@ -331,9 +337,12 @@ def test_oversized_reflection_edits_still_publish(tmp_path: Path, monkeypatch: p
 
     class Reflector:
         def resume(self, **_: object) -> ReflectionTurn:
-            # A sparse file reports a size beyond every benchmark evidence limit.
-            with (checkout / "oversized.bin").open("wb") as stream:
-                stream.truncate(64 << 20)
+            if cause == "oversized":
+                # A sparse file reports a size beyond every benchmark evidence limit.
+                with (checkout / "oversized.bin").open("wb") as stream:
+                    stream.truncate(64 << 20)
+            elif cause == "symlink":
+                (checkout / "linked").symlink_to(tmp_path, target_is_directory=True)
             return ReflectionTurn(
                 summary="Synthetic oversized edit set",
                 learning_decision="no_change",
@@ -356,6 +365,6 @@ def test_oversized_reflection_edits_still_publish(tmp_path: Path, monkeypatch: p
     assert checkpoint.result == published[0]
     assert checkpoint.file_edits is None
     assert checkpoint.unrecorded_file_edits is not None
-    assert "32 MiB" in checkpoint.unrecorded_file_edits
+    assert reason in checkpoint.unrecorded_file_edits
     with pytest.raises(replay.CheckpointError, match="not replayable: file edits not recorded"):
         replay.replay_broker_result(checkpoint, source=checkout, operator_root=ROOT / "sdo/operator")
