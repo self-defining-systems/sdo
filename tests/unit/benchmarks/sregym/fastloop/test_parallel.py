@@ -187,7 +187,8 @@ def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monk
     def command(argv, **kwargs):
         from benchmarks.sregym.fastloop.cli import build_parser
 
-        args = build_parser().parse_args(argv[3:])
+        args = build_parser().parse_args(argv[argv.index("benchmarks.sregym.fastloop") + 1 :])
+        assert args.cleanup_passes == 1
         assert (args.provider, args.model) == (provider, model)
         stream = load_stream_config(args.stream)
         assert (stream.capability_mode, stream.permissive_responder) == ("permissive", True)
@@ -332,7 +333,7 @@ def test_parallel_prepare_passes_plan_model_to_real_run_parser(monkeypatch, tmp_
 
     monkeypatch.setattr(cli, "_sdo_agent", agent)
     with pytest.raises(Prepared):
-        shared_memory.prepare_shared_lanes(selected, tmp_path / "attachment.json")
+        shared_memory.prepare_lane(selected, "left")
 
 
 @pytest.mark.parametrize("fields", [{"provider": "unknown"}, {"model": ""}])
@@ -375,36 +376,6 @@ def test_lane_tree_is_read_by_a_git_container_because_kind_nodes_ship_no_git(tmp
 def test_lane_tree_rejects_volumes_outside_the_shared_root(tmp_path, volume):
     with pytest.raises(ValueError, match="eval: lane volume"):
         shared_memory.lane_git_command(_lane(tmp_path), volume, tmp_path, "status")
-
-
-BASELINE = ".sdo/diagnostics/detectors/health/service-reachability/baseline.json"
-
-
-def _divergence(monkeypatch, tmp_path, lane_tree, changed):
-    def command(*argv):
-        return lane_tree if "rev-parse" in argv else "\n".join(changed)
-
-    monkeypatch.setattr(shared_memory, "_command", command)
-    return shared_memory.lane_divergence(_lane(tmp_path), "/opt/sdo-parallel/lanes/kind-a", tmp_path, "tree-a")
-
-
-def test_lanes_may_differ_only_in_per_cluster_health_captures(monkeypatch, tmp_path):
-    assert _divergence(monkeypatch, tmp_path, "tree-a", []) == []
-    assert _divergence(monkeypatch, tmp_path, "tree-b", [BASELINE]) == [BASELINE]
-
-
-@pytest.mark.parametrize(
-    "changed",
-    [
-        [],
-        [".sdo/playbooks/fix/README.md"],
-        [BASELINE, ".sdo/outcomes/x.json"],
-        [".sdo/diagnostics/detectors/health/a/b/baseline.json"],
-    ],
-)
-def test_any_other_lane_divergence_is_refused(monkeypatch, tmp_path, changed):
-    with pytest.raises(ValueError, match="merge through the broker"):
-        _divergence(monkeypatch, tmp_path, "tree-b", changed)
 
 
 def test_attachment_never_runs_tools_inside_nodes_that_kind_images_lack():

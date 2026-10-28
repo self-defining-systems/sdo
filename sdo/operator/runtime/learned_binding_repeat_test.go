@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/runtime/jitview"
+	"slices"
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"

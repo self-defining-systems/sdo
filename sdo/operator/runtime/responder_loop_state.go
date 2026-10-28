@@ -26,6 +26,7 @@ type responderToolState struct {
 	SourceCommit     string
 	FailureSignals   []string
 	Batches          int
+	LoopOpen         bool
 	ApplySeq         int
 	MaxBatches       int
 }
@@ -34,7 +35,7 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	if l.saveToolState == nil {
 		return nil
 	}
-	payload, err := json.Marshal(responderToolState{StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: l.applicationRepairsLocked(), Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
+	payload, err := json.Marshal(responderToolState{StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: l.applicationRepairsLocked(), Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, LoopOpen: l.loopOpen, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -80,6 +81,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	l.menuRepairs = state.MenuRepairs
 	l.menuExecutions = state.MenuExecutions
 	l.batches = state.Batches
+	l.loopOpen = state.LoopOpen
 	l.applySeq = max(state.ApplySeq, state.Batches)
 	if state.MaxBatches > 0 && state.MaxBatches < l.MaxBatches {
 		l.MaxBatches = state.MaxBatches

@@ -155,6 +155,8 @@ type RecordingReadView struct {
     RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
     must support concurrent reads; inspect Calls only after all readers finish.
 
+func (v *RecordingReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.AdmissionWebhook, error)
+
 func (v *RecordingReadView) AlertsResult() (metrics.AlertsResult, bool)
 
 func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
@@ -228,6 +230,8 @@ type ReplayReadView struct {
     diagnoses share the view. Snapshot and Calls must remain immutable during
     use.
 
+func (v *ReplayReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.AdmissionWebhook, error)
+
 func (v *ReplayReadView) AlertsResult() (metrics.AlertsResult, bool)
 
 func (v *ReplayReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
@@ -237,8 +241,4 @@ func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, e
 func (v *ReplayReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 
 func (v *ReplayReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
-
-func (v *ReplayReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
-
-func (v *ReplayReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
 ```
