@@ -79,6 +79,8 @@ class PoolConfig(BaseModel):
     lane_memory: Literal["shared", "private"] = "shared"
     #: Host commands that deploy ``{app}`` (problem ``{problem}``) into ``{run_dir}`` for lane ``{lane}``.
     prepare_steps: list[list[str]] = Field(min_length=1)
+    #: Host commands that move an existing lane to another app (fastloop ``retire-app``); none disables redeploys.
+    redeploy_steps: list[list[str]] | None = None
     #: Native ``infra_error`` values that end a pair without its repeat and keep the lane.
     known_continue: list[str] = Field(default_factory=list)
     max_attempts: int = Field(default=3, ge=1)
@@ -322,7 +324,14 @@ class Scheduler:
             for pair in self.journal.pairs
             if pair.status == "pending"
         ]
-        for decision in place(pending, lanes, rooms, build=self.config.build, lane_cpus=self.config.lane_cpus):
+        for decision in place(
+            pending,
+            lanes,
+            rooms,
+            build=self.config.build,
+            lane_cpus=self.config.lane_cpus,
+            redeploy=self.config.redeploy_steps is not None,
+        ):
             if isinstance(decision, Run):
                 self._start_pair(decision)
             else:
@@ -365,6 +374,7 @@ class Scheduler:
         if not host.gate():
             return
         self.journal.deploys += 1
+        previous_app = ""
         if decision.lane is None:
             number = self.journal.lanes_created.get(decision.host, 0)
             self.journal.lanes_created[decision.host] = number + 1
@@ -372,8 +382,10 @@ class Scheduler:
             run_dir = self._root(decision.host) / "lanes" / lane_id
         else:
             lane_id = decision.lane
-            run_dir = self.registry.read().lane(lane_id).run_dir
+            previous = self.registry.read().lane(lane_id)
+            run_dir, previous_app = previous.run_dir, previous.app
         unit = f"pool-{self.config.run_id}-{lane_id}-d{self.journal.deploys}"
+        steps = self.config.prepare_steps if decision.lane is None else self.config.redeploy_steps or []
         self._save()
         memory = self.config.endpoints[decision.pair.app]
         values = {
@@ -383,6 +395,8 @@ class Scheduler:
             "app": decision.pair.app,
             "problem": decision.pair.problem,
             "run_dir": str(run_dir),
+            "work_root": str(self._root(decision.host)),
+            "previous_app": previous_app,
             "build": self.config.build,
             "lease": config.lease,
             "coord": str(config.coord),
@@ -396,7 +410,7 @@ class Scheduler:
             build=self.config.build,
             run_dir=run_dir,
             ready=self._ready(decision.host, unit),
-            steps=[[part.format(**values) for part in step] for step in self.config.prepare_steps],
+            steps=[[part.format(**values) for part in step] for step in steps],
             memory=memory,
         )
         host.write_text(self._spec(decision.host, unit), spec.model_dump_json(indent=2) + "\n")

@@ -38,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
     release.add_argument("--registry", type=Path, required=True)
     release.add_argument("--lane", required=True)
     release.add_argument("--note", required=True)
+    attach = commands.add_parser("attach-lane", help="deploy step: attach one prepared lane to its app's memory")
+    attach.add_argument("--run-dir", type=Path, required=True)
+    attach.add_argument("--lane", required=True)
+    attach.add_argument("--problem", required=True)
+    attach.add_argument("--accepted", type=Path, required=True, help="<app memory root>/accepted")
+    attach.add_argument("--report", type=Path, required=True)
     for verb in ("pair", "prepare"):
         worker = commands.add_parser(verb, help=f"host-side {verb} process started by the pool owner")
         worker.add_argument("--spec", type=Path, required=True)
@@ -65,7 +71,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     from benchmarks.sregym.pool import worker
 
-    if args.command == "pair":
+    if args.command == "attach-lane":
+        worker.attach_lane(args.run_dir, args.lane, args.problem, args.accepted, args.report)
+    elif args.command == "pair":
         worker.pair(PairSpec.model_validate_json(args.spec.read_text()))
     else:
         worker.prepare(DeploySpec.model_validate_json(args.spec.read_text()))

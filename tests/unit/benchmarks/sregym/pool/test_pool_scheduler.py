@@ -238,3 +238,20 @@ def test_status_line_counts(tmp_path: Path) -> None:
     assert "pairs done=4/4" in final
     assert "held=0" in final
     assert "chelan4" in final
+
+
+def test_redeploy_runs_redeploy_steps_on_the_same_lane(tmp_path: Path) -> None:
+    problems = [("p0", "hotel_reservation"), ("p1", "social_network")]
+    pool, hosts, posts = scheduler(
+        tmp_path, problems, redeploy_steps=[["retire", "{previous_app}", "{app}", "{run_dir}"]]
+    )
+    for host in hosts.values():
+        host.cores = 4 if host.name == "chelan5" else 0  # room for exactly one lane
+    assert run(pool)["done"] == 2
+    [lane] = LaneRegistry(tmp_path / "lanes.json").read().lanes
+    assert (lane.id, lane.app) == ("c5-l0", "social_network")
+    specs = [json.loads(hosts["chelan5"].files[a[a.index("--spec") + 1]]) for _, a in hosts["chelan5"].spawned]
+    deploys = [spec for spec in specs if "steps" in spec]
+    assert deploys[0]["steps"] == [["true"]]
+    assert deploys[1]["steps"] == [["retire", "hotel_reservation", "social_network", str(lane.run_dir)]]
+    assert any(post.startswith("REDEPLOY c5-l0") for post in posts)

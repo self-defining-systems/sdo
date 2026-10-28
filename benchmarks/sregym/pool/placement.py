@@ -66,13 +66,15 @@ def place(
     *,
     build: str,
     lane_cpus: float = DEFAULT_LANE_CPUS,
+    redeploy: bool = True,
 ) -> list[Run | Deploy]:
     """Place waiting pairs in stream order.
 
     1. A ready lane with the pair's app on the current build runs it.
     2. A lane already deploying an app covers one waiting pair of that app.
     3. Otherwise deploy: first on an idle lane no waiting pair can use, then a
-       new lane on an open host whose booked cores fit its coord budget. Each
+       new lane on an open host whose booked cores fit its coord budget
+       (``redeploy=False`` skips idle lanes: the run has no redeploy steps). Each
        host has at most 2 deploys in flight and 15 lanes; no heavy step starts
        on a host at or above its load gate.
     """
@@ -101,7 +103,7 @@ def place(
     order = sorted(rooms.values(), key=lambda room: (room.load1, room.name))
     for pair in uncovered:
         open_hosts = [room.name for room in order if room.open and deploying[room.name] < MAX_DEPLOYS_PER_HOST]
-        spare = next((lane for lane in idle if lane.host in open_hosts), None)
+        spare = next((lane for lane in idle if redeploy and lane.host in open_hosts), None)
         if spare is not None:
             idle.remove(spare)
             deploying[spare.host] += 1

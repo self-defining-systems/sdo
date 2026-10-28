@@ -89,3 +89,10 @@ def test_keeps_each_app_in_stream_order() -> None:
     lanes = [ready("a", "c5", "hotel")]
     decisions = place([pair(3, "hotel"), pair(7, "hotel")], lanes, [room("c5", budget=4)], build="h1")
     assert decisions == [Run(pair(3, "hotel"), "a")]
+
+
+def test_without_redeploy_steps_idle_lanes_are_never_redeployed() -> None:
+    lanes = [ready("a", "c5", "hotel")]
+    decisions = place([pair(0, "social")], lanes, [room("c5", budget=8)], build="h1", redeploy=False)
+    assert decisions == [Deploy(pair(0, "social"), "c5", lane=None)]
+    assert place([pair(0, "social")], lanes, [room("c5", budget=4)], build="h1", redeploy=False) == []

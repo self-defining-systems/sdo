@@ -128,3 +128,22 @@ def test_pair_refuses_a_lane_whose_memory_differs_from_the_run(tmp_path: Path) -
     with pytest.raises(ValueError, match="lane_memory=shared"):
         pair(spec)
     assert not spec.output.exists()
+
+
+def test_attach_lane_prepares_exactly_that_lane_into_the_app_root(tmp_path: Path) -> None:
+    from benchmarks.sregym.pool.worker import attach_lane
+
+    seen: list[tuple[ParallelPlan, Path]] = []
+    attach_lane(
+        tmp_path / "lane",
+        "c5-l3",
+        "mf__hotel_reservation__n1__s1__reliable__v_",
+        tmp_path / "memory" / "hotel_reservation" / "accepted",
+        tmp_path / "attach.json",
+        prepare_shared=lambda plan, report: seen.append((plan, report)),
+    )
+    [(plan, report)] = seen
+    assert plan.lanes == {"c5-l3": tmp_path / "lane"}
+    assert plan.accepted_repository == tmp_path / "memory" / "hotel_reservation" / "accepted"
+    assert [e.problem for e in plan.encounters] == ["mf__hotel_reservation__n1__s1__reliable__v_"]
+    assert report == tmp_path / "attach.json"

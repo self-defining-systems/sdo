@@ -6,12 +6,16 @@ import hashlib
 import json
 import os
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.pool.scheduler import Ready
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.parallel import ParallelPlan
     from benchmarks.sregym.pool.scheduler import DeploySpec, PairSpec
 
 
@@ -110,3 +114,28 @@ def private_pair(spec: PairSpec, environment: FastloopEnvironment) -> None:
     write_records(spec.output / "incidents.jsonl", load_records(path) if path.exists() else [])
     if completed.returncode:
         raise SystemExit(completed.returncode)
+
+
+def attach_lane(
+    run_dir: Path,
+    lane: str,
+    problem: str,
+    accepted: Path,
+    report: Path,
+    *,
+    prepare_shared: Callable[[ParallelPlan, Path], Any] | None = None,
+) -> None:
+    """Prepare one lane and attach it to its app's shared accepted memory (fastloop ``parallel --prepare``).
+
+    The first lane of an app clones the root's accepted repository; later lanes join it.
+    """
+    from benchmarks.sregym.fastloop.parallel import Encounter, ParallelPlan
+    from benchmarks.sregym.fastloop.shared_memory import prepare_shared_lanes
+
+    plan = ParallelPlan(
+        run_id=f"attach-{lane}",
+        accepted_repository=accepted,
+        lanes={lane: run_dir},
+        encounters=[Encounter(problem=problem, lane=lane)],
+    )
+    (prepare_shared or prepare_shared_lanes)(plan, report)
