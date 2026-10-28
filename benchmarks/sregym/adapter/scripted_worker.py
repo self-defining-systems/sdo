@@ -72,6 +72,9 @@ def _command(argv: list[str], *, timeout: int = 180) -> str:
 def _tool(*args: str) -> dict[str, Any]:
     output = _command(["sdo", *args, "--json"])
     response = json.loads(output.splitlines()[0])
+    if isinstance(response, dict) and response.get("summarized") and response.get("details_file"):
+        # Capped replies keep the complete response in the file they name.
+        response = json.loads(Path(response["details_file"]).read_text(encoding="utf-8"))
     if not isinstance(response, dict) or response.get("error"):
         raise RuntimeError(f"sdo {' '.join(args)}: {response.get('error') if isinstance(response, dict) else output}")
     return response

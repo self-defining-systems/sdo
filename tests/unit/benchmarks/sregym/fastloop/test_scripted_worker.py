@@ -570,3 +570,20 @@ def test_scripted_notes_require_eligible_learning_on_failed_closure(
     )
     assert turn.learning_decision == ("no_change" if classification == "failed" else "updated")
     assert (tmp_path / ".sdo/playbooks/verified-repair-notes/README.md").exists() == (classification == "success")
+
+
+def test_tool_reads_the_complete_response_behind_a_capped_reply(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The real context cap spills large `sdo --json` replies to a file; the scripted consumer follows it."""
+    from sdo.agents import context_output
+
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    full = {
+        "command": "source",
+        "source": {"kind": "Service", "spec": {"ports": [{"port": 80}]}, "padding": "x" * 4000},
+    }
+    envelope = context_output.cap_text(json.dumps(full), 512, json_output=True)
+    assert json.loads(envelope)["summarized"] is True
+    monkeypatch.setattr(scripted_worker, "_command", lambda *_args, **_kwargs: envelope + "\n")
+    assert scripted_worker._tool("source", "Service/app/api") == full
