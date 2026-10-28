@@ -17,7 +17,7 @@ import (
 )
 
 // DefaultStageBudget is the one owner of the automatic stage's time: the
-// checks, the single apply with its rollout wait, and the post-repair
+// checks, sequential applies with their rollout waits, and the post-repair
 // observation share it. Matches the stage could not apply or verify inside it
 // go to the agent in the stage report (skip reason "stage_budget").
 const DefaultStageBudget = 45 * time.Second
@@ -181,8 +181,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		attempted[key] = true
 	}
-	var ready []stageReady
-	for _, match := range matches {
+	// Only diagnoses that wrote nothing receive a second turn. Keep the
+	// opening order; dependencies are learned from live state, never names.
+	deferred := map[string]bool{}
+	for index := 0; index < len(matches); index++ {
+		match := matches[index]
 		if len(state.Findings) == 0 {
 			break
 		}
@@ -272,6 +275,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		before := program.RunDiagnose(ctx, diagnoser, view, bindings, loop.deadline())
 		if before.Result != program.Match {
+			if len(matches) > 1 && !deferred[key] {
+				deferred[key] = true
+				delete(attempted, key)
+				retry[key] = attempt
+				matches = append(matches, match)
+			}
 			reason := "diagnose_unavailable"
 			if before.Result == program.NoMatch {
 				reason = "diagnose_no_longer_matches"
@@ -318,10 +327,14 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		ready = append(ready, stageReady{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID})
-	}
-	if err := stage.applyMatched(ctx, loop, state, ready, remaining, save); err != nil {
-		return report, err
+		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, remaining, save); err != nil {
+			return report, err
+		}
+		// A later diagnosis must observe converged effects. An unsettled or
+		// failed application hands the remaining work to the responder.
+		if attempt.ApplyReceipt.GetRolloutPending() != nil || attempt.Error != "" {
+			break
+		}
 	}
 	// Once all opening faults have verified repairs, let the remaining health
 	// detectors' own windows roll over before handoff.
@@ -634,45 +647,30 @@ func (l *ResponderLoop) locked(fn func()) {
 	fn()
 }
 
-// stageReady is one matched, planned binding waiting for the stage's apply.
-type stageReady struct {
+// stagePlanned is one freshly diagnosed and planned binding.
+type stagePlanned struct {
 	match    stageCandidate
 	attempt  *contracts.StageMitigation
 	bindings program.Bindings
 	planID   string
 }
 
-// applyMatched sends every planned binding through one apply and one rollout
-// wait, bounded by what is left of the stage budget. The application receipt
-// is the whole application; each attempt keeps its own plan, action range,
-// diagnosis and result.
-func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop *ResponderLoop, state *IncidentState, ready []stageReady, remaining func() time.Duration, save func(bool) error) error {
-	if len(ready) == 0 {
-		return nil
-	}
+// applyMatch runs one binding through the ordinary executor lifecycle before
+// the next candidate may diagnose or plan. There is no merged stage batch.
+func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, item stagePlanned, remaining func() time.Duration, save func(bool) error) error {
 	if remaining() <= 0 {
-		for _, item := range ready {
-			item.attempt.Result, item.attempt.SkipReason = "skipped", "stage_budget"
-			recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
-		}
+		item.attempt.Result, item.attempt.SkipReason = "skipped", "stage_budget"
+		recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
 		return save(false)
 	}
-	planIDs := make([]string, 0, len(ready))
-	selected := make([]selectedPlan, 0, len(ready))
-	offset := 0
-	for _, item := range ready {
-		plan := loop.plans[item.planID]
-		count := len(plan.plan.Actions)
-		item.attempt.PlanId = item.planID
-		item.attempt.PlanActionStart, item.attempt.PlanActionCount = int32(offset), int32(count)
-		offset += count
-		// Persist intent before mutation. If interrupted, a later attempt hands this
-		// uncertainty to the agent instead of silently repeating a possible write.
-		item.attempt.Result = "apply_error"
-		item.attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
-		planIDs = append(planIDs, item.planID)
-		selected = append(selected, plan)
-	}
+	plan := loop.plans[item.planID]
+	item.attempt.PlanId = item.planID
+	item.attempt.PlanActionCount = int32(len(plan.plan.Actions))
+	// Persist intent before mutation. Interrupted writes are never replayed.
+	item.attempt.Result = "apply_error"
+	item.attempt.Error = "application interrupted before a completed receipt; inspect current state and recorded actions"
+	planIDs := []string{item.planID}
+	selected := []selectedPlan{plan}
 	if err := save(false); err != nil {
 		return err
 	}
@@ -702,7 +700,7 @@ func (stage *DeterministicResponseStage) applyMatched(ctx context.Context, loop 
 		loop.verify(ctx, selected, &applied, true)
 	}
 	updateStageFindings(state, applied)
-	for _, item := range ready {
+	{
 		attempt := item.attempt
 		attempt.Error = applied.Error
 		attempt.ApplyReceipt = receipt

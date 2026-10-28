@@ -149,7 +149,7 @@ func TestDeterministicResponseStageClearsBothFaultsWithoutAgent(t *testing.T) {
 			t.Fatalf("attempt: %v", attempt)
 		}
 	}
-	if len(loop.PlanApplications()) != 1 {
+	if len(loop.PlanApplications()) != 2 {
 		t.Fatalf("real executor not used: %v", loop.PlanApplications())
 	}
 }
@@ -234,9 +234,7 @@ func TestStageAndAgentApplicationsShareOneIDSequence(t *testing.T) {
 	}
 }
 
-// The stage sends all its matched plans in one apply with one rollout wait:
-// one round of stage work whatever the number of bindings, each binding's plan,
-// receipt range and result attributable, and the agent still has all 5 rounds.
+// Each binding has its own application and converged rollout before the next diagnosis.
 func TestDeterministicResponseStageAppliesMatchedBindingsOnce(t *testing.T) {
 	loop, state := pipelineTestLoopWithServices(t, false, "api2")
 	waits := 0
@@ -248,8 +246,8 @@ func TestDeterministicResponseStageAppliesMatchedBindingsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	applications := loop.PlanApplications()
-	if len(report.Mitigations) != 3 || len(applications) != 1 || waits != 1 {
-		t.Fatalf("want 3 attempts, 1 application, 1 rollout wait; got %d, %d, %d: %v", len(report.Mitigations), len(applications), waits, report)
+	if len(report.Mitigations) != 3 || len(applications) != 3 || waits != 3 {
+		t.Fatalf("want 3 attempts, 3 applications, 3 rollout waits; got %d, %d, %d: %v", len(report.Mitigations), len(applications), waits, report)
 	}
 	if loop.LoopsUsed() != 0 || loop.Exhausted() {
 		t.Fatalf("agent rounds spent: %d", loop.LoopsUsed())
@@ -257,13 +255,13 @@ func TestDeterministicResponseStageAppliesMatchedBindingsOnce(t *testing.T) {
 	if status := loop.Handle(context.Background(), ToolRequest{Command: "status"}); status.MitigationRoundsUsed != 0 || status.MitigationRoundsAllowed != 5 {
 		t.Fatalf("agent budget at hand-off: %+v", status)
 	}
-	planIDs, starts := map[string]bool{}, map[int32]bool{}
+	planIDs, applicationIDs := map[string]bool{}, map[string]bool{}
 	for _, attempt := range report.Mitigations {
 		receipt := attempt.ApplyReceipt
-		if attempt.Result != "applied_cleared" || receipt.GetApplicationId() != applications[0].ID || attempt.PlanId == "" || planIDs[attempt.PlanId] || attempt.PlanActionCount != 1 || starts[attempt.PlanActionStart] {
+		if attempt.Result != "applied_cleared" || receipt.GetApplicationId() == "" || applicationIDs[receipt.GetApplicationId()] || attempt.PlanId == "" || planIDs[attempt.PlanId] || attempt.PlanActionCount != 1 || attempt.PlanActionStart != 0 {
 			t.Fatalf("attempt not attributable: %v", attempt)
 		}
-		planIDs[attempt.PlanId], starts[attempt.PlanActionStart] = true, true
+		planIDs[attempt.PlanId], applicationIDs[receipt.GetApplicationId()] = true, true
 		ref, err := planActionRef(planActionState(receipt.GetPlan().GetActions()[attempt.PlanActionStart]))
 		if err != nil {
 			t.Fatal(err)
@@ -282,7 +280,7 @@ func TestDeterministicResponseStageAppliesMatchedBindingsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.PlanApplications) != 1 || len(result.PlanApplications[0].PlanIDs) != 3 || len(result.AppliedPlaybooks) != 3 || len(result.ConfirmedRootCauses) != 3 {
+	if len(result.PlanApplications) != 3 || len(result.PlanApplications[0].PlanIDs) != 1 || len(result.AppliedPlaybooks) != 3 || len(result.ConfirmedRootCauses) != 3 {
 		t.Fatalf("outcome lost a binding: applications=%v playbooks=%v causes=%v", result.PlanApplications, result.AppliedPlaybooks, result.ConfirmedRootCauses)
 	}
 }
@@ -606,5 +604,110 @@ func TestResponseStageFreshNoMatchRemovesStaleFindingsBeforeAgent(t *testing.T) 
 	}
 	if calls != 0 || len(state.Findings) != 0 || len(loop.PlanApplications()) != 0 || state.PriorStages[0].Mitigations[0].SkipReason != "diagnose_no_longer_matches" {
 		t.Fatalf("stale work was dispatched after live NoMatch: calls=%d reports=%v", calls, state.PriorStages)
+	}
+}
+
+// The dependency is expressed entirely by live diagnose, never by IDs/order.
+type pipelineDependentImageProgram struct {
+	pipelineImageProgram
+	blocked program.Result
+}
+
+func (p pipelineDependentImageProgram) Diagnose(ctx context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
+	verdict, err := p.pipelineImageProgram.Diagnose(ctx, view, b)
+	if err != nil || verdict.Result != program.Match {
+		return verdict, err
+	}
+	for _, service := range view.Services() {
+		if service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+			return program.Verdict{Result: p.blocked}, nil
+		}
+	}
+	return verdict, nil
+}
+
+func TestDeterministicResponseStageRechecksDeferredDependencies(t *testing.T) {
+	for _, blocked := range []program.Result{program.Unknown, program.NoMatch} {
+		t.Run(string(blocked), func(t *testing.T) {
+			loop, state := pipelineTestLoop(t, false)
+			dependent := pipelineDependentImageProgram{blocked: blocked}
+			registry, err := program.NewRegistry([]program.Diagnoser{dependent, pipelinePortProgram{}}, []program.Mitigator{dependent, pipelinePortProgram{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			loop.Programs = registry
+			// Opening coverage has both learned matches; the dependent program
+			// is first, but its current precondition is not yet satisfied.
+			if state.Coverage.Matches[0].PlaybookId != dependent.Spec().ID {
+				t.Fatal("fixture order")
+			}
+			report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(state.Findings) != 0 || len(loop.PlanApplications()) != 2 || len(report.Mitigations) != 2 {
+				t.Fatalf("dependency not settled: %v findings=%v", report, state.Findings)
+			}
+			for _, attempt := range report.Mitigations {
+				if attempt.Result != "applied_cleared" || !attempt.ApplyReceipt.GetVerificationPassed() {
+					t.Fatalf("unverified attempt: %v", attempt)
+				}
+			}
+		})
+	}
+}
+
+func (p pipelineDependentImageProgram) Mitigate(ctx context.Context, view program.ReadView, b program.Bindings) (program.Plan, error) {
+	verdict, err := p.Diagnose(ctx, view, b)
+	if err != nil || verdict.Result != program.Match {
+		return program.Plan{}, errors.New("precondition unmet at planning")
+	}
+	return p.pipelineImageProgram.Mitigate(ctx, view, b)
+}
+
+func TestDeterministicResponseStageDeferredDiagnosisIsBounded(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	dependent := pipelineDependentImageProgram{blocked: program.Unknown}
+	registry, err := program.NewRegistry([]program.Diagnoser{dependent, pipelineIneffectivePortProgram{}}, []program.Mitigator{dependent, pipelineIneffectivePortProgram{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.Programs = registry
+	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Mitigations) != 2 || len(loop.PlanApplications()) != 1 || report.Mitigations[0].SkipReason != "diagnose_unavailable" || len(state.Findings) != 2 {
+		t.Fatalf("unmet dependency must hand off without writes/repeated applications: %v", report)
+	}
+}
+
+// A sibling's converged effect may invalidate an opening match. Such a plan
+// must never reach the executor, even though opening coverage offered it.
+type pipelinePortWhileImageBrokenProgram struct{ pipelinePortProgram }
+
+func (p pipelinePortWhileImageBrokenProgram) Diagnose(ctx context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
+	for _, deployment := range view.Deployments() {
+		if deployment.Spec.Template.Spec.Containers[0].Image == "missing:v1" {
+			return p.pipelinePortProgram.Diagnose(ctx, view, b)
+		}
+	}
+	return program.Verdict{Result: program.NoMatch}, nil
+}
+
+func TestDeterministicResponseStageInvalidatedMatchNeverApplies(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	conditional := pipelinePortWhileImageBrokenProgram{}
+	registry, err := program.NewRegistry([]program.Diagnoser{pipelineImageProgram{}, conditional}, []program.Mitigator{pipelineImageProgram{}, conditional})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.Programs = registry
+	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loop.PlanApplications()) != 1 || len(report.Mitigations) != 2 || report.Mitigations[1].SkipReason != "diagnose_no_longer_matches" || len(state.Findings) != 1 {
+		t.Fatalf("stale plan executed: %v findings=%v", report, state.Findings)
 	}
 }

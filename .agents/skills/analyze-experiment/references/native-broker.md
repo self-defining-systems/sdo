@@ -102,9 +102,13 @@ Each mitigation identifies the accepted playbook revision, bindings, plan,
 Results distinguish `applied_cleared`, `applied_still_matching`, `rollout_failed`,
 `rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`
 (`stage_budget` means the 45 s stage budget ran out before the match was applied).
-The stage sends all its matched plans in one apply: its mitigations share one
-`apply_receipt` (same `application_id`), and `plan_action_start`/`plan_action_count`
-select each mitigation's actions in that receipt's plan. Recorded stage `apply`
+The stage applies matched bindings sequentially, re-running Diagnose on fresh
+state after the preceding application's effects converge. A nonmatching or
+unavailable diagnosis gets one deferred turn after the other candidates, within
+the same 45 s budget. Each applied mitigation has its own `apply_receipt` and
+`application_id`; `plan_action_start` is zero and `plan_action_count` covers its
+plan. Historical merged-stage runs share one application ID and use the action
+range to select each mitigation's actions. Recorded stage `apply`
 tool calls carry `"stage":true` in `request_json`; agent applies do not.
 Stage-level fingerprints describe work remaining at each handoff. These scoped
 observations never replace independent controller closure/classification.
