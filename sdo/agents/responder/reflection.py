@@ -26,7 +26,7 @@ from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
-from sdo.agents.responder.reflection_evidence import memory_view
+from sdo.agents.responder.reflection_evidence import incident_memory_snapshot, reflection_memory_view
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.responder.session_turn import (
     WrongBranchError,
@@ -173,6 +173,16 @@ class ReflectionDeadlineExceeded(RuntimeError):
     """The reflection used its whole budget before the agent returned a valid result."""
 
 
+class ReflectionCorrectionStopped(RuntimeError):
+    """A blocking check cannot be corrected safely within this dispatch."""
+
+    def __init__(
+        self, reason: Literal["unchanged_validation_failure", "validation_budget_reserved"], check: ValidationResult
+    ) -> None:
+        self.reason = reason
+        super().__init__(f"reflection memory check failed ({reason}): {check.stdout}\n{check.stderr}")
+
+
 def reflection_budget_seconds() -> float:
     """Seconds the reflection agent may use, ending before the frozen task deadline."""
     raw = os.environ.get(REFLECTION_DEADLINE_ENV)
@@ -208,7 +218,9 @@ def _logical_learning_request(
             part="reflection.instructions",
             skills_root=SKILLS_ROOT,
             branch_instruction=branch_instruction("reflection"),
-            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_view(snapshot), indent=2)),
+            memory_view_json=named_prompt(
+                "reflection.memory", json.dumps(reflection_memory_view(snapshot, outcome), indent=2)
+            ),
             outcome_commit=outcome_commit,
             outcome_json=named_prompt(
                 "reflection.outcome", json_format.MessageToJson(outcome, preserving_proto_field_name=True)
@@ -235,7 +247,9 @@ def _logical_learning_request(
         branch_instruction=branch_instruction("reflection"),
         work_section=named_prompt("reflection.cause_work", work_section),
         outcome_commit=outcome_commit,
-        memory_view_json=named_prompt("reflection.memory", json.dumps(memory_view(snapshot), indent=2)),
+        memory_view_json=named_prompt(
+            "reflection.memory", json.dumps(reflection_memory_view(snapshot, outcome), indent=2)
+        ),
         current_outcome_view_json=named_prompt(
             "reflection.outcome", json.dumps(current_outcome_view(outcome), indent=2)
         ),
@@ -256,7 +270,26 @@ def _logical_learning_request(
 def _history_section(
     outcome: OutcomeRecord, history: list[OutcomeRecord], evidence_directory: Path | None = None
 ) -> str:
-    prior = history_view(history, current_incident_id=outcome.incident_id, evidence_directory=evidence_directory)
+    detector_ids = {finding.detector_id for finding in outcome.findings}
+    playbook_ids = set(outcome.applied_playbooks) | set(outcome.confirmed_playbooks)
+    resources = {
+        (ref.kind, ref.namespace, ref.name) for cause in outcome.confirmed_root_causes for ref in cause.resources
+    }
+    relevant = [
+        record
+        for record in history
+        if (
+            any(finding.detector_id in detector_ids for finding in record.findings)
+            or playbook_ids.intersection(record.applied_playbooks)
+            or playbook_ids.intersection(record.confirmed_playbooks)
+            or any(
+                (ref.kind, ref.namespace, ref.name) in resources
+                for cause in record.confirmed_root_causes
+                for ref in cause.resources
+            )
+        )
+    ]
+    prior = history_view(relevant[-3:], current_incident_id=outcome.incident_id, evidence_directory=evidence_directory)
     if not prior:
         return render_prompt("responder", "history_section_01", part="reflection.instructions")
     return render_prompt(
@@ -337,8 +370,13 @@ class SessionReflector:
                     raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
                 # The brief replaces the responder transcript, which a resumed
                 # session would re-send on every model request.
+                scoped_closure = type(closure)()
+                scoped_closure.CopyFrom(closure)
+                scoped_closure.request.memory_snapshot.CopyFrom(
+                    incident_memory_snapshot(closure.request.memory_snapshot, outcome)
+                )
                 brief = incident_brief(
-                    closure,
+                    scoped_closure,
                     worktree=worktree,
                     detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
                     event_dependence=self.guidance == "generalize-spec",
@@ -426,11 +464,20 @@ class CodexSessionBackend:
     ) -> ReflectionTurn:
         budget = reflection_budget_seconds() if self.timeout_seconds is None else self.timeout_seconds
         deadline = time.monotonic() + budget
+        # Keep validation inside the frozen worker budget. Small explicit test or
+        # operator budgets reserve the same fraction, up to one full check.
+        validation_reserve = min(VALIDATION_TIMEOUT_SECONDS, budget / 3)
 
         def remaining() -> float:
             left = deadline - time.monotonic()
             if left <= 0:
                 raise ReflectionDeadlineExceeded(f"reflection exceeded its {budget:g}s budget")
+            return left
+
+        def agent_remaining() -> float:
+            left = remaining() - validation_reserve
+            if left <= 0:
+                raise ReflectionDeadlineExceeded("reflection validation budget reserved; no agent budget remains")
             return left
 
         turn = self._run(
@@ -439,9 +486,10 @@ class CodexSessionBackend:
                 "responder", "turn_01", part="reflection.instructions", idempotency_key=idempotency_key, prompt=prompt
             ),
             session_id=session_id,
-            timeout_seconds=budget,
+            timeout_seconds=agent_remaining(),
         )
         usage: dict[str, int | float] = {}
+        previous_failure: ValidationResult | None = None
         for attempt in range(4):
             for name, value in turn_usage(turn).items():
                 usage[name] = usage.get(name, 0) + value
@@ -452,7 +500,7 @@ class CodexSessionBackend:
                     worktree=worktree,
                     prompt=branch_correction("reflection"),
                     session_id=turn.session_id,
-                    timeout_seconds=remaining(),
+                    timeout_seconds=agent_remaining(),
                 )
                 for name, value in turn_usage(turn).items():
                     usage[name] = usage.get(name, 0) + value
@@ -470,11 +518,16 @@ class CodexSessionBackend:
                 ).with_usage(usage)
             if attempt == 3 or time.monotonic() >= deadline:
                 raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
+            if check == previous_failure:
+                raise ReflectionCorrectionStopped("unchanged_validation_failure", check)
+            if remaining() <= validation_reserve:
+                raise ReflectionCorrectionStopped("validation_budget_reserved", check)
+            previous_failure = check
             turn = self._run(
                 worktree=worktree,
                 prompt=memory_check_correction(check, idempotency_key),
                 session_id=turn.session_id,
-                timeout_seconds=remaining(),
+                timeout_seconds=agent_remaining(),
             )
         raise AssertionError("unreachable reflection validation state")
 

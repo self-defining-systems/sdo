@@ -13,6 +13,7 @@ failure context for the report returned to the same responder session.
 Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse, generalization and retirement; that skill also defines ownership and logical IDs.
 
 1. Compare the confirmed mechanism and repair with accepted playbooks using the memory principles.
+   Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps.
 2. For deterministic programs, read [program authoring](references/programs.md) before editing and the
    [generated program SDK](references/program-sdk.md) before choosing API types. The
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
@@ -41,7 +42,7 @@ Mitigation returns to accepted or observed state;
 intended-state changes are source repairs. An emergency literal is a declared parameter the responder fills
 and justifies.
 
-Before returning memory edits, run the complete memory check and resolve every diagnostic until it passes.
+Before returning memory edits, run the complete memory check and resolve blocking diagnostics; do not correct informational replay results.
 
 Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.
 

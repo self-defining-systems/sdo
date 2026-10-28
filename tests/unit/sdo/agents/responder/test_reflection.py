@@ -130,7 +130,7 @@ def test_codex_reflection_resumes_structured_session_in_incident_worktree(
     assert parse_sandbox(argv) == CodexSandboxConfig(mode="danger-full-access")
     assert argv[argv.index("--model") + 1] == "gpt-test"
     assert request.cwd == str(tmp_path.resolve())
-    assert request.timeout == 456
+    assert request.timeout == pytest.approx(304, abs=1)  # final check retains one third
 
 
 def test_claude_reflection_resumes_structured_session(tmp_path: Path, prepare_reflection_memory) -> None:
