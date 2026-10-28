@@ -6,12 +6,12 @@
     "api_version": "apps/v1",
     "kind": "Deployment",
     "namespace": "demo",
-    "name": "cart"
+    "name": "widget"
    }
   ],
   "result": {
    "changed": true,
-   "text": "spec.template.spec.containers[name=cart].resources.requests.cpu: accepted 100m, live 4"
+   "text": "spec.template.spec.containers[name=widget].resources.requests.cpu: accepted 100m, live 4"
   }
  },
  {
@@ -22,7 +22,7 @@
     "api_version": "apps/v1",
     "kind": "Deployment",
     "namespace": "demo",
-    "name": "cart"
+    "name": "widget"
    }
   ],
   "result": {
@@ -43,7 +43,7 @@
      "api_version": "apps/v1",
      "kind": "Deployment",
      "namespace": "demo",
-     "name": "cart"
+     "name": "widget"
     }
    ]
   }

@@ -4,26 +4,26 @@
   "kind": "Deployment",
   "metadata": {
    "namespace": "demo",
-   "name": "cart"
+   "name": "widget"
   },
   "spec": {
    "replicas": 1,
    "selector": {
     "matchLabels": {
-     "app": "cart"
+     "app": "widget"
     }
    },
    "template": {
     "metadata": {
      "labels": {
-      "app": "cart"
+      "app": "widget"
      }
     },
     "spec": {
      "containers": [
       {
-       "name": "cart",
-       "image": "cart:1",
+       "name": "widget",
+       "image": "widget:1",
        "resources": {
         "requests": {
          "cpu": "100m"

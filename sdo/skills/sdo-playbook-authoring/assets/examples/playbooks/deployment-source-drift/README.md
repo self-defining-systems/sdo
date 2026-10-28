@@ -7,5 +7,5 @@ description: Restore a Deployment whose live spec drifted from accepted source.
 ---
 
 Use when a detector finding binds a Deployment whose live spec differs from accepted source,
-for example an edited resource request, image or replica count. Restore it, then check the
+for example an edited CPU request, image or replica count. Restore it, then check the
 rollout finishes; a rollout that stays pending needs its Pods' scheduling evidence.

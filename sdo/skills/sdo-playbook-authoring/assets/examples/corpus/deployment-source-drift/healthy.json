@@ -6,8 +6,8 @@
    "kind": "Deployment",
    "metadata": {
     "namespace": "demo",
-    "name": "cart",
-    "uid": "cart-uid",
+    "name": "widget",
+    "uid": "widget-uid",
     "resourceVersion": "8",
     "annotations": {
      "deployment.kubernetes.io/revision": "2"
@@ -17,20 +17,20 @@
     "replicas": 1,
     "selector": {
      "matchLabels": {
-      "app": "cart"
+      "app": "widget"
      }
     },
     "template": {
      "metadata": {
       "labels": {
-       "app": "cart"
+       "app": "widget"
       }
      },
      "spec": {
       "containers": [
        {
-        "name": "cart",
-        "image": "cart:1",
+        "name": "widget",
+        "image": "widget:1",
         "resources": {
          "requests": {
           "cpu": "100m"
