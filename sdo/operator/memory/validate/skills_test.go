@@ -34,7 +34,6 @@ var internalRules = map[string]string{
 	RuleUpkeepMigration:         "only the Upkeep actor migrates schema versions",
 	RuleArchitectureAlone:       "architecture belongs to the deployer lifecycle stage",
 
-	RuleReflectionProgramRequired:  "a coverage-gap name, recorded and never refused; the skills teach saving programs",
 	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
 	RuleTrafficUndrivenEdge:        "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches driving every edge",
 }

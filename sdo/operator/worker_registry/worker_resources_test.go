@@ -2,7 +2,11 @@ package worker_registry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -99,5 +103,83 @@ func TestWorkerAdmittedWithAnotherMemoryLimitIsTypedAsRewritten(t *testing.T) {
 func TestOrdinaryWorkerFailureHasNoResourceReason(t *testing.T) {
 	if reason := (&JobFailedError{Containers: []ContainerFailure{{ContainerName: "agent", Reason: "Error", ExitCode: 1}}}).FailureReason(); reason != "" {
 		t.Fatalf("exit 1 typed as %q", reason)
+	}
+}
+
+func TestWorkerPodIdentityIsDownwardAPIBoundAndCannotBeForged(t *testing.T) {
+	task := reflectionTestTask(t)
+	client := fake.NewSimpleClientset()
+	forged := map[string]string{}
+	for _, identity := range workerIdentityEnvironment() {
+		forged[identity.Name] = "forged"
+	}
+	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t),
+		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", Environment: forged}
+	launch := &contracts.KubernetesJobLaunch{Image: "example/worker:1", Command: []string{"/worker"}}
+	name := JobName(task.TaskId)
+	if err := executor.ensureJob(context.Background(), task, launch, name, requestSource{ConfigMap: name + "-request"}, name+"-result", ""); err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range workerIdentityEnvironment() {
+		count := 0
+		for _, actual := range job.Spec.Template.Spec.Containers[0].Env {
+			if actual.Name != expected.Name {
+				continue
+			}
+			count++
+			if actual.Value != expected.Value {
+				t.Fatalf("identity %s value = %q", actual.Name, actual.Value)
+			}
+			if expected.ValueFrom != nil && (actual.ValueFrom == nil || actual.ValueFrom.FieldRef == nil || actual.ValueFrom.FieldRef.FieldPath != expected.ValueFrom.FieldRef.FieldPath) {
+				t.Fatalf("identity %s must come from downward API", actual.Name)
+			}
+		}
+		if count != 1 {
+			t.Fatalf("identity %s emitted %d times", expected.Name, count)
+		}
+	}
+	if job.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever {
+		t.Fatal("worker container must never restart after termination")
+	}
+	// Resolve the real produced downward-API bindings against a synthetic Pod,
+	// then run the real Python record producer's identity decoder.
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("python3", "-c", "import dataclasses,json; from sdo.agents.responder.writer_termination import worker_identity; print(json.dumps(dataclasses.asdict(worker_identity())))")
+	cmd.Dir = root
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "SDO_WORKER_") {
+			cmd.Env = append(cmd.Env, value)
+		}
+	}
+	metadata := map[string]string{"metadata.namespace": "demo", "metadata.name": "worker-pod", "metadata.uid": "immutable-uid"}
+	for _, value := range job.Spec.Template.Spec.Containers[0].Env {
+		if !strings.HasPrefix(value.Name, "SDO_WORKER_") {
+			continue
+		}
+		resolved := value.Value
+		if value.ValueFrom != nil {
+			resolved = metadata[value.ValueFrom.FieldRef.FieldPath]
+		}
+		cmd.Env = append(cmd.Env, value.Name+"="+resolved)
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Python identity consumer: %v: %s", err, output)
+	}
+	actual := map[string]string{}
+	if err := json.Unmarshal(output, &actual); err != nil {
+		t.Fatal(err)
+	}
+	for field, expected := range map[string]string{"namespace": "demo", "pod_name": "worker-pod", "pod_uid": "immutable-uid", "container": "agent"} {
+		if actual[field] != expected {
+			t.Fatalf("Python %s = %q, want %q", field, actual[field], expected)
+		}
 	}
 }

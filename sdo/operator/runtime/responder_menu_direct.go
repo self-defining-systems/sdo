@@ -92,7 +92,9 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 				bindings = append(bindings, request.Bindings)
 			} else {
 				for _, finding := range l.Request.Findings {
-					bindings = append(bindings, candidateBindings(spec, finding)...)
+					if bound, err := program.BindFinding(spec, finding); err == nil {
+						bindings = append(bindings, bound)
+					}
 				}
 				// Namespace-sweep matches can bind resources absent from findings.
 				// Offer the exact option identified by incident-open coverage.
@@ -127,7 +129,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		p := plan.Plan
 		entries[plan.ID] = menuEntry{programID: plan.ProgramID, bindings: cloneProgramBindings(plan.Bindings), plan: &p}
 	}
-	menu := &contracts.MitigationMenu{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, DispatchEpoch: 1, SourceCommit: l.Request.SourceCommit, ScopeDigest: "direct", PolicyDigest: "direct", RoundLimit: uint32(max(1, min(5, l.MaxBatches)-l.batches)), RemainingBatches: uint32(max(0, min(5, l.MaxBatches)-l.batches)), OriginalDeadline: timestamppb.New(l.Request.ResponseDeadline)}
+	menu := &contracts.MitigationMenu{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, DispatchEpoch: 1, SourceCommit: l.Request.SourceCommit, ScopeDigest: "direct", PolicyDigest: "direct", RoundLimit: uint32(max(1, l.loopsRemaining())), RemainingBatches: uint32(l.loopsRemaining()), OriginalDeadline: timestamppb.New(l.Request.ResponseDeadline)}
 	ids := make([]string, 0, len(entries))
 	for id := range entries {
 		ids = append(ids, id)
@@ -195,7 +197,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 	if rounds > 5 {
 		rounds = 5
 	}
-	if consumeRound && rounds > uint32(max(0, min(5, l.MaxBatches)-l.batches)) {
+	if consumeRound && rounds > uint32(l.loopsRemaining()) {
 		response.Error = "response loop budget exhausted"
 		return
 	}
@@ -220,17 +222,22 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 				err, reason = errors.New(conflict.Error), "pending_write_conflict"
 			}
 		} else {
-			if consumeRound {
-				l.batches++
-			}
-			// Preserve the ordinary incident counter before a potentially lost reply.
-			_ = l.persistToolState(ctx)
 			plan, err = l.prepareMenuPlan(ctx, entry, parameters, bindings)
 			if bindingErr != nil {
 				err = bindingErr
 			}
 			if err == nil && consumeRound {
 				err = l.validateMenuPreconditions(ctx, entry, bindings)
+			}
+			if err == nil && consumeRound {
+				// A later round follows the executor's verification of the
+				// previous one, so it is a new act→verify cycle.
+				if round > 1 {
+					l.closeLoop()
+				}
+				l.spendLoop()
+				// Preserve the ordinary incident counter before a potentially lost reply.
+				_ = l.persistToolState(ctx)
 			}
 		}
 		if err != nil {
@@ -409,7 +416,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		// Earlier rounds' reservations settle once a follow-up unblocked them.
 		l.settlePending(ctx)
 	}
-	report.RemainingBatches = uint32(max(0, min(5, l.MaxBatches)-l.batches))
+	report.RemainingBatches = uint32(l.loopsRemaining())
 	l.menuReports = append(l.menuReports, cloneSelectionReport(report))
 	if l.menuExecutions == nil {
 		l.menuExecutions = map[string][]MenuRoundExecution{}

@@ -5,20 +5,26 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
 // ReflectionCoverageGaps notes each verified cause that reflection left without
-// executable learning: no replayable program, or a program no detector lists.
-// A gap is information for analysis, never a refusal: the repeat's act-verify
-// loop is the safety net for whatever was not learned. Memory that cannot be
-// inspected yields no notes: the structural and program layers report why.
+// executable learning: no replayable program, or a program no finding links.
+// The link is the automatic stage's binding rule (findingBindsCase). A detector
+// that lists the playbook without binding its roles does not link it. Health
+// and generated detectors need no edit to reach a learned program.
+// These cause-level notes remain informational. ReflectionRepairDiagnostics
+// separately makes RuleReflectionProgramRequired blocking for each recorded
+// hand repair; detector coverage and replay are still advisory. Memory that
+// cannot be inspected yields no notes: the structural layers report why.
 func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision) (gaps []Diagnostic) {
 	if decision.GetLearningDecision() == "no_change" && decision.GetNoChangeReason() == "no_session" && outcome.GetReflectionSkipReason() == "no_session" {
 		return nil
@@ -40,16 +46,6 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 	if err != nil {
 		return nil
 	}
-	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
-	if err != nil {
-		return nil
-	}
-	linked := map[string]bool{}
-	for _, d := range detectors {
-		for _, id := range d.Manifest.PossiblePlaybooks {
-			linked[id] = true
-		}
-	}
 	for _, cause := range causes {
 		hasProgram, hasDetector := false, false
 		for _, spec := range specs {
@@ -65,7 +61,7 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 					continue
 				}
 				hasProgram = true
-				hasDetector = hasDetector || linked[spec.ID]
+				hasDetector = hasDetector || findingBindsCase(outcome, c.Bindings.Objects)
 			}
 		}
 		resources := make([]string, 0, len(cause.GetResources()))
@@ -76,7 +72,7 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 		case !hasProgram:
 			gaps = append(gaps, Diagnostic{Rule: RuleReflectionProgramRequired, Message: fmt.Sprintf("verified cause %d (%s) has no replayable diagnose and mitigation program", cause.GetCauseIndex(), strings.Join(resources, ", "))})
 		case !hasDetector:
-			gaps = append(gaps, Diagnostic{Rule: RuleReflectionDetectorRequired, Message: fmt.Sprintf("verified cause %d (%s) has a program, but no detector lists it in possiblePlaybooks", cause.GetCauseIndex(), strings.Join(resources, ", "))})
+			gaps = append(gaps, Diagnostic{Rule: RuleReflectionDetectorRequired, Message: fmt.Sprintf("verified cause %d (%s) has a program, but no finding binds its roles", cause.GetCauseIndex(), strings.Join(resources, ", "))})
 		}
 	}
 	return gaps
@@ -108,4 +104,51 @@ func bindingsCoverCause(bindings map[string]sdk.ObjectRef, resources []*contract
 		}
 	}
 	return true
+}
+
+// findingBindsCase reports whether the automatic stage can bind the recorded
+// case from one incident finding: program.BindFinding, the stage's binding
+// rule, fills every role the case binds with that same object. A listed
+// playbook without these bindings is diagnosed unbound and never runs.
+func findingBindsCase(outcome *contracts.OutcomeRecord, bindings map[string]sdk.ObjectRef) bool {
+	if len(bindings) == 0 {
+		return false
+	}
+	spec := program.ProgramSpec{ID: "recorded-case"}
+	for role, ref := range bindings {
+		spec.Params = append(spec.Params, program.ParamSpec{Name: role, Kind: program.Kind(ref.Kind), Required: true})
+	}
+	sort.Slice(spec.Params, func(i, j int) bool { return spec.Params[i].Name < spec.Params[j].Name })
+	for _, finding := range outcome.GetFindings() {
+		bound, err := program.BindFinding(spec, findingForBinding(finding))
+		if err != nil {
+			continue
+		}
+		all := true
+		for role, want := range bindings {
+			got := bound.Objects[role]
+			all = all && got.Kind == want.Kind && got.Namespace == want.Namespace && got.Name == want.Name
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+func findingForBinding(finding *contracts.Finding) sdk.Finding {
+	ref := func(r *contracts.ObjectRef) sdk.ObjectRef {
+		return sdk.ObjectRef{APIVersion: r.GetApiVersion(), Kind: r.GetKind(), Namespace: r.GetNamespace(), Name: r.GetName()}
+	}
+	result := sdk.Finding{PrimaryResource: ref(finding.GetPrimaryResource())}
+	for _, related := range finding.GetRelatedResources() {
+		result.RelatedResources = append(result.RelatedResources, ref(related))
+	}
+	for role, bound := range finding.GetParameterBindings() {
+		if result.ParameterBindings == nil {
+			result.ParameterBindings = map[string]sdk.ObjectRef{}
+		}
+		result.ParameterBindings[role] = ref(bound)
+	}
+	return result
 }

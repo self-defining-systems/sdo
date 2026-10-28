@@ -12,21 +12,24 @@ runs under ``bwrap`` with a private ``/tmp`` unless the caller opts out.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import queue
 import subprocess
 import threading
+from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
 from benchmarks.sregym.fastloop.host_limits import HostLimits
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Sequence
     from types import TracebackType
 
 DEFAULT_TIMEOUT_SECONDS = wait_for(WaitKind.RESPONSE)
+WORKER_MODULE = "benchmarks.sregym.fastloop.worker_bridge"
 
 
 class SregymWorkerError(RuntimeError):
@@ -34,10 +37,52 @@ class SregymWorkerError(RuntimeError):
 
 
 def worker_argv(sregym_dir: Path, *, private_tmp: Path | None) -> list[str]:
-    command = ["uv", "run", "--directory", str(sregym_dir), "python", "-m", "benchmarks.sregym.fastloop.worker_bridge"]
+    command = ["uv", "run", "--directory", str(sregym_dir), "python", "-m", WORKER_MODULE]
     if private_tmp is None:
         return command
     return ["bwrap", "--dev-bind", "/", "/", "--bind", str(private_tmp), "/tmp", *command]
+
+
+def worker_modules(code_root: Path) -> list[str]:
+    """Every first-party module the worker bridge can load, eagerly or on a request path."""
+
+    bridge = code_root / Path(*WORKER_MODULE.split(".")).with_suffix(".py")
+    tree = ast.parse(bridge.read_text(encoding="utf-8"))
+    imported = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("benchmarks.")
+    }
+    return sorted(imported | {WORKER_MODULE})
+
+
+def worker_import_error(code_root: Path, modules: Sequence[str] | None = None) -> str | None:
+    """Why the worker's modules do not import in SREGym's own venv (None when they all do).
+
+    The worker runs without SDO's dependencies, so a first-party import that pulls one in
+    (h9.18: source deployment -> ``sdo.contracts`` -> protovalidate) fails every deploy.
+    """
+
+    sregym_dir = code_root / "third_party" / "sregym"
+    if not (sregym_dir / "pyproject.toml").is_file():
+        return f"SREGym harness is not checked out at {sregym_dir}"
+    names = list(worker_modules(code_root) if modules is None else modules)
+    script = "import importlib, sys\nfor name in sys.argv[1:]:\n    importlib.import_module(name)\n"
+    timeout = wait_for(WaitKind.OPERATION)
+    try:
+        result = subprocess.run(
+            ["uv", "run", "--directory", str(sregym_dir), "python", "-c", script, *names],
+            env={**os.environ, "PYTHONPATH": str(code_root)},
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return f"worker module imports did not finish in {timeout:.0f}s"
+    if result.returncode == 0:
+        return None
+    return f"worker modules do not import in SREGym's venv: {result.stderr.strip()[-2000:]}"
 
 
 class SregymWorker:

@@ -184,6 +184,7 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 		// Correct that same proposal by learning the hand repair with current
 		// DatabaseUsers / EnsureDatabaseUser / CredentialRef APIs and a detector.
 		copyFastloopTree(t, fixture, filepath.Join(checkout, ".sdo"))
+		appendControllerRepairReceipts(t, checkout, "mongo-auth", outcome)
 		writeReflectionCheckDecision(t, checkout, decision)
 		// Fixed/healthy catalogs cannot substitute for the observed open catalog.
 		// This guards against a simulator that merely trusts the expected result.

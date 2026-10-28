@@ -25,7 +25,9 @@ func ReplayNote(programID,caseID string,r replay.Result) sdktest.MitigationRepla
 `
 
 // ValidateScriptOrigins binds newly authored origin labels to the accepted
-// controller outcome. Static inspection separately checks the authored script digest.
+// controller outcome: any successful timed receipt, with equal script bytes
+// when the receipt recorded them. Static inspection separately checks the
+// authored script digest.
 func ValidateScriptOrigins(root string, outcome *contracts.OutcomeRecord, paths []string) error {
 	cases := map[string]bool{}
 	for _, path := range paths {
@@ -51,7 +53,7 @@ func ValidateScriptOrigins(root string, outcome *contracts.OutcomeRecord, paths 
 		}
 		for digest, receiptID := range corpus.ScriptOrigins {
 			receipt := receipts[receiptID]
-			if receipt == nil || receipt.GetScriptDigest() == "" || receipt.GetScriptDigest() != digest || !receipt.GetSuccess() || receipt.GetStartedAt() == nil || receipt.GetCompletedAt() == nil || corpus.Provenance.IncidentID != outcome.GetIncidentId() {
+			if receipt == nil || (receipt.GetScriptDigest() != "" && receipt.GetScriptDigest() != digest) || !receipt.GetSuccess() || receipt.GetStartedAt() == nil || receipt.GetCompletedAt() == nil || corpus.Provenance.IncidentID != outcome.GetIncidentId() {
 				return fmt.Errorf("RunScript origin %q must reference a successful accepted incident receipt", receiptID)
 			}
 			matched := false
@@ -60,7 +62,7 @@ func ValidateScriptOrigins(root string, outcome *contracts.OutcomeRecord, paths 
 					continue
 				}
 				var recorded sdkprogram.ScriptOriginReceipt
-				if json.Unmarshal(call.Result, &recorded) == nil && recorded.ID == receiptID && recorded.ScriptDigest == digest && recorded.IncidentID == outcome.GetIncidentId() && recorded.Success && recorded.StartedAt.Equal(receipt.GetStartedAt().AsTime()) && recorded.CompletedAt.Equal(receipt.GetCompletedAt().AsTime()) {
+				if json.Unmarshal(call.Result, &recorded) == nil && recorded.ID == receiptID && recorded.ScriptDigest == receipt.GetScriptDigest() && recorded.IncidentID == outcome.GetIncidentId() && recorded.Success && recorded.StartedAt.Equal(receipt.GetStartedAt().AsTime()) && recorded.CompletedAt.Equal(receipt.GetCompletedAt().AsTime()) {
 					matched = true
 				}
 			}

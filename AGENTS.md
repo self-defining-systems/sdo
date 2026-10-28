@@ -55,6 +55,8 @@ bash scripts/check_errors.sh
 `tests/unit/test_architecture.py`, including the facade-import rule, alongside
 Ruff, Tach, Pyright, Go checks, and proto drift when Buf is installed.
 
+The repository tooling map is [docs/tooling.md](docs/tooling.md).
+
 Use `uv` and `uv run ...` for Python. See [docs/testing-guide.md](docs/testing-guide.md) for focused Python and Go commands.
 
 ## Remote repository access

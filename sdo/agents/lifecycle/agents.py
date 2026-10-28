@@ -18,10 +18,10 @@ from libs.agent_cli.structured import (
     AgentProvider,
     StructuredTurnError,
     StructuredTurnTimeout,
-    run_structured_turn,
 )
 from sdo.agents.code_paths import SKILLS_ROOT, agent_guidance
 from sdo.agents.prompt_templates import named_prompt, render_prompt
+from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -315,7 +315,11 @@ class CodexLifecycleBackend:
         home_variable = "CODEX_HOME" if self.provider == "codex" else "CLAUDE_CONFIG_DIR"
         skills = {home_variable: turn.skill_directory} if turn.skill_directory is not None else {}
         escaped_command = _first_repository_escape(
-            turn.shell_commands, repository.resolve(), task_outputs=task_outputs, skill_directories=skills
+            turn.shell_commands,
+            repository.resolve(),
+            task_outputs=task_outputs,
+            skill_directories=skills,
+            context_files=frozenset(getattr(prompt, "context_files", ())),
         )
         if escaped_command is not None:
             raise LifecycleAgentError(
@@ -340,6 +344,7 @@ def _first_repository_escape(
     *,
     task_outputs: ClaudeTaskOutputs | None = None,
     skill_directories: Mapping[str, Path] | None = None,
+    context_files: frozenset[Path] = frozenset(),
 ) -> str | None:
     """Return the first shell command that reaches outside *repository*, if any."""
     return next(
@@ -347,7 +352,11 @@ def _first_repository_escape(
             command
             for command in commands
             if _command_escapes_repository(
-                command, repository, task_outputs=task_outputs, skill_directories=skill_directories
+                command,
+                repository,
+                task_outputs=task_outputs,
+                skill_directories=skill_directories,
+                context_files=context_files,
             )
         ),
         None,
@@ -407,7 +416,7 @@ def _readonly_skill_access(command: str, raw_path: str) -> bool:
                 chunks[-1].append(token)
     except ValueError:
         return False
-    readers = {"cat", "find", "ls", "head", "tail", "sed", "rg", "grep", "stat", "wc", "test", "["}
+    readers = {"cat", "find", "ls", "head", "tail", "sed", "rg", "grep", "jq", "stat", "wc", "test", "["}
     matching = [chunk for chunk in chunks if raw_path in chunk]
     forbidden = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
     return bool(matching) and all(
@@ -424,6 +433,7 @@ def _command_escapes_repository(
     *,
     task_outputs: ClaudeTaskOutputs | None = None,
     skill_directories: Mapping[str, Path] | None = None,
+    context_files: frozenset[Path] = frozenset(),
 ) -> bool:
     if _PARENT_PATH.search(command):
         return True
@@ -444,12 +454,20 @@ def _command_escapes_repository(
         skills = skill_directories.get(variable)
         home = skills.parent if skills is not None else Path("/__untrusted_cli_home__")
         audited_command = re.sub(r"\$(?:" + variable + r"\b|\{" + variable + r"\})", str(home), audited_command)
+    for variable in ("SDO_SESSION_SCRATCH", "SDO_SESSION_DIR"):
+        scratch = os.environ.get(variable)
+        if scratch:
+            audited_command = re.sub(r"\$(?:" + variable + r"\b|\{" + variable + r"\})", scratch, audited_command)
     write_only_paths = {match.group(1) for match in _WRITE_REDIRECT_ABSOLUTE_PATH.finditer(audited_command)}
     for raw_path in _ABSOLUTE_PATH.findall(audited_command):
         candidate = Path(raw_path)
         if ".." in candidate.parts:
             return True
         if any(candidate == root or root in candidate.parents for root in (SKILLS_ROOT, *skill_directories.values())):
+            if raw_path in write_only_paths or not _readonly_skill_access(audited_command, raw_path):
+                return True
+            continue
+        if candidate in context_files:
             if raw_path in write_only_paths or not _readonly_skill_access(audited_command, raw_path):
                 return True
             continue

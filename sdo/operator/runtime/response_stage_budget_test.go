@@ -24,8 +24,8 @@ func TestDeterministicResponseStageBudgetExhaustedHandsMatchesToAgent(t *testing
 	}
 }
 
-// The one rollout wait ends within the stage budget, however many bindings
-// share the apply.
+// Every rollout wait ends within the stage budget. A pending handoff keeps the
+// pass, so each binding still gets its own apply under what remains.
 func TestDeterministicResponseStageRolloutWaitIsBoundedByBudget(t *testing.T) {
 	loop, state := pipelineTestLoopWithServices(t, false, "api2")
 	rollout := &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
@@ -35,7 +35,7 @@ func TestDeterministicResponseStageRolloutWaitIsBoundedByBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rollout.observed <= 0 || rollout.observed > budget || len(loop.PlanApplications()) != 1 {
+	if rollout.observed <= 0 || rollout.observed > budget || len(loop.PlanApplications()) != len(report.Mitigations) || len(report.Mitigations) != 3 {
 		t.Fatalf("rollout wait %s outside the %s budget, applications=%d", rollout.observed, budget, len(loop.PlanApplications()))
 	}
 	for _, attempt := range report.Mitigations {
@@ -44,4 +44,3 @@ func TestDeterministicResponseStageRolloutWaitIsBoundedByBudget(t *testing.T) {
 		}
 	}
 }
-
