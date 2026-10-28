@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"sort"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -14,12 +15,26 @@ import (
 func programRunContract(run ProgramRun) *contracts.ProgramRun {
 	result := &contracts.ProgramRun{CanMitigate: run.CanMitigate, ProgramId: run.ProgramID, FindingFingerprint: run.FindingFingerprint, BindingSource: run.BindingSource, ProgramRevision: run.ProgramRevision, Duration: durationpb.New(run.Duration), Verdict: verdictContract(run.Verdict)}
 	result.Bindings = programBindingsContract(run.Bindings)
+	var reasons []string
 	for _, evidence := range run.Verdict.Evidence {
-		if evidence.Resource.Kind == "" && (evidence.Fact == "" || (run.Verdict.Result == program.Unknown && evidence.Fact == "diagnosis")) {
-			result.Error = evidence.Observed
-			break
+		if evidence.Resource.Kind != "" || (evidence.Fact != "" && run.Verdict.Result != program.Unknown) {
+			continue
+		}
+		reason := evidence.Observed
+		// Wire Evidence requires a resource. Binding and relation failures
+		// often have none; the existing error channel must carry their facts
+		// instead of converting a reasoned Unknown into an unexplained one.
+		if evidence.Fact != "" && evidence.Fact != "diagnosis" {
+			reason = evidence.Fact + ": " + reason
+			if evidence.Expected != "" {
+				reason += " (expected " + evidence.Expected + ")"
+			}
+		}
+		if reason != "" {
+			reasons = append(reasons, reason)
 		}
 	}
+	result.Error = strings.Join(reasons, "\n")
 	return result
 }
 

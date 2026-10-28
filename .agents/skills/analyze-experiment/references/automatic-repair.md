@@ -61,12 +61,23 @@ affected repeats separately from repeats with an actually blocked repair. Initia
 outcome runs also include later diagnoses, aliases and post-repair stale bindings, so do not add their
 counts as distinct failed attempts. Unknown without evidence/error has an unrecorded reason.
 
+Older contract projections dropped resource-free evidence unless its fact was exactly `diagnosis`.
+Consequently an empty wire Unknown can be a lost binding/catalog/relation explanation rather than a failed
+primitive. New projections carry all resource-free Unknown facts through `program_runs[].error`, keeping
+the scoped evidence contract intact. These are diagnostic reasons, never evidence of health or a Match.
+
 The automatic stage reserves rollout time for remaining candidates and continues after an application
 failure; every later binding diagnoses fresh state through the ordinary executor fences. Before this change,
 one failure could hand off otherwise matched repairs without attempting them. Compare stage receipt
 completion times with model tool invocations: the fastloop mitigation timestamp can be the last successful
 repair, whereas an earlier independently verified stage repair is already a first fix. Model turns require
 provider response IDs, not one count per controller tool call (one model response can execute several).
+
+Historical `wait for the cache to observe plan writes: write observation unknown` on a confirmed
+ResourceQuota delete can mean the barrier waited for a nonexistent informer. The current barrier requires
+cache catch-up only for watched kinds; an uncached kind needs the executor's fresh, process-local direct
+effect proof. Persisted receipts do not restore that proof. This removes the generic API operation failure
+class without treating missing observations as success or bypassing watched UID/version barriers.
 
 `ineffective` skips a match whose program revision already ended `applied_still_matching` in this incident for the same finding fingerprints (a replacement object, such as the Pod a restart creates, is a new binding but not new evidence; a finding that attempt did not target is). A deferred second diagnosis turn runs only after a turn that wrote or cleared something.
 
