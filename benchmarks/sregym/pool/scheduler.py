@@ -88,6 +88,8 @@ class PoolConfig(BaseModel):
     #: Native ``infra_error`` values that end a pair without its repeat and keep the lane.
     known_continue: list[str] = Field(default_factory=list)
     max_attempts: int = Field(default=3, ge=1)
+    #: Optional balanced-proof quota. Completed lanes retain their booked cores.
+    max_pairs_per_lane: int | None = Field(default=None, ge=1)
     status_seconds: float = Field(default=600, ge=0)
     _items: list[StreamItem] = PrivateAttr(default_factory=list)
     _endpoints: dict[str, MemoryEndpoint] = PrivateAttr(default_factory=dict)
@@ -347,6 +349,13 @@ class Scheduler:
             build=self.config.build,
             lane_cpus=self.config.lane_cpus,
             redeploy=self.config.redeploy_steps is not None,
+            unavailable=frozenset(
+                lane.id
+                for lane in lanes
+                if self.config.max_pairs_per_lane is not None
+                and sum(pair.status == "done" and pair.lane == lane.id for pair in self.journal.pairs)
+                >= self.config.max_pairs_per_lane
+            ),
         ):
             if isinstance(decision, Run):
                 self._start_pair(decision)

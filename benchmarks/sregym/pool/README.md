@@ -80,3 +80,8 @@ After the final pair, run `sync-memory --run-dir LANE --code-root CODE --lease L
 on each host. This invokes the production broker sync under its existing lock,
 then records `memory-convergence.json` only when the controller and GitHub heads
 agree. It never creates a synthetic incident or imports grader evidence.
+
+For a balanced rehearsal, `max_pairs_per_lane: 2` lets a ready lane start
+immediately and limits it to two completed problem pairs while a slower peer
+prepares. Completed lanes keep their cores booked. Leave the setting unset for
+normal streams with unlimited lane reuse.

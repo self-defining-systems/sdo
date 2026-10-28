@@ -255,3 +255,28 @@ def test_redeploy_runs_redeploy_steps_on_the_same_lane(tmp_path: Path) -> None:
     assert deploys[0]["steps"] == [["true"]]
     assert deploys[1]["steps"] == [["retire", "hotel_reservation", "social_network", str(lane.run_dir)]]
     assert any(post.startswith("REDEPLOY c5-l0") for post in posts)
+
+
+def test_lane_pair_quota_balances_the_proof_without_waiting_for_slow_preparation(tmp_path: Path) -> None:
+    from collections import Counter
+
+    pool, hosts, posts = scheduler(tmp_path, [(f"p{i}", "hotel_reservation") for i in range(4)], max_pairs_per_lane=2)
+    for host in hosts.values():
+        host.cores = 4
+    slow = hosts["chelan4"]
+    original = slow.active
+    delays: dict[str, int] = {}
+
+    def active(unit: str) -> bool:
+        if unit in slow.running and delays.get(unit, 0) < 5:
+            delays[unit] = delays.get(unit, 0) + 1
+            return True
+        return original(unit)
+
+    slow.active = active
+    assert run(pool)["done"] == 4
+    rows = json.loads((tmp_path / "state/pairs.json").read_text())["pairs"]
+    assert Counter(row["lane"] for row in rows) == {"c4-l0": 2, "c5-l0": 2}
+    first_start = next(i for i, post in enumerate(posts) if post.startswith("START "))
+    slow_ready = next(i for i, post in enumerate(posts) if post.startswith("READY c4-l0"))
+    assert first_start < slow_ready

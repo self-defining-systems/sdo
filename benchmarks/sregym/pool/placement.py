@@ -67,6 +67,7 @@ def place(
     build: str,
     lane_cpus: float = DEFAULT_LANE_CPUS,
     redeploy: bool = True,
+    unavailable: frozenset[str] = frozenset(),
 ) -> list[Run | Deploy]:
     """Place waiting pairs in stream order.
 
@@ -79,7 +80,11 @@ def place(
        on a host at or above its load gate.
     """
     rooms = {room.name: room for room in hosts}
-    idle = [lane for lane in lanes if lane.state == "ready" and rooms.get(lane.host, None) and rooms[lane.host].open]
+    idle = [
+        lane
+        for lane in lanes
+        if lane.state == "ready" and lane.id not in unavailable and rooms.get(lane.host, None) and rooms[lane.host].open
+    ]
     idle.sort(key=lambda lane: (rooms[lane.host].load1, lane.host, lane.id))
     decisions: list[Run | Deploy] = []
     waiting: list[Pair] = []

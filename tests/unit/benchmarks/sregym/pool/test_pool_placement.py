@@ -96,3 +96,24 @@ def test_without_redeploy_steps_idle_lanes_are_never_redeployed() -> None:
     decisions = place([pair(0, "social")], lanes, [room("c5", budget=8)], build="h1", redeploy=False)
     assert decisions == [Deploy(pair(0, "social"), "c5", lane=None)]
     assert place([pair(0, "social")], lanes, [room("c5", budget=4)], build="h1", redeploy=False) == []
+
+
+def test_completed_lane_quota_keeps_its_cores_booked():
+    from benchmarks.sregym.pool.placement import HostRoom, Pair, place
+    from benchmarks.sregym.pool.registry import Lane
+
+    lane = Lane(
+        id="c5-l0",
+        host="c5",
+        run_dir="/synthetic/lane",
+        cpus=4,
+        state="ready",
+        app="hotel",
+        build="h1",
+        source_digest="sha256:synthetic",
+        kubeconfig="/synthetic/kubeconfig",
+    )
+    assert (
+        place([Pair("p", "p", "hotel")], [lane], [HostRoom("c5", 4, 1)], build="h1", unavailable=frozenset({lane.id}))
+        == []
+    )
