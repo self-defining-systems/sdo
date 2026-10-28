@@ -16,7 +16,7 @@ SPEC.loader.exec_module(shards)
 
 
 def inventory() -> dict[str, list[str]]:
-    return {
+    source = {
         "sdo.dev/operator/builder": [
             *shards.MOVED_BUILDER_TESTS,
             "TestBuildWorkspaceCompilesApplicationDetectors",
@@ -37,6 +37,14 @@ def inventory() -> dict[str, list[str]]:
         "sdo.dev/operator/operatorcli": ["TestAdoptionCompilesAsIsAndLaterValidationStillRejects"],
         "sdo.dev/operator/worker_registry": ["TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent"],
     }
+    # Every measured move participates in this synthetic compiled inventory;
+    # negative controls below remove anchors after construction.
+    for full in shards.MOVED_TESTS:
+        package, _, name = full.rpartition("/")
+        names = source.setdefault(package, [])
+        if name not in names:
+            names.append(name)
+    return source
 
 
 def test_compiler_work_is_exhaustive_disjoint_and_keeps_new_names() -> None:
@@ -155,10 +163,7 @@ def test_top_level_pause_does_not_become_execution_cost() -> None:
 
 def test_hosted_expensive_nonbuilder_work_shares_existing_runners() -> None:
     source = inventory()
-    source[shards.PREFIX + "operatorcli"] = [
-        "TestAdoptionCompilesAsIsAndLaterValidationStillRejects",
-        "TestNewCLIBehavior",
-    ]
+    source[shards.PREFIX + "operatorcli"].append("TestNewCLIBehavior")
     source[shards.PREFIX + "worker_registry"] = [
         "TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent",
         "FuzzWorker",
@@ -174,7 +179,7 @@ def test_hosted_expensive_nonbuilder_work_shares_existing_runners() -> None:
     assert groups["remaining"][shards.PREFIX + "worker_registry"] == ["FuzzWorker"]
 
 
-@pytest.mark.parametrize("package", ["operatorcli", "worker_registry"])
+@pytest.mark.parametrize("package", ["broker", "operatorcli", "worker_registry"])
 def test_removed_or_renamed_nonbuilder_cost_anchor_fails_closed(package: str) -> None:
     source = inventory()
     source[shards.PREFIX + package].clear()
@@ -202,3 +207,30 @@ def test_measured_slow_acceptance_cases_share_existing_compiler_runner() -> None
     groups = shards.partition(source)
     assert name in groups["compiler-replay"][shards.PREFIX + "broker"]
     assert sum(names.count(name) for group in groups.values() for names in group.values()) == 1
+
+
+def test_advisory_acceptance_group_shares_existing_broker_runner() -> None:
+    source = inventory()
+    name = "TestCLIAndBrokerAgreeOnAcceptanceFourthShard"
+    source[shards.PREFIX + "broker"].append(name)
+    groups = shards.partition(source)
+    assert name in groups["broker"][shards.PREFIX + "broker"]
+    assert sum(names.count(name) for group in groups.values() for names in group.values()) == 1
+
+
+def test_hosted_timeout_work_is_distributed_across_existing_allocations() -> None:
+    expected = {
+        "builder/TestUnreplayableMitigatorIsSavedWithReason": "acceptance",
+        "builder/TestBuildWorkspaceRegistersProgramAndSharedLibrary": "acceptance",
+        "builder/TestProgramAcceptsRecordedSyntheticNoMatchCase": "broker",
+        "builder/TestProgramRepeatUnreachableIsRecordedAsGap": "broker",
+        "builder/TestOperatorCorpusRequiresProductionClosedLoop": "acceptance",
+        "memory/validate/TestPartialPlaybookPublication": "acceptance-second",
+        "memory/validate/TestAssuranceSeedsPassHealthJudgeCheck": "broker",
+        "operatorcli/TestMemoryCheckCleanTreeExitsZero": "acceptance-second",
+        "operatorcli/TestInstallExistingAdoptedVerifiedSeedOnboarding": "acceptance",
+        "broker/TestCLIAndBrokerAgreeOnAcceptanceFifthShard": "compiler",
+        "broker/TestCLIAndBrokerAgreeOnUnobservableDetectorLocator": "compiler",
+    }
+    for name, owner in expected.items():
+        assert shards.MOVED_TESTS[shards.PREFIX + name] == owner

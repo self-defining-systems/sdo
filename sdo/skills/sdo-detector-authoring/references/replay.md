@@ -94,6 +94,11 @@ func LoadCorpusCase(dir string) (CorpusCase, error)
     LoadCorpusCase reads open.json, fixed.json, healthy.json, recordings.json,
     and labels.json from one .sdo/corpus/<case> directory.
 
+func LoadCorpusMetadata(dir string) (CorpusCase, error)
+    LoadCorpusMetadata reads labels and available receipt recordings without
+    requiring replay snapshots. Static provenance never depends on replay
+    inputs.
+
 func (c CorpusCase) PhaseRecordings(phase string) []PrimitiveCall
     PhaseRecordings selects actual observations for one corpus phase. Healthy
     snapshots are the verified fixed snapshot, so they share its observations.
@@ -117,7 +122,8 @@ type MitigationReplayResult struct {
 func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (MitigationReplayResult, error)
     CheckMitigation validates every plan. SetField-only plans must repair the
     faulted fixture; plans with external effects return an explicit skipped
-    note. Diagnosis corpus replay remains a separate mandatory gate.
+    note. Diagnosis replay is an analysis helper; its outcome never gates
+    publication.
 
 type MitigationReplayStatus string
 

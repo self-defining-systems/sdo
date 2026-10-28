@@ -167,7 +167,8 @@
           "namespace": "demo",
           "name": "mongodb-geo"
         }
-      ]
+      ],
+      "script_digest": "356db4f1dc4280d7959ed51e88208b9820c0919d2a792958115485d416cec139"
     }
   }
 ]

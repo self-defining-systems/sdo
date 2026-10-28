@@ -14,7 +14,6 @@ import (
 	"sdo.dev/operator/internal/testutil"
 
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -119,7 +118,10 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 
 func TestCLIAndBrokerAgreeOnUnobservableDetectorLocator(t *testing.T) {
 	for _, mode := range []string{"unknown", "needs-judgement", "source-evidence-gap"} {
-		t.Run(mode, func(t *testing.T) { checkUnobservableDetectorLocator(t, mode) })
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			checkUnobservableDetectorLocator(t, mode)
+		})
 	}
 }
 
@@ -210,36 +212,35 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 	cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=", "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID=incident")
 	var stdout, stderr bytes.Buffer
 	cli.Stdout, cli.Stderr = &stdout, &stderr
-	cliErr := cli.Run()
-	var exit *exec.ExitError
-	if !errors.As(cliErr, &exit) || exit.ExitCode() != 1 {
-		t.Fatalf("unobservable locator passed CLI or infrastructure failed: %v %s", cliErr, stderr.String())
+	if err := cli.Run(); err != nil {
+		t.Fatalf("unobservable replay blocked CLI: %v %s %s", err, stdout.String(), stderr.String())
 	}
 	report := new(contracts.MemoryCheckReport)
 	if err := protojson.Unmarshal(stdout.Bytes(), report); err != nil {
 		t.Fatal(err)
 	}
-	_, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, "incident"), "incident", decision)
-	var failure *validate.Failure
-	if !errors.As(publishErr, &failure) {
-		t.Fatalf("unobservable locator passed broker: %v", publishErr)
+	receipt, err := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, "incident"), "incident", decision)
+	if err != nil {
+		t.Fatalf("unobservable replay blocked broker: %v", err)
 	}
-	if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
-		t.Fatalf("diagnostics differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
+	if len(report.Diagnostics) != 0 || len(report.CoverageGaps) == 0 {
+		t.Fatalf("replay observation missing: %v", report)
 	}
-	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorTest || !strings.Contains(report.Diagnostics[0].Message, "detector.corpus-observation") {
-		t.Fatalf("locator failure was not actionable: %v", report)
+	cliKeys := gapKeys(reportGaps(report.CoverageGaps))
+	brokerKeys := gapKeys(receipt.CoverageGaps)
+	if strings.Join(cliKeys, "\n") != strings.Join(brokerKeys, "\n") {
+		t.Fatalf("replay observations differ: CLI %v broker %v", cliKeys, brokerKeys)
 	}
-	if mode == "needs-judgement" && !strings.Contains(report.Diagnostics[0].Message, "Which listener is intended?") {
-		t.Fatalf("judgement context lost: %v", report)
-	}
-	if mode == "source-evidence-gap" && !strings.Contains(report.Diagnostics[0].Message, "trusted deployment image evidence missing") {
-		t.Fatalf("source provenance gap was hidden: %v", report)
+	observations := strings.Join(cliKeys, "\n")
+	reason := map[string]string{"unknown": "selected Service observation unavailable", "needs-judgement": "Which listener is intended?", "source-evidence-gap": "trusted deployment image evidence missing"}[mode]
+	if !strings.Contains(observations, reason) {
+		t.Fatalf("replay reason lost: %s", observations)
 	}
 
 }
 
 func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
 	if out, err := exec.Command("go", "build", "-o", binary, "../cmd/sdo-operator").CombinedOutput(); err != nil {
@@ -264,7 +265,7 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	source = strings.Replace(source, `"context"`, `"context"; "fmt"`, 1)
 	source = strings.Replace(source, `for _, service := range s.Services() {`, `for _, service := range s.Services() { if service.Name == "healthy-only" { return nil, fmt.Errorf("healthy-only selected Pod observation unavailable") }`, 1)
 	put(t, root, ".sdo/diagnostics/detectors/incidents/cache/detector.go", source, 0644)
-	replaceParityText(t, root, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - base\n  - service-targetport-mismatch\n")
+	replaceParityText(t, root, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - service-targetport-mismatch\n")
 	runGit(t, root, "add", "-f", ".sdo")
 	runGit(t, root, "commit", "-qm", "accepted learned program and detector")
 	repository, err := broker.New(root, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema, baseline: baseline}))
@@ -306,25 +307,23 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE="+baseline, "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID=incident")
 	var stdout, stderr bytes.Buffer
 	cli.Stdout, cli.Stderr = &stdout, &stderr
-	cliErr := cli.Run()
-	var exit *exec.ExitError
-	if !errors.As(cliErr, &exit) || exit.ExitCode() != 1 {
-		t.Fatalf("program edit dropped healthy input or infrastructure failed: %v %s", cliErr, stderr.String())
+	if err := cli.Run(); err == nil {
+		t.Fatalf("unobservable healthy detector accepted by CLI: %s", stdout.String())
 	}
 	report := new(contracts.MemoryCheckReport)
 	if err := protojson.Unmarshal(stdout.Bytes(), report); err != nil {
 		t.Fatal(err)
 	}
-	_, publishErr := repository.PublishReflection(validate.WithCaptureSource(ctx, capture, "incident"), "incident", decision)
+	_, err = repository.PublishReflection(validate.WithCaptureSource(ctx, capture, "incident"), "incident", decision)
 	var failure *validate.Failure
-	if !errors.As(publishErr, &failure) {
-		t.Fatalf("broker dropped healthy replay input: %v", publishErr)
-	}
-	if !proto.Equal(&contracts.MemoryCheckReport{Diagnostics: report.Diagnostics}, &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics)}) {
-		t.Fatalf("healthy input differs: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
+	if !errors.As(err, &failure) {
+		t.Fatalf("unobservable healthy detector accepted by broker: %v", err)
 	}
 	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorHealthyBaseline || !strings.Contains(report.Diagnostics[0].Message, "healthy-only") {
-		t.Fatalf("healthy locator error omitted: %v", report)
+		t.Fatalf("CLI lost healthy detector refusal: %v", report)
+	}
+	if len(failure.Diagnostics) != 1 || failure.Diagnostics[0].Rule != report.Diagnostics[0].Rule || failure.Diagnostics[0].Message != report.Diagnostics[0].Message {
+		t.Fatalf("healthy detector refusals differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
 	}
 }
 
@@ -341,4 +340,12 @@ func independentParityRoutingDetector(t *testing.T) string {
 	source = strings.ReplaceAll(source, `DetectorID: "service-targetport-mismatch"`, `DetectorID: "cache"`)
 	source = strings.ReplaceAll(source, `[]string{"base"}`, `[]string{"service-targetport-mismatch"}`)
 	return source
+}
+
+func reportGaps(items []*contracts.MemoryDiagnostic) []validate.Diagnostic {
+	result := make([]validate.Diagnostic, 0, len(items))
+	for _, item := range items {
+		result = append(result, validate.Diagnostic{Rule: item.Rule, Path: item.Path, Message: item.Message})
+	}
+	return result
 }

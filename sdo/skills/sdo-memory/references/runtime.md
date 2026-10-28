@@ -223,4 +223,5 @@ Run the complete memory check and wait for final diagnostics (at most 300s).
 Supply the typed decision fields directly; this tool writes the result
 JSON outside the authored tree. Return the same decision and logical IDs.
 Legacy decision_path files are also supported. One call waits for final
-diagnostics. The broker independently repeats the validation.
+diagnostics. Compile/import/format/provenance checks remain required;
+replay verdicts are information and never block saving. The broker repeats the check.

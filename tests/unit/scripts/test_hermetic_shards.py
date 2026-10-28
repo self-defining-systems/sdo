@@ -8,7 +8,9 @@ import pytest
 
 
 @pytest.mark.parametrize("jobs", [4, 8])
-@pytest.mark.parametrize("failure", ["none", "first_runtime", "second_runtime", "reflection", "python"])
+@pytest.mark.parametrize(
+    "failure", ["none", "first_runtime", "second_runtime", "reflection", "shared_memory", "python"]
+)
 def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: str, jobs: int) -> None:
     root = Path(__file__).resolve().parents[3]
     commands = tmp_path / "bin"
@@ -19,6 +21,7 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
         "#!/bin/bash\n"
         'printf "go workers=%s %s\\n" "$GOMAXPROCS" "$*" >> "$LG_DRIVER_LOG"\n'
         'case "$*" in\n'
+        "  *TestHermeticSharedMemoryControllers*) shard=shared_memory ;;\n"
         "  *TestReflectionMongoAuth*) shard=reflection ;;\n"
         "  *TestHermeticBringup*) shard=first_runtime ;;\n"
         "  *TestLearnedOriginCredit*) shard=second_runtime ;;\n"
@@ -51,6 +54,7 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
     assert result.returncode == (0 if failure == "none" else 7), result.stderr
     lines = log.read_text().splitlines()
     assert any("TestReflectionMongoAuth" in line for line in lines)
+    assert sum("TestHermeticSharedMemoryControllers" in line for line in lines) == 1
     # Python is a joined parallel shard: it must run even when another shard
     # fails, and its own failure must propagate after every Go shard is joined.
     assert "uv" in lines
@@ -59,6 +63,7 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
 
     for marker, expected in (
         ("TestReflectionMongoAuth", jobs // 2),
+        ("TestHermeticSharedMemoryControllers", jobs // 2),
         ("TestHermeticBringup", jobs // 2 - 1),
         ("TestLearnedOriginCredit", jobs // 2),
     ):

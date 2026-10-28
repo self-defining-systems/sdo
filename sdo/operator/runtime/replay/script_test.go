@@ -24,7 +24,7 @@ func TestRunScriptObservedTransitionDoesNotInventActionResults(t *testing.T) {
 	c.Corpus.Bindings = program.Bindings{Values: map[string]any{"target": "current-related-pod"}}
 	plan, _ := p.Mitigate(context.Background(), nil, c.Corpus.Bindings)
 	script := plan.Actions[0].(program.RunScript)
-	receipt := program.ScriptOriginReceipt{ID: "manual-exec", IncidentID: c.ID, Success: true, StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)}
+	receipt := program.ScriptOriginReceipt{ScriptDigest: program.ScriptDigest(script.Script), ID: "manual-exec", IncidentID: c.ID, Success: true, StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)}
 	raw, _ := json.Marshal(receipt)
 	c.Corpus.Recordings = append(c.Corpus.Recordings, sdktest.PrimitiveCall{Method: "RepairReceipt", Arguments: json.RawMessage("[]"), Result: raw})
 	c.Corpus.Provenance.IncidentID = c.ID

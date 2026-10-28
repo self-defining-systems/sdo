@@ -17,7 +17,8 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
 3. Derive relationships from observed objects. Use the context namespace for absent resources and emit
    stable fingerprints and role bindings. Observed evaluation supplies an omitted `DetectorID` from
    the emitting detector's `Spec.ID`; an authored identity must still match that detector.
-4. Prove a matching case and near misses with the [generated replay API](references/replay.md).
+4. Explore matching cases and near misses with the [generated replay API](references/replay.md).
+   Replay and test verdicts are information, never a save gate; keep unavailable observations explicit.
    The [restart-loop source](assets/restart-loop/detector.go) and
    [tests](assets/restart-loop/detector_test.go) show the current detector interface.
 5. Validate final proposal files through the memory check. The broker repeats this check independently.

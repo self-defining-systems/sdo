@@ -64,7 +64,7 @@ func TestCheckReturnsCompileDiagnosticsAndInfrastructureErrors(t *testing.T) {
 	}
 }
 
-func TestCompileCandidateRequiresToolchainSourcesAndConfiguredBaseline(t *testing.T) {
+func TestCompileCandidateRequiresToolchainSources(t *testing.T) {
 	operatorRoot, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,6 @@ func TestCompileCandidateRequiresToolchainSourcesAndConfiguredBaseline(t *testin
 	for _, request := range []Request{
 		{Root: t.TempDir()},
 		{Root: t.TempDir(), OperatorRoot: t.TempDir()},
-		{Root: t.TempDir(), OperatorRoot: operatorRoot, HealthyBaseline: filepath.Join(t.TempDir(), "absent")},
 	} {
 		if diagnostics, err := CompileCandidate(context.Background(), request); err == nil || len(diagnostics) > 0 {
 			t.Fatalf("missing input must be infrastructure failure: %v %v", diagnostics, err)

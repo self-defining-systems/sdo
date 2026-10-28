@@ -9,10 +9,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_go_integration_initializes_inputs_before_starting_pytest(tmp_path: Path) -> None:
+@pytest.mark.parametrize("shard", ["all", "external", "replay"])
+def test_go_integration_initializes_inputs_before_starting_pytest(tmp_path: Path, shard: str) -> None:
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     driver = scripts / "test_go_integration.sh"
@@ -36,7 +39,7 @@ def test_go_integration_initializes_inputs_before_starting_pytest(tmp_path: Path
         )
         path.chmod(0o755)
     result = subprocess.run(
-        ["bash", str(driver)],
+        ["bash", str(driver), shard],
         env={
             **os.environ,
             "PATH": str(tools) + os.pathsep + os.defpath,
@@ -51,3 +54,13 @@ def test_go_integration_initializes_inputs_before_starting_pytest(tmp_path: Path
     calls = [json.loads(line) for line in events.read_text().splitlines()]
     assert calls[0] == ["uv", "run", "python", "scripts/init_test_prereqs.py"]
     assert any("pytest" in call for call in calls)
+
+    pytest_call = next(call for call in calls if "pytest" in call)
+    recording = "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py"
+    if shard == "external":
+        assert "--ignore=" + recording in pytest_call
+        assert pytest_call[-1] == "tests"
+    elif shard == "replay":
+        assert pytest_call[-1] == recording
+    else:
+        assert pytest_call[-1] == "tests"

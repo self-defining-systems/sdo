@@ -63,7 +63,7 @@ Healthy-peer replay also needs recorded evidence. Service-targetPort-only
 SetField replay retains original direct-Pod TCP observations only when the full
 captured Pod object is unchanged. It never reuses Service probes or fixed answers
 to prove an effect. The installed routing example exercises this stricter
-predicate and complete repair-to-NoMatch replay through the shared compiler gate.
+predicate and informational repair-to-NoMatch replay through the shared compiler; a replay mismatch never blocks saving.
 
 ## Accepted source rendering
 

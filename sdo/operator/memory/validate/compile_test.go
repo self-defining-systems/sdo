@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -63,9 +64,6 @@ func TestCompileReportsTheFailingStage(t *testing.T) {
 			edit(t, root, detectorSource, "return Detector{}", `_ = fmt.Sprintf("%d", "not a number")
 	return Detector{}`)
 		}, detectorSource},
-		{"test", RuleDetectorTest, func(t *testing.T, root string) {
-			edit(t, root, ".sdo/diagnostics/detectors/incidents/missing-configmap/detector_test.go", "if len(findings) != 1 {", "if len(findings) != 7 {")
-		}, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -100,5 +98,38 @@ func TestCompileRunsOnlyAfterStaticLayersPass(t *testing.T) {
 func TestCompileSkipsRepositoriesWithoutDetectors(t *testing.T) {
 	if got := diagnose(t, compileRequest(t.TempDir())); len(got) != 0 {
 		t.Fatalf("unbootstrapped repository rejected: %v", got)
+	}
+}
+
+func TestMissingHealthyReplayInputIsInformational(t *testing.T) {
+	for _, mode := range []string{"missing", "empty", "file"} {
+		t.Run(mode, func(t *testing.T) {
+			root := compileTree(t)
+			baseline := filepath.Join(t.TempDir(), "baseline")
+			if mode == "empty" {
+				if err := os.MkdirAll(baseline, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "file" {
+				if err := os.WriteFile(baseline, []byte("no snapshot directory"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var observations []Diagnostic
+			request := compileRequest(root)
+			request.HealthyBaseline = baseline
+			request.CoverageGaps = &observations
+			if ds, err := CompileCandidate(context.Background(), request); err != nil || len(ds) != 0 {
+				t.Fatalf("missing replay input blocked saving: %v %v", ds, err)
+			}
+			found := false
+			for _, note := range observations {
+				found = found || note.Rule == RuleReplayObservation && strings.Contains(note.Message, "healthy replay unverified")
+			}
+			if !found {
+				t.Fatalf("missing replay input was hidden: %v", observations)
+			}
+		})
 	}
 }

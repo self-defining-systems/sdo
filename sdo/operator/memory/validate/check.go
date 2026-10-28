@@ -107,13 +107,6 @@ func CompileCandidate(ctx context.Context, request Request) ([]Diagnostic, error
 	if _, err := exec.LookPath("go"); err != nil {
 		return nil, fmt.Errorf("memory check Go toolchain: %w", err)
 	}
-	if request.HealthyBaseline != "" {
-		if info, err := os.Stat(request.HealthyBaseline); err != nil {
-			return nil, fmt.Errorf("memory check healthy baseline: %w", err)
-		} else if !info.IsDir() {
-			return nil, errors.New("memory check healthy baseline must be a directory")
-		}
-	}
 	request.Layers = Compile
 	return Validate(ctx, request)
 }

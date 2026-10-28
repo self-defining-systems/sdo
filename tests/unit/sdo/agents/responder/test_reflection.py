@@ -190,7 +190,7 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     assert "Operational memory is fallible advice." in prompt
     assert "Recovery requires evidence from the intended application behavior." in prompt
     assert "artifact_proposal" not in prompt
-    assert "broker independently validates" in prompt
+    assert "broker checks" in prompt
     assert "draft-test" not in prompt
     assert "sdo-memory/SKILL.md" in prompt
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
@@ -204,7 +204,7 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
 @pytest.mark.parametrize("session_mode", ["fresh", "resume"])
 @pytest.mark.parametrize("retry", [False, True])
 @pytest.mark.parametrize("classification", ["success", "failed"])
-def test_reflection_requires_executable_learning_for_verified_parts(
+def test_reflection_saves_partial_learning_for_verified_parts(
     tmp_path: Path, session_mode: str, retry: bool, classification: str
 ) -> None:
     backend = _CapturingBackend()
@@ -231,12 +231,13 @@ def test_reflection_requires_executable_learning_for_verified_parts(
         diagnostics=[MemoryDiagnostic(rule="program.replay", message="Correct the fixed case")] if retry else [],
     )
     prompt = str(backend.calls[0]["prompt"])
-    assert "On a closure verified healthy, save the repair steps used" in prompt
+    assert "Save verified steps with partial coverage" in prompt
     assert "Use recorded actions as repair evidence" in prompt
-    assert "A README note alone does not capture an executable repair" in prompt
-    assert "Learn verified parts even when the whole incident remains unhealthy" in prompt
-    assert "A cause you cannot save as a program is recorded as a gap, not refused" in prompt
-    assert "detector coverage; detectors may surface several playbooks" in prompt
+    assert "Save verified, specific README-only guidance too" in prompt
+    assert "Replay is informational" in prompt
+    assert "persistent Match and unavailable replay never block saving" in prompt
+    assert "Include scoped sdk_gaps alongside updated for unencoded parts" in prompt
+    assert "README orchestration and detectors" in prompt
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["classification"] == classification
     assert current["repair_actions"][0]["details"] == outcome.repair_actions[0].details
@@ -514,10 +515,10 @@ def test_large_evidence_principle_is_stated_once(tmp_path: Path) -> None:
         closure=_fresh_closure(tmp_path),
     )
     prompt = str(backend.calls[0]["prompt"])
-    assert prompt.count("Preserve potentially large evidence output") == 1
+    assert prompt.count("Search full evidence") == 1
     assert "temporary file" in prompt
-    assert "search or extract" in prompt
-    assert "never infer missing evidence from a truncated prefix" in prompt
+    assert "Search full evidence" in prompt
+    assert "never infer from truncated output" in prompt
 
 
 def test_reflection_exposes_verified_onboarding_separately_from_findings(tmp_path: Path) -> None:
@@ -589,5 +590,5 @@ def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_p
     prompt = str(backend.calls[0]["prompt"])
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["undetected_causes"][0]["repair_action_id"] == "recorded-patch"
-    assert "recorded as a gap, not refused" in prompt
+    assert "Include scoped sdk_gaps alongside updated" in prompt
     assert "listed undetected transitions" in prompt

@@ -410,11 +410,13 @@ message RepairActionReceipt {
   google.protobuf.Timestamp completed_at = 8 [(buf.validate.field).required = true];
   bool success = 9;
   bool reversible = 10;
-  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "incident_verified", "source_residual"]}];
+  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "incident_verified", "source_residual", "script_unprovenanced"]}];
   // Controller ownerReference chains of written resources, read from the
   // live object before the write. Cause attribution follows these chains,
   // never generated names.
   repeated ResourceOwners owners = 12;
+  // Controller-recorded SHA256 of the exact executed RunScript bytes.
+  string script_digest = 13;
 }
 
 // ResourceOwners is one written resource's controller owner chain, nearest

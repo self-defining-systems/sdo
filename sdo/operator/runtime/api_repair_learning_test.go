@@ -84,8 +84,8 @@ func TestUnwrappedShellWriteBindsRunScriptOnlyAfterIndependentClearance(t *testi
 			script := program.RunScript{Script: `kubectl patch deployment "$WORKLOAD" --type=json -p "$PATCH"`}
 			corpus := sdktest.CorpusCase{Provenance: sdktest.CorpusProvenance{IncidentID: id}, ScriptOrigins: map[string]string{program.ScriptDigest(script.Script): derived.Record.RepairActions[0].ActionId}, Recordings: calls}
 			origin, err := sdktest.ScriptOrigin(script, corpus)
-			if err != nil || origin.ID != derived.Record.RepairActions[0].ActionId {
-				t.Fatalf("verified API receipt cannot bind RunScript: %+v %v", origin, err)
+			if err == nil {
+				t.Fatalf("API receipt without script byte evidence authorized RunScript: %+v", origin)
 			}
 		})
 	}

@@ -474,3 +474,13 @@ def test_nightly_fuzz_campaigns_cover_each_target_within_one_job_budget() -> Non
     for directory, targets in NIGHTLY_FUZZ_TARGETS.items():
         sources = "".join(path.read_text() for path in (ROOT / directory).glob("*_test.go"))
         assert all(f"func {target}(" in sources for target in targets)
+
+
+def test_recorded_reflection_contracts_share_existing_replay_job() -> None:
+    jobs = workflow()["jobs"]
+    external = jobs["go-integration"]
+    replay = jobs["replay"]
+    assert any("scripts/test_go_integration.sh external" in step.get("run", "") for step in external["steps"])
+    assert any("scripts/test_go_integration.sh replay" in step.get("run", "") for step in replay["steps"])
+    assert "needs.changes.outputs.python == 'true'" in replay["if"]
+    assert external["timeout-minutes"] == replay["timeout-minutes"] == 5
