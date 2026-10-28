@@ -23,6 +23,7 @@ from benchmarks.sregym.adapter.persistent import (
 )
 from benchmarks.sregym.fastloop.loop import InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict, load_records
+from benchmarks.sregym.fastloop.replay import CheckpointError
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
 from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
 from benchmarks.sregym.runner.runner import _stage_results_error
@@ -680,6 +681,24 @@ def test_checkpoint_opt_out_preserves_resolution_and_learning(tmp_path: Path, mo
     assert learned.incident_id == "incident-1"
     assert learned.resolved_at == VERIFIED
     assert learned.reflection_tokens.input_tokens > 0
+
+
+def test_oversized_replay_evidence_never_fails_the_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = _agent(tmp_path, FakeOps(), [])
+    agent._settings = replace(agent._settings, kubeconfig="unused-kubeconfig", checkpoint_enabled=True)
+
+    class Listing:
+        stdout = '{"items": []}'
+
+    def oversized(*args: Any, **kwargs: Any) -> None:
+        raise CheckpointError("corpus capture open@detect-recordings.json exceeds 4194304 bytes")
+
+    monkeypatch.setattr("benchmarks.sregym.adapter.kubectl", lambda *args, **kwargs: Listing())
+    monkeypatch.setattr("benchmarks.sregym.fastloop.sdo_agent.capture_checkpoints", oversized)
+    learned = agent.learn(agent.resolve(0, "p", _inject))
+
+    assert learned.incident_id == "incident-1"
+    assert "exceeds 4194304 bytes" in (agent._settings.results_dir / "checkpoint-000.unrecorded.txt").read_text()
 
 
 def test_a_detector_review_stop_publishes_its_evidence_and_the_runner_names_the_reason(tmp_path: Path) -> None:

@@ -32,7 +32,7 @@ from benchmarks.sregym.adapter import (
 )
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
 from benchmarks.sregym.fastloop.records import AgentName, TokenCounts
-from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
+from benchmarks.sregym.fastloop.replay import CheckpointError, CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
 
 if TYPE_CHECKING:
@@ -457,4 +457,10 @@ class SdoPersistentAgent:
         items = document.get("items")
         if not isinstance(items, list):
             raise RuntimeError("worker ConfigMap listing omitted items")
-        capture_checkpoints(CheckpointStore(self._settings.results_dir), index, incident_id, receipt_dir, items)
+        try:
+            capture_checkpoints(CheckpointStore(self._settings.results_dir), index, incident_id, receipt_dir, items)
+        except CheckpointError as exc:
+            # Replay evidence is best effort: an over-budget capture never fails a resolved incident.
+            (self._settings.results_dir / f"checkpoint-{index:03d}.unrecorded.txt").write_text(
+                str(exc), encoding="utf-8"
+            )
