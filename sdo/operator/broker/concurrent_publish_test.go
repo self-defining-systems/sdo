@@ -294,6 +294,10 @@ func TestConcurrentMemoryConflictRebasesRejectedProposal(t *testing.T) {
 	if _, err := publishLearning(b, "lane-b", "base"); err == nil {
 		t.Fatal("colliding proposal was accepted")
 	}
+	decision := []byte(`{"learning_decision":"updated","proposed_artifact_ids":["base","beta"]}`)
+	if err := os.WriteFile(filepath.Join(pb.Path, ".git", validate.DecisionFile), decision, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	rebased, err := b.RebaseProposal(ctx, "lane-b", ReflectionPhase)
 	if err != nil {
 		t.Fatal(err)
@@ -303,6 +307,9 @@ func TestConcurrentMemoryConflictRebasesRejectedProposal(t *testing.T) {
 	}
 	if info, err := b.ProposalInfo("lane-b", ReflectionPhase); err != nil || info != rebased {
 		t.Fatalf("rebased proposal metadata = %+v, %v", info, err)
+	}
+	if kept, err := os.ReadFile(filepath.Join(rebased.Path, ".git", validate.DecisionFile)); err != nil || string(kept) != string(decision) {
+		t.Fatalf("intended decision not kept: %s %v", kept, err)
 	}
 	if paths, err := b.ChangedPaths(ctx, "lane-b", ReflectionPhase); err != nil || !slices.Equal(paths, []string{".sdo/playbooks/base/README.md", ".sdo/playbooks/beta/README.md"}) {
 		t.Fatalf("rebased changes = %v, %v", paths, err)

@@ -187,6 +187,14 @@ func (b *Broker) RebaseProposal(ctx context.Context, incidentID string, phase Ph
 				return err
 			}
 		}
+		// The agent's intended decision stays with its kept edits.
+		if decision, err := os.ReadFile(filepath.Join(proposal.Path, ".git", validate.DecisionFile)); err == nil {
+			if err := os.WriteFile(filepath.Join(next, ".git", validate.DecisionFile), decision, 0o600); err != nil {
+				return err
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
 		rebased = Proposal{IncidentID: incidentID, Path: checkout, BaseCommit: current}
 		if err := validate.WritePublicationContext(ctx, next, validate.PublicationContext{BaseCommit: current, IncidentID: incidentID, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace}); err != nil {
 			return err
