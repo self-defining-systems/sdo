@@ -13,8 +13,18 @@ class ProviderRateLimited(StructuredTurnError):
     """
 
     def __init__(
-        self, reason: str = "provider retry budget exhausted", *, session_id: str = "", retryable: bool = True
+        self,
+        reason: str = "provider retry budget exhausted",
+        *,
+        session_id: str = "",
+        retryable: bool = True,
+        shell_commands: tuple[str, ...] = (),
+        tool_calls: int = 0,
+        usage: dict[str, int | float] | None = None,
     ) -> None:
+        self.shell_commands = shell_commands
+        self.tool_calls = tool_calls
+        self.usage = usage or {}
         self.retryable = retryable
         self.session_id = session_id
         super().__init__(f"rate_limited: {reason}")

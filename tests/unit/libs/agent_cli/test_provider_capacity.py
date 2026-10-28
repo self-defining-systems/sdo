@@ -107,6 +107,17 @@ def test_backoff_doubles_to_ten_minutes_then_exhausts_at_thirty(tmp_path: Path) 
     assert events[-1]["state"] == "exhausted"
 
 
+def test_thirty_minute_retry_cap_includes_time_spent_in_retry_attempts(tmp_path: Path) -> None:
+    clock = Clock()
+    manager = capacity(tmp_path, clock)
+    manager.backoff(0)
+    clock.sleep(1750)  # A retry ran for this long before the next overload.
+    with pytest.raises(ProviderRateLimited, match="budget exhausted"):
+        manager.backoff(1)
+    assert clock.seconds == 1800
+    assert manager.rate_limit_wait_seconds == 50
+
+
 def test_ordinary_failures_never_retry(tmp_path: Path) -> None:
     clock = Clock()
     agent = ScriptedAgent(lambda _: failure(stderr="Permission denied"))
@@ -230,6 +241,50 @@ def test_backoff_releases_opus_token_and_retry_resumes_the_existing_session(tmp_
         provider_capacity=manager,
     )
     assert sleeps == [30]
+
+
+def test_retry_keeps_prior_tool_audit_and_paid_usage(tmp_path: Path) -> None:
+    from agentshim import TokenUsage
+    from agentshim.testing import FakeRun, scripted_turn
+
+    from libs.agent_cli.structured import turn_usage
+
+    first = scripted_turn(
+        "claude",
+        session_id="s-1",
+        usage=TokenUsage(input_tokens=7, output_tokens=3, turns=1),
+        tool_calls=[("Bash", {"command": "cat source.py"}, "source")],
+    )
+    lines = list(first.stdout)
+    final = json.loads(lines[-1])
+    final.update(is_error=True, result=LIMITS[0])
+    final.pop("structured_output", None)
+    lines[-1] = json.dumps(final)
+    attempts = [
+        FakeRun(stdout=lines, returncode=1),
+        scripted_turn(
+            "claude",
+            session_id="s-1",
+            usage=TokenUsage(input_tokens=11, output_tokens=5, turns=1),
+            structured_output={"answer": "ok"},
+        ),
+    ]
+    agent = ScriptedAgent(lambda _: attempts.pop(0))
+    turn = run_structured_turn(
+        "claude",
+        "prompt",
+        output_schema=SCHEMA,
+        cwd=tmp_path,
+        access="read-only",
+        model="sonnet",
+        executor=agent.executor,
+        provider_capacity=capacity(tmp_path, Clock()),
+    )
+    assert turn.shell_commands == ("cat source.py",)
+    assert turn.tool_calls == 1
+    assert turn.model_requests == 2
+    assert turn_usage(turn)["input_tokens"] == 18
+    assert turn.usage.tokens.output_tokens == 8
 
 
 def test_fake_claude_executable_reports_the_real_cli_limit_line(

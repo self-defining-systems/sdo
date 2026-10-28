@@ -191,7 +191,6 @@ class StructuredTurn:
     skill_directory: Path | None = None
     rate_limit_wait_seconds: float = 0.0
     concurrency_wait_seconds: float = 0.0
-    prior_usage: dict[str, int | float] = field(default_factory=dict[str, int | float])
 
 
 def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
@@ -220,8 +219,6 @@ def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
         usage["total_cost_usd"] = turn.usage.total_cost_usd
     if turn.model_requests is not None:
         usage["model_requests"] = turn.model_requests
-    for name, value in turn.prior_usage.items():
-        usage[name] = usage.get(name, 0) + value
     return usage
 
 
@@ -298,6 +295,8 @@ def run_structured_turn(
     session_id = resume_session_id
     prior_usage: dict[str, int | float] = {}
     attempt_usage: dict[str, int | float] = {}
+    prior_commands: tuple[str, ...] = ()
+    prior_tool_calls = 0
 
     def checkpoint(usage: dict[str, int | float], complete: bool) -> None:
         attempt_usage.clear()
@@ -324,6 +323,14 @@ def run_structured_turn(
             with ExitStack() as scope:
                 if provider == "claude":
                     scope.enter_context(capacity.opus_session(model))
+                    if capacity.wait_deadline is not None:
+                        if capacity.remaining_seconds <= 0:
+                            raise capacity.exhausted("provider retry budget exhausted", session_id=session_id or "")
+                        remaining = (
+                            min(remaining, capacity.remaining_seconds)
+                            if remaining is not None
+                            else capacity.remaining_seconds
+                        )
                 turn = _run_structured_turn_once(
                     provider,
                     prompt,
@@ -345,11 +352,13 @@ def run_structured_turn(
                     session_termination_observer=session_termination_observer,
                     interrupt_when=interrupt_when,
                 )
+            turn = _with_prior_usage(turn, prior_usage)
             completed = replace(
                 turn,
+                shell_commands=prior_commands + turn.shell_commands,
+                tool_calls=prior_tool_calls + turn.tool_calls,
                 rate_limit_wait_seconds=capacity.rate_limit_wait_seconds,
                 concurrency_wait_seconds=capacity.concurrency_wait_seconds,
-                prior_usage=prior_usage,
             )
             _append_turn_usage(provider, model, Path(cwd).resolve(), completed, capacity.monotonic() - started)
             return completed
@@ -363,11 +372,40 @@ def run_structured_turn(
             if provider != "claude" or not exc.retryable:
                 raise
             session_id = exc.session_id or session_id
-            for name, value in attempt_usage.items():
+            prior_commands += exc.shell_commands
+            prior_tool_calls += exc.tool_calls
+            for name, value in (exc.usage or attempt_usage).items():
                 prior_usage[name] = prior_usage.get(name, 0) + value
             attempt_usage.clear()
             capacity.backoff(attempt, session_id=session_id or "")
             attempt += 1
+
+
+def _with_prior_usage(turn: StructuredTurn, prior: Mapping[str, int | float]) -> StructuredTurn:
+    if not prior:
+        return turn
+    combined = turn_usage(turn)
+    for name, value in prior.items():
+        combined[name] = combined.get(name, 0) + value
+    if turn.model_requests_source == CLAUDE_TURNS_REQUEST_SOURCE:
+        combined["model_requests"] = combined["llm_calls"]
+    tokens = normalized_usage(
+        input_tokens=int(combined["input_tokens"]),
+        output_tokens=int(combined["output_tokens"]),
+        cache_read_input_tokens=int(combined["cache_read_input_tokens"]),
+        cache_write_input_tokens=int(combined["cache_write_input_tokens"]),
+        cache_write_1h_input_tokens=int(combined["cache_write_1h_input_tokens"]),
+        reasoning_output_tokens=int(combined["reasoning_output_tokens"]),
+        turns=int(combined["llm_calls"]),
+    )
+    cost = turn.usage.total_cost_usd
+    if cost is not None:
+        cost = cost + prior["total_cost_usd"] if "total_cost_usd" in prior else None
+    return replace(
+        turn,
+        usage=replace(turn.usage, tokens=tokens, total_cost_usd=cost),
+        model_requests=int(combined["model_requests"]) if "model_requests" in combined else None,
+    )
 
 
 def _run_structured_turn_once(
@@ -593,13 +631,23 @@ def _run_structured_turn_once(
         # either, and callers hand this text back to the next attempt.
         details = "\n".join(part.strip() for part in (exc.stderr, exc.stdout) if part.strip())
         if provider == "claude" and (is_claude_rate_limit(exc.stderr) or is_claude_rate_limit(exc.stdout)):
-            raise ProviderRateLimited(session_id=recorder.session_id or resume_session_id or "") from exc
+            raise ProviderRateLimited(
+                session_id=recorder.session_id or resume_session_id or "",
+                shell_commands=tuple(recorder.commands),
+                tool_calls=recorder.tool_calls,
+                usage=spent_usage(),
+            ) from exc
         raise StructuredTurnError(f"{provider} exited with code {exc.returncode}: {details or 'no output'}") from exc
     except AgentShimError as exc:
         if interrupted.is_set():
             raise stopped() from exc
         if provider == "claude" and is_claude_rate_limit(str(exc)):
-            raise ProviderRateLimited(session_id=recorder.session_id or resume_session_id or "") from exc
+            raise ProviderRateLimited(
+                session_id=recorder.session_id or resume_session_id or "",
+                shell_commands=tuple(recorder.commands),
+                tool_calls=recorder.tool_calls,
+                usage=spent_usage(),
+            ) from exc
         raise StructuredTurnError(f"{provider} turn failed: {exc}") from exc
 
     if on_usage is not None and provider == "codex" and resume_session_id is not None:
@@ -610,7 +658,12 @@ def _run_structured_turn_once(
             raise StructuredTurnError("resumed cumulative token accounting unavailable after turn")
 
     if provider == "claude" and result.structured_output is None and is_claude_rate_limit(result.text):
-        raise ProviderRateLimited(session_id=result.session_id or resume_session_id or "")
+        raise ProviderRateLimited(
+            session_id=result.session_id or resume_session_id or "",
+            shell_commands=tuple(recorder.commands),
+            tool_calls=recorder.tool_calls,
+            usage=spent_usage(),
+        )
     structured_output: object = result.structured_output
     session_id = result.session_id or resume_session_id or ""
     model_requests: int | None = None
@@ -647,6 +700,7 @@ def _run_structured_turn_once(
         _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
         raise StructuredTurnError(f"{provider} turn returned no structured output")
     if not session_id:
+        _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
         raise StructuredTurnError(f"{provider} turn did not report a session id")
     return turn
 

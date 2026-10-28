@@ -126,10 +126,18 @@ class ProviderCapacity:
     turn_id: str = field(default_factory=lambda: uuid4().hex)
     rate_limit_wait_seconds: float = 0.0
     concurrency_wait_seconds: float = 0.0
+    wait_deadline: float | None = field(default=None, init=False)
 
     @property
     def wait_seconds(self) -> float:
         return self.rate_limit_wait_seconds + self.concurrency_wait_seconds
+
+    @property
+    def remaining_seconds(self) -> float:
+        remaining = self.policy.max_wait_seconds - self.wait_seconds
+        if self.wait_deadline is not None:
+            remaining = min(remaining, self.wait_deadline - self.monotonic())
+        return max(0.0, remaining)
 
     @property
     def log_path(self) -> Path | None:
@@ -173,6 +181,8 @@ class ProviderCapacity:
     def measured_wait(self, kind: str) -> Iterator[None]:
         wait_id = uuid4().hex
         started = self.monotonic()
+        if self.wait_deadline is None:
+            self.wait_deadline = started + self.policy.max_wait_seconds
         started_at = self.now().isoformat()
         self.record(kind, "started", wait_id=wait_id, started_at=started_at)
         try:
@@ -193,13 +203,13 @@ class ProviderCapacity:
             )
 
     def backoff(self, attempt: int, *, session_id: str = "") -> None:
-        left = self.policy.max_wait_seconds - self.wait_seconds
+        left = self.remaining_seconds
         if left <= 0:
             raise self.exhausted("provider retry budget exhausted", session_id=session_id)
         delay = min(self.policy.initial_delay_seconds * 2 ** min(attempt, 32), self.policy.max_delay_seconds, left)
         with self.measured_wait("rate_limit"):
             self.sleep(delay)
-        if self.wait_seconds >= self.policy.max_wait_seconds:
+        if self.remaining_seconds <= 0:
             raise self.exhausted("provider retry budget exhausted", session_id=session_id)
 
     @contextmanager
@@ -215,7 +225,7 @@ class ProviderCapacity:
             handle = pool.try_acquire()
             if handle is None:
                 started = self.monotonic()
-                left = self.policy.max_wait_seconds - self.wait_seconds
+                left = self.remaining_seconds
                 with self.measured_wait("concurrency"):
                     while handle is None and self.monotonic() - started < left:
                         self.sleep(min(1.0, left - (self.monotonic() - started)))
