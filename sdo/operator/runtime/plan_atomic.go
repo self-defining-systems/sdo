@@ -55,9 +55,13 @@ func coalesceDocumentPatches(result *PlanApplicationResult) error {
 		patch.After = result.Patches[end-1].After.DeepCopy()
 		if end-first > 1 {
 			patch.Authorization = "general"
-			for i := first; i < end; i++ {
-				patch.Structured = patch.Structured || result.Patches[i].Structured || isGeneralAction(result.Plan.Actions[i])
+		}
+		for i := first; i < end; i++ {
+			if isGeneralAction(result.Plan.Actions[i]) {
+				patch.Authorization = "general"
+				patch.Structured = true
 			}
+			patch.Structured = patch.Structured || result.Patches[i].Structured
 		}
 		before, err := json.Marshal(patch.Before.Object)
 		if err != nil {

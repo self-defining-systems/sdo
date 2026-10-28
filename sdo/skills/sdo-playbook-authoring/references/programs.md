@@ -195,3 +195,5 @@ claim exact external-effect simulation, or assert the rewritten script ran.
 The live apply→Diagnose check verifies that version; global health owns closure.
 Preimages and API receipts are retained, with explicit gaps for opaque effects;
 undo remains an explicit responder decision.
+
+Raw document merge requests resolve a built-in schema from their API URL; any supplied reference must match. Unknown schemas and subresources return `RawMergeSchemaError`. Media-type parameters do not bypass keyed-list validation. Apply-style named Service ports merge by name, preserving unspecified fields when their port numbers change.
