@@ -562,8 +562,25 @@ def test_wipe_environment_resets_lane_seed_and_controller_registry_together(tmp_
         applications=[APP],
         provision_credentials=provision,
         planned_commit=heads[0],
+        provenance_path=environment.run_dir / "results/row-000/reset-generation.json",
         timeout_seconds=30,
     )
+    from benchmarks.sregym.fastloop.reset_provenance import read_reset_generation
+
+    generation = read_reset_generation(environment.run_dir / "results/row-000/reset-generation.json", repo)
+    assert generation["accepted_before"] == heads[0]
+    assert generation["pre_reset_head"] == heads[1]
+    with pytest.raises(WipeError, match="already published"):
+        wipe_environment(
+            environment,
+            lane,
+            applications=[APP],
+            provision_credentials=lambda _: pytest.fail("re-provisioned a published generation"),
+            planned_commit=heads[1],
+            provenance_path=environment.run_dir / "results/row-000/reset-generation.json",
+            timeout_seconds=30,
+        )
+    assert git(repo, "rev-parse", "HEAD") == heads[0]
     assert provisioned == [CONTROL]
     assert set(lane.contents) == KEEP | {CONTROL}
     assert lane.contents[CONTROL] == set()
