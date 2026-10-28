@@ -310,3 +310,17 @@ def test_foreign_alias_added_during_cleanup_is_protected(monkeypatch):
     monkeypatch.setattr(retention.subprocess, "run", run)
     retention.retain_node_images("lane-worker", ["sdo-controller:current"])
     assert runtime.removed == []
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_shared_registry_alias_needs_exclusively_owned_source_refs(monkeypatch, foreign):
+    runtime = NodeRuntime()
+    digest = "sha256:" + "a" * 64
+    runtime.images[2]["repoDigests"] = ["127.0.0.1:32123/sdo/images@" + digest]
+    if foreign:
+        runtime.images[2]["repoTags"].append("someone/backup:old")
+    # A bare shared alias proves no SDO role and grants no deletion authority.
+    runtime.images.append(image("bare", repoTags=[], repoDigests=["127.0.0.1:32123/sdo/images@" + digest]))
+    monkeypatch.setattr(retention.subprocess, "run", runtime.run)
+    retention.retain_node_images("lane-worker", ["sdo-controller:current"])
+    assert runtime.removed == ([] if foreign else ["sha256:old"])
