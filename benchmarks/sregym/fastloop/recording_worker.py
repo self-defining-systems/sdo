@@ -5,11 +5,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 from benchmarks.sregym.fastloop.checkpoint_limits import MAX_RESULT_BYTES, MAX_TASK_BYTES
-from benchmarks.sregym.fastloop.file_edits import MAX_FILE_EDITS_BYTES, encode_file_edits, record_file_edits
+from benchmarks.sregym.fastloop.file_edits import (
+    MAX_FILE_EDITS_BYTES,
+    UNRECORDED_FILE_EDITS,
+    encode_file_edits,
+    record_file_edits,
+)
 from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
 from sdo.agents.responder import (
     AGENT_SKILLS,
@@ -56,6 +62,20 @@ def _record_payload(path: Path, payload: str, *, limit: int = MAX_RESULT_BYTES) 
     temporary.replace(path)
 
 
+def _record_result(directory: Path, wire: str, payload: str, *, reflection: bool) -> None:
+    if reflection and json.loads(payload).get("status") == "completed":
+        task = parse_json(wire, AgentTask())
+        try:
+            edits = record_file_edits(Path(task.workspace.checkout_path), task.workspace.base_commit)
+            _record_payload(
+                directory / "file_edits.json", encode_file_edits(edits).decode(), limit=MAX_FILE_EDITS_BYTES
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            # Replay reports this checkpoint as not replayable instead of losing the reflection.
+            _record_payload(directory / UNRECORDED_FILE_EDITS, json.dumps({"reason": str(exc)}))
+    _record_payload(directory / "result.json", payload)
+
+
 def recording_executor(directory: Path, wire: str) -> RecordingExecutor:
     """Keep a warm worker's private path out of the canonical replay identity."""
     replacements: dict[str, str] = {}
@@ -91,13 +111,11 @@ def main(argv: list[str] | None = None) -> int:
         def publish_payload(self, name: str, key: str, payload: str) -> None:
             if key != "agent-result.json":
                 raise ValueError(f"unexpected worker result key {key!r}")
-            if args[0] == "reflection" and json.loads(payload).get("status") == "completed":
-                task = parse_json(wire, AgentTask())
-                edits = record_file_edits(Path(task.workspace.checkout_path), task.workspace.base_commit)
-                _record_payload(
-                    directory / "file_edits.json", encode_file_edits(edits).decode(), limit=MAX_FILE_EDITS_BYTES
-                )
-            _record_payload(directory / "result.json", payload)
+            # Benchmark evidence never gates the production result.
+            try:
+                _record_result(directory, wire, payload, reflection=args[0] == "reflection")
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                print(f"benchmark recording incomplete: {exc}", file=sys.stderr)
             remote.publish_payload(name, key, payload)
 
     publisher = Publisher()
