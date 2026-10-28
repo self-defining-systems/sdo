@@ -17,7 +17,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-const workedExamples = "../../../../examples/playbook-programs"
+const workedExamples = "../../../skills/sdo-playbook-authoring/assets/examples"
 
 // The authoring skill points reflection at these worked examples, so they pass
 // the same reflection check a learned playbook must: compile, format, labels,
@@ -71,7 +71,7 @@ func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
 	commit(t, root, "accepted outcome\n\nSDO-Incident: worked-example\nSDO-Phase: outcome")
 	base := gitIn(t, root, "rev-parse", "HEAD")
 
-	for _, part := range []string{"playbooks", "corpus", "lib"} {
+	for _, part := range []string{"playbooks", "corpus"} {
 		copyTree(t, filepath.Join(workedExamples, part), filepath.Join(root, ".sdo", part))
 	}
 	index := "# Playbooks\n\n- [base](base/README.md)\n"
