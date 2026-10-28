@@ -77,7 +77,8 @@ async def render_contract() -> str:
         )
         + "\n- Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.\n"
         "Select only files actually supplied by the controller. "
-        "Supported phase values do not promise capture availability.",
+        "Supported phase values do not promise capture availability. "
+        "Captures store each object once, in objects; capture_fields serves the typed sections.",
         "## Tool reply budget\n\n"
         f"A reflection tool reply over {MAX_TOOL_REPLY_BYTES} bytes is saved whole to a file; the reply names "
         "its size and path with a short partial head. Search or extract from that file; the head is not "

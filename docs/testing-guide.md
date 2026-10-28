@@ -145,6 +145,15 @@ are in `tests/unit/sdo/agents/responder/test_command_reference.py`; they include
 missing/stale-reference negative control. The responder image's cached model-tool
 layer installs `jq` and runs a JSON extraction smoke check during the build.
 
+The model-bearing image build runs `scripts/check_model_cli_versions.py` against
+`claude --version` and `codex --version`. Default model compatibility requirements
+live in `sdo/operator/model_cli_requirements.json`; update the Claude CLI minimum
+alongside the default model list when a model requires a newer CLI. A mismatch
+fails the build before any model call. The image freezes both measured versions
+and the requirements in `/opt/sdo/model-cli-versions.json` and exposes the verified
+pins as `dev.sdo.claude-code.version` and `dev.sdo.codex.version` image labels.
+The focused no-Docker tests are `tests/unit/scripts/test_model_cli_versions.py`.
+
 The benchmark responder image inventory is checked by
 `scripts/check_responder_image.py` (newline-separated paths on stdin). This script
 owns the recording-module allowlist shared by CI and

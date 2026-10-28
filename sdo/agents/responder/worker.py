@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 from google.protobuf import json_format
 
+from libs.agent_cli.errors import rate_limit_failure
 from libs.agent_cli.startup import mark_startup
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
@@ -112,7 +113,22 @@ def run_worker_task(
         request.repository_worktree = alias
     mark_startup("worker_ready")
     os.environ["SDO_RESPONDER_TASK_ID"] = task.task_id
-    result = executor(request)
+    try:
+        result = executor(request)
+    except RuntimeError as exc:
+        limited = rate_limit_failure(exc)
+        if limited is None:
+            raise
+        envelope = AgentResult(
+            schema_version=SCHEMA_VERSION,
+            task_id=task.task_id,
+            status="failed",
+            proposal_id=task.workspace.proposal_id,
+            failure_reason="rate_limited",
+            error_summary=str(limited),
+        )
+        publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(envelope))
+        return envelope
     if result.incident_id != request.incident_id:
         raise ResponderExecutionError("responder result incident_id does not match request")
     for playbook in result.applied_playbooks:

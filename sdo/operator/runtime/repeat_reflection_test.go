@@ -199,9 +199,10 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 	if rejectFirst || boundSession {
 		expectedCalls = 1
 	}
-	if rejected != rejectFirst || modelCalls != expectedCalls || ledger.ReflectionCommit == "" || len(paths) != 5 || validations == 0 {
+	if rejected != rejectFirst || modelCalls != expectedCalls || ledger.ReflectionCommit == "" || len(paths) != 4 || validations == 0 {
 		t.Fatalf("model=%d paths=%v ledger=%v checks=%d", modelCalls, paths, ledger, validations)
 	}
+	// open, fixed, recordings and labels: the healthy snapshot is fixed.json.
 	// The protected open/fixed snapshots already contain the bound Service.
 	// Primitive calls are not required for an object to count as observed.
 	if ledger.ReflectionNoRepairCount == nil || ledger.GetReflectionNoRepairCount() != 0 {
@@ -216,7 +217,7 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 		t.Fatalf("verified repeat earned no trust: %+v", state)
 	}
 	again, err := native.processReflection(ctx, ledger)
-	if err != nil || len(again) != 5 || modelCalls != expectedCalls {
+	if err != nil || len(again) != 4 || modelCalls != expectedCalls {
 		t.Fatalf("restart duplicated work: %v %v calls=%d", again, err, modelCalls)
 	}
 }

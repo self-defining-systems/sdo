@@ -72,6 +72,7 @@ A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accept
   is open; `fixed`, `healthy`), plus one `RepairReceipt` entry per encoded hand repair (`create_corpus` adds them; a
   `reflection.program-required` hint prints the exact entry otherwise).
 - `open.json`, `fixed.json`, `healthy.json` snapshots, and `accepted.json` when Mitigate reads source.
+  Omit `open.json` or `healthy.json` when identical to `fixed.json`; the loader uses that file.
   Missing captures never block saving; replay results are information. Diagnose replays recorded phase
   reads, including source comparisons, webhooks, database catalogs and pod admission; an unrecorded read
   is Unknown and names the call. Use its open capture (repair reads are in pre-apply); never invent replies.

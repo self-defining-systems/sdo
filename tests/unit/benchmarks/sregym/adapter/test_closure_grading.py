@@ -34,6 +34,17 @@ def ledger() -> dict:
     }
 
 
+def test_rate_limited_closure_never_submits_an_agent_failure(tmp_path: Path) -> None:
+    evidence = ledger()
+    evidence["closure"]["result"] = {"status": "failed", "error": "agent task failed: rate_limited: capacity exhausted"}
+    grader = ClosureGrader(tmp_path, "http://conductor", submit=lambda *_: pytest.fail("rate limits are not graded"))
+    grader.observe(evidence)
+    record = json.loads(grader.path.read_text())
+    assert record["status"] == "NOT-GRADED"
+    assert record["reason"] == "rate_limited"
+    assert "grade" not in record
+
+
 def test_grade_precedes_terminal_receipt_and_survives_failed_reflection(tmp_path: Path) -> None:
     calls = []
 

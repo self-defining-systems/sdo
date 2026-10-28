@@ -37,6 +37,8 @@ from benchmarks.sregym.fastloop.records import (
 )
 from benchmarks.sregym.faults.description import SuiteCapabilities
 from benchmarks.sregym.protocol.injection import InvalidInjectionError, ensure_incident_follows_injection
+from benchmarks.sregym.protocol.provider_capacity import ProviderWaitInterval, RateLimitedRun
+from libs.agent_cli.errors import rate_limit_failure
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -76,6 +78,7 @@ class AgentOutcome:
     """What an agent reports for one incident; learning fields arrive after recovery."""
 
     injection: InjectionWindow
+    provider_waits: tuple[ProviderWaitInterval, ...] = ()
     detected_at: datetime | None = None
     mitigation_applied_at: datetime | None = None
     resolved_at: datetime | None = None
@@ -477,6 +480,7 @@ def _run_one(
     outcome: AgentOutcome | None = None
     oracle: OracleVerdict | None = None
     infra_error: str | None = None
+    limited_waits: list[ProviderWaitInterval] = []
     recovery_oracle: OracleVerdict | None = None
     recovery_oracle_samples: list[RecoveryOracleSample] = []
     oracle_finished_at: datetime | None = None
@@ -591,22 +595,35 @@ def _run_one(
         raise
     except Exception as exc:
         logger.exception("incident %d failed", index)
-        errors.append(_describe(exc))
+        if rate_limit_failure(exc) is not None:
+            infra_error = "rate_limited"
+            if isinstance(exc, RateLimitedRun):
+                limited_waits = list(exc.evidence.intervals)
+        else:
+            errors.append(_describe(exc))
         from benchmarks.sregym.fastloop.runtime_observation import ObservationUnavailable
 
         if isinstance(exc, ObservationUnavailable) and not injection_attempted and not windows:
             infra_error = "never_injected_retry"
 
     recovered = bool(windows)
-    if windows and grader is not None and outcome is not None and outcome.diagnosis.strip():
+    if (
+        windows
+        and infra_error != "rate_limited"
+        and grader is not None
+        and outcome is not None
+        and outcome.diagnosis.strip()
+    ):
         try:
             diagnosis_grade = grader.grade(problem_ids, outcome.diagnosis if outcome else "")
         except Exception as exc:
             diagnosis_grade = DiagnosisGrade(error=_describe(exc))
     elif windows and grader is not None:
-        diagnosis_grade = DiagnosisGrade(skipped=True, skip_reason="no diagnosis text")
+        diagnosis_grade = DiagnosisGrade(
+            skipped=True, skip_reason="rate_limited" if infra_error == "rate_limited" else "no diagnosis text"
+        )
 
-    if windows and oracle_finished_at is None:
+    if windows and oracle_finished_at is None and infra_error != "rate_limited":
         measure_resolution(ResolutionGradePoint(outcome.incident_id, outcome.resolved_at) if outcome else None)
 
     learning_complete = outcome is None or not outcome.terminal_error
@@ -651,6 +668,9 @@ def _run_one(
         state = delivery_state(config.delivery_record_path)
         if state:
             delivery, reason = state["path"], state["reason"]
+    outcome_fields: dict[str, Any] = (
+        _outcome_fields(outcome) if outcome is not None else {"provider_waits": limited_waits}
+    )
     record = IncidentRecord(
         image_delivery=delivery,
         image_delivery_reason=reason,
@@ -696,8 +716,10 @@ def _run_one(
         incident_wall_seconds=monotonic() - started,
         run_prelude_phase_seconds=config.run_prelude_phase_seconds if index == config.slot_offset else {},
         error="; ".join(errors) or None,
-        **(_outcome_fields(outcome) if outcome is not None else {}),
+        **outcome_fields,
     )
+    if infra_error == "rate_limited":
+        persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", record)
     return record, recovered and learning_complete
 
 
@@ -710,6 +732,7 @@ def _injection_state(windows: list[InjectionWindow], *, attempted: bool) -> Inje
 
 def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
     return {
+        "provider_waits": list(outcome.provider_waits),
         "detected_at": outcome.detected_at,
         "mitigation_applied_at": outcome.mitigation_applied_at,
         "resolved_at": outcome.resolved_at,

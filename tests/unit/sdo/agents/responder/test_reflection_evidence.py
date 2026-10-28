@@ -52,6 +52,25 @@ def test_capture_fields_are_retrieved_on_demand_and_paginated(tmp_path: Path) ->
     assert read_capture(tmp_path, "detect", "events")["items"] == []
 
 
+def test_objects_only_capture_pages_typed_sections(tmp_path: Path) -> None:
+    capture = {
+        "object_snapshot_version": 2,
+        "namespace": "app",
+        "objects": [
+            {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "web", "namespace": "app"}},
+            {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "web-1", "namespace": "app"}},
+            {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "other", "namespace": "elsewhere"}},
+        ],
+    }
+    (tmp_path / "open@detect.json").write_text(json.dumps(capture))
+    pods = read_capture(tmp_path, "detect", "pods", fields=["metadata.name"])
+    assert pods["items"] == [{"metadata.name": "web-1"}]
+    assert read_capture(tmp_path, "detect", "deployments")["total"] == 1
+    resources = capture_inventory(tmp_path)["captures"][0]["resources"]
+    assert resources["pods"]["names"] == ["web-1"]
+    assert resources["deployments"]["count"] == 1
+
+
 def test_memory_view_omits_scripts_and_bounds_repeated_memory_text() -> None:
     from sdo.agents.responder.reflection_evidence import memory_view
     from sdo.contracts import OperationalMemorySnapshot

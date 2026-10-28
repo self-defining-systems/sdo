@@ -237,6 +237,9 @@ func Resources(c Config) (Plan, error) {
 	addAdminGrant(c, &plan)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
+	if err := worker_registry.ApplyProviderCapacity(&plan.Job.Spec.Template.Spec, worker_registry.ProviderCapacityEnvironment()); err != nil {
+		return Plan{}, err
+	}
 	if c.AcceptedCommit != "" {
 		plan.Job.Spec.Template.Annotations = map[string]string{"sdo.dev/accepted-commit": c.AcceptedCommit}
 	}

@@ -263,11 +263,23 @@ def _reflection_namespace() -> str:
     return str(task["request"]["closure"]["request"]["namespace"])
 
 
+def _captured_services(path: Path) -> list[dict[str, Any]]:
+    """Namespace Services of a capture; objects-only captures (version 2) store them once, in objects."""
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    if snapshot.get("object_snapshot_version", 0) < 2:
+        return snapshot.get("services") or []
+    return [
+        item
+        for item in snapshot.get("objects") or []
+        if (item.get("apiVersion"), item.get("kind")) == ("v1", "Service")
+        and item.get("metadata", {}).get("namespace") == snapshot.get("namespace")
+    ]
+
+
 def _captured_pair(capture: Path) -> tuple[str, str]:
-    opened = json.loads((capture / "open@detect.json").read_text(encoding="utf-8"))
-    fixed = json.loads((capture / "fixed.json").read_text(encoding="utf-8"))
-    after = {item["metadata"]["name"]: item for item in fixed.get("services", [])}
-    for item in opened.get("services", []):
+    opened = _captured_services(capture / "open@detect.json")
+    after = {item["metadata"]["name"]: item for item in _captured_services(capture / "fixed.json")}
+    for item in opened:
         name = item["metadata"]["name"]
         if name in after and item["spec"].get("ports") != after[name]["spec"].get("ports"):
             peers = sorted(peer for peer in after if peer != name)
@@ -314,7 +326,6 @@ def reflect_program(turn: Turn, prompt: str, worktree: Path, incident_id: str) -
     for name, data in {
         "open.json": opened,
         "fixed.json": fixed,
-        "healthy.json": fixed,
         "recordings.json": (CAPTURE_DIR / "open@detect-recordings.json").read_bytes(),
     }.items():
         (case / name).write_bytes(data)
