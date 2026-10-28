@@ -11,6 +11,7 @@ from google.protobuf import json_format
 
 from sdo.agents.responder.result_output import normalize_usage, parse_incident_result, validate_incident_result
 from sdo.contracts import IncidentRequest, IncidentResult, UsageMetrics, parse_json, to_canonical_json, validate
+from sdo.contracts.model_schema import controller_owned
 
 FIXTURE_DIR = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts"
 USAGE = {"llm_calls": 1, "input_tokens": 10, "output_tokens": 4, "reasoning_output_tokens": 1}
@@ -170,3 +171,31 @@ class TestUsageMetrics:
         normalize_usage(usage)
         with pytest.raises(ValueError, match=match):
             validate(usage)
+
+
+def test_controller_owned_drift_is_removed_before_worker_validation() -> None:
+    reply = _model_reply()
+    reply["drift_reprompt"] = {"findings_before": 0, "findings_after": 0}
+    reply["unresolved_findings"] = [{"not_a_finding": True}]
+    result = parse_incident_result(reply, USAGE)
+    assert not result.HasField("drift_reprompt")
+    assert not result.unresolved_findings
+
+
+def test_controller_records_keep_positive_before_count_invariant() -> None:
+    from sdo.contracts.proto import messages_pb2
+
+    with pytest.raises(ValueError, match="findings_before"):
+        validate(messages_pb2.DriftReprompt(findings_before=0, findings_after=0))
+    validate(messages_pb2.DriftReprompt(findings_before=2, findings_after=0))
+
+
+@pytest.mark.parametrize(
+    "field",
+    [field for field in IncidentResult.DESCRIPTOR.fields if controller_owned(field)],
+    ids=lambda field: field.name,
+)
+def test_worker_never_validates_any_controller_owned_result_field(field: Any) -> None:
+    for key in {field.name, field.json_name}:
+        result = parse_incident_result({**_model_reply(), key: {"invalid": None}}, USAGE)
+        assert field.name not in {present.name for present, _ in result.ListFields()}

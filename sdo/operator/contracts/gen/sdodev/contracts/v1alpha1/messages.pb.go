@@ -4101,27 +4101,27 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x10\n" +
 	"\x03old\x18\x02 \x01(\tR\x03old\x12\x10\n" +
 	"\x03new\x18\x03 \x01(\tR\x03new\x12\x16\n" +
-	"\x06source\x18\x04 \x01(\tR\x06source\"\x81\x06\n" +
+	"\x06source\x18\x04 \x01(\tR\x06source\"\xab\x06\n" +
 	"\n" +
 	"DriftEvent\x126\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12=\n" +
-	"\x06fields\x18\x02 \x03(\v2%.sdodev.contracts.v1alpha1.DriftFieldR\x06fields\x12\x16\n" +
-	"\x06source\x18\x03 \x01(\tR\x06source\x12\x18\n" +
-	"\amanager\x18\x04 \x01(\tR\amanager\x12\x1c\n" +
-	"\toperation\x18\x05 \x01(\tR\toperation\x12;\n" +
-	"\vobserved_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"\x06fields\x18\x02 \x03(\v2%.sdodev.contracts.v1alpha1.DriftFieldR\x06fields\x12\x1c\n" +
+	"\x06source\x18\x03 \x01(\tB\x04\xc8\xf3\x18\x01R\x06source\x12\x18\n" +
+	"\amanager\x18\x04 \x01(\tR\amanager\x12\"\n" +
+	"\toperation\x18\x05 \x01(\tB\x04\xc8\xf3\x18\x01R\toperation\x12A\n" +
+	"\vobserved_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampB\x04\xc8\xf3\x18\x01R\n" +
 	"observedAt\x12A\n" +
-	"\x0eclassification\x18\a \x01(\tB\x19\xbaH\x16r\x14R\x05faultR\vunexplainedR\x0eclassification\x12\x1d\n" +
+	"\x0eclassification\x18\a \x01(\tB\x19\xbaH\x16r\x14R\x05faultR\vunexplainedR\x0eclassification\x12#\n" +
 	"\n" +
-	"program_id\x18\b \x01(\tR\tprogramId\x129\n" +
+	"program_id\x18\b \x01(\tB\x04\xc8\xf3\x18\x01R\tprogramId\x12?\n" +
 	"\n" +
-	"manager_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tmanagerAt\x121\n" +
+	"manager_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampB\x04\xc8\xf3\x18\x01R\tmanagerAt\x127\n" +
 	"\x14investigation_status\x18\n" +
-	" \x01(\tR\x13investigationStatus\x12Q\n" +
+	" \x01(\tB\x04\xc8\xf3\x18\x01R\x13investigationStatus\x12Q\n" +
 	"\x15investigation_verdict\x18\v \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x03bugR\x06benignR\x06unsureR\x14investigationVerdict\x121\n" +
 	"\x14investigation_reason\x18\f \x01(\tR\x13investigationReason\x12_\n" +
-	"\x16investigation_evidence\x18\r \x03(\v2(.sdodev.contracts.v1alpha1.DriftEvidenceR\x15investigationEvidence\x128\n" +
-	"\x18investigation_capture_id\x18\x0e \x01(\tR\x16investigationCaptureId\"\x86\x01\n" +
+	"\x16investigation_evidence\x18\r \x03(\v2(.sdodev.contracts.v1alpha1.DriftEvidenceR\x15investigationEvidence\x12>\n" +
+	"\x18investigation_capture_id\x18\x0e \x01(\tB\x04\xc8\xf3\x18\x01R\x16investigationCaptureId\"\x86\x01\n" +
 	"\rDriftEvidence\x12S\n" +
 	"\x04kind\x18\x01 \x01(\tB?\xbaH<r:R\x14source_contradictionR\x11violated_relationR\x0fobserved_impactR\x04kind\x12 \n" +
 	"\vobservation\x18\x02 \x01(\tR\vobservation\"\xcc\x02\n" +
@@ -4361,7 +4361,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\tstartedAt\x12E\n" +
 	"\fcompleted_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\vcompletedAt:g\xbaHd\x1ab\n" +
-	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xdc\x06\n" +
+	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xe8\x06\n" +
 	"\x13RepairActionReceipt\x12$\n" +
 	"\taction_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bactionId\x12\x1b\n" +
 	"\x04kind\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1f\n" +
@@ -4377,14 +4377,14 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"reversible\x18\n" +
 	" \x01(\bR\n" +
 	"reversible\x12\xba\x01\n" +
-	"\x0efailure_reason\x18\v \x01(\tB\x92\x01\xbaH\x8e\x01r\x8b\x01R\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\x0fsource_residualR\x14script_unprovenancedR\rfailureReason\x12A\n" +
-	"\x06owners\x18\f \x03(\v2).sdodev.contracts.v1alpha1.ResourceOwnersR\x06owners\x12#\n" +
-	"\rscript_digest\x18\r \x01(\tR\fscriptDigest:n\xbaHk\x1ai\n" +
+	"\x0efailure_reason\x18\v \x01(\tB\x92\x01\xbaH\x8e\x01r\x8b\x01R\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\x0fsource_residualR\x14script_unprovenancedR\rfailureReason\x12G\n" +
+	"\x06owners\x18\f \x03(\v2).sdodev.contracts.v1alpha1.ResourceOwnersB\x04\xc8\xf3\x18\x01R\x06owners\x12)\n" +
+	"\rscript_digest\x18\r \x01(\tB\x04\xc8\xf3\x18\x01R\fscriptDigest:n\xbaHk\x1ai\n" +
 	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xab\x01\n" +
 	"\x0eResourceOwners\x12H\n" +
 	"\bresource\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\bresource\x12O\n" +
 	"\vowner_chain\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\b\xbaH\x05\x92\x01\x02\b\x01R\n" +
-	"ownerChain\"\xea\x0f\n" +
+	"ownerChain\"\xa4\x10\n" +
 	"\x0eIncidentResult\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12(\n" +
@@ -4394,8 +4394,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x15confirmed_root_causes\x18\x04 \x03(\v2-.sdodev.contracts.v1alpha1.ConfirmedRootCauseR\x13confirmedRootCauses\x12W\n" +
 	"\x11applied_playbooks\x18\x05 \x03(\v2*.sdodev.contracts.v1alpha1.AppliedPlaybookR\x10appliedPlaybooks\x12%\n" +
 	"\x0erepair_changes\x18\x06 \x03(\tR\rrepairChanges\x12U\n" +
-	"\x0erepair_actions\x18\a \x03(\v2..sdodev.contracts.v1alpha1.RepairActionReceiptR\rrepairActions\x12a\n" +
-	"\x15final_detector_states\x18\b \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x13finalDetectorStates\x122\n" +
+	"\x0erepair_actions\x18\a \x03(\v2..sdodev.contracts.v1alpha1.RepairActionReceiptR\rrepairActions\x12g\n" +
+	"\x15final_detector_states\x18\b \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationB\x04\xc8\xf3\x18\x01R\x13finalDetectorStates\x122\n" +
 	"\x15proposed_artifact_ids\x18\t \x03(\tR\x13proposedArtifactIds\x12d\n" +
 	"\x15verification_evidence\x18\n" +
 	" \x03(\v2/.sdodev.contracts.v1alpha1.VerificationEvidenceR\x14verificationEvidence\x12E\n" +
@@ -4403,17 +4403,17 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x06timing\x18\f \x01(\v2(.sdodev.contracts.v1alpha1.TimingMetricsB\x06\xbaH\x03\xc8\x01\x01R\x06timing\x125\n" +
 	"\x14responder_session_id\x18\r \x01(\tH\x00R\x12responderSessionId\x88\x01\x01\x12\x19\n" +
 	"\x05error\x18\x0e \x01(\tH\x01R\x05error\x88\x01\x01\x12Y\n" +
-	"\x12late_findings_pull\x18\x0f \x01(\v2+.sdodev.contracts.v1alpha1.LateFindingsPullR\x10lateFindingsPull\x12X\n" +
-	"\x12program_tool_calls\x18\x10 \x03(\v2*.sdodev.contracts.v1alpha1.ProgramToolCallR\x10programToolCalls\x12H\n" +
-	"\fprogram_runs\x18\x11 \x03(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\vprogramRuns\x12W\n" +
-	"\x11plan_applications\x18\x12 \x03(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\x10planApplications\x12.\n" +
-	"\x13response_loops_used\x18\x13 \x01(\x05R\x11responseLoopsUsed\x126\n" +
-	"\x17response_loop_exhausted\x18\x14 \x01(\bR\x15responseLoopExhausted\x126\n" +
-	"\x17program_failure_signals\x18\x15 \x03(\tR\x15programFailureSignals\x12J\n" +
-	"\x0fresolution_path\x18\x16 \x01(\tB!\xbaH\x1er\x1cR\x00R\tresponderR\rdeterministicR\x0eresolutionPath\x12H\n" +
-	"\fdrift_events\x18\x1a \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12S\n" +
-	"\x13unresolved_findings\x18\x1b \x03(\v2\".sdodev.contracts.v1alpha1.FindingR\x12unresolvedFindings\x12O\n" +
-	"\x0edrift_reprompt\x18\x1c \x01(\v2(.sdodev.contracts.v1alpha1.DriftRepromptR\rdriftReprompt:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
+	"\x12late_findings_pull\x18\x0f \x01(\v2+.sdodev.contracts.v1alpha1.LateFindingsPullR\x10lateFindingsPull\x12^\n" +
+	"\x12program_tool_calls\x18\x10 \x03(\v2*.sdodev.contracts.v1alpha1.ProgramToolCallB\x04\xc8\xf3\x18\x01R\x10programToolCalls\x12N\n" +
+	"\fprogram_runs\x18\x11 \x03(\v2%.sdodev.contracts.v1alpha1.ProgramRunB\x04\xc8\xf3\x18\x01R\vprogramRuns\x12]\n" +
+	"\x11plan_applications\x18\x12 \x03(\v2*.sdodev.contracts.v1alpha1.PlanApplicationB\x04\xc8\xf3\x18\x01R\x10planApplications\x124\n" +
+	"\x13response_loops_used\x18\x13 \x01(\x05B\x04\xc8\xf3\x18\x01R\x11responseLoopsUsed\x12<\n" +
+	"\x17response_loop_exhausted\x18\x14 \x01(\bB\x04\xc8\xf3\x18\x01R\x15responseLoopExhausted\x12<\n" +
+	"\x17program_failure_signals\x18\x15 \x03(\tB\x04\xc8\xf3\x18\x01R\x15programFailureSignals\x12N\n" +
+	"\x0fresolution_path\x18\x16 \x01(\tB%\xbaH\x1er\x1cR\x00R\tresponderR\rdeterministic\xc8\xf3\x18\x01R\x0eresolutionPath\x12H\n" +
+	"\fdrift_events\x18\x1a \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12Y\n" +
+	"\x13unresolved_findings\x18\x1b \x03(\v2\".sdodev.contracts.v1alpha1.FindingB\x04\xc8\xf3\x18\x01R\x12unresolvedFindings\x12U\n" +
+	"\x0edrift_reprompt\x18\x1c \x01(\v2(.sdodev.contracts.v1alpha1.DriftRepromptB\x04\xc8\xf3\x18\x01R\rdriftReprompt:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
 	"\x1fresult.unique_repair_action_ids\x12 repair action IDs must be unique\x1aathis.repair_actions.all(a, this.repair_actions.filter(b, b.action_id == a.action_id).size() == 1)B\x17\n" +
 	"\x15_responder_session_idB\b\n" +
 	"\x06_errorJ\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x19\x10\x1a\"\xaa\x02\n" +
