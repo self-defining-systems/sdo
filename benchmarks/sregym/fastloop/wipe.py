@@ -292,6 +292,12 @@ def wipe_environment(
         forget_controller=lambda: environment.state_path.unlink(missing_ok=True),
         timeout_seconds=timeout_seconds,
     )
+    if environment.parallel_root is not None:
+        from benchmarks.sregym.fastloop.shared_memory import provision_parallel_volume
+
+        # Deleting the control namespace deleted the lane repository claim;
+        # restore the claim and its PV together before anything mounts it.
+        provision_parallel_volume(environment)
     if provenance_path is not None and before is not None:
         publish_reset_generation(provenance_path, environment.workspace, planned_commit, before)
     return receipt
