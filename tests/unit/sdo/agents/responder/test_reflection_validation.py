@@ -316,4 +316,5 @@ async def test_check_memory_reply_leads_with_the_next_step(
     assert expected in reply["next"]
     assert "information" in reply["next"]
     if exit_code == 0:
-        assert '"updated"' in reply["next"] and '["book"]' in reply["next"]
+        assert '"updated"' in reply["next"]
+        assert '["book"]' in reply["next"]

@@ -120,7 +120,10 @@ class CheckMemoryReply:
         elif result.timed_out:
             step = "timed out: check again once; replay notes are information, not work."
         else:
-            step = "fix each diagnostic as its hint says, then check again; mitigation_replay_notes and coverage_gaps are information, not work."
+            step = (
+                "fix each diagnostic as its hint says, then check again; "
+                "mitigation_replay_notes and coverage_gaps are information, not work."
+            )
         return cls(step, result.exit_code, result.timed_out, result.stdout, result.stderr)
 
 
