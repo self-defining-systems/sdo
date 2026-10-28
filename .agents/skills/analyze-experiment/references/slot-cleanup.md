@@ -40,7 +40,10 @@ last-injection journal is pending before recreation can write; only healthy sour
 deployment and completed recapture clear it. Missing or interrupted history stays
 dirty. A plain application reapply cannot clear unknown data history; only the full
 recreation transaction establishes that fact. Known clean warm lanes retain the
-fast path. Control state reset stays separate.
+fast path. Control state reset stays separate. After every writer stops it retires
+controller state and all worker request, result and execution records, so a later
+identical request cannot reuse a result computed against a deleted checkout. Those
+records survive only in per-incident checkpoints; the native ledger is unchanged.
 
 ## Ordered mixed-app dispatch
 

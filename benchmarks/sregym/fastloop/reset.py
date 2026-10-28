@@ -47,6 +47,24 @@ def ensure_application_namespace(kubeconfig: Path, namespace: str) -> None:
     )
 
 
+# Record shapes the Go worker executor writes (worker_registry TaskDataKey,
+# ResultDataKey, requestDigestAnnotation and incidentExecutionLabel). Any one
+# marks a request, result, execution receipt or incident execution identity.
+WORKER_RECORD_DATA_KEYS = frozenset({"agent-task.json", "agent-result.json"})
+WORKER_RECORD_ANNOTATION = "sdo.dev/request-sha256"
+WORKER_RECORD_LABEL = "sdo.dev/incident-execution"
+
+
+def is_worker_record(configmap: dict[str, Any]) -> bool:
+    """Return whether a control-namespace ConfigMap caches one worker execution."""
+    metadata = configmap.get("metadata") or {}
+    return (
+        bool(WORKER_RECORD_DATA_KEYS & set(configmap.get("data") or {}))
+        or WORKER_RECORD_ANNOTATION in (metadata.get("annotations") or {})
+        or WORKER_RECORD_LABEL in (metadata.get("labels") or {})
+    )
+
+
 class ResetCluster(Protocol):
     def list_objects(self, namespace: str) -> list[dict[str, Any]]: ...
 
@@ -124,14 +142,23 @@ class KubectlResetCluster(KubectlApplicationCluster):
                 namespace=namespace,
                 kubeconfig=self.kubeconfig,
             )
-        # Retire only transient controller state after all writers stop. The
-        # next incident must not resume an expired request/proposal checkout.
+        # Retire transient controller state and worker records after all writers
+        # stop. The next incident must not resume an expired request/proposal
+        # checkout or reuse a cached result computed against a deleted checkout.
+        # Per-incident checkpoints and the native ledger keep the evidence.
+        listing = kubectl(["get", "configmaps", "-o", "json"], namespace=namespace, kubeconfig=self.kubeconfig)
+        records = sorted(
+            item["metadata"]["name"]
+            for item in json.loads(listing.stdout or "{}").get("items", [])
+            if is_worker_record(item)
+        )
         kubectl(
             [
                 "delete",
                 "configmap",
                 "sdo-controller-state",
                 "sdo-controller-state-drift-verdicts",
+                *records,
                 "--ignore-not-found=true",
                 "--wait=true",
             ],
