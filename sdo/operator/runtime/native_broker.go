@@ -205,6 +205,19 @@ func (n NativeIncidentBroker) PrepareIncident(ctx context.Context, incidentID st
 	return IncidentWorkspace{IncidentID: incidentID, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}, nil
 }
 
+// PrepareIncidentAt keeps the incident's detector/program revision and its
+// isolated memory checkout together, independently of peer publications.
+func (n NativeIncidentBroker) PrepareIncidentAt(ctx context.Context, incidentID, base string) (IncidentWorkspace, error) {
+	if n.Repository == nil {
+		return IncidentWorkspace{}, errors.New("Go repository broker is not configured")
+	}
+	proposal, err := n.Repository.CreateProposalAt(ctx, incidentID, base)
+	if err != nil {
+		return IncidentWorkspace{}, err
+	}
+	return IncidentWorkspace{IncidentID: incidentID, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}, nil
+}
+
 func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure IncidentClosure) (ClosureReceipt, error) {
 	if n.Repository == nil || n.Deriver == nil || n.ResponderBackend == "" || n.ResponderModel == "" {
 		return ClosureReceipt{}, errors.New("native broker requires repository, outcome deriver, and responder identity")

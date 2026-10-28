@@ -131,7 +131,7 @@ def test_registration_settings_reach_all_roles(tmp_path):
     assert {p.stem for p in directory.glob("*.json")} == {"deployer", "health-judge", "responder", "reflector"}
     for path in directory.glob("*.json"):
         job = json.loads(path.read_text())["kubernetes_job"]
-        assert job["command"][:2] == ["env", "SDO_AGENT_REASONING_EFFORT=high"]
+        assert job["command"][:2] == ["python3", "-m"]
         assert job["image"] == environment.images.responder
 
 

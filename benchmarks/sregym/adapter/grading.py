@@ -70,6 +70,12 @@ class ClosureGrader:
             if previous.get("incident_id") != incident_id:
                 raise ValueError("grading directory already belongs to another incident") from None
             return
+        if "rate_limited:" in str(closure["result"].get("error", "")):
+            record.update(status="NOT-GRADED", reason="rate_limited")
+            temporary = self.path.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            temporary.replace(self.path)
+            return
         try:
             record["grade"] = self.submit(
                 {"schema_version": "sdo.production-receipt/v2", "native_ledger": ledger}, self.api_base

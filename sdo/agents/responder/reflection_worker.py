@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
+from libs.agent_cli.errors import rate_limit_failure
 from libs.agent_cli.session_ownership import SessionHandoffError, SessionHandoffTimeout
 from libs.agent_cli.structured import StructuredTurnTimeout
 from sdo.agents.provider import resolve_agent
@@ -77,7 +78,9 @@ class Reflector(Protocol):
 
 def _default_reflector(guidance: ReflectionGuidance) -> SessionReflector:
     resolved = resolve_agent("reflection", "reflection")
-    backend = (ClaudeSessionBackend if resolved.provider == "claude" else CodexSessionBackend)(model=resolved.model)
+    backend = (ClaudeSessionBackend if resolved.provider == "claude" else CodexSessionBackend)(
+        model=resolved.model, reasoning_effort=resolved.effort
+    )
     return SessionReflector(backend, guidance=guidance)
 
 
@@ -214,6 +217,8 @@ def run_reflection_task(
 
 
 def _failure_reason(exc: BaseException) -> str:
+    if rate_limit_failure(exc) is not None:
+        return "rate_limited"
     cause: BaseException | None = exc
     while cause is not None:
         if isinstance(cause, SessionHandoffTimeout):

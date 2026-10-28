@@ -17,6 +17,7 @@ import (
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/shellpath"
+	"sdo.dev/operator/worker_registry"
 )
 
 const PreparedCommitAnnotation = "sdo.dev/prepared-commit"
@@ -117,7 +118,7 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--responder-image", cfg.ResponderImage, "--validator-image", cfg.ValidatorImage,
 		"--repository-pvc", cfg.RepositoryPVC, "--repository-mount-path", "/workspace",
 		"--credentials-secret", cfg.CredentialsSecret, "--model", cfg.Model,
-		"--agent-provider", provider(cfg), "--worktree-root", "/workspace/worktrees",
+		"--agent-provider", provider(cfg), "--agent-effort", cfg.AgentEffort, "--worktree-root", "/workspace/worktrees",
 		"--buildkit-image", cfg.BuildKitImage, "--registry-push-secret", cfg.RegistryPushSecret,
 		"--repair-policy", defaultRepairPolicy(cfg), "--response-timeout", fmt.Sprintf("%ds", cfg.TimeoutSeconds),
 		"--verification-timeout", fmt.Sprintf("%ds", verificationTimeout(cfg)),
@@ -188,6 +189,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if devmount.Enabled() {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)
+	}
+	if err := worker_registry.ApplyProviderCapacity(pod, worker_registry.ProviderCapacityEnvironment()); err != nil {
+		return nil, err
 	}
 	return job, nil
 }

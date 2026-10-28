@@ -40,8 +40,9 @@ links:
 `
 
 // A health probe that never crosses a declared dependency edge cannot see a
-// fault that answers connections but fails requests on that edge. The check
-// says so without rejecting the memory.
+// fault that answers connections but fails requests on that edge, and one on
+// the default latency bound cannot see its path slow down. The check says so
+// without rejecting the memory.
 func TestValidateNotesDependencyEdgesNoHealthScenarioDrives(t *testing.T) {
 	app := t.TempDir()
 	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app", ".sdo", "diagnostics")
@@ -81,5 +82,15 @@ func TestValidateNotesDependencyEdgesNoHealthScenarioDrives(t *testing.T) {
 	joined := strings.Join(gaps, "\n")
 	if !strings.Contains(joined, "traffic edge checkout -> payment:8080 is not driven") || strings.Contains(joined, "frontend -> catalog") {
 		t.Fatalf("want exactly the undriven checkout -> payment edge noted, got %q", gaps)
+	}
+	// The read keeps the generous default latency bound, so its path could
+	// slow many times over without firing. The check notes it, again
+	// without rejecting the memory.
+	latency, err := workspace.TrafficLatencyGaps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latency) != 1 || !strings.Contains(latency[0], "scenario browse keeps the default") {
+		t.Fatalf("want the browse scenario's default latency bound noted, got %q", latency)
 	}
 }

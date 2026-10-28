@@ -596,6 +596,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 			},
 		},
 	}
+	if err := ApplyProviderCapacity(&job.Spec.Template.Spec, e.Environment); err != nil {
+		return err
+	}
 	e.addAPIHistory(job, task)
 	if e.standbyMode {
 		e.configureStandby(job, launch)

@@ -89,6 +89,10 @@ func ServiceExpectsEndpoints(service corev1.Service) bool
     for missing ready endpoints or pods.
 
 func SortObjects(objects []unstructured.Unstructured)
+func TypedObjectFields(target any) []reflect.Value
+    TypedObjectFields returns target's typed Kubernetes list fields, the ones
+    DecodeTypedObjects fills. They are a projection of the generic objects.
+
 func TypedObjects(view any) []unstructured.Unstructured
     TypedObjects is the compatibility edge for existing typed detector views and
     old fixtures. It discovers zero-argument Kubernetes slice getters by type;
@@ -155,6 +159,8 @@ type DetectionContext interface {
 	PodsForService(namespace string, service string) []corev1.Pod
 	RecentEventsFor(namespace string, kind string, name string) []corev1.Event
 }
+    DetectionContext is the frozen snapshot read by detectors and, through
+    ReadView, by programs.
 
 type Detector interface {
 	Spec() DetectorSpec
@@ -244,17 +250,4 @@ func DetectObserved(ctx context.Context, detector Detector, view DetectionContex
     finding, even if the detector ignores an accessor error.
 
 type FindingSeverity string
-
-const (
-	SeverityInfo     FindingSeverity = "info"
-	SeverityWarning  FindingSeverity = "warn"
-	SeverityCritical FindingSeverity = "critical"
-	SeverityLatent   FindingSeverity = "latent"
-)
-type FindingStatus string
-
-const (
-	FindingActive   FindingStatus = "active"
-	FindingResolved FindingStatus = "resolved"
-)
 ```

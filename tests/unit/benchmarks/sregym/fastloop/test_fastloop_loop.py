@@ -120,6 +120,28 @@ def _config(tmp_path: Path, count: int, problems: tuple[str, ...] = ("p1",)) -> 
     return LoopConfig(run_id="run-1", problems=problems, incidents=count, results_path=tmp_path / "incidents.jsonl")
 
 
+def test_rate_limited_agent_is_not_graded_and_cleanup_still_runs(tmp_path: Path) -> None:
+    from libs.agent_cli.errors import ProviderRateLimited
+
+    clock = FakeClock()
+    driver = FakeDriver(clock, oracle_success=False)
+
+    class LimitedAgent(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            inject()
+            raise ProviderRateLimited("provider retry budget exhausted", retryable=False)
+
+    records = run_incidents(LimitedAgent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    (record,) = records
+    assert record.infra_error == "rate_limited"
+    assert record.grade_status == "NOT-GRADED"
+    assert record.oracle is None
+    assert record.error is None
+    assert driver.events == ["inject:p1", "recover", "oracle"]
+    frozen = json.loads((tmp_path / "incidents.grades/000000.json").read_text())
+    assert frozen["not_graded_reason"] == "rate_limited"
+
+
 @pytest.mark.parametrize(("oracle_success", "recover_fails"), [(False, False), (False, True), (True, False)])
 def test_grade_precedes_learning_and_cleanup_without_feedback(
     tmp_path: Path, oracle_success: bool, recover_fails: bool

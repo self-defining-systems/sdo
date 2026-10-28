@@ -12,8 +12,17 @@ const CapturedFixedNoMatchPhase = "fixed"
     CapturedFixedNoMatchPhase identifies observed negative evidence only.
 
 const MaxCapturedSnapshotBytes = 4 << 20
+const ObjectsOnlySnapshotVersion = 2
+    ObjectsOnlySnapshotVersion stores every captured object once, in Objects.
+    Loading rebuilds the typed lists from the namespace-local objects.
+
 
 FUNCTIONS
+
+func CanonicalSnapshot(raw []byte) ([]byte, error)
+    CanonicalSnapshot returns the stored form of a snapshot file. The version
+    1 and objects-only forms of one captured snapshot have the same canonical
+    bytes.
 
 func CheckGeneralization(t testing.TB, p program.Diagnoser, c CorpusCase, peer program.Bindings)
 func CheckMitigationRepairs(p program.Diagnoser, m program.Mitigator, c CorpusCase) error
@@ -31,6 +40,10 @@ func CheckRenameInvariance(t testing.TB, p program.Diagnoser, c CorpusCase)
     the recorded application's resources, labels, images, and ports. Namespace
     names, IPs, digest-pinned images, binary ConfigMap data, and HTTP paths stay
     fixed because the corpus cannot safely substitute their external targets.
+
+func CorpusSnapshotFile(dir, name string) string
+    CorpusSnapshotFile resolves a case file. open.json and healthy.json are
+    omitted when they equal fixed.json; the case then references fixed.json.
 
 func ExternalNameEndpointViolations(detector sdk.Detector, serviceNames []string) []string
     ExternalNameEndpointViolations checks that a detector never reports an
@@ -66,9 +79,20 @@ func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginR
     observed API writes); when the receipt recorded script bytes, they must be
     these bytes.
 
+func SnapshotDigest(raw []byte) (string, error)
+    SnapshotDigest hashes a snapshot's canonical form, so provenance compares
+    snapshot content rather than one file layout.
+
+func SnapshotMatchesDigest(raw []byte, digest string) bool
+    SnapshotMatchesDigest accepts a recorded digest of either the exact
+    file bytes (cases written before the objects-only form) or the canonical
+    snapshot.
+
 func ValidateCorpusProvenance(dir string) error
     ValidateCorpusProvenance checks that persisted case snapshots still match
     their recorded controller capture, or an explicitly labeled NoMatch case.
+    Digests name snapshot content: either the exact file bytes or the canonical
+    snapshot, so both stored forms of one capture match.
 
 
 TYPES
@@ -92,7 +116,8 @@ type CorpusCase struct {
 
 func LoadCorpusCase(dir string) (CorpusCase, error)
     LoadCorpusCase reads open.json, fixed.json, healthy.json, recordings.json,
-    and labels.json from one .sdo/corpus/<case> directory.
+    and labels.json from one .sdo/corpus/<case> directory. A case stores each
+    distinct snapshot once: an absent open.json or healthy.json is fixed.json.
 
 func LoadCorpusMetadata(dir string) (CorpusCase, error)
     LoadCorpusMetadata reads labels and available receipt recordings without
@@ -211,34 +236,4 @@ func (v *RecordingReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoint
 func (v *RecordingReadView) ScopedServices(namespace string) ([]corev1.Service, error)
 
 func (v *RecordingReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
-
-func (v *RecordingReadView) TrafficWindow(name string) (traffic.Window, bool)
-
-func (v *RecordingReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error)
-
-func (v *RecordingReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
-
-func (v *RecordingReadView) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
-
-type ReplayReadView struct {
-	Snapshot
-	Calls []PrimitiveCall
-
-	// Has unexported fields.
-}
-    ReplayReadView consumes each recorded call at most once, including when
-    diagnoses share the view. Snapshot and Calls must remain immutable during
-    use.
-
-func (v *ReplayReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.AdmissionWebhook, error)
-
-func (v *ReplayReadView) AlertsResult() (metrics.AlertsResult, bool)
-
-func (v *ReplayReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
-
-func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
-
-func (v *ReplayReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
-
-func (v *ReplayReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
 ```

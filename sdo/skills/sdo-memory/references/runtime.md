@@ -167,7 +167,7 @@ verification_blockers[{detector_id,reason}], drift[], drift_events[]
 - When captured, filename: open@detect.json; provenance open_at: detect.
 - When captured, filename: open@pre-apply.json; provenance open_at: pre-apply.
 - Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.
-Select only files actually supplied by the controller. Supported phase values do not promise capture availability.
+Select only files actually supplied by the controller. Supported phase values do not promise capture availability. Captures store each object once, in objects; capture_fields serves the typed sections.
 
 ## Tool reply budget
 
@@ -178,8 +178,8 @@ A reflection tool reply over 8192 bytes is saved whole to a file; the reply name
 Read shipped authoring references: a section index, or one section by heading or declaration.
 
 The full topic text is saved once to the file named in the reply; search
-that file instead of re-reading the reference. SDK includes detector
-source-diff access before playbook selection.
+that file instead of re-reading the reference. The sdk topic starts with
+the SDK card: exact signatures grouped by fault, one line each.
 
 ## create_corpus
 
@@ -188,9 +188,9 @@ Create a positive replay fixture from recorded session observations or optional 
 Pass observations to use the snapshot and primitive replies already in
 the responder session; include accepted_json for source-reading plans.
 Missing controller captures do not block this mode. Without observations,
-copy the selected available capture and peer context. Include original timed
-RepairReceipt observations for each recorded repair encoded by these
-programs. Replay snapshots and verdicts are informational.
+copy the selected available capture and peer context. repair_receipt_ids
+names the outcome's hand repairs these programs encode; their exact
+RepairReceipt entries are added for you. Replay snapshots and verdicts are informational.
 
 ## evidence_inventory
 
@@ -206,7 +206,8 @@ independent validation. Read relevant fields rather than entire captures.
 Read captured resource fields or primitive recordings on demand.
 
 Fields are dotted paths; list indices are numeric (spec.containers.0.image).
-Null collections are empty. Results are paginated; the shared reply cap
+Null collections are empty. Sections of a capture that stores each object
+once, in objects, are rebuilt from those objects. Results are paginated; the shared reply cap
 saves large complete pages to a session file. Extract relevant fields
 from that file. Missing fields are null, never evidence that a primitive succeeded.
 
@@ -227,6 +228,8 @@ Run the complete memory check and wait for final diagnostics (at most 300s).
 
 Supply the typed decision fields directly; this tool writes the result
 JSON outside the authored tree. Return the same decision and logical IDs.
+It first gofmt-formats Go files changed under .sdo/. The reply's next
+field says what to do: return on a pass, else fix the diagnostics.
 Legacy decision_path files are also supported. One call waits for final
 diagnostics. Compile/import/format/provenance checks remain required;
 replay verdicts are information and never block saving. The broker repeats the check.

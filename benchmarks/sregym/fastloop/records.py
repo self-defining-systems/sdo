@@ -21,6 +21,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field
 
 from benchmarks.sregym.faults.description import CapabilityMode, FaultCapability  # noqa: TC001
 from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 - Pydantic resolves this at runtime.
+from benchmarks.sregym.protocol.provider_capacity import ProviderWaitInterval, wait_seconds_between
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -50,27 +51,55 @@ class _PersistedModel(BaseModel):
 
 
 class TokenCounts(_PersistedModel):
-    """Provider-reported token usage; ``input_tokens`` already includes cached input."""
+    """Provider-reported token usage; ``input_tokens`` already includes cache reads and writes.
+
+    Every class a price table weights is kept, so a row prices completely for Claude (cache writes) as for Codex.
+    ``cached_input_tokens`` is cache reads only.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     input_tokens: int = Field(default=0, ge=0)
     cached_input_tokens: int = Field(default=0, ge=0)
+    cache_write_input_tokens: int = Field(default=0, ge=0)
+    cache_write_1h_input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
+    reasoning_output_tokens: int = Field(default=0, ge=0)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cache_read_input_tokens(self) -> int:
+        """Cache reads under agentshim 0.7's name, so readers never take ``cached_input_tokens`` to include writes."""
+        return self.cached_input_tokens
+
+    def __add__(self, other: TokenCounts) -> TokenCounts:
+        return TokenCounts(**{name: getattr(self, name) + getattr(other, name) for name in TokenCounts.model_fields})
+
     @classmethod
     def from_usage(cls, usage: object) -> TokenCounts:
         if not isinstance(usage, dict):
             return cls()
+
+        def count(name: str, proto: str, *fallbacks: str) -> int:
+            for key in (name, proto, *fallbacks):
+                if usage.get(key):
+                    return int(usage[key])
+            return 0
+
         return cls(
-            input_tokens=int(usage.get("input_tokens") or usage.get("inputTokens") or 0),
-            cached_input_tokens=int(usage.get("cached_input_tokens") or usage.get("cachedInputTokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or usage.get("outputTokens") or 0),
+            input_tokens=count("input_tokens", "inputTokens"),
+            cached_input_tokens=count(
+                "cache_read_input_tokens", "cacheReadInputTokens", "cached_input_tokens", "cachedInputTokens"
+            ),
+            cache_write_input_tokens=count("cache_write_input_tokens", "cacheWriteInputTokens"),
+            cache_write_1h_input_tokens=count("cache_write_1h_input_tokens", "cacheWrite1hInputTokens"),
+            output_tokens=count("output_tokens", "outputTokens"),
+            reasoning_output_tokens=count("reasoning_output_tokens", "reasoningOutputTokens"),
         )
 
 
@@ -182,6 +211,7 @@ class IncidentRecord(_PersistedModel):
     image_delivery_reason: str = ""
     schema_version: Literal["sdo.fastloop-incident/v2"] = SCHEMA_VERSION
     infra_error: str | None = None
+    provider_waits: list[ProviderWaitInterval] = Field(default_factory=list)
     recovery_error: str | None = None
     injection_evidence: dict[str, Any] = Field(default_factory=dict)
     fault_components: list[FaultComponent] = Field(default_factory=list)
@@ -191,7 +221,10 @@ class IncidentRecord(_PersistedModel):
     index: int = Field(ge=0)
     agent: AgentName
     problem_id: str = Field(min_length=1)
+    #: The provider, model and reasoning effort the row's agents were configured with; ``None`` on older rows.
+    provider: str | None = None
     model: str
+    reasoning_effort: str | None = None
     injection: InjectionState
     #: First detector firing (SDO only; the raw baseline has no detector).
     detected_at: AwareDatetime | None = None
@@ -286,6 +319,52 @@ class IncidentRecord(_PersistedModel):
             )
         return self
 
+    def _active_seconds(self, start: datetime | None, end: datetime | None) -> float | None:
+        raw = _seconds(start, end)
+        return max(0.0, raw - wait_seconds_between(self.provider_waits, start, end)) if raw is not None else None
+
+    def _wait_end(self) -> datetime | None:
+        return (
+            self.resolved_at
+            or self.responder_finished_at
+            or max((item.finished_at for item in self.provider_waits), default=None)
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def grade_status(self) -> Literal["GRADED", "NOT-GRADED"]:
+        return "NOT-GRADED" if self.infra_error or isinstance(self.injection, NotInjected) else "GRADED"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def not_graded_reason(self) -> str | None:
+        return self.infra_error or ("not_injected" if isinstance(self.injection, NotInjected) else None)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def raw_injection_to_mitigation_seconds(self) -> float | None:
+        return _seconds(self.injection_started_at, self.mitigation_applied_at)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def rate_limit_wait_seconds(self) -> float:
+        return wait_seconds_between(
+            self.provider_waits,
+            self.injection_started_at,
+            self._wait_end(),
+            kind="rate_limit",
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def concurrency_wait_seconds(self) -> float:
+        return wait_seconds_between(
+            self.provider_waits,
+            self.injection_started_at,
+            self._wait_end(),
+            kind="concurrency",
+        )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_started_at(self) -> datetime | None:
@@ -304,17 +383,17 @@ class IncidentRecord(_PersistedModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def detection_to_mitigation_seconds(self) -> float | None:
-        return _seconds(self.detected_at, self.mitigation_applied_at)
+        return self._active_seconds(self.detected_at, self.mitigation_applied_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_mitigation_seconds(self) -> float | None:
-        return _seconds(self.injection_started_at, self.mitigation_applied_at)
+        return self._active_seconds(self.injection_started_at, self.mitigation_applied_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_resolution_seconds(self) -> float | None:
-        return _seconds(self.injection_started_at, self.resolved_at)
+        return self._active_seconds(self.injection_started_at, self.resolved_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -208,6 +208,10 @@ func TestUpstreamUnavailableKeepsPublishingLocallyAndCatchesUp(t *testing.T) {
 	if git(t, rootA, "rev-parse", head+"^1") != peer.Commit {
 		t.Fatal("remote first-parent history was rewritten")
 	}
+	index, err := os.ReadFile(filepath.Join(rootA, ".sdo/playbooks/README.md"))
+	if err != nil || !strings.Contains(string(index), "[alpha](alpha/README.md)") || !strings.Contains(string(index), "[beta](beta/README.md)") {
+		t.Fatalf("merged generated index does not contain both disjoint publications: %s, %v", index, err)
+	}
 }
 
 // Offline publications that overlap a peer's are never merged blindly or

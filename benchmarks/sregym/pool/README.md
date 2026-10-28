@@ -25,7 +25,7 @@ Each host's optional `registry_relay` config names a systemd service and its
 listen/upstream host/port. The registry host exposes its loopback registry on
 the private LAN; peers relay from loopback to that listener. Use distinct owned
 ports while retiring hand-started relays. The owner checks every 30 seconds;
-systemd restarts failed relays, including after a reboot (`enable`), and the
+systemd restarts failed relays; enabled units also start with the user manager (reboot startup requires host linger). The
 health check requires readiness from the owned service PID plus `/v2/` through
 the entire transport. Docker is never restarted. The host user manager must be
 available on both hosts.
@@ -71,6 +71,12 @@ The hook is also passed to each encounter; the keeper is a child of the pair
 unit, uses a lease-fenced kubectl shim and is stopped when the pair ends. Fresh
 Python processes run through `lane_guard` so lease expiry/transfer stops later
 operations. Encounters use permissive stream capability mode and the shared
-fastloop command's one cleanup pass. When RATE1 is merged, configure its shared
-Opus pool on both hosts before live admission; capacity exhaustion remains an
-infrastructure result.
+fastloop command's one cleanup pass. Configure RATE1's identical `SDO_OPUS_POOL_NFS_SERVER`, `SDO_OPUS_POOL_NFS_PATH`
+and capacity on both hosts before Opus preparation. The pool installs NFS client
+helpers on its own kind nodes when needed; it never changes the host Docker
+configuration. Capacity exhaustion remains an infrastructure result.
+
+After the final pair, run `sync-memory --run-dir LANE --code-root CODE --lease LEASE`
+on each host. This invokes the production broker sync under its existing lock,
+then records `memory-convergence.json` only when the controller and GitHub heads
+agree. It never creates a synthetic incident or imports grader evidence.

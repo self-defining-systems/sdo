@@ -58,6 +58,15 @@ def image_build_source(tmp_path: Path) -> Path:
     return source
 
 
+@pytest.fixture(autouse=True)
+def _isolated_opus_pool(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Fake-agent tests share a real temporary lock pool, never the live account pool."""
+    # tmp_path itself is often the proposal repository. Coordination metadata
+    # belongs in a sibling directory, outside every agent-authored checkout.
+    monkeypatch.setenv("SDO_OPUS_POOL_DIR", str(tmp_path_factory.mktemp("provider-capacity")))
+    monkeypatch.setenv("SDO_OPUS_MAX_SESSIONS", "8")
+
+
 @pytest.fixture(scope="session")
 def operator_binary() -> Path:
     repository = Path(__file__).resolve().parents[1]

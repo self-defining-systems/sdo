@@ -78,15 +78,6 @@ def _settings(argv: list[str]) -> dict[str, Any] | None:
     return json.loads(argv[argv.index("--settings") + 1])
 
 
-def test_run_setting_controls_effort_before_provider_execution(tmp_path, monkeypatch):
-    monkeypatch.setenv("SDO_AGENT_REASONING_EFFORT", "high")
-    _, agent = _run("codex", tmp_path, reasoning_effort="medium")
-    assert any('model_reasoning_effort="high"' in part for part in agent.requests[-1].argv)
-    monkeypatch.setenv("SDO_AGENT_REASONING_EFFORT", "invalid")
-    with pytest.raises(ValueError, match="SDO_AGENT_REASONING_EFFORT"):
-        _run("codex", tmp_path)
-
-
 @pytest.mark.parametrize("provider", AGENT_PROVIDERS)
 @pytest.mark.parametrize("access", ACCESS_MODES)
 def test_every_combination_returns_the_structured_output_and_session(
@@ -919,3 +910,11 @@ def test_the_installed_codex_shows_the_model_no_skill_list_or_bundled_skills(tmp
     assert "<skills_instructions>" not in rendered
     assert "<recommended_plugins>" not in rendered
     assert not (home / "skills" / ".system").exists()
+
+
+def test_a_claude_turn_passes_the_configured_model_and_effort_to_the_cli(tmp_path: Path) -> None:
+    _turn, agent = _run("claude", tmp_path, model="claude-opus-5-5", reasoning_effort="medium")
+
+    (argv,) = agent.argvs
+    assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
+    assert argv[argv.index("--effort") + 1] == "medium"

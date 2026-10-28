@@ -68,10 +68,24 @@ def main(argv: list[str] | None = None) -> int:
         seed.add_argument(f"--{name}", type=Path, required=True)
     seed.add_argument("--application", required=True)
     seed.add_argument("--namespace", required=True)
+    sync = commands.add_parser("sync-memory", help="drain a bound lane through its broker and prove branch convergence")
+    sync.add_argument("--run-dir", type=Path, required=True)
+    sync.add_argument("--code-root", type=Path, required=True)
+    sync.add_argument("--lease", required=True)
     for verb in ("pair", "prepare"):
         worker = commands.add_parser(verb, help=f"host-side {verb} process started by the pool owner")
         worker.add_argument("--spec", type=Path, required=True)
     args = parser.parse_args(argv)
+
+    if args.command == "sync-memory":
+        from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+        from benchmarks.sregym.fastloop.lane_guard import LaneGuard
+        from benchmarks.sregym.pool.real_apps import sync_memory
+
+        environment = FastloopEnvironment.load(args.run_dir)
+        LaneGuard(environment.cluster, environment.kubeconfig, args.lease, "/mnt/data/shli/coord/coord").install()
+        print(sync_memory(environment, args.code_root))
+        return 0
 
     if args.command == "ensure-relay":
         from benchmarks.sregym.pool.relay import RelayConfig, ensure_relay

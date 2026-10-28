@@ -403,7 +403,7 @@ func (s *run) loadManifest(class layout.Class, id string, file textFile) {
 	det.manifestText = file.content
 	manifest, err := layout.ParseDetectorManifest(file.content)
 	if err != nil {
-		s.add(Structural, Diagnostic{Rule: RuleManifestParse, Path: file.path, Line: errorLine(err, 0), Message: err.Error(), Hint: "manifest fields are listed in docs/architecture.md; unknown or duplicate keys are rejected"})
+		s.add(Structural, Diagnostic{Rule: RuleManifestParse, Path: file.path, Line: errorLine(err, 0), Message: err.Error(), Hint: "valid keys: " + layout.ManifestKeys() + "; unknown or duplicate keys are rejected"})
 		return
 	}
 	if err := manifest.Validate(); err != nil {

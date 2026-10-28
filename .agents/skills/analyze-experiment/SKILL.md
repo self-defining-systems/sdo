@@ -60,6 +60,7 @@ For incident deadlines and restart recovery, read [native incident recovery](ref
 For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md).
 For setup costs and interrupted responder accounting, read [phase-bound usage evidence](references/setup-usage.md).
 Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).
+Before attributing throttled rows to SDO, read [provider capacity evidence](references/provider-capacity.md).
 For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md) and [restartable lane/conversion receipts](references/fastloop-sequences.md).
 For injection identity, grade checkpoints and per-fault timings, read [fault tracking evidence](references/fault-tracking.md).
 For scripted repair gates, read [scripted rehearsal evidence](references/scripted-rehearsals.md).
@@ -74,3 +75,5 @@ also read [drift and toy failures](references/drift-failures.md).
 For automatic repair gate changes, defaults, match selection and historical receipt provenance, read [automatic repair evidence](references/automatic-repair.md).
 
 For fastloop capability, infrastructure, ordered dispatch and image-delivery interpretation, read [dispatch evidence](references/fastloop-dispatch.md).
+
+For ordered stage reports and pending rollout handoffs, read [ordered response stages](references/response-stages.md).

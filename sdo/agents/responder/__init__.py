@@ -16,10 +16,10 @@ _EXPORTS = {
     "print_tool_response": "tools_cli",
     "command_surface": "tools_cli",
     "await_standby_claim": "standby",
+    "capture_sections": "reflection_evidence",
     "AGENT_SKILLS": "credentials",
     "ClaudeSessionBackend": "reflection",
     "CodexSessionBackend": "reflection",
-    "INCIDENT_REASONING_EFFORT": "reflection",
     "IncidentStatusReport": "incident_status",
     "IncidentStatusState": "incident_status",
     "KubernetesResultPublisher": "job",
@@ -86,9 +86,6 @@ if TYPE_CHECKING:
         write_application_kubeconfig as write_application_kubeconfig,
     )
     from sdo.agents.responder.reflection import (
-        INCIDENT_REASONING_EFFORT as INCIDENT_REASONING_EFFORT,
-    )
-    from sdo.agents.responder.reflection import (
         REFLECTION_GUIDANCE_MODES as REFLECTION_GUIDANCE_MODES,
     )
     from sdo.agents.responder.reflection import (
@@ -107,6 +104,7 @@ if TYPE_CHECKING:
         reflection_output_schema as reflection_output_schema,
     )
     from sdo.agents.responder.reflection import render_reflection_prompt as render_reflection_prompt
+    from sdo.agents.responder.reflection_evidence import capture_sections as capture_sections
     from sdo.agents.responder.reflection_outcomes import (
         current_outcome_view as current_outcome_view,
     )

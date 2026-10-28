@@ -64,7 +64,7 @@ def pair(spec: PairSpec) -> None:
 
         LaneGuard(environment.cluster, environment.kubeconfig, spec.lease, str(spec.coord)).install()
         preflight_memory(environment, spec.memory.repo, spec.memory.branch)
-        configure_workers(environment, registrations, spec.provider, spec.model)
+        configure_workers(environment, registrations, spec.provider, spec.model, spec.reasoning_effort)
         private_pair(spec, environment)
         return
     if spec.lane_memory == "private":
@@ -78,6 +78,7 @@ def pair(spec: PairSpec) -> None:
         timeout_seconds=spec.timeout_seconds,
         provider=spec.provider,
         model=spec.model,
+        reasoning_effort=spec.reasoning_effort,
         agent_registrations=spec.agent_registrations,
         capability_mode=spec.capability_mode,
         permissive_responder=spec.capability_mode == "permissive",
@@ -108,7 +109,7 @@ def private_pair(spec: PairSpec, environment: FastloopEnvironment) -> None:
         )
         + "\n"
     )
-    arguments = ["--provider", spec.provider, "--model", spec.model]
+    arguments = ["--provider", spec.provider, "--model", spec.model, "--reasoning-effort", spec.reasoning_effort]
     if spec.agent_registrations:
         arguments.extend(["--agent-registrations", str(spec.agent_registrations)])
     if spec.credentials_hook:
@@ -124,6 +125,8 @@ def private_pair(spec: PairSpec, environment: FastloopEnvironment) -> None:
         command, cluster=environment.cluster, kubeconfig=environment.kubeconfig, lease=spec.lease, coord=spec.coord
     )
     process_env = lane_process_environment(environment, 1)
+    jobs = min(4, max(1, int(os.environ.get("GOMAXPROCS", "4"))))
+    process_env.update(GOMAXPROCS=str(jobs), GOFLAGS=f"{os.environ.get('GOFLAGS', '')} -p={jobs}".strip())
     keeper = None
     with (spec.output / "worker.log").open("w") as log:
         try:
@@ -170,7 +173,6 @@ def worker_registrations(spec: PairSpec, environment: FastloopEnvironment) -> Pa
         registration = json.loads(path.read_text())
         job = registration["kubernetes_job"]
         job["image"] = environment.images.responder
-        job["command"] = ["env", f"SDO_AGENT_REASONING_EFFORT={spec.reasoning_effort}", *job["command"]]
         (destination / path.name).write_text(json.dumps(registration, indent=2) + "\n")
     return destination
 

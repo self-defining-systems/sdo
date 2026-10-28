@@ -76,6 +76,12 @@ def prepare_real_app(
     from benchmarks.sregym.pool.worker import worker_registrations
 
     setup.verify_seed()
+    if (
+        provider == "claude"
+        and "opus" in model.lower()
+        and not all(os.environ.get(name) for name in ("SDO_OPUS_POOL_NFS_SERVER", "SDO_OPUS_POOL_NFS_PATH"))
+    ):
+        raise ValueError("pool: Opus lanes require RATE1's shared NFS pool before preparation")
     environment = setup.process_environment()
     if setup.relay is not None:
         ensure_relay(setup.relay, setup.code_root, run_dir.parent / "registry-relay")
@@ -112,6 +118,20 @@ def prepare_real_app(
         command, cluster=cluster, kubeconfig=kubeconfig, lease=lease, coord=Path("/mnt/data/shli/coord/coord")
     )
     subprocess.run(command, env={**environment, "KUBECONFIG": str(kubeconfig)}, check=True)
+    if os.environ.get("SDO_OPUS_POOL_NFS_SERVER"):
+        nodes = subprocess.check_output(["kind", "get", "nodes", "--name", cluster], text=True).splitlines()
+        for node in nodes:
+            subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    node,
+                    "sh",
+                    "-ec",
+                    "command -v mount.nfs >/dev/null || (apt-get update -qq && apt-get install -y -qq nfs-common)",
+                ],
+                check=True,
+            )
     lane_env = FastloopEnvironment.load(run_dir)
     subprocess.run(
         [str(setup.credentials_hook), lane_env.namespace + "-sdo"],
@@ -145,6 +165,7 @@ def prepare_real_app(
         encounters=[Encounter(problem=problem, lane=lane)],
         provider=provider,
         model=model,
+        reasoning_effort=reasoning_effort,
         agent_registrations=prepared_registrations,
         capability_mode="permissive",
         permissive_responder=True,
@@ -202,7 +223,9 @@ def preflight_memory(environment: FastloopEnvironment, repo: str, branch: str) -
     return head
 
 
-def configure_workers(environment: FastloopEnvironment, registrations: Path, provider: str, model: str) -> None:
+def configure_workers(
+    environment: FastloopEnvironment, registrations: Path, provider: str, model: str, effort: str = "medium"
+) -> None:
     """Switch idle prepared lanes between scripted and live workers without reseeding memory."""
     from benchmarks.sregym import adapter
     from benchmarks.sregym.fastloop.shared_memory import JOB_NAME, _json, lane_environment, shared_controller_job
@@ -219,14 +242,19 @@ def configure_workers(environment: FastloopEnvironment, registrations: Path, pro
         current["data"] == desired
         and args[args.index("--model") + 1] == model
         and args[args.index("--responder-backend") + 1] == provider
+        and "--agent-effort" in args
+        and args[args.index("--agent-effort") + 1] == effort
     ):
         return
     with lane_environment(environment):
         adapter.pause_for_recovery(adapter.KubectlClusterOps(), control)
     recreated = shared_controller_job(job, environment.application)
     arguments = recreated["spec"]["template"]["spec"]["containers"][0]["args"]
-    for flag, value in (("--model", model), ("--responder-backend", provider)):
-        arguments[arguments.index(flag) + 1] = value
+    for flag, value in (("--model", model), ("--responder-backend", provider), ("--agent-effort", effort)):
+        if flag in arguments:
+            arguments[arguments.index(flag) + 1] = value
+        else:
+            arguments.extend([flag, value])
     adapter.kubectl(
         ["delete", "job", JOB_NAME, "--cascade=foreground", "--wait=true", "--timeout=120s"],
         namespace=control,
@@ -245,3 +273,58 @@ def configure_workers(environment: FastloopEnvironment, registrations: Path, pro
         kubeconfig=environment.kubeconfig,
     )
     environment.state_path.unlink(missing_ok=True)
+
+
+def sync_memory(environment: FastloopEnvironment, code_root: Path) -> str:
+    """Final pool drain through the real broker lock, then prove controller and remote heads agree."""
+    from benchmarks.sregym.adapter import control_namespace_for, kubectl
+    from benchmarks.sregym.fastloop.remote_memory import SSH_DIR, MemoryEndpoint, remote_head
+    from benchmarks.sregym.fastloop.shared_memory import _json
+
+    endpoint = MemoryEndpoint(environment.memory_repo, environment.memory_branch)
+    control = control_namespace_for(environment.namespace)
+    pods = _json(
+        environment, "get", "pods", "--selector", "job-name=sdo-controller-run", "-o", "json", namespace=control
+    )
+    [pod] = [p["metadata"]["name"] for p in pods["items"] if p.get("status", {}).get("phase") == "Running"]
+    binary = environment.run_dir / "sdo-pool-memory"
+    subprocess.run(
+        ["go", "build", "-ldflags=-s -w", "-o", str(binary), str(code_root / "benchmarks/sregym/pool/seed_render.go")],
+        cwd=code_root / "sdo/operator/runtime",
+        check=True,
+    )
+    kubectl(
+        ["cp", str(binary), f"{pod}:/tmp/sdo-pool-memory", "-c", "controller"],
+        namespace=control,
+        kubeconfig=environment.kubeconfig,
+    )
+    kubectl(
+        [
+            "exec",
+            pod,
+            "-c",
+            "controller",
+            "--",
+            "/tmp/sdo-pool-memory",
+            "sync",
+            "/workspace/application",
+            "/workspace/pool-sync-workspaces",
+            endpoint.url,
+            endpoint.branch,
+            SSH_DIR,
+        ],
+        namespace=control,
+        kubeconfig=environment.kubeconfig,
+    )
+    head = kubectl(
+        ["exec", pod, "-c", "controller", "--", "git", "-C", "/workspace/application", "rev-parse", "HEAD"],
+        namespace=control,
+        kubeconfig=environment.kubeconfig,
+    ).stdout.strip()
+    upstream = remote_head(endpoint)
+    if head != upstream:
+        raise ValueError(f"pool: lane head {head} differs from remote {upstream} after broker sync")
+    (environment.run_dir / "memory-convergence.json").write_text(
+        json.dumps({"repo": endpoint.repo, "branch": endpoint.branch, "head": head, "remote_head": upstream}) + "\n"
+    )
+    return head

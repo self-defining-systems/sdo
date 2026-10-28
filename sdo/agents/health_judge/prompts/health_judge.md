@@ -86,6 +86,8 @@ provenance itself from the trusted inventory (${covered_kinds} objects, restrict
 metadata and does not choose your checks.
 
 Choose the checks from the human objective and the application's own topology, not from a catalogue of fault types.
+Cover each critical user path's success and latency and the saturation of the services on it, using signals the
+application already exposes.
 Derive what a check depends on from the objects observed at detection time (the relationships the deployer assessment
 and the active topology record) rather than hard-coding object names, so each check stays valid when objects are
 recreated, and include matching and near-miss tests for every check.

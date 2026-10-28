@@ -146,7 +146,7 @@ class ExperimentConfig:
     capability_mode: Literal["strict", "permissive"] = "strict"
     # Agent reasoning effort, passed to SREGym as --reasoning-effort. Empty
     # leaves the agent's default. SDO's incident agents pin theirs in code
-    # (sdo.agents.responder.INCIDENT_REASONING_EFFORT); a config test
+    # (sdo.agents.provider.DEFAULT_AGENT_EFFORT); a config test
     # keeps every compared arm declaring that value.
     reasoning_effort: str = ""
 
