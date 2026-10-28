@@ -19,6 +19,8 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   builds/discards every production executable too. The portable graph warms only
   `runtime/prober`, the generated traffic binary's dependency, rather than the
   whole Kubernetes runtime. The CLI and bootstrap fixture are cached once.
+  `download_go_modules.sh` warms each full module graph through temporary module
+  metadata; cache preparation never rewrites the source-bound go.mod/go.sum.
 - `python_go_tools.sh` prepares the real operator, receipt checker and submission
   guard once. Both Python jobs download its tar artifact from their own workflow
   run, verify the operator source stamp, and select the adapters' existing binary

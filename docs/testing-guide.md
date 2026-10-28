@@ -973,3 +973,8 @@ The `env` command requires all three and verifies the operator's source stamp
 before selecting the adapter binaries. Missing or stale artifacts fail before
 pytest instead of starting an unbudgeted adapter build. Normal preparation also
 vets benchmark mains so static analysis reuses the exact source graph.
+
+Full module-cache downloads use `scripts/download_go_modules.sh` with alternate
+module metadata beside the original module. `go mod download all` may add
+checksums; those writes belong to the temporary metadata, so the committed
+Go source identity stays equal in preparation and consumers.

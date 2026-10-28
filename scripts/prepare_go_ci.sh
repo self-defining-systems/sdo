@@ -51,6 +51,6 @@ if [[ "$mode" == normal ]]; then
   # modules), so a new module is covered without editing this.
   git -C "$root" ls-files 'sdo/operator/go.mod' 'sdo/operator/**/go.mod' 'benchmarks/sregym/protocol/**/go.mod' | grep -v /testdata/ |
     while read -r manifest; do
-      (cd "$root/$(dirname "$manifest")" && go mod download all)
+      bash "$root/scripts/download_go_modules.sh" "$root/$(dirname "$manifest")"
     done
 fi

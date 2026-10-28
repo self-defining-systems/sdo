@@ -246,10 +246,18 @@ def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
         env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
         check=True,
     )
+    download_commands = [
+        shlex.split(args)
+        for line in calls.read_text().splitlines()
+        for _, args in [line.split(":", 1)]
+        if shlex.split(args)[:2] == ["mod", "download"]
+    ]
+    assert download_commands
+    assert all(args[2] == "-modfile" and args[3].endswith(".mod") for args in download_commands)
     downloaded = {
         directory
         for directory, args in (line.split(":", 1) for line in calls.read_text().splitlines())
-        if args == "mod download all"
+        if shlex.split(args)[:2] == ["mod", "download"] and shlex.split(args)[-1] == "all"
     }
     modules = {str(ROOT / "sdo/operator" / name) for name in ("sdk", "core", "runtime", "contracts")} | {
         str(ROOT / "sdo/operator")
