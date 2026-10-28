@@ -63,8 +63,10 @@ func ProjectCapturedObject(raw []byte) ([]byte, error)
     Secrets entirely; this also protects recorded JSON.
 
 func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginReceipt, error)
-    ScriptOrigin checks linkage against controller-recorded successful receipts.
-    It never matches opaque shell commands against typed external effects.
+    ScriptOrigin checks linkage to an original successful timed receipt of the
+    case's incident. Every recorded mutation path qualifies (RunScript, sdo act,
+    observed API writes); when the receipt recorded script bytes, they must be
+    these bytes.
 
 func ValidateCorpusProvenance(dir string) error
     ValidateCorpusProvenance checks that persisted case snapshots still match

@@ -19,8 +19,11 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
    shipped references as a section index or one section, with a file to search.
 3. Save each verified mechanical step as a diagnose and mitigation program, even with partial coverage.
-   A new performed repair can be a `RunScript` bash step with relation-derived Env and
-   digest-to-receipt linkage. Put judgement about when and in
+   `RunScript` bash can express any probe or repair the responder ran: use relation-derived Env and
+   digest-to-receipt linkage to its original receipt; replay evidence is optional.
+   A program's diagnosis should check the conditions its action needs (for example, the cause is gone before
+   a restart), so the automatic stage, which runs programs one at a time with a fresh diagnosis before each,
+   can find a working order. Put judgement about when and in
    what order to run steps in the README, with observations and decisions that guide it.
    Stop the ongoing cause or producer before restarting its victims; if the repair cannot, state that limitation in the README.
    README text holds only judgement and ordering; every recorded repair needs an executable step linked to its original receipt. Add detector coverage. A detector may surface multiple playbooks;
