@@ -43,6 +43,7 @@ func modelEffects(effects []Effect) []byte {
 func modelClosure(index int) *contracts.IncidentClosure {
 	return &contracts.IncidentClosure{Request: &contracts.IncidentRequest{IncidentId: fmt.Sprintf("incident-%d", index), RepositoryBaseCommit: "accepted", ResponseDeadline: timestamppb.New(time.Unix(300, 0))}, Result: &contracts.IncidentResult{IncidentId: fmt.Sprintf("incident-%d", index), Status: "completed"}}
 }
+
 // frozenModelClosure is modelClosure after its Freeze event folded in the
 // recheck note the explorer supplies.
 func frozenModelClosure(index int) *contracts.IncidentClosure {

@@ -41,6 +41,13 @@ func (v *switchableSourceView) drift() DriftControllerConfig {
 
 var stillDrifted = program.Diff{Changed: true, Text: "accepted: {} observed: {\"spec\":{\"ports\":[{\"targetPort\":9999}]}}"}
 
+// completeDriftFinding fills the drift finding of newSourceInformationController
+// so the closure passes the broker's and the state store's validation.
+func completeDriftFinding(controller *Controller) {
+	drift := &controller.pendingClosure.Request.Findings[len(controller.pendingClosure.Request.Findings)-1]
+	drift.RuleID, drift.Severity, drift.Summary, drift.Evidence = "unexplained", sdk.SeverityWarning, "targetPort differs from accepted source", "spec.ports[0].targetPort"
+}
+
 // CLOSE2: the first broker attempt receives the closure-time recheck's notes
 // and stores the closure in its ledger, then fails before an outcome commits
 // (the controller exits for a health refresh). Live drift changes before the
@@ -86,8 +93,7 @@ func TestClosureIdentityIsFrozenAcrossBrokerRetryAndRestart(t *testing.T) {
 			}
 			first.pendingClosure.Request.RepositoryWorktree, first.pendingClosure.Request.RepositoryBaseCommit = workspace.Worktree, workspace.BaseCommit
 			first.pendingClosure.Request.RepairPolicy = "recorded-actions"
-			drift := &first.pendingClosure.Request.Findings[len(first.pendingClosure.Request.Findings)-1]
-			drift.RuleID, drift.Severity, drift.Summary, drift.Evidence = "unexplained", sdk.SeverityWarning, "targetPort differs from accepted source", "spec.ports[0].targetPort"
+			completeDriftFinding(first)
 
 			executeRecheck(t, first)
 			awaitBrokerResult(t, first.closureResults)
@@ -167,6 +173,7 @@ func TestBrokerReceivesExactlyTheDurablePendingClosure(t *testing.T) {
 				executeRecheck(t, controller)
 			}
 			awaitBrokerResult(t, controller.closureResults)
+			controller.processBrokerCompletions()
 			if len(broker.closures) != 1 {
 				t.Fatalf("broker calls = %d, want 1", len(broker.closures))
 			}
@@ -178,5 +185,62 @@ func TestBrokerReceivesExactlyTheDurablePendingClosure(t *testing.T) {
 				t.Fatalf("broker received a closure the controller never persisted:\nsent    %v\ndurable %v", sent, durable)
 			}
 		})
+	}
+}
+
+// The freeze is durable before the broker sees the closure: a failed state
+// save hands the broker nothing, and what the broker later receives is the
+// closure a restarted controller loads.
+func TestFrozenClosureIsDurableBeforeBrokerAttempt(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1000, 0).UTC()
+	broker := &recordingClosureBroker{}
+	controller := newSourceInformationController(t, &windowDetector{confirmed: true}, DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView {
+		return sourceCompareView{ReplayReadView: &sdktest.ReplayReadView{}, diff: stillDrifted}
+	}}, broker, &now)
+	completeDriftFinding(controller)
+	file := crashStateStore{path: filepath.Join(t.TempDir(), "state")}
+	store := &retryFailingStateStore{StateStore: file}
+	if err := controller.AttachStateStore(ctx, store); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatal(err)
+	}
+	store.failures = 1
+	effect, ok := controller.PendingClosureEffect()
+	if !ok || !effect.Freeze {
+		t.Fatalf("an unfrozen closure must be frozen first: %+v %v", effect, ok)
+	}
+	if err := controller.ExecuteClosureEffect(ctx, effect); err == nil {
+		t.Fatal("a failed save of the frozen closure must stop the handoff")
+	}
+	if broker.processCalls() != 0 {
+		t.Fatal("broker received a closure that was never saved")
+	}
+	for attempt := 0; broker.processCalls() == 0 && attempt < 3; attempt++ {
+		effect, ok := controller.PendingClosureEffect()
+		if !ok {
+			t.Fatal("frozen closure has no pending effect")
+		}
+		if err := controller.ExecuteClosureEffect(ctx, effect); err != nil && !errors.Is(err, ErrEffectNotDurable) {
+			t.Fatal(err)
+		}
+		if err := controller.PersistState(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	awaitBrokerResult(t, controller.closureResults)
+	controller.processBrokerCompletions()
+	loaded, _, err := file.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, err := incidentClosureContract(broker.closures[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sent.GetFrozen() || !proto.Equal(sent, loaded.GetPendingClosure()) {
+		t.Fatalf("broker closure is not the durable frozen closure:\nsent   %v\nloaded %v", sent, loaded.GetPendingClosure())
 	}
 }
