@@ -59,6 +59,13 @@ func (l *ResponderLoop) mitigationIncident(selected []selectedPlan) IncidentRequ
 					}
 				}
 			}
+			// A plan chosen without a prior diagnosis run (plan, menu) targets
+			// the related findings that can bind its program.
+			if l.Programs != nil && coverageFindingRelated(l.lastDiagnosisView, finding, plan.bindings) {
+				for _, spec := range l.Programs.List() {
+					targeted = targeted || (spec.ID == plan.programID && programLinksFinding(spec, finding))
+				}
+			}
 		}
 		if targeted {
 			request.Findings = append(request.Findings, finding)
