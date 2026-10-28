@@ -45,6 +45,224 @@ def render_bundle(title: str, packages: tuple[str, ...], stem: str) -> dict[str,
     return files
 
 
+# The card is the first SDK stop for reflection: exact signatures grouped by the
+# fault a program repairs. Groups are chosen here; signatures and meanings come
+# from Go doc comments, so the card cannot drift from the SDK.
+CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "Program shape",
+        (
+            "program.ProgramSpec",
+            "program.ParamSpec",
+            "program.Bindings",
+            "program.Bindings.Parameter",
+            "program.Verdict",
+            "program.Result",
+            "program.Evidence",
+            "program.Plan",
+        ),
+    ),
+    ("Values for writes", ("program.FromSource", "program.FromObserved", "program.FromParam", "program.ValueKind")),
+    (
+        "Reads (ReadView)",
+        (
+            "program.ReadView:names",
+            "sdk.DetectionContext",
+            "sdk.ObjectReader.Object",
+            "program.ReadView.LogsWithOptions",
+        ),
+    ),
+    (
+        "Source drift: a field, ConfigMap entry or object differs from accepted source",
+        (
+            "sdk.DetectionContext.DiffAgainstSource",
+            "sdk.SourceDiff",
+            "sdk.SourceDiff.PresentButNotInSource",
+            "program.SetField",
+            "program.ReconcileFromSource",
+            "program.CreateFromSource",
+            "program.DeleteObject",
+            "program.PatchObject",
+            "program.Rollback",
+        ),
+    ),
+    (
+        "Admission webhook CA or policy blocks Pod creation",
+        (
+            "sdk.DetectionContext.PodAdmission",
+            "program.ReadView.AdmissionWebhooksFor",
+            "program.AdmissionWebhook",
+            "program.WebhookCA",
+            "program.ReadView.WebhookCAMatchesSecret",
+            "program.SyncWebhookCA",
+        ),
+    ),
+    (
+        "Rollout stuck, Pods unready or crashing",
+        (
+            "program.StalledRolloutRelease",
+            "program.RetireOldRevision",
+            "program.RestartRollout",
+            "program.DeletePod",
+            "program.ScaleWorkload",
+            "program.WaitFor",
+        ),
+    ),
+    (
+        "Service routing and ports",
+        (
+            "program.ReadView.ProbeTCP",
+            "program.ReadView.ProbeHTTP",
+            "program.HTTPProbe",
+            "program.RemoveServicePort",
+        ),
+    ),
+    (
+        "Database users",
+        (
+            "program.ReadView.DatabaseUsers",
+            "program.DatabaseTarget",
+            "program.DatabaseAuth",
+            "program.CredentialRef",
+            "program.ConfigMapCredentialRef",
+            "program.DatabaseRole",
+            "program.EnsureDatabaseUser",
+        ),
+    ),
+    (
+        "Any other hand repair: commands, HTTP, Jobs, raw API objects",
+        (
+            "program.RunScript",
+            "program.Exec",
+            "program.EnsureExec",
+            "program.EnsureHTTP",
+            "program.RunJob",
+            "program.ApplyObject",
+            "program.KubernetesRequest",
+        ),
+    ),
+    ("Corpus receipt links", ("program.ScriptOriginReceipt", "program.ScriptDigest")),
+)
+CARD_PACKAGES = {"program": "./program", "sdk": "."}
+
+
+def _doc_blocks(package: str) -> list[str]:
+    text = subprocess.run(["go", "doc", "-all", package], cwd=SDK, check=True, text=True, capture_output=True).stdout
+    return re.split(r"\n(?=(?:type|func|var|const) )", text)
+
+
+def _first_sentence(lines: list[str]) -> str:
+    text = " ".join(line.strip() for line in lines if line.strip())
+    match = re.match(r"(.+?\.)(?:\s|$)", text)
+    return (match.group(1) if match else text).strip()
+
+
+def _split_block(block: str) -> tuple[list[str], list[str]]:
+    """Declaration lines, then the 4-space indented doc comment."""
+    lines = block.rstrip().splitlines()
+    end = next((i for i, line in enumerate(lines) if line.startswith("    ")), len(lines))
+    return lines[:end], lines[end:]
+
+
+def _compact(declaration: list[str]) -> str:
+    """One line: comments and struct tags dropped, fields joined by semicolons."""
+    head, *body = declaration
+    if not body:
+        return head.strip().removesuffix("{ ... }").strip()
+    members = []
+    for line in body:
+        line = re.sub(r"`[^`]*`", "", line).strip()
+        if not line or line.startswith("//") or line == "}":
+            continue
+        members.append(" ".join(line.split()))
+    return head.removesuffix("{").strip() + "{" + "; ".join(members) + "}"
+
+
+def _member_doc(declaration: list[str], name: str) -> tuple[str, str]:
+    """An interface method signature and the comment directly above it."""
+    comment: list[str] = []
+    for line in declaration[1:]:
+        stripped = line.strip()
+        if stripped.startswith("//"):
+            comment.append(stripped.removeprefix("//"))
+            continue
+        if re.match(rf"{re.escape(name)}\(", stripped):
+            return stripped, _first_sentence(comment)
+        comment = []
+    raise ValueError(f"interface method {name} not found")
+
+
+def render_card() -> str:
+    blocks = {alias: _doc_blocks(package) for alias, package in CARD_PACKAGES.items()}
+
+    def find(alias: str, pattern: str) -> str:
+        for block in blocks[alias]:
+            if re.match(pattern, block.lstrip("\n")):
+                return block.lstrip("\n")
+        raise ValueError(f"SDK card symbol not found: {alias} {pattern}")
+
+    lines = [
+        "# Program SDK card",
+        "",
+        "GENERATED by scripts/gen_skill_references.sh from Go doc comments in sdo/operator/sdk; do not edit by hand.",
+        "",
+        "Exact signatures programs use, grouped by the fault they repair. Imports: `sdo.dev/operator/sdk`,",
+        "`sdo.dev/operator/sdk/program`. Refs are `sdk.ObjectRef{APIVersion, Kind, Namespace, Name}` from bindings",
+        "or reads. The full [program SDK](program-sdk.md) is rarely needed.",
+    ]
+    undocumented: list[str] = []
+    for title, symbols in CARD_GROUPS:
+        lines += ["", f"## {title}", ""]
+        for symbol in symbols:
+            symbol, names_only = symbol.removesuffix(":names"), symbol.endswith(":names")
+            alias, *parts = symbol.split(".")
+            if len(parts) == 2:
+                owner, member = parts
+                if owner[0].isupper() and re.search(rf"^type {owner} interface", "\n".join(blocks[alias]), re.M):
+                    declaration, _ = _split_block(find(alias, rf"type {owner} interface"))
+                    signature, doc = _member_doc(declaration, member)
+                    entry = f"{owner}.{signature}"
+                else:
+                    declaration, doc_lines = _split_block(find(alias, rf"func \(\w+ \*?{owner}\) {member}\("))
+                    entry, doc = declaration[0].strip(), _first_sentence(doc_lines)
+            else:
+                (name,) = parts
+                declaration, doc_lines = _split_block(find(alias, rf"(?:type|func) {name}\b"))
+                doc = _first_sentence(doc_lines)
+                if declaration[0].startswith("type ") and declaration[0].rstrip().endswith("interface {"):
+                    methods = [
+                        line.strip()
+                        for line in declaration[1:]
+                        if line.strip() and not line.strip().startswith("//") and line.strip() != "}"
+                    ]
+                    if names_only:
+                        methods = [re.sub(r"\(.*", "", method).removeprefix("sdk.") for method in methods]
+                    entry = f"type {name} interface: " + ("; ", ", ")[names_only].join(methods)
+                else:
+                    entry = _compact(declaration)
+                if name in {"Result", "ValueKind"}:
+                    consts = find(alias, rf"const \(?\s*\w+\s+{name}\b|const \w+ {name} ")
+                    values = re.findall(rf"^\s*(?:const )?(\w+)\s+{name}\b", consts, re.M)
+                    entry += " (" + ", ".join(values) + ")"
+            if not doc:
+                undocumented.append(symbol)
+            doc = doc.removeprefix(parts[-1] + " ")
+            lines.append(f"- `{entry}`: {doc}")
+    if undocumented:
+        raise ValueError("SDK card symbols need a Go doc comment in the SDK: " + ", ".join(undocumented))
+    return "\n".join(lines) + "\n"
+
+
+def card_coverage_failures() -> list[str]:
+    """Every program action must be on the card, so new actions cannot be missed."""
+    listed = {symbol.split(".")[1] for _, symbols in CARD_GROUPS for symbol in symbols}
+    actions = set()
+    for path in (SDK / "program").glob("*.go"):
+        if not path.name.endswith("_test.go"):
+            actions.update(re.findall(r"^func \((\w+)\) action\(\)", path.read_text(), re.M))
+    return [f"program action {name} is missing from the SDK card groups" for name in sorted(actions - listed)]
+
+
 def sync_topic_links(skill: str, *, check: bool) -> list[str]:
     path = ROOT / "sdo/skills" / skill / "SKILL.md"
     original = path.read_text()
@@ -94,6 +312,14 @@ def main() -> None:
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(expected)
+    card = ROOT / "sdo/skills/sdo-playbook-authoring/references/sdk-card.md"
+    failures.extend(card_coverage_failures())
+    expected_card = render_card()
+    if args.check:
+        if not card.is_file() or card.read_text() != expected_card:
+            failures.append(str(card.relative_to(ROOT)))
+    else:
+        card.write_text(expected_card)
     for skill in sorted({bundle[0] for bundle in bundles}):
         failures.extend(sync_topic_links(skill, check=args.check))
     if failures:

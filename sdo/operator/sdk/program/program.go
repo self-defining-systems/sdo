@@ -21,6 +21,9 @@ import (
 
 type Kind string
 
+// ProgramSpec names a playbook program (its directory ID) and declares the
+// roles and values a finding or the responder binds; Diagnose and Mitigate
+// must return identical specs.
 type ProgramSpec struct {
 	ID     string
 	Params []ParamSpec
@@ -133,7 +136,10 @@ type Mitigator interface {
 	Mitigate(context.Context, ReadView, Bindings) (Plan, error)
 }
 
+// ReadView is a program's frozen, recorded read access to the incident
+// namespace; every read is replayed from the corpus at check time.
 type ReadView interface {
+	// WebhookCAMatchesSecret reports whether one webhook's caBundle equals a Secret key without exposing either value.
 	WebhookCAMatchesSecret(WebhookCA) (bool, error)
 	// AdmissionWebhooksFor lists the webhook entries that admit Pod creation for a Namespace or workload; cluster webhook names need no observation grant.
 	AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)
@@ -150,13 +156,17 @@ type ReadView interface {
 	traffic.Source
 	servicehealth.ReachabilitySource
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
+	// LogsWithOptions reads bounded container logs; Previous selects the last terminated instance.
 	LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
 	metrics.UsageSource
+	// ProbeTCP connects to one port of a Pod or Service and records whether it accepted.
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
+	// ProbeHTTP sends one recorded HTTP request to a Pod or Service.
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
 	DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error)
+	// DatabaseUsers lists nonsecret user names and direct roles of one database catalog.
 	DatabaseUsers(DatabaseTarget) ([]DatabaseUser, error)
 	Observe(ExternalOperation) (int32, error)
 	KubernetesRead(KubernetesRequest) (json.RawMessage, error)
@@ -167,6 +177,7 @@ type ProbeResult struct {
 	Detail  string `json:"detail,omitempty"`
 }
 
+// HTTPProbe is the request ProbeHTTP sends.
 type HTTPProbe struct {
 	Method  string            `json:"method"`
 	Path    string            `json:"path"`
@@ -177,6 +188,8 @@ type HTTPProbe struct {
 // A delete-style Diagnose matches on diff.PresentButNotInSource(), not SourceAbsent, which stays true after the delete.
 type Diff = sdk.SourceDiff
 
+// Result is a diagnosis verdict: Match means the fault is present, NoMatch
+// absent, Unknown that evidence is unavailable.
 type Result string
 
 const (
@@ -186,6 +199,7 @@ const (
 	NeedsJudgement Result = "NeedsJudgement"
 )
 
+// Evidence is one observed fact supporting a verdict.
 type Evidence struct {
 	Resource sdk.ObjectRef `json:"resource"`
 	Fact     string        `json:"fact"`
@@ -193,6 +207,7 @@ type Evidence struct {
 	Expected string        `json:"expected"`
 }
 
+// Verdict is what Diagnose returns; NeedsJudgement requires a Question.
 type Verdict struct {
 	Result   Result     `json:"result"`
 	Evidence []Evidence `json:"evidence,omitempty"`
@@ -234,10 +249,13 @@ type DeleteObject struct {
 
 func (DeleteObject) action() {}
 
+// ReconcileFromSource restores a whole source-owned object to accepted source,
+// removing additions SourceDiff reports; prefer SetField for one field.
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
 
 func (ReconcileFromSource) action() {}
 
+// Rollback restores a workload's fields from an explicit earlier revision.
 type Rollback struct {
 	Ref        sdk.ObjectRef
 	ToRevision string
@@ -245,6 +263,8 @@ type Rollback struct {
 
 func (Rollback) action() {}
 
+// SetField writes one schema-checked field (or one ConfigMap JSON/YAML entry)
+// from a Value: accepted source, an observation or a declared parameter.
 type SetField struct {
 	Ref    sdk.ObjectRef
 	Path   string
@@ -286,6 +306,8 @@ type Exec struct {
 
 func (Exec) action() {}
 
+// RestartRollout restarts a Deployment's Pods like kubectl rollout restart;
+// Ref must be an apps/v1 Deployment.
 type RestartRollout struct {
 	Ref    sdk.ObjectRef
 	Reason string
@@ -293,6 +315,8 @@ type RestartRollout struct {
 
 func (RestartRollout) action() {}
 
+// Plan is what Mitigate returns: actions applied in order as one batch.
+// An empty plan means nothing to do.
 type Plan struct {
 	Actions   []Action
 	Rationale string

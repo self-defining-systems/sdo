@@ -71,3 +71,4 @@ Open only the topic needed for the current edit.
 - [routing](references/programs/routing.md)
 - [source-restoration](references/programs/source-restoration.md)
 - [values-and-runtime-actions](references/programs/values-and-runtime-actions.md)
+- [sdk-card](references/sdk-card.md)

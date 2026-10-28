@@ -33,12 +33,17 @@ type Value struct {
 	bound  *ValueInputs
 }
 
+// FromSource is the field value in the incident's accepted source manifest.
 func FromSource(ref sdk.ObjectRef, path string) Value {
 	return Value{origin: SourceValue, ref: ref, path: path}
 }
+
+// FromObserved is the field value in this invocation's ReadView snapshot.
 func FromObserved(ref sdk.ObjectRef, path string) Value {
 	return Value{origin: ObservedValue, ref: ref, path: path}
 }
+
+// FromParam is a declared scalar parameter's bound value or default.
 func FromParam(name string) Value   { return Value{origin: ParameterValue, param: name} }
 func (v Value) Origin() ValueOrigin { return v.origin }
 func (v Value) Ref() sdk.ObjectRef  { return v.ref }

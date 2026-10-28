@@ -11,6 +11,7 @@ type ObjectCaptureSource interface {
     scopes.
 
 type ObjectReader interface {
+	// Object reads one exact object by kind, namespace and name.
 	Object(ObjectRef) (*unstructured.Unstructured, error)
 }
     ObjectReader reads an exact, versioned identity. Returned objects are
@@ -198,9 +199,9 @@ type SourceDiff struct {
     comparison.
 
 func (d SourceDiff) PresentButNotInSource() bool
-    PresentButNotInSource is true only while the object exists live and accepted
-    source lacks it; unlike SourceAbsent it is false once the object is deleted,
-    so use it as the Diagnose match for delete-style repairs.
+    PresentButNotInSource is true while the object exists live but not in
+    accepted source. Unlike SourceAbsent it turns false after the delete,
+    so delete-style Diagnose matches on it.
 
 type WatchKind struct {
 	APIVersion string
