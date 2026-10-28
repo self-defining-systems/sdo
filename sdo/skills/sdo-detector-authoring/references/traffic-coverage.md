@@ -18,3 +18,37 @@ request across that edge.
 - `sdo-operator memory check` lists each edge no health-probe scenario drives as a `traffic.undriven-edge` coverage
   gap. It never fails the check. Drive the edge, or write a comment above that link in `links.yaml` saying why no
   synthetic request can safely cross it.
+
+## Latency and saturation
+
+A path is healthy only while it is also fast. A saturated service (CPU at its limit, a cache out of memory) usually
+slows its path many times over before any request fails: a CPU-throttled service moved one read's median from 7 ms to
+350 ms, still under the 1.5 s default bound.
+
+- Give each health-probe scenario its own latency bound (`slo.maxLatency`, per scenario or on the workload). The
+  bound covers the whole scenario, every step together; keep it below the request `timeout`.
+- Bound the median: set `latencyPercentile: 50`. Over the default five-sample window p90 is the slowest sample, so a
+  single pause fires a tight p90 bound, and a write journey's healthy tail can cross even the default (an order took
+  40 ms to 1.8 s while healthy, median 170 ms). Saturation moves the median; one pause does not.
+- Base the bound on what the path does: a read that crosses one or two in-cluster services has a median of tens of
+  milliseconds, so a median bound of 100 to 250 ms leaves room for a loaded cluster and still sees a service slowed
+  many times over. Give multi-service writes about a second.
+- `sdo-operator memory check` lists each health-probe scenario left on the default bound as a
+  `traffic.default-latency` coverage gap. It never fails the check.
+- Memory saturation that kills a container (OOMKilled, restarts) is already reported by `workload-health`. Latency
+  and failing scenarios show the rest. With a metrics source, add threshold rules for CPU throttling and memory near
+  the limit of the services on each critical path. Without one, a health detector may compare
+  `program.ReadFrom(ctx).PodUsage` with a container's limits, but a failed usage read is Unknown and holds health, so
+  use it only where the cluster serves resource metrics.
+
+## Every record, every sample
+
+The SLO judges a scenario by its error rate over its recent samples. A fault that breaks one record (one product,
+one user, one key) fails only the samples that happen to pick that record, which stays under the error budget when a
+step picks one of many records at random.
+
+- Visit every seeded record on every iteration: one step per record, up to `traffic.MaxSteps` steps per scenario, and
+  split a larger set across scenarios. Build the steps in a Go loop over the seeded IDs.
+- After a write, read back what it changed (an order clears what it consumed, a new record is listed). Some
+  failures leave the write's own response successful: a service can ignore an error from a dependency it calls only
+  to clean up.

@@ -36,6 +36,7 @@ var internalRules = map[string]string{
 
 	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
 	RuleTrafficUndrivenEdge:        "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches driving every edge",
+	RuleTrafficDefaultLatency:      "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches latency bounds",
 }
 
 // ruleIDs returns every rule constant declared in rules.go.

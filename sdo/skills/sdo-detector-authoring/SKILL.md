@@ -45,7 +45,7 @@ Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent 
 Steady traffic remains pending until every scenario has succeeded since observation began and has enough recent usable SLO samples. Pending carries a reason naming unproven scenarios, establishes no health and never opens an incident by itself. Qualified violations still fire alongside unproven peers. Process restarts lose qualification; recovery requires fresh observations and the controller's ordinary clearing check. A verify burst reports present scenario evidence, while controller verification owns incident closure.
 
 Health traffic sees only what it calls: give every `links.yaml` edge a continuous scenario that crosses it, writes
-included; see [traffic coverage](references/traffic-coverage.md).
+included, bound each scenario's latency and cover every seeded record; see [traffic coverage](references/traffic-coverage.md).
 
 ## Metrics detectors (optional input)
 
