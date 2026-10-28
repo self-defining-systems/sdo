@@ -40,11 +40,13 @@ FROM registry.k8s.io/kubectl:v1.33.2@sha256:15ac68dd5ff1c5ef4c5ef85f2ef1a6e20903
 FROM node:22.17.0-bookworm-slim@sha256:b04ce4ae4e95b522112c2e5c52f781471a5cbc3b594527bcddedee9bc48c03a0 AS node-tools
 
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime-base
-# The identical OS/tool layer is shared by every shipped role. Go and build
+# The identical OS/tool layer is shared by every shipped role. Pods run as uid 65532;
+# its passwd entry lets the ssh client reach a memory upstream. Go and build
 # dependencies stay in build stages; controller and validator share compiler layers.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates git openssh-client python3 python3-pip bash curl jq tar \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "sdo:x:65532:65532:SDO:/tmp:/usr/sbin/nologin" >> /etc/passwd
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 ENV PATH="/usr/local/go/bin:${PATH}" \
     PYTHONPATH=/opt/sdo \
