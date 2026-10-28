@@ -65,6 +65,13 @@ func (s *run) compile(ctx context.Context) error {
 		for _, gap := range gaps {
 			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybooksDir, Message: gap})
 		}
+		edges, edgeErr := workspace.TrafficCoverageGaps()
+		if edgeErr != nil {
+			s.req.noteGaps(Diagnostic{Rule: RuleTrafficUndrivenEdge, Path: layout.TrafficWorkloadsDir, Message: "traffic coverage unverified: " + edgeErr.Error()})
+		}
+		for _, edge := range edges {
+			s.req.noteGaps(Diagnostic{Rule: RuleTrafficUndrivenEdge, Path: layout.TrafficWorkloadsDir, Message: edge})
+		}
 		for _, note := range notes {
 			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybookDir(note.ProgramID), Message: fmt.Sprintf("program=%s case=%s replay=%s: %s", note.ProgramID, note.CaseID, note.Status, strings.Join(note.Effects, "; "))})
 		}
