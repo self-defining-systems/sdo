@@ -91,3 +91,17 @@ def test_build_settings_are_part_of_cache_identity(module: Path, monkeypatch: py
 def test_real_operator_embeds_its_input_identity(operator_binary: Path) -> None:
     repository = Path(__file__).resolve().parents[2]
     verify_operator(operator_binary, source_identity(repository / "sdo/operator"))
+
+
+def test_identity_input_diagnostics_preserve_the_digest(module: Path) -> None:
+    inputs: dict[str, str] = {}
+    identity = source_identity(module, inputs)
+    assert identity == source_identity(module)
+    assert "build environment" in inputs
+    label = "fixture.test/operator/cmd/sdo-operator/message.txt"
+    before = inputs[label]
+    (module / "cmd/sdo-operator/message.txt").write_text("changed embed")
+    changed: dict[str, str] = {}
+    assert source_identity(module, changed) != identity
+    assert changed[label] != before
+    assert changed["build environment"] == inputs["build environment"]

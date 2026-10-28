@@ -63,7 +63,7 @@ def _go_json_objects(output: str) -> list[dict[str, Any]]:
     return objects
 
 
-def source_identity(module: Path) -> str:
+def source_identity(module: Path, inputs: dict[str, str] | None = None) -> str:
     """Hash selected source bytes, module metadata and effective build settings."""
     environment = subprocess.check_output(["go", "env", "-json", *_BUILD_ENV], cwd=module, text=True)
     packages = _go_json_objects(
@@ -76,6 +76,8 @@ def source_identity(module: Path) -> str:
     digest = hashlib.sha256(b"sdo-test-cli-v1\0-buildvcs=false\0-mod=readonly\0")
 
     def add(label: str, content: bytes) -> None:
+        if inputs is not None:
+            inputs[label] = hashlib.sha256(content).hexdigest()
         # Length framing avoids ambiguity between paths and file contents.
         for item in (label.encode(), content):
             digest.update(len(item).to_bytes(8, "big"))
@@ -157,10 +159,15 @@ def build_operator(module: Path, directory: Path) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", type=Path, help="verify an existing binary against this checkout")
+    parser.add_argument("--describe", action="store_true", help="print hashed inputs for handoff diagnostics")
     arguments = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
     module = repository / "sdo/operator"
-    if arguments.check:
+    if arguments.describe:
+        inputs: dict[str, str] = {}
+        identity = source_identity(module, inputs)
+        print(json.dumps({"identity": identity, "inputs": inputs}, sort_keys=True))
+    elif arguments.check:
         verify_operator(arguments.check, source_identity(module))
     else:
         print(build_operator(module, repository / ".fastloop/test-bin"))
