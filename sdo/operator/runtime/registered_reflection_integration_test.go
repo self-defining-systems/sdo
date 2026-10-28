@@ -450,7 +450,14 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 			nativeGit(t, target, "add", "-A")
 			nativeGit(t, target, "commit", "-qm", "memory")
 			const incidentID = "learned-program"
-			capture := t.TempDir()
+			sessions := t.TempDir()
+			capture, err := memory.IncidentCorpusDir(sessions, incidentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(capture, 0755); err != nil {
+				t.Fatal(err)
+			}
 			fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo/corpus/targetport-mismatch"
 			for destination, source := range map[string]string{"open@detect.json": "open.json", "fixed.json": "fixed.json", "open@detect-recordings.json": "recordings.json"} {
 				data, err := os.ReadFile(filepath.Join(fixture, source))
@@ -511,13 +518,13 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				t.Fatal(err)
 			}
 			outcome := reflectionFixtureOutcome(incidentID)
-			// A second independently repaired cause has a real, resource-scoped
-			// SDK gap. It must not excuse the learnable Service cause.
+			// A second cause has a real, resource-scoped SDK gap: an observation
+			// the SDK does not offer, with no recorded hand repair of its own. It
+			// must not excuse the learnable Service cause.
 			peer := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "database"}
-			gap := &contracts.SdkGap{FaultClass: "database", Primitive: "DatabaseUsers", Reason: "synthetic unavailable catalog", ScratchScript: "scratch/catalog", Resources: []*contracts.ObjectRef{peer}}
-			outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "database user repaired", Resources: []*contracts.ObjectRef{peer}})
-			outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: "database-health", RuleId: "catalog", Severity: "warn", Summary: "missing application account", Evidence: "synthetic observed database fault", Status: "active", PrimaryResource: peer, Fingerprint: "database"})
-			outcome.RepairActions = append(outcome.RepairActions, &contracts.RepairActionReceipt{ActionId: "repair-database", Kind: "exec", Target: "Pod/demo/database", Summary: "restore application account", Details: "synthetic controller-recorded repair", Success: true, Resources: []*contracts.ObjectRef{peer}, StartedAt: timestamppb.New(time.Unix(1, 0)), CompletedAt: timestamppb.New(time.Unix(2, 0))})
+			gap := &contracts.SdkGap{FaultClass: "database", Primitive: "DatabaseReplicationStatus", Reason: "synthetic unavailable replication status read", ScratchScript: "scratch/replication", Resources: []*contracts.ObjectRef{peer}}
+			outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "database replication recovered", Resources: []*contracts.ObjectRef{peer}})
+			outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: "database-health", RuleId: "replication", Severity: "warn", Summary: "replica lagging", Evidence: "synthetic observed database fault", Status: "active", PrimaryResource: peer, Fingerprint: "database"})
 			outcome.DetectorHistory = append(outcome.DetectorHistory, &contracts.DetectorEvaluation{DetectorId: "database-health", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(3, 0))})
 			if scenario == "undetected_repair" {
 				outcome.ConfirmedRootCauses = outcome.ConfirmedRootCauses[1:]
@@ -533,6 +540,11 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "unresolved blocker", Resources: []*contracts.ObjectRef{{Kind: "Role", Namespace: "demo", Name: "blocker"}}})
 			}
 			if _, err := repository.RecordOutcome(ctx, incidentID, outcome); err != nil {
+				t.Fatal(err)
+			}
+			// The controller copies original repair receipts into the capture
+			// before reflection, as the registered worker does in production.
+			if err := memory.CaptureRepairReceipts(sessions, incidentID, outcome); err != nil {
 				t.Fatal(err)
 			}
 			proposal, err := repository.CreateProposalForPhase(ctx, incidentID, broker.ReflectionPhase)
