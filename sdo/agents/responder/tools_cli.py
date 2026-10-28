@@ -358,17 +358,12 @@ def verification_help() -> str:
 
 
 def command_surface() -> dict[str, object]:
-    """Generate incident-facing signatures from the same parser that accepts commands."""
+    """Keep one capability line per command; detailed help belongs in the reference."""
     parser = _parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
     return {
-        "commands": {
-            name: " ".join(command.format_usage().removeprefix("usage: ").split())
-            for name, command in subcommands.choices.items()
-        },
-        "mitigation": subcommands.choices["mitigate"].description,
-        "output": "Full JSON: path retains complete evidence. Mutations print progress and the file schema; "
-        "--json keeps mutations compact and prints other complete responses. Extract needed fields.",
+        "commands": {action.dest: action.help for action in subcommands._choices_actions},
+        "reference": "sdo-incident-response/references/commands.md",
     }
 
 

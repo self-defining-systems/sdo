@@ -565,7 +565,9 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
     assert "Counts inform; never permission gates" in _workflow()
     assert "Discover capabilities and argument shapes" in _workflow()
     assert "--bind" not in prompt.split("Incident request:", 1)[0]
-    assert "--bind" in json.loads(prompt.split("Incident request:\n", 1)[1])["incident_tools"]["commands"]["plan"]
+    tools = json.loads(prompt.split("Incident request:\n", 1)[1])["incident_tools"]
+    assert tools["commands"]["plan"] == "plan a bound program repair"
+    assert "--bind" in (SKILLS_ROOT / tools["reference"]).read_text()
 
 
 def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:
