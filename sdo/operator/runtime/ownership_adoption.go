@@ -215,10 +215,11 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		// The record waits until controllers have caught up with the
 		// object; until then its source comparison fails closed.
 		record := ""
+		lost := !recorded && recordLost(live, accepted[acceptedObjectKey(ref)])
 		if !recorded {
 			if !acceptanceSettled(live) {
 				unsettled = true
-			} else if encoded, fits, err := buildAcceptanceRecord(source, normalized, live, recordLost(live, accepted[acceptedObjectKey(ref)])); err != nil {
+			} else if encoded, fits, err := buildAcceptanceRecord(source, normalized, live, lostRecordDefaults(actionCtx, resource, ref, source, live, lost), lost); err != nil {
 				objectFailed(ref, fmt.Errorf("record accepted paths of %s/%s: %w", ref.Kind, ref.Name, err))
 				continue
 			} else if fits {
@@ -399,6 +400,20 @@ func recordLost(live *unstructured.Unstructured, acceptedBefore bool) bool {
 		return record.UID != "" && record.UID != string(live.GetUID())
 	}
 	return acceptedBefore
+}
+
+// lostRecordDefaults renders accepted source's server defaults for an object
+// that lost its record with no earlier copy to carry. Without them every
+// default the recreating writer owns would stay an addition forever.
+func lostRecordDefaults(ctx context.Context, resource acceptedResource, ref sdk.ObjectRef, source, live *unstructured.Unstructured, lost bool) *unstructured.Unstructured {
+	if _, carried := readAcceptanceRecord(live); !lost || carried {
+		return nil
+	}
+	rendered, err := resource.renderDefaults(ctx, ref, source)
+	if err != nil {
+		return nil
+	}
+	return rendered
 }
 
 func declaredFieldDifference(expected, observed *unstructured.Unstructured, declared map[string]bool) bool {

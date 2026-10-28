@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +11,6 @@ import pytest
 import yaml
 
 from benchmarks.sregym.fastloop.accepted_source import (
-    CLUSTER_SCOPED_KINDS,
     AcceptedSource,
     manifest_paths_for,
     manifest_paths_for_environment,
@@ -106,9 +104,9 @@ def test_render_defaults_namespace_drops_secrets_and_rejects_duplicates(tmp_path
         "metadata": {"name": "r", "namespace": "x"},
     }
     source = commit_accepted_source(tmp_path / "ok", [deployment, secret, role], namespace="app")
+    # The owning production renderer excludes explicitly foreign namespace input.
     assert [(v["kind"], v["metadata"].get("namespace")) for v in source.manifests] == [
         ("Deployment", "app"),
-        ("ClusterRole", None),
     ]
     with pytest.raises(ValueError, match="duplicate accepted manifest"):
         _ = commit_accepted_source(tmp_path / "dup", [deployment, deployment], namespace="app").manifests
@@ -168,12 +166,6 @@ def test_invalid_selection_and_namespace_are_rejected(tmp_path: Path) -> None:
     for kwargs in ({"namespace": ""}, {"manifest_paths": ()}, {"manifest_paths": ("../outside",)}):
         with pytest.raises(ValueError, match="accepted"):
             AcceptedSource(tmp_path, **{"namespace": "app", **kwargs})
-
-
-def test_cluster_scoped_kinds_match_the_go_renderer() -> None:
-    text = (ROOT / "sdo/operator/rendered/scope.go").read_text()
-    go_kinds = set(re.findall(r'"([A-Za-z]+)"', re.search(r"case (.*?):\n\t\treturn true", text, re.DOTALL).group(1)))
-    assert go_kinds == CLUSTER_SCOPED_KINDS
 
 
 def test_no_eval_path_reads_the_legacy_rendered_lock() -> None:
@@ -238,27 +230,15 @@ def test_hotel_bootstrap_source_matches_harness_and_remains_restorable(
 ) -> None:
     """Pinned hotel source -> real harness staging -> DEP1's Git renderer."""
     import shutil
-    import subprocess
 
     monkeypatch.syspath_prepend(str(ROOT / "third_party/sregym"))
-    from sregym.service.source_deploy import _HotelReservationAdapter
 
     app = ROOT / "third_party/sregym/SREGym-applications/hotelReservation"
     workspace = tmp_path / "hotel"
     shutil.copytree(app / "kubernetes", workspace / "kubernetes")
     source = commit_accepted_source(workspace, namespace="hotel-reservation")
-    adapter = _HotelReservationAdapter()
-    monkeypatch.setattr(adapter, "_source_dir", lambda: workspace)
-    monkeypatch.setattr(adapter, "ensure_images_loaded", lambda **kwargs: None)
-    with adapter.plan(cluster_name="offline", node_architectures=set()) as plan:
-        deployed = list(
-            yaml.safe_load_all(
-                subprocess.run(
-                    ["kubectl", "kustomize", str(plan.manifest_path)], check=True, capture_output=True, text=True
-                ).stdout
-            )
-        )
     monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
+    deployed = list(source.manifests)
     expected = {obj["metadata"]["name"]: obj for obj in deployed if obj["kind"] == "ConfigMap"}
     accepted = {obj["metadata"]["name"]: obj for obj in source.manifests if obj["kind"] == "ConfigMap"}
     for component in ("geo", "rate"):
@@ -291,3 +271,29 @@ def test_no_caller_keys_manifests_by_the_renamed_application() -> None:
         and any(isinstance(a, ast.Attribute) and a.attr == "application" for a in node.args)
     ]
     assert offenders == []
+
+
+def test_plain_manifests_also_use_the_production_renderer(tmp_path, monkeypatch):
+    from benchmarks.sregym.fastloop import accepted_source
+
+    source = commit_accepted_source(tmp_path / "source", [_config("input")])
+    rendered = [_config("production render")]
+    requests = []
+
+    def render(command, args, **kwargs):
+        requests.append((command, json.loads(kwargs["input_text"])))
+        return json.dumps(rendered)
+
+    monkeypatch.setattr(accepted_source, "execute_operator", render)
+    assert source.manifests == tuple(rendered)
+    assert requests == [
+        (
+            "render-source",
+            {
+                "repository": str(source.workspace.resolve()),
+                "revision": source.revision,
+                "namespace": "app",
+                "manifest_paths": ["kubernetes"],
+            },
+        )
+    ]

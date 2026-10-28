@@ -97,10 +97,13 @@ func acceptedPortLearning(t *testing.T, root string) {
 	git(t, root, "commit", "-qm", "accepted executable learning")
 }
 
+// The accepted port program performed the verified repair, so reflection may
+// refine shared memory without a new executable step for a hand repair.
 func verifiedPortOutcome() *contracts.OutcomeRecord {
 	ref := &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "front"}
 	at := time.Unix(100, 0)
-	return &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{ref}}}, Findings: []*contracts.Finding{{DetectorId: "routing", RuleId: "target-port", Status: "active", Severity: "critical", Summary: "synthetic target-port fault", Evidence: "synthetic independent opening observation", Fingerprint: "routing/front", PrimaryResource: ref}}, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "sdo-act-repair", Kind: "kubectl-patch", Target: "Service/demo/front", Summary: "restore target port", Details: "synthetic controller receipt", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}, FinalHealthDetectorState: []*contracts.DetectorEvaluation{{DetectorId: "routing", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}}
+	application := &contracts.PlanApplication{Plan: &contracts.Plan{}, ApplicationId: "sdo-apply-port", ProgramIds: []string{"service-targetport-mismatch"}, Applied: true, VerificationCompleted: true, VerificationPassed: true, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}
+	return &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{ref}}}, Findings: []*contracts.Finding{{DetectorId: "routing", RuleId: "target-port", Status: "active", Severity: "critical", Summary: "synthetic target-port fault", Evidence: "synthetic independent opening observation", Fingerprint: "routing/front", PrimaryResource: ref}}, AppliedPlaybooks: []string{"service-targetport-mismatch"}, PlanApplications: []*contracts.PlanApplication{application}, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "sdo-apply-port", Kind: "sdo-apply", Target: "Service/demo/front", Summary: "restore target port", Details: "synthetic controller receipt", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}, FinalHealthDetectorState: []*contracts.DetectorEvaluation{{DetectorId: "routing", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}}
 }
 
 func portCaptureContext(t *testing.T, ctx context.Context) context.Context {

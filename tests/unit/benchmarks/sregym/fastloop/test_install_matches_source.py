@@ -17,6 +17,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
     InstallDivergesFromSource,
     accepted_restore_baselines,
     load_application_baseline,
+    require_install_matches_source,
     save_application_baseline,
 )
 from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
@@ -68,7 +69,7 @@ def test_lane_tag_install_is_refused_with_every_diverging_workload_named(tmp_pat
     ]
 
     with pytest.raises(InstallDivergesFromSource) as error:
-        accepted_restore_baselines(source, _seal(tmp_path, source, installed))
+        require_install_matches_source(source, _seal(tmp_path, source, installed))
 
     message = str(error.value)
     assert "Deployment/api" in message
@@ -83,7 +84,7 @@ def test_init_container_image_divergence_is_refused(tmp_path: Path) -> None:
     )
     installed = [_deployment("api", "org/svc:1", init_image="org/init:2", kind="StatefulSet")]
     with pytest.raises(InstallDivergesFromSource, match=r"StatefulSet/api.*org/init:2.*org/init:1"):
-        accepted_restore_baselines(source, _seal(tmp_path, source, installed))
+        require_install_matches_source(source, _seal(tmp_path, source, installed))
 
 
 def test_matching_install_restores_unchanged_and_registry_prefixes_are_not_divergence(tmp_path: Path) -> None:
@@ -92,13 +93,13 @@ def test_matching_install_restores_unchanged_and_registry_prefixes_are_not_diver
     )
     installed = [_deployment("api", "docker.io/org/svc:latest"), _deployment("db", "docker.io/library/mongo:4.4.6")]
     restored = accepted_restore_baselines(source, _seal(tmp_path, source, installed))
-    assert restored[0].objects == installed
+    assert restored[0].objects == list(source.manifests)
 
 
 def test_workloads_the_source_does_not_declare_are_not_compared(tmp_path: Path) -> None:
     source = commit_accepted_source(tmp_path / "workspace", [_deployment("api", "org/svc:latest")])
     installed = [_deployment("api", "org/svc:latest"), _deployment("runtime-only", "org/other:7")]
-    assert accepted_restore_baselines(source, _seal(tmp_path, source, installed))[0].objects == installed
+    assert accepted_restore_baselines(source, _seal(tmp_path, source, installed))[0].objects == list(source.manifests)
 
 
 def test_repaired_source_wins_over_the_install_without_a_divergence_error(tmp_path: Path) -> None:
@@ -141,4 +142,4 @@ def test_restore_cannot_reintroduce_chart_policy_over_accepted_source(tmp_path: 
     assert actual["spec"]["initContainers"] == pod["initContainers"]
     assert actual["spec"]["containers"] == pod["containers"]
     assert actual["metadata"] == declared["spec"]["template"]["metadata"]
-    assert actual["spec"]["dnsPolicy"] == "ClusterFirst"
+    assert "dnsPolicy" not in actual["spec"]

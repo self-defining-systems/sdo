@@ -97,11 +97,8 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 		Summary: "bad replica", Resources: []sdk.ObjectRef{{Kind: "Deployment", Name: "app"}},
 		Evidence: []RootCauseEvidence{{Kind: "detector-finding", Source: "health", Observation: "health detector fired"}}, ExplainedDetectors: []string{"health"},
 	}}
-	closure.Result.RepairActions = []RepairActionReceipt{{
-		ActionID: "repair-1", Kind: "kubectl", Target: "Deployment/app", Summary: "restored replica", Details: "repaired source was applied", Success: true,
-		StartedAt: closure.DetectedAt.Add(100 * time.Millisecond), CompletedAt: closure.DetectedAt.Add(200 * time.Millisecond),
-		Resources: []sdk.ObjectRef{{Kind: "Deployment", Name: "app"}},
-	}}
+	// The repair is the source edit above; the broker publishes it. No hand
+	// cluster receipt is recorded, so the typed SDK gap needs no executable step.
 	clearedAt := closure.DetectedAt.Add(500 * time.Millisecond)
 	closure.HealthClearedAt = &clearedAt
 	closure.FinalDetectorStates = []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: closure.VerifiedAt, Status: DetectorEvaluationClear}}

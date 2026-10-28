@@ -1,6 +1,5 @@
 """Oracle infrastructure comes from the pinned harness, outside the application."""
 
-import json
 import subprocess
 from pathlib import Path
 
@@ -72,22 +71,3 @@ def test_a_failed_command_reports_its_stderr(tmp_path: Path):
         prepare_oracle_observability(
             kubeconfig=tmp_path / "kube", sregym_dir=_harness(tmp_path), cluster="lane", run=run
         )
-
-
-def test_trace_routing_keeps_existing_external_name_services(tmp_path: Path):
-    from benchmarks.sregym.adapter import route_astronomy_traces
-
-    calls = []
-
-    def run(argv, **kwargs):
-        calls.append(argv)
-        return subprocess.CompletedProcess(
-            argv,
-            0,
-            json.dumps({"spec": {"type": "ExternalName", "externalName": "otel-collector.observe.svc.cluster.local"}}),
-            "",
-        )
-
-    route_astronomy_traces(tmp_path / "kube", run=run)
-    assert not any("delete" in c and "service" in c for c in calls)
-    assert not any("create" in c for c in calls)

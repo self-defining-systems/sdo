@@ -218,6 +218,12 @@ def run(argv: list[str], *, stdin: str, store: Store | None = None) -> int:
     # The session wrapper schema (sdo.agents.responder.session_turn) carries both turns' results.
     branch = "incident_result" if kind.startswith("responder") else "reflection"
     text = json.dumps({"incident_result": None, "reflection": None, branch: answer})
+    # Read the same provider session evidence used by live-run analysis.
+    from sdo.agents.session_context import measure_session
+
+    context = measure_session(rollout.path)
+    context.check("responder" if kind.startswith("responder") else "reflection")
+    record_extra["context_sizes"] = context.as_dict()
     turn.finish(text)
     store.record_turn(
         f"{rollout.session_id}:{turn.started_at}",

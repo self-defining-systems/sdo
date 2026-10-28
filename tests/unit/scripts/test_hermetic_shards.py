@@ -1,6 +1,7 @@
 """The hermetic driver must join every shard and preserve every failure."""
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -32,7 +33,8 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
     go.chmod(0o755)
     uv = commands / "uv"
     uv.write_text(
-        '#!/bin/bash\nprintf "uv\\n" >> "$LG_DRIVER_LOG"\nif [[ "$LG_DRIVER_FAILURE" == "python" ]]; then exit 7; fi\n'
+        '#!/bin/bash\nprintf "uv %s\\n" "$*" >> "$LG_DRIVER_LOG"\n'
+        'if [[ "$LG_DRIVER_FAILURE" == "python" ]]; then exit 7; fi\n'
     )
     uv.chmod(0o755)
     env = {
@@ -57,7 +59,12 @@ def test_hermetic_driver_propagates_each_shard_failure(tmp_path: Path, failure: 
     assert sum("TestHermeticSharedMemoryControllers" in line for line in lines) == 1
     # Python is a joined parallel shard: it must run even when another shard
     # fails, and its own failure must propagate after every Go shard is joined.
-    assert "uv" in lines
+    python_commands = [line for line in lines if line.startswith("uv ")]
+    assert len(python_commands) == 1
+    assert {
+        "tests/unit/benchmarks/sregym/fastloop/test_toy.py",
+        "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker.py",
+    } <= set(shlex.split(python_commands[0]))
     assert any("TestLearnedOriginCredit" in line for line in lines)
     assert any("TestHermeticControllerClosureReachesNativeOutcomeBroker" in line for line in lines)
 
