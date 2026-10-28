@@ -88,7 +88,7 @@ def inventory(module: str, *, prepared: bool = False) -> dict[str, list[str]]:
     return result
 
 
-def plan(scope: str, source: dict[str, list[str]]) -> CostPlan:
+def plan(scope: str, source: dict[str, list[str]], *, replay_only: bool = False) -> CostPlan:
     profile = json.loads((ROOT / f"scripts/{scope}_test_costs.json").read_text())["costs"]
     validate_costs(profile)
     # Equal names stay together: go test's union regex applies to every package.
@@ -96,6 +96,8 @@ def plan(scope: str, source: dict[str, list[str]]) -> CostPlan:
     costs: dict[str, float] = {}
     for package, names in sorted(source.items()):
         for name in names:
+            if replay_only and (scope != "runtime" or not name.startswith("TestReplay")):
+                continue
             if scope == "runtime" and DEDICATED.match(name):
                 continue
             packages.setdefault(name, []).append(package)
@@ -109,15 +111,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--prepared", action="store_true", help="use the inventory compiled by prepare_go_ci.sh")
+    parser.add_argument("--replay-only", action="store_true", help="preserve Python-only PR Go replay coverage")
     args = parser.parse_args()
     plans = {
-        scope: plan(scope, inventory(module, prepared=args.prepared))
+        scope: plan(scope, inventory(module, prepared=args.prepared), replay_only=args.replay_only)
         for scope, module in [("operator", ""), ("runtime", "runtime")]
     }
-    matrix = [
-        {"module": "foundation-sdk", "go-version": "1.24.5", "foundation": "stable"},
-        {"module": "foundation-contracts", "go-version": "1.26.8", "foundation": "contracts"},
-    ]
+    matrix = (
+        []
+        if args.replay_only
+        else [
+            {"module": "foundation-sdk", "go-version": "1.24.5", "foundation": "stable"},
+            {"module": "foundation-contracts", "go-version": "1.26.8", "foundation": "contracts"},
+        ]
+    )
     for scope, data in plans.items():
         for index, members in enumerate(data["bins"]):
             matrix.append(
@@ -125,6 +132,8 @@ def main() -> None:
             )
             print(f"{scope}-{index}: {sum(data['costs'][n] for n in members):.2f}s, {len(members)} tests")
         print(f"{scope} nightly: {data['nightly']}")
+    if not matrix:
+        matrix = [{"module": "no-go-replay-tests", "go-version": "1.26.8"}]
     if len(matrix) > 256:
         raise ValueError("plan exceeds GitHub matrix capacity; reduce test cost before publication")
     args.output.parent.mkdir(parents=True, exist_ok=True)

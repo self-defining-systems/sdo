@@ -131,3 +131,10 @@ def test_go_replay_is_budgeted_without_sharing_a_python_job():
     data = planner.plan("runtime", {"sdo.dev/operator/runtime": ["TestReplayNewBehavior", "TestChaosBounded"]})
     assert data["bins"] == [["TestReplayNewBehavior"]]
     assert "TestChaosBounded" not in data["packages"]
+
+
+def test_python_only_changes_keep_go_replay_coverage_without_other_go_suites():
+    source = {"sdo.dev/operator/runtime": ["TestReplayNewBehavior", "TestReflectionUnchanged", "TestChaosBounded"]}
+    data = planner.plan("runtime", source, replay_only=True)
+    assert data["bins"] == [["TestReplayNewBehavior"]]
+    assert planner.plan("operator", {"sdo.dev/operator/broker": ["TestOther"]}, replay_only=True)["bins"] == []

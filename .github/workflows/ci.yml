@@ -210,8 +210,12 @@ jobs:
       - name: Plan capacity from compiled inventory and hosted costs
         if: matrix.mode == 'race'
         id: cost-plan
+        env:
+          GO_CHANGED: ${{ needs.changes.outputs.go }}
         run: |
-          python3 scripts/go_cost_plan.py --prepared --output .fastloop/test-bin/go-test-plan.json | tee "$RUNNER_TEMP/cost-plan.log"
+          selection=()
+          if [[ "$GO_CHANGED" != true ]]; then selection+=(--replay-only); fi
+          python3 scripts/go_cost_plan.py --prepared "${selection[@]}" --output .fastloop/test-bin/go-test-plan.json | tee "$RUNNER_TEMP/cost-plan.log"
           grep -E '^(matrix|nightly_matrix)=' "$RUNNER_TEMP/cost-plan.log" >> "$GITHUB_OUTPUT"
 
       - name: Publish the exact race test plan
@@ -332,7 +336,7 @@ jobs:
   controller:
     name: controller (${{ matrix.module }})
     needs: [changes, prepare-go]
-    if: needs.changes.outputs.go == 'true'
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
