@@ -184,6 +184,7 @@ def test_current_seed_renderer_feeds_scripted_judge_without_source_run_memory(tm
     health = scripted_judge_seed(target)
     assert "health-objective" in health.detector_ids
     assert "service-endpoints" in health.detector_ids
+    assert "health-objective/README.md" in (target / ".sdo/playbooks/README.md").read_text()
     assert not (target / ".sdo-runtime").exists()
     assert not (target / ".sdo/outcomes.jsonl").exists()
     assert "Deployment synthetic" in (target / ".sdo/arch.md").read_text()

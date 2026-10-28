@@ -10,6 +10,7 @@ import (
 
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 )
 
 func main() {
@@ -52,6 +53,9 @@ func main() {
 		panic(err)
 	}
 	if err := memory.PrepareHealth(os.Args[1]); err != nil {
+		panic(err)
+	}
+	if _, err := layout.WritePlaybookIndex(root); err != nil {
 		panic(err)
 	}
 	fmt.Println("fresh generic health policy rendered")
