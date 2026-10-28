@@ -116,6 +116,7 @@ func TestCLIAndBrokerAgreeOnAcceptanceThirdShard(t *testing.T) {
 // Advisory replay makes these source-evidence cases perform full validation.
 // Share the existing broker runner; every case keeps exactly one owner.
 func TestCLIAndBrokerAgreeOnAcceptanceFourthShard(t *testing.T) {
+	t.Parallel()
 	testCLIAndBrokerAgreeOnAcceptance(t, 3)
 }
 
