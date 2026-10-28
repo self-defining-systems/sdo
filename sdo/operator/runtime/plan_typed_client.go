@@ -258,3 +258,18 @@ func (c TypedPlanClient) Exec(ctx context.Context, pod sdk.ObjectRef, container 
 	code, err := c.runCommand(ctx, program.Command{Pod: pod, Container: container, Args: command})
 	return int(code), err
 }
+
+// RecordAcceptance shares adoption's metadata-only acceptance writer.
+func (c TypedPlanClient) RecordAcceptance(ctx context.Context, ref sdk.ObjectRef, record string, live *unstructured.Unstructured) error {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return err
+	}
+	if c.Client == nil {
+		return fmt.Errorf("acceptance transport unavailable")
+	}
+	resource, err := resolveAcceptedResource(c.Client, ref)
+	if err != nil {
+		return err
+	}
+	return resource.recordInstanceAcceptance(ctx, ref, record, live)
+}
