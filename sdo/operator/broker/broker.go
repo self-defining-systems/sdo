@@ -343,6 +343,14 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
+		// A corpus case stores each snapshot once; copies of fixed.json are removed.
+		if normalized, err := validate.NormalizeCapturedCorpus(proposal.Path, paths); err != nil {
+			return fmt.Errorf("normalize captured corpus: %w", err)
+		} else if len(normalized) > 0 {
+			if paths, err = validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit); err != nil {
+				return err
+			}
+		}
 		candidateRoot := proposal.Path
 		if actor == Responder && phase == ProposalPhase {
 			paths = SourceRepairPaths(paths)

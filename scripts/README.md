@@ -58,3 +58,14 @@ proto toolchain/lint/codegen drift, full SDK/core compatibility at Go 1.24.5 and
 The extra short schedule/fuzz replay invocation was deleted: its seeds already run
 in the one ordinary test inventory. Nightly does not rerun the same cheap Go/native
 nodes selected for PR CI.
+
+`check_model_cli_versions.py` runs in the image's `model-deps` stage after npm
+installation. `sdo/operator/model_cli_requirements.json` keeps the image's default
+model compatibility list beside its required CLI minimums. The check measures
+`claude --version` and `codex --version`, rejects versions below the declared
+minimum or different from the Dockerfile pins, and writes both measured versions
+and the policy to `/opt/sdo/model-cli-versions.json`. The inherited
+`dev.sdo.claude-code.version` and `dev.sdo.codex.version` image labels expose the
+verified pins without starting a container. Scripted images omit the model CLIs
+and this gate. Focused tests: `uv run --extra test pytest -q -p no:tach
+tests/unit/scripts/test_model_cli_versions.py`.

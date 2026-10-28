@@ -24,9 +24,10 @@ func TestFixedNoMatchEvidenceUsesExactFixedCaptureAndNoTrustLabel(t *testing.T) 
 			instances := map[string][]program.Bindings{"routing": {{Objects: program.ObjectBindings{"service": {Kind: "Service", Namespace: "app", Name: "api"}}}}}
 			origins := map[string]string{CapturedInstanceKey("routing", instances["routing"][0]): phase}
 			paths, err := RecordFixedNoMatchCorpus(root, capture, "incident", instances, origins)
-			if err != nil || len(paths) != 5 {
+			if err != nil || len(paths) != 3 {
 				t.Fatalf("fixed negative: %v %v", paths, err)
 			}
+			assertSnapshotsStoredOnce(t, filepath.Join(root, filepath.Dir(paths[0])), "fixed.json")
 			if err := ValidateCapturedCorpusDirectory(capture, root, "incident", paths); err != nil {
 				t.Fatal(err)
 			}
