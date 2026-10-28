@@ -40,8 +40,10 @@ func TestDatabaseRecordingReplayAndRedaction(t *testing.T) {
 		if !fail && (len(got) != len(users) || got[0].Name != "app") {
 			t.Fatalf("%+v", got)
 		}
-		if _, err = replay.DatabaseUsers(target); err == nil {
-			t.Fatal("reused consumed observation")
+		// A catalog is frozen per snapshot: a repeated read sees the same answer.
+		again, err := replay.DatabaseUsers(target)
+		if (err != nil) != fail || len(again) != len(got) {
+			t.Fatalf("repeated read changed: %+v %v", again, err)
 		}
 	}
 }

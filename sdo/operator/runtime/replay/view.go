@@ -13,9 +13,8 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// DiffAgainstSource is recomputed with the production comparison. Primitive
-// observations are available only in the phase in which they were recorded;
-// fixed recordings are never used to prove the effect of a plan.
+// Before execution, every read answers from what the controller recorded in
+// that phase; fixed recordings are never used to prove the effect of a plan.
 type readView struct {
 	*sdktest.ReplayReadView
 	source   *source
@@ -28,11 +27,20 @@ func newReadView(ctx context.Context, s sdktest.Snapshot, calls []sdktest.Primit
 	return &readView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: s, Calls: append(append([]sdktest.PrimitiveCall(nil), s.Readings...), calls...)}, source: source, ctx: ctx}
 }
 func (v *readView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
-	// Before execution, a recorded comparison can prove an uncaptured object's
-	// observed absence. After execution, only the mutated fake API supplies it.
+	// Before execution the controller's recorded comparison is the observation:
+	// captured objects are projected (ConfigMap values redacted) and the case's
+	// inventory need not be the one the controller compared against. Only an
+	// explicit inventory may answer a comparison nobody recorded. After
+	// execution, only the mutated fake API supplies the post-state.
 	if v.external == nil {
-		if _, err := v.Snapshot.Object(ref); errors.Is(err, sdk.ErrObjectNotCaptured) {
-			return v.ReplayReadView.DiffAgainstSource(ref)
+		var diff program.Diff
+		err := v.ReplayReadView.Recorded("DiffAgainstSource", []any{ref}, &diff)
+		var unrecorded *sdktest.UnrecordedError
+		if !errors.As(err, &unrecorded) {
+			return diff, err
+		}
+		if len(v.source.accepted) == 0 {
+			return program.Diff{}, err
 		}
 	}
 	return (operator.LiveReadView{DetectionContext: v, Context: v.ctx, Source: v.source, SourceCommit: "offline-accepted"}).DiffAgainstSource(ref)

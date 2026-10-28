@@ -831,6 +831,12 @@ func (c *Controller) captureOpenDetect(ctx context.Context, snapshot sdk.Detecti
 	}
 	view := c.drift.View(snapshot)
 	c.goBackground(func() {
+		budget, cancel := context.WithTimeout(ctx, sourceComparisonCaptureBudget)
+		comparisons := boundaryObservations(budget, snapshot, view)
+		cancel()
+		if err := memory.AppendCapturedRecordings(c.config.CorpusSessionRoot, request.IncidentID, "open@detect", comparisons); err != nil {
+			report(fmt.Errorf("capture incident source comparisons: %w", err))
+		}
 		if err := captureRoutingEvidence(ctx, c.config.CorpusSessionRoot, request.IncidentID, "open@detect", request.Findings, view); err != nil {
 			report(fmt.Errorf("capture incident routing evidence: %w", err))
 		}
@@ -1533,7 +1539,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			incidentID := c.currentIncidentRequest.IncidentID
 			findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)
 			c.mu.Unlock()
-			err := memory.CaptureRepairedProgramReads(c.config.CorpusSessionRoot, incidentID, c.drift.View)
+			err := memory.CaptureRepairedProgramReads(c.config.CorpusSessionRoot, incidentID, c.drift.View(snapshot))
 			if err == nil {
 				err = captureRoutingEvidence(ctx, c.config.CorpusSessionRoot, incidentID, "fixed", findings, c.drift.View(snapshot))
 			}
