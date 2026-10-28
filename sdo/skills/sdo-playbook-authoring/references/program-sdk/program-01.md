@@ -58,11 +58,11 @@ func CheckReads(view ReadView) (sdk.DetectionContext, func() error)
     cannot be ignored to turn Unknown into clearance.
 
 func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView) error
-    CheckReplicaSetScales allows a program to scale a ReplicaSet only when the
-    observed ReplicaSet is controlled by an observed Deployment and is not that
-    Deployment's current revision. The owner is a relation, not a binding.
-    Retiring an old revision is the only repair a program needs on a ReplicaSet;
-    anything else risks an outage.
+    CheckReplicaSetScales allows a program to scale or retire a ReplicaSet
+    only when the observed ReplicaSet is controlled by an observed Deployment
+    and is not that Deployment's current revision. The owner is a relation,
+    not a binding. Retiring an old revision is the only repair a program needs
+    on a ReplicaSet; anything else risks an outage.
 
 func DocumentWriteRef(action Action) (sdk.ObjectRef, bool)
     DocumentWriteRef identifies actions that project edits onto an existing
@@ -128,6 +128,14 @@ TYPES
 type Action interface {
 	// Has unexported methods.
 }
+
+func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action
+    StalledRolloutRelease returns the standard release of a Deployment rollout
+    whose current-revision Pod is Unschedulable: one RetireOldRevision for each
+    old revision that still keeps a replica, in name order. It returns nothing
+    while no current-revision Pod is Unschedulable, so a crashing or merely
+    slow rollout never loses the revision that still serves. SDO offers the same
+    actions to the responder when it hands off a stalled rollout.
 
 type ApplyObject struct {
 	Ref    sdk.ObjectRef
@@ -248,10 +256,4 @@ type DatabaseUser struct {
 func ApplyEnsureDatabaseUser(users []DatabaseUser, a EnsureDatabaseUser) ([]DatabaseUser, error)
     ApplyEnsureDatabaseUser projects a typed catalog mutation on a recorded open
     catalog. It never reads credentials or invents an unavailable observation.
-
-func NormalizeDatabaseUsers(users []DatabaseUser) ([]DatabaseUser, error)
-    NormalizeDatabaseUsers validates, sorts and defensively copies nonsecret
-    catalog observations. Duplicate users or roles are refused.
-
-func (u DatabaseUser) Validate() error
 ```

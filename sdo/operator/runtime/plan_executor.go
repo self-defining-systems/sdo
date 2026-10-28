@@ -1109,7 +1109,7 @@ type liveRevisionView struct {
 	deployments []appsv1.Deployment
 }
 
-func (v liveRevisionView) ReplicaSets() []appsv1.ReplicaSet  { return v.sets }
+func (v liveRevisionView) ReplicaSets() []appsv1.ReplicaSet { return v.sets }
 func (v liveRevisionView) Deployments() []appsv1.Deployment { return v.deployments }
 
 // checkOldRevision applies the program ReplicaSet-scale rule to the live
