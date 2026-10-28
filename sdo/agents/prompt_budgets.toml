@@ -149,7 +149,7 @@ max_chars = 200
 reason = "New responder workflow skill description; shares the existing 200-character skill-index allowance."
 [continuation.instructions]
 max_chars = 270
-reason = "Compact high-level continuation principles; instructions and real ten-receipt data together must fit 1500 characters."
+reason = "Compact high-level continuation principles; required progress is counted separately under continuation.incident_data and their sum owns the total continuation allowance."
 
 [continuation.incident_data]
 max_chars = 1600
