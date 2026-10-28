@@ -35,7 +35,7 @@ snapshot digests and a protected capture mount are not required. Include accepte
 mitigation reads accepted source. For replay, open.json represents the fault and recordings.json contains
 its observed primitive replies; fixed.json and healthy.json remain readable context, not repair proof.
 
-For every cause with a recorded repair on a closure verified healthy, save diagnose and mitigate programs, a README describing fault
+When accepted playbooks do not already cover a recorded repair on a closure verified healthy, save useful diagnose and mitigate steps and a README describing fault
 handling, and a detector that references its playbook. One detector may reference several playbooks. A missing piece is
 recorded as a coverage gap.
 Replay observes incident detectors, binding selection, diagnosis and mitigation on recorded states. Every outcome, including unavailable evidence or a persistent Match, is information only; it never blocks saving.
@@ -197,3 +197,9 @@ Preimages and API receipts are retained, with explicit gaps for opaque effects;
 undo remains an explicit responder decision.
 
 Raw document merge requests resolve a built-in schema from their API URL; any supplied reference must match. Unknown schemas and subresources return `RawMergeSchemaError`. Media-type parameters do not bypass keyed-list validation. Apply-style named Service ports merge by name, preserving unspecified fields when their port numbers change.
+
+## Recorded repair coverage
+
+Every successful hand-repair receipt needs an executable typed SDK or RunScript step in a changed program. Its positive case lists that program ID, binds the repaired resources (or their recorded controller owners), and includes the original timed `RepairReceipt` observation in `recordings.json`. Use the existing `ScriptOriginReceipt` shape for typed plans too: exact original ID, incident, success, times, resources and script digest when present. Separate cases/programs may cover the resources of one grouped receipt together. A new metadata-only case needs no snapshots or other primitive replies; replay remains informational. Preserve accepted cases and add a new case for this incident.
+
+README carries judgement and ordering. An SDK gap is typed and names an actually unavailable observation or effect; installed actions and unencoded recorded repairs are not gaps. Save their executable steps, including partial ones, even when diagnosis or replay is unavailable.

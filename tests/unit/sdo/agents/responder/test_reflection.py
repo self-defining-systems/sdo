@@ -186,16 +186,15 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     (call,) = backend.calls
     assert call["mode"] == "fresh"
     prompt = str(call["prompt"])
-    assert "Accepted source and developer changes express intent." in prompt
-    assert "Operational memory is fallible advice." in prompt
-    assert "Recovery requires evidence from the intended application behavior." in prompt
+    assert "accepted source expresses intent." in prompt
+    assert "memory is fallible advice" in prompt
     assert "artifact_proposal" not in prompt
     assert "broker checks" in prompt
     assert "draft-test" not in prompt
     assert "sdo-memory/SKILL.md" in prompt
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
     assert "Accepted architecture summary" in prompt
-    assert "Edit final operational-memory files only" in prompt
+    assert "Edit only authorized operational-memory files" in prompt
     assert "in the `reflection` field and leave `incident_result` null" in prompt
     assert "sdo.operational_memory" not in prompt
     assert json.dumps({"incident_id": "inc-1"}) not in prompt
@@ -231,13 +230,10 @@ def test_reflection_saves_partial_learning_for_verified_parts(
         diagnostics=[MemoryDiagnostic(rule="program.replay", message="Correct the fixed case")] if retry else [],
     )
     prompt = str(backend.calls[0]["prompt"])
-    assert "Save verified steps with partial coverage" in prompt
+    assert "Preserve verified partial steps" in prompt
     assert "Use recorded actions as repair evidence" in prompt
-    assert "Save verified, specific README-only guidance too" in prompt
     assert "Replay is informational" in prompt
-    assert "persistent Match and unavailable replay never block saving" in prompt
-    assert "Include scoped sdk_gaps alongside updated for unencoded parts" in prompt
-    assert "README orchestration and detectors" in prompt
+    assert "README holds only judgement and ordering" in prompt
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["classification"] == classification
     assert current["repair_actions"][0]["details"] == outcome.repair_actions[0].details
@@ -482,25 +478,27 @@ def _verified_repeat_outcome() -> OutcomeRecord:
     )
 
 
-def test_typed_no_recorded_repair_decline_has_a_canonical_reason() -> None:
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "no recorded repair",
+        "No successful repair was recorded.",
+        "The controller observed recovery without intervention.",
+    ],
+)
+def test_typed_no_recorded_repair_decline_preserves_the_specific_reason(reason: str) -> None:
     from sdo.agents.responder.reflection import ReflectionTurn
 
     turn = ReflectionTurn.from_model_output(
         {
             "summary": "No recorded repair touched the cause.",
             "learning_decision": "no_change",
-            "no_change_reason": "no recorded repair",
+            "no_change_reason": reason,
             "decline_reason": "no_recorded_repair",
         }
     )
     assert turn.decline_reason == "no_recorded_repair"
-    with pytest.raises(ValueError, match="canonical"):
-        ReflectionTurn(
-            summary="Missing observation",
-            learning_decision="no_change",
-            no_change_reason="some inferred absence",
-            decline_reason="no_recorded_repair",
-        )
+    assert turn.to_result().no_change_reason == reason
 
 
 def test_large_evidence_principle_is_stated_once(tmp_path: Path) -> None:
@@ -515,10 +513,7 @@ def test_large_evidence_principle_is_stated_once(tmp_path: Path) -> None:
         closure=_fresh_closure(tmp_path),
     )
     prompt = str(backend.calls[0]["prompt"])
-    assert prompt.count("Search full evidence") == 1
-    assert "temporary file" in prompt
-    assert "Search full evidence" in prompt
-    assert "never infer from truncated output" in prompt
+    assert prompt.count("never infer from truncated output") == 1
 
 
 def test_reflection_exposes_verified_onboarding_separately_from_findings(tmp_path: Path) -> None:
@@ -590,5 +585,3 @@ def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_p
     prompt = str(backend.calls[0]["prompt"])
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["undetected_causes"][0]["repair_action_id"] == "recorded-patch"
-    assert "Include scoped sdk_gaps alongside updated" in prompt
-    assert "listed undetected transitions" in prompt

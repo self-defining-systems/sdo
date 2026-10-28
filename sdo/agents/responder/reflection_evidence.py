@@ -249,24 +249,20 @@ def memory_view(snapshot: OperationalMemorySnapshot) -> dict[str, Any]:
         "architecture_omitted_characters": max(0, len(snapshot.architecture_markdown) - 2000),
         "detectors": [
             {"id": item.id, "description": item.description[:200], "playbook_ids": list(item.possible_playbook_ids)}
-            for item in snapshot.detectors[:30]
+            for item in snapshot.detectors
         ],
         "playbooks": [
             {"id": item.id, "excerpt": item.markdown[:400], "script_names": [script.name for script in item.scripts]}
-            for item in snapshot.playbooks[:30]
+            for item in snapshot.playbooks
         ],
-        "omitted_detectors": max(0, len(snapshot.detectors) - 30),
-        "omitted_playbooks": max(0, len(snapshot.playbooks) - 30),
+        "omitted_detectors": 0,
+        "omitted_playbooks": 0,
         "full_text": "Read relevant accepted files in the proposal checkout through the memory inventory.",
     }
 
 
 def incident_memory_snapshot(snapshot: OperationalMemorySnapshot, outcome: OutcomeRecord) -> OperationalMemorySnapshot:
-    """Incident-local advice, bound to the accepted snapshot, never learning authority.
-
-    Select before clipping: a relevant playbook may be beyond the inventory's
-    first page. Full accepted files and the authoritative outcome remain intact.
-    """
+    """Order all accepted memory with incident-linked items first; never filter it."""
     detector_ids = {finding.detector_id for finding in outcome.findings}
     detector_ids.update(item.detector_id for item in outcome.disabled_setup_detectors)
     playbook_ids = set(outcome.applied_playbooks) | set(outcome.confirmed_playbooks)
@@ -276,26 +272,23 @@ def incident_memory_snapshot(snapshot: OperationalMemorySnapshot, outcome: Outco
     for detector in snapshot.detectors:
         if detector.id in detector_ids:
             playbook_ids.update(detector.possible_playbook_ids)
-    scoped = type(snapshot)(
-        accepted_commit=snapshot.accepted_commit,
-        goal_markdown=snapshot.goal_markdown,
-        architecture_markdown=snapshot.architecture_markdown,
+    ordered = type(snapshot)()
+    ordered.CopyFrom(snapshot)
+    del ordered.detectors[:]
+    del ordered.playbooks[:]
+    ordered.detectors.extend(
+        sorted(
+            snapshot.detectors,
+            key=lambda item: not (item.id in detector_ids or playbook_ids.intersection(item.possible_playbook_ids)),
+        )
     )
-    scoped.detectors.extend(
-        item
-        for item in snapshot.detectors
-        if item.id in detector_ids or playbook_ids.intersection(item.possible_playbook_ids)
-    )
-    scoped.playbooks.extend(item for item in snapshot.playbooks if item.id in playbook_ids)
-    return scoped
+    ordered.playbooks.extend(sorted(snapshot.playbooks, key=lambda item: item.id not in playbook_ids))
+    return ordered
 
 
 def reflection_memory_view(snapshot: OperationalMemorySnapshot, outcome: OutcomeRecord) -> dict[str, Any]:
     """Compact accepted inventory and controller stage facts; information only."""
-    scoped = incident_memory_snapshot(snapshot, outcome)
-    view = memory_view(scoped)
-    view["omitted_detectors"] = len(snapshot.detectors) - len(view["detectors"])
-    view["omitted_playbooks"] = len(snapshot.playbooks) - len(view["playbooks"])
+    view = memory_view(incident_memory_snapshot(snapshot, outcome))
     if outcome.prior_stages or outcome.playbook_coverage.matches:
         attempts = {
             (item.playbook_id, item.program_revision, item.result)

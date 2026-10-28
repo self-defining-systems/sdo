@@ -561,7 +561,11 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 			ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}
 			outcome.Record.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified service port repair", Resources: []*contracts.ObjectRef{ref}}}
 			outcome.Record.Findings = []*contracts.Finding{{DetectorId: "routing-relations", RuleId: "targetport", Status: "active", Severity: "warn", Summary: "target port mismatch", Evidence: "selected pod has a different port", Fingerprint: "port-mismatch", PrimaryResource: ref}}
-			outcome.Record.RepairActions = []*contracts.RepairActionReceipt{{ActionId: "repair-port", Kind: "kubectl", Target: "Service/demo/front", Summary: "restore target port", Details: "target port restored and read back", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(closure.DetectedAt), CompletedAt: timestamppb.New(closure.ResponderCompletedAt)}}
+			// The accepted port program performed the repair; reflection adds
+			// only the detector, so no hand repair needs a new executable step.
+			outcome.Record.AppliedPlaybooks = []string{"service-targetport-mismatch"}
+			outcome.Record.PlanApplications = []*contracts.PlanApplication{{Plan: &contracts.Plan{}, ApplicationId: "repair-port", ProgramIds: []string{"service-targetport-mismatch"}, Applied: true, VerificationCompleted: true, VerificationPassed: true, StartedAt: timestamppb.New(closure.DetectedAt), CompletedAt: timestamppb.New(closure.ResponderCompletedAt)}}
+			outcome.Record.RepairActions = []*contracts.RepairActionReceipt{{ActionId: "repair-port", Kind: "sdo-apply", Target: "Service/demo/front", Summary: "restore target port", Details: "target port restored and read back", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(closure.DetectedAt), CompletedAt: timestamppb.New(closure.ResponderCompletedAt)}}
 			outcome.Record.DetectorHistory = []*contracts.DetectorEvaluation{{DetectorId: "routing-relations", Status: "clear", EvaluatedAt: timestamppb.New(closure.VerifiedAt)}}
 			return outcome, nil
 		}),

@@ -207,3 +207,11 @@ preparation. Recovery uses that receipt to reject re-creation after restart;
 API read failures remain uncertainty, not disappearance. A completed result
 still follows the existing deadline and worker-quiescence checks after Job TTL.
 Existing executions without dispatch receipts retain deadline-based recovery.
+
+## REFLP1 coverage decisions
+
+The shared memory check makes `reflection.program-required` blocking for every successful recorded hand repair. An `updated` result must name a changed program with a Mitigator; positive case metadata binds the repaired resources and includes that action's original timed `RepairReceipt` observation (the existing `ScriptOriginReceipt` shape, including resources and any script digest). Metadata-only cases need no replay snapshots, and replay verdicts remain informational. Multiple executable steps may cover a grouped receipt together. README text carries judgement and ordering and cannot substitute for recorded actions.
+
+Typed SDK gaps cannot excuse a recorded repair. `reflection.sdk-gap-unavailable` rejects prose such as “not encoded yet” and names of installed SDK capabilities; an installed read may be unavailable only when an accepted program/tool error names it. Gaps can still accompany saved steps for actually unavailable observations or effects. `reflection.stale-playbook` rejects an unchanged applied playbook after failure, unresolved own findings or later same-resource hand repair. Peer edits and SDK gaps do not fix stale memory.
+
+Reflection inventories show every accepted detector and playbook with a short excerpt, incident-linked entries first. Fresh-session incident briefs supply the missing responder evidence without repeating or filtering that inventory. Full accepted memory and outcomes remain readable in the checkout. Dispatch, session reuse and deadlines are unchanged.

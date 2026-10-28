@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -93,14 +94,25 @@ def reflection_recording(
         cause = record.reflection_eligibility.causes.add(cause_index=0)
         cause.resources.append(resource)
     else:
-        # These tests isolate transport and frontmatter from verified repair learning.
+        # These tests isolate transport and frontmatter from verified repair
+        # learning: README-only memory is judgement, so no hand repair is recorded.
         del record.confirmed_root_causes[:]
+        if not covered_repeat:
+            del record.repair_actions[:]
     if covered_repeat:
         record.applied_playbooks.append("missing-configmap")
         record.playbook_coverage.matches.add(playbook_id="missing-configmap", program_revision="accepted-program")
-        record.prior_stages.add(stage="deterministic").mitigations.add(
+        mitigation = record.prior_stages.add(stage="deterministic").mitigations.add(
             playbook_id="missing-configmap", program_revision="accepted-program", result="applied_cleared"
         )
+        # The accepted playbook's own application performed the recorded repair.
+        application = mitigation.apply_receipt
+        application.plan.SetInParent()
+        application.application_id = "restore"
+        application.program_ids.append("missing-configmap")
+        application.applied = application.verification_completed = application.verification_passed = True
+        application.completed_at.CopyFrom(record.repair_actions[0].completed_at)
+        record.repair_actions[0].kind = "sdo-apply"
     outcome = tmp_path / "outcome.json"
     outcome.write_text(to_canonical_json(record))
     recorder = tmp_path / "outcome.go"
@@ -221,7 +233,12 @@ def test_recorded_covered_reflection_finishes_in_one_request(tmp_path: Path, unr
         assert "accepted-program" in prompt
         assert "applied_cleared" in prompt
         assert "Existing accepted repair" in prompt
-        assert "unrelated prior learning" not in prompt
+        # Reflection sees all accepted memory, incident-linked entries first,
+        # as bounded excerpts; full files stay readable in the checkout.
+        assert prompt.count("unrelated-") >= unrelated_playbooks
+        if unrelated_playbooks:
+            assert prompt.index("Existing accepted repair") < prompt.index("unrelated prior learning")
+            assert "unrelated prior learning" * 100 not in prompt
 
     store, source = reflection_recording(
         tmp_path,
@@ -334,6 +351,21 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
         "fixed.json": json.dumps(fixed).encode(),
     }
     labels = json.loads((corpus / "labels.json").read_text())
+    # The controller appends the original repair receipt to captured recordings
+    # (memory.CaptureRepairReceipts); the authored positive case copies it.
+    incident = _closure().request.incident_id
+    observed = max(evaluation.evaluated_at.seconds for evaluation in _outcome(incident).detector_history)
+    receipt = {
+        "id": "restore",
+        "incident_id": incident,
+        "success": True,
+        "started_at": datetime.fromtimestamp(observed + 1, UTC).isoformat().replace("+00:00", "Z"),
+        "completed_at": datetime.fromtimestamp(observed + 2, UTC).isoformat().replace("+00:00", "Z"),
+        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "front"}],
+    }
+    recordings = [*json.loads(captures["open@detect-recordings.json"])]
+    recordings.append({"method": "RepairReceipt", "arguments": [], "result": receipt})
+    captures["open@detect-recordings.json"] = json.dumps(recordings).encode()
     files = readme_files()
     # Reuse the kept hand-written program, its library, and its module definition.
     for name in ("diagnose.go", "mitigate.go"):
@@ -362,8 +394,8 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
     def check_prompt(prompt: str) -> None:
         # This scripted agent checks its task before authoring final Go files.
         # It proves wiring and validation, not how a live model follows instructions.
-        assert "Save verified steps with partial coverage, README orchestration and detectors" in prompt
-        assert "Replay is informational: NoMatch, persistent Match and unavailable replay never block saving" in prompt
+        assert "Every recorded hand repair needs an executable typed SDK plan or RunScript step" in prompt
+        assert "Replay is informational" in prompt
         assert "Use recorded actions as repair evidence" in prompt
         current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
         assert current["classification"] == classification

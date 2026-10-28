@@ -16,9 +16,10 @@ import (
 
 // ReflectionCoverageGaps notes each verified cause that reflection left without
 // executable learning: no replayable program, or a program no detector lists.
-// A gap is information for analysis, never a refusal: the repeat's act-verify
-// loop is the safety net for whatever was not learned. Memory that cannot be
-// inspected yields no notes: the structural and program layers report why.
+// These cause-level notes remain informational. ReflectionRepairDiagnostics
+// separately makes RuleReflectionProgramRequired blocking for each recorded
+// hand repair; detector coverage and replay are still advisory. Memory that
+// cannot be inspected yields no notes: the structural layers report why.
 func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision) (gaps []Diagnostic) {
 	if decision.GetLearningDecision() == "no_change" && decision.GetNoChangeReason() == "no_session" && outcome.GetReflectionSkipReason() == "no_session" {
 		return nil

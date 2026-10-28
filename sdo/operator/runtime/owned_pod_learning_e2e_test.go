@@ -118,6 +118,12 @@ func TestFirstEncounterNamingReplacedPodPublishesWorkloadPlaybook(t *testing.T) 
 		for _, relative := range []string{"playbooks/workload-host-port", "diagnostics/detectors/incidents/host-port-conflict", "corpus/workload-host-port"} {
 			copyFastloopTree(t, filepath.Join(fixture, relative), filepath.Join(checkout, relative))
 		}
+		// The positive case carries the original receipt of the hand repair.
+		request := new(contracts.ReflectionRequest)
+		if err := task.Request.UnmarshalTo(request); err != nil {
+			return nil, err
+		}
+		appendControllerRepairReceipts(t, task.Workspace.CheckoutPath, "workload-host-port", request.Outcome)
 		index := filepath.Join(checkout, "playbooks/README.md")
 		indexBytes, err := os.ReadFile(index)
 		if err != nil {
