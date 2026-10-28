@@ -223,3 +223,60 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observe
 		},
 	}, true
 }
+
+// UndrivenLinks returns the edges declared by link-probe workloads that no
+// scenario of a health-probe workload drives, sorted by ID. A scenario drives
+// an edge when its Target or DependsOn names both ends. A link probe proves only
+// that a fresh connection opens; a fault that answers the connection but fails
+// the request (a broken payment call behind checkout) shows only through a
+// continuously probed scenario whose request crosses the edge, so each edge
+// returned here is one the health probes cannot see break.
+func UndrivenLinks(catalog Catalog, workloads []Workload) []Link {
+	var driving []Scenario
+	for _, workload := range workloads {
+		if workload.Purpose != PurposeHealthProbe {
+			continue
+		}
+		for _, selected := range workload.Scenarios {
+			if scenario, ok := catalog.Scenario(selected.ID); ok {
+				driving = append(driving, scenario)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var undriven []Link
+	for _, workload := range workloads {
+		if workload.Purpose != PurposeLinkProbe {
+			continue
+		}
+		for _, link := range workload.Links {
+			if seen[link.ID()] || drives(driving, link) {
+				continue
+			}
+			seen[link.ID()] = true
+			undriven = append(undriven, link)
+		}
+	}
+	sort.Slice(undriven, func(i, j int) bool { return undriven[i].ID() < undriven[j].ID() })
+	return undriven
+}
+
+func drives(scenarios []Scenario, link Link) bool {
+	for _, scenario := range scenarios {
+		on := map[string]bool{scenario.Target.Service: true}
+		for _, service := range scenario.DependsOn {
+			on[service] = true
+		}
+		if on[link.From] && on[link.To] {
+			return true
+		}
+	}
+	return false
+}
+
+// UndrivenLinkNote is the non-blocking memory-check note for an edge
+// UndrivenLinks returns.
+func UndrivenLinkNote(link Link) string {
+	return fmt.Sprintf("traffic edge %s is not driven by any health-probe scenario: add a scenario whose requests "+
+		"cross it (writes included), or note in links.yaml why none can", link)
+}
