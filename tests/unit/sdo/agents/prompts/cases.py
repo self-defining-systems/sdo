@@ -11,6 +11,7 @@ import pytest
 
 from benchmarks.sregym.adapter.runtime import _responder_instructions
 from sdo.agents.deployer import worker
+from sdo.agents.lifecycle import agents as lifecycle_agents
 from sdo.agents.lifecycle.agents import (
     ActiveTopologyResourceDTO,
     CodexLifecycleBackend,
@@ -230,6 +231,7 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
         # of the checkout that runs the production builders.
         patch.setattr(codex, "SKILLS_ROOT", Path("/opt/sdo/skills"))
         patch.setattr(reflection, "SKILLS_ROOT", Path("/opt/sdo/skills"))
+        patch.setattr(lifecycle_agents, "SKILLS_ROOT", Path("/opt/sdo/skills"))
         # Prompt size caps count temporary-path characters; the golden root is
         # a fixed input rather than whatever TMPDIR the runner happens to use.
         patch.setattr(tempfile, "tempdir", "/tmp")

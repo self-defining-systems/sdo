@@ -9,7 +9,7 @@ Memory exists so later incidents are fixed faster and cheaper. Read and reason a
 
 1. Read the supplied playbook index (ID and one-line description), then open only relevant READMEs; read a playbook before using it. Check its diagnosis against current resources first, or after applying when the match is ready to mitigate.
 2. Before editing, read the [generated layout and ownership map](references/layout.md); preserve accepted provenance and corpus cases, and the task's actor, phase, accepted base and incident identity.
-3. For reflection, read the installed `sdo-playbook-authoring` skill; for detector changes, read `sdo-detector-authoring`. Open only the reference needed for the current step.
+3. For reflection, read [`sdo-playbook-authoring`](../sdo-playbook-authoring/SKILL.md); for detector changes, read [`sdo-detector-authoring`](../sdo-detector-authoring/SKILL.md). Open only the reference needed for the current step.
 4. Validate final edits with [check_memory](references/runtime.md#check_memory), supply typed decision fields directly, and return the same decision and logical IDs; correct named diagnostics before checking again. The broker independently validates final bytes.
 
 ## Memory principles
