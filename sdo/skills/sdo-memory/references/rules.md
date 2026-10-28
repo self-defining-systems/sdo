@@ -14,6 +14,8 @@ Every rule names the validator rule IDs that enforce it. The detector and playbo
 - YAML, front matter, and Go files parse. Enforced by: `yaml.parse`, `document.parse`, `go.syntax`.
 - Logical IDs follow their patterns (playbooks `^[a-z][a-z0-9_-]*$`, detectors `^[a-z0-9][a-z0-9_.-]*$`) and are
   unique. Enforced by: `id.pattern`, `id.duplicate`.
+- Memory is shared by every cluster that adopts it: it holds what to measure and thresholds, never one cluster's
+  measurements (Service UIDs, allocated IPs, probe or capture times). Enforced by: `memory.cluster-local`.
 
 ## Ownership
 
