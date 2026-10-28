@@ -164,8 +164,8 @@ def test_stabilization_observes_until_deadline_then_fails_without_injecting():
 def test_late_dependency_roll_fails_even_when_all_pods_ready():
     from benchmarks.sregym.adapter.eval_guards import assert_stable_workloads
 
-    before = {"Deployment/registry": {"generation": 1, "pods": ["uid-a"]}}
-    after = {"Deployment/registry": {"generation": 2, "pods": ["uid-b"]}}
+    before = {"Deployment/registry": {"pods": ["uid-a"]}}
+    after = {"Deployment/registry": {"pods": ["uid-b"]}}
     with pytest.raises(ValueError, match="rolled after Ready"):
         assert_stable_workloads(before, after)
 
