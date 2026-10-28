@@ -197,9 +197,7 @@ def _count_omitted(target: dict[str, Any], key: str, total: int) -> None:
         target.pop(key + "_omitted", None)
 
 
-def _fit_summary(
-    document: dict[str, Any], limit: int, size: Callable[[str], int]
-) -> tuple[str, bool] | None:
+def _fit_summary(document: dict[str, Any], limit: int, size: Callable[[str], int]) -> tuple[str, bool] | None:
     """The richest JSON summary of ``document`` within ``limit``, and whether it is a placeholder.
 
     A placeholder leaves a nonempty list with no items. The first top-level
@@ -217,9 +215,7 @@ def _fit_summary(
     return (best[1], best[2]) if best is not None else None
 
 
-def _fill(
-    document: dict[str, Any], width: int, limit: int, size: Callable[[str], int]
-) -> tuple[int, str, bool] | None:
+def _fill(document: dict[str, Any], width: int, limit: int, size: Callable[[str], int]) -> tuple[int, str, bool] | None:
     """Fill list slots round-robin, priority lists first, each item at the richest form that fits.
 
     Every list reachable through records is a slot. Slots start empty with their
@@ -246,7 +242,9 @@ def _fill(
     rank = {key: index for index, key in enumerate(PRIORITY_LISTS)}
     slots.sort(key=lambda slot: rank.get(slot[1], len(rank)))
 
-    def place(target: dict[str, Any], key: str, items: list[Any], index: int, forms: Sequence[tuple[int, int, int]]) -> bool:
+    def place(
+        target: dict[str, Any], key: str, items: list[Any], index: int, forms: Sequence[tuple[int, int, int]]
+    ) -> bool:
         """Put ``items[index]`` at the first of ``forms`` that fits, keeping any earlier form otherwise."""
         visible = target[key]
         previous = visible[index] if index < len(visible) else None

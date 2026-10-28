@@ -7,9 +7,8 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from google.protobuf import json_format
-
 import pytest
+from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.runtime import _responder_instructions
 from sdo.agents.deployer import worker
@@ -206,7 +205,9 @@ def live_shaped_reflection(scale: int = 1) -> SimpleNamespace:
             "schema_version": 1,
             "incident_id": request.incident_id,
             "classification": "success",
-            "findings": [json_format.MessageToDict(item, preserving_proto_field_name=True) for item in request.findings],
+            "findings": [
+                json_format.MessageToDict(item, preserving_proto_field_name=True) for item in request.findings
+            ],
             "confirmed_root_causes": [
                 {
                     "summary": "unexplained drift; restore accepted-source differences unless evidence shows "
