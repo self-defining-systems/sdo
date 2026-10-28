@@ -15,8 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 JOB_SECONDS = 300.0
 SETUP_MARGIN = 90.0
 BUDGET = JOB_SECONDS - SETUP_MARGIN
-# Unmeasured names own a whole bin, so a new slow test cannot overload peers.
-DEFAULT_COST = BUDGET
+# A name with no recorded cost runs in the PR (never hidden in nightly) at this
+# provisional reservation, and its first hosted run records the real value.
+DEFAULT_COST = 15.0
 DEDICATED = re.compile(r"^Test(?:Chaos|Exhaustive|Explorer)")
 
 
@@ -26,6 +27,7 @@ class CostPlan(TypedDict):
     nightly: list[str]
     packages: dict[str, list[str]]
     costs: dict[str, float]
+    unmeasured: list[str]
 
 
 def validate_costs(costs: dict[str, float]) -> None:
@@ -51,8 +53,12 @@ def pack(
     budget: float = BUDGET,
     max_bins: int | None = None,
     max_test_seconds: float | None = None,
+    priority: frozenset[str] = frozenset(),
 ) -> tuple[list[list[str]], list[str]]:
-    """First-fit decreasing grows capacity, never a job deadline or placement list."""
+    """First-fit decreasing grows capacity, never a job deadline or placement list.
+
+    With a fixed bin count, `priority` names are admitted before all others
+    (cheapest first within each class), so cheap filler cannot displace them."""
     check_budget([], costs, budget=budget)
     if len(names) != len(set(names)):
         raise ValueError("inventory contains duplicate names")
@@ -67,7 +73,7 @@ def pack(
         # work, never another PR job. Pack that set longest-first afterwards.
         remaining = max_bins * budget
         candidates = []
-        for name in sorted(names, key=lambda n: (costs.get(n, DEFAULT_COST), n)):
+        for name in sorted(names, key=lambda n: (n not in priority, costs.get(n, DEFAULT_COST), n)):
             cost = costs.get(name, DEFAULT_COST)
             if cost > budget or cost > remaining or (max_test_seconds is not None and cost > max_test_seconds):
                 nightly.append(name)
@@ -127,6 +133,7 @@ def plan(
     # Equal names stay together: go test's union regex applies to every package.
     packages: dict[str, list[str]] = {}
     costs: dict[str, float] = {}
+    unmeasured: set[str] = set()
     for package, names in sorted(source.items()):
         for name in names:
             if replay_only and (scope != "runtime" or not name.startswith("TestReplay")):
@@ -138,9 +145,18 @@ def plan(
             # Local measurements are only a conservative bootstrap. Hosted
             # observations always take precedence; truly unknown work is isolated.
             estimate = max(10.0, 10 * local[key]) if key in local else DEFAULT_COST
+            if key not in profile:
+                unmeasured.add(name)
             costs[name] = costs.get(name, 0.0) + profile.get(key, estimate)
     bins, nightly = pack(list(packages), costs)
-    return {"scope": scope, "bins": bins, "nightly": nightly, "packages": packages, "costs": costs}
+    return {
+        "scope": scope,
+        "bins": bins,
+        "nightly": nightly,
+        "packages": packages,
+        "costs": costs,
+        "unmeasured": sorted(unmeasured),
+    }
 
 
 def main() -> None:
