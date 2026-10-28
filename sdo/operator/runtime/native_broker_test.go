@@ -114,6 +114,8 @@ func nativeClosure(workspace IncidentWorkspace) IncidentClosure {
 		},
 		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear}},
 		DetectedAt:          now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
+		// The controller freezes every closure before its first broker attempt.
+		Frozen: true,
 	}
 }
 

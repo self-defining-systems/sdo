@@ -453,6 +453,7 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		UnconfirmedDetail:       closure.UnconfirmedDetail,
 		StatePersistenceFailure: clonePersistenceFailure(closure.StatePersistenceFailure),
 		SourceCheckNotes:        append([]string(nil), closure.SourceCheckNotes...),
+		Frozen:                  closure.Frozen,
 	}
 	if closure.ClosureStabilityWindow == 0 {
 		message.ClosureStabilityWindow = nil
@@ -641,6 +642,7 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		UnconfirmedDetail:       message.GetUnconfirmedDetail(),
 		StatePersistenceFailure: clonePersistenceFailure(message.GetStatePersistenceFailure()),
 		SourceCheckNotes:        append([]string(nil), message.GetSourceCheckNotes()...),
+		Frozen:                  message.GetFrozen(),
 	}
 	if request := incidentRequestState(message.GetRequest()); request != nil {
 		closure.Request = *request
