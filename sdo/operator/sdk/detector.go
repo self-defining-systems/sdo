@@ -240,9 +240,12 @@ type SourceDiff struct {
 	Text    string `json:"text,omitempty"`
 }
 
-// PresentButNotInSource is true only while the object exists live and accepted source lacks it; unlike SourceAbsent it is false once the object is deleted, so use it as the Diagnose match for delete-style repairs.
+// PresentButNotInSource is true while the object exists live but not in accepted source.
+// Unlike SourceAbsent it turns false after the delete, so delete-style Diagnose matches on it.
 func (d SourceDiff) PresentButNotInSource() bool { return d.Changed && d.SourceAbsent }
 
+// DetectionContext is the frozen snapshot read by detectors and, through
+// ReadView, by programs.
 type DetectionContext interface {
 	// DiffAgainstSource compares a captured resource with accepted source, including
 	// source absence. Runtime reads are frozen per snapshot and recorded for replay.

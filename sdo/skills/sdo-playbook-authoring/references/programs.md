@@ -1,40 +1,63 @@
-# Direct program authoring
+# Program notes
 
-Programs implement the [generated program SDK](program-sdk.md). Diagnose reads a bound resource view;
-mitigation returns typed actions. Import shared SDK helpers (`sdk/observe`, `sdk/routing`) instead of copying them into `.sdo/lib`.
-Keep names, ports and images in bindings or observed state, never in the learned predicate.
+Facts behind the authoring steps. Signatures are on the [SDK card](sdk-card.md).
 
-Detectors detect continuously; playbook Diagnose runs only while handling their findings, using one finding-bound assignment. Read additional objects through ReadView by name or relation.
-Health findings name no roles, so declare one role per object kind: two roles of one kind (aliases) never bind and are refused at save.
-Detectors call `ctx.DiffAgainstSource(ref)` before selection, then bind playbooks through findings.
-`Changed` covers field drift; `SourceAbsent` confirms absence. Unavailable evidence errors.
-Both contexts share recorded comparisons.
+## Per-cause work
 
-Accepted Mitigators and raw one-action plans appear in the responder menu.
-Declare object/value parameters; group related actions. PlanExecutor retains its checks; SDO identities hold a cluster-wide grant, so RBAC refuses nothing.
-Per-action results, provenance and errors guide the responder across five incident rounds.
-Intermediate reports grant neither independent outcomes nor trust credit.
-Mitigate may run again: when its rollout stays pending, the runtime re-plans on fresh observations and
-applies the next plan until it repeats an earlier plan (at most three follow-ups). Write a repair
-that depends on what its write causes as one Mitigate over current state, e.g. also returning
-`program.StalledRolloutRelease(v, deployment)` after a source write: it retires (`RetireOldRevision`) each old
-revision that holds the place of a replacement that cannot be placed or created, and returns nothing otherwise.
-It selects by controller ownerReference and revision, never by name; the owner need not be bound.
-Retiring or scaling a current revision or an unowned ReplicaSet is refused as `replicaset_scale_refused`. Once a stalled rollout is released, a later responder write ends the
-program's credit for it. Prose in the README never runs.
+Go settles covered repairs and their corpus cases before reflection; answer only the open questions in the
+per-cause work. A verified cause with no recorded repair on its own resources is recorded, and the other
+causes are still learned. A program that still matches the verified fixed capture needs refinement: Go keeps
+that capture as a NoMatch regression case (`CapturedFixedNoMatchPhase`), never a positive case.
 
-A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
-fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
-The authoring reference tool supplies the routing example.
+## Bindings and values
 
-## Topics
+- `bindings.Objects[role]` holds resource identities; `bindings.Parameter(spec, name)` returns a scalar
+  parameter or its default. Required scalar parameters need a `Default` so findings can bind them. Diagnose
+  and Mitigate declare identical parameters. Two roles of one Kind never bind and are refused at save.
+- An emergency literal is a declared parameter the responder supplies and justifies.
 
-- [Evidence and replay fixtures](programs/evidence-and-replay-fixtures.md)
-- [Recorded repair coverage](programs/recorded-repair-coverage.md)
-- [Source restoration](programs/source-restoration.md)
-- [Values and runtime actions](programs/values-and-runtime-actions.md)
-- [Routing](programs/routing.md)
-- [Acceptance](programs/acceptance.md)
-- [Go-owned per-cause work](programs/go-owned-per-cause-work.md)
-- [Removing one Service port](programs/removing-one-service-port.md)
-- [Database catalogs](programs/database-catalogs.md)
+## Source restoration
+
+- `SetField` restores one schema-checked field; named list selectors (`env[name=X]`) and ConfigMap
+  JSON/YAML entries (`DocumentFormat`, `DocumentPath`) preserve unrelated values. A missing final
+  `env[name=X]` entry is inserted.
+- `ReconcileFromSource` restores a whole source-owned object and removes reported additions;
+  `CreateFromSource` restores a named missing object. `DeleteObject` is irreversible; a delete-style Diagnose
+  matches on `diff.PresentButNotInSource()`, which turns false after the delete.
+- A `dnsPolicy` repair does not remove an injected `dnsConfig`; remove that with a JSON patch.
+
+## Stalled rollouts
+
+Mitigate may run again: while a rollout stays pending the runtime re-plans on fresh observations, at most
+three follow-ups, until a plan repeats. `StalledRolloutRelease` retires (`RetireOldRevision`) each old
+revision holding the place of a replacement that cannot be placed or created, selected by ownerReference
+and revision; it returns nothing otherwise. Scaling a current revision is refused (`replicaset_scale_refused`).
+
+## Pods and commands
+
+`DeletePod` checks UID/version; a terminating Pod counts as deleted and is never recreated on undo.
+`ScaleWorkload` verifies `spec.replicas`. `Exec` runs as the controller, reports only the exit code and
+earns no repair credit when refused. `RunScript` defaults to 60 s, at most 5 min; script and each output
+stream keep at most 64 KiB. Its bytes are checked against this program's linked receipts at plan time;
+unlinked bytes are refused as `script_unprovenanced`.
+
+## Database catalogs
+
+`DatabaseUsers(DatabaseTarget)` reads nonsecret user names and direct roles of one MongoDB catalog on a
+bound Pod (`Shell` mongo or mongosh). `CredentialRef` is exactly one of `Env` or `ConfigMap{Name, Key,
+Assignment}` in the Pod's namespace; only the executor resolves it, through exec stdin.
+`EnsureDatabaseUser` creates a missing user or restores its exact direct roles, keeps existing passwords and
+other users, and is irreversible. Build replay from recorded open `DatabaseUsers` replies. Add
+`RestartRollout` for a dependent Deployment when recovery needs a reconnect.
+
+## Routing and Service ports
+
+Declared container ports choose probe candidates; they never prove a listener. A numeric `targetPort`
+repair needs successful TCP probes at the candidate port and refused probes at the faulty port on the
+selected ready Pods; anything ambiguous stays Unknown. `RemoveServicePort` removes exactly one port by
+name or by port and protocol; missing or ambiguous entries refuse, and the last port needs `AllowEmpty`.
+
+## Acceptance
+
+The broker repeats the memory check. Compilation, imports, changed-source formatting, ownership and
+receipt provenance are required; replay outcomes, missing captures and detector coverage are information.

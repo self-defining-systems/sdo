@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import pathlib
+import shutil
 import sys
 from typing import TYPE_CHECKING
 
@@ -257,3 +258,86 @@ async def test_every_reflection_tool_reply_stays_within_the_shared_budget(tmp_pa
     assert "line 399" not in block.text
     # The bound sits on the server's single dispatch path, so no registered tool can bypass it.
     assert type(server).call_tool is not FastMCP.call_tool
+
+
+@pytest.mark.skipif(shutil.which("gofmt") is None, reason="needs the Go toolchain")
+async def test_check_memory_formats_changed_memory_go_before_checking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Formatting is mechanical: the tool fixes changed sources instead of reporting go.format."""
+    import subprocess
+
+    checkout = tmp_path / "checkout"
+    (checkout / ".sdo/playbooks/fixture").mkdir(parents=True)
+    accepted = checkout / ".sdo/playbooks/fixture/accepted.go"
+    accepted.write_text("package fixture\nfunc  Accepted() {}\n")
+    subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+    subprocess.run(["git", "add", "."], cwd=checkout, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "accepted"], cwd=checkout, check=True
+    )
+    changed = checkout / ".sdo/playbooks/fixture/diagnose.go"
+    changed.write_text("package fixture\nfunc  Diagnose() {\n x := 1\n _ = x\n}\n")
+    outside = checkout / "main.go"
+    outside.write_text("package main\nfunc  main() {}\n")
+    _validator(
+        tmp_path,
+        """import sys
+from pathlib import Path
+source = Path(".sdo/playbooks/fixture/diagnose.go").read_text()
+sys.exit(0 if source == "package fixture\\n\\nfunc Diagnose() {\\n\\tx := 1\\n\\t_ = x\\n}\\n" else 3)
+""",
+        monkeypatch,
+    )
+    server = validation_server(checkout)
+    result = await server.call_tool("check_memory", {"learning_decision": "updated", "summary": "s"})
+    (block,) = result
+    assert json.loads(block.text)["exit_code"] == 0
+    assert accepted.read_text() == "package fixture\nfunc  Accepted() {}\n", "accepted bytes are never rewritten"
+    assert outside.read_text() == "package main\nfunc  main() {}\n", "only operational memory is formatted"
+
+
+@pytest.mark.parametrize(("exit_code", "expected"), [(0, "passed"), (1, "fix each diagnostic")])
+async def test_check_memory_reply_leads_with_the_next_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int, expected: str
+) -> None:
+    """Replay notes ride along with a pass; the reply says plainly they are not work."""
+    _validator(
+        tmp_path,
+        f'import sys\nprint(\'{{"diagnostics": [], "mitigation_replay_notes": [1]}}\')\nsys.exit({exit_code})\n',
+        monkeypatch,
+    )
+    server = validation_server(tmp_path)
+    (block,) = await server.call_tool(
+        "check_memory", {"learning_decision": "updated", "summary": "s", "proposed_artifact_ids": ["book"]}
+    )
+    reply = json.loads(block.text)
+    assert next(iter(reply)) == "next", "the instruction leads so a capped reply keeps it"
+    assert expected in reply["next"]
+    if exit_code == 0:
+        assert "information" in reply["next"]
+        assert '"updated"' in reply["next"]
+        assert '["book"]' in reply["next"]
+
+
+async def test_check_memory_pass_names_programs_whose_replay_disagrees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each new program should Match its fault capture and NoMatch healthy; a pass says which do not."""
+    notes = [
+        {"program_id": "good", "case_id": "a", "effects": ["open diagnosis: Match", "healthy diagnosis: NoMatch"]},
+        {"program_id": "weak", "case_id": "b", "effects": ["open diagnosis: Unknown", "healthy diagnosis: Unknown"]},
+        {"program_id": "health-objective", "case_id": "settled", "effects": ["open diagnosis: Unknown"]},
+    ]
+    body = json.dumps({"diagnostics": [], "mitigation_replay_notes": notes})
+    _validator(tmp_path, f"print({body!r})\n", monkeypatch)
+    server = validation_server(tmp_path)
+    (block,) = await server.call_tool(
+        "check_memory", {"learning_decision": "updated", "summary": "s", "proposed_artifact_ids": ["good", "weak"]}
+    )
+    step = json.loads(block.text)["next"]
+    assert "weak" in step
+    assert "open Unknown" in step
+    assert "healthy Unknown" in step
+    assert "good" not in step.split("passed")[1].split("Each program")[0]
+    assert "health-objective" not in step, "only the agent's own programs are named"

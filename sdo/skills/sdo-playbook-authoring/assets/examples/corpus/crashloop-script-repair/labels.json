@@ -1,0 +1,21 @@
+{
+ "root_cause_program_ids": [
+  "crashloop-script-repair"
+ ],
+ "bindings": {
+  "objects": {
+   "deployment": {
+    "api_version": "apps/v1",
+    "kind": "Deployment",
+    "namespace": "demo",
+    "name": "checkout"
+   }
+  }
+ },
+ "provenance": {
+  "incident_id": "worked-example"
+ },
+ "script_origins": {
+  "960cb9804c14f747225fd802492e14c6ddd26759ac5e0b8a796ffdb1442ef6ed": "example-act-4"
+ }
+}

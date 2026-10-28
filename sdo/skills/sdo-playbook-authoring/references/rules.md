@@ -45,42 +45,15 @@ diagnostic; look it up here.
 - The responder writes playbooks, scripts, and the index during reflection. The health judge writes only the
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
-Replay reports diagnosis, detector observations and plan application as information only. Open NoMatch,
-fixed/post-plan Match, unavailable reads, empty or unappliable plans and failing replay tests never block
-saving. Compilation, imports, changed-source formatting, ownership and provenance remain required.
-Source values and live mutation policies are checked when a plan is applied.
-
-## Value provenance and runtime effects
-
-Mitigation returns to accepted or observed state; intended-state changes are source repairs. An emergency
-literal is a declared scalar parameter the responder fills and justifies. Opaque `FromSource`, `FromObserved`,
-or `FromParam` values enforce the Go API boundary; raw SetField, replica, or command literals fail compilation.
-
-Declare each scalar parameter's kind and optional default. The SDK's `ValidateBindings` checks supplied values;
-its value resolver rejects undeclared parameters, wrong types, zero Values, and Secret references before writes.
-
-Runtime action reports and receipts retain commit/path, resourceVersion/path, or parameter-name provenance.
-The runtime guards DeletePod by UID/version and directly verifies ScaleWorkload replicas. Exec uses the controller's
-pods/exec grant in the application namespace and returns an exit code with no stdout/stderr; commands can reach mounted Secret files.
-
-Advice, not validator-checked: unavailable external-effect replay proves no repair; report its reason.
-Irreversible Pod deletion or Exec never grants restart mutation or recreation authority.
+Replay results are information only; compilation, imports, changed-source formatting, ownership and
+provenance are required.
 
 ## Corpus evidence
 
-Partial mechanical coverage is useful: save every recorded hand repair as an executable typed SDK or RunScript step, with relation-derived Env and digest-to-receipt linkage. README text holds only judgement and ordering. When accepted playbooks already match well and no uncovered repair remains, return no_change promptly. Typed SDK gaps describe actually unavailable observations or effects, never work not encoded yet. Missing executable coverage of recorded hand repairs is blocking; detector coverage and replay results remain informational.
+Every recorded hand repair needs an executable typed SDK or RunScript step (partial coverage is fine), with
+relation-derived Env and digest-to-receipt linkage; README text holds only judgement and ordering.
 
 - Build replay fixtures from recorded session observations when available. Missing or inconclusive replay
   is recorded with its reason and never rejects publication; retain RunScript receipt linkage. Enforced by: `program.mitigation-not-repaired`.
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,
   provenance, bindings and labels. Do not delete or relabel it; submit new evidence with a new case ID. Enforced by: `program.corpus-immutable`.
-
-Advice, not validator-checked: live RemoveServicePort identifies exactly one port and explicitly allows removing the last entry.
-  EnsureDatabaseUser uses only env or namespace-local ConfigMap key/assignment references, preserves other users and
-  existing passwords, and discloses irreversible effects. Unavailable catalog observations remain Unknown. Replay findings are informational; fixed answers never
-  establish a live repair.
-
-General actions do not require per-fault value provenance or accepted-source presence. Use the
-[general action vocabulary](general-actions.md) and retain exact recorded transition evidence
-for commands, HTTP, raw API effects and one-off completion. Missing evidence remains Unknown;
-Fixed replies never establish an effect. Compilation and provenance still apply; replay verdicts remain information.

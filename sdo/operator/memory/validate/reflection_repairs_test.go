@@ -291,3 +291,24 @@ func btoi(b bool) int {
 	}
 	return 0
 }
+
+// The health judge owns the health-objective playbook. Its generic program
+// failing an incident asks for incident playbooks (via the hand repairs that
+// follow), never for the responder to edit the judge's playbook.
+func TestStaleRuleNeverAsksTheResponderToChangeTheJudgesPlaybook(t *testing.T) {
+	root := goodTree(t)
+	o := &contracts.OutcomeRecord{IncidentId: "incident", Classification: "success", PriorStages: []*contracts.StageReport{{Stage: "deterministic", Mitigations: []*contracts.StageMitigation{
+		{PlaybookId: layout.HealthObjectivePlaybook, Result: "admission_blocked"},
+		{PlaybookId: "base", Result: "rollout_failed"},
+	}}}}
+	ds := ReflectionRepairDiagnostics(root, o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "x"}, nil)
+	var stale []string
+	for _, d := range ds {
+		if d.Rule == RuleReflectionStalePlaybook {
+			stale = append(stale, d.Message)
+		}
+	}
+	if len(stale) != 1 || !strings.Contains(stale[0], `"base"`) {
+		t.Fatalf("stale diagnostics: %v", stale)
+	}
+}
