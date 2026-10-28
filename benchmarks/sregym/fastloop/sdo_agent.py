@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -421,12 +422,17 @@ class SdoPersistentAgent:
         finally:
             if settings.kubeconfig:
                 receipt_dir = Path(str(outcome.artifacts_dir))
-                exported = self._ops.export_runtime_artifacts(
-                    replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
-                )
-                if exported.get("error"):
-                    raise RuntimeError(f"incomplete replay recording: {exported['error']}")
-                self._checkpoint(int(receipt_dir.name.split("_", 1)[0]), outcome.incident_id, receipt_dir)
+                index = int(receipt_dir.name.split("_", 1)[0])
+                try:
+                    exported = self._ops.export_runtime_artifacts(
+                        replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
+                    )
+                    if exported.get("error"):
+                        raise RuntimeError(f"incomplete replay recording: {exported['error']}")
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                    self._unrecorded_checkpoint(index, exc)
+                else:
+                    self._checkpoint(index, outcome.incident_id, receipt_dir)
         # Receipt rejection happens after the controller has acknowledged and relaunched.
         # Other drain failures leave the pending gate intact and stop the stream.
         record.pending = None
@@ -571,16 +577,31 @@ class SdoPersistentAgent:
         from benchmarks.sregym.adapter import kubectl
 
         control = self._settings.runtime_config.controller_namespace
-        response = kubectl(
-            ["get", "configmaps", "-o", "json"],
-            namespace=control,
-            kubeconfig=Path(self._settings.kubeconfig),
-        )
-        document = json.loads(response.stdout)
-        items = document.get("items")
-        if not isinstance(items, list):
-            raise RuntimeError("worker ConfigMap listing omitted items")
-        capture_checkpoints(CheckpointStore(self._settings.results_dir), index, incident_id, receipt_dir, items)
+        store = CheckpointStore(self._settings.results_dir)
+        try:
+            response = kubectl(
+                ["get", "configmaps", "-o", "json"],
+                namespace=control,
+                kubeconfig=Path(self._settings.kubeconfig),
+            )
+            document = json.loads(response.stdout)
+            if not isinstance(document, dict):
+                raise ValueError("worker ConfigMap listing must be a JSON object")
+            items = document.get("items")
+            if not isinstance(items, list):
+                raise RuntimeError("worker ConfigMap listing omitted items")
+            capture_checkpoints(store, index, incident_id, receipt_dir, items)
+            store.clear_unrecorded(index)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            self._unrecorded_checkpoint(index, exc)
+
+    def _unrecorded_checkpoint(self, index: int, error: Exception) -> None:
+        reason = f"{type(error).__name__}: {error}"
+        logger.warning("Optional replay checkpoint %03d not recorded: %s", index, reason)
+        try:
+            CheckpointStore(self._settings.results_dir).mark_unrecorded(index, reason)
+        except OSError:
+            logger.warning("Could not persist unrecorded checkpoint %03d reason", index, exc_info=True)
 
 
 def _post_closure_wait(wait: FollowupClosureWait) -> PostClosureWait:

@@ -21,7 +21,14 @@ import (
 )
 
 func TestPartialPlaybookPublication(t *testing.T) {
-	for _, mode := range []string{"mechanical-step", "open-no-match", "fixed-still-match", "unverified-read", "missing-fixed", "labels-only", "no-corpus", "readme-only", "broken-peer"} {
+	compileFiles := map[string]string{
+		"diagnose-compile": "playbooks/service-targetport-mismatch/diagnose.go",
+		"mitigate-compile": "playbooks/service-targetport-mismatch/mitigate.go",
+		"library-compile":  "lib/ports/ports.go",
+		"test-compile":     "playbooks/service-targetport-mismatch/program_test.go",
+	}
+
+	for _, mode := range []string{"mechanical-step", "open-no-match", "fixed-still-match", "unverified-read", "missing-fixed", "labels-only", "no-corpus", "readme-only", "broken-peer", "diagnose-compile", "mitigate-compile", "library-compile", "test-compile"} {
 		t.Run(mode, func(t *testing.T) {
 			root := goodTree(t)
 			fixture := "../../../../tests/fixtures/sdo/playbook_program_app/.sdo"
@@ -97,6 +104,22 @@ func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(progra
 					remove(t, root, ".sdo/corpus")
 				}
 
+				if file := compileFiles[mode]; file != "" {
+					path := filepath.Join(root, ".sdo", file)
+					data, err := os.ReadFile(path)
+					if mode == "test-compile" && os.IsNotExist(err) {
+						data, err = []byte("package targetport\n"), nil
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					formatted, err := format.Source(append(data, []byte("\nfunc brokenCompileContract() { _ = undefinedMemoryValue }\n")...))
+					if err != nil {
+						t.Fatal(err)
+					}
+					write(t, root, ".sdo/"+file, string(formatted))
+				}
+
 				if mode == "broken-peer" {
 					// A partial playbook grants no exemption to another malformed program.
 					write(t, root, ".sdo/playbooks/partial-orchestration/mitigate.go", "package broken\n")
@@ -118,6 +141,14 @@ func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(progra
 			ds, err := Check(context.Background(), Request{CoverageGaps: &observations, MitigationReplayNotes: &notes, Root: root, Base: base, Actor: Responder, Phase: ReflectionPhase, Decision: decision, Publication: &PublicationContext{BaseCommit: base, IncidentID: outcome.IncidentId}, OperatorRoot: filepath.Join("..", "..")}, CompileCandidate)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if strings.HasSuffix(mode, "-compile") {
+				for _, d := range ds {
+					if (d.Rule == RuleDetectorCompile || d.Rule == RuleDetectorVet) && strings.Contains(d.Message, "undefinedMemoryValue") && d.Path == ".sdo/"+compileFiles[mode] && d.Line > 0 {
+						return
+					}
+				}
+				t.Fatalf("noncompiling memory must be blocked at its authored file, never advisory: diagnostics=%v observations=%v", ds, observations)
 			}
 			if mode == "readme-only" {
 				if len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {

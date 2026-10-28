@@ -64,7 +64,8 @@ func (c *Controller) captureHealthyMemoryBaseline(ctx context.Context, now time.
 	}
 }
 
-// Record all declared Service TCP ports, including intentionally unused ports.
+// Record every object's source comparison and all declared Service TCP ports,
+// including intentionally unused ports.
 // Missing capabilities remain evidence gaps that reject later publication.
 func (c *Controller) recordHealthyMemoryObservation(ctx context.Context, reference string, snapshot sdk.DetectionContext) error {
 	captured, err := sdktest.CaptureSnapshot(snapshot, c.config.Namespace)
@@ -74,6 +75,11 @@ func (c *Controller) recordHealthyMemoryObservation(ctx context.Context, referen
 	var view program.ReadView
 	if c.drift != nil && c.drift.View != nil {
 		view = c.drift.View(snapshot)
+	}
+	if view != nil {
+		budget, cancel := context.WithTimeout(ctx, sourceComparisonCaptureBudget)
+		captured.Readings = append(captured.Readings, boundaryObservations(budget, snapshot, view)...)
+		cancel()
 	}
 	if live, ok := routingLiveView(view); ok && live.Prober != nil {
 		live.DetectionContext = captured
