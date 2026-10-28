@@ -58,6 +58,12 @@ The prober dials each declared edge afresh every interval and the finding needs 
 
 Compare the health workload's scenarios (and their `DependsOn`) with the `links.yaml` edges: an edge no health-probe scenario crosses is invisible to traffic health unless the fault also breaks fresh connections. The accepted commit's `SDO-Coverage-Gap:` trailers and `memory check` output list such edges as `traffic.undriven-edge`; a comment above the link in `links.yaml` gives the judge's reason when it chose not to drive one. Classify as health-objective coverage (owner: health judge), not responder quality.
 
+## Health clears while a slow or single-record fault remains
+
+**Signature:** SDO health clears while the grader still fails a fault that slows a service without failing it (CPU saturation behind a tight limit) or that breaks one record (one product, one key), with health traffic that does reach the service.
+
+Read the health workload's `slo.maxLatency` per scenario and the traffic findings' latency evidence: a path slowed many times over can stay under the 1.5 s default bound, and `memory check` lists every health-probe scenario on that default as `traffic.default-latency`. For a single-record fault, check whether the scenario picks one record at random per sample: the failing fraction then stays under the error budget. Classify as health-objective coverage (owner: health judge).
+
 ## Workload-health finding
 
 **Signature:** a finding from detector `workload-health` with a `workload-pod-*`, `workload-container-*`, `workload-init-container-stuck` or `workload-deployment-*` rule. Runs whose seed predates the detector have no such records.

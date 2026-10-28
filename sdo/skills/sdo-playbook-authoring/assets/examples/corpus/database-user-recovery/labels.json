@@ -1,0 +1,18 @@
+{
+ "root_cause_program_ids": [
+  "database-user-recovery"
+ ],
+ "bindings": {
+  "objects": {
+   "pod": {
+    "api_version": "v1",
+    "kind": "Pod",
+    "namespace": "demo",
+    "name": "mongo-app"
+   }
+  }
+ },
+ "provenance": {
+  "incident_id": "worked-example"
+ }
+}

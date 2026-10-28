@@ -61,6 +61,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	registryHost := flags.String("registry-host", "", "trusted source image registry host[:port]")
 	model := flags.String("model", "", "agent model")
 	provider := flags.String("agent-provider", "codex", "agent provider")
+	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
 	registrationSource := flags.String("agent-registrations", "", "local registration JSON directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap name")
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
@@ -176,7 +177,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		ValidatorImage: *validatorImage, BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
-		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider,
+		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider, AgentEffort: *effort,
 		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,

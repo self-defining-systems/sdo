@@ -12,6 +12,8 @@ from typing import Any
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.native_operator import (
+    AGENT_EFFORTS,
+    DEFAULT_AGENT_EFFORT,
     NativeInstallConfig,
     collect_native_receipt,
     install_existing,
@@ -47,6 +49,7 @@ class RuntimeConfig:
     wait_for_completion: bool = False
     repair_policy: str = "recorded-actions"
     agent_provider: str = "codex"
+    agent_effort: str = DEFAULT_AGENT_EFFORT
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
@@ -97,6 +100,8 @@ class RuntimeConfig:
             raise ValueError("repair_policy must be commit or recorded-actions")
         if self.agent_provider not in ("codex", "claude"):
             raise ValueError("agent_provider must be codex or claude")
+        if self.agent_effort not in AGENT_EFFORTS:
+            raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
         if self.reflection_session not in ("fresh", "resume"):
             raise ValueError("reflection_session must be fresh or resume")
         if self.code_path not in ("go", "shell"):
@@ -145,6 +150,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         model=config.model,
         kubeconfig=Path(kubeconfig),
         agent_provider=config.agent_provider,
+        agent_effort=config.agent_effort,
         repair_policy=config.repair_policy,
         late_findings=config.late_findings,
         reflection_session=config.reflection_session,

@@ -79,6 +79,9 @@ const (
 	// Informational traffic coverage: a declared dependency edge no
 	// health-probe scenario drives. Never an acceptance diagnostic.
 	RuleTrafficUndrivenEdge = "traffic.undriven-edge"
+	// Informational traffic coverage: a health-probe scenario that keeps the
+	// default latency bound. Never an acceptance diagnostic.
+	RuleTrafficDefaultLatency = "traffic.default-latency"
 
 	// Compile.
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"

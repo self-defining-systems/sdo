@@ -24,6 +24,7 @@ type DatabaseRole struct {
 	Database string `json:"database"`
 	Name     string `json:"name"`
 }
+    DatabaseRole is one directly granted role in a named database.
 
 type DatabaseTarget struct {
 	Engine    string        `json:"engine"`
@@ -120,6 +121,8 @@ type EnsureExec struct {
 	Expect  int32
 	Reason  string
 }
+    EnsureExec runs Observe in a Pod and, unless it already exits with Expect,
+    runs Ensure and observes again; effects are irreversible.
 
 type EnsureHTTP struct {
 	Observe HTTPRequest
@@ -127,6 +130,8 @@ type EnsureHTTP struct {
 	Expect  int32
 	Reason  string
 }
+    EnsureHTTP sends Observe and, unless it already returns Expect, sends Ensure
+    and observes again; effects are irreversible.
 
 type Evidence struct {
 	Resource sdk.ObjectRef `json:"resource"`
@@ -134,6 +139,7 @@ type Evidence struct {
 	Observed string        `json:"observed"`
 	Expected string        `json:"expected"`
 }
+    Evidence is one observed fact supporting a verdict.
 
 type Exec struct {
 	Pod       sdk.ObjectRef
@@ -170,6 +176,7 @@ type HTTPProbe struct {
 	Path    string            `json:"path"`
 	Headers map[string]string `json:"headers,omitempty"`
 }
+    HTTPProbe is the request ProbeHTTP sends.
 
 type HTTPRequest struct {
 	Pod       sdk.ObjectRef            `json:"pod"`
@@ -289,23 +296,6 @@ type Plan struct {
 	Actions   []Action
 	Rationale string
 }
-
-func BindPlanValues(plan Plan, in ValueInputs) Plan
-    BindPlanValues pins each value to its own program invocation. This survives
-    batching plans with different parameter names or observation snapshots. The
-    controller calls this after Mitigate returns, replacing any program binding.
-
-func (p Plan) Validate() error
-
-type ProbeResult struct {
-	Success bool   `json:"success"`
-	Detail  string `json:"detail,omitempty"`
-}
-
-type ProgramRegistry interface {
-	List() []ProgramSpec
-	Diagnoser(id string) (Diagnoser, bool)
-	Mitigator(id string) (Mitigator, bool)
-}
-    ProgramRegistry is the compiled program catalog available to the controller.
+    Plan is what Mitigate returns: actions applied in order as one batch.
+    An empty plan means nothing to do.
 ```

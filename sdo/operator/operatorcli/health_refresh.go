@@ -73,7 +73,7 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if err != nil {
 		return err
 	}
-	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel())
+	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel(), config.GetAgentEffort())
 	if err != nil {
 		return err
 	}

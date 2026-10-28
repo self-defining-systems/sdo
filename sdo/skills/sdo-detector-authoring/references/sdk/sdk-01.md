@@ -159,6 +159,8 @@ type DetectionContext interface {
 	PodsForService(namespace string, service string) []corev1.Pod
 	RecentEventsFor(namespace string, kind string, name string) []corev1.Event
 }
+    DetectionContext is the frozen snapshot read by detectors and, through
+    ReadView, by programs.
 
 type Detector interface {
 	Spec() DetectorSpec
@@ -248,12 +250,4 @@ func DetectObserved(ctx context.Context, detector Detector, view DetectionContex
     finding, even if the detector ignores an accessor error.
 
 type FindingSeverity string
-
-const (
-	SeverityInfo     FindingSeverity = "info"
-	SeverityWarning  FindingSeverity = "warn"
-	SeverityCritical FindingSeverity = "critical"
-	SeverityLatent   FindingSeverity = "latent"
-)
-type FindingStatus string
 ```

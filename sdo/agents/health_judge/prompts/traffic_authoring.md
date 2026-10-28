@@ -7,7 +7,10 @@ few requests per second; the traffic health detector opens an incident when a sc
 responder's repair is accepted only when the same scenarios recover. A dependency no continuous scenario calls can
 break unseen, so the health workload must send at least one request across every service-to-service edge you
 declare in links.yaml, write paths included (services only a write reaches never see a read). Every scenario
-must succeed against the healthy application.
+must succeed against the healthy application. A path is healthy only while it also stays fast: a saturated service
+slows its path long before it fails, so bound each health scenario's latency near its healthy latency. Make each
+scenario fail on every sample when what it covers breaks: cover every seeded record rather than one picked at random,
+and read back what a write changed.
 
 1. Generators: Go package `generators` in `.sdo/diagnostics/traffic/generators/` exporting
    `func Scenarios() traffic.Catalog` (import "sdo.dev/operator/sdk/traffic"). Each traffic.Scenario has ID,
@@ -29,7 +32,8 @@ must succeed against the healthy application.
    `health` (purpose health-probe, ratePerSecond at most 4, reads plus the write journeys that reach otherwise
    uncovered edges, writing only marked synthetic data as the application's own tests or clients do) and `verify`
    (purpose verify-burst, ratePerSecond about 12, duration 3s, the same scenarios). Optional: timeout (2s) and
-   slo {window, minSamples, maxErrorRate, maxTimeoutRate, latencyPercentile, maxLatency}. Journey workloads run only
+   slo {window, minSamples, maxErrorRate, maxTimeoutRate, latencyPercentile, maxLatency}; set maxLatency per health
+   scenario (memory check notes each one left on the default as `traffic.default-latency`). Journey workloads run only
    on demand and never feed detection.
 3. Firing policy: `traffic.NewDetector` defaults `Persistence.MinDuration` to `traffic.DefaultHealthMinDuration`
    (9s) for a health-class detector, so a brief data-plane stall (about 3s after some pod-network changes) does not

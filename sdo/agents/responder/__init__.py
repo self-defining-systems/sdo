@@ -20,7 +20,6 @@ _EXPORTS = {
     "AGENT_SKILLS": "credentials",
     "ClaudeSessionBackend": "reflection",
     "CodexSessionBackend": "reflection",
-    "INCIDENT_REASONING_EFFORT": "reflection",
     "IncidentStatusReport": "incident_status",
     "IncidentStatusState": "incident_status",
     "KubernetesResultPublisher": "job",
@@ -85,9 +84,6 @@ if TYPE_CHECKING:
     )
     from sdo.agents.responder.job import (
         write_application_kubeconfig as write_application_kubeconfig,
-    )
-    from sdo.agents.responder.reflection import (
-        INCIDENT_REASONING_EFFORT as INCIDENT_REASONING_EFFORT,
     )
     from sdo.agents.responder.reflection import (
         REFLECTION_GUIDANCE_MODES as REFLECTION_GUIDANCE_MODES,
