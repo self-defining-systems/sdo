@@ -110,3 +110,24 @@ def test_structured_pytest_costs_update_the_python_profile_only(
     assert result["costs"] == {"old.py::test_old": 1, "new.py::test_new": 12.5}
     assert result["source_run"] == 123
     assert sorted(p.name for p in scripts.iterdir()) == ["python_integration_test_costs.json"]
+
+
+def test_local_bootstrap_preserves_hosted_measurements_and_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    path = scripts / "runtime_test_costs.json"
+    path.write_text('{"source_run":123,"costs":{"TestParent":5}}')
+    log = tmp_path / "local.log"
+    log.write_text(json.dumps(event("pass", 0, Elapsed=0.05)))
+    monkeypatch.setattr(costs, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        "sys.argv", ["update", "--local-log", str(log), "--scope", "runtime", "--head", "c" * 40, "--write"]
+    )
+    costs.main()
+    result = json.loads(path.read_text())
+    assert result["costs"] == {"TestParent": 5}
+    assert result["local_costs"] == {"TestParent": 0.05}
+    assert result["source_run"] == 123
+    assert result["local_source_head"] == "c" * 40

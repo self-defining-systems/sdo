@@ -138,3 +138,23 @@ def test_python_only_changes_keep_go_replay_coverage_without_other_go_suites():
     data = planner.plan("runtime", source, replay_only=True)
     assert data["bins"] == [["TestReplayNewBehavior"]]
     assert planner.plan("operator", {"sdo.dev/operator/broker": ["TestOther"]}, replay_only=True)["bins"] == []
+
+
+def test_local_measurements_have_conservative_bounds_until_hosted_costs_exist(tmp_path, monkeypatch):
+    import json
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "runtime_test_costs.json").write_text(
+        json.dumps(
+            {
+                "costs": {"TestHosted": 2},
+                "local_costs": {"TestLocal": 0.5, "TestHosted": 10},
+            }
+        )
+    )
+    monkeypatch.setattr(planner, "ROOT", tmp_path)
+    data = planner.plan("runtime", {"runtime": ["TestLocal", "TestHosted", "TestUnmeasured"]})
+    assert data["costs"]["TestLocal"] == 10
+    assert data["costs"]["TestHosted"] == 2
+    assert data["costs"]["TestUnmeasured"] == planner.BUDGET

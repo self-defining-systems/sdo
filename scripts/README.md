@@ -35,3 +35,9 @@ Every report records all pytest phases in a JSON timing artifact. Refresh the
 Python cost profile with `update_go_test_costs.py --pytest-costs <reports...>
 --run <id> --head <sha> --write`. Unknown and oversized nodes follow the same
 isolation/nightly rules as Go tests. No file-name placement list is maintained.
+
+Measured local Go tests can bootstrap missing hosted costs with `--local-log`
+(instead of `--log`/`--run`) and `--head <sha>`. Raw local values are retained
+separately; until a hosted observation exists, each reserves max(10 seconds,
+10 times the local duration). This avoids one setup-heavy job per already
+measured tiny test while preserving isolation for genuinely unmeasured tests.

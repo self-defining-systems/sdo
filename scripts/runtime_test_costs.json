@@ -1412,5 +1412,19 @@
     "TestXV2TypedExecCompletesWithOnlyExitStatus": 0.01,
     "TestXV2TypedExecUsesRBACAndRequestsNoOutput": 0.002,
     "TestXV2ValueDefaultsDoNotBecomeObjectCandidates": 0.001
-  }
+  },
+  "local_costs": {
+    "TestReplayAcceptsAListEditMitigationTheStageCanApply": 0.01,
+    "TestReplayBuildsMitigationPlansOnlyThroughTheRuntimeBuilder": 0.001,
+    "TestReplayLifecycleContract": 0.05,
+    "TestReplayMitigationFailureNamesAnUncapturedRead": 0.001,
+    "TestReplayNamesTheStagePlanBuildInAFailure": 0.001,
+    "TestReplayRecordedIncidents": 0.65,
+    "TestReplayReferencePromotesTheSameSettledCandidateAsStateChanges": 0.19,
+    "TestReplayRejectsAMitigationThatReturnsAnEmptyPlan": 0.001,
+    "TestReplayRestoreToAbsentIsDeleteObjectAndReconcileSaysSo": 0.003,
+    "TestReplayRunsMitigationsOnTheAdmissionAndObjectsDiagnosisSaw": 0.002,
+    "TestReplayStateRoundTripContract": 0.09
+  },
+  "local_source_head": "3a3762f7bbec10566f7787dc9c40f2e873ff897b"
 }

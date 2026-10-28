@@ -89,8 +89,11 @@ def inventory(module: str, *, prepared: bool = False) -> dict[str, list[str]]:
 
 
 def plan(scope: str, source: dict[str, list[str]], *, replay_only: bool = False) -> CostPlan:
-    profile = json.loads((ROOT / f"scripts/{scope}_test_costs.json").read_text())["costs"]
+    recorded = json.loads((ROOT / f"scripts/{scope}_test_costs.json").read_text())
+    profile = recorded["costs"]
+    local = recorded.get("local_costs", {})
     validate_costs(profile)
+    validate_costs(local)
     # Equal names stay together: go test's union regex applies to every package.
     packages: dict[str, list[str]] = {}
     costs: dict[str, float] = {}
@@ -102,7 +105,10 @@ def plan(scope: str, source: dict[str, list[str]], *, replay_only: bool = False)
                 continue
             packages.setdefault(name, []).append(package)
             key = name if scope == "runtime" else package + "/" + name
-            costs[name] = costs.get(name, 0.0) + profile.get(key, DEFAULT_COST)
+            # Local measurements are only a conservative bootstrap. Hosted
+            # observations always take precedence; truly unknown work is isolated.
+            estimate = max(10.0, 10 * local[key]) if key in local else DEFAULT_COST
+            costs[name] = costs.get(name, 0.0) + profile.get(key, estimate)
     bins, nightly = pack(list(packages), costs)
     return {"scope": scope, "bins": bins, "nightly": nightly, "packages": packages, "costs": costs}
 
