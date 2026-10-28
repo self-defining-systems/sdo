@@ -32,12 +32,7 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/sdo-operator")
-	build.Dir = operatorRoot
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v: %s", err, out)
-	}
+	binary := operatorCLIFixture(t)
 	for _, scenario := range []string{"detector and README", "malformed then fixed", "no change", "SDK gap"} {
 		t.Run(scenario, func(t *testing.T) {
 			target := nativeRepository(t)
@@ -426,12 +421,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/sdo-operator")
-	build.Dir = operatorRoot
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v: %s", err, out)
-	}
+	binary := operatorCLIFixture(t)
 	for _, scenario := range []string{"valid", "physical_path", "failed_closure", "undetected_repair"} {
 		physical := scenario == "physical_path"
 		t.Run(scenario, func(t *testing.T) {

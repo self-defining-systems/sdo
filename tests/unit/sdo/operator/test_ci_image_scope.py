@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[4]
     ],
 )
 def test_image_ci_accepts_only_recording_files_from_fastloop(tmp_path: Path, path: str, accepted: bool) -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    workflow = yaml.safe_load((ROOT / ".github/workflows/nightly-fuzz.yml").read_text(encoding="utf-8"))
     step = next(
         step
         for step in workflow["jobs"]["images"]["steps"]
