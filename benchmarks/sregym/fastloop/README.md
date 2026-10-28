@@ -63,7 +63,25 @@ and retention. A content-derived tag locates a manifest; verified cache hits ski
 `docker push`. Nodes pull its immutable manifest digest and retain the original
 source image names. Manifest bytes, the frozen config ID and each node's CRI
 image ID are checked before reporting success. Identical images under different
-source names share the same publication.
+source names share the same publication. The frozen ID is the config digest on
+Docker's classic image store and the manifest digest on its containerd image
+store; both are accepted, and nodes are always checked against the config digest.
+
+## Shared source-built app images
+
+SREGym tags each source-built app image `sregym-src-<identity>`, where the
+identity digests the build context, Dockerfile, build arguments and platform,
+and labels it `sregym.source-identity`. No lane name is part of the ref, so
+every lane deploying the same sources resolves the same image. Before a build,
+the worker bridge holds a host lock for that identity and looks for it in the
+local Docker store, then in the host registry (`sdo/app-src:<tag>`), then in
+the registries listed in `FASTLOOP_APP_IMAGE_REGISTRIES` (comma-separated
+`host:port`, for example an ssh tunnel to another host's registry). Only a miss
+everywhere builds. A build or remote pull is published to every listed registry
+that lacks it. A pulled image must carry its identity label. An unreachable
+extra registry counts as a miss. Each lookup is appended to `app_images.jsonl`
+next to `image_delivery.jsonl`, with its `source` (`local`, `registry:<host>`
+or `build`), `published` registries and `seconds`.
 
 Lane teardown removes only retired lane-owned registries. It leaves the host
 registry and its data intact for other lanes. The host registry is bound to a

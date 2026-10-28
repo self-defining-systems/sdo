@@ -270,7 +270,7 @@ def test_worker_bridge_installs_node_caps_hook(monkeypatch: pytest.MonkeyPatch) 
 
     calls = []
     infra = SimpleNamespace(preflight_cluster_requirements=lambda *_args: calls.append(["images"]))
-    source = SimpleNamespace()
+    source = SimpleNamespace(_build_image=None)
 
     class Worker:
         def handle(self, request):

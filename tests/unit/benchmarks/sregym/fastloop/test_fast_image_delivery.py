@@ -194,7 +194,7 @@ def test_external_worker_uses_registry_for_sdo_and_platform_images(monkeypatch, 
     from benchmarks.sregym.fastloop import toy_images, worker_bridge
 
     infra = SimpleNamespace()
-    source = SimpleNamespace()
+    source = SimpleNamespace(_build_image=None)
 
     class Worker:
         def handle(self, request):
