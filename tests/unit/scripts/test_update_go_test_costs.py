@@ -60,7 +60,7 @@ def test_operator_only_refresh_preserves_runtime_profile(tmp_path: Path, monkeyp
     runtime = profiles / "runtime_test_costs.json"
     runtime.write_text("unchanged runtime profile")
     operator = profiles / "operator_test_costs.json"
-    operator.write_text(json.dumps({"costs": {"Old": 1}, "placements": {"Old": "remaining"}}))
+    operator.write_text(json.dumps({"costs": {"Old": 1}}))
     log = tmp_path / "events.log"
     done = event("pass", 8, Elapsed=8)
     done["Package"] = "sdo.dev/operator/broker"
@@ -72,5 +72,62 @@ def test_operator_only_refresh_preserves_runtime_profile(tmp_path: Path, monkeyp
     costs.main()
     assert runtime.read_text() == "unchanged runtime profile"
     result = json.loads(operator.read_text())
-    assert result["placements"] == {"Old": "remaining"}
     assert result["costs"]["sdo.dev/operator/broker/TestParent"] == 8
+
+
+def test_subsecond_tests_remain_measured_instead_of_unknown_forever() -> None:
+    done = event("pass", 0, "TestFast", Elapsed=0.02)
+    assert costs.measured_costs([done]) == {("sdo.dev/operator/runtime", "TestFast"): 0.02}
+
+
+def test_zero_resolution_completion_has_positive_cost_floor() -> None:
+    assert costs.measured_costs([event("pass", 0, "TestInstant", Elapsed=0)]) == {
+        ("sdo.dev/operator/runtime", "TestInstant"): 0.001,
+    }
+
+
+def test_skipped_race_helpers_do_not_reserve_a_whole_unknown_job_forever() -> None:
+    assert costs.measured_costs([event("skip", 0, "TestChildProcess", Elapsed=0)]) == {
+        ("sdo.dev/operator/runtime", "TestChildProcess"): 0.001,
+    }
+
+
+def test_structured_pytest_costs_update_the_python_profile_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    profile = scripts / "python_integration_test_costs.json"
+    profile.write_text('{"costs":{"old.py::test_old":1}}')
+    report = tmp_path / "report.json"
+    report.write_text('{"new.py::test_new":12.5}')
+    monkeypatch.setattr(costs, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        "sys.argv", ["update", "--pytest-costs", str(report), "--run", "123", "--head", "b" * 40, "--write"]
+    )
+    costs.main()
+    result = json.loads(profile.read_text())
+    assert result["costs"] == {"old.py::test_old": 1, "new.py::test_new": 12.5}
+    assert result["source_run"] == 123
+    assert sorted(p.name for p in scripts.iterdir()) == ["python_integration_test_costs.json"]
+
+
+def test_local_bootstrap_preserves_hosted_measurements_and_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    path = scripts / "runtime_test_costs.json"
+    path.write_text('{"source_run":123,"costs":{"TestParent":5}}')
+    log = tmp_path / "local.log"
+    log.write_text(json.dumps(event("pass", 0, Elapsed=0.05)))
+    monkeypatch.setattr(costs, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        "sys.argv", ["update", "--local-log", str(log), "--scope", "runtime", "--head", "c" * 40, "--write"]
+    )
+    costs.main()
+    result = json.loads(path.read_text())
+    assert result["costs"] == {"TestParent": 5}
+    assert result["local_costs"] == {"TestParent": 0.05}
+    assert result["source_run"] == 123
+    assert result["local_source_head"] == "c" * 40

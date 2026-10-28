@@ -1,0 +1,6 @@
+{
+  "contract_jobs": 2,
+  "python_jobs": 2,
+  "contract_work_seconds": 180,
+  "setup_margin_seconds": 90
+}
