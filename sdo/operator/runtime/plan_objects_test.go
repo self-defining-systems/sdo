@@ -421,7 +421,7 @@ func (c *lifecycleTestClient) RecordAcceptance(_ context.Context, ref sdk.Object
 	if object == nil || object.GetUID() != live.GetUID() || object.GetResourceVersion() != live.GetResourceVersion() {
 		return fmt.Errorf("acceptance identity conflict")
 	}
-	object.SetAnnotations(acceptanceRecordObject(ref, record, live).GetAnnotations())
+	object.SetAnnotations(AcceptanceRecordObject(ref, record, live).GetAnnotations())
 	object.SetResourceVersion("3")
 	return nil
 }

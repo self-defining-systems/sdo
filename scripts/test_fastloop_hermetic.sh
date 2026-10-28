@@ -29,6 +29,12 @@ export GOMAXPROCS="$hermetic_jobs" GOFLAGS="${GOFLAGS:-} -p=$hermetic_jobs"
     go test -run '^TestInstallExisting.*Onboarding|^TestInstallExistingClearAdoption|^TestInstallExistingAdoptedVerifiedSeedOnboarding$' -count=1 -timeout=5m ./operatorcli
 )
 
+# Replay owns a distinct fake API transport; exercise its lifecycle publisher too.
+(
+    cd "$root/sdo/operator/runtime"
+    go test -count=1 -timeout=1m ./replay
+)
+
 # Fixture checks compile their own isolated CLI/workspaces. Run that process
 # alongside the remaining runtime checks, with four Go workers on each side.
 # Separate processes also isolate tests that set session environment variables.

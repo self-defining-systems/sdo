@@ -89,7 +89,7 @@ func (c GenericPlanClient) RecordAcceptance(ctx context.Context, ref sdk.ObjectR
 	if err != nil {
 		return err
 	}
-	body, err := json.Marshal(acceptanceRecordObject(ref, record, live).Object)
+	body, err := json.Marshal(AcceptanceRecordObject(ref, record, live).Object)
 	if err != nil {
 		return err
 	}

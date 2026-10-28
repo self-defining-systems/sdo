@@ -353,6 +353,17 @@ func checkWrites(ctx context.Context, c *cluster, a operator.PlanApplicationResu
 		if got == nil {
 			return fmt.Errorf("unrelated object disappeared: %s/%s", ref.Kind, ref.Name)
 		}
+		if annotations := c.acceptanceWrites[ref]; annotations != nil {
+			o = o.DeepCopy()
+			merged := o.GetAnnotations()
+			if merged == nil {
+				merged = map[string]string{}
+			}
+			for key, value := range annotations {
+				merged[key] = value
+			}
+			o.SetAnnotations(merged)
+		}
 		left, leftErr := comparable(o)
 		right, rightErr := comparable(got)
 		if leftErr != nil || rightErr != nil || !bytes.Equal(left, right) {
@@ -394,6 +405,7 @@ func comparable(o *unstructured.Unstructured) ([]byte, error) {
 type cluster struct {
 	operator.TypedPlanClient
 	fake                  *kubefake.Clientset
+	acceptanceWrites      map[sdk.ObjectRef]map[string]string
 	initial               map[sdk.ObjectRef]*unstructured.Unstructured
 	original              sdktest.Snapshot
 	catalogs              map[string]databaseCatalog

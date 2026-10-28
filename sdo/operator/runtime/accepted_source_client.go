@@ -111,7 +111,8 @@ func (r acceptedResource) recordAcceptance(ctx context.Context, ref sdk.ObjectRe
 	return r.recordInstanceAcceptance(ctx, ref, record, nil)
 }
 
-func acceptanceRecordObject(ref sdk.ObjectRef, record string, live *unstructured.Unstructured) *unstructured.Unstructured {
+// AcceptanceRecordObject builds the metadata-only, UID-bound write shared by acceptance transports.
+func AcceptanceRecordObject(ref sdk.ObjectRef, record string, live *unstructured.Unstructured) *unstructured.Unstructured {
 	metadata := map[string]any{"name": ref.Name, "annotations": map[string]any{acceptedPathsAnnotation: record}}
 	if live != nil {
 		metadata["uid"] = string(live.GetUID())
@@ -123,7 +124,7 @@ func acceptanceRecordObject(ref sdk.ObjectRef, record string, live *unstructured
 }
 
 func (r acceptedResource) recordInstanceAcceptance(ctx context.Context, ref sdk.ObjectRef, record string, live *unstructured.Unstructured) error {
-	_, err := r.applyAs(ctx, ref, acceptanceRecordObject(ref, record, live), false, acceptanceFieldManager)
+	_, err := r.applyAs(ctx, ref, AcceptanceRecordObject(ref, record, live), false, acceptanceFieldManager)
 	return err
 }
 
