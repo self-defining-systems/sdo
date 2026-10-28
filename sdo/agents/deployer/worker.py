@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from libs.agent_cli.structured import run_structured_turn
 from sdo.agents.lifecycle import (
     ClaudeLifecycleBackend,
     CodexLifecycleBackend,
@@ -18,6 +17,7 @@ from sdo.agents.lifecycle import (
     TopologyResourceDTO,
 )
 from sdo.agents.prompt_templates import render_prompt
+from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import (
     AGENT_SKILLS,

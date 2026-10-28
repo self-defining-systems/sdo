@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -156,6 +157,18 @@ func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
 	mount := t.TempDir()
 	accepted := nativeRepository(t)
 	nativeMemoryFixture(t, accepted)
+	// The menu registry stands for programs compiled from accepted playbooks.
+	for _, id := range []string{"try-wrong-port", "restore-route"} {
+		path := filepath.Join(accepted, ".sdo/playbooks", id, "README.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: initial\n---\nRoute <RESOURCE_NAME>.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nativeGit(t, accepted, "add", ".")
+	nativeGit(t, accepted, "commit", "-qm", "accepted menu playbooks")
 	// Declare the independently healthy application before injecting the bad
 	// route, so production source-inventory closure has accepted evidence.
 	healthyService := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(8080)}}}}
@@ -172,12 +185,31 @@ func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
 		}
 		t.Logf("closure evidence: status=%s repairs=%d plans=%d calls=%d dispatch_error=%s", closure.Result.Status, len(closure.Result.RepairActions), len(closure.Result.PlanApplications), len(closure.Result.ProgramToolCalls), closure.DispatchError)
 		return (ProtoOutcomeDeriver{}).Derive(ctx, closure, repairCommit, backend, model)
-	}), ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, _ IncidentWorkspace, outcome *contracts.OutcomeRecord, _ string, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
-		var gaps []*contracts.SdkGap
-		for _, cause := range outcome.ConfirmedRootCauses {
-			gaps = append(gaps, &contracts.SdkGap{FaultClass: "synthetic-fixture", Primitive: "fixture-capability", Reason: "menu transport fixture has no executable learning observations", ScratchScript: "scratch/test", Resources: cause.Resources})
+	}), ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, outcome *contracts.OutcomeRecord, _ string, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
+		// Accepted menu playbooks performed every repair. Only a playbook whose
+		// application did not verify needs a change; the rest is covered.
+		var stale []string
+		for _, application := range outcome.PlanApplications {
+			if !application.Applied || !application.VerificationPassed {
+				stale = append(stale, application.ProgramIds...)
+			}
 		}
-		return ReflectionDecision{LearningDecision: "sdk_gap", NoChangeReason: "synthetic menu transport fixture", SDKGaps: gaps}, nil
+		slices.Sort(stale)
+		stale = slices.Compact(stale)
+		for _, id := range stale {
+			path := filepath.Join(workspace.Worktree, ".sdo/playbooks", id, "README.md")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return ReflectionDecision{}, err
+			}
+			if err := os.WriteFile(path, append(data, []byte("\nThis port did not restore the route; verify the listener first.\n")...), 0o644); err != nil {
+				return ReflectionDecision{}, err
+			}
+		}
+		if len(stale) == 0 {
+			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted menu playbooks performed every repair"}, nil
+		}
+		return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: stale}, nil
 	})}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", UID: types.UID("fixture-uid"), ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
 	bad, good := productionMenuProgram{"try-wrong-port", 7777}, productionMenuProgram{"restore-route", 8080}
@@ -267,9 +299,11 @@ func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
 				t.Fatalf("live defaulted assignment did not apply and verify: %v", attempt)
 			}
 		}
+		// Coverage uses the stage's own rule: a recorded match of the applied
+		// diagnosis explains the finding that bound it, with no detector list.
 		for _, match := range ledger.GetOutcomeDocument().GetPlaybookCoverage().GetMatches() {
-			if len(match.ExplainedFindingFingerprints) != 0 {
-				t.Fatalf("automatic application invented authored coverage: %v", match)
+			if match.GetPlaybookId() == reports[0].Mitigations[0].GetPlaybookId() && len(match.ExplainedFindingFingerprints) != 1 {
+				t.Fatalf("coverage disagrees with the automatic stage's applied match: %v", match)
 			}
 		}
 		return
@@ -394,7 +428,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
 	strict.Env = append(os.Environ(), "PYTHONPATH="+root)
 	strictOutput, err := strict.CombinedOutput()
 	if err != nil || !strings.Contains(string(strictOutput), "strict receipt PASS: sdo_mitigated") {
-		t.Fatalf("strict factory receipt: %v %s", err, strictOutput)
+		t.Fatalf("strict factory receipt: %v %s; reflection rejections: %v", err, strictOutput, ledger.GetReflectionRejections())
 	}
 	if destination := os.Getenv("SDO_MENU_E2E_ARTIFACTS"); destination != "" {
 		if err := os.MkdirAll(destination, 0700); err != nil {
@@ -427,7 +461,10 @@ turn=Turn("responder",175,Path.cwd(),rollout,EventStream(io.StringIO()))
 def select(program):
  code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"]),max_output_chars=MAX_STRUCTURED_OUTPUT_CHARS)
  assert code==0,text
- menu=json.loads(text.splitlines()[0])["menu"]
+ response=json.loads(text.splitlines()[0])
+ if response.get("summarized"):
+  response=json.loads(Path(response["details_file"]).read_text())
+ menu=response["menu"]
  option=next(o["option_id"] for o in menu["options"] if o.get("program_id")==program)
  code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","mitigate",option,"--rounds","1"]))
  assert code==0,text

@@ -311,9 +311,7 @@ def test_baseline_file_preserves_infrastructure_and_older_files_skip_reconciliat
     assert json.loads(path.read_text(encoding="utf-8"))["namespaces"] == ["observe"]
 
 
-def test_capture_discovers_secondary_app_namespaces_without_control_or_observability(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_capture_namespace_ownership_does_not_expand_from_cluster_discovery(tmp_path: Path, monkeypatch: Any) -> None:
     from benchmarks.sregym.fastloop import baseline_recovery
 
     path = tmp_path / "cluster_baseline_state.json"
@@ -325,7 +323,7 @@ def test_capture_discovers_secondary_app_namespaces_without_control_or_observabi
 
     monkeypatch.setattr(baseline_recovery, "kubectl", fake_kubectl)
 
-    assert application_namespaces(path, tmp_path / "kubeconfig", "hotel") == ("hotel", "hotel-db")
+    assert application_namespaces(path, tmp_path / "kubeconfig", "hotel") == ("hotel",)
 
 
 ALLOCATED_CASES = [
@@ -575,11 +573,11 @@ def test_sealed_restore_never_reverts_passive_objects_to_the_pre_adoption_captur
         for value in accepted_restore_baselines(source, _sealed(tmp_path, captured))[0].objects
     }
 
-    assert restored["settings"]["data"] == {"app.yml": "adopted", "extra": "kept"}
+    assert restored["settings"]["data"] == {"app.yml": "adopted"}
     assert restored["redirect"]["metadata"]["labels"] == {"app.kubernetes.io/name": "redirect"}
-    assert restored["redirect"]["spec"]["selector"] == {"app": "x"}
-    # Declared fields already present in the capture (plus extras SDO cannot remove) stay as captured.
-    assert restored["routes"] == captured[2]
+    assert "selector" not in restored["redirect"]["spec"]
+    # Captured fields and ports outside accepted source do not become desired state.
+    assert restored["routes"] == accepted[2]
     # Compose the accepted workload policy before restore; the old chart capture
     # must not drop it and open a baseline incident after onboarding.
     assert restored["api"] == accepted[3]
@@ -818,7 +816,7 @@ def test_application_helper_migration_leaves_sdo_owned_deployments_untouched(ope
     assert cluster.objects[(namespace, "Deployment", "mongodb-geo")] == owned
 
 
-def test_sealed_restore_merges_service_ports_by_name_and_keeps_captured_extras(tmp_path: Path) -> None:
+def test_sealed_restore_uses_only_source_service_ports(tmp_path: Path) -> None:
     routes = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "routes", "namespace": "app"}}
     captured = [
         {
@@ -847,9 +845,8 @@ def test_sealed_restore_merges_service_ports_by_name_and_keeps_captured_extras(t
     ports = accepted_restore_baselines(source, _sealed(tmp_path, captured))[0].objects[0]["spec"]["ports"]
 
     assert ports == [
-        {"name": "http", "port": 80, "targetPort": 9090, "protocol": "TCP"},
-        {"name": "metrics", "port": 90, "protocol": "TCP"},
-        {"port": 100, "targetPort": 1000, "protocol": "TCP"},
+        {"name": "http", "port": 80, "targetPort": 9090},
+        {"port": 100, "targetPort": 1000},
     ]
 
 
@@ -1020,4 +1017,4 @@ def test_restore_preserves_declared_list_order_and_explicit_empty(
     actual = restored_pod["containers"][0] if field == "args" else restored_pod
     assert field in actual
     assert actual[field] == declared
-    assert restored_pod["containers"][0]["terminationMessagePolicy"] == "File"
+    assert "terminationMessagePolicy" not in restored_pod["containers"][0]

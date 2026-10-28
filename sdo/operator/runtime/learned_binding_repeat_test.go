@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/runtime/jitview"
+	"slices"
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -92,10 +93,10 @@ func TestLearnedSourceRepairsBindOnRepeat(t *testing.T) {
 					if len(state.Coverage.Matches) != 1 {
 						t.Fatalf("live diagnosis did not match: %v", state.Coverage)
 					}
-					if len(state.Coverage.Matches[0].ExplainedFindingFingerprints) != 0 {
-						t.Fatal("fixture must not invent authored coverage")
-					}
 					fingerprint := state.Request.InitialProgramRuns[0].FindingFingerprint
+					if !slices.Contains(state.Coverage.Matches[0].ExplainedFindingFingerprints, fingerprint) {
+						t.Fatal("a live diagnosis without detector playbook lists must explain the finding that bound it")
+					}
 					if fingerprint == previousFingerprint {
 						t.Fatal("repeat reused first incident fingerprint")
 					}
@@ -173,8 +174,8 @@ func TestMatchedToolUsesLiveDiagnosisBindingsWithoutAuthoredCoverage(t *testing.
 	runs := loop.InitialDiagnose(context.Background())
 	loop.Request.InitialProgramRuns = runs
 	loop.Request.PlaybookCoverage = buildPlaybookCoverage(loop.Request.Findings, runs, loop.lastDiagnosisView, nil)
-	if len(loop.Request.PlaybookCoverage.Matches) != 1 || len(loop.Request.PlaybookCoverage.Matches[0].ExplainedFindingFingerprints) != 0 {
-		t.Fatal("fixture must have a live match without authored explanation")
+	if len(loop.Request.PlaybookCoverage.Matches) != 1 || len(loop.Request.PlaybookCoverage.Matches[0].ExplainedFindingFingerprints) == 0 {
+		t.Fatal("a live diagnosis without detector playbook lists must explain the finding that bound it")
 	}
 	loop.MenuConfig = &ResponderMenuConfig{}
 	response := loop.Handle(context.Background(), ToolRequest{Command: "menu", ProgramID: "service-targetport-mismatch", Match: true})

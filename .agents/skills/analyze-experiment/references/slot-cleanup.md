@@ -27,9 +27,25 @@ infrastructure details without silently converting them to agent failures.
 Fastloop invalid injections carry `infra_error=injection_invalid` and
 `injection_evidence`; they have no response, oracle grade or learning credit.
 Summaries exclude them from incident denominators and expose
-`infrastructure_outcomes` separately. `recovery_error` stops the stream even with
-continue-on-error: no baseline repair or reset can erase failed full recovery.
-The driver requests protocol v2 full cleanup before restoring its owned baseline.
+`infrastructure_outcomes` separately. For lanes reset by row-start recreation, `cleanup_skipped_reason=row_start_tier2`
+also applies to partial/invalid injection cleanup; interrupts and partial composite
+failures do not invoke per-fault undo. Missing cleanup flags on these rows do not
+invalidate an already sampled grade. The next row recreates the dirty lane.
+Other warm-recovery paths still require protocol-v2 full cleanup and a successful
+independent recovery oracle; `recovery_error` stops those streams.
+
+Explicit `up --redeploy` and dirty-lane bring-up share the row reset transaction.
+`wipe-receipt.json` may report `tier2_trigger=explicit_redeploy`. The durable
+last-injection journal is pending before recreation can write; only healthy source
+deployment and completed recapture clear it. Missing or interrupted history stays
+dirty. A plain application reapply cannot clear unknown data history; only the full
+recreation transaction establishes that fact. Known clean warm lanes retain the
+fast path. Control state reset stays separate. After every writer stops it retires
+controller state and all worker request, result and execution records, so a later
+identical request cannot reuse a result computed against a deleted checkout. Those
+records survive only in per-incident checkpoints; the native ledger is unchanged.
+On a shared-memory lane the wipe re-provisions the private repository claim and its PV
+together; a PV still bound to a deleted claim's UID is recreated with it, never left Released.
 
 ## Ordered mixed-app dispatch
 
@@ -145,3 +161,5 @@ The durable attempt marker retains injected row IDs, so the next row recreates
 the app namespace/PVCs under tier 2 and records its trigger in `wipe-receipt.json`.
 Entry, restore-invariant, pre-injection baseline and injection-validity checks
 still run. Warm streams without row-start wipes retain their recovery fences.
+
+Namespace ownership follows the accepted render's configured application namespace. A namespace discovered after an infrastructure snapshot is not evidence of application ownership; recreation must not delete it merely because the snapshot omitted it.

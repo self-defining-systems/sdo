@@ -198,6 +198,7 @@ type failedSourceDriftView struct{ driftReadView }
 func (failedSourceDriftView) DiffAgainstSource(sdk.ObjectRef) (program.Diff, error) {
 	return program.Diff{}, fmt.Errorf("source unavailable")
 }
+
 // A source that cannot be compared is information about the drift, never a
 // verdict on health.
 func TestUnexplainedDriftSourceErrorIsInformationOnly(t *testing.T) {

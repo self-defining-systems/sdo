@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,7 @@ type adoptionServiceAPI struct {
 	conflicts   int
 	lastApply   *corev1.Service
 	records     int
+	renders     int
 	// owners models server-side apply for annotations: a manager's apply
 	// removes the keys it applied before and omits now.
 	owners map[string]string
@@ -94,6 +96,23 @@ func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http
 	var applied corev1.Service
 	if json.NewDecoder(request.Body).Decode(&applied) != nil {
 		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	// A dry-run apply at another name creates nothing: it renders the body
+	// with the defaults the server fills into a new Service.
+	if !strings.HasSuffix(request.URL.Path, "/"+a.service.Name) {
+		if request.URL.Query().Get("dryRun") == "" || !strings.HasSuffix(request.URL.Path, "/"+applied.Name) {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		a.renders++
+		if applied.Spec.Type == "" {
+			applied.Spec.Type = corev1.ServiceTypeClusterIP
+		}
+		if applied.Spec.SessionAffinity == "" {
+			applied.Spec.SessionAffinity = corev1.ServiceAffinityNone
+		}
+		_ = json.NewEncoder(writer).Encode(&applied)
 		return
 	}
 	if manager == acceptanceFieldManager {

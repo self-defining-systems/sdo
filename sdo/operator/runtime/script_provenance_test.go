@@ -289,9 +289,10 @@ func TestScriptProvenanceUsesOnlyThisProgramsAcceptedReceipts(t *testing.T) {
 	}
 }
 
-// Review negative control: the only original receipt contains no script bytes
-// or digest, so relabeling it must not authorize a never-executed script.
-func TestREV44BReceiptWithoutScriptBytesCannotAuthorizeScript(t *testing.T) {
+// A hand repair recorded without script bytes (sdo act, an observed API write)
+// authorizes the learned script that encodes it, by receipt identity. A receipt
+// that recorded different executed bytes still refuses: it names what ran.
+func TestScriptProvenanceLinksReceiptIdentityAndRecordedBytes(t *testing.T) {
 	for _, executed := range []string{"", "echo actually-executed"} {
 		t.Run(executed, func(t *testing.T) {
 			loop, state := pipelineTestLoop(t, true)
@@ -303,7 +304,7 @@ func TestREV44BReceiptWithoutScriptBytesCannotAuthorizeScript(t *testing.T) {
 			}
 			loop.Programs = registry
 			root, commit := acceptedScriptMemoryWithExecutedScript(t, p.Spec().ID, "echo recorded", executed)
-			// The label points to either a legacy receipt or different executed bytes.
+			// The label points to either a receipt without bytes or different executed bytes.
 			loop.Request.RepositoryWorktree, loop.Request.SourceCommit = root, commit
 			state.Request = loop.Request
 			state.Coverage = nil
@@ -314,8 +315,11 @@ func TestREV44BReceiptWithoutScriptBytesCannotAuthorizeScript(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if client.request.Script != "" {
-				t.Fatalf("NEVER-EXECUTED SCRIPT AUTHORIZED: %q; report=%v", client.request.Script, report)
+			if executed == "" && client.request.Script != "echo recorded" {
+				t.Fatalf("script encoding a recorded hand repair refused: %q; report=%v", client.request.Script, report)
+			}
+			if executed != "" && client.request.Script != "" {
+				t.Fatalf("script differing from the recorded executed bytes authorized: %q; report=%v", client.request.Script, report)
 			}
 		})
 	}

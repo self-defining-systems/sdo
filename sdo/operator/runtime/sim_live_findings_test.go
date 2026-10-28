@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -226,14 +227,10 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 					return ReflectionDecision{}, errors.New("simulated validator transport interruption")
 				}
 				reflections.Add(1)
-				return ReflectionDecision{
-					LearningDecision: "sdk_gap", NoChangeReason: "scripted schedule has no executable playbook author",
-					SDKGaps: []*contracts.SdkGap{{
-						FaultClass: "synthetic", Primitive: "simulated-service-repair",
-						Reason:    "schedule fixture has no executable playbook author",
-						Resources: []*contracts.ObjectRef{outcome.GetFindings()[0].GetPrimaryResource()}, ScratchScript: "scratch/sim-repair",
-					}},
-				}, nil
+				// The schedule has no executable playbook author, so the shared
+				// check rejects every attempt for the recorded hand repair. The
+				// rejection must still end reflection durably and exactly once.
+				return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "scripted schedule has no executable playbook author"}, nil
 			})}
 		reporter := &simReportingResponder{base: w.responder, repaired: make(chan IncidentResult, 1), release: make(chan struct{}), terminating: int((seed >> 1) % 2)}
 		w.config.SourceCommit = nativeGit(t, root, "rev-parse", "HEAD")
@@ -433,12 +430,14 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			t.Fatalf("paused closure has no committed outcome: %v", err)
 		}
 		ledger, err := native.readLedger(id)
-		if err != nil || !ledger.ReflectionProcessed || ledger.ReflectionDecision.GetLearningDecision() != "sdk_gap" || reflections.Load() != 1 || ledger.AcknowledgedAt == nil {
-			for _, rejection := range ledger.GetReflectionRejections() {
-				t.Logf("reflection rejection: %v", rejection.GetDiagnostics())
-				break
+		attempts := reflections.Load()
+		if err != nil || !ledger.ReflectionProcessed || !ledger.ReflectionRejected || attempts == 0 || int(attempts) != len(ledger.ReflectionRejections) || ledger.AcknowledgedAt == nil {
+			t.Fatalf("paused closure stranded reflection/ack: reflections=%d rejections=%d acknowledged=%v err=%v", attempts, len(ledger.GetReflectionRejections()), ledger.GetAcknowledged(), err)
+		}
+		for _, rejection := range ledger.ReflectionRejections {
+			if ds := rejection.GetDiagnostics(); len(ds) != 1 || ds[0].GetRule() != validate.RuleReflectionProgramRequired || !strings.Contains(ds[0].GetMessage(), `"repair"`) {
+				t.Fatalf("reflection rejection does not name the uncovered hand repair: %v", ds)
 			}
-			t.Fatalf("paused closure stranded reflection/ack: reflections=%d decision=%v acknowledged=%v err=%v", reflections.Load(), ledger.GetReflectionDecision(), ledger.GetAcknowledged(), err)
 		}
 		if ledger.OutcomeCommit != ledgerBefore.OutcomeCommit || ledger.OutcomeDocument.GetClassification() != ledgerBefore.OutcomeDocument.GetClassification() || ledger.ReflectionCommit != "" {
 			t.Fatal("scope restart rewrote historical outcome or credited interrupted learning")
@@ -450,7 +449,7 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		w.applyScheduleEvent(simScheduleEvent{kind: simResume})
 		w.step()
 		w.drain()
-		if !w.idle() || reflections.Load() != 1 || len(w.violations) > 0 {
+		if !w.idle() || reflections.Load() != attempts || len(w.violations) > 0 {
 			t.Fatalf("resume duplicated or stranded closure: %v", w.violations)
 		}
 	})

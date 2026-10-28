@@ -164,8 +164,8 @@ def test_stabilization_observes_until_deadline_then_fails_without_injecting():
 def test_late_dependency_roll_fails_even_when_all_pods_ready():
     from benchmarks.sregym.adapter.eval_guards import assert_stable_workloads
 
-    before = {"Deployment/registry": {"generation": 1, "pods": ["uid-a"]}}
-    after = {"Deployment/registry": {"generation": 2, "pods": ["uid-b"]}}
+    before = {"Deployment/registry": {"pods": ["uid-a"]}}
+    after = {"Deployment/registry": {"pods": ["uid-b"]}}
     with pytest.raises(ValueError, match="rolled after Ready"):
         assert_stable_workloads(before, after)
 
@@ -480,7 +480,7 @@ def test_lane_resources_reject_before_any_health_wait_or_restore(monkeypatch, tm
         gate.prove("application-sdo")
 
 
-def test_new_lane_restores_its_sealed_install_when_source_is_unchanged_since_the_seed(tmp_path):
+def test_new_lane_restore_uses_source_instead_of_a_conflicting_sealed_install(tmp_path):
     from benchmarks.sregym.fastloop.baseline_recovery import (
         ApplicationBaseline,
         accepted_restore_baselines,
@@ -491,6 +491,7 @@ def test_new_lane_restores_its_sealed_install_when_source_is_unchanged_since_the
     path = tmp_path / "baseline.json"
     path.write_text("{}")
     installed = {
+        "apiVersion": "apps/v1",
         "kind": "Deployment",
         "metadata": {"name": "api", "namespace": "app"},
         "spec": {"replicas": 1, "template": {"spec": {"containers": [{"name": "api", "image": "new-lane"}]}}},
@@ -500,7 +501,7 @@ def test_new_lane_restores_its_sealed_install_when_source_is_unchanged_since_the
     other["spec"]["template"]["spec"]["containers"][0]["image"] = "inherited"
     source = commit_accepted_source(tmp_path / "workspace", [other])
     baseline = load_application_baseline(path, "app")
-    assert accepted_restore_baselines(source, baseline)[0].objects == [installed]
+    assert accepted_restore_baselines(source, baseline)[0].objects == [other]
     value = json.loads(path.read_text())
     value["fastloop_application"]["namespaces"][0]["objects"][0]["spec"]["replicas"] = 0
     path.write_text(json.dumps(value))

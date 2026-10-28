@@ -169,6 +169,9 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 				if err := wire.UnmarshalLenientMigrating([]byte(raw), outcome); err != nil {
 					return nil, err
 				}
+				if structurallyValid {
+					ds = append(ds, ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths)...)
+				}
 				r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
 				if structurallyValid {
 					if err := programvalidation.ValidateScriptOrigins(r.Root, outcome, paths); err != nil {

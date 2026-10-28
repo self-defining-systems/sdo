@@ -227,3 +227,121 @@ def test_parallel_volume_selects_schedulable_node_before_any_controller_install(
     assert pv["spec"]["nodeAffinity"]["required"]["nodeSelectorTerms"][0]["matchExpressions"][0]["values"] == [
         "lane-worker"
     ]
+
+
+class _VolumeCluster:
+    """Kubernetes PV/PVC binding as the API server applies it, enough to show claim-UID binding."""
+
+    def __init__(self) -> None:
+        self.pv: dict | None = None
+        self.pvc: dict | None = None
+        self.uids = 0
+
+    def wipe_control_namespace(self) -> None:
+        # Deleting the namespace deletes its claim; a Retain PV keeps the old claim UID.
+        self.pvc = None
+        if self.pv is not None:
+            self.pv["status"] = {"phase": "Released"}
+
+    def _bind(self) -> None:
+        if self.pv is None or self.pvc is None:
+            return
+        ref = self.pv["spec"].setdefault("claimRef", {})
+        if ref.get("uid") in (None, self.pvc["metadata"]["uid"]):
+            ref["uid"] = self.pvc["metadata"]["uid"]
+            self.pv["status"] = {"phase": "Bound"}
+            self.pvc["status"] = {"phase": "Bound"}
+        else:
+            self.pvc["status"] = {"phase": "Pending"}
+
+    def kubectl(self, argv, **kwargs):
+        import copy
+        import json
+
+        if argv[:2] == ["get", "pvc"]:
+            return CompletedProcess(argv, 0, json.dumps(self.pvc) if self.pvc else "", "")
+        if argv[:2] == ["get", "pv"]:
+            return CompletedProcess(argv, 0, json.dumps(self.pv) if self.pv else "", "")
+        if argv[:2] == ["delete", "pvc"]:
+            self.pvc = None
+        elif argv[:2] == ["delete", "pv"]:
+            self.pv = None
+        elif argv[0] == "apply":
+            value = json.loads(kwargs["input_text"])
+            if value["kind"] == "PersistentVolume":
+                if self.pv is None:
+                    self.pv = copy.deepcopy(value)
+                else:
+                    # Apply merges: a server-set claimRef.uid survives a manifest that omits it.
+                    uid = self.pv["spec"].get("claimRef", {}).get("uid")
+                    self.pv["spec"] = copy.deepcopy(value["spec"])
+                    if uid:
+                        self.pv["spec"]["claimRef"]["uid"] = uid
+            elif value["kind"] == "PersistentVolumeClaim" and self.pvc is None:
+                self.uids += 1
+                self.pvc = copy.deepcopy(value) | {"metadata": value["metadata"] | {"uid": f"claim-{self.uids}"}}
+            self._bind()
+        return CompletedProcess(argv, 0, "", "")
+
+
+def _parallel_lane(monkeypatch, tmp_path):
+    from benchmarks.sregym.fastloop import shared_memory
+
+    env = FastloopEnvironment(
+        run_dir=tmp_path / "lane",
+        cluster="lane",
+        kubeconfig=tmp_path / "config",
+        namespace="app",
+        application="app",
+        workspace=tmp_path / "app",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=tmp_path / "tmp",
+        parallel_root=tmp_path / "shared",
+    )
+    monkeypatch.setattr(shared_memory, "lane_nodes", lambda *_: ["lane-worker"])
+    monkeypatch.setattr(shared_memory, "_json", lambda *_a, **_k: {"items": [{"metadata": {"name": "lane-worker"}}]})
+    monkeypatch.setattr(shared_memory, "_command", lambda *_: "")
+    cluster = _VolumeCluster()
+    monkeypatch.setattr(shared_memory, "kubectl", cluster.kubectl)
+    return env, cluster
+
+
+def test_parallel_repository_pvc_and_pv_are_recreated_together_after_a_wipe(monkeypatch, tmp_path):
+    from benchmarks.sregym.fastloop import shared_memory
+
+    env, cluster = _parallel_lane(monkeypatch, tmp_path)
+    shared_memory.provision_parallel_volume(env)
+    assert cluster.pvc["status"]["phase"] == "Bound"
+    first = cluster.pvc["metadata"]["uid"]
+    # A bound pair is kept intact: no recreation, same claim.
+    shared_memory.provision_parallel_volume(env)
+    assert cluster.pvc["metadata"]["uid"] == first
+    cluster.wipe_control_namespace()
+    shared_memory.provision_parallel_volume(env)
+    assert cluster.pvc["status"]["phase"] == "Bound", "new claim must not wait on a PV bound to the deleted claim"
+    assert cluster.pv["spec"]["claimRef"]["uid"] == cluster.pvc["metadata"]["uid"] != first
+
+
+def test_wipe_of_a_parallel_lane_reprovisions_its_repository_volume_pair(monkeypatch, tmp_path):
+    from benchmarks.sregym.fastloop import shared_memory, wipe
+
+    env, cluster = _parallel_lane(monkeypatch, tmp_path)
+    shared_memory.provision_parallel_volume(env)
+    first = cluster.pvc["metadata"]["uid"]
+
+    def tier1(*_args, **_kwargs):
+        cluster.wipe_control_namespace()
+        return wipe.Tier1Receipt(0.0, ("namespace/app-sdo",), False, ())
+
+    monkeypatch.setattr(wipe, "run_tier1", tier1)
+    wipe.wipe_environment(
+        env,
+        object(),
+        applications=["app"],
+        provision_credentials=lambda _ns: None,
+        planned_commit="c",
+        timeout_seconds=1,
+    )
+    assert cluster.pvc is not None
+    assert cluster.pvc["status"]["phase"] == "Bound"
+    assert cluster.pv["spec"]["claimRef"]["uid"] == cluster.pvc["metadata"]["uid"] != first
