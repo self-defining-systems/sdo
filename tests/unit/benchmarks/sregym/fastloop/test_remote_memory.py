@@ -194,3 +194,41 @@ def test_bind_checks_the_key_before_touching_the_lane(tmp_path: Path, monkeypatc
             known_hosts=tmp_path / "known_hosts",
         )
     assert touched == []
+
+
+def test_a_lane_with_private_memory_is_refused_without_pausing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import remote_memory, shared_memory
+
+    remote = bare(tmp_path)
+    ensure_run_branch(ENDPOINT, accepted(tmp_path, "seed", {"app.txt": "app\n"}), str(remote))
+    lane_repo = accepted(tmp_path, "lane", {"app.txt": "lane-specific source\n"})
+    archive = subprocess.run(["tar", "-C", str(lane_repo), "-cf", "-", "."], capture_output=True, check=True).stdout
+    paused: list[str] = []
+    monkeypatch.setattr(remote_memory, "render_ssh_secret", lambda *args: "{}")
+    monkeypatch.setattr(remote_memory, "_pod_tar", lambda *args, **kwargs: archive)
+    monkeypatch.setattr(MemoryEndpoint, "url", property(lambda self: str(remote)))
+    monkeypatch.setattr(
+        shared_memory,
+        "_json",
+        lambda _env, *args, **kwargs: (
+            {"items": [{"metadata": {"name": "controller"}, "status": {"phase": "Running"}}]} if "pods" in args else {}
+        ),
+    )
+    monkeypatch.setattr(adapter, "pause_for_recovery", lambda _ops, control, **kwargs: paused.append(control))
+    lane = SimpleNamespace(
+        namespace="sdo-toy",
+        kubeconfig=tmp_path / "kubeconfig",
+        run_dir=tmp_path,
+        application="toy",
+        problem_application="toy",
+        cluster="lane-0",
+    )
+    with pytest.raises(ValueError, match="matches no commit of the run branch"):
+        remote_memory.bind_lane_to_branch(lane, ENDPOINT, identity=tmp_path, known_hosts=tmp_path)  # type: ignore[arg-type]
+    assert paused == []
+    assert not (tmp_path / remote_memory.BIND_RECORD).exists()

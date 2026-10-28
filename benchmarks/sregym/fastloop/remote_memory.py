@@ -293,6 +293,25 @@ def _pod_tar(environment: FastloopEnvironment, pod: str, script: str, data: byte
 BIND_RECORD = "memory-bind.json"
 
 
+def _adopted_copy(
+    environment: FastloopEnvironment, pod: str, endpoint: MemoryEndpoint, *, seed: bool
+) -> tuple[Path, tempfile.TemporaryDirectory[str], str]:
+    """Copy the lane's accepted repository out and adopt the run branch history in the copy."""
+
+    scratch = tempfile.TemporaryDirectory(prefix="sdo-memory-bind-")
+    try:
+        local = Path(scratch.name) / "application"
+        local.mkdir()
+        archive = _pod_tar(environment, pod, f"tar -C {REPOSITORY} -cf - .")
+        subprocess.run(["tar", "-C", str(local), "-xf", "-"], input=archive, check=True)
+        if seed:
+            ensure_run_branch(endpoint, local)
+        return local, scratch, adopt_run_branch(local, endpoint)
+    except Exception:
+        scratch.cleanup()
+        raise
+
+
 def bind_lane_to_branch(
     environment: FastloopEnvironment,
     endpoint: MemoryEndpoint,
@@ -332,27 +351,30 @@ def bind_lane_to_branch(
         # Incident IDs derive from the application name, so lanes sharing a branch need distinct ones.
         application = f"{environment.problem_application or environment.application}-{environment.cluster}"
         application = application[:30].rstrip("-") + "-" + uuid.uuid4().hex
+        # Check the lane can join before pausing it: a refused lane is left untouched.
+        _adopted_copy(environment, pod, endpoint, seed=seed)[1].cleanup()
         with lane_environment(environment):
-            adapter.pause_for_recovery(adapter.KubectlClusterOps(), control)
-        with tempfile.TemporaryDirectory(prefix="sdo-memory-bind-") as scratch:
-            local = Path(scratch) / "application"
-            local.mkdir()
-            archive = _pod_tar(environment, pod, f"tar -C {REPOSITORY} -cf - .")
-            subprocess.run(["tar", "-C", str(local), "-xf", "-"], input=archive, check=True)
-            if seed:
-                ensure_run_branch(endpoint, local)
-            commit = adopt_run_branch(local, endpoint)
+            ops = adapter.KubectlClusterOps()
+            adapter.pause_for_recovery(ops, control)
+            try:
+                local, scratch, commit = _adopted_copy(environment, pod, endpoint, seed=False)
+            except Exception:
+                ops.set_maintenance(control, paused=False, generation=f"memory-bind-{uuid.uuid4().hex}-resumed")
+                raise
+        try:
             (local / ".git" / "sdo-shared-id").write_text(shared_identity(endpoint) + "\n", encoding="utf-8")
             packed = subprocess.run(["tar", "-C", str(local), "-cf", "-", "."], capture_output=True, check=True).stdout
-            staged = REPOSITORY + ".bind"
-            _pod_tar(
-                environment,
-                pod,
-                f'rm -rf "{staged}" && mkdir "{staged}" && tar -C "{staged}" -xf - && '
-                f'rm -rf "{REPOSITORY}.old" && mv "{REPOSITORY}" "{REPOSITORY}.old" && mv "{staged}" "{REPOSITORY}" && '
-                f'rm -rf "{REPOSITORY}.old"',
-                packed,
-            )
+        finally:
+            scratch.cleanup()
+        staged = REPOSITORY + ".bind"
+        _pod_tar(
+            environment,
+            pod,
+            f'rm -rf "{staged}" && mkdir "{staged}" && tar -C "{staged}" -xf - && '
+            f'rm -rf "{REPOSITORY}.old" && mv "{REPOSITORY}" "{REPOSITORY}.old" && mv "{staged}" "{REPOSITORY}" && '
+            f'rm -rf "{REPOSITORY}.old"',
+            packed,
+        )
         record = {
             "repo": endpoint.repo,
             "branch": endpoint.branch,
