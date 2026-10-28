@@ -135,7 +135,7 @@ type Mitigator interface {
 
 type ReadView interface {
 	WebhookCAMatchesSecret(WebhookCA) (bool, error)
-	// AdmissionWebhooksFor lists the webhook entries that admit Pod creation in a Namespace, or in the namespace of a workload or Pod, with each backend Service and the Secrets its Pods mount. Bind the failing Namespace or workload from the finding; cluster webhook names need no grant.
+	// AdmissionWebhooksFor lists the webhook entries that admit Pod creation for a Namespace or workload; cluster webhook names need no observation grant.
 	AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)
 	sdk.ObjectReader
 	sdk.DetectionContext
