@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 )
 
@@ -46,7 +47,9 @@ func (e *MemoryConflict) Diagnostic() *contracts.MemoryDiagnostic {
 // replayCandidate freezes only the authorized proposal diff relative to its
 // original base, then three-way applies it onto the current accepted checkout.
 // Agent commits, staged/untracked files, modes, binaries and deletions are all
-// captured by Git. The original proposal is never mutated by the broker.
+// captured by Git. The generated playbook index is left out of the patch and
+// regenerated on the merged tree. The original proposal is never mutated by
+// the broker.
 func (b *Broker) replayCandidate(ctx context.Context, proposal Proposal, candidate, stage, current string, paths []string) error {
 	if _, err := runGit(ctx, stage, "merge-base", "--is-ancestor", proposal.BaseCommit, current); err != nil {
 		return fmt.Errorf("proposal base is not an ancestor of accepted state: %w", err)
@@ -60,6 +63,9 @@ func (b *Broker) replayCandidate(ctx context.Context, proposal Proposal, candida
 		return err
 	}
 	for _, path := range paths {
+		if path == layout.PlaybookIndexFile {
+			continue
+		}
 		if err := copyChange(candidate, frozen, path); err != nil {
 			return err
 		}
@@ -94,6 +100,11 @@ func (b *Broker) replayCandidate(ctx context.Context, proposal Proposal, candida
 			conflicts = slices.Clone(paths)
 		}
 		return b.memoryConflict(ctx, proposal.BaseCommit, current, conflicts, nil)
+	}
+	if slices.ContainsFunc(paths, func(path string) bool { return strings.HasPrefix(path, layout.PlaybooksDir+"/") }) {
+		if _, err := layout.WritePlaybookIndex(stage); err != nil {
+			return fmt.Errorf("regenerate playbook index: %w", err)
+		}
 	}
 	return nil
 }

@@ -12,12 +12,14 @@ import (
 var faultClassLine = regexp.MustCompile(`(?m)^fault_class:.*$`)
 
 // NormalizeAuthoredPlaybooks derives what an author never needs to get right:
-// each changed playbook's fault_class comes from its ID, and the playbook index
-// lists every changed playbook. Like whitespace, it is fixed, never rejected.
-// It returns the paths it rewrote.
+// each changed playbook's fault_class comes from its ID, and a change below the
+// playbooks directory regenerates the playbook index, dropping any edit to it.
+// Like whitespace, it is fixed, never rejected. It returns the paths it rewrote.
 func NormalizeAuthoredPlaybooks(root string, paths []string) ([]string, error) {
 	var changed []string
+	touched := false
 	for _, path := range paths {
+		touched = touched || strings.HasPrefix(path, layout.PlaybooksDir+"/")
 		kind, id, ok := layout.Classify(path)
 		if !ok || kind != layout.KindPlaybook {
 			continue
@@ -48,12 +50,13 @@ func NormalizeAuthoredPlaybooks(root string, paths []string) ([]string, error) {
 			}
 			changed = append(changed, path)
 		}
-		if retired, _ := layout.PlaybookRetired(doc); retired {
-			continue
-		}
-		if err := layout.IndexPlaybook(root, id); err != nil {
-			return nil, err
-		}
+	}
+	if !touched {
+		return changed, nil
+	}
+	if rewritten, err := layout.WritePlaybookIndex(root); err != nil {
+		return nil, err
+	} else if rewritten {
 		changed = append(changed, layout.PlaybookIndexFile)
 	}
 	return changed, nil

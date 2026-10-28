@@ -24,8 +24,8 @@ diagnostic; look it up here.
 
 ## Index
 
-- The playbook index links only to playbooks. SDO adds each changed playbook's link when it publishes.
-  Enforced by: `playbook.index-missing`, `playbook.index-link`.
+- SDO generates the playbook index: one line per active playbook, titled by its README's first heading.
+  Edits to the index are replaced. Enforced by: `playbook.index-missing`, `playbook.index-generated`.
 
 ## Scripts
 
@@ -42,7 +42,7 @@ diagnostic; look it up here.
 
 ## Ownership
 
-- The responder writes playbooks, scripts, and the index during reflection. The health judge writes only the
+- The responder writes playbooks and scripts during reflection. The health judge writes only the
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
 Replay reports diagnosis, detector observations and plan application as information only. Open NoMatch,

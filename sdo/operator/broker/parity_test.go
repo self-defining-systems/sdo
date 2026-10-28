@@ -279,7 +279,6 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 		"playbook-owner":                validate.RulePlaybookOwner,
 		"playbook-originating-incident": validate.RulePlaybookIncident,
 		"index-missing":                 validate.RuleIndexMissing,
-		"index-link":                    validate.RuleIndexLink,
 		"script-unreferenced":           validate.RuleScriptUnreferenced,
 		"script-syntax":                 validate.RuleScriptSyntax,
 		"physical-path":                 validate.RulePhysicalPath,

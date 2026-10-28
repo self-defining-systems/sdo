@@ -82,14 +82,6 @@ def reflect(turn: Turn, binding: Binding, prompt: str, worktree: Path, store: St
         path.write_text(content, encoding="utf-8")
         if relative in proposal.executable_paths:
             path.chmod(0o755)
-    index = worktree / ".sdo/playbooks/README.md"
-    index.write_text(
-        "# Operational playbooks\n\n"
-        + "".join(
-            f"- [{path.name}]({path.name}/README.md)\n" for path in sorted(index.parent.iterdir()) if path.is_dir()
-        ),
-        encoding="utf-8",
-    )
     if mode == "invalid_then_learn" and not retry and store.claim(f"{incident_id}:reflection-invalid"):
         readme = worktree / f".sdo/playbooks/{proposal.playbook_id}/README.md"
         readme.write_text("malformed README\n", encoding="utf-8")

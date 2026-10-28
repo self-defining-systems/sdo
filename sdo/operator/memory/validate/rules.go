@@ -48,7 +48,7 @@ const (
 	RulePlaybookOwner        = "playbook.owner"
 	RulePlaybookIncident     = "playbook.originating-incident"
 	RuleIndexMissing         = "playbook.index-missing"
-	RuleIndexLink            = "playbook.index-link"
+	RuleIndexGenerated       = "playbook.index-generated"
 	RuleScriptNotExecutable  = "script.not-executable"
 	RuleScriptUnreferenced   = "script.unreferenced"
 	RuleScriptSyntax         = "script.syntax"

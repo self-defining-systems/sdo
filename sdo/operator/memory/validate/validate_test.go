@@ -54,7 +54,7 @@ func TestStructuralAndSemanticRules(t *testing.T) {
 		{"playbook-owner", []string{RulePlaybookOwner}, ".sdo/playbooks/base/README.md", 0},
 		{"playbook-originating-incident", []string{RulePlaybookIncident}, ".sdo/playbooks/base/README.md", 0},
 		{"index-missing", []string{RuleIndexMissing}, ".sdo/playbooks/README.md", 0},
-		{"index-link", []string{RuleIndexLink}, ".sdo/playbooks/README.md", 4},
+		{"index-generated", []string{RuleIndexGenerated}, ".sdo/playbooks/README.md", 0},
 		{"script-unreferenced", []string{RuleScriptUnreferenced}, ".sdo/playbooks/base/scripts/other.sh", 0},
 		{"script-syntax", []string{RuleScriptSyntax}, ".sdo/playbooks/base/scripts/fix.sh", 0},
 		{"physical-path", []string{RulePhysicalPath}, ".sdo/playbooks/base/README.md", 7},

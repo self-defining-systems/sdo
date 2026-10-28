@@ -274,3 +274,33 @@ func TestConcurrentMemoryReplayPreservesSourceProjectionAndFileChanges(t *testin
 		t.Fatal("source replay lost accepted peer")
 	}
 }
+
+// Two reflections that each add a playbook never collide on the playbook
+// index: Go regenerates it on the merged tree and drops agent edits to it.
+func TestConcurrentMemoryNewPlaybooksShareGeneratedIndex(t *testing.T) {
+	root, a, b := sharedReflectionFixture(t)
+	pa, pb := reflectionProposal(t, a, "lane-a"), reflectionProposal(t, b, "lane-b")
+	writeLearning(t, pa, "gamma", "# Gamma fault\n\nGamma learning")
+	writeLearning(t, pb, "delta", "# Delta fault\n\nDelta learning")
+	index := ".sdo/playbooks/README.md"
+	for _, p := range []Proposal{pa, pb} {
+		f, err := os.OpenFile(filepath.Join(p.Path, index), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("- [My new playbook](" + map[string]string{pa.Path: "gamma", pb.Path: "delta"}[p.Path] + "/README.md)\n"); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	if _, err := publishLearning(a, "lane-a", "gamma"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publishLearning(b, "lane-b", "delta"); err != nil {
+		t.Fatalf("second new playbook conflicted: %v", err)
+	}
+	want := "# Playbooks\n\n- [alpha](alpha/README.md)\n- [base](base/README.md)\n- [beta](beta/README.md)\n- [Delta fault](delta/README.md)\n- [Gamma fault](gamma/README.md)\n"
+	if got := git(t, root, "show", "HEAD:"+index) + "\n"; got != want {
+		t.Fatalf("index =\n%s\nwant\n%s", got, want)
+	}
+}

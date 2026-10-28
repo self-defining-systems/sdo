@@ -57,8 +57,8 @@ detector_test.go directly under
 `.sdo/diagnostics/detectors/health/health-objective/` in this checkout. Author the complete
 `.sdo/playbooks/health-objective/README.md` with front matter: schema_version: 1, owner: responder,
 fault_class: health-objective-failure, originating_incident: lifecycle-bootstrap, then repair guidance using
-logical artifact IDs and parameter placeholders such as <AFFECTED_RESOURCE>. Update the playbook index
-`.sdo/playbooks/README.md` to list the playbooks. Preserve existing incident detectors and all other playbooks,
+logical artifact IDs and parameter placeholders such as <AFFECTED_RESOURCE>. SDO generates the playbook
+index. Preserve existing incident detectors and all other playbooks,
 human goal, architecture, outcomes, schema-version and diagnostics go.mod. Health manifests use apiVersion:
 sdo.dev/v1alpha1, kind: DetectorManifest, sdkVersion: v0.1, constructor: New, class: health,
 owner: health_judge, and the Spec values above (possiblePlaybooks: [health-objective]).

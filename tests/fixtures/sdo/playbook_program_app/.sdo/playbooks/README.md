@@ -1,4 +1,4 @@
-# Operational playbooks
+# Playbooks
 
-- [missing-configmap](missing-configmap/README.md)
+- [Missing required ConfigMap](missing-configmap/README.md)
 - [service-targetport-mismatch](service-targetport-mismatch/README.md)

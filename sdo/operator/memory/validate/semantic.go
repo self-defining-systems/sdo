@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -16,10 +17,6 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/sdk"
-)
-
-var (
-	markdownLink = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
 )
 
 func (s *run) semantic(ctx context.Context) error {
@@ -30,7 +27,9 @@ func (s *run) semantic(ctx context.Context) error {
 		s.completeness()
 		s.documents()
 		s.observationRules()
-		s.playbookIndex()
+		if err := s.playbookIndex(); err != nil {
+			return err
+		}
 		s.detectorRules()
 		if err := s.scripts(ctx); err != nil {
 			return err
@@ -133,34 +132,27 @@ func (s *run) sortedDetectors() []*detector {
 	return list
 }
 
-func (s *run) playbookIndex() {
+// playbookIndex requires the generated index. A publication that changes no
+// playbook keeps the accepted index, so only the full check and playbook
+// changes compare it; the broker and memory check regenerate it first.
+func (s *run) playbookIndex() error {
 	if s.index == nil {
 		if s.complete() && len(s.playbooks) > 0 {
-			s.add(Semantic, Diagnostic{Rule: RuleIndexMissing, Path: layout.PlaybookIndexFile, Message: "the playbook index is required", Hint: "list every playbook as a Markdown link in .sdo/playbooks/README.md"})
+			s.add(Semantic, Diagnostic{Rule: RuleIndexMissing, Path: layout.PlaybookIndexFile, Message: "the playbook index is required", Hint: "SDO generates the index whenever a playbook changes; publish or check a playbook change"})
 		}
-		return
+		return nil
 	}
-	for _, match := range markdownLink.FindAllStringSubmatchIndex(string(s.index.content), -1) {
-		target := string(s.index.content[match[2]:match[3]])
-		line := strings.Count(string(s.index.content[:match[0]]), "\n") + 1
-		link := strings.SplitN(target, "#", 2)[0]
-		if strings.Contains(link, "://") || link == "" {
-			continue
-		}
-		clean := path.Clean(link)
-		if path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
-			s.add(Semantic, Diagnostic{Rule: RuleIndexLink, Path: s.index.path, Line: line, Message: fmt.Sprintf("index link escapes the playbooks directory: %s", link)})
-			continue
-		}
-		if !strings.HasSuffix(clean, layout.PlaybookFileName) {
-			clean = path.Join(clean, layout.PlaybookFileName)
-		}
-		id, _, _ := strings.Cut(clean, "/")
-		if book := s.playbooks[id]; book == nil || !book.hasReadme || clean != id+"/"+layout.PlaybookFileName {
-			s.add(Semantic, Diagnostic{Rule: RuleIndexLink, Path: s.index.path, Line: line, Message: fmt.Sprintf("index link does not name a playbook: %s", link)})
-			continue
-		}
+	if s.req.Base != "" && !slices.ContainsFunc(s.changed, func(p string) bool { return strings.HasPrefix(p, layout.PlaybooksDir+"/") }) {
+		return nil
 	}
+	generated, err := layout.GeneratePlaybookIndex(s.req.Root)
+	if err != nil {
+		return err
+	}
+	if generated != nil && !bytes.Equal(generated, s.index.content) {
+		s.add(Semantic, Diagnostic{Rule: RuleIndexGenerated, Path: s.index.path, Message: "the playbook index differs from the one generated from the playbooks", Hint: "do not edit the index; SDO regenerates it from each playbook's first heading when a playbook changes"})
+	}
+	return nil
 }
 
 func (s *run) detectorRules() {
