@@ -910,3 +910,11 @@ def test_the_installed_codex_shows_the_model_no_skill_list_or_bundled_skills(tmp
     assert "<skills_instructions>" not in rendered
     assert "<recommended_plugins>" not in rendered
     assert not (home / "skills" / ".system").exists()
+
+
+def test_a_claude_turn_passes_the_configured_model_and_effort_to_the_cli(tmp_path: Path) -> None:
+    _turn, agent = _run("claude", tmp_path, model="claude-opus-5-5", reasoning_effort="medium")
+
+    (argv,) = agent.argvs
+    assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
+    assert argv[argv.index("--effort") + 1] == "medium"
