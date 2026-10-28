@@ -6,8 +6,10 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-// ScriptOrigin checks linkage against controller-recorded successful receipts.
-// It never matches opaque shell commands against typed external effects.
+// ScriptOrigin checks linkage to an original successful timed receipt of the
+// case's incident. Every recorded mutation path qualifies (RunScript, sdo act,
+// observed API writes); when the receipt recorded script bytes, they must be
+// these bytes.
 func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginReceipt, error) {
 	id := c.ScriptOrigins[program.ScriptDigest(script.Script)]
 	if id == "" || c.Provenance.IncidentID == "" {
@@ -24,8 +26,8 @@ func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginR
 		if receipt.IncidentID != c.Provenance.IncidentID || !receipt.Success || receipt.StartedAt.IsZero() || receipt.CompletedAt.IsZero() || receipt.CompletedAt.Before(receipt.StartedAt) {
 			return receipt, fmt.Errorf("RunScript origin receipt lacks a successful timed incident mutation")
 		}
-		if receipt.ScriptDigest == "" || receipt.ScriptDigest != program.ScriptDigest(script.Script) {
-			return receipt, fmt.Errorf("RunScript origin receipt does not record these script bytes")
+		if receipt.ScriptDigest != "" && receipt.ScriptDigest != program.ScriptDigest(script.Script) {
+			return receipt, fmt.Errorf("RunScript origin receipt records different script bytes")
 		}
 		return receipt, nil
 	}

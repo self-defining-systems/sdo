@@ -124,7 +124,6 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 		}
 		return result, nil
 	}
-	var refs []sdk.ObjectRef
 	for i, a := range plan.Actions {
 		e.scriptActionIndex = i
 		step, stepErr := e.generalStep(ctx, incident, generalAction(a), false)
@@ -141,24 +140,11 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 			result.ActionsApplied = append(result.ActionsApplied, a)
 		}
 		if stepErr != nil {
-			var partial *SourceReconcilePartialError
-			if errors.As(stepErr, &partial) {
-				complete = true
-			}
 			return result, stepErr
-		}
-		if ref, refErr := planActionRef(a); refErr == nil && ref.Kind != "" && objectActionOperation(a) != "delete" {
-			refs = append(refs, ref)
 		}
 	}
 	complete = true
-	if pending, waitErr := e.waitAfterSourceWrites(ctx, incident, &result, refs); waitErr != nil {
-		result.RolloutPending = pending
-		return result, waitErr
-	}
-	result.VerificationPassed, err = e.Verifier.Verify(ctx)
-	result.VerificationCompleted = true
-	return result, err
+	return result, nil
 }
 func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest, action program.Action, dry bool) (r PlanApplicationResult, err error) {
 	r.Plan = program.Plan{Actions: []program.Action{action}}
@@ -166,7 +152,7 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	r.ActionReports = newPlanReports(r.Plan)
 	if !isGeneralAction(action) {
 		nested := e
-		nested.deferDependencyRecovery = true
+		nested.deferConvergence = true
 		return nested.Apply(ctx, incident, r.Plan, dry)
 	}
 	if ca, ok := action.(program.SyncWebhookCA); ok {
@@ -377,7 +363,7 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	r.Applied = true
 	r.ActionsApplied = []program.Action{action}
 	if patch.Operation != "" {
-		err = e.observeObjectEffect(ctx, r.Patches[0])
+		err = e.observeObjectEffect(ctx, &r.Patches[0])
 		effect := PlanObjectEffect{Operation: patch.Operation, Ref: ref, Confirmed: err == nil, State: "applied", Irreversible: patch.Irreversible}
 		if before != nil {
 			effect.UID = string(before.GetUID())

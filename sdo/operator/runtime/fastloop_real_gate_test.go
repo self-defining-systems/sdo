@@ -793,6 +793,11 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	secondResult := fastloopGateResult(secondRequest, []sdk.ObjectRef{peer})
 	secondResult.ProgramRuns = []ProgramRun{{ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": peer}}, Verdict: program.Verdict{Result: program.NoMatch}}}
 	secondResult.ProgramToolCalls = []ToolCall{{Command: "diagnose"}, {Command: "plan"}, {Command: "apply"}, {Command: "verify"}}
+	// The apply tool ran the accepted program; its application receipts come
+	// from the controller producer, so the repair is not a hand repair.
+	peerFix := program.Action(program.SetField{Ref: peer, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080), Reason: "restore the learned target port"})
+	secondResult.PlanApplications = []RecordedPlanApplication{{ID: "apply-peer", ProgramIDs: []string{"service-targetport-mismatch"}, StartedAt: secondResult.Timing.StartedAt, CompletedAt: secondResult.Timing.CompletedAt, Result: PlanApplicationResult{Applied: true, Plan: program.Plan{Actions: []program.Action{peerFix}}, ActionsApplied: []program.Action{peerFix}, VerificationCompleted: true, VerificationPassed: true}}}
+	secondResult.RepairActions = ProgramRepairReceipts(secondResult.PlanApplications, nil)
 	secondResult.ResponseLoopsUsed = 1
 	secondClosure := fastloopGateClose(t, ctx, second, secondDispatch, secondResult, start.Add(2*time.Second))
 	if secondClosure.HealthClearedAt == nil {

@@ -155,3 +155,33 @@ def test_merge_cannot_hide_an_unjustified_parent_raise(history: tuple[Path, str]
     errors = check_range(root, base, "HEAD")
     assert len(errors) == 1
     assert errors[0].startswith(bad[:12])
+
+
+@pytest.mark.parametrize(
+    ("target_limit", "raised_first", "blocked"), [(50, None, False), (1000, None, True), (1000, 1200, False)]
+)
+def test_placeholder_retarget_is_a_ratchet(history, target_limit, raised_first, blocked):
+    import json
+
+    root, base = history
+    budget = root / BUDGET_PATH
+    budget.write_text(
+        document(100) + f'\n[other.large]\nmax_chars = {target_limit}\nreason = "existing large section"\n'
+    )
+    git(root, "add", BUDGET_PATH)
+    git(root, "commit", "-m", "declare other budget\n\nBudget-Reason: existing large section")
+    sections = root / "sdo/agents/prompt_sections.json"
+    sections.write_text(json.dumps({"agent/template": {"value": "responder.instructions"}}))
+    git(root, "add", ".")
+    git(root, "commit", "-m", "bind template")
+    if raised_first:
+        budget.write_text(
+            document(raised_first, "explicit metadata raise")
+            + f'\n[other.large]\nmax_chars = {target_limit}\nreason = "existing large section"\n'
+        )
+        git(root, "add", BUDGET_PATH)
+        git(root, "commit", "-m", "raise original cap\n\nBudget-Reason: explicitly raised metadata")
+    sections.write_text(json.dumps({"agent/template": {"value": "other.large"}}))
+    git(root, "add", ".")
+    git(root, "commit", "-m", "silently widen placeholder")
+    assert any("retarget" in error for error in check_range(root, base, "HEAD")) is blocked

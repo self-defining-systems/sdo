@@ -51,6 +51,7 @@ type rehearsalJudge struct {
 	scripted   *tracingRefreshWorker
 	captured   *contracts.AgentTask
 	recovering bool
+	fresh      int
 }
 
 func (w *rehearsalJudge) Execute(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -79,6 +80,14 @@ func (w *rehearsalJudge) Execute(ctx context.Context, task *contracts.AgentTask)
 			}
 		}
 		return nil, context.Canceled
+	}
+	if _, err := w.client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, worker_registry.JobName(w.captured.TaskId)+"-result", metav1.GetOptions{}); apierrors.IsNotFound(err) {
+		// Reset retired the prior stream's worker records with its checkout, so
+		// the fresh stream runs a new judge instead of adopting a stale result.
+		w.fresh++
+		return w.scripted.Execute(ctx, task)
+	} else if err != nil {
+		return nil, err
 	}
 	if !proto.Equal(task, w.captured) {
 		return nil, errors.New("restart replaced frozen judge task")
@@ -157,8 +166,7 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 		t.Fatalf("aborted prior attempt: %v", err)
 	}
 	oldResultName := worker_registry.JobName(judge.captured.TaskId) + "-result"
-	oldResult, err := client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, oldResultName, metav1.GetOptions{})
-	if err != nil {
+	if _, err := client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, oldResultName, metav1.GetOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	// HY restores a real targetPort fault using kubectl against this same tracker.
@@ -262,12 +270,11 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	if err != nil || len(afterJobs.Items) != len(beforeJobs.Items) {
 		t.Fatalf("old completed result reran a worker: %d -> %d %v", len(beforeJobs.Items), len(afterJobs.Items), err)
 	}
-	if scripted.calls != 1 || validations != 1 {
-		t.Fatalf("setup work: judge=%d validator=%d", scripted.calls, validations)
+	if scripted.calls != 2 || judge.fresh != 1 || validations != 1 {
+		t.Fatalf("setup work: judge=%d fresh=%d validator=%d", scripted.calls, judge.fresh, validations)
 	}
-	afterResult, err := client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, oldResultName, metav1.GetOptions{})
-	if err != nil || !reflect.DeepEqual(afterResult.Data, oldResult.Data) {
-		t.Fatal("reset/recovery overwrote old result evidence")
+	if _, err := client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, oldResultName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("reset kept the prior stream's worker result: %v", err)
 	}
 	accepted, err := memory.AcceptedHealthRevision(ctx, root)
 	if err != nil || accepted.NeedsRefresh {

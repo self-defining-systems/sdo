@@ -143,7 +143,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		if outcome == nil {
 			return ReflectionDecision{}, errors.New("reflection outcome is required")
 		}
-		current := proto.Clone(outcome).(*contracts.OutcomeRecord)
+		// Outcome text can quote agent prose; workers see it in its logical form.
+		current, err := memory.LogicalOutcome(outcome)
+		if err != nil {
+			return ReflectionDecision{}, err
+		}
 		if current.GetIncidentId() != workspace.IncidentID {
 			return ReflectionDecision{}, errors.New("reflection outcome incident differs from proposal")
 		}
@@ -154,7 +158,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		history := make([]*contracts.OutcomeRecord, 0, len(prior))
 		for _, record := range prior {
 			if record.IncidentID != workspace.IncidentID {
-				history = append(history, summarizeEarlierOutcome(record.Record))
+				earlier, err := memory.LogicalOutcome(summarizeEarlierOutcome(record.Record))
+				if err != nil {
+					return ReflectionDecision{}, err
+				}
+				history = append(history, earlier)
 			}
 		}
 		sort.SliceStable(history, func(i, j int) bool { return verifiedTime(history[i]).Before(verifiedTime(history[j])) })

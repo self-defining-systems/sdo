@@ -213,16 +213,4 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
         )
 
     counts = [len(rows), len(done), len(unmatched), len(feedback.verification_blockers)]
-    for width in (64, 32, 16):
-        prompt = render(width, *counts)
-        if len(prompt) <= MAX_CONTINUATION_CHARS:
-            return prompt
-    # Large inventories retain complete facts on disk and explicitly count rows
-    # omitted from the prompt. Never slice a rendered row or its evidence path.
-    for index in (3, 2, 1, 0):
-        while counts[index]:
-            counts[index] -= 1
-            prompt = render(16, *counts)
-            if len(prompt) <= MAX_CONTINUATION_CHARS:
-                return prompt
-    raise ValueError("continuation evidence reference exceeds prompt budget")
+    return render(64, *counts)

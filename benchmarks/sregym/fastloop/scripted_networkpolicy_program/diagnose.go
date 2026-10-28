@@ -29,7 +29,7 @@ func (Program) Diagnose(_ context.Context, view program.ReadView, bindings progr
 		if err != nil {
 			return program.Verdict{Result: program.Unknown}, nil
 		}
-		if !diff.SourceAbsent {
+		if !diff.PresentButNotInSource() {
 			return program.Verdict{Result: program.NoMatch}, nil
 		}
 		selector, err := metav1.LabelSelectorAsSelector(&policy.Spec.PodSelector)

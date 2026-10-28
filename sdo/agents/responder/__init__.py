@@ -10,6 +10,11 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 _EXPORTS = {
+    "render_incident_prompt": "codex",
+    "render_reflection_prompt": "reflection",
+    "prepared_incident_data": "incident_context",
+    "print_tool_response": "tools_cli",
+    "command_surface": "tools_cli",
     "await_standby_claim": "standby",
     "AGENT_SKILLS": "credentials",
     "ClaudeSessionBackend": "reflection",
@@ -45,6 +50,7 @@ if TYPE_CHECKING:
     from sdo.agents.responder.codex import (
         execute_incident as execute_incident,
     )
+    from sdo.agents.responder.codex import render_incident_prompt as render_incident_prompt
     from sdo.agents.responder.credentials import (
         AGENT_SKILLS as AGENT_SKILLS,
     )
@@ -54,6 +60,7 @@ if TYPE_CHECKING:
     from sdo.agents.responder.credentials import (
         prepare_codex_home as prepare_codex_home,
     )
+    from sdo.agents.responder.incident_context import prepared_incident_data as prepared_incident_data
     from sdo.agents.responder.incident_status import (
         IncidentStatusReport as IncidentStatusReport,
     )
@@ -99,6 +106,7 @@ if TYPE_CHECKING:
     from sdo.agents.responder.reflection import (
         reflection_output_schema as reflection_output_schema,
     )
+    from sdo.agents.responder.reflection import render_reflection_prompt as render_reflection_prompt
     from sdo.agents.responder.reflection_outcomes import (
         current_outcome_view as current_outcome_view,
     )
@@ -124,6 +132,8 @@ if TYPE_CHECKING:
     from sdo.agents.responder.termination import (
         records_worker_failure as records_worker_failure,
     )
+    from sdo.agents.responder.tools_cli import command_surface as command_surface
+    from sdo.agents.responder.tools_cli import print_tool_response as print_tool_response
     from sdo.agents.responder.worker import (
         run_worker_task as run_worker_task,
     )

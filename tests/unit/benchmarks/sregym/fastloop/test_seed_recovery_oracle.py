@@ -9,6 +9,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.loop import run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
 from tests.unit.benchmarks.sregym.fastloop.test_fastloop_loop import FakeAgent, FakeClock, FakeDriver, _config
 
 
@@ -55,6 +56,7 @@ def test_driver_requires_completed_seed_cleanup_before_independent_oracle():
         baseline_problem_id="seed-problem",
         baseline=ApplicationBaseline("sample", []),
         cluster=SimpleNamespace(list_objects=lambda _: []),
+        accepted_source=fixed_source_provider(ApplicationBaseline("sample", []), "sample"),
     )
     with pytest.raises(RuntimeError, match="seed recovery"):
         driver.recovery_oracle()

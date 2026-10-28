@@ -53,8 +53,10 @@ func TestUndetectedRepairRequiresMeasuredObjectTransition(t *testing.T) {
 		}
 	}
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{{FaultClass: "database", Primitive: "catalog", Reason: "unavailable", ScratchScript: "inspect", Resources: []*contracts.ObjectRef{{Kind: "Deployment", Namespace: "demo", Name: "database"}}}}}
+	// The cause is learnable; with no finding to bind its role, the only note
+	// is that a detector must bind it before the automatic stage can run it.
 	ds := ReflectionCoverageGaps(root, outcome, decision)
-	if len(ds) != 0 {
+	if len(ds) != 1 || ds[0].Rule != RuleReflectionDetectorRequired {
 		t.Fatalf("learnable undetected cause blocked by peer gap: %v", ds)
 	}
 	for _, mode := range []string{"unchanged", "stale", "failed-receipt", "detected"} {

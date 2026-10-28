@@ -16,7 +16,9 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-func TestUnwrappedShellWriteBindsRunScriptOnlyAfterIndependentClearance(t *testing.T) {
+// A raw kubectl write (no sdo act) is recorded from API history, and after
+// independent clearance it authorizes the RunScript step that encodes it.
+func TestUnwrappedShellWriteBindsRunScriptAfterIndependentClearance(t *testing.T) {
 	for _, clear := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unverified", true: "verified"}[clear], func(t *testing.T) {
 			root := t.TempDir()
@@ -84,8 +86,8 @@ func TestUnwrappedShellWriteBindsRunScriptOnlyAfterIndependentClearance(t *testi
 			script := program.RunScript{Script: `kubectl patch deployment "$WORKLOAD" --type=json -p "$PATCH"`}
 			corpus := sdktest.CorpusCase{Provenance: sdktest.CorpusProvenance{IncidentID: id}, ScriptOrigins: map[string]string{program.ScriptDigest(script.Script): derived.Record.RepairActions[0].ActionId}, Recordings: calls}
 			origin, err := sdktest.ScriptOrigin(script, corpus)
-			if err == nil {
-				t.Fatalf("API receipt without script byte evidence authorized RunScript: %+v", origin)
+			if err != nil || len(origin.Resources) != 1 || origin.Resources[0] != ref {
+				t.Fatalf("verified raw shell repair cannot be saved as RunScript: %+v %v", origin, err)
 			}
 		})
 	}

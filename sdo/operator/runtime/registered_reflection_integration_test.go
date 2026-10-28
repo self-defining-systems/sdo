@@ -121,7 +121,27 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 					if err := os.WriteFile(readme, authoredREADME, 0o644); err != nil {
 						return nil, err
 					}
-					response = &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}}
+					programReadme := filepath.Join(checkout, ".sdo/playbooks/service-targetport-mismatch/README.md")
+					programText, err := os.ReadFile(programReadme)
+					if err != nil {
+						return nil, err
+					}
+					if err := os.WriteFile(programReadme, append(programText, []byte("\nThe current controller receipt confirms this repair step.\n")...), 0644); err != nil {
+						return nil, err
+					}
+					caseDir := filepath.Join(checkout, ".sdo/corpus/current-repair")
+					if err := os.MkdirAll(caseDir, 0755); err != nil {
+						return nil, err
+					}
+					labels, err := os.ReadFile(filepath.Join(checkout, ".sdo/corpus/targetport-mismatch/labels.json"))
+					if err != nil {
+						return nil, err
+					}
+					if err := os.WriteFile(filepath.Join(caseDir, "labels.json"), labels, 0644); err != nil {
+						return nil, err
+					}
+					appendControllerRepairReceipts(t, checkout, "current-repair", reflectionFixtureOutcome("direct-files"))
+					response = &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base", "service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}}
 					if scenario == "malformed then fixed" {
 						if err := os.WriteFile(readme, []byte("malformed README\n"), 0o644); err != nil {
 							return nil, err
@@ -183,7 +203,7 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 					t.Fatal("update was not committed")
 				}
 				ledger, err := native.readLedger("direct-files")
-				if err != nil || len(ledger.GetReflectionDecision().GetPlaybookIds()) != 1 || ledger.GetReflectionDecision().GetPlaybookIds()[0] != "base" {
+				if err != nil || len(ledger.GetReflectionDecision().GetPlaybookIds()) != 2 || ledger.GetReflectionDecision().GetPlaybookIds()[0] != "base" {
 					t.Fatalf("accepted playbook IDs not durable: %v %v", ledger, err)
 				}
 				for rel, want := range map[string][]byte{".sdo/playbooks/base/README.md": authoredREADME, ".sdo/diagnostics/detectors/incidents/cache/detector.go": authoredGo} {
@@ -420,7 +440,14 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 			nativeGit(t, target, "add", "-A")
 			nativeGit(t, target, "commit", "-qm", "memory")
 			const incidentID = "learned-program"
-			capture := t.TempDir()
+			sessions := t.TempDir()
+			capture, err := memory.IncidentCorpusDir(sessions, incidentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(capture, 0755); err != nil {
+				t.Fatal(err)
+			}
 			fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo/corpus/targetport-mismatch"
 			for destination, source := range map[string]string{"open@detect.json": "open.json", "fixed.json": "fixed.json", "open@detect-recordings.json": "recordings.json"} {
 				data, err := os.ReadFile(filepath.Join(fixture, source))
@@ -481,13 +508,13 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				t.Fatal(err)
 			}
 			outcome := reflectionFixtureOutcome(incidentID)
-			// A second independently repaired cause has a real, resource-scoped
-			// SDK gap. It must not excuse the learnable Service cause.
+			// A second cause has a real, resource-scoped SDK gap: an observation
+			// the SDK does not offer, with no recorded hand repair of its own. It
+			// must not excuse the learnable Service cause.
 			peer := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "database"}
-			gap := &contracts.SdkGap{FaultClass: "database", Primitive: "DatabaseUsers", Reason: "synthetic unavailable catalog", ScratchScript: "scratch/catalog", Resources: []*contracts.ObjectRef{peer}}
-			outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "database user repaired", Resources: []*contracts.ObjectRef{peer}})
-			outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: "database-health", RuleId: "catalog", Severity: "warn", Summary: "missing application account", Evidence: "synthetic observed database fault", Status: "active", PrimaryResource: peer, Fingerprint: "database"})
-			outcome.RepairActions = append(outcome.RepairActions, &contracts.RepairActionReceipt{ActionId: "repair-database", Kind: "exec", Target: "Pod/demo/database", Summary: "restore application account", Details: "synthetic controller-recorded repair", Success: true, Resources: []*contracts.ObjectRef{peer}, StartedAt: timestamppb.New(time.Unix(1, 0)), CompletedAt: timestamppb.New(time.Unix(2, 0))})
+			gap := &contracts.SdkGap{FaultClass: "database", Primitive: "DatabaseReplicationStatus", Reason: "synthetic unavailable replication status read", ScratchScript: "scratch/replication", Resources: []*contracts.ObjectRef{peer}}
+			outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "database replication recovered", Resources: []*contracts.ObjectRef{peer}})
+			outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: "database-health", RuleId: "replication", Severity: "warn", Summary: "replica lagging", Evidence: "synthetic observed database fault", Status: "active", PrimaryResource: peer, Fingerprint: "database"})
 			outcome.DetectorHistory = append(outcome.DetectorHistory, &contracts.DetectorEvaluation{DetectorId: "database-health", Status: "clear", EvaluatedAt: timestamppb.New(time.Unix(3, 0))})
 			if scenario == "undetected_repair" {
 				outcome.ConfirmedRootCauses = outcome.ConfirmedRootCauses[1:]
@@ -503,6 +530,11 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Summary: "unresolved blocker", Resources: []*contracts.ObjectRef{{Kind: "Role", Namespace: "demo", Name: "blocker"}}})
 			}
 			if _, err := repository.RecordOutcome(ctx, incidentID, outcome); err != nil {
+				t.Fatal(err)
+			}
+			// The controller copies original repair receipts into the capture
+			// before reflection, as the registered worker does in production.
+			if err := memory.CaptureRepairReceipts(sessions, incidentID, outcome); err != nil {
 				t.Fatal(err)
 			}
 			proposal, err := repository.CreateProposalForPhase(ctx, incidentID, broker.ReflectionPhase)
@@ -594,7 +626,7 @@ func reflectionFixtureResources() []*contracts.ObjectRef {
 	return []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}
 }
 func reflectionFixtureGap() *contracts.SdkGap {
-	return &contracts.SdkGap{FaultClass: "synthetic-routing", Primitive: "fixture-coverage", Reason: "transport fixture records an explicit SDK coverage gap", ScratchScript: "scratch/fixture", Resources: reflectionFixtureResources()}
+	return &contracts.SdkGap{FaultClass: "synthetic-routing", Primitive: "FixtureUnavailableObservation", Reason: "transport fixture records an explicit SDK coverage gap", ScratchScript: "scratch/fixture", Resources: reflectionFixtureResources()}
 }
 
 func reflectionFixtureOutcome(incidentID string) *contracts.OutcomeRecord {
