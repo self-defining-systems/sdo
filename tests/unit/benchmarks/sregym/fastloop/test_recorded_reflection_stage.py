@@ -6,6 +6,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -332,7 +333,10 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
         assert "Save verified steps with partial coverage, README orchestration and detectors" in prompt
         assert "Replay is informational: NoMatch, persistent Match and unavailable replay never block saving" in prompt
         assert "Use recorded actions as repair evidence" in prompt
-        current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
+        section = prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0]
+        if section.startswith("Full: "):
+            section = Path(os.path.expandvars(section.splitlines()[0].removeprefix("Full: "))).read_text()
+        current = json.loads(section)
         assert current["classification"] == classification
         assert (
             current["repair_actions"][0]["details"]
