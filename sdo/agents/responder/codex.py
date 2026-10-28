@@ -282,7 +282,12 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
     if extra:
         prompt += named_prompt(
             "responder.additional_context",
-            render_prompt("responder", "incident_01", part="responder.additional_context", extra_instructions=extra),
+            render_prompt(
+                "responder",
+                "incident_01",
+                part="responder.additional_context",
+                extra_instructions=named_prompt("responder.additional_context", extra),
+            ),
         )
     return prompt + named_prompt("responder.incident_data", incident_data)
 

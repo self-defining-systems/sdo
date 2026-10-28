@@ -23,6 +23,11 @@ class PromptPart:
     text: str
 
 
+def cap_section(name: str, text: str) -> str:
+    """The one place a registered prompt section meets its budget."""
+    return cap_text(text, budget_for(name))
+
+
 class RenderedPrompt(str):
     """A normal prompt string with the ordered parts that produced its exact bytes."""
 
@@ -34,7 +39,7 @@ class RenderedPrompt(str):
         grouped: dict[str, str] = defaultdict(str)
         for part in raw:
             grouped[part.name] += part.text
-        capped = {name: cap_text(text, budget_for(name)) for name, text in grouped.items()}
+        capped = {name: cap_section(name, text) for name, text in grouped.items()}
         emitted: set[str] = set()
         result: list[PromptPart] = []
         for part in raw:
