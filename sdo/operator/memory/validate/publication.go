@@ -275,7 +275,7 @@ func changedFilesHint(paths []string) string {
 	if len(paths) == 0 {
 		return "no_change and sdk_gap return proposed_artifact_ids []"
 	}
-	return fmt.Sprintf("%d memory files differ from the accepted base (yours or evidence Go settled); return learning_decision \"updated\" with proposed_artifact_ids %s, or revert your own edits", len(paths), encoded)
+	return fmt.Sprintf("%d memory files differ from the accepted base; before your own edits these are evidence Go settled for covered items: keep them. Check learning_decision \"updated\" with proposed_artifact_ids %s and return it when it passes", len(paths), encoded)
 }
 
 func sortDiagnostics(ds []Diagnostic) {

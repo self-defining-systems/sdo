@@ -114,7 +114,7 @@ class CheckMemoryReply:
                 if decision
                 else "the same decision"
             )
-            disagreements = _replay_disagreements(result.stdout)
+            disagreements = _replay_disagreements(result.stdout, set(ids) if decision else None)
             if disagreements:
                 step = (
                     f"passed; replay disagrees for {'; '.join(disagreements)}. Each program should Match its fault "
@@ -130,15 +130,18 @@ class CheckMemoryReply:
         return cls(step, result.exit_code, result.timed_out, result.stdout, result.stderr)
 
 
-def _replay_disagreements(stdout: str) -> list[str]:
-    """Programs whose replay does not Match their fault capture or NoMatch healthy."""
+def _replay_disagreements(stdout: str, own: set[str] | None) -> list[str]:
+    """The agent's programs whose replay does not Match their fault capture or NoMatch healthy.
+
+    Cases Go settled for other playbooks (the health judge's included) are not the agent's to refine.
+    """
     try:
         notes = json.loads(stdout).get("mitigation_replay_notes") or []
     except (ValueError, AttributeError):
         return []
     found = []
     for note in notes:
-        if not isinstance(note, dict):
+        if not isinstance(note, dict) or (own is not None and note.get("program_id") not in own):
             continue
         effects = note.get("effects") or []
         diagnosis = {

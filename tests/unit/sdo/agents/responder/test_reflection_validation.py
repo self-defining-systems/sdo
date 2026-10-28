@@ -327,6 +327,7 @@ async def test_check_memory_pass_names_programs_whose_replay_disagrees(
     notes = [
         {"program_id": "good", "case_id": "a", "effects": ["open diagnosis: Match", "healthy diagnosis: NoMatch"]},
         {"program_id": "weak", "case_id": "b", "effects": ["open diagnosis: Unknown", "healthy diagnosis: Unknown"]},
+        {"program_id": "health-objective", "case_id": "settled", "effects": ["open diagnosis: Unknown"]},
     ]
     body = json.dumps({"diagnostics": [], "mitigation_replay_notes": notes})
     _validator(tmp_path, f"print({body!r})\n", monkeypatch)
@@ -339,3 +340,4 @@ async def test_check_memory_pass_names_programs_whose_replay_disagrees(
     assert "open Unknown" in step
     assert "healthy Unknown" in step
     assert "good" not in step.split("passed")[1].split("Each program")[0]
+    assert "health-objective" not in step, "only the agent's own programs are named"
