@@ -62,13 +62,15 @@ func TestCreatedAcceptanceUsesAdoptionWriterThroughAPI(t *testing.T) {
 					annotations["example.test/default"] = "yes"
 					object.SetAnnotations(annotations)
 				case http.MethodPatch:
+					// Controllers may update status between create and metadata publication.
+					object.SetResourceVersion("controller-update")
 					applied := &unstructured.Unstructured{}
 					if err := json.NewDecoder(r.Body).Decode(&applied.Object); err != nil {
 						t.Error(err)
 						w.WriteHeader(400)
 						return
 					}
-					if object == nil || r.URL.Query().Get("fieldManager") != acceptanceFieldManager || r.URL.Query().Get("force") != "true" || applied.GetUID() != object.GetUID() || applied.GetResourceVersion() != object.GetResourceVersion() || applied.Object["data"] != nil || applied.Object["spec"] != nil {
+					if object == nil || r.URL.Query().Get("fieldManager") != acceptanceFieldManager || r.URL.Query().Get("force") != "true" || applied.GetUID() != object.GetUID() || applied.GetResourceVersion() != "" || applied.Object["data"] != nil || applied.Object["spec"] != nil {
 						t.Error("acceptance did not use adoption's conditional metadata writer")
 						w.WriteHeader(409)
 						return
@@ -113,6 +115,9 @@ func TestCreatedAcceptanceUsesAdoptionWriterThroughAPI(t *testing.T) {
 			live, err := client.Get(context.Background(), ref)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if result.Patches[0].After.GetResourceVersion() != live.GetResourceVersion() {
+				t.Fatal("write barrier does not include the acceptance publication version")
 			}
 			snapshot := &sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}
 			view := LiveReadView{DetectionContext: snapshot, Source: e.Source, SourceCommit: "accepted"}

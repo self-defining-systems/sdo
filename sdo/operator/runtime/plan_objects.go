@@ -24,7 +24,7 @@ type PlanLifecycleClient interface {
 	Delete(context.Context, sdk.ObjectRef, types.UID, string) error
 }
 
-// PlanAcceptanceClient publishes UID/version-bound records through the same
+// PlanAcceptanceClient publishes UID-bound records through the same
 // acceptance field manager used by adoption. Source creates require this owner.
 type PlanAcceptanceClient interface {
 	RecordAcceptance(context.Context, sdk.ObjectRef, string, *unstructured.Unstructured) error
@@ -264,7 +264,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 			}
 		}
 		if patch.Operation != "" {
-			if err := e.observeObjectEffect(ctx, *patch); err != nil {
+			if err := e.observeObjectEffect(ctx, patch); err != nil {
 				return result, err
 			}
 			effect.Confirmed = true
@@ -313,10 +313,10 @@ func (e PlanExecutor) prepareObjectAction(ctx context.Context, incident Incident
 	return desired, nil
 }
 
-func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch PlanPatch) error {
+func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch *PlanPatch) error {
 
 	if patch.Operation == "delete" {
-		return e.observeDeletedObject(ctx, patch)
+		return e.observeDeletedObject(ctx, *patch)
 	}
 	live, err := e.Client.Get(ctx, patch.Ref)
 	if err != nil || live == nil || !samePlanRef(live, patch.Ref) {
@@ -335,6 +335,9 @@ func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch PlanPatch) 
 			return fmt.Errorf("create observation unknown: source fields differ")
 		}
 	}
+	// The outer cache barrier must include acceptance publication, not only
+	// the earlier create version whose object had no baseline yet.
+	patch.After.SetResourceVersion(live.GetResourceVersion())
 	return nil
 }
 
@@ -385,7 +388,7 @@ func objectEffectFor(result *PlanApplicationResult, ref sdk.ObjectRef) *PlanObje
 }
 
 func (e PlanExecutor) reconcileObjectEffect(ctx context.Context, result PlanApplicationResult, index int) (PlanApplicationResult, error) {
-	patch := result.Patches[index]
+	patch := &result.Patches[index]
 	if patch.Operation == "create" && (patch.After == nil || patch.After.GetUID() == "") {
 		return result, fmt.Errorf("create receipt unknown: ownership cannot be inferred without the server UID receipt")
 	}

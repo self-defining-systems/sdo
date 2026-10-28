@@ -363,7 +363,7 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	r.Applied = true
 	r.ActionsApplied = []program.Action{action}
 	if patch.Operation != "" {
-		err = e.observeObjectEffect(ctx, r.Patches[0])
+		err = e.observeObjectEffect(ctx, &r.Patches[0])
 		effect := PlanObjectEffect{Operation: patch.Operation, Ref: ref, Confirmed: err == nil, State: "applied", Irreversible: patch.Irreversible}
 		if before != nil {
 			effect.UID = string(before.GetUID())

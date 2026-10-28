@@ -115,7 +115,6 @@ func acceptanceRecordObject(ref sdk.ObjectRef, record string, live *unstructured
 	metadata := map[string]any{"name": ref.Name, "annotations": map[string]any{acceptedPathsAnnotation: record}}
 	if live != nil {
 		metadata["uid"] = string(live.GetUID())
-		metadata["resourceVersion"] = live.GetResourceVersion()
 	}
 	if ref.Namespace != "" {
 		metadata["namespace"] = ref.Namespace
