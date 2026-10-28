@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarks.sregym.fastloop import toy_images, worker_bridge
+from benchmarks.sregym.fastloop import app_images, toy_images, worker_bridge
 
 pytestmark = pytest.mark.requires_sregym
 
@@ -29,6 +29,9 @@ def test_bridge_delivery_then_in_node_tag_publishes_the_declared_ref(monkeypatch
         toy_images, "load_images", lambda cluster, images, **kw: events.extend(("deliver", i) for i in images) or {}
     )
     monkeypatch.setattr(source, "_build_image", lambda *args, **kwargs: None)
+    # Every image is already local under its content identity; the shared registry is unreachable.
+    monkeypatch.setattr(source, "local_image_identity", lambda ref: ref.rpartition("sregym-src-")[2][:64])
+    monkeypatch.setenv(app_images.REGISTRY_ENV, "127.0.0.1:9")
     monkeypatch.setattr(source, "_BUILT_IMAGES", set())
     monkeypatch.setattr(
         source,
