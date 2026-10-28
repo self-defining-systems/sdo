@@ -69,6 +69,7 @@ func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRe
 	}
 	started := time.Now()
 	var blockers []*contracts.RolloutBlocker
+	stalled := 0
 	for _, ref := range refs {
 		if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
 			continue
@@ -78,12 +79,18 @@ func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRe
 			return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
 		}
 		if !deployment.DeploymentRolloutComplete(object) {
-			blocker, admission := w.rolloutBlocker(ctx, object, started)
+			blocker, stuck, admission := w.rolloutBlocker(ctx, object, started)
 			if admission != nil {
 				return admission
 			}
 			blockers = append(blockers, blocker)
+			if stuck {
+				stalled++
+			}
 		}
+	}
+	if len(blockers) > 0 && stalled == len(blockers) {
+		return &rolloutBlockedError{blockers: blockers, cause: errRolloutStalled}
 	}
 	if len(blockers) > 0 {
 		return &rolloutBlockedError{blockers: blockers, cause: context.DeadlineExceeded}
@@ -91,6 +98,16 @@ func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRe
 	return nil
 }
 
+// rolloutStallGrace lets transient scheduling failures (a node joining, a
+// volume binding) clear before a stall is handed off.
+const rolloutStallGrace = 2 * time.Second
+
+// errRolloutStalled means waiting cannot complete a rollout; it never means
+// the rollout failed or that its writes should be undone.
+var errRolloutStalled = errors.New("rollout cannot progress without another actor")
+
+// Wait settles each Deployment on its own: it returns once every one has
+// completed or stalled, so a stalled rollout never spends the bounded wait.
 func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
 	if w.Client == nil {
 		return errors.New("Kubernetes rollout client is required")
@@ -98,12 +115,9 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	started := time.Now()
-	var blockers []*contracts.RolloutBlocker
-	diagnostics := map[sdk.ObjectRef]*contracts.RolloutBlocker{}
+	stalledSince := map[sdk.ObjectRef]time.Time{}
 	for {
-		settled := true
-		blockers = nil
-
+		var blockers, stalled []*contracts.RolloutBlocker
 		for _, ref := range refs {
 			if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
 				continue
@@ -112,18 +126,31 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 			if err != nil {
 				return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
 			}
-			if !deployment.DeploymentRolloutComplete(deploymentObject) {
-				settled = false
-				blocker, admission := w.rolloutBlocker(ctx, deploymentObject, started)
-				if admission != nil {
-					return admission
-				}
-				diagnostics[ref] = blocker
-				blockers = append(blockers, diagnostics[ref])
+			if deployment.DeploymentRolloutComplete(deploymentObject) {
+				delete(stalledSince, ref)
+				continue
+			}
+			blocker, stuck, admission := w.rolloutBlocker(ctx, deploymentObject, started)
+			if admission != nil {
+				return admission
+			}
+			blockers = append(blockers, blocker)
+			if !stuck {
+				delete(stalledSince, ref)
+				continue
+			}
+			if stalledSince[ref].IsZero() {
+				stalledSince[ref] = time.Now()
+			}
+			if time.Since(stalledSince[ref]) >= rolloutStallGrace {
+				stalled = append(stalled, blocker)
 			}
 		}
-		if settled {
+		if len(blockers) == 0 {
 			return nil
+		}
+		if len(stalled) == len(blockers) {
+			return &rolloutBlockedError{blockers: stalled, cause: errRolloutStalled}
 		}
 		select {
 		case <-ctx.Done():

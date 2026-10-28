@@ -218,6 +218,9 @@
     "agent_timeout",
     "request_too_large",
     "result_too_large",
+    "session_handoff_invalid",
+    "session_handoff_timeout",
+    "session_unavailable",
     "timeout",
     "worker_oom_killed",
     "worker_resources_rewritten"
@@ -308,6 +311,7 @@
     "already_attempted",
     "diagnose_no_longer_matches",
     "diagnose_unavailable",
+    "ineffective",
     "multiple_entry_points",
     "no_mitigation",
     "plan_not_executable",

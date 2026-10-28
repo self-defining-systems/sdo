@@ -65,7 +65,10 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 			continue
 		}
 		for _, spec := range registry.List() {
-			assignments := candidateBindings(spec, finding)
+			var assignments []program.Bindings
+			if bound, err := program.BindFinding(spec, finding); err == nil {
+				assignments = append(assignments, bound)
+			}
 			hintOnly := false
 			if len(assignments) == 0 {
 				for _, reference := range finding.Playbooks {
@@ -140,14 +143,6 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 	}
 	sortProgramRuns(runs)
 	return runs
-}
-
-func candidateBindings(spec program.ProgramSpec, finding sdk.Finding) []program.Bindings {
-	bindings, err := program.BindFinding(spec, finding)
-	if err != nil {
-		return nil
-	}
-	return []program.Bindings{bindings}
 }
 
 func cloneProgramBindings(source program.Bindings) program.Bindings {

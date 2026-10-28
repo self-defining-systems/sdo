@@ -553,11 +553,12 @@ def _run_one(
         cleanup_error = exc.cleanup_error
         recovered = False
         recovery_seconds = None
-        try:
-            recovery_seconds = _recover_fault(agent, driver, outcome)
-            recovered = cleanup_error is None
-        except Exception as recovery_exc:
-            cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
+        if not config.row_start_tier2:
+            try:
+                recovery_seconds = _recover_fault(agent, driver, outcome)
+                recovered = cleanup_error is None
+            except Exception as recovery_exc:
+                cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
         return IncidentRecord(
             run_id=config.run_id,
             index=index,
@@ -569,13 +570,14 @@ def _run_one(
             infra_error=exc.infra_error,
             recovery_error=cleanup_error,
             injection_evidence=exc.details,
+            cleanup_skipped_reason="row_start_tier2" if config.row_start_tier2 else None,
             error=cleanup_error,
             recovery_finished_at=now() if recovered else None,
             fault_recovery_seconds=recovery_seconds,
             incident_wall_seconds=monotonic() - started,
         ), recovered
     except KeyboardInterrupt:
-        if windows:
+        if windows and not config.row_start_tier2:
             try:
                 _recover_fault(agent, driver, outcome)
                 if not driver.oracle().success:

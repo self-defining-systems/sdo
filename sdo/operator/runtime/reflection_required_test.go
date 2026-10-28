@@ -5,6 +5,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,9 @@ import (
 	"sdo.dev/operator/runtime/lifecyclecore"
 )
 
-func TestReadmeOnlyVerifiedReflectionCommitsWithARecordedGap(t *testing.T) {
+// README text is judgement and ordering. A verified hand repair needs an
+// executable step, so README-only memory is rejected with the repair named.
+func TestReadmeOnlyVerifiedReflectionIsRejectedForRecordedHandRepair(t *testing.T) {
 	root := nativeRepository(t)
 	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(root, ".sdo"))
 	if err := os.Chmod(filepath.Join(root, ".sdo/playbooks/base/scripts/fix.sh"), 0755); err != nil {
@@ -61,11 +64,10 @@ func TestReadmeOnlyVerifiedReflectionCommitsWithARecordedGap(t *testing.T) {
 	state, _ = lifecyclecore.StepReflection(state, reviewed)
 	_, effects = lifecyclecore.StepReflection(state, lifecyclecore.ReflectionEvent{Kind: lifecyclecore.ReflectionDrive})
 	event, err := driver.Execute(context.Background(), effects[0])
-	if err != nil || event.Kind != lifecyclecore.ReflectionPublished || len(event.CoverageGaps) != 1 || event.CoverageGaps[0].Rule != "reflection.program-required" {
-		t.Fatalf("README-only repair must commit with a recorded gap: %+v %v", event, err)
+	if err != nil || event.Kind != lifecyclecore.ReflectionRejected || event.Commit != "" || len(event.Diagnostics) != 1 || event.Diagnostics[0].GetRule() != "reflection.program-required" || !strings.Contains(event.Diagnostics[0].GetMessage(), `"sdo-act-repair"`) {
+		t.Fatalf("README-only memory for a recorded hand repair must be rejected: %+v %v", event, err)
 	}
-	next, _ := lifecyclecore.StepReflection(state, event)
-	if len(next.ReflectionCoverageGaps) != 1 || next.ReflectionCoverageGaps[0].Rule != "reflection.program-required" {
-		t.Fatalf("gap not recorded in the ledger: %v", next)
+	if data, err := os.ReadFile(filepath.Join(root, ".sdo/playbooks/base/README.md")); err != nil || strings.Contains(string(data), "Additional response advice") {
+		t.Fatalf("rejected README reached accepted memory: %v", err)
 	}
 }

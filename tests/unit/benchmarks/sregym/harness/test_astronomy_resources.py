@@ -1,20 +1,13 @@
 """Keep the benchmark's rendered proxy budget at the proven LH no-fault baseline."""
 
-import shutil
-import subprocess
-import tarfile
 from pathlib import Path
 
-import pytest
 import yaml
 
 from benchmarks.sregym.adapter.lane_resources import LaneResourcePolicy
 
 ROOT = Path(__file__).resolve().parents[5]
-APPLICATIONS = ROOT / "third_party/sregym/SREGym-applications"
-OVERRIDES = ROOT / "third_party/sregym/sregym/service/metadata/astronomy-shop-resources.yaml"
-CHART = APPLICATIONS / "astronomy-shop/charts/opentelemetry-demo"
-DEPENDENCIES = ROOT / "tests/fixtures/benchmarks/astronomy-chart-dependencies"
+SOURCE = ROOT / "apps/astronomy_shop/kubernetes/astronomy-shop.yaml"
 MINIMUM_PROXY_MEMORY_MIB = 192
 GIB = 1024**3
 # OpenSearch must stay writable on a busy shared host that still passes lane admission.
@@ -54,19 +47,28 @@ PROVEN_LIMITS_MIB = {
 }
 
 
-def test_astronomy_proxy_override_preserves_proven_memory_floor() -> None:
-    values = yaml.safe_load(OVERRIDES.read_text())
-    proxy = values.get("components", {}).get("frontend-proxy", {})
-    memory = proxy.get("resources", {}).get("limits", {}).get("memory", "0")
-    assert values["opentelemetry-collector"]["resources"] == {
+def documents():
+    return [value for value in yaml.safe_load_all(SOURCE.read_text()) if value]
+
+
+def containers():
+    return {
+        container["name"]: container
+        for value in documents()
+        if value["kind"] in {"Deployment", "DaemonSet", "StatefulSet"}
+        for container in value["spec"]["template"]["spec"]["containers"]
+    }
+
+
+def test_accepted_proxy_source_preserves_proven_memory_floor() -> None:
+    selected = containers()
+    assert selected["opentelemetry-collector"]["resources"] == {
         "limits": {"memory": "448Mi"},
         "requests": {"memory": "200Mi"},
     }
+    memory = selected["frontend-proxy"]["resources"]["limits"]["memory"]
     assert memory.endswith("Mi")
-    assert int(memory[:-2]) >= MINIMUM_PROXY_MEMORY_MIB, (
-        "Astronomy frontend-proxy needs the proven 192Mi memory floor; "
-        "the old 65Mi chart default OOMs during the no-fault rehearsal"
-    )
+    assert int(memory[:-2]) >= MINIMUM_PROXY_MEMORY_MIB
 
 
 def assert_watermarks_below_admission_floor(search_config: str) -> None:
@@ -82,76 +84,35 @@ def assert_watermarks_below_admission_floor(search_config: str) -> None:
     assert parsed["low"] + WATERMARK_FLOOR_MARGIN_BYTES <= floor, (watermarks, floor)
 
 
-def test_astronomy_opensearch_watermarks_sit_far_below_admission_floor() -> None:
-    values = yaml.safe_load(OVERRIDES.read_text())
-    assert_watermarks_below_admission_floor(values["opensearch"]["config"]["opensearch.yml"])
-
-
-@pytest.mark.skipif(
-    shutil.which("helm") is None or not (CHART / "Chart.yaml").exists(),
-    reason="rendered contract requires Helm and the populated harness chart",
-)
-def test_astronomy_rendered_proxy_preserves_proven_memory_floor(tmp_path: Path) -> None:
-    # Always start cold: local helm dependency builds must not affect this test.
-    chart = tmp_path / "opentelemetry-demo"
-    shutil.copytree(CHART, chart, ignore=shutil.ignore_patterns("charts"))
-    dependencies = yaml.safe_load((chart / "Chart.yaml").read_text())["dependencies"]
-    for dependency in dependencies:
-        name, version = dependency["name"], dependency["version"]
-        archive = DEPENDENCIES / f"{name}-{version}.tgz"
-        with tarfile.open(archive) as package:
-            metadata = package.extractfile(f"{name}/Chart.yaml")
-            assert metadata is not None
-            packaged = yaml.safe_load(metadata.read())
-        assert (packaged["name"], packaged["version"]) == (name, version)
-        (chart / "charts").mkdir(exist_ok=True)
-        shutil.copy2(archive, chart / "charts" / archive.name)
-    rendered = subprocess.run(
-        [
-            "helm",
-            "template",
-            "astronomy-shop",
-            str(chart),
-            "--namespace",
-            "astronomy-shop",
-            "--values",
-            str(OVERRIDES),
-            "--set",
-            "prometheus.enabled=false",
-            "--show-only",
-            "templates/component.yaml",
-            "--show-only",
-            "charts/opentelemetry-collector/templates/daemonset.yaml",
-            "--show-only",
-            "charts/opensearch/templates/statefulset.yaml",
-            "--show-only",
-            "charts/grafana/templates/deployment.yaml",
-            "--show-only",
-            "charts/opensearch/templates/configmap.yaml",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
+def test_accepted_opensearch_watermarks_sit_below_admission_floor() -> None:
+    config = next(
+        item["data"]["opensearch.yml"]
+        for item in documents()
+        if item["kind"] == "ConfigMap" and "opensearch.yml" in item.get("data", {})
     )
-    workloads = [
-        item
-        for item in yaml.safe_load_all(rendered.stdout)
-        if item and item.get("kind") in {"Deployment", "DaemonSet", "StatefulSet"}
-    ]
-    containers = {
-        container["name"]: container
-        for item in workloads
-        for container in item["spec"]["template"]["spec"]["containers"]
-    }
+    assert_watermarks_below_admission_floor(config)
+
+
+def test_accepted_render_preserves_every_proven_container_memory_floor() -> None:
+    selected = containers()
     for name, minimum in PROVEN_LIMITS_MIB.items():
-        assert name in containers, f"missing rendered baseline container: {name}"
-        memory = containers[name]["resources"]["limits"]["memory"]
+        assert name in selected, f"missing accepted baseline container: {name}"
+        memory = selected[name]["resources"]["limits"]["memory"]
         assert memory.endswith("Mi"), (name, memory)
         assert int(memory[:-2]) >= minimum, (name, memory, minimum)
-    assert containers["opentelemetry-collector"]["resources"]["requests"]["memory"] == "200Mi"
-    configurations = [item for item in yaml.safe_load_all(rendered.stdout) if item and item.get("kind") == "ConfigMap"]
-    search_config = next(
-        item["data"]["opensearch.yml"] for item in configurations if "opensearch.yml" in item.get("data", {})
+
+
+def test_source_generator_reproduces_accepted_opensearch_policy() -> None:
+    import runpy
+    from copy import deepcopy
+
+    accepted = next(
+        item for item in documents() if item["kind"] == "ConfigMap" and item["metadata"]["name"] == "opensearch-config"
     )
-    assert_watermarks_below_admission_floor(search_config)
+    generated = deepcopy(accepted)
+    stock = yaml.safe_load(generated["data"]["opensearch.yml"])
+    for name in ("low", "high", "flood_stage"):
+        stock.pop(f"cluster.routing.allocation.disk.watermark.{name}")
+    generated["data"]["opensearch.yml"] = yaml.safe_dump(stock, sort_keys=False)
+    runpy.run_path(str(ROOT / "apps/astronomy_shop/render.py"))["prepare_baseline"](generated)
+    assert generated == accepted

@@ -49,7 +49,9 @@ func buildPlaybookCoverage(findings []sdk.Finding, runs []ProgramRun, view sdk.D
 				continue
 			}
 			fp := FindingFingerprint(finding)
-			if fp == run.FindingFingerprint && programExplainsFinding(finding, run.ProgramID) && coverageFindingRelated(view, finding, run.Bindings) {
+			// The run's fingerprint is the finding that bound it; its Match is
+			// the one explanation rule, shared with the automatic stage.
+			if fp == run.FindingFingerprint && coverageFindingRelated(view, finding, run.Bindings) {
 				covered[fp] = true
 				explained[fp] = true
 			}

@@ -15,7 +15,11 @@ const DefaultMitigationRolloutTimeout = 90 * time.Second
 
 // RolloutPendingError means writes landed but rollout completion is unverified.
 // It is neither permission to undo those writes nor independently verified repair.
-type RolloutPendingError struct{ Pending *contracts.RolloutPending }
+// Stalled means no unsettled rollout can progress without another actor.
+type RolloutPendingError struct {
+	Pending *contracts.RolloutPending
+	Stalled bool
+}
 
 func (e *RolloutPendingError) Error() string { return "rollout_pending: " + e.Pending.GetReason() }
 
@@ -50,9 +54,11 @@ func (e PlanExecutor) waitForRollouts(ctx context.Context, incident IncidentRequ
 	if errors.As(err, &admission) {
 		return admission.Pending, admission
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errRolloutStalled) {
 		return nil, err
 	}
+	// A stalled rollout is handed off as pending: its writes stay applied, and
+	// the blocker names what another actor must change.
 	pending := &contracts.RolloutPending{Reason: "rollout is settling; writes remain applied and are not independently verified"}
 	var blocked *rolloutBlockedError
 	if errors.As(err, &blocked) {
@@ -68,7 +74,7 @@ func (e PlanExecutor) waitForRollouts(ctx context.Context, incident IncidentRequ
 	if len(pending.Blockers) > 0 {
 		pending.Reason = fmt.Sprintf("%s/%s rollout is pending: %s", pending.Blockers[0].GetRef().GetKind(), pending.Blockers[0].GetRef().GetName(), pending.Blockers[0].GetReason())
 	}
-	return pending, &RolloutPendingError{Pending: pending}
+	return pending, &RolloutPendingError{Pending: pending, Stalled: errors.Is(err, errRolloutStalled)}
 }
 
 type rolloutBlockedError struct {
