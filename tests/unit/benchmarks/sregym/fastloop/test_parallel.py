@@ -187,7 +187,8 @@ def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monk
     def command(argv, **kwargs):
         from benchmarks.sregym.fastloop.cli import build_parser
 
-        args = build_parser().parse_args(argv[3:])
+        args = build_parser().parse_args(argv[argv.index("benchmarks.sregym.fastloop") + 1 :])
+        assert args.cleanup_passes == 1
         assert (args.provider, args.model) == (provider, model)
         stream = load_stream_config(args.stream)
         assert (stream.capability_mode, stream.permissive_responder) == ("permissive", True)

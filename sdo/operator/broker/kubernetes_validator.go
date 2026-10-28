@@ -117,6 +117,11 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 	}
 	name := "sdo-validator-" + hex.EncodeToString(random)
 	defer k.cleanup(name)
+	if k.OnPhase != nil {
+		if err := k.OnPhase(validationCtx, "network_canaries_started"); err != nil {
+			return ValidationJobReceipt{}, err
+		}
+	}
 	if err := k.proveIsolation(validationCtx, name); err != nil {
 		return ValidationJobReceipt{}, err
 	}
@@ -178,7 +183,9 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 
 // proveIsolation establishes the default-deny policy and, unless a recent proof
 // for this image still holds and the policy is unchanged, runs the allow and
-// deny canaries. Validator pods are always labelled for the same policy.
+// deny canaries. Validator pods are always labelled for the same policy. The
+// policy selects only labelled pods, so the unlabelled allow canary and the
+// labelled deny canary are independent controls and run at the same time.
 func (k KubernetesValidationJobClient) proveIsolation(ctx context.Context, name string) error {
 	image, now := k.Image, time.Now()
 	ttl := k.IsolationProofTTL
@@ -192,17 +199,17 @@ func (k KubernetesValidationJobClient) proveIsolation(ctx context.Context, name 
 			return nil
 		}
 	}
-	if err := k.createJob(ctx, k.canaryJob(name+"-allow", false)); err != nil {
+	if err := k.ensurePolicy(ctx); err != nil {
 		return err
 	}
-	if err := k.waitJob(ctx, name+"-allow"); err != nil {
-		return fmt.Errorf("validator network positive control: %w", err)
-	}
-	if err := k.ensurePolicy(ctx); err != nil {
+	if err := k.createJob(ctx, k.canaryJob(name+"-allow", false)); err != nil {
 		return err
 	}
 	if err := k.createJob(ctx, k.canaryJob(name+"-deny", true)); err != nil {
 		return err
+	}
+	if err := k.waitJob(ctx, name+"-allow"); err != nil {
+		return fmt.Errorf("validator network positive control: %w", err)
 	}
 	if err := k.waitJob(ctx, name+"-deny"); err != nil {
 		return fmt.Errorf("validator default-deny egress canary: %w", err)
