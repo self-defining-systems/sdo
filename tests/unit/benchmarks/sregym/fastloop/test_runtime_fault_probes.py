@@ -710,3 +710,62 @@ def test_tracker_baseline_retries_complete_kafka_capture(monkeypatch):
     assert tracker is not None
     assert tracker.poll().states[f.name] is True
     assert len(attempts) == 4
+
+
+#: JVM options a broker container sets for its own process (seen live: the demo image's
+#: OpenTelemetry agent made one consumer-group describe take 20-29 s against an 8 s budget).
+_BROKER_JVM_ENV = {
+    "KAFKA_OPTS": "-javaagent:/tmp/opentelemetry-javaagent.jar",
+    "KAFKA_HEAP_OPTS": "-Xmx400M -Xms400M",
+    "KAFKA_JVM_PERFORMANCE_OPTS": "-XX:+UseG1GC",
+    "KAFKA_GC_LOG_OPTS": "-Xlog:gc",
+    "KAFKA_JMX_OPTS": "-Dcom.sun.management.jmxremote",
+    "JMX_PORT": "9999",
+    "KAFKA_LOG4J_OPTS": "-Dlog4j.configuration=file:/broker/log4j.properties",
+    "KAFKA_DEBUG": "y",
+    "JAVA_TOOL_OPTIONS": "-javaagent:/tmp/agent.jar",
+    "JDK_JAVA_OPTIONS": "-javaagent:/tmp/agent.jar",
+    "_JAVA_OPTIONS": "-Xmx400M",
+}
+
+
+def test_every_kafka_cli_observation_starts_without_the_broker_jvm_options(tmp_path):
+    """Run each exec script in a real shell against stand-in Kafka tools under the broker's env."""
+    import os
+    import subprocess
+
+    from benchmarks.sregym.fastloop.runtime_observation import (
+        _EXEC_SCRIPTS,
+        KubectlObservationTransport,
+        ReadOnlyObservation,
+    )
+
+    tools = tmp_path / "kafka-bin"
+    tools.mkdir()
+    for tool in ("kafka-consumer-groups.sh", "kafka-get-offsets.sh"):
+        script = tools / tool
+        script.write_text(
+            "#!/bin/sh\n"
+            + "".join(f'[ -z "${{{name}+set}}" ] || echo "inherited {name}"\n' for name in _BROKER_JVM_ENV)
+        )
+        script.chmod(0o755)
+    kafka_operations = [operation for operation, script in _EXEC_SCRIPTS.items() if "/opt/kafka/bin/" in script]
+    assert {"kafka_offsets", "kafka_progress"} <= set(kafka_operations)
+    for operation in kafka_operations:
+        captured = []
+
+        def run(command, **kwargs):
+            captured.append(command)
+            return subprocess.CompletedProcess(command, 0, "")
+
+        KubectlObservationTransport(namespace="app", run=run)(ReadOnlyObservation(operation, "kafka-pod", "kafka"))
+        script = captured[0][captured[0].index("-c", 10) + 1].replace("/opt/kafka/bin/", f"{tools}/")
+        completed = subprocess.run(
+            ["sh", "-c", script, "sdo-read-only-observation"],
+            env={"PATH": os.environ["PATH"], **_BROKER_JVM_ENV},
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        assert "inherited" not in completed.stdout, (operation, completed.stdout)
