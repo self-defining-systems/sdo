@@ -101,6 +101,6 @@ def test_incident_data_cap_preserves_overflow_instead_of_inline_memory_bodies() 
     request = incident(5, oversized=True)
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= 12000
-        assert "Full:" in rendered
+        assert '"details_file"' in rendered
         assert "手" * 100 not in rendered
         assert "検" * 100 not in rendered
