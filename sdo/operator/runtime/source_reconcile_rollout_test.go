@@ -169,7 +169,8 @@ func TestSourceConvergenceWaitsForKubernetesOldObjects(t *testing.T) {
 				}
 			} else {
 				var partial *SourceReconcilePartialError
-				if !errors.As(err, &partial) || report.Converged || result.VerificationPassed || time.Now().Before(deadline) || !strings.Contains(strings.Join(report.ResidualPaths, " "), "old-pod") {
+				var pending *RolloutPendingError
+				if errors.As(err, &pending) || result.RolloutPending != nil || !errors.As(err, &partial) || report.Converged || result.VerificationPassed || time.Now().Before(deadline) || !strings.Contains(strings.Join(report.ResidualPaths, " "), "old-pod") {
 					t.Fatalf("deadline lost residual: report=%v err=%v", report, err)
 				}
 			}
