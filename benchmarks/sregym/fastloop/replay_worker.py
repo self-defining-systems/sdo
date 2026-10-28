@@ -29,6 +29,7 @@ from benchmarks.sregym.fastloop.replay import (
 from sdo.agents.responder import (
     CodexSessionBackend,
     SessionReflector,
+    capture_sections,
     execute_incident,
     run_reflection_task,
     run_worker_task,
@@ -126,8 +127,9 @@ class CapturedKubernetesAPI:
 
 def _objects(snapshot: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
     result: dict[tuple[str, str], dict[str, Any]] = {}
+    sections = capture_sections(snapshot)
     for kind, collection in (("Service", "services"), ("Deployment", "deployments")):
-        for item in snapshot.get(collection, []):
+        for item in sections.get(collection, []):
             result[(kind, item["metadata"]["name"])] = item
     return result
 

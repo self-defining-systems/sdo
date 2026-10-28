@@ -23,6 +23,7 @@ from google.protobuf import json_format
 from sdo.agents.health_judge import run_judge_task
 from sdo.agents.responder import (
     KubernetesResultPublisher,
+    capture_sections,
     ReflectionTurn,
     await_standby_claim,
     recorded_actions,
@@ -595,7 +596,7 @@ def _captured_pair(capture: Path, open_at: str = "detect") -> tuple[str, str] | 
     fixed_path = capture / "fixed.json"
     if not open_path.is_file() or not fixed_path.is_file():
         return None
-    opened, fixed = (json.loads(path.read_text(encoding="utf-8")) for path in (open_path, fixed_path))
+    opened, fixed = (capture_sections(json.loads(path.read_text(encoding="utf-8"))) for path in (open_path, fixed_path))
     fixed_services = {item["metadata"]["name"]: item for item in fixed.get("services", [])}
     for item in opened.get("services", []):
         name = item["metadata"]["name"]
@@ -634,7 +635,7 @@ def _captured_policy_pair(capture: Path, open_at: str) -> tuple[str, str] | None
     opened_path, fixed_path = capture / f"open@{open_at}.json", capture / "fixed.json"
     if not opened_path.is_file() or not fixed_path.is_file():
         return None
-    opened, fixed = (json.loads(path.read_text(encoding="utf-8")) for path in (opened_path, fixed_path))
+    opened, fixed = (capture_sections(json.loads(path.read_text(encoding="utf-8"))) for path in (opened_path, fixed_path))
     fixed_policies = {item["metadata"]["name"]: item for item in (fixed.get("networkPolicies") or [])}
     for item in opened.get("networkPolicies") or []:
         name = item["metadata"]["name"]
@@ -779,7 +780,6 @@ class ScriptedReflector:
         for name, data in {
             "open.json": opened,
             "fixed.json": fixed,
-            "healthy.json": fixed,
             "recordings.json": (capture / f"open@{open_at}-recordings.json").read_bytes(),
         }.items():
             (case / name).write_bytes(data)
