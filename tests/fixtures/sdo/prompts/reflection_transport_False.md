@@ -10,17 +10,8 @@ Committed outcomes are authoritative; memory is fallible advice and accepted sou
 
 Go has settled covered items and materialized their evidence in this checkout. Preserve Go-owned cases and address only the per-cause questions in the same incident session. A false-match fixed capture is a required NoMatch regression. Missing controller captures do not block learning from recorded session observations. Return updated whenever final files include Go or agent edits.
 Per-cause work:
-{
-  "causes": [],
-  "unassigned": [
-    {
-      "program_id": "repair-0",
-      "disposition": "question",
-      "question": "Which live observation establishes the repair?",
-      "reason": "synthetic work item"
-    }
-  ]
-}
+{"causes":[],"unassigned":[{"program_id":"repair-0","disposition":"question","question":"Which live observation establishes the repair?","reason":"synthetic work item","detail_fields_omitted":0}],"unassigned_settled_items_omitted":0,"full_work_path":"<context file>"}
+{"causes": [], "unassigned": [{"item_index": 0}]}
 Outcome commit: dddddddddddddddddddddddddddddddddddddddd
 Operational memory snapshot:
 {
@@ -49,15 +40,12 @@ Operational memory snapshot:
 
 Full outcome and memory index: referenced files; open only what you need.
 Current outcome:
+{"incident_id":"toy-incident","classification":"failed","repair_actions":[],"full_current_outcome_path":"<context file>"}
 {
-  "incident_id": "toy-incident",
-  "classification": "failed",
   "findings": [],
   "confirmed_root_causes": [],
-  "repair_actions": [],
   "plan_applications": [],
-  "undetected_causes": [],
-  "full_current_outcome_path": "<context file>"
+  "undetected_causes": []
 }
 
 Outcome history (prior incidents, compact): none

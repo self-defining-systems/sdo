@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from sdo.agents.responder.continuation import ContinuationFeedback, continuation_prompt
+from sdo.agents.prompt_templates import PromptBudgetError
+from sdo.agents.responder.continuation import MAX_CONTINUATION_CHARS, ContinuationFeedback, continuation_prompt
 from tests.context_helpers import expand_context
 
 
@@ -54,7 +55,7 @@ def test_ten_receipt_continuation_fits_complete_prompt_budget() -> None:
 
     payload = ten_receipt_continuation()
     prompt = continuation_prompt(json.dumps(payload))
-    assert len(prompt) <= 1500
+    assert len(prompt) <= MAX_CONTINUATION_CHARS
     assert "".join(part.text for part in prompt.parts) == prompt
     broken, done = prompt.split("already_done:", 1)
     for index in (8, 9):
@@ -62,6 +63,7 @@ def test_ten_receipt_continuation_fits_complete_prompt_budget() -> None:
         assert action_id(index) not in done
     for index in range(8):
         assert action_id(index) in done
+    assert all(finding["fingerprint"] in broken for finding in payload["still_broken"])
     assert "Forbidden" in broken
     assert "synthetic typed mutation" not in prompt
     evidence = Path(expand_context(prompt).split("Full JSON: ", 1)[1].splitlines()[0])
@@ -107,8 +109,9 @@ def test_continuation_large_fields_are_bounded_and_full_evidence_survives() -> N
     payload["already_done"][0]["summary"] = "receipt\n" * 4000
     payload["already_done"][1]["rolled_back"] = True
     prompt = continuation_prompt(json.dumps(payload))
-    assert len(prompt) <= 1500
+    assert len(prompt) <= MAX_CONTINUATION_CHARS
     assert "verification unavailable" in prompt
+    assert all(action_id(index) in prompt for index in range(10))
     assert action_id(1) not in prompt.split("already_done:", 1)[1]
     evidence = Path(expand_context(prompt).split("Full JSON: ", 1)[1].splitlines()[0])
     assert json.loads(evidence.read_text()) == payload
@@ -130,17 +133,13 @@ def test_typed_failure_reason_and_same_name_other_namespace_are_not_success() ->
     assert action_id(0) in done
 
 
-def test_large_inventory_explicitly_counts_omitted_rows_without_losing_evidence() -> None:
+def test_oversized_required_inventory_fails_instead_of_summarizing_rows() -> None:
     from tests.unit.sdo.agents.responder.continuation_cases import ten_receipt_continuation
 
     payload = ten_receipt_continuation()
     payload["still_broken"] *= 30
-    prompt = continuation_prompt(json.dumps(payload))
-    assert len(prompt) <= 1500
-    assert "still_broken: (90)" in prompt
-    assert "Summary" in prompt
-    evidence = Path(expand_context(prompt).split("Full JSON: ", 1)[1].splitlines()[0])
-    assert len(json.loads(evidence.read_text())["still_broken"]) == 90
+    with pytest.raises(PromptBudgetError, match="continuation.incident_data.*required"):
+        continuation_prompt(json.dumps(payload))
 
 
 def test_source_differences_are_shown_as_information_not_as_broken_findings() -> None:
@@ -167,7 +166,7 @@ def test_source_differences_are_shown_as_information_not_as_broken_findings() ->
 
 
 @pytest.mark.parametrize("count", [1, 40])
-def test_continuation_names_unconfirmed_detectors_within_budget(count: int) -> None:
+def test_continuation_keeps_blockers_or_fails_when_required_rows_do_not_fit(count: int) -> None:
     payload = {
         "attempt": 1,
         "healthy": False,
@@ -179,10 +178,25 @@ def test_continuation_names_unconfirmed_detectors_within_budget(count: int) -> N
             for index in range(count)
         ],
     }
+    if count == 40:
+        with pytest.raises(PromptBudgetError, match="continuation.incident_data.*required"):
+            continuation_prompt(json.dumps(payload))
+        return
     prompt = continuation_prompt(json.dumps(payload))
     assert "verification_blockers" in prompt
     assert "health-0" in prompt
     assert "observation window" in prompt
-    assert len(prompt) <= 1500
+    assert len(prompt) <= MAX_CONTINUATION_CHARS
     evidence = Path(expand_context(prompt).split("Full JSON: ", 1)[1].splitlines()[0])
     assert json.loads(evidence.read_text()) == payload
+
+
+def test_required_action_identity_cannot_be_shortened_to_hide_overflow():
+    from tests.unit.sdo.agents.responder.continuation_cases import ten_receipt_continuation
+
+    payload = ten_receipt_continuation()
+    identity = "synthetic-action-" + "a" * 2000
+    payload["already_done"][0]["action_id"] = identity
+    payload["already_done"][0]["receipt"]["action_id"] = identity
+    with pytest.raises(PromptBudgetError, match="continuation.incident_data.*required"):
+        continuation_prompt(json.dumps(payload))

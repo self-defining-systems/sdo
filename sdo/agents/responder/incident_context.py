@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from sdo.agents.context_output import budget_for
-from sdo.agents.prompt_templates import count_chars, render_prompt
+from sdo.agents.prompt_templates import PromptBudgetError, count_chars, render_prompt
 from sdo.agents.responder.reflection_evidence import playbook_description
 from sdo.agents.responder.rollout_release import release_lines
 from sdo.agents.responder.tool_output import write_json
@@ -284,24 +284,28 @@ def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[s
 
 
 def _fit(brief: dict[str, Any]) -> dict[str, Any]:
-    """Trim the longest list first, counting omissions, until the message fits its budget."""
+    """Trim optional lists by priority; performed stage actions are never droppable."""
 
     def lists() -> dict[str, list[Any]]:
         return {
-            "findings": brief["findings"],
-            "stage_actions": brief.get("stage_actions", []),
-            "rollout_releases": brief.get("rollout_releases", []),
+            "playbook_documents": list(brief.get("playbook_documents", {})),
             "program_runs": brief.get("program_runs", []),
             "playbook_coverage.matches": brief["playbook_coverage"]["matches"],
-            "playbook_documents": list(brief.get("playbook_documents", {})),
+            "findings": brief["findings"],
+            "rollout_releases": brief.get("rollout_releases", []),
         }
 
     # Measure before the renderer's generic cap, which must never see this message.
     framing = count_chars(_render_data({})) - count_chars(_encode({}))
     while framing + count_chars(_encode(brief)) > MAX_INCIDENT_SUMMARY_CHARS:
-        name, items = max(lists().items(), key=lambda item: len(item[1]))
-        if not items:
-            raise ValueError("responder brief exceeds its budget without any list to trim")
+        candidates = [(name, items) for name, items in lists().items() if items]
+        if not candidates:
+            size = framing + count_chars(_encode(brief))
+            raise PromptBudgetError(
+                f"responder.incident_data: required content is {size} characters, "
+                f"budget is {MAX_INCIDENT_SUMMARY_CHARS}; performed repair actions cannot be omitted"
+            )
+        name, items = candidates[0]
         if name == "playbook_documents":
             brief["playbook_documents"].pop(items[-1])
             brief["playbook_index"].pop(items[-1], None)

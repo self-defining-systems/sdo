@@ -4,11 +4,13 @@ Use existing gates when extending a contract. New agent implementations and comm
 
 | Owner / tool | Contract and extension point |
 | --- | --- |
-| `sdo/agents/prompt_templates.py` | The sole prompt renderer/provider dispatch boundary. `prompt_sections.json` enumerates every template placeholder and names its cap in `prompt_budgets.toml`. A missing cap fails at runtime. |
+| `sdo/agents/prompt_templates.py` | The sole prompt renderer/provider dispatch boundary. `prompt_sections.json` enumerates every template placeholder and names its cap in `prompt_budgets.toml`. A missing cap or overflowing required section fails at runtime. Required parts survive composition unchanged; optional parts explicitly opt into ranked trimming with counts. |
 | `tests/unit/sdo/agents/prompts/test_context_registry.py` | Enumerates capability registrations, all production Python source, every prompt template and registered MCP/CLI tool. Add production render fixtures for new registered capabilities. AST negative controls guard bypasses. |
 | `tests/unit/sdo/agents/prompts/test_production_caps.py` | Real-scale generated inputs through production prompt/CLI/MCP producers. Every registered tool needs an executable fixture; unknown registrations fail. |
+| `tests/unit/sdo/agents/prompts/test_required_content.py` | Always-run required-content ratchet: every agent render, every template placeholder, fresh/retry composition and synthetic profiles at recorded run19 cardinalities (91 questions, 24 repairs). Overflow negative controls prove required content cannot be summarized; the responder-stage overflow regression also runs in `check_errors.sh`. |
 | `sdo/agents/context_output.py` | Shared lossless spill/summary boundary, including JSON framing, file pointers, Unicode and byte budgets. Full values remain in private session files. |
 | `libs/agent_cli/provider_capacity.py` | Shared provider admission owner; resolves pool paths and rejects checkout-contained coordination metadata before creating files or starting a CLI. Negative controls cover the checkout itself, descendants and symlink aliases. |
+| `scripts/prepare_opus_host_pool.py` | Provision static host tokens and hard-link aliases under existing kind extraMount roots; reject different alias inodes or capacity without replacing live files. |
 | `scripts/check_skill_sizes.py` | Glob-based skill document size gate in `check_errors.sh`; 100 lines/1,200 words per SKILL.md, 2,000 words/12k characters per reference file. |
 | `scripts/gen_skill_references.sh` | Generate SDK indexes and bounded topic files from `go doc`; `--check` rejects missing, stale and orphan generated files. |
 | `scripts/update_prompt_goldens.py` | Regenerate normalized prompt goldens after intentional changes. |
