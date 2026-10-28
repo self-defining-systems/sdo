@@ -420,8 +420,8 @@ type TrafficSnapshotProvider struct {
 	Base                          SnapshotProvider
 	Observer                      *TrafficObserver
 	Reachability                  *ServiceReachabilityObserver
-	Baseline                      *servicehealth.ReachabilityBaseline
-	SourceInputs, ObjectiveDigest string
+	// Reference is this cluster's reachability baseline; nil means no record.
+	Reference *ReachabilityReference
 }
 
 func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -436,7 +436,7 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	var reachability *servicehealth.ReachabilityWindow
 	if p.Reachability != nil {
 		window, _ := p.Reachability.Window()
-		window.Baseline, window.SourceInputs, window.ObjectiveDigest = p.Baseline, p.SourceInputs, p.ObjectiveDigest
+		p.Reference.bind(&window)
 		reachability = &window
 	}
 	return trafficContext{ScopedObservationSource: scopedSource(base), DetectionContext: base, windows: windows, reachability: reachability}, nil

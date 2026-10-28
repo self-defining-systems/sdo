@@ -498,12 +498,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		defer reachabilityObserver.Stop()
 	}
 	var snapshotProvider SnapshotProvider = kubernetesCache
+	// Each cluster's reachability baseline is controller state below the
+	// lane-private repository mount, never shared accepted memory.
+	var reachabilityReference *ReachabilityReference
 	if trafficObserver != nil || reachabilityObserver != nil {
-		baseline, sourceInputs, objective, err := loadReachabilityBaseline(ctx, resolvedRoot, resolvedSourceCommit)
+		reachabilityReference, err = loadReachabilityBaseline(ctx, *repositoryMountPath, resolvedRoot, resolvedSourceCommit, func(err error) { fmt.Fprintln(stderr, err) })
 		if err != nil {
 			return err
 		}
-		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver, Baseline: baseline, SourceInputs: sourceInputs, ObjectiveDigest: objective}
+		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver, Reference: reachabilityReference}
 	}
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
@@ -1032,7 +1035,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return fmt.Errorf("sync Kubernetes informer cache: %w", err)
 		}
 		if launchConfig != nil && options.NativeBroker != nil {
-			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, options.NativeBroker.Repository, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, detectors); err != nil {
+			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, *repositoryMountPath, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, reachabilityReference, detectors); err != nil {
 				return err
 			}
 		}
@@ -1088,7 +1091,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return fmt.Errorf("resume observation of namespace %s: %w", *namespace, syncErr)
 		}
 		if launchConfig != nil && options.NativeBroker != nil {
-			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, options.NativeBroker.Repository, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, detectors); err != nil {
+			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, *repositoryMountPath, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, reachabilityReference, detectors); err != nil {
 				return err
 			}
 		}
@@ -1589,14 +1592,9 @@ func evaluateOnce(
 		}
 		return WriteSourceInventoryReport(stdout, *sourceDriftReport, index, cache.SourceDriftObjects())
 	}
+	// Deployment-time evaluation runs before any controller measured this
+	// cluster, so it judges reachability without a recorded baseline.
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
-	if *appRoot != "" {
-		baseline, sourceInputs, objective, err := loadReachabilityBaseline(ctx, *appRoot, readCommit)
-		if err != nil {
-			return err
-		}
-		trafficProvider.Baseline, trafficProvider.SourceInputs, trafficProvider.ObjectiveDigest = baseline, sourceInputs, objective
-	}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if *proberURL == "" {
 			return errors.New("traffic health evaluation requires a live prober URL")
