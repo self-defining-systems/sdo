@@ -30,19 +30,17 @@ func AgentEnvironment(provider, model, effort string) (map[string]string, error)
 	if effort != "" && !slices.Contains(AgentEfforts, effort) {
 		return nil, fmt.Errorf("unsupported agent effort %q: must be one of %v", effort, AgentEfforts)
 	}
+	environment := ProviderCapacityEnvironment()
+	if effort != "" {
+		environment[EffortEnvironment] = effort
+	}
 	if provider == "" {
-		if effort != "" {
-			return map[string]string{EffortEnvironment: effort}, nil
-		}
-		return map[string]string{}, nil
+		return environment, nil
 	}
 	if provider != "codex" && provider != "claude" {
 		return nil, fmt.Errorf("unsupported responder backend %q: must be codex or claude", provider)
 	}
-	environment := map[string]string{ProviderEnvironment: provider}
-	if effort != "" {
-		environment[EffortEnvironment] = effort
-	}
+	environment[ProviderEnvironment] = provider
 	if model != "" {
 		for _, name := range ModelEnvironments {
 			environment[name] = model
