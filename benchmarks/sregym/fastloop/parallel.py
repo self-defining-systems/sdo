@@ -18,6 +18,8 @@ from benchmarks.sregym.fastloop.records import IncidentRecord, load_records, wri
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
 
 class Encounter(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -88,6 +90,18 @@ def preflight_lane(name: str, run_dir: Path, plan: ParallelPlan) -> None:
     assert_shared_lane(environment)
 
 
+def lane_process_environment(environment: FastloopEnvironment, lanes: int) -> dict[str, str]:
+    """One host CPU budget for concurrent lane processes (prepare and encounters): 8 build jobs in total."""
+    jobs = max(1, 8 // lanes)
+    return {
+        **os.environ,
+        "KUBECONFIG": str(environment.kubeconfig),
+        "SREGYM_BASE_KUBECONFIG": str(environment.kubeconfig),
+        "GOMAXPROCS": str(jobs),
+        "GOFLAGS": f"{os.environ.get('GOFLAGS', '')} -p={jobs}".strip(),
+    }
+
+
 def execute_lane(
     name: str, directory: Path, encounters: Sequence[Encounter], plan: ParallelPlan
 ) -> list[IncidentRecord]:
@@ -134,16 +148,14 @@ def execute_lane(
         "2",
     ]
     command.extend(plan.worker_arguments())
-    jobs = max(1, 8 // len(plan.lanes))
-    child_environment = {
-        **os.environ,
-        "KUBECONFIG": str(environment.kubeconfig),
-        "SREGYM_BASE_KUBECONFIG": str(environment.kubeconfig),
-        "GOMAXPROCS": str(jobs),
-        "GOFLAGS": f"{os.environ.get('GOFLAGS', '')} -p={jobs}".strip(),
-    }
     with (directory / "worker.log").open("w") as log:
-        completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False, env=child_environment)
+        completed = subprocess.run(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+            env=lane_process_environment(environment, len(plan.lanes)),
+        )
     path = results / "incidents.jsonl"
     rows = load_records(path) if path.exists() else []
     if completed.returncode or len(rows) != len(encounters):
