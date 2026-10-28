@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -75,4 +76,24 @@ func (c GenericPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid ty
 		return err
 	}
 	return resource.Delete(ctx, ref.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &version}})
+}
+
+func (c GenericPlanClient) RecordAcceptance(ctx context.Context, ref sdk.ObjectRef, record string, live *unstructured.Unstructured) error {
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return err
+	}
+	if c.Objects == nil {
+		return c.TypedPlanClient.RecordAcceptance(ctx, ref, record, live)
+	}
+	resource, err := c.Objects.Resource(ref)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(acceptanceRecordObject(ref, record, live).Object)
+	if err != nil {
+		return err
+	}
+	force := true
+	_, err = resource.Patch(ctx, ref.Name, types.ApplyPatchType, body, metav1.PatchOptions{FieldManager: acceptanceFieldManager, Force: &force})
+	return err
 }

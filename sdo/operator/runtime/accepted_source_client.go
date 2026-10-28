@@ -108,11 +108,23 @@ func (r acceptedResource) apply(ctx context.Context, ref sdk.ObjectRef, source *
 // recordAcceptance writes only the acceptance record, under its own field
 // manager, so later deployer applies that omit it leave it in place.
 func (r acceptedResource) recordAcceptance(ctx context.Context, ref sdk.ObjectRef, record string) error {
+	return r.recordInstanceAcceptance(ctx, ref, record, nil)
+}
+
+func acceptanceRecordObject(ref sdk.ObjectRef, record string, live *unstructured.Unstructured) *unstructured.Unstructured {
 	metadata := map[string]any{"name": ref.Name, "annotations": map[string]any{acceptedPathsAnnotation: record}}
-	if r.namespaced {
+	if live != nil {
+		metadata["uid"] = string(live.GetUID())
+		metadata["resourceVersion"] = live.GetResourceVersion()
+	}
+	if ref.Namespace != "" {
 		metadata["namespace"] = ref.Namespace
 	}
-	_, err := r.applyAs(ctx, ref, &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": metadata}}, false, acceptanceFieldManager)
+	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": metadata}}
+}
+
+func (r acceptedResource) recordInstanceAcceptance(ctx context.Context, ref sdk.ObjectRef, record string, live *unstructured.Unstructured) error {
+	_, err := r.applyAs(ctx, ref, acceptanceRecordObject(ref, record, live), false, acceptanceFieldManager)
 	return err
 }
 
