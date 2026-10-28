@@ -172,6 +172,9 @@ def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monk
     monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", "/wrong-lane")
 
     def command(argv, **kwargs):
+        from benchmarks.sregym.fastloop.cli import build_parser
+
+        assert build_parser().parse_args(argv[argv.index("benchmarks.sregym.fastloop") + 1 :]).cleanup_passes == 1
         assert kwargs["env"]["SREGYM_BASE_KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["GOMAXPROCS"] == "4"

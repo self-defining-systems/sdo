@@ -101,7 +101,7 @@ def finish(plan: SequencePlan, index: int, path: Path) -> None:
             recovery_oracle=OracleVerdict(kind="health-check", success=True),
             recovery_finished_at=now,
             full_cleanup_verified=True,
-            cleanup_passes_verified=2,
+            cleanup_passes_verified=1,
             reflection_finished_at=now,
             artifacts_dir=str(artifact),
         ),
@@ -181,7 +181,7 @@ def test_unacknowledged_native_memory_blocks_repeat(plan: SequencePlan) -> None:
         run_sequence(plan, execute=execute)
 
 
-@pytest.mark.parametrize("updates", [{"full_cleanup_verified": False}, {"cleanup_passes_verified": 1}])
+@pytest.mark.parametrize("updates", [{"full_cleanup_verified": False}, {"cleanup_passes_verified": 0}])
 def test_partial_cleanup_cannot_advance_the_sequence(plan: SequencePlan, updates: dict) -> None:
     def execute(p: SequencePlan, index: int, path: Path) -> None:
         finish(p, index, path)
@@ -229,7 +229,8 @@ def test_busy_host_waits_before_starting_the_guarded_native_runner(plan: Sequenc
     parsed = build_parser().parse_args(command[boundary + 2 :])
     assert parsed.require_fault_tracking
     assert parsed.require_full_cleanup
-    assert parsed.cleanup_passes == 2
+    # One verified cleanup pass per eval row; repeated passes are a rehearsal check.
+    assert parsed.cleanup_passes == 1
     assert parsed.provider == "codex"
     assert parsed.model == "gpt-6-luna"
 

@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.parallel_memory import memory_ancestry, memory_head
-from benchmarks.sregym.fastloop.records import load_records
+from benchmarks.sregym.fastloop.records import EVAL_CLEANUP_PASSES, load_records
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -126,7 +126,7 @@ def execute_row(plan: SequencePlan, index: int, results: Path) -> None:
         "--require-fault-tracking",
         "--require-full-cleanup",
         "--cleanup-passes",
-        "2",
+        str(EVAL_CLEANUP_PASSES),
         "--continue-on-error",
     ]
     directory = plan.journal_dir / f"{index:03d}"
@@ -185,7 +185,7 @@ def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object
                 or not record.recovery_oracle
                 or not record.recovery_oracle.success
                 or not record.full_cleanup_verified
-                or record.cleanup_passes_verified != 2
+                or record.cleanup_passes_verified != EVAL_CLEANUP_PASSES
             )
         )
         or record.reflection_finished_at is None
