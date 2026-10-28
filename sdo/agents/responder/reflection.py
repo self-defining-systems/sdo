@@ -3,10 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import time
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 
 from agentshim import SessionResumeError
@@ -17,17 +14,18 @@ from libs.agent_cli.structured import (
     AgentProvider,
     StructuredTurn,
     StructuredTurnError,
-    run_structured_turn,
     turn_usage,
 )
 from sdo.agents.code_paths import agent_guidance
+from sdo.agents.context_output import save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
+from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
-from sdo.agents.responder.reflection_evidence import memory_view
+from sdo.agents.responder.reflection_evidence import reflection_memory_view
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.responder.session_turn import (
     WrongBranchError,
@@ -46,6 +44,7 @@ REFLECTION_SESSION_MODES: tuple[ReflectionSessionMode, ...] = ("resume", "fresh"
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from pathlib import Path
 
     from agentshim import CommandExecutor
 
@@ -111,12 +110,6 @@ class ReflectionTurn(BaseModel):
             raise ValueError("reflection requires logical playbook IDs")
         if len(set(self.playbook_ids)) != len(self.playbook_ids):
             raise ValueError("reflection playbook IDs must be unique")
-        if (
-            self.decline_reason == "no_recorded_repair"
-            and self.learning_decision == "no_change"
-            and self.no_change_reason != "no recorded repair"
-        ):
-            raise ValueError("no_recorded_repair no_change uses the canonical no recorded repair reason")
         if self.learning_decision == "no_change" and self.sdk_gaps:
             raise ValueError("no_change reflection cannot report SDK gaps")
         if self.learning_decision in {"no_change", "sdk_gap"}:
@@ -174,6 +167,16 @@ class ReflectionDeadlineExceeded(RuntimeError):
     """The reflection used its whole budget before the agent returned a valid result."""
 
 
+class ReflectionCorrectionStopped(RuntimeError):
+    """A blocking check cannot be corrected safely within this dispatch."""
+
+    def __init__(
+        self, reason: Literal["unchanged_validation_failure", "validation_budget_reserved"], check: ValidationResult
+    ) -> None:
+        self.reason = reason
+        super().__init__(f"reflection memory check failed ({reason}): {check.stdout}\n{check.stderr}")
+
+
 def reflection_budget_seconds() -> float:
     """Seconds the reflection agent may use, ending before the frozen task deadline."""
     raw = os.environ.get(REFLECTION_DEADLINE_ENV)
@@ -195,13 +198,40 @@ def _logical_learning_request(
     outcome_commit: str,
     closure: IncidentClosure,
     guidance: ReflectionGuidance,
-    history_directory: Path | None = None,
     cause_work: Sequence[ReflectionCauseWork] = (),
     unassigned_work: Sequence[ReflectionWorkItem] = (),
 ) -> RenderedPrompt:
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     snapshot = closure.request.memory_snapshot
+    findings = [*outcome.findings, *closure.request.findings]
+    linked = {finding.detector_id for finding in findings}
+    linked.update(playbook for finding in findings for playbook in finding.playbook_ids)
+    linked.update([*outcome.applied_playbooks, *outcome.confirmed_playbooks, *outcome.rejected_playbooks])
+    linked.update(run.program_id for run in outcome.program_runs)
+    linked.update(match.playbook_id for match in closure.request.playbook_coverage.matches)
+    memory_index = reflection_memory_view(snapshot, outcome, linked_ids=linked)
+    _, memory_path = save_context(json.dumps(memory_index, indent=2))
+    _, outcome_path = save_context(json_format.MessageToJson(outcome, preserving_proto_field_name=True))
+    outcome_view = current_outcome_view(outcome)
+    outcome_summary = {
+        key: outcome_view[key]
+        for key in (
+            "incident_id",
+            "classification",
+            "findings",
+            "confirmed_root_causes",
+            "repair_actions",
+            "plan_applications",
+            "undetected_causes",
+            "final_detector_states",
+            "source_check_notes",
+            "disabled_setup_detectors",
+        )
+        if key in outcome_view
+    }
+    outcome_summary["full_current_outcome_path"] = outcome_path
+    memory_index["full_index_path"] = memory_path
     if agent_guidance() == "shell":
         return render_prompt(
             "responder",
@@ -209,12 +239,10 @@ def _logical_learning_request(
             part="reflection.instructions",
             skills_root=SKILLS_ROOT,
             branch_instruction=branch_instruction("reflection"),
-            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_view(snapshot), indent=2)),
+            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2)),
             outcome_commit=outcome_commit,
-            outcome_json=named_prompt(
-                "reflection.outcome", json_format.MessageToJson(outcome, preserving_proto_field_name=True)
-            ),
-            history_section=named_prompt("reflection.history", _history_section(outcome, history, history_directory)),
+            outcome_json=named_prompt("reflection.outcome", json.dumps(outcome_summary, indent=2)),
+            history_section=named_prompt("reflection.history", _history_section(outcome, history)),
         )
     work_section = ""
     if cause_work or unassigned_work:
@@ -236,11 +264,9 @@ def _logical_learning_request(
         branch_instruction=branch_instruction("reflection"),
         work_section=named_prompt("reflection.cause_work", work_section),
         outcome_commit=outcome_commit,
-        memory_view_json=named_prompt("reflection.memory", json.dumps(memory_view(snapshot), indent=2)),
-        current_outcome_view_json=named_prompt(
-            "reflection.outcome", json.dumps(current_outcome_view(outcome), indent=2)
-        ),
-        history_section=named_prompt("reflection.history", _history_section(outcome, history, history_directory)),
+        memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2)),
+        current_outcome_view_json=named_prompt("reflection.outcome", json.dumps(outcome_summary, indent=2)),
+        history_section=named_prompt("reflection.history", _history_section(outcome, history)),
     )
     if closure.request.HasField("namespace_onboarding"):
         prompt += render_prompt(
@@ -254,10 +280,27 @@ def _logical_learning_request(
     return prompt
 
 
-def _history_section(
-    outcome: OutcomeRecord, history: list[OutcomeRecord], evidence_directory: Path | None = None
-) -> str:
-    prior = history_view(history, current_incident_id=outcome.incident_id, evidence_directory=evidence_directory)
+def _history_section(outcome: OutcomeRecord, history: list[OutcomeRecord]) -> str:
+    detector_ids = {finding.detector_id for finding in outcome.findings}
+    playbook_ids = set(outcome.applied_playbooks) | set(outcome.confirmed_playbooks)
+    resources = {
+        (ref.kind, ref.namespace, ref.name) for cause in outcome.confirmed_root_causes for ref in cause.resources
+    }
+    relevant = [
+        record
+        for record in history
+        if (
+            any(finding.detector_id in detector_ids for finding in record.findings)
+            or playbook_ids.intersection(record.applied_playbooks)
+            or playbook_ids.intersection(record.confirmed_playbooks)
+            or any(
+                (ref.kind, ref.namespace, ref.name) in resources
+                for cause in record.confirmed_root_causes
+                for ref in cause.resources
+            )
+        )
+    ]
+    prior = history_view(relevant[-3:], current_incident_id=outcome.incident_id)
     if not prior:
         return render_prompt("responder", "history_section_01", part="reflection.instructions")
     return render_prompt(
@@ -300,84 +343,81 @@ class SessionReflector:
             raise ValueError(f"unsupported reflection session mode: {session_mode!r}")
         if closure is None or not closure.request.HasField("memory_snapshot"):
             raise ValueError("reflection requires a logical memory snapshot")
-        with TemporaryDirectory(prefix="sdo-reflection-history-") as history_directory:
-            request = _logical_learning_request(
-                outcome=outcome,
-                history=history,
-                outcome_commit=outcome_commit,
-                closure=closure,
-                guidance=self.guidance,
-                history_directory=Path(history_directory),
-                cause_work=cause_work,
-                unassigned_work=unassigned_work,
+        request = _logical_learning_request(
+            outcome=outcome,
+            history=history,
+            outcome_commit=outcome_commit,
+            closure=closure,
+            guidance=self.guidance,
+            cause_work=cause_work,
+            unassigned_work=unassigned_work,
+        )
+        idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
+        if diagnostics:
+            # Keep the incident session; only rejected-edit feedback is new.
+            prompt = render_prompt(
+                "responder",
+                "reflection_retry",
+                part="reflection.instructions",
+                render_validation_feedback=named_prompt(
+                    "reflection.validation_feedback", render_validation_feedback(validation_attempt, diagnostics)
+                ),
+                request=request,
             )
-            idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
-            if diagnostics:
-                # Keep the incident session; only rejected-edit feedback is new.
-                prompt = render_prompt(
-                    "responder",
-                    "reflection_retry",
-                    part="reflection.instructions",
-                    render_validation_feedback=named_prompt(
-                        "reflection.validation_feedback", render_validation_feedback(validation_attempt, diagnostics)
-                    ),
-                    request=request,
-                )
-                if session_mode == "resume":
-                    return self.backend.resume(
-                        session_id=session_id, worktree=worktree, prompt=prompt, idempotency_key=idempotency_key
-                    )
-                return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-            if session_mode == "fresh":
-                if agent_guidance() == "shell":
-                    prompt = render_prompt(
-                        "responder", "reflection_shell_fresh", part="reflection.instructions", request=request
-                    )
-                    return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-                if closure is None:
-                    raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
-                # The brief replaces the responder transcript, which a resumed
-                # session would re-send on every model request.
-                brief = incident_brief(
-                    closure,
-                    worktree=worktree,
-                    detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
-                    event_dependence=self.guidance == "generalize-spec",
-                )
-                prompt = render_prompt(
-                    "responder", "reflection_fresh", part="reflection.instructions", brief=brief, request=request
-                )
-                return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-            prompt = render_prompt("responder", "reflection_resume", part="reflection.instructions", request=request)
-            try:
+            if session_mode == "resume":
                 return self.backend.resume(
-                    session_id=session_id,
-                    worktree=worktree,
-                    prompt=prompt,
-                    idempotency_key=idempotency_key,
+                    session_id=session_id, worktree=worktree, prompt=prompt, idempotency_key=idempotency_key
                 )
-            except ResponderSessionUnavailable as exc:
-                print(render_prompt("responder", "resume_04", part="reflection.instructions", exc=exc), file=sys.stderr)
-                return self.resume(
-                    session_id=session_id,
-                    incident_id=incident_id,
-                    worktree=worktree,
-                    outcome=outcome,
-                    history=history,
-                    outcome_commit=outcome_commit,
-                    session_mode="fresh",
-                    closure=closure,
-                    cause_work=cause_work,
-                    unassigned_work=unassigned_work,
+            return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
+        if session_mode == "fresh":
+            if agent_guidance() == "shell":
+                prompt = render_prompt(
+                    "responder", "reflection_shell_fresh", part="reflection.instructions", request=request
                 )
+                return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
+            if closure is None:
+                raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
+            # The request already contains the complete accepted inventory;
+            # the brief replaces only the missing responder transcript.
+            brief = incident_brief(
+                closure,
+                include_memory=False,
+                worktree=worktree,
+                detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
+                event_dependence=self.guidance == "generalize-spec",
+            )
+            prompt = render_prompt(
+                "responder", "reflection_fresh", part="reflection.instructions", brief=brief, request=request
+            )
+            return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
+        prompt = render_prompt("responder", "reflection_resume", part="reflection.instructions", request=request)
+        return self.backend.resume(
+            session_id=session_id,
+            worktree=worktree,
+            prompt=prompt,
+            idempotency_key=idempotency_key,
+        )
 
 
 def memory_check_correction(check: ValidationResult, idempotency_key: str) -> RenderedPrompt:
+    details = check.stdout + "\n" + check.stderr
+    feedback = details
+    try:
+        report = json.loads(check.stdout)
+        diagnostics = report.get("diagnostics", [])
+        if diagnostics:
+            feedback = "\n".join(
+                f"[{item.get('rule', '')}] {item.get('path', '')}: {item.get('message', '')}" for item in diagnostics
+            )
+            _, path = save_context(details)
+            feedback += "\nFull check: " + path
+    except (ValueError, AttributeError, TypeError):
+        pass
     correction = render_prompt(
         "responder",
         "reflection_check_correction",
         part="reflection.instructions",
-        diagnostics=named_prompt("reflection.validation_feedback", check.stdout + "\n" + check.stderr),
+        diagnostics=named_prompt("reflection.validation_feedback", feedback),
     )
     return render_prompt(
         "responder",
@@ -442,11 +482,20 @@ class CodexSessionBackend:
     ) -> ReflectionTurn:
         budget = reflection_budget_seconds() if self.timeout_seconds is None else self.timeout_seconds
         deadline = time.monotonic() + budget
+        # Keep validation inside the frozen worker budget. Small explicit test or
+        # operator budgets reserve the same fraction, up to one full check.
+        validation_reserve = min(VALIDATION_TIMEOUT_SECONDS, budget / 3)
 
         def remaining() -> float:
             left = deadline - time.monotonic()
             if left <= 0:
                 raise ReflectionDeadlineExceeded(f"reflection exceeded its {budget:g}s budget")
+            return left
+
+        def agent_remaining() -> float:
+            left = remaining() - validation_reserve
+            if left <= 0:
+                raise ReflectionDeadlineExceeded("reflection validation budget reserved; no agent budget remains")
             return left
 
         turn = self._run(
@@ -455,9 +504,10 @@ class CodexSessionBackend:
                 "responder", "turn_01", part="reflection.instructions", idempotency_key=idempotency_key, prompt=prompt
             ),
             session_id=session_id,
-            timeout_seconds=budget,
+            timeout_seconds=agent_remaining(),
         )
         usage: dict[str, int | float] = {}
+        previous_failure: ValidationResult | None = None
         for attempt in range(4):
             for name, value in turn_usage(turn).items():
                 usage[name] = usage.get(name, 0) + value
@@ -468,7 +518,7 @@ class CodexSessionBackend:
                     worktree=worktree,
                     prompt=branch_correction("reflection"),
                     session_id=turn.session_id,
-                    timeout_seconds=remaining(),
+                    timeout_seconds=agent_remaining(),
                 )
                 for name, value in turn_usage(turn).items():
                     usage[name] = usage.get(name, 0) + value
@@ -486,11 +536,16 @@ class CodexSessionBackend:
                 ).with_usage(usage)
             if attempt == 3 or time.monotonic() >= deadline:
                 raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
+            if check == previous_failure:
+                raise ReflectionCorrectionStopped("unchanged_validation_failure", check)
+            if remaining() <= validation_reserve:
+                raise ReflectionCorrectionStopped("validation_budget_reserved", check)
+            previous_failure = check
             turn = self._run(
                 worktree=worktree,
                 prompt=memory_check_correction(check, idempotency_key),
                 session_id=turn.session_id,
-                timeout_seconds=remaining(),
+                timeout_seconds=agent_remaining(),
             )
         raise AssertionError("unreachable reflection validation state")
 
@@ -508,7 +563,7 @@ class CodexSessionBackend:
                 timeout_seconds=timeout_seconds,
                 resume_session_id=session_id,
                 executor=self.executor,
-                **session_turn_options(self.provider, worktree),
+                **session_turn_options(self.provider, worktree, phase="reflection"),
             )
         except StructuredTurnError as exc:
             if session_id is not None and (
@@ -532,3 +587,6 @@ class ClaudeSessionBackend(CodexSessionBackend):
     """Resume the responder's own Claude Code session to reflect on its outcome."""
 
     provider: ClassVar[AgentProvider] = "claude"
+
+
+render_reflection_prompt = _logical_learning_request

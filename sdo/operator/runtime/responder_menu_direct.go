@@ -92,7 +92,9 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 				bindings = append(bindings, request.Bindings)
 			} else {
 				for _, finding := range l.Request.Findings {
-					bindings = append(bindings, candidateBindings(spec, finding)...)
+					if bound, err := program.BindFinding(spec, finding); err == nil {
+						bindings = append(bindings, bound)
+					}
 				}
 				// Namespace-sweep matches can bind resources absent from findings.
 				// Offer the exact option identified by incident-open coverage.

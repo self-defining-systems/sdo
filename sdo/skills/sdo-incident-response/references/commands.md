@@ -6,7 +6,7 @@ The incident prompt carries one capability line per command. Read this reference
 
 ## Output
 
-Use `--json` before or after the command; for `act`, put SDO options before the wrapped command's `--`. Read commands return the complete JSON response; their default text points to a complete JSON file. Mutations return a compact JSON envelope with `command`, `summary`, `details_file`, `incident_verified` and conditional `error`/`failure_reason`/`hint`. The envelope is limited to 2048 UTF-8 bytes; query `details_file` for complete evidence. The worker provides `jq` for JSON extraction.
+Use `--json` before or after the command; for `act`, put SDO options before the wrapped command's `--`. Read commands return bounded JSON; overflow envelopes point to the complete response file. their default text points to a complete JSON file. Mutations return a compact JSON envelope with `command`, `summary`, `details_file`, `incident_verified` and conditional `error`/`failure_reason`/`hint`. The envelope is limited to 2048 UTF-8 bytes; query `details_file` for complete evidence. The worker provides `jq` for JSON extraction.
 
 Response keys below are conditional: absence is not success or health. Ordinary responses share `command`, `summary`, `healthy`, optional `error` and optional `incident_verified.{verified_at,message}`. Only independent verification establishes recovery. A pending detector reason is unproven health. Closed-incident reads/reports remain available; new mutations are rejected.
 
@@ -53,195 +53,18 @@ Example: sdo plan targetport --bind service=Service/app/api
 Action output separates target progress from incident verification and lists fixed, new (possible regression), and unchanged findings from authoritative controller progress. Mutation stdout is at most 2048 UTF-8 bytes, including JSON framing and newline. Every invocation saves the complete findings/evidence, program_runs, execution reports and receipts under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. The response includes a readable path (a compact copy if needed) and a generated schema for querying its arrays. incident_verified is an extra informational warning; reads/reports keep their normal results, and new mutations are rejected.
 ```
 
-## status
-
-read findings and detector confirmation
-
-```text
-sdo status [-h]
-```
-
-Key JSON fields: `healthy, findings[], detector_states[], drift[], drift_events[], program_runs[]`.
-
-## detect
-
-run fresh detectors; pending health is unproven
-
-```text
-sdo detect [-h] [--detector ID [ID ...]]
-```
-
-- `--detector`: detector IDs to run; repeat for more IDs (default: all)
-
-Key JSON fields: `healthy, findings[], detector_states[]`.
-
-## check
-
-run detectors and verify closure; --detector ID selects detectors
-
-```text
-sdo check [-h] [--detector ID [ID ...]]
-```
-
-- `--detector`: detector IDs to run; repeat for more IDs (default: all)
-
-Key JSON fields: `healthy, findings[], detector_states[], detection (fresh detect response)`.
-
-## diagnose
-
-evaluate a bound program
-
-```text
-sdo diagnose [-h] [--bind NAME=Kind/namespace/name] [program_id]
-```
-
-Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
-
-- `--bind`: named program parameter; repeat for each binding
-
-```text
-Example: sdo diagnose targetport --bind service=Service/app/api
-```
-
-Key JSON fields: `program_runs[].{program_id, program_revision, verdict, can_mitigate}, program_revisions`.
-
-## plan
-
-plan a bound program repair
-
-```text
-sdo plan [-h] [--finding FINGERPRINT] [--bind NAME=Kind/namespace/name] program_id
-```
-
-SetField updates a schema-checked field by index or unique name, optionally from accepted source; ConfigMap JSON/YAML entries preserve unrelated keys.
-Object edits write atomically per object; use strategic patches for keyed lists.
-CreateFromSource restores a named missing object, including declared file-generated ConfigMaps, from accepted source. Source/config restores may recycle blocked dependent Pods once; Pod deletion receipts are irreversible.
-ReconcileFromSource converges source-owned configuration, removes additions since acceptance, and reports residual source differences and remaining old-revision ReplicaSets/Pods. The Deployment controller and responder handle the rollout.
-DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.
-Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
-
-- `--finding`: target finding fingerprint; repeat for each intended finding
-- `--bind`: named program parameter; repeat for each binding
-
-Key JSON fields: `plan_id, patches[], program_runs[], program_revisions`.
-
-## menu
-
-list controller mitigation options
-
-```text
-sdo menu [-h] [--bind NAME=Kind/namespace/name] [program_id]
-```
-
-Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
-
-- `--bind`: named program parameter; repeat for each binding
-
-Key JSON fields: `menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, selection_schema, selection_set_schema, unexplained_removal_blockers[]`.
-
-## apply
-
-apply a previously planned repair
-
-```text
-sdo apply [-h] plan_ids [plan_ids ...]
-```
-
-Complete report fields (`details_file`): `actions[].{application_id, targeted_healthy, mitigation_health, program_runs, program_revisions, report}`.
-
-## mitigate
-
-apply independent options; --finding FINGERPRINT scopes verification; overlapping writes refused
-
-```text
-sdo mitigate [-h] [--finding FINGERPRINT] [--rounds ROUNDS] [--selection FILE] [--selection-set FILE] [--option ID] [--param NAME=VALUE] [--match ID] [--bind NAME=REF] [option]
-```
-
-Apply independent options; overlapping writes are refused. Repeat --option ID with --param NAME=VALUE, or use --selection-set FILE with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. --match ID selects a playbook_coverage match; --bind narrows it. Each option has a receipt; one call uses one of five rounds. --NAME VALUE also sets parameters. Pending rollout retains its application ID and allows reads; rollout_stalled releases writes once stuck or at its bound. Source reconciliation waits for old objects to drain; persistent differences return source_residual. Script fixes are learnable; unlinked bytes are refused as script_unprovenanced. Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
-
-- `option`: advertised option ID or unambiguous program ID
-- `--finding`: target finding fingerprint; repeat for each intended finding
-- `--rounds`: maximum rounds within the remaining incident allowance
-- `--selection-set`: version 1 selection set with per-option bindings and parameters
-- `--option`: independent option ID; repeat, with per-option --param arguments
-- `--match`: playbook ID of a ready playbook_coverage match
-- `--bind`: with --match: only the match binding NAME to REF (Kind/namespace/name); repeat
-
-```text
-Advertised option IDs remain valid for this session across filtered menu calls. Learned program preconditions are rechecked against live state before any batch writes.
-```
-
-```text
-Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. sdo menu exports recursive parameters[].schema for every option, plus selection_schema and selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. CLI --param NAME=VALUE accepts JSON text for structured values. SyncWebhookCA privately copies a named Secret key into one webhook caBundle; only its reference and digest are returned. EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth username/password take exactly one credential reference: {env: NAME} or {config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. Assignment selects one literal NAME=value line. The executor resolves values privately; never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable. The result reads the catalog back: action_results[].database_user states the verified user and outcome (created, updated or already_correct). Failures use execution_failed, authorization_denied or outcome_unknown; details retain the safe database diagnostic. A verified user does not mean the application recovered.
-```
-
-Complete report fields (`details_file`): `actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending, program_revisions}, option_reports[]`.
-
-## report
-
-retrieve a settled mitigation report
-
-```text
-sdo report [-h] --incident-id INCIDENT_ID --session-id SESSION_ID --epoch EPOCH attempt_id
-```
-
-Key JSON fields: `report.{status, attempt_id, rounds}, session`.
-
-## source
-
-inspect accepted source for one resource
-
-```text
-sdo source [-h] Kind/namespace/name
-```
-
-```text
-Example: sdo source Deployment/app/api
-```
-
-Key JSON fields: `source (accepted Kubernetes object)`.
-
-## act
-
-record a command with --resource Kind/namespace/name
-
-```text
-sdo act [-h] --resource Kind/namespace/name [--summary SUMMARY] [--irreversible] ...
-```
-
-Run one live mutation and record its repair receipt (target, resources, timing, outcome and command line). The command's exit code is returned. Do not hand-write receipts. Report one cause per independently fixable fault and record a separate act for each, declaring only that cause's resources, so each receipt is attributed to its cause; combine only faults that can't be fixed separately. When an admission control blocks recovery and its backend is gone, restore the backend if you can. Otherwise a scoped fail-open or removal that restores availability is acceptable; report it. SDO options go before --; the command after it runs verbatim, except that a kubectl command may also carry SDO's --json, --summary and --irreversible, which kubectl never defines. A rejected command line returns a one-line hint with the correct form.
-
-- `--resource`: object the command mutates (Kind/name when cluster-scoped); repeat for each one
-- `--summary`: one line describing the repair
-- `--irreversible`: the mutation cannot be undone
-- `act_command`: the mutating command
-
-```text
-Example: sdo act --resource Deployment/app/api -- kubectl -n app set image deployment/api api=img:1.2
-```
-
-Complete report fields (`details_file`): `actions[].{success, exit_code, receipt, output, failure_reason, hint}`.
-
-## verify
-
-read cached controller verification; optionally await a stable verdict
-
-```text
-sdo verify [-h] [--wait SECONDS]
-```
-
-Reads the controller's cached health verdict immediately; drift[] lists objects that still differ from accepted source and never decides healthy. After a healthy return, SDO may resume once for source differences when progress remains; terminal inventory and no-progress stops do not resume. restore them or explain the intended difference. Pending observation windows, including unproven synthetic scenarios, are not healthy. verification_blockers names incomplete detectors and reasons. SDO resumes once for these blockers, then stops any running blocker turn and records an unconfirmed outcome at the verification bound if they persist. Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, including after recorded actions; inspect their evidence before repeating workload writes. Wait on SDO's verification instead of sleeping. After closure, incident_verified is an informational warning on every response; reads and reports remain available, while mutations are rejected. After verified closure, report grace and outcome/reflection work continue during maintenance pauses.
-
-- `--wait`: wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)
-
-Key JSON fields: `healthy, unresolved, findings[], detector_states[], verification_blockers[{detector_id,reason}], drift[], drift_events[]`.
-
-## rollback
-
-roll back a plan application
-
-```text
-sdo rollback [-h] application_id
-```
-
-Complete report fields (`details_file`): `actions[].{application_id, summary, error}`.
+## Commands
+
+- [status](commands/status.md)
+- [detect](commands/detect.md)
+- [check](commands/check.md)
+- [diagnose](commands/diagnose.md)
+- [plan](commands/plan.md)
+- [menu](commands/menu.md)
+- [apply](commands/apply.md)
+- [mitigate](commands/mitigate.md)
+- [report](commands/report.md)
+- [source](commands/source.md)
+- [act](commands/act.md)
+- [verify](commands/verify.md)
+- [rollback](commands/rollback.md)

@@ -172,6 +172,7 @@ type HTTPProbe struct {
 }
 
 // Diff is the shared accepted-source or baseline comparison result.
+// A delete-style Diagnose matches on diff.PresentButNotInSource(), not SourceAbsent, which stays true after the delete.
 type Diff = sdk.SourceDiff
 
 type Result string

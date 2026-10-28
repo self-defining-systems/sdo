@@ -157,21 +157,47 @@ func acceptanceRecordBound(observed, source *unstructured.Unstructured) bool {
 // object was recreated, or the record stripped): what changed meanwhile is
 // unknown. Its undeclared fields that another writer owns then stay additions;
 // only declared fields, the deployer's fields and unowned server defaults are
-// accepted. ok is false when the record would exceed the size limit.
-func buildAcceptanceRecord(source, applied, live *unstructured.Unstructured, reaccepted bool) (string, bool, error) {
+// accepted. A record the object still carries from its earlier instance stays
+// its acceptance point, rebound to the live UID: the fields it accepted, at
+// their accepted values, stay accepted whoever owns them now (the request
+// that recreates an object owns every server default it filled in); only its
+// changed values and fields it never had are additions. defaults is the
+// server's render of accepted source alone (nil when unavailable): a
+// configuration scalar equal to its default there is the server's, not a
+// writer's, so it is accepted by value whoever owns it. ok is false when the
+// record would exceed the size limit.
+func buildAcceptanceRecord(source, applied, live, defaults *unstructured.Unstructured, reaccepted bool) (string, bool, error) {
 	carried := map[string]bool{}
-	if previous, ok := readAcceptanceRecord(live); ok {
+	previous, hadRecord := readAcceptanceRecord(live)
+	if hadRecord {
 		for _, path := range additionsAgainst(live, previous, source) {
+			carried[path] = true
+		}
+		for _, path := range changedAcceptedValues(live, previous) {
 			carried[path] = true
 		}
 	}
 	if reaccepted {
 		declared := flattenDriftObject(source)
 		owned := ownedByOtherWriters(live)
-		for path := range flattenDriftObject(applied) {
-			if ownsDriftPath(owned, path) && !declaredPath(declared, path) {
-				carried[path] = true
+		acceptedBefore := map[string]bool{}
+		if hadRecord {
+			for _, path := range previous.Paths {
+				acceptedBefore[path] = true
 			}
+		}
+		rendered := map[string]any{}
+		if defaults != nil {
+			rendered = flattenDriftObject(defaults)
+		}
+		for path, value := range flattenDriftObject(applied) {
+			if !ownsDriftPath(owned, path) || declaredPath(declared, path) || acceptedBefore[path] {
+				continue
+			}
+			if fallback, ok := rendered[path]; ok && value != nil && valueTracked(path) && sameScalar(value, fallback) {
+				continue
+			}
+			carried[path] = true
 		}
 	}
 	paths := []string{}
@@ -459,7 +485,7 @@ func removeAddedFields(next, observed, source *unstructured.Unstructured) {
 // RecordAcceptance sets on object the acceptance record that adoption would
 // take against source over the object as it is now.
 func RecordAcceptance(object, source *unstructured.Unstructured) error {
-	record, fits, err := buildAcceptanceRecord(source, object, object, false)
+	record, fits, err := buildAcceptanceRecord(source, object, object, nil, false)
 	if err != nil {
 		return err
 	}

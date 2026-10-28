@@ -19,7 +19,7 @@ func (Detector) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk.Find
 	if err != nil {
 		return nil, err
 	}
-	if !diff.Changed || !diff.SourceAbsent {
+	if !diff.PresentButNotInSource() {
 		return nil, nil
 	}
 	return []sdk.Finding{{DetectorID: "source-absent-binding", RuleID: "source-absent-binding", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "Unexpected authority absent from accepted source", Evidence: diff.Text, PrimaryResource: ref, ParameterBindings: map[string]sdk.ObjectRef{"binding": ref}, Playbooks: []string{"source-absent-binding"}}}, nil

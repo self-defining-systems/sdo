@@ -12,17 +12,16 @@ raw evidence.
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import re
 from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
+from sdo.agents.context_output import save_context
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from sdo.contracts import DetectorEvaluation, ObjectRef, OutcomeRecord
 
@@ -104,7 +103,6 @@ def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
 # Keep head and tail so command failures and final status remain visible. Full
 # responses can be retrieved from the committed outcome, rather than replayed
 # into every reflection model request.
-_TOOL_RESPONSE_MAX_CHARS = 4000
 
 
 def _canonical(value: Any) -> str:
@@ -138,7 +136,6 @@ def _collapse_program_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 _QUIET_RESULTS = {"RESULT_NO_MATCH": "no_match", "RESULT_UNKNOWN": "unknown"}
 _SUMMARY_MAX_PROGRAMS = 30
 _SUMMARY_MAX_REASONS = 3
-_SUMMARY_REASON_MAX_CHARS = 160
 _SUMMARY_MAX_BINDINGS = 5
 
 
@@ -178,7 +175,7 @@ def split_quiet_program_runs(runs: list[dict[str, Any]]) -> tuple[list[dict[str,
     for key, summary in ordered[:_SUMMARY_MAX_PROGRAMS]:
         distinct = reasons.get(key, [])
         if distinct:
-            summary["unknown_reasons"] = [text[:_SUMMARY_REASON_MAX_CHARS] for text in distinct[:_SUMMARY_MAX_REASONS]]
+            summary["unknown_reasons"] = list(distinct[:_SUMMARY_MAX_REASONS])
             if len(distinct) > _SUMMARY_MAX_REASONS:
                 summary["unknown_reasons_omitted"] = len(distinct) - _SUMMARY_MAX_REASONS
         if bindings.get(key):
@@ -237,18 +234,13 @@ def _collapse_tool_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
             previous[1]["last_at"] = call.get("at")
             continue
         entry = {**call, "evaluations": 1, "last_at": call.get("at"), "outcome_call_index": index}
-        if len(response) > _TOOL_RESPONSE_MAX_CHARS:
-            half = _TOOL_RESPONSE_MAX_CHARS // 2
-            entry["response_json"] = response[:half] + "\n[... omitted ...]\n" + response[-half:]
-            entry["response_json_omitted_chars"] = len(response) - _TOOL_RESPONSE_MAX_CHARS
-            entry["response_json_sha256"] = hashlib.sha256(call["response_json"].encode()).hexdigest()
-            entry["corpus_refs"] = _corpus_refs(parsed_response if parsed_response is not None else response)
-            if isinstance(parsed_response, dict):
-                entry["response_status"] = {
-                    key: parsed_response[key]
-                    for key in ("error", "summary", "application_id", "plan_id", "healthy", "unresolved")
-                    if key in parsed_response
-                }
+        entry["corpus_refs"] = _corpus_refs(parsed_response if parsed_response is not None else response)
+        if isinstance(parsed_response, dict):
+            entry["response_status"] = {
+                key: parsed_response[key]
+                for key in ("error", "summary", "application_id", "plan_id", "healthy", "unresolved")
+                if key in parsed_response
+            }
         retained.append(entry)
         latest[identity] = (signature, entry)
     return retained
@@ -261,52 +253,45 @@ def _resource(ref: ObjectRef) -> str:
 # Prior history is context, not the current repair's evidence. Bound both the
 # number of entries and each narrative so a single long incident stays small.
 _HISTORY_ITEMS = 2
-_HISTORY_TEXT_CHARS = 160
-
-
-def _history_text(value: str) -> str:
-    if len(value) <= _HISTORY_TEXT_CHARS:
-        return value
-    return value[:_HISTORY_TEXT_CHARS] + " [omitted]"
 
 
 def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
     """A bounded orientation summary; the full prior record is available by reference."""
 
     view: dict[str, Any] = {
-        "incident_id": _history_text(record.incident_id),
-        "classification": _history_text(record.classification),
+        "incident_id": record.incident_id,
+        "classification": record.classification,
         "findings": [
             {
-                "detector_id": _history_text(finding.detector_id),
-                "rule_id": _history_text(finding.rule_id),
-                "summary": _history_text(finding.summary),
-                "fingerprint": _history_text(finding.fingerprint),
-                "primary_resource": _history_text(_resource(finding.primary_resource)),
+                "detector_id": finding.detector_id,
+                "rule_id": finding.rule_id,
+                "summary": finding.summary,
+                "fingerprint": finding.fingerprint,
+                "primary_resource": _resource(finding.primary_resource),
             }
             for finding in record.findings[:_HISTORY_ITEMS]
         ],
         "confirmed_root_causes": [
             {
-                "summary": _history_text(cause.summary),
-                "resources": [_history_text(_resource(ref)) for ref in cause.resources[:_HISTORY_ITEMS]],
+                "summary": cause.summary,
+                "resources": [_resource(ref) for ref in cause.resources[:_HISTORY_ITEMS]],
             }
             for cause in record.confirmed_root_causes[:_HISTORY_ITEMS]
         ],
         "repair_actions": [
             {
-                "kind": _history_text(action.kind),
-                "target": _history_text(action.target),
-                "summary": _history_text(action.summary),
+                "kind": action.kind,
+                "target": action.target,
+                "summary": action.summary,
                 "success": action.success,
             }
             for action in record.repair_actions[:_HISTORY_ITEMS]
         ],
-        "applied_playbooks": [_history_text(value) for value in record.applied_playbooks[:_HISTORY_ITEMS]],
-        "confirmed_playbooks": [_history_text(value) for value in record.confirmed_playbooks[:_HISTORY_ITEMS]],
-        "rejected_playbooks": [_history_text(value) for value in record.rejected_playbooks[:_HISTORY_ITEMS]],
+        "applied_playbooks": list(record.applied_playbooks[:_HISTORY_ITEMS]),
+        "confirmed_playbooks": list(record.confirmed_playbooks[:_HISTORY_ITEMS]),
+        "rejected_playbooks": list(record.rejected_playbooks[:_HISTORY_ITEMS]),
         "detector_evaluations": len(record.detector_history),
-        "memory_commit": _history_text(record.memory_commit) if record.HasField("memory_commit") else None,
+        "memory_commit": record.memory_commit if record.HasField("memory_commit") else None,
     }
     for field in (
         "findings",
@@ -322,22 +307,14 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
     return {key: value for key, value in view.items() if value is not None and value != [] and value != 0}
 
 
-def history_view(
-    history: Sequence[OutcomeRecord], *, current_incident_id: str, evidence_directory: Path | None = None
-) -> list[dict[str, Any]]:
-    """Every prior incident the request carries (Go keeps the latest few); the current one is shown separately."""
-
-    prior = [record for record in history if record.incident_id != current_incident_id]
+def history_view(history: Sequence[OutcomeRecord], *, current_incident_id: str) -> list[dict[str, Any]]:
+    """Index each prior outcome; complete records survive every turn in the session."""
     views = []
-    for record in prior:
+    for record in history:
+        if record.incident_id == current_incident_id:
+            continue
         view = prior_outcome_view(record)
-        if evidence_directory is not None:
-            # IDs are data, never paths. These private copies live outside the
-            # proposal tree and survive the backend's in-session corrections.
-            name = f"{len(views)}.json"
-            path = evidence_directory / name
-            with open(path, "w", encoding="utf-8", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
-                stream.write(json_format.MessageToJson(record, preserving_proto_field_name=True))
-            view["full_outcome_path"] = str(path)
+        path, _ = save_context(json_format.MessageToJson(record, preserving_proto_field_name=True))
+        view["full_outcome_path"] = str(path)
         views.append(view)
     return views

@@ -521,6 +521,9 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 		return unpublished(errors.New("standby claim is too old to publish before the pod expires"))
 	}
 	environment := cloneEnvironment(e.Environment)
+	for _, identity := range workerIdentityEnvironment() {
+		delete(environment, identity.Name)
+	}
 	environment["SDO_REQUEST_SHA256"] = taskRequestDigest(task)
 	environment["SDO_RESULT_CONFIGMAP"] = b.JobName + "-result"
 	environment["SDO_NAMESPACE"] = e.Namespace

@@ -95,6 +95,7 @@ def test_responder_and_reflection_turns_send_the_same_model_visible_schema_and_m
     )
     reflection = _Recorder(provider, reflection_root, _REFLECTION, "reflection")
 
+    monkeypatch.setenv("SDO_SESSION_DIR", str(tmp_path / "session"))
     monkeypatch.setenv("SDO_PHASE", "responder")
     execute_incident(request, provider=provider, executor=responder.agent.executor)
     prepare_reflection_memory(reflection_root)

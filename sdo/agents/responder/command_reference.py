@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from sdo.agents.responder.mutation_output import command_report_schema
 REFERENCE_PATH = Path(__file__).resolve().parents[2] / "skills/sdo-incident-response/references/commands.md"
 
 
-def render_reference() -> str:
+def _render_full_reference() -> str:
     """Render deterministically without controller I/O or heavyweight worker imports."""
     parser = tools_cli._parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
@@ -36,7 +37,7 @@ def render_reference() -> str:
         "Read this reference or `sdo COMMAND --help` for arguments, execution bounds and response fields.",
         "## Output\n\n"
         "Use `--json` before or after the command; for `act`, put SDO options before the wrapped command's `--`. "
-        "Read commands return the complete JSON response; "
+        "Read commands return bounded JSON; overflow envelopes point to the complete response file. "
         "their default text points to a complete JSON file. Mutations return a compact JSON envelope "
         "with `command`, `summary`, `details_file`, `incident_verified` and conditional "
         "`error`/`failure_reason`/`hint`. "
@@ -86,23 +87,80 @@ def render_reference() -> str:
     return "\n\n".join(sections) + "\n"
 
 
+def render_reference_bundle() -> dict[str, str]:
+    """One short command index, shared guidance and one file per registered command."""
+    full = _render_full_reference()
+    commands = tools_cli.command_surface()["commands"]
+    index, *sections = full.split("\n\n## ")
+    common = [index]
+    files = {}
+    for section in sections:
+        heading = section.split("\n", 1)[0]
+        if heading in commands:
+            files[f"commands/{heading}.md"] = "## " + section.rstrip() + "\n"
+        else:
+            common.append("## " + section.rstrip())
+    common.append("## Commands\n\n" + "\n".join(f"- [{name}](commands/{name}.md)" for name in commands))
+    files["commands.md"] = "\n\n".join(common) + "\n"
+    return files
+
+
+def render_reference() -> str:
+    return render_reference_bundle()["commands.md"]
+
+
+def topic_links() -> str:
+    skill = REFERENCE_PATH.parent.parent / "SKILL.md"
+    original = skill.read_text()
+    marker = "<!-- command-topics -->"
+    base = original.split(marker, 1)[0].rstrip()
+    linked = {match.split("#", 1)[0] for match in re.findall(r"\]\(([^)]+)\)", base)}
+    topics = [name for name in sorted(render_reference_bundle()) if "references/" + name not in linked]
+    return (
+        base
+        + "\n\n"
+        + marker
+        + "\n## Command topics\n\n"
+        + "\n".join(f"- [{Path(name).stem}](references/{name})" for name in topics)
+        + "\n"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail if the committed reference has drifted")
     parser.add_argument("--output", type=Path, default=REFERENCE_PATH)
     args = parser.parse_args(argv)
-    expected = render_reference()
-    if args.check:
-        if not args.output.is_file() or args.output.read_text() != expected:
-            print(
-                f"{args.output} is missing or stale; regenerate with "
-                "uv run python -m sdo.agents.responder.command_reference",
-                file=sys.stderr,
-            )
-            return 1
-    else:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(expected)
+    bundle = render_reference_bundle()
+    directory = args.output.parent
+    expected = {args.output: bundle.pop("commands.md"), **{directory / name: text for name, text in bundle.items()}}
+    existing = {args.output, *(directory / "commands").glob("*.md")}
+    stale = []
+    for path in sorted(existing | expected.keys()):
+        text = expected.get(path)
+        if args.check:
+            if text is None or not path.is_file() or path.read_text() != text:
+                stale.append(str(path))
+        elif text is None:
+            path.unlink()
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+    if args.output == REFERENCE_PATH:
+        skill = REFERENCE_PATH.parent.parent / "SKILL.md"
+        expected_skill = topic_links()
+        if args.check:
+            if skill.read_text() != expected_skill:
+                stale.append(str(skill))
+        else:
+            skill.write_text(expected_skill)
+    if stale:
+        print(
+            "Missing or stale command references; regenerate with "
+            "uv run python -m sdo.agents.responder.command_reference:\n" + "\n".join(stale),
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

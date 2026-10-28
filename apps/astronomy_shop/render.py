@@ -50,6 +50,16 @@ def prepare_baseline(obj: dict[str, Any]) -> None:
         else:
             readers.append({"pull": {"exporter": {"prometheus": prometheus}}})
         obj["data"]["relay"] = yaml.safe_dump(config, sort_keys=False)
+    if kind == "ConfigMap" and name == "opensearch-config":
+        # Absolute free-space thresholds stay below the benchmark admission
+        # floor. This policy belongs in source, never in a harness overlay.
+        config = yaml.safe_load(obj["data"]["opensearch.yml"])
+        config.update({
+            "cluster.routing.allocation.disk.watermark.low": "40gb",
+            "cluster.routing.allocation.disk.watermark.high": "30gb",
+            "cluster.routing.allocation.disk.watermark.flood_stage": "20gb",
+        })
+        obj["data"]["opensearch.yml"] = yaml.safe_dump(config, sort_keys=False)
     # The pinned OpenSearch 3.4 image disables Performance Analyzer because
     # its required configuration is absent. Preserve HTTP/transport, without
     # advertising a metrics listener that the image does not provide.

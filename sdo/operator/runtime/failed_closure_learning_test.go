@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,11 +139,9 @@ func TestFailedClosureReflectionReceivesExactlyVerifiedCauses(t *testing.T) {
 		if len(request.UnassignedWork) != 1 {
 			t.Fatalf("missing unresolved-cause question: %v", request)
 		}
-		gaps := []*contracts.SdkGap{}
-		for _, cause := range request.Outcome.ConfirmedRootCauses {
-			gaps = append(gaps, &contracts.SdkGap{FaultClass: "synthetic-fixture", Primitive: "fixture-observation", Reason: "scripted transport check has no executable replay fixture", ScratchScript: "scratch/test", Resources: cause.Resources})
-		}
-		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "sdk_gap", NoChangeReason: "filtered learning view retains two independently verified causes without scripted replay observations", SdkGaps: gaps})
+		// Prose cannot cover recorded hand repairs, so the shared check rejects
+		// this answer. Its diagnostics show which repairs carry authority.
+		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "filtered learning view retains two independently verified causes"})
 		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 	})}
 	if _, err := closeAndReflect(t, ctx, native, closure); err != nil {
@@ -152,8 +151,21 @@ func TestFailedClosureReflectionReceivesExactlyVerifiedCauses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || ledger.OutcomeDocument.Classification != "failed" || len(ledger.OutcomeDocument.ConfirmedRootCauses) != 3 {
-		t.Fatalf("durable outcome altered: %v", ledger)
+	if calls == 0 || calls != len(ledger.ReflectionRejections) || !ledger.ReflectionRejected || ledger.OutcomeDocument.Classification != "failed" || len(ledger.OutcomeDocument.ConfirmedRootCauses) != 3 {
+		t.Fatalf("durable outcome altered or rejection not recorded: calls=%d %v", calls, ledger)
+	}
+	for _, rejection := range ledger.ReflectionRejections {
+		var named []string
+		for _, d := range rejection.Diagnostics {
+			if d.Rule != validate.RuleReflectionProgramRequired {
+				t.Fatalf("unexpected rejection: %v", d)
+			}
+			named = append(named, d.Message)
+		}
+		text := strings.Join(named, "\n")
+		if len(named) != 2 || !strings.Contains(text, `"sdo-act-first"`) || !strings.Contains(text, `"sdo-act-second"`) || strings.Contains(text, "blocker") {
+			t.Fatalf("only independently verified repairs require coverage: %v", named)
+		}
 	}
 }
 

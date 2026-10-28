@@ -615,3 +615,31 @@ func TestStandbyNeverReplacesAnExistingColdExecution(t *testing.T) {
 		t.Fatal("cold retry consumed standby")
 	}
 }
+
+func TestStandbyClaimCannotOverwriteDownwardAPIWorkerIdentity(t *testing.T) {
+	pool, executor, task := standbyFixture(t)
+	slot := readyStandby(t, pool)
+	for _, identity := range workerIdentityEnvironment() {
+		executor.Environment[identity.Name] = "forged"
+	}
+	bound, err := pool.TryBind(context.Background(), executor, task)
+	if err != nil || bound.WarmBinding == nil {
+		t.Fatalf("claim failed: %v", err)
+	}
+	if err := bound.publishWarmTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(slot.Directory, "control/environment.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment := map[string]string{}
+	if err := json.Unmarshal(data, &environment); err != nil {
+		t.Fatal(err)
+	}
+	for _, identity := range workerIdentityEnvironment() {
+		if _, ok := environment[identity.Name]; ok {
+			t.Fatalf("claim overwrites Pod identity %s", identity.Name)
+		}
+	}
+}
