@@ -214,3 +214,67 @@ reason = "Measured production rendering 1125 Unicode characters across three-fau
 [skills.sdo-shell-authoring]
 max_chars = 1750
 reason = "Measured shell authoring guidance 1465 characters; bounded general principles and ownership guidance."
+
+[tool_reply.authoring_reference]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.authoring_reference]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.create_corpus]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.create_corpus]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.evidence_inventory]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.evidence_inventory]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.capture_fields]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.capture_fields]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.recordings_index]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.recordings_index]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.check_memory]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.check_memory]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[session_context.responder_first]
+max_chars = 12000
+reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
+
+[session_context.reflection_first]
+max_chars = 15000
+reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
+
+[session_context.tool_total]
+max_chars = 131072
+reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
+
+[session_context.tool_description]
+max_chars = 256
+reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
