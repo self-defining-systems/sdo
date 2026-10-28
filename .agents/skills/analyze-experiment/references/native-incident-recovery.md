@@ -70,3 +70,18 @@ On a closure failure or missing receipt, the benchmark preserves `sdo-controller
 Controller-state contract rejection records `state_persistence_failure={reason: state_persistence_invalid, detail: <validation diagnostics with offending field paths>}` on the closure and outcome. The controller quarantines invalid evidence and commits a failed closure from its last validated checkpoint; receipt, grading and queued reflection still proceed. Do not credit dropped action or health evidence as a repair. Database action/repair `failure_reason` uses the common contract vocabulary (`execution_failed`, `authorization_denied`, `outcome_unknown`); safe database-stage diagnostics remain in the application error.
 
 A source reconcile with post-write admission or rollout residuals records `source_residual` in both the action report and controller repair receipt. This is failed convergence evidence, not a rejected receipt: preserve its timing and applied writes through pending-closure persistence. Historical builds whose repair-receipt vocabulary omitted this value instead produced `state_persistence_invalid` and discarded the affected result; do not interpret their missing timing or usage as zero.
+
+### Responder to reflection writer hand-off
+
+The built-in worker stores versioned writer ownership under the incident session's
+`thread-ownership/<sha256(provider:session_id)>.json`, serialized by a stable
+sibling `.lock` file. `active` means the writer has not confirmed closure;
+`released` is persisted only after the provider process terminates. Reflection
+waits at most 30 seconds (within its existing turn budget) for that release,
+then exclusively claims the same session. The role transfers from responder to
+reflection permanently; stale responders cannot reclaim it. An OS lock released
+by a process crash does not prove writer release. Restart reads the same record:
+missing/malformed identity yields `session_handoff_invalid`, an unreleased writer
+yields `session_handoff_timeout`, and an unavailable provider session yields
+`session_unavailable`. These are terminal failed reflection decisions, with no
+provider resume retry or implicit fresh-session fallback.
