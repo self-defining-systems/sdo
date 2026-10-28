@@ -938,3 +938,11 @@ reason = "Explicit cap for the newly merged registered result-correction templat
 [template_data.responder-result_correction-diagnostic]
 max_chars = 256
 reason = "Explicit cap for the newly merged registered result-correction template; full diagnostics stay in session files."
+
+[reflection.cause_details]
+max_chars = 1500
+reason = "CTXFAIL1: retain the original cause-work allowance for optional settled evaluation and binding details; complete questions have their own required cap."
+
+[reflection.outcome_details]
+max_chars = 3600
+reason = "CTXFAIL1: retain the original outcome allowance for optional findings and plan detail; complete repair receipts have their own required cap."
