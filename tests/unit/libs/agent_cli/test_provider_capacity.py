@@ -167,8 +167,9 @@ def test_retry_policy_rejects_invalid_configuration(kwargs: dict[str, float]) ->
 def test_shared_pool_releases_a_token_when_its_process_dies(tmp_path: Path) -> None:
     code = """
 import sys
+import pathlib
 from libs.agent_cli.provider_capacity import OpusPool
-handle = OpusPool(Path(sys.argv[1]), capacity=1).try_acquire()
+handle = OpusPool(pathlib.Path(sys.argv[1]), capacity=1).try_acquire()
 assert handle is not None
 print('acquired', flush=True)
 sys.stdin.read()
