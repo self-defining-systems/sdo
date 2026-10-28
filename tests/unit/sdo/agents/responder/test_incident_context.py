@@ -7,6 +7,7 @@ from pathlib import Path
 
 from sdo.agents.responder.incident_context import MAX_INCIDENT_SUMMARY_CHARS, incident_data_view, prepared_incident_data
 from sdo.contracts import IncidentRequest, OperationalMemorySnapshot, Verdict
+from tests.context_helpers import incident_document, incident_facts_path
 
 
 def _request() -> IncidentRequest:
@@ -54,7 +55,7 @@ def test_lean_view_retains_findings_intent_and_latest_detector_evaluations() -> 
 def test_lean_context_for_five_findings_is_below_typical_budget() -> None:
     with prepared_incident_data(_request()) as rendered:
         assert len(rendered) <= 6000
-        document = json.loads(rendered.split("Incident request:\n", 1)[1])
+        document = incident_document(rendered, full=True)
         assert len(document["findings"]) == 5
 
 
@@ -63,8 +64,8 @@ def test_oversized_incident_context_keeps_complete_facts_in_a_private_turn_file(
     request.findings[-1].evidence = "start " + "large live evidence 界" * 1000 + " end"
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= 12000
-        assert "Read the full incident facts before acting" in rendered
-        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        assert "Full:" in rendered
+        details = incident_facts_path(rendered)
         document = json.loads(details.read_text(encoding="utf-8"))
         assert document["findings"][-1]["evidence"] == request.findings[-1].evidence
         assert details.stat().st_mode & 0o777 == 0o600
@@ -123,14 +124,17 @@ def test_bulky_intent_does_not_hide_actionable_findings_and_coverage() -> None:
 
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= 6000
-        summary = json.loads(rendered.split("Incident request summary:\n", 1)[1].splitlines()[0])
-        assert [item["fingerprint"] for item in summary["findings"]] == [item.fingerprint for item in request.findings]
+        summary = incident_document(rendered)
+        assert [item["fingerprint"] for item in summary["findings"]] == [
+            item.fingerprint for item in request.findings[: len(summary["findings"])]
+        ]
+        assert len(summary["findings"]) + summary.get("findings_omitted", 0) == len(request.findings)
         assert all(item["primary_resource"]["name"] == f"service-{i}" for i, item in enumerate(summary["findings"]))
         assert summary["playbook_coverage"] == incident_data_view(request)["playbook_coverage"]
-        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        details = incident_facts_path(rendered)
         full = json.loads(details.read_text())
         assert full["intent"]["architecture"] == request.memory_snapshot.architecture_markdown
-        assert "intent" in summary["supplemental_fields"]
+        assert "Summary (partial)" in rendered
         assert full["findings"] == incident_data_view(request)["findings"]
     assert not details.exists()
 
@@ -142,7 +146,7 @@ def test_accepted_playbook_documents_are_available_without_searching_examples() 
     before = request.SerializeToString()
 
     with prepared_incident_data(request) as rendered:
-        document = json.loads(rendered.split("Incident request:\n", 1)[1])
+        document = incident_document(rendered, full=True)
         references = document["playbook_documents"]
         assert set(references) == {"repair", "other"}
         paths = [Path(value) for value in references.values()]
@@ -156,11 +160,11 @@ def test_accepted_playbook_documents_are_available_without_searching_examples() 
 
 def test_incident_carries_the_current_cli_surface_without_tool_discovery() -> None:
     with prepared_incident_data(_request()) as rendered:
-        document = json.loads(rendered.split("Incident request:\n", 1)[1])
+        document = incident_document(rendered, full=True)
         tools = document["incident_tools"]
-        assert "--finding" in tools["commands"]["mitigate"]
-        assert "--resource" in tools["commands"]["act"]
-        assert "--detector" in tools["commands"]["check"]
+        assert "sdo mitigate --help" in tools["commands"]["mitigate"]
+        assert "sdo act --help" in tools["commands"]["act"]
+        assert "sdo check --help" in tools["commands"]["check"]
         assert "Full JSON:" in tools["output"]
         assert "--json" in tools["output"]
 
@@ -172,11 +176,11 @@ def test_verbose_findings_retain_identities_coverage_and_commands_in_summary() -
     request.playbook_coverage.matches.add(playbook_id="repair", can_mitigate=False)
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= 6000
-        summary = json.loads(rendered.split("Incident request summary:\n", 1)[1].splitlines()[0])
-        assert len(summary["findings"]) == 5
+        summary = incident_document(rendered)
+        assert len(summary["findings"]) + summary.get("findings_omitted", 0) == 5
         assert summary["playbook_coverage"]["matches"][0]["can_mitigate"] is False
         assert "mitigate" in summary["incident_tools"]["commands"]
-        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        details = incident_facts_path(rendered)
         assert len(json.loads(details.read_text())["findings"][0]["evidence"]) > 30000
 
 
@@ -186,12 +190,15 @@ def test_many_finding_summary_keeps_unexplained_counts_and_complete_facts() -> N
     request = incident(100, oversized=True)
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
-        summary = json.loads(rendered.split("Incident request summary:\n", 1)[1].splitlines()[0])
-        assert summary["finding_count"] == 100
+        summary = incident_document(rendered)
+        assert len(summary["findings"]) + summary["findings_omitted"] == 100
         assert len(summary["findings"]) + summary["findings_omitted"] == 100
         coverage = summary["playbook_coverage"]
-        assert len(coverage["unexplained_finding_fingerprints"]) + coverage["unexplained_findings_omitted"] == 100
-        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        assert (
+            len(coverage["unexplained_finding_fingerprints"]) + coverage["unexplained_finding_fingerprints_omitted"]
+            == 100
+        )
+        details = incident_facts_path(rendered)
         assert len(json.loads(details.read_text())["findings"]) == 100
 
 
@@ -241,12 +248,12 @@ def test_many_stage_attempts_cannot_displace_bounded_first_prompt() -> None:
         )
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
-        summary = json.loads(rendered.split("Incident request summary:\n", 1)[1].splitlines()[0])
+        summary = incident_document(rendered)
         stage = summary["prior_stages"][0]
         assert stage["mitigations"][0]["result"] == "apply_error"
         assert len(stage["mitigations"]) + stage["mitigations_omitted"] == 20
         assert "mitigate" in summary["incident_tools"]["commands"]
-        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        details = incident_facts_path(rendered)
         assert len(json.loads(details.read_text())["prior_stages"][0]["mitigations"]) == 20
 
 
@@ -262,7 +269,7 @@ def test_failed_episode_progress_stays_inline_with_full_results_in_facts() -> No
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
         assert "source-fixed" in rendered
         assert "admission_blocked" in rendered
-        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        details = incident_facts_path(rendered)
         evidence = json.loads(details.read_text())["prior_response_progress"][0]
         assert evidence["successful_actions"][0]["details"] == "write read back " * 4000
         assert evidence["blockers"][0]["reason_code"] == "admission_blocked"
@@ -285,7 +292,7 @@ def test_many_prior_episodes_keep_latest_progress_within_first_prompt_budget() -
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
         assert "done-9-0" in rendered
         assert "admission_blocked" in rendered
-        details = Path(rendered.split("Full incident facts: ", 1)[1].splitlines()[0])
+        details = incident_facts_path(rendered)
         assert len(json.loads(details.read_text())["prior_response_progress"]) == 10
 
 

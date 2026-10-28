@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
 import sys
 import time
 import uuid
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn, TypedDict
 
+from sdo.agents.context_output import budget_for, cap_text
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.mutation_output import compact_mutation_envelope
 from sdo.agents.responder.tool_output import render_summary, write_response
@@ -136,12 +139,27 @@ class _OptionFinding(argparse.Action):
             namespace.finding = [*getattr(namespace, "finding", []), values]
 
 
+class _CappedParser(argparse.ArgumentParser):
+    """Help and usage errors share the same context boundary as command results."""
+
+    def _limit(self) -> int:
+        command = self.prog.split()[1:]
+        return budget_for("tool_stdout." + command[0]) if command else 8192
+
+    def print_help(self, file=None) -> None:
+        self._print_message(cap_text(self.format_help(), self._limit() - 1) + "\n", file or sys.stdout)
+
+    def error(self, message: str) -> NoReturn:
+        text = self.format_usage() + f"{self.prog}: error: {message}\n"
+        self.exit(2, cap_text(text, self._limit() - 1) + "\n")
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _CappedParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Output: session schema; correct feedback once. "
-        "prior_stages: automatic repairs; prior_response_progress: bounded failed-episode progress with omissions. "
+        "prior_stages: per-repair receipts; prior_response_progress: bounded failed-episode progress with omissions. "
         "Keep repairs; admission_blocked names a rollout prerequisite.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
@@ -151,10 +169,10 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print JSON for scripts (mutations: compact envelope and complete report path)",
     )
-    commands.add_parser("status", help="read fresh findings and detector confirmation; pending is not healthy")
+    commands.add_parser("status", help="read findings and detector confirmation")
     for name, help_text in (
-        ("detect", "run fresh detectors; pending with a reason means health is unproven"),
-        ("check", "run fresh detectors then independent closure verification"),
+        ("detect", "run fresh detectors; pending health is unproven"),
+        ("check", "run detectors and verify closure; --detector ID selects detectors"),
     ):
         check = commands.add_parser(name, help=help_text)
         check.add_argument(
@@ -196,17 +214,17 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
     mitigate = commands.add_parser(
         "mitigate",
-        help="apply independent options in one call; overlaps refused; shows progress and full JSON",
+        help="apply independent options; --finding FINGERPRINT scopes verification; overlapping writes refused",
         description=(
-            "Apply several independent options in one call; overlapping object write sets are refused before writes. "
-            "Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE "
+            "Apply independent options; overlapping writes are refused. "
+            "Repeat --option ID with --param NAME=VALUE, or use --selection-set FILE "
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
-            "--match ID applies a ready playbook_coverage match; --bind narrows it. "
-            "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID; "
-            "reads stay open; past its bound it frees its writes as rollout_stalled. "
-            "A single option also accepts --NAME VALUE parameters. "
-            "Five rounds per incident. "
-            "Script fixes are learnable mitigations; unlinked script bytes are refused as script_unprovenanced."
+            "--match ID selects a playbook_coverage match; --bind narrows it. "
+            "Each option has a receipt; one call uses one of five rounds. --NAME VALUE also sets parameters. "
+            "Pending rollout retains its application ID and allows reads; "
+            "rollout_stalled releases writes once stuck or at its bound. "
+            "Source reconciliation waits for old objects to drain; persistent differences return source_residual. "
+            "Script fixes are learnable; unlinked bytes are refused as script_unprovenanced."
             + " "
             + WORKING_PROGRAM_HELP
         ),
@@ -278,7 +296,7 @@ def _parser() -> argparse.ArgumentParser:
     ).add_argument("ref", metavar="Kind/namespace/name")
     act = commands.add_parser(
         "act",
-        help=("record one command; outer shell chains run separately; shows progress and a complete JSON report"),
+        help="record a command with --resource Kind/namespace/name",
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts. "
@@ -357,18 +375,31 @@ def verification_help() -> str:
     return commands.choices["verify"].format_help()
 
 
-def command_surface() -> dict[str, object]:
+class CommandSurface(TypedDict):
+    commands: dict[str, str]
+    reference: str
+    output: str
+
+
+def command_surface() -> CommandSurface:
     """Generate incident-facing signatures from the same parser that accepts commands."""
     parser = _parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+    purposes: dict[str, str] = {}
+    for action in subcommands._choices_actions:
+        if not isinstance(action.help, str) or not action.help.strip():
+            raise ValueError(f"{action.dest}: registered commands require a short listing description")
+        purposes[action.dest] = action.help
+    descriptions = {
+        name: f"sdo {name}: {purposes[name]}; read sdo {name} --help for arguments." for name in subcommands.choices
+    }
+    for name, description in descriptions.items():
+        if len(description) > budget_for("session_context.tool_description"):
+            raise ValueError(f"{name}: listing description exceeds its budget")
     return {
-        "commands": {
-            name: " ".join(command.format_usage().removeprefix("usage: ").split())
-            for name, command in subcommands.choices.items()
-        },
-        "mitigation": subcommands.choices["mitigate"].description,
-        "output": "Full JSON: path retains complete evidence. Mutations print progress and the file schema; "
-        "--json keeps mutations compact and prints other complete responses. Extract needed fields.",
+        "commands": descriptions,
+        "reference": "sdo-incident-response/references/commands.md",
+        "output": "Full JSON: read details_file; --json uses the same caps and complete evidence stays in files.",
     }
 
 
@@ -717,7 +748,9 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
             print(text)
         return
     output = write_response(response)
-    print(json.dumps(response, ensure_ascii=False, sort_keys=True) if full_json else render_summary(output))
+    text = json.dumps(response, ensure_ascii=False, sort_keys=True) if full_json else render_summary(output)
+    limit = budget_for("tool_stdout." + str(response["command"]))
+    print(cap_text(text, limit - 1, json_output=full_json))
 
 
 def _print_client_error(args: argparse.Namespace, error: Exception) -> None:
@@ -742,7 +775,7 @@ def _check(args: argparse.Namespace, directory: Path) -> dict[str, object]:
     return response
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args, extra = parser.parse_known_args(argv)
     if extra:
@@ -763,6 +796,33 @@ def main(argv: list[str] | None = None) -> int:
         _print_client_error(args, exc)
         return 1
     return 1 if response.get("error") else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Cap all emitted channels, including help, errors and future command handlers."""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    commands = RESPONSE_FIELDS.keys()
+    command = next((value for value in arguments if value in commands), None)
+    limit = budget_for("tool_stdout." + command) if command else 8192
+    stdout, stderr = io.StringIO(), io.StringIO()
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            return _main(arguments)
+    finally:
+        out, err = stdout.getvalue(), stderr.getvalue()
+        combined = out + err
+        size = len(combined.encode()) if command in MUTATION_COMMANDS else len(combined)
+        if size <= limit:
+            sys.stdout.write(out)
+            sys.stderr.write(err)
+        else:
+            text = cap_text(
+                combined, limit - 1, json_output="--json" in arguments, bytes_limit=command in MUTATION_COMMANDS
+            )
+            print(text)
+
+
+print_tool_response = _print_response
 
 
 if __name__ == "__main__":

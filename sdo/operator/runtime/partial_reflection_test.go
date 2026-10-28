@@ -15,7 +15,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 )
 
@@ -40,7 +42,22 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 			}
 			ctx := context.Background()
 			root := nativeRepository(t)
-			repository, err := broker.New(root, filepath.Join(t.TempDir(), "proposals"), nil)
+			var compile broker.Validator
+			if scenario == "cold" {
+				seedPortProgramMemory(t, root)
+				operatorRoot, err := filepath.Abs("..")
+				if err != nil {
+					t.Fatal(err)
+				}
+				compile = func(ctx context.Context, candidate string, _ []string) error {
+					ds, err := validate.CompileCandidate(ctx, validate.Request{Root: candidate, OperatorRoot: operatorRoot})
+					if err != nil {
+						return err
+					}
+					return validate.Err(ds)
+				}
+			}
+			repository, err := broker.New(root, filepath.Join(t.TempDir(), "proposals"), compile)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,11 +116,16 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 				if err := os.WriteFile(usagePath, []byte(`{"usage":{"input_tokens":42,"output_tokens":7,"model_requests":2}}`+"\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				var gaps []*contracts.SdkGap
-				for _, cause := range request.Outcome.ConfirmedRootCauses {
-					gaps = append(gaps, &contracts.SdkGap{FaultClass: "synthetic-fixture", Primitive: "fixture-capability", Reason: "transport-only test has no executable observation fixture", ScratchScript: "scratch/test", Resources: cause.Resources})
+				// The coverage rule requires an executable step for a verified hand
+				// repair, so the cold hand repair extends the accepted port program
+				// with a positive case linked to its original receipt. The program
+				// application's repair needs no new memory.
+				result := &contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "the verified repair came from an existing program application"}
+				if scenario == "cold" {
+					coverRepairsWithPortProgram(t, task.Workspace.CheckoutPath, "partial-repair", request.Outcome)
+					result = &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}}
 				}
-				response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "sdk_gap", NoChangeReason: "synthetic transport fixture lacks SDK evidence", SdkGaps: gaps})
+				response, err := anypb.New(result)
 				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 			})}
 			receipt, err := closeAndReflect(t, ctx, native, closure)
@@ -436,5 +458,83 @@ func TestAllClearPartialEvidenceStillRejectsContradictions(t *testing.T) {
 				t.Fatalf("contradictory all-clear proof admitted: %v", got)
 			}
 		})
+	}
+}
+
+// seedPortProgramMemory accepts the shared Service targetPort program fixture.
+func seedPortProgramMemory(t *testing.T, root string) {
+	t.Helper()
+	if err := os.CopyFS(root, os.DirFS("../memory/validate/testdata/good")); err != nil {
+		t.Fatal(err)
+	}
+	acceptPortProgram(t, root)
+}
+
+// acceptPortProgram adds the shared Service targetPort program to accepted memory.
+func acceptPortProgram(t *testing.T, root string) {
+	t.Helper()
+	fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
+	module, err := os.ReadFile(filepath.Join(fixture, "diagnostics/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".sdo/diagnostics/go.mod"), module, 0644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.CopyPortProgram(t, root, fixture)
+	index := filepath.Join(root, ".sdo/playbooks/README.md")
+	data, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, root, "add", "-A")
+	nativeGit(t, root, "commit", "-qm", "accepted port program")
+}
+
+// coverRepairsWithPortProgram encodes each verified hand repair as a step of
+// the accepted port program: one positive case per repaired Service, each
+// linked to the incident's original repair receipts.
+func coverRepairsWithPortProgram(t *testing.T, checkout, casePrefix string, outcome *contracts.OutcomeRecord) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, action := range outcome.RepairActions {
+		for _, ref := range action.GetResources() {
+			key := ref.Kind + "/" + ref.Namespace + "/" + ref.Name
+			if !action.GetSuccess() || seen[key] {
+				continue
+			}
+			seen[key] = true
+			caseID := fmt.Sprintf("%s-%d", casePrefix, len(seen))
+			if err := os.MkdirAll(filepath.Join(checkout, ".sdo/corpus", caseID), 0755); err != nil {
+				t.Fatal(err)
+			}
+			apiVersion := ref.ApiVersion
+			if apiVersion == "" {
+				apiVersion = "v1"
+			}
+			labels, err := json.Marshal(map[string]any{
+				"root_cause_program_ids": []string{"service-targetport-mismatch"},
+				"bindings":               map[string]any{"service": map[string]string{"api_version": apiVersion, "kind": ref.Kind, "namespace": ref.Namespace, "name": ref.Name}},
+				"provenance":             map[string]string{"incident_id": outcome.IncidentId},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(checkout, ".sdo/corpus", caseID, "labels.json"), labels, 0644); err != nil {
+				t.Fatal(err)
+			}
+			appendControllerRepairReceipts(t, checkout, caseID, outcome)
+		}
+	}
+	readme := filepath.Join(checkout, ".sdo/playbooks/service-targetport-mismatch/README.md")
+	text, err := os.ReadFile(readme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(readme, append(text, []byte("\nRecorded Service repairs of incident "+outcome.IncidentId+" use this mitigation.\n")...), 0644); err != nil {
+		t.Fatal(err)
 	}
 }

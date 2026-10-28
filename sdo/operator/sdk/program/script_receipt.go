@@ -52,8 +52,9 @@ type ScriptExecutionResult struct {
 	CaptureGaps     []string                   `json:"capture_gaps,omitempty"`
 }
 
-// ScriptOriginReceipt is protected historical evidence. A parameterized script
-// links to the exact bytes the controller executed.
+// ScriptOriginReceipt is protected historical evidence: the original
+// successful repair a learned step encodes. Any recorded mutation qualifies;
+// ScriptDigest, when present, names the exact RunScript bytes that ran.
 type ScriptOriginReceipt struct {
 	ScriptDigest string          `json:"script_digest,omitempty"`
 	ID           string          `json:"id"`

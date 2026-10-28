@@ -315,9 +315,12 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
     save("attached")
 
 
+PARALLEL_VOLUME = "sdo-parallel-repository"
+
+
 def parallel_volume_objects(environment: FastloopEnvironment, node: str) -> list[dict[str, Any]]:
     control = control_namespace_for(environment.namespace)
-    volume = "sdo-parallel-repository"
+    volume = PARALLEL_VOLUME
     return [
         {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": control}},
         {
@@ -388,8 +391,32 @@ def provision_parallel_volume(environment: FastloopEnvironment) -> None:
         kubeconfig=environment.kubeconfig,
         check=False,
     )
-    if prior.stdout.strip() and json.loads(prior.stdout)["spec"].get("volumeName") != "sdo-parallel-repository":
+    claim = json.loads(prior.stdout) if prior.stdout.strip() else None
+    if claim is not None and claim["spec"].get("volumeName") != PARALLEL_VOLUME:
         raise ValueError("eval: refusing to replace an existing lane repository PVC")
+    existing = kubectl(
+        ["get", "pv", PARALLEL_VOLUME, "--ignore-not-found=true", "-o", "json"],
+        namespace=None,
+        kubeconfig=environment.kubeconfig,
+        check=False,
+    )
+    volume = json.loads(existing.stdout) if existing.stdout.strip() else None
+    bound = (volume or {}).get("spec", {}).get("claimRef", {}).get("uid")
+    if bound and bound != (claim or {}).get("metadata", {}).get("uid"):
+        # The claim and its PV form one pair: a PV still bound to a deleted claim
+        # never binds a new one. Retain plus hostPath keep the repository on disk,
+        # so recreate both objects together, never one without the other.
+        if claim is not None:
+            kubectl(
+                ["delete", "pvc", PVC_NAME, "--ignore-not-found=true", "--wait=true"],
+                namespace=control,
+                kubeconfig=environment.kubeconfig,
+            )
+        kubectl(
+            ["delete", "pv", PARALLEL_VOLUME, "--ignore-not-found=true", "--wait=true"],
+            namespace=None,
+            kubeconfig=environment.kubeconfig,
+        )
     for resource in parallel_volume_objects(environment, node):
         kubectl(
             ["apply", "-f", "-"], namespace=None, kubeconfig=environment.kubeconfig, input_text=json.dumps(resource)

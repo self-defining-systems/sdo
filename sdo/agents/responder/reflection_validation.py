@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import inspect
 import json
 import math
 import os
@@ -14,8 +15,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import TextContent
 
+from sdo.agents.context_output import budget_for, save_context
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, validation_output
 from sdo.agents.responder.reflection_authoring import SdkGap, install_authoring_tools
 from sdo.agents.responder.reflection_evidence import install_evidence_tools
@@ -30,6 +33,8 @@ if TYPE_CHECKING:
 # worker-pinned ownership and offline toolchain settings explicitly.
 VALIDATION_ENVIRONMENT = (
     "SDO_ACTOR",
+    "SDO_SESSION_SCRATCH",
+    "SDO_SESSION_DIR",
     "SDO_PHASE",
     "SDO_BASE_COMMIT",
     "SDO_INCIDENT_ID",
@@ -59,15 +64,34 @@ class _TextToolServer(FastMCP):
     is saved to a file the agent can search instead.
     """
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.help_texts: dict[str, str] = {}
+
     def add_tool(self, fn: Any, *args: Any, structured_output: bool | None = None, **kwargs: Any) -> None:
-        super().add_tool(fn, *args, structured_output=False, **kwargs)
+        name = kwargs.get("name") or fn.__name__
+        budget_for("tool_reply." + name)
+        limit = budget_for("tool_description." + name)
+        help_text = kwargs.pop("description", None) or inspect.getdoc(fn) or ""
+        self.help_texts[name] = help_text
+        if len(help_text) > limit:
+            _, reference = save_context(help_text)
+            description = help_text.split(". ", 1)[0].split("\n", 1)[0].rstrip(".") + "."
+            suffix = f" Full help: {reference}"
+            if len(description + suffix) > limit:
+                raise ValueError(f"{name}: first help sentence exceeds listing budget {limit}")
+            help_text = description + suffix
+        super().add_tool(fn, *args, description=help_text, structured_output=False, **kwargs)
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Sequence[ContentBlock] | dict[str, Any]:
-        result = await super().call_tool(name, arguments)
+        try:
+            result = await super().call_tool(name, arguments)
+        except ToolError as exc:
+            result = [TextContent(type="text", text="Tool error: " + str(exc))]
         if isinstance(result, dict) or not all(isinstance(block, TextContent) for block in result):
-            return result
+            raise TypeError(f"{name}: SDO tools must return text through the capped boundary")
         text = "\n".join(block.text for block in result if isinstance(block, TextContent))
-        bounded = bound_reply(text, tool=name)
+        bounded = bound_reply(text, tool=name, budget=budget_for("tool_reply." + name))
         return result if bounded == text else [TextContent(type="text", text=bounded)]
 
 
@@ -76,7 +100,7 @@ def validation_server(
     *,
     timeout_seconds: float = VALIDATION_TIMEOUT_SECONDS,
     expire: Callable[[float], Awaitable[object]] = asyncio.sleep,
-) -> FastMCP:
+) -> _TextToolServer:
     """Serve the reflection tools; ``expire(timeout_seconds)`` returns when a check times out."""
     if (
         isinstance(timeout_seconds, bool)

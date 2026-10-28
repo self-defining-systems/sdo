@@ -550,6 +550,10 @@ message IncidentClosure {
   // only: health alone decided the closure.
   repeated string source_check_notes = 26;
   StatePersistenceFailure state_persistence_failure = 27;
+  // Set durably before the first broker attempt, with the closure-time
+  // recheck's notes folded in. A frozen closure is the incident's terminal
+  // identity: every later attempt, across restarts, sends these exact bytes.
+  bool frozen = 28;
 }
 
 // ClosureUnconfirmedReason explains why a verified closure was committed

@@ -27,6 +27,7 @@ from sdo.contracts import (
     MemoryWatch,
     PriorOutcomeEvidence,
 )
+from tests.context_helpers import incident_document, incident_facts_path
 from tests.proto_messages import evolve, from_dict
 from tests.structured_turns import ScriptedAgent, failure
 
@@ -51,7 +52,13 @@ def _responder_prompt(request: IncidentRequest) -> str:
 
 
 def _workflow() -> str:
-    return (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
+    return (
+        (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
+        + "\n"
+        + (SKILLS_ROOT / "sdo-incident-response/references/live-repairs.md").read_text()
+        + "\n"
+        + (SKILLS_ROOT / "sdo-incident-response/references/coverage.md").read_text()
+    )
 
 
 def _request(name: str = "incident_request.json") -> IncidentRequest:
@@ -275,7 +282,7 @@ def _not_yet_fired_request(worktree: Path, *, prior_incident: str = "incident-se
 
 def test_matched_memory_uses_the_workflow_without_repeating_playbook_bodies(tmp_path: Path) -> None:
     prompt = _responder_prompt(_warm_request(tmp_path))
-    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    document = incident_document(prompt, full=True)
     assert document["available_playbook_ids"] == [INCIDENT_PLAYBOOK]
     assert "Restore `<MISSING_CONFIG_MAP>` from source" not in prompt
     assert "verify.sh" not in prompt
@@ -287,7 +294,7 @@ def test_matched_memory_uses_the_workflow_without_repeating_playbook_bodies(tmp_
 def test_historical_detector_match_does_not_invent_current_coverage(tmp_path: Path) -> None:
     request = _not_yet_fired_request(tmp_path)
     prompt = _responder_prompt(request)
-    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    document = incident_document(prompt, full=True)
     assert document["findings"][0]["detector_id"] == "health-objective"
     assert "Warm path" not in prompt
     assert "preconditions and accepted-source values" in _workflow()
@@ -303,7 +310,7 @@ def test_warm_and_cold_paths_share_live_precondition_checks(tmp_path: Path) -> N
 def test_nonexact_history_remains_advice_without_a_warm_instruction_branch(tmp_path: Path) -> None:
     request = _warm_request(tmp_path, match_reason="detector-rule-resource-kind")
     prompt = _responder_prompt(request)
-    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    document = incident_document(prompt, full=True)
     assert document["relevant_outcomes"][0]["match_reason"] == "detector-rule-resource-kind"
     assert "Warm path" not in prompt
     assert "Operational memory is fallible advice" in _workflow()
@@ -313,7 +320,7 @@ def test_cold_prompt_offers_logical_ids_without_inlining_playbook_content() -> N
     request = _request()
     request.memory_snapshot.playbooks.add(id="missing-configmap", markdown="Large reusable repair content")
     prompt = _responder_prompt(request)
-    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    document = incident_document(prompt, full=True)
     assert document["available_playbook_ids"] == ["missing-configmap"]
     assert "Large reusable repair content" not in prompt
     assert ".sdo/" not in prompt
@@ -354,7 +361,7 @@ def test_prompt_requires_live_evidence_for_every_root_cause() -> None:
 def test_prompt_keeps_typed_healthy_baseline_changes_once() -> None:
     request = _request("incident_request_state_changes.json")
     prompt = _responder_prompt(request)
-    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    document = incident_document(prompt, full=True)
     assert document["state_changes"] == json_format.MessageToDict(
         request.state_changes, preserving_proto_field_name=True
     )
@@ -366,11 +373,11 @@ def test_prompt_distinguishes_an_empty_baseline_diff_from_an_absent_one() -> Non
     request = evolve(
         request, state_changes=evolve(request.state_changes, changes=[], omitted=None, unobserved_kinds=[])
     )
-    document = json.loads(_responder_prompt(request).split("Incident request:\n", 1)[1])
+    document = incident_document(_responder_prompt(request), full=True)
     assert document["state_changes"] == json_format.MessageToDict(
         request.state_changes, preserving_proto_field_name=True
     )
-    assert "state_changes" not in json.loads(_responder_prompt(_request()).split("Incident request:\n", 1)[1])
+    assert "state_changes" not in incident_document(_responder_prompt(_request()), full=True)
 
 
 def test_warm_path_requires_the_incident_playbook_to_exist(tmp_path: Path) -> None:
@@ -393,7 +400,7 @@ def test_prompt_never_inlines_large_playbook_bodies(tmp_path: Path) -> None:
 def test_prompt_compacts_detector_history_to_latest_evidence(tmp_path: Path) -> None:
     request = evolve(_request(), repository_worktree=str(tmp_path))
     prompt = _responder_prompt(request)
-    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    document = incident_document(prompt, full=True)
     assert "detector_history" not in document
     latest = next(
         item for item in document["latest_detector_evaluations"] if item["detector_id"] == "missing-configmap"
@@ -406,25 +413,25 @@ def test_prompt_compacts_detector_history_to_latest_evidence(tmp_path: Path) -> 
 def test_prompt_keeps_accepted_health_intent_and_bounds_large_intent(tmp_path: Path) -> None:
     request = evolve(_request(), repository_worktree=str(tmp_path))
     request.memory_snapshot.goal_markdown = "The application serves successful requests."
-    document = json.loads(_responder_prompt(request).split("Incident request:\n", 1)[1])
+    document = incident_document(_responder_prompt(request), full=True)
     assert document["intent"]["goal"] == request.memory_snapshot.goal_markdown
     request.memory_snapshot.goal_markdown = "y" * 20000
     with prepared_incident_data(request) as data:
         assert len(data) <= 12000
         assert "y" * 5000 not in data
-        assert "Full incident facts" in data
+        assert "Full:" in data
 
 
 def test_prompt_keeps_accepted_architecture_and_bounds_large_intent(tmp_path: Path) -> None:
     request = evolve(_request(), repository_worktree=str(tmp_path))
     request.memory_snapshot.architecture_markdown = "The entrypoint uses the configuration service."
-    document = json.loads(_responder_prompt(request).split("Incident request:\n", 1)[1])
+    document = incident_document(_responder_prompt(request), full=True)
     assert document["intent"]["architecture"] == request.memory_snapshot.architecture_markdown
     request.memory_snapshot.architecture_markdown = "y" * 20000
     with prepared_incident_data(request) as data:
         assert len(data) <= 12000
         assert "y" * 5000 not in data
-        assert "Full incident facts" in data
+        assert "Full:" in data
 
 
 def test_program_prompt_guides_codex_and_claude_sessions() -> None:
@@ -516,7 +523,7 @@ def test_prompt_omits_no_match_sweep_but_preserves_match_evidence() -> None:
     original = request.SerializeToString()
 
     prompt = _responder_prompt(request)
-    view = json.loads(prompt.split("Incident request:\n", 1)[1])
+    view = incident_document(prompt, full=True)
 
     assert len(view["initial_program_runs"]) == 1
     assert view["initial_program_runs"][0]["program_id"] == "targetport"
@@ -553,7 +560,7 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
         json_format.ParseDict({"can_mitigate": can_mitigate}, request.initial_program_runs[-1])
 
     prompt = _responder_prompt(request)
-    view = json.loads(prompt.split("Incident request:\n", 1)[1])["initial_program_runs"][0]
+    view = incident_document(prompt, full=True)["initial_program_runs"][0]
 
     if can_mitigate is False:
         assert view["capability"] == "diagnosis-only"
@@ -563,9 +570,9 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
         assert view["capability"] == "unknown"
     assert "Diagnosis-only matches supply evidence" in _workflow()
     assert "Counts inform; never permission gates" in _workflow()
-    assert "Discover capabilities and argument shapes" in _workflow()
+    assert "Use only help-confirmed options" in _workflow()
     assert "--bind" not in prompt.split("Incident request:", 1)[0]
-    assert "--bind" in json.loads(prompt.split("Incident request:\n", 1)[1])["incident_tools"]["commands"]["plan"]
+    assert "sdo plan --help" in incident_document(prompt, full=True)["incident_tools"]["commands"]["plan"]
 
 
 def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:
@@ -704,9 +711,9 @@ def test_real_turn_can_read_complete_overflow_facts_and_cleans_them_up(fails: bo
 
     def respond(command) -> FakeRun:
         prompt = command.stdin or ""
-        data = prompt.split("Incident request summary:\n", 1)[1]
+        data = prompt
         assert len(data) < 12000
-        details = Path(data.split("Full incident facts: ", 1)[1].splitlines()[0])
+        details = incident_facts_path(data)
         files.append(details)
         assert (
             json.loads(details.read_text(encoding="utf-8"))["findings"][-1]["evidence"] == request.findings[-1].evidence

@@ -244,4 +244,7 @@ type IncidentClosure struct {
 	// differ from the accepted source. They are information on the outcome, not
 	// a verdict.
 	SourceCheckNotes []string
+	// Frozen marks the closure's terminal identity: persisted, with the
+	// recheck's notes folded in, before the first broker attempt.
+	Frozen bool
 }

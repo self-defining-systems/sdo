@@ -108,12 +108,45 @@ func (r acceptedResource) apply(ctx context.Context, ref sdk.ObjectRef, source *
 // recordAcceptance writes only the acceptance record, under its own field
 // manager, so later deployer applies that omit it leave it in place.
 func (r acceptedResource) recordAcceptance(ctx context.Context, ref sdk.ObjectRef, record string) error {
+	return r.recordInstanceAcceptance(ctx, ref, record, nil)
+}
+
+// AcceptanceRecordObject builds the metadata-only, UID-bound write shared by acceptance transports.
+func AcceptanceRecordObject(ref sdk.ObjectRef, record string, live *unstructured.Unstructured) *unstructured.Unstructured {
 	metadata := map[string]any{"name": ref.Name, "annotations": map[string]any{acceptedPathsAnnotation: record}}
-	if r.namespaced {
+	if live != nil {
+		metadata["uid"] = string(live.GetUID())
+	}
+	if ref.Namespace != "" {
 		metadata["namespace"] = ref.Namespace
 	}
-	_, err := r.applyAs(ctx, ref, &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": metadata}}, false, acceptanceFieldManager)
+	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": metadata}}
+}
+
+func (r acceptedResource) recordInstanceAcceptance(ctx context.Context, ref sdk.ObjectRef, record string, live *unstructured.Unstructured) error {
+	_, err := r.applyAs(ctx, ref, AcceptanceRecordObject(ref, record, live), false, acceptanceFieldManager)
 	return err
+}
+
+// defaultRenderSuffix names the probe object of renderDefaults; dry-run never
+// persists it.
+const defaultRenderSuffix = "-sdo-default-render"
+
+// renderDefaults is the server's dry-run create of accepted source alone, under
+// a probe name no live object has: every field the server fills in carries its
+// default value. Recreated objects use it to tell a default from a writer's
+// value. Any refusal leaves the caller without defaults (fail closed).
+func (r acceptedResource) renderDefaults(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	probe := ref
+	probe.Name = ref.Name + defaultRenderSuffix
+	if len(probe.Name) > 253 {
+		return nil, fmt.Errorf("default render name for %s/%s is too long", ref.Kind, ref.Name)
+	}
+	object := source.DeepCopy()
+	object.SetName(probe.Name)
+	object.SetAnnotations(nil)
+	at := acceptedResource{client: r.client, path: strings.TrimSuffix(r.path, "/"+ref.Name) + "/" + probe.Name, namespaced: r.namespaced}
+	return at.applyAs(ctx, probe, object, true, "sdo-deployer")
 }
 
 func (r acceptedResource) applyAs(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool, manager string) (*unstructured.Unstructured, error) {
