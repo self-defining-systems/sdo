@@ -2,6 +2,8 @@ package validate
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,15 +19,28 @@ func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, 
 	if decision == nil || (outcome.GetReflectionSkipReason() == "no_session" && decision.GetLearningDecision() == "no_change" && decision.GetNoChangeReason() == "no_session") {
 		return nil
 	}
-	changed := map[string]bool{}
-	if decision.GetLearningDecision() == "updated" {
-		for _, p := range paths {
-			kind, id, ok := layout.Classify(p)
-			id, _, _ = strings.Cut(id, "/")
-			if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookProgram || kind == layout.KindPlaybookScript) && slices.Contains(decision.GetPlaybookIds(), id) {
+	changed, touched := map[string]bool{}, map[string]bool{}
+	for _, p := range paths {
+		kind, id, ok := layout.Classify(p)
+		id, _, _ = strings.Cut(id, "/")
+		if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookProgram || kind == layout.KindPlaybookScript) {
+			touched[id] = true
+			if decision.GetLearningDecision() == "updated" && slices.Contains(decision.GetPlaybookIds(), id) {
 				changed[id] = true
 			}
 		}
+	}
+	// Only accepted playbooks own repairs and can go stale. Applications also
+	// attribute generic menu actions and removals, which stay hand repairs.
+	playbook := func(id string) bool {
+		if touched[id] {
+			return true
+		}
+		if id == "" || id == "." || id == ".." || strings.ContainsAny(id, "/:\\") {
+			return false
+		}
+		info, err := os.Stat(filepath.Join(root, layout.PlaybookDir(id)))
+		return err == nil && info.IsDir()
 	}
 	applications := append([]*contracts.PlanApplication(nil), outcome.GetPlanApplications()...)
 	stageHandled := map[string]map[string]bool{}
@@ -55,7 +70,7 @@ func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, 
 		}
 		fromPlaybook := false
 		for _, app := range applications {
-			if len(app.GetProgramIds()) > 0 && !app.GetDryRun() && applicationOwnsRepair(app, a) {
+			if slices.ContainsFunc(app.GetProgramIds(), playbook) && !app.GetDryRun() && applicationOwnsRepair(app, a) {
 				fromPlaybook = true
 				break
 			}
@@ -69,6 +84,9 @@ func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, 
 			continue
 		}
 		for _, id := range app.GetProgramIds() {
+			if !playbook(id) {
+				continue
+			}
 			if !stageHandled[app.GetApplicationId()][id] && (!app.GetApplied() || app.GetError() != "" || app.GetRolledBack() || app.GetRollbackError() != "" || !app.GetVerificationCompleted() || !app.GetVerificationPassed()) {
 				stale[id] = "application failed or did not verify its findings"
 			}
@@ -148,6 +166,10 @@ func applicationOwnsRepair(app *contracts.PlanApplication, a *contracts.RepairAc
 	switch a.GetKind() {
 	case "sdo-apply", "sdo-mitigate":
 		return a.GetActionId() == id
+	case "mitigation-menu":
+		// The responder menu numbers each applied action of one application.
+		n, err := strconv.Atoi(strings.TrimPrefix(a.GetActionId(), id+"-a"))
+		return strings.HasPrefix(a.GetActionId(), id+"-a") && err == nil && n >= 1
 	case "program-plan", "run-script":
 		base := "sdo-program-" + id
 		if a.GetActionId() == base {

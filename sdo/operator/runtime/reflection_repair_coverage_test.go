@@ -40,7 +40,11 @@ func TestControllerRepairReceiptsFeedReflectionCoverage(t *testing.T) {
 				t.Fatal(err)
 			}
 			o := &contracts.OutcomeRecord{Classification: "success", RepairActions: result.RepairActions, PlanApplications: result.PlanApplications}
-			ds := validate.ReflectionRepairDiagnostics(t.TempDir(), o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".sdo/playbooks/restore-port"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			ds := validate.ReflectionRepairDiagnostics(root, o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
 			wantGap := kind == "hand" || kind == "hand-script"
 			if (len(ds) > 0) != wantGap {
 				t.Fatalf("kind=%s diagnostics=%v", kind, ds)
