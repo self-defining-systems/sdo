@@ -2,6 +2,18 @@
 
 ## Broker incident ledger
 
+Incident workspace preparation uses the full accepted commit bound in the
+durable opening request. It clones that immutable revision under a per-proposal
+lock, independently of the shared publication lock held during peer validation.
+Newer memory is incorporated at later publication/rebuild boundaries. Compare
+`incident_opened` with `workspace_prepared` in lifecycle telemetry; current logs
+also emit `incident_workspace_preparing` and `incident_workspace_prepared` with
+`bound_commit`, the resulting `base_commit`, `duration_ms`, and any error. A
+workspace's base must remain the opening revision even when a peer commits in
+between. Older builds selected the latest head only after waiting for the shared
+broker lock, so a long pre-stage gap could be peer validation time rather than
+program execution or a controller restart.
+
 Source repairs change source identity (all non-`.sdo` inputs participate). Diff, reconcile and closure render accepted source directly; no rendered lock or image evidence exists.
 
 For active Go runs, inspect the configured runtime `LedgerRoot` and the Go broker workspace root. The broker stages the deployer receipt before publishing source, then reconciles it to the attributed accepted commit after a crash. The receipt binds the candidate Git tree, strategy, image references, resource IDs, and observed ready revision; it is information and never gates a diff, reconcile or closure.
