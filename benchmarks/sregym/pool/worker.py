@@ -45,11 +45,16 @@ def prepare(spec: DeploySpec) -> None:
 
 
 def pair(spec: PairSpec) -> None:
-    """One first+repeat (or a retried remainder) on one lane, with fastloop's guarded parallel runner."""
+    """One first+repeat (or a retried remainder) on one lane, with fastloop's guarded lane runner."""
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
     from benchmarks.sregym.fastloop.parallel import Encounter, ParallelPlan, run_parallel
 
     environment = FastloopEnvironment.load(spec.run_dir.resolve())
+    if bool(environment.shared_accepted_id) != (spec.lane_memory == "shared"):
+        raise ValueError(f"pool: lane {spec.lane} memory differs from the run's lane_memory={spec.lane_memory}")
+    if spec.lane_memory == "private":
+        private_pair(spec, environment)
+        return
     plan = ParallelPlan(
         run_id=spec.run_id,
         accepted_repository=environment.workspace,
@@ -63,3 +68,45 @@ def pair(spec: PairSpec) -> None:
         diagnosis_grading=spec.diagnosis_grading,
     )
     run_parallel(plan, spec.output)
+
+
+def private_pair(spec: PairSpec, environment: FastloopEnvironment) -> None:
+    """A lane with its own memory runs the same guarded encounter command as a parallel lane."""
+    from benchmarks.sregym.fastloop.parallel import lane_process_environment, lane_run_command
+    from benchmarks.sregym.fastloop.records import load_records, write_records
+
+    results = environment.run_dir / "results" / spec.run_id
+    if results.exists():
+        raise ValueError(f"pool: refusing to replay existing lane results: {results}")
+    spec.output.mkdir(parents=True)
+    stream = spec.output / "stream.json"
+    stream.write_text(
+        json.dumps(
+            {
+                "incidents": [[spec.problem] for _ in spec.encounters],
+                "diagnosis_grading": spec.diagnosis_grading,
+                "capability_mode": spec.capability_mode,
+                "permissive_responder": spec.capability_mode == "permissive",
+            }
+        )
+        + "\n"
+    )
+    command = lane_run_command(
+        environment.run_dir,
+        spec.run_id,
+        stream,
+        spec.timeout_seconds,
+        ["--provider", spec.provider, "--model", spec.model],
+    )
+    with (spec.output / "worker.log").open("w") as log:
+        completed = subprocess.run(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+            env=lane_process_environment(environment, 1),
+        )
+    path = results / "incidents.jsonl"
+    write_records(spec.output / "incidents.jsonl", load_records(path) if path.exists() else [])
+    if completed.returncode:
+        raise SystemExit(completed.returncode)

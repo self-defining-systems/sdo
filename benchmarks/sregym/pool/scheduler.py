@@ -75,6 +75,8 @@ class PoolConfig(BaseModel):
     timeout_seconds: int = Field(default=2400, gt=0)
     diagnosis_grading: Literal["off", "deferred", "inline"] = "off"
     capability_mode: Literal["strict", "permissive"] = "permissive"
+    #: ``shared``: lanes attach one accepted memory per app; ``private``: each lane keeps its own (toy lanes).
+    lane_memory: Literal["shared", "private"] = "shared"
     #: Host commands that deploy ``{app}`` (problem ``{problem}``) into ``{run_dir}`` for lane ``{lane}``.
     prepare_steps: list[list[str]] = Field(min_length=1)
     #: Native ``infra_error`` values that end a pair without its repeat and keep the lane.
@@ -117,6 +119,7 @@ class PairSpec(BaseModel):
     timeout_seconds: int
     diagnosis_grading: Literal["off", "deferred", "inline"]
     capability_mode: Literal["strict", "permissive"]
+    lane_memory: Literal["shared", "private"]
     memory: MemoryEndpoint
 
 
@@ -474,6 +477,7 @@ class Scheduler:
             timeout_seconds=self.config.timeout_seconds,
             diagnosis_grading=self.config.diagnosis_grading,
             capability_mode=self.config.capability_mode,
+            lane_memory=self.config.lane_memory,
             memory=self.config.endpoints[record.app],
         )
         host.write_text(self._spec(lane.host, unit), spec.model_dump_json(indent=2) + "\n")

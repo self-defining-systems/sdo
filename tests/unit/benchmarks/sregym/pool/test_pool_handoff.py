@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+import pytest
+
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.parallel import Encounter, ParallelPlan, run_parallel
 from benchmarks.sregym.fastloop.records import IncidentRecord, Injected, NotInjected
 from benchmarks.sregym.pool.endpoints import MemoryEndpoint
-from benchmarks.sregym.pool.scheduler import DeploySpec, Ready, pair_disposition
-from benchmarks.sregym.pool.worker import prepare
+from benchmarks.sregym.pool.scheduler import DeploySpec, PairSpec, Ready, pair_disposition
+from benchmarks.sregym.pool.worker import pair, prepare
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -72,7 +74,7 @@ def test_parallel_output_decides_the_pair(tmp_path: Path) -> None:
     assert pair_disposition(held, "p", ["first", "repeat"], []).kind == "held"
 
 
-def test_prepare_worker_ready_record_is_what_the_scheduler_reads(tmp_path: Path) -> None:
+def toy_lane(tmp_path: Path) -> Path:
     run_dir = tmp_path / "lane"
     FastloopEnvironment(
         run_dir=run_dir,
@@ -85,6 +87,11 @@ def test_prepare_worker_ready_record_is_what_the_scheduler_reads(tmp_path: Path)
         private_tmp=None,
         seed_commit="a" * 40,
     ).save()
+    return run_dir
+
+
+def test_prepare_worker_ready_record_is_what_the_scheduler_reads(tmp_path: Path) -> None:
+    run_dir = toy_lane(tmp_path)
     spec = DeploySpec(
         lane="c5-l0",
         app="hotel_reservation",
@@ -99,3 +106,25 @@ def test_prepare_worker_ready_record_is_what_the_scheduler_reads(tmp_path: Path)
     ready = Ready.model_validate_json(spec.ready.read_text())
     assert (ready.app, ready.build, ready.kubeconfig) == ("hotel_reservation", "h1", run_dir / "kubeconfig")
     assert ready.source_digest.startswith("sha256:")
+
+
+def test_pair_refuses_a_lane_whose_memory_differs_from_the_run(tmp_path: Path) -> None:
+    spec = PairSpec(
+        run_id="r",
+        lane="c5-l0",
+        problem="p",
+        app="hotel_reservation",
+        encounters=["first", "repeat"],
+        run_dir=toy_lane(tmp_path),
+        output=tmp_path / "out",
+        provider="codex",
+        model="scripted",
+        timeout_seconds=60,
+        diagnosis_grading="off",
+        capability_mode="permissive",
+        lane_memory="shared",
+        memory=MemoryEndpoint(repo="o/hotel-reservation-sdo", branch="live/t"),
+    )
+    with pytest.raises(ValueError, match="lane_memory=shared"):
+        pair(spec)
+    assert not spec.output.exists()
