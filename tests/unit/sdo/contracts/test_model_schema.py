@@ -60,6 +60,7 @@ def test_incident_schema_is_the_proto_message_minus_declared_omissions() -> None
         "response_loop_exhausted",
         "program_failure_signals",
         "resolution_path",
+        "drift_reprompt",
     }
 
 
@@ -139,3 +140,49 @@ def test_fields_with_no_model_form_must_be_omitted() -> None:
         AppliedPlaybook.DESCRIPTOR, omit={AppliedPlaybook.DESCRIPTOR.full_name: ("parameter_bindings",)}
     )
     assert _property_names(schema) == {"playbook_id", "script_names"}
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_no_controller_owned_field_is_reachable_in_provider_schema(provider: str, tmp_path) -> None:
+    from sdo.agents.responder.session_turn import session_turn_options
+    from sdo.contracts.model_schema import controller_owned
+
+    def check(descriptor: Any, schema: dict[str, Any]) -> None:
+        for field in descriptor.fields:
+            if controller_owned(field):
+                assert field.name not in schema["properties"], field.full_name
+            elif field.name in schema["properties"] and field.message_type is not None:
+                child = schema["properties"][field.name]
+                if field.is_repeated:
+                    child = child["items"]
+                if "properties" in child:
+                    check(field.message_type, child)
+
+    schema = session_turn_options(provider, tmp_path)["output_schema"]
+    for branch, message in (("incident_result", IncidentResult), ("reflection", ReflectionResult)):
+        check(message.DESCRIPTOR, schema["properties"][branch]["anyOf"][0])
+
+
+def test_worker_projection_drops_every_annotated_field_recursively() -> None:
+    from sdo.contracts.model_schema import controller_owned, worker_result_payload
+
+    def sweep(descriptor: Any, ancestors: frozenset[str] = frozenset()) -> None:
+        if descriptor.full_name in ancestors:
+            return
+        ancestors = ancestors | {descriptor.full_name}
+        for field in descriptor.fields:
+            for key in {field.name, field.json_name}:
+                if controller_owned(field):
+                    assert worker_result_payload({key: {"invalid": None}}, descriptor) == {}
+                elif field.message_type is not None and not field.message_type.GetOptions().map_entry:
+                    sweep(field.message_type, ancestors)
+                    nested = {
+                        child.name: {"invalid": None} for child in field.message_type.fields if controller_owned(child)
+                    }
+                    if nested:
+                        value = [nested] if field.is_repeated else nested
+                        expected = [{}] if field.is_repeated else {}
+                        assert worker_result_payload({key: value}, descriptor) == {key: expected}
+
+    sweep(IncidentResult.DESCRIPTOR)
+    sweep(ReflectionResult.DESCRIPTOR)
