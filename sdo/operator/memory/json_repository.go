@@ -291,10 +291,31 @@ func (s *JSONStore) ImportLegacy(ctx context.Context) error {
 	return nil
 }
 
+// LogicalOutcome returns record as every stored outcome reads: each text field
+// with its physical memory paths rewritten to logical references.
+func LogicalOutcome(record *contracts.OutcomeRecord) (*contracts.OutcomeRecord, error) {
+	document, err := wire.MarshalFull(record)
+	if err != nil {
+		return nil, err
+	}
+	outcome, err := parse(document)
+	if err != nil {
+		return nil, err
+	}
+	return outcome.Record, nil
+}
+
+// parse is the one path by which outcome documents are written and read, so
+// stored outcomes, including memory accepted before agent prose was rewritten,
+// never show a worker a physical memory path.
 func parse(document []byte) (Outcome, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(document, &fields); err != nil || fields == nil {
 		return Outcome{}, fmt.Errorf("outcome must be a JSON object")
+	}
+	document, err := logicalDocument(document)
+	if err != nil {
+		return Outcome{}, err
 	}
 	record := new(contracts.OutcomeRecord)
 	if err := wire.UnmarshalLenientMigrating(document, record); err != nil {
@@ -325,4 +346,44 @@ func safeDirectory(directory string) error {
 		}
 	}
 	return nil
+}
+
+// logicalDocument rewrites every string in a JSON document, known or
+// historical field, through layout.LogicalizeText. A document without a
+// physical memory path is returned unchanged.
+func logicalDocument(document []byte) ([]byte, error) {
+	if !layout.ContainsPhysicalPath(string(document)) {
+		return document, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	var tree any
+	if err := decoder.Decode(&tree); err != nil {
+		return nil, err
+	}
+	var logical func(any) any
+	logical = func(value any) any {
+		switch value := value.(type) {
+		case string:
+			return layout.LogicalizeText(value)
+		case []any:
+			for i := range value {
+				value[i] = logical(value[i])
+			}
+		case map[string]any:
+			rewritten := make(map[string]any, len(value))
+			for key, item := range value {
+				rewritten[layout.LogicalizeText(key)] = logical(item)
+			}
+			return rewritten
+		}
+		return value
+	}
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(logical(tree)); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

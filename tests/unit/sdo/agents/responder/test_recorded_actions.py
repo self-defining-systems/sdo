@@ -26,6 +26,7 @@ from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection_brief import responder_shell_commands
 from sdo.contracts import IncidentRequest, IncidentResult
+from tests.context_helpers import expand_context
 from tests.proto_messages import evolve
 from tests.structured_turns import ScriptedAgent, reply
 from tests.unit.sdo.agents.prompts.cases import responder_prompt as _responder_prompt
@@ -91,7 +92,7 @@ def test_act_runs_one_mutation_and_records_its_receipt(scratch: Path, capsys: py
     )
 
     assert code == 0
-    printed = json.loads(capsys.readouterr().out)
+    printed = json.loads(expand_context(capsys.readouterr().out))
     full = json.loads(Path(printed["details_file"]).read_text())
     assert "deployment.apps/rate image updated" in full["actions"][0]["output"]
     (receipt,) = _recorded(scratch)
@@ -374,7 +375,7 @@ def test_act_help_documents_the_mutation_form(capsys: pytest.CaptureFixture[str]
     with pytest.raises(SystemExit):
         tools_cli.main(["act", "--help"])
 
-    assert "sdo act --resource" in capsys.readouterr().out
+    assert "sdo act --resource" in expand_context(capsys.readouterr().out)
 
 
 def _scripted_reply(result: IncidentResult, *, during_turn: list[str], raw_lines: Sequence[str] = ()) -> ScriptedAgent:
@@ -442,6 +443,7 @@ def test_prompt_routes_mutations_through_the_recorder_and_leaves_receipts_to_it(
     prompt = _responder_prompt(_request())
     assert "sdo-incident-response/SKILL.md" in prompt
     workflow = (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
+    workflow += (SKILLS_ROOT / "sdo-incident-response/references/live-repairs.md").read_text()
     assert "Use recorded actions for live mutations" in workflow
     assert "declare every changed resource" in workflow
     assert "never hand-write receipts" in workflow
@@ -847,7 +849,7 @@ def test_verified_incident_act_returns_rejection_receipt_without_running(tmp_pat
     marker = tmp_path / "must-not-run"
     assert tools_cli.main(["act", "--resource", "Service/app/api", "--", "touch", str(marker)]) == 1
     assert not marker.exists()
-    text = capsys.readouterr().out
+    text = expand_context(capsys.readouterr().out)
     details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
     action = json.loads(details.read_text())["actions"][0]
     assert action["receipt"]["failure_reason"] == "incident_verified"
@@ -923,7 +925,7 @@ def test_sdo_options_trailing_a_kubectl_command_belong_to_sdo(
 
     assert code == 0
     assert log.read_text().split() == ["-n", "app", "set", "image", "deployment/rate", "rate=img"]
-    assert json.loads(capsys.readouterr().out)["command"] == "act"
+    assert json.loads(expand_context(capsys.readouterr().out))["command"] == "act"
     (receipt,) = _recorded(scratch)
     assert receipt["summary"] == "restore rate image"
     assert receipt["reversible"] is False
@@ -960,7 +962,7 @@ def test_a_wrapped_usage_error_says_how_to_call_act_in_one_line(
     argv = ["act", "--resource", "Service/app/api", "--", str(kubectl), "patch", "svc", "api", "--wait=true"]
     assert tools_cli.main(["--json", *argv] if full_json else argv) == 1
 
-    out = capsys.readouterr().out
+    out = expand_context(capsys.readouterr().out)
     hint = json.loads(out)["hint"] if full_json else next(line for line in out.splitlines() if "sdo act" in line)
     assert "\n" not in hint
     assert "kubectl" in hint

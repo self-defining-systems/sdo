@@ -126,7 +126,7 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 			plan, err = bindMitigationValues(plan, p.Spec(), bindings, isolated)
 		}
 		if err == nil {
-			err = program.CheckReplicaSetScales(plan, isolated, bindings)
+			err = program.CheckReplicaSetScales(plan, isolated)
 		}
 		results <- outcome{plan: plan, err: err}
 	}()

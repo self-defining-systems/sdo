@@ -1,0 +1,3 @@
+# Live repairs
+
+Use recorded actions for live mutations (declare every changed resource); never hand-write receipts. One wrapper; client-go reads; commit source repairs. Restore namespace drift to accepted source unless live evidence establishes an intended difference; uncertainty alone doesn't block it. Explain benign drift with live evidence. When an admission control blocks recovery and its backend is gone, restore the backend if you can. Otherwise a scoped fail-open or removal that restores availability is acceptable; report it. CA: `SyncWebhookCA` ([ref](webhook-ca.md)). Repairs stay on app objects; never widen a selector or policy to other namespaces.

@@ -269,13 +269,24 @@ def _prepare_policy_reflection(
     }
     opened = json.dumps({"namespace": NAMESPACE, "networkPolicies": [policy, peer]}).encode()
     fixed = json.dumps({"namespace": NAMESPACE, "networkPolicies": [peer]}).encode()
+    # memory.CaptureRepairReceipts copies the original hand-repair receipt into
+    # captured recordings; the positive case links it to the learned program.
+    receipt = {
+        "id": "delete-policy",
+        "incident_id": incident_id,
+        "success": True,
+        "started_at": "2026-01-01T00:00:01Z",
+        "completed_at": "2026-01-01T00:00:02Z",
+        "resources": [resource],
+    }
+    recordings = json.dumps([{"method": "RepairReceipt", "arguments": [], "result": receipt}]).encode()
     corpus = worktree / ".sdo/corpus/deny-all-networkpolicy-isolation"
     corpus.mkdir(parents=True)
     for name, content in {
         "open.json": opened,
         "fixed.json": fixed,
         "healthy.json": fixed,
-        "recordings.json": b"[]",
+        "recordings.json": recordings,
     }.items():
         (corpus / name).write_bytes(content)
     (corpus / "labels.json").write_text(
@@ -298,7 +309,7 @@ def _prepare_policy_reflection(
     (capture / "healthy/healthy.json").write_bytes(fixed)
     (capture / "open@detect.json").write_bytes(opened)
     (capture / "fixed.json").write_bytes(fixed)
-    (capture / "open@detect-recordings.json").write_text("[]")
+    (capture / "open@detect-recordings.json").write_bytes(recordings)
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
     return prepare_reflection_memory(
         worktree,

@@ -23,6 +23,7 @@ from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.parallel_memory import memory_ancestry, memory_head
 from benchmarks.sregym.fastloop.records import load_records
+from benchmarks.sregym.fastloop.reset_provenance import RESET_GENERATION, read_reset_generation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -130,6 +131,15 @@ def execute_row(plan: SequencePlan, index: int, results: Path) -> None:
         "--continue-on-error",
     ]
     directory = plan.journal_dir / f"{index:03d}"
+    if environment.app != "toy":
+        planned = (
+            json.loads((plan.journal_dir / f"{index - 1:03d}" / "finished.json").read_text())["accepted_after"]
+            if index
+            else environment.seed_commit
+        )
+        if not isinstance(planned, str) or not planned:
+            raise ValueError("eval: planned encounter ancestry is missing")
+        command.extend(["--planned-commit", planned])
     _save(directory / "command.json", command)
     # Keep transient load admission from turning an unstarted row into an
     # uncertain interruption. Lease loss still stops immediately.
@@ -264,7 +274,7 @@ def run_sequence(plan: SequencePlan, *, execute: Callable[[SequencePlan, int, Pa
                         "lane": plan.lane,
                         "code_sha": plan.code_sha,
                         "seed_commit": environment.seed_commit,
-                        "accepted_before": memory_head(environment.workspace),
+                        "pre_reset_head": memory_head(environment.workspace),
                         "started_at": _now(),
                         "program_trust_threshold": plan.program_trust_threshold,
                         "program_trust_threshold_status": "retired; provenance only",
@@ -287,6 +297,19 @@ def run_sequence(plan: SequencePlan, *, execute: Callable[[SequencePlan, int, Pa
                 _save(retry_path, {"next_attempt": attempt + 1})
                 raise
             start = json.loads(manifest.read_text())
+            reset_path = results.parent / RESET_GENERATION
+            if environment.app != "toy":
+                reset = read_reset_generation(reset_path, environment.workspace)
+                planned = (
+                    json.loads((plan.journal_dir / f"{index - 1:03d}" / "finished.json").read_text())["accepted_after"]
+                    if index
+                    else environment.seed_commit
+                )
+                if reset["accepted_before"] != planned:
+                    raise ValueError("eval: reset generation differs from planned encounter ancestry")
+                start = {**start, **reset}
+            else:
+                start["accepted_before"] = start["pre_reset_head"]
             after = memory_head(environment.workspace)
             lineage = memory_ancestry(environment.workspace, start["accepted_before"], after)
             _save(

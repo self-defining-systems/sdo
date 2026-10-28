@@ -12,15 +12,16 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from agentshim import StdioMcpServer
 
 from sdo.agents.prompt_templates import render_prompt
 from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, VALIDATION_TOOL_TIMEOUT_SECONDS
+from sdo.agents.responder.writer_termination import KubernetesWriterObserver, worker_identity
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from typing import Any
 
     from agentshim import McpServer
@@ -103,10 +104,18 @@ def session_mcp_servers(worktree: Path, provider: str) -> list[McpServer]:
     ]
 
 
-def session_turn_options(provider: str, worktree: Path) -> dict[str, Any]:
-    """Keyword arguments for ``run_structured_turn`` that must match across the session's turns."""
+def session_turn_options(
+    provider: str, worktree: Path, *, phase: Literal["responder", "reflection"] = "responder"
+) -> dict[str, Any]:
+    """Shared model-facing configuration and phase-bound writer ownership."""
 
     return {
+        "session_ownership_role": phase,
+        "session_ownership_worker": worker_identity(),
+        "session_termination_observer": KubernetesWriterObserver(),
+        "session_ownership_directory": Path(os.environ["SDO_SESSION_DIR"]) / "thread-ownership"
+        if os.environ.get("SDO_SESSION_DIR")
+        else None,
         "output_schema": session_output_schema(),
         "mcp_servers": session_mcp_servers(worktree, provider),
         "environment": {"MCP_TOOL_TIMEOUT": str(VALIDATION_TOOL_TIMEOUT_SECONDS * 1000)}

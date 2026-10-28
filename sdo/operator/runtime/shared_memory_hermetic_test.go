@@ -37,7 +37,8 @@ func (d sharedMemoryResponder) Dispatch(_ context.Context, r IncidentRequest) (I
 	result := completedResult(r.IncidentID)
 	result.ResponderSessionID = "session-" + d.lane
 	result.Timing = TimingMetrics{StartedAt: d.start.Add(time.Second), CompletedAt: d.start.Add(2 * time.Second)}
-	result.RepairActions = []RepairActionReceipt{{ActionID: d.lane + "-repair", Kind: "source", Target: d.lane + ".txt", Summary: "synthetic repair", Details: "scripted source repair", Success: true, StartedAt: result.Timing.StartedAt, CompletedAt: result.Timing.CompletedAt}}
+	// The repair is the source file in the incident workspace, published by the
+	// broker. No cluster receipt is recorded, so README edits stay judgement.
 	return result, nil
 }
 

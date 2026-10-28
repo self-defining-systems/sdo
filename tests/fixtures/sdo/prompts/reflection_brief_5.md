@@ -1,4 +1,4 @@
-Incident brief (built by the broker from the verified closure; about 894 tokens):
+Incident brief (built by the broker from the verified closure; about 868 tokens):
 ## Live evidence at dispatch (closure request)
 Application toy in namespace toy; source commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, deployed commit cccccccccccccccccccccccccccccccccccccccc.
 Detected 1970-01-01T00:00:00+00:00, dispatched 1970-01-01T00:00:00+00:00, responder completed 1970-01-01T00:00:00+00:00, health verified 1970-01-01T00:00:00+00:00.
@@ -50,6 +50,8 @@ Post-response incident detector states: none recorded
 ## Responder structured result
 No responder result was recorded (dispatch error: none).
 
+Full: <context file>
+Summary (1582 chars; partial):
 ## Existing operational memory (trusted logical snapshot)
 Health detectors (judge-owned, never edit): none
 - detector-0 (watches: v1/Service, firing: 0, playbooks: ['repair-0'], originatingIncident: prior-toy) [raised a finding in this incident]
@@ -67,9 +69,9 @@ repair-0
 Existing playbooks: repair-0
 Excerpt of playbook repair-0:
 ```
-手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手
-[... 8300 characters omitted ...]
-```
+Full: <context file>
+Summary (9000 chars; partial):
+手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手
 
 ## Responder shell commands
 The responder's shell commands are not available for this session.

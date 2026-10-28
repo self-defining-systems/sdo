@@ -64,7 +64,7 @@ func TestHermeticResponsePipelineClearsTwoFaultsThroughControllerClosure(t *test
 	}
 	select {
 	case closure := <-closed:
-		if dispatcher.agentCalls != 0 || closure.Result == nil || closure.Result.ResolutionPath != "deterministic" || len(closure.Request.PriorStages) != 1 || len(closure.Result.RepairActions) != 1 || len(closure.Result.ConfirmedRootCauses) != 2 {
+		if dispatcher.agentCalls != 0 || closure.Result == nil || closure.Result.ResolutionPath != "deterministic" || len(closure.Request.PriorStages) != 1 || len(closure.Result.RepairActions) != 2 || len(closure.Result.ConfirmedRootCauses) != 2 {
 			t.Fatalf("pipeline closure lost evidence or ran agent: %+v agent=%d", closure, dispatcher.agentCalls)
 		}
 		if len(closure.FinalDetectorStates) == 0 || closure.FinalDetectorStates[0].Status != DetectorEvaluationClear {

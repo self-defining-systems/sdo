@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from sdo.agents.context_output import cap_text
+
 MAX_OUTPUT_CHARS = 3000
 # Shared byte budget for every agent-facing MCP tool reply.
 MAX_TOOL_REPLY_BYTES = 8192
@@ -73,19 +75,7 @@ def bound_reply(text: str, *, tool: str, budget: int = MAX_TOOL_REPLY_BYTES) -> 
     The session resends every reply on each later model request, so the
     printed part names the size and the file instead of a truncated copy.
     """
-    if len(text.encode("utf-8")) <= budget:
-        return text
-    name = re.sub(r"[^a-z]+", "-", tool.lower()).strip("-") or "tool"
-    path = write_text(text, command=name, root=session_output_root())
-    lines = text.splitlines()
-    notice = (
-        f"{tool} reply: {len(text.encode('utf-8'))} bytes, {len(lines)} lines; over the {budget}-byte "
-        "reply budget, so it is saved whole to a file. Search or extract what you need from that file; "
-        "the head below is partial.\n"
-        f"Full reply: {path}\nHead:\n"
-    )
-    head = text.encode("utf-8")[: min(1024, budget // 2)].decode("utf-8", errors="ignore")
-    return notice + head + "\n…"
+    return cap_text(text, budget, bytes_limit=True)
 
 
 def summarize_response(response: dict[str, Any], details_file: str) -> dict[str, Any]:
