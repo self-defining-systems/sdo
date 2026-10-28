@@ -115,9 +115,20 @@ COPY --from=node-tools /usr/local/lib/node_modules/npm /usr/local/lib/node_modul
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 ARG CODEX_VERSION=0.163.0
-ARG CLAUDE_CODE_VERSION=2.1.258
+ARG CLAUDE_CODE_VERSION=2.1.280
 RUN npm install --global "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force
+# Keep model requirements beside their image defaults; measure the installed
+# executables rather than trusting the npm arguments or image labels alone.
+COPY scripts/check_model_cli_versions.py /usr/local/lib/sdo/check_model_cli_versions.py
+COPY sdo/operator/model_cli_requirements.json /usr/local/lib/sdo/model_cli_requirements.json
+RUN python3 /usr/local/lib/sdo/check_model_cli_versions.py \
+      --requirements /usr/local/lib/sdo/model_cli_requirements.json \
+      --claude-code-version "${CLAUDE_CODE_VERSION}" \
+      --codex-version "${CODEX_VERSION}" \
+      --metadata /opt/sdo/model-cli-versions.json
+LABEL dev.sdo.claude-code.version="${CLAUDE_CODE_VERSION}" \
+      dev.sdo.codex.version="${CODEX_VERSION}"
 
 FROM go-deps AS go-binaries
 # The runtime and synthesized detector workspaces use local Go modules in this
