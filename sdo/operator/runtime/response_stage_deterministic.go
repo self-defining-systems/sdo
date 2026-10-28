@@ -393,19 +393,15 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, remaining, save); err != nil {
+		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, remaining, len(matches)-index, save); err != nil {
 			return report, err
 		}
 		progressed = true
 		appliedHere = append(appliedHere, attempt)
 		ineffective.add(attempt)
-		// Apply already waited as long as waiting can help, so a pending
-		// handoff (admission-blocked, stalled or bounded) keeps the pass: each
-		// later match diagnoses the live state afresh and may be the actor the
-		// rollout needs. A failed application hands the rest to the responder.
-		if attempt.ApplyReceipt.GetRolloutPending() == nil && attempt.Error != "" {
-			break
-		}
+		// An unsuccessful application is evidence about that binding, not a
+		// reason to starve the other matches. Each later match diagnoses fresh
+		// state and goes through the ordinary conflict and mutation fences.
 	}
 	if err := stage.revertIneffective(ctx, loop, state, report, appliedHere, save); err != nil {
 		return report, err
@@ -731,7 +727,7 @@ type stagePlanned struct {
 
 // applyMatch runs one binding through the ordinary executor lifecycle before
 // the next candidate may diagnose or plan. There is no merged stage batch.
-func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, item stagePlanned, remaining func() time.Duration, save func(bool) error) error {
+func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, item stagePlanned, remaining func() time.Duration, candidatesLeft int, save func(bool) error) error {
 	if remaining() <= 0 {
 		item.attempt.Result, item.attempt.SkipReason = "skipped", "stage_budget"
 		recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
@@ -748,7 +744,9 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 	if err := save(false); err != nil {
 		return err
 	}
-	rolloutTimeout := remaining()
+	// Reserve a share for each remaining match. A rollout may depend on a
+	// later repair, so waiting for it cannot consume that repair's whole turn.
+	rolloutTimeout := remaining() / time.Duration(max(1, candidatesLeft))
 	if stage.RolloutTimeout > 0 && stage.RolloutTimeout < rolloutTimeout {
 		rolloutTimeout = stage.RolloutTimeout
 	}

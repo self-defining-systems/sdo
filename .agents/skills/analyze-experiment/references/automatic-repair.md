@@ -55,6 +55,19 @@ Source reconciliation action reports carry `source_reconcile`: the object refere
 
 Live diagnosis bindings come from `program.BindFinding` through `SelectProgramCandidates`, shared by stage selection, matched menu selection and reflection repeat observation. Stage target associations are separate from authored explanation coverage: an unlinked live Match remains applicable. Optional roles may be absent and scalar defaults need no explicit value entry; historical `unbound_parameter` skips can reflect the retired duplicate coverage/completeness gate, not a missing declared parameter.
 
+Programs declaring object roles need at least one finding-bound object or an explicit playbook hint to be
+candidates. Historical empty optional-role diagnoses often returned Unknown on unrelated findings; count
+affected repeats separately from repeats with an actually blocked repair. Initial runs are opening evidence;
+outcome runs also include later diagnoses, aliases and post-repair stale bindings, so do not add their
+counts as distinct failed attempts. Unknown without evidence/error has an unrecorded reason.
+
+The automatic stage reserves rollout time for remaining candidates and continues after an application
+failure; every later binding diagnoses fresh state through the ordinary executor fences. Before this change,
+one failure could hand off otherwise matched repairs without attempting them. Compare stage receipt
+completion times with model tool invocations: the fastloop mitigation timestamp can be the last successful
+repair, whereas an earlier independently verified stage repair is already a first fix. Model turns require
+provider response IDs, not one count per controller tool call (one model response can execute several).
+
 `ineffective` skips a match whose program revision already ended `applied_still_matching` in this incident for the same finding fingerprints (a replacement object, such as the Pod a restart creates, is a new binding but not new evidence; a finding that attempt did not target is). A deferred second diagnosis turn runs only after a turn that wrote or cleared something.
 
 `reverted_ineffective` (HALF1) is an applied attempt of the current run that cleared none of its target findings while a fresh diagnosis of the same program/binding still matched; the stage restored its writes from the executor's preimages (receipt `rolled_back=true`, a stage `rollback` tool call) before handoff, so the responder starts from the original fault. Other applied attempts that left findings open stay `applied_still_matching` with `kept_reason`: `partial` (cleared a finding or its own diagnosis), `irreversible` (delete, exec, script, external call, webhook CA sync or restart; never undone), or `rollback_failed` (`apply_receipt.rollback_error`). `touched_objects` lists what each attempt wrote. A reverted attempt counts toward `ineffective` skips, is not progress for a later pass, and reflection marks its playbook stale. Runs before HALF1 left such writes in place.

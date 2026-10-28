@@ -220,7 +220,7 @@ def _parser() -> argparse.ArgumentParser:
             "Apply independent options; overlapping writes are refused. "
             "Repeat --option ID with --param NAME=VALUE, or use --selection-set FILE "
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
-            "--match ID selects a playbook_coverage match; --bind narrows it. "
+            "--match ID selects a playbook_coverage match with its supplied bindings; --bind narrows it. "
             "Each option has a receipt; writes before your next verify share one of five loops. "
             "--NAME VALUE also sets parameters. "
             "Pending rollout retains its application ID and allows reads; "

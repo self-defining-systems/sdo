@@ -3,7 +3,6 @@ package runtime
 import (
 	"fmt"
 
-	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -15,16 +14,8 @@ import (
 // detector lists are never required, because health and generated detectors
 // list only their own playbook and reflection cannot edit them.
 func programLinksFinding(spec program.ProgramSpec, finding sdk.Finding) bool {
-	if _, err := program.BindFinding(spec, finding); err == nil {
-		return true
-	}
-	for _, reference := range finding.Playbooks {
-		linked, err := layout.PlaybookID(reference)
-		if err == nil && linked == spec.ID {
-			return true
-		}
-	}
-	return false
+	_, _, ok := findingProgramBindings(spec, finding)
+	return ok
 }
 
 // mitigationIncident carries the selected programs' original findings, distinct
