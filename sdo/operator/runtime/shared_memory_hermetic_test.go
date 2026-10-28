@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
@@ -47,8 +48,15 @@ func (d sharedMemoryResponder) Dispatch(_ context.Context, r IncidentRequest) (I
 var conflictBlock = regexp.MustCompile(`(?s)<<<<<<< [^\n]*\n.*?\n>>>>>>> [^\n]*\n`)
 
 func TestHermeticSharedMemoryControllers(t *testing.T) {
-	for _, conflict := range []bool{false, true} {
-		t.Run(fmt.Sprintf("same-playbook=%t", conflict), func(t *testing.T) {
+	type mode struct{ conflict, remote bool }
+	for _, m := range []mode{{false, false}, {true, false}, {false, true}, {true, true}} {
+		conflict, remote := m.conflict, m.remote
+		name := fmt.Sprintf("same-playbook=%t", conflict)
+		if remote {
+			// Lanes on different hosts: private accepted checkouts sharing one remote branch.
+			name += ",remote-branch"
+		}
+		t.Run(name, func(t *testing.T) {
 			// Conflict modes own separate repositories and controller/process state.
 			t.Parallel()
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -75,6 +83,17 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 			nativeGit(t, root, "add", ".")
 			nativeGit(t, root, "commit", "-qm", "synthetic accepted memory")
 			base := nativeGit(t, root, "rev-parse", "HEAD")
+			const branch = "live/20261028-hermetic"
+			laneRoots := []string{root, root}
+			remoteURL := filepath.Join(t.TempDir(), "memory.git")
+			if remote {
+				testutil.CloneGit(t, root, remoteURL, "--bare")
+				nativeGit(t, root, "push", "--quiet", remoteURL, "HEAD:refs/heads/"+branch)
+				for lane := range laneRoots {
+					laneRoots[lane] = filepath.Join(t.TempDir(), "accepted")
+					testutil.CloneGit(t, remoteURL, laneRoots[lane], "--branch", branch)
+				}
+			}
 			operatorRoot, err := filepath.Abs("..")
 			if err != nil {
 				t.Fatal(err)
@@ -96,9 +115,15 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 			incidents := make([]string, 2)
 			for lane := 0; lane < 2; lane++ {
 				name := fmt.Sprintf("lane-%d", lane)
-				authority, err := broker.New(root, t.TempDir(), compile)
+				laneRoot := laneRoots[lane]
+				authority, err := broker.New(laneRoot, t.TempDir(), compile)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if remote {
+					if err := authority.SetUpstream(broker.Upstream{URL: remoteURL, Branch: branch}); err != nil {
+						t.Fatal(err)
+					}
 				}
 				executor := reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 					attempt := calls[lane].Add(1)
@@ -178,7 +203,7 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 					response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: books})
 					return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 				})
-				worker := RegisteredReflectionWorker{Executor: executor, AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(root), Catalog: memory.OpenCatalogReader(root), Timeout: time.Minute, SessionMode: "resume", SessionExecutor: func(string) (ReflectionTaskExecutor, error) { return executor, nil }}
+				worker := RegisteredReflectionWorker{Executor: executor, AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(laneRoot), Catalog: memory.OpenCatalogReader(laneRoot), Timeout: time.Minute, SessionMode: "resume", SessionExecutor: func(string) (ReflectionTaskExecutor, error) { return executor, nil }}
 				native := NativeIncidentBroker{Repository: authority, LedgerRoot: t.TempDir(), Deriver: ProtoOutcomeDeriver{}, Reflector: worker, ResponderBackend: "scripted", ResponderModel: "none", ForceReflection: true}
 				natives[lane] = native
 				at := time.Unix(1000+int64(lane)*100, 0)
@@ -188,7 +213,7 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 				health.active.set(true)
 				cfg := testControllerConfig()
 				cfg.SourceCommit, cfg.DeployedCommit = base, base
-				cfg.RepositoryWorktree = root
+				cfg.RepositoryWorktree = laneRoot
 				cfg.BatchDebounce = 0
 				cfg.ClearThreshold = 1
 				cfg.FiringThreshold = 1
@@ -253,6 +278,23 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 			controllers[1].processBrokerCompletions()
 			if controllers[1].closureReceipt == nil {
 				t.Fatalf("second closure failed: %+v", controllers[1].closureFailure)
+			}
+			if remote {
+				for lane := range natives {
+					if err := natives[lane].Repository.SyncUpstream(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+				head := nativeGit(t, remoteURL, "rev-parse", "refs/heads/"+branch)
+				for _, laneRoot := range laneRoots {
+					if nativeGit(t, laneRoot, "rev-parse", "HEAD") != head {
+						t.Fatal("lanes did not converge on the remote branch head")
+					}
+				}
+				if merges := nativeGit(t, remoteURL, "rev-list", "--merges", head); merges != "" {
+					t.Fatalf("online lanes produced merge commits: %s", merges)
+				}
+				root = laneRoots[1]
 			}
 			for lane, c := range controllers {
 				if c.closureReceipt.ReflectionCommit == "" {

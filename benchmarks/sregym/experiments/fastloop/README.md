@@ -513,6 +513,34 @@ Reset also handles namespaces absent after an older abort: it recreates only
 the namespace named by the captured application baseline. Authorization/read
 failures never become absence; system and SDO control namespaces are refused.
 
+## Lanes on several hosts: one GitHub memory branch per app and run
+
+`benchmarks/sregym/fastloop/remote_memory.py` shares an app's accepted memory between lanes on any
+host through a private GitHub repository, with no shared filesystem. Every run must name the
+repository and branch for each app in `memory-endpoints.json`; there is no default, and `main`/`master`
+are refused (main holds only the README index):
+
+```json
+{"hotel-reservation": {"repo": "vibesys-playground/hotel-reservation-sdo", "branch": "live/20261028-mixed10"}}
+```
+
+Use `run_branch(label)` for `live/<yyyymmdd>-<run-label>`. Create the branch once from the app's seed
+(`ensure_run_branch(endpoint, seed)`), and prepare every lane of that app from the same seed (or a clone of
+the branch), so each lane's tree equals a branch commit. For each prepared idle lane, on its own host,
+call `bind_lane_to_branch(environment, endpoint, seed=<first lane of the app>)` (the key defaults to the one
+ssh offers github.com on that host; hosts differ). It checks the key first, pauses the controller, seeds the
+branch from the first lane, makes every other lane adopt the branch history (its tree must equal a
+branch commit), copies the host's existing GitHub key into the lane Secret `sdo-memory-upstream-ssh`
+(mounted read-only; never printed) and recreates the controller with the upstream. `run_dir/memory-bind.json` lets a rerun finish a
+binding that failed after the repository was replaced. Each lane keeps
+its private PVC and a unique application name. The harness then treats it as a prepared shared
+lane (no wipe, reseed, reset or reinstall): `fastloop.json` points `workspace` at a host mirror of
+the branch that every shared-identity read and memory-head read refreshes from GitHub. The broker pushes and fetches directly; a lost push
+race is replayed and checked again, and a conflict returns to reflection as `memory.conflict`, as
+with one shared checkout. If GitHub is unreachable, lanes keep fixing faults and accept memory
+locally; the next broker operation pushes it. At the end of the run, `close_run_branch(endpoint,
+row, message=...)` tags `<branch>-final` and adds one README row on main.
+
 ## Parallel lanes with shared accepted memory
 
 Use separate warm kind lanes for the same source application. Create each with
