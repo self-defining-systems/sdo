@@ -74,11 +74,12 @@ type RetireOldRevision struct {
 	Ref sdk.ObjectRef
 }
     RetireOldRevision scales one old-revision ReplicaSet of a Deployment to
-    zero. It releases a rollout whose replacement Pod cannot be placed while
-    the old revision's Pod holds its place (hard anti-affinity, a host port
-    or capacity on a small cluster). The Deployment controller never scales
-    a retired revision back up. It is refused like any ReplicaSet scale for a
-    current revision or a ReplicaSet without an observed controlling Deployment.
+    zero. It releases a rollout whose replacement Pod cannot be placed or
+    created while the old revision's Pod holds its place (hard anti-affinity,
+    a host port, node capacity or namespace quota). The Deployment controller
+    never scales a retired revision back up. It is refused like any ReplicaSet
+    scale for a current revision or a ReplicaSet without an observed controlling
+    Deployment.
 
 type Rollback struct {
 	Ref        sdk.ObjectRef

@@ -130,12 +130,14 @@ type Action interface {
 }
 
 func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action
-    StalledRolloutRelease returns the standard release of a Deployment rollout
-    whose current-revision Pod is Unschedulable: one RetireOldRevision for each
-    old revision that still keeps a replica, in name order. It returns nothing
-    while no current-revision Pod is Unschedulable, so a crashing or merely
-    slow rollout never loses the revision that still serves. SDO offers the same
-    actions to the responder when it hands off a stalled rollout.
+    StalledRolloutRelease returns the standard release of a Deployment
+    rollout whose replacement cannot get the place the old revision holds:
+    a current-revision Pod is Unschedulable, or its ReplicaSet cannot create
+    Pods because the namespace quota is exceeded. It is one RetireOldRevision
+    for each old revision that still keeps a replica, in name order, and nothing
+    otherwise, so a crashing, merely slow or misconfigured rollout never loses
+    the revision that still serves. SDO offers the same actions to the responder
+    when it hands off a stalled rollout.
 
 type ApplyObject struct {
 	Ref    sdk.ObjectRef
@@ -252,8 +254,4 @@ type DatabaseUser struct {
 }
     DatabaseUser contains only catalog identity and directly granted roles.
     Password hashes, credentials and authentication restrictions are excluded.
-
-func ApplyEnsureDatabaseUser(users []DatabaseUser, a EnsureDatabaseUser) ([]DatabaseUser, error)
-    ApplyEnsureDatabaseUser projects a typed catalog mutation on a recorded open
-    catalog. It never reads credentials or invents an unavailable observation.
 ```

@@ -29,7 +29,8 @@ PLAN_ACTIONS = (
     "ReconcileFromSource converges source-owned configuration, removes additions since acceptance, "
     "and reports residual source differences and remaining old-revision ReplicaSets/Pods. "
     "The Deployment controller and responder handle the rollout.\n"
-    "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
+    "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.\n"
+    "RetireOldRevision scales an old-revision ReplicaSet to zero; stalled rollouts name it as their release."
 )
 
 WORKING_PROGRAM_HELP = (

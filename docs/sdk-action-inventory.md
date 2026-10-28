@@ -23,6 +23,7 @@ expected fixed snapshots alone never establish command semantics or success.
 | patch-list-match | RemoveServicePort only | PatchObject list edit by unique field match; API replay |
 | delete | DeleteObject; namespace restriction | DeleteObject through general execution; API replay |
 | scale | ScaleWorkload (Deployment/StatefulSet; in programs, an old-revision ReplicaSet of a bound Deployment) | PatchObject spec.replicas for any scale target; API replay |
+| retire-old-revision | RetireOldRevision (one old-revision ReplicaSet to zero, checked against its live owner at write time); `StalledRolloutRelease` selects it; stalled handoffs carry it in `RolloutBlocker.release` | ScaleWorkload with a parameter bound to 0 |
 | rollout-restart | RestartRollout (Deployment only) | PatchObject template restart annotation; API replay |
 | rollout-undo | Rollback with explicit revision | ApplyObject previous template / Rollback; API replay |
 | rollout-pause | missing | PatchObject spec.paused; API replay |
