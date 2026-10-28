@@ -308,6 +308,7 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
         images=images,
         dev_mount=None,
         application="fixture",
+        problem_application="fixture",
         app="sregym",
         deploy_problem="fixture-problem",
         seed_commit="b" * 40,
