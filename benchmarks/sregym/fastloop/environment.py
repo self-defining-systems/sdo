@@ -54,6 +54,9 @@ class FastloopEnvironment(BaseModel):
     parallel_root: Path | None = None
     parallel_lane: str = ""
     shared_accepted_id: str = ""
+    #: GitHub repository and run branch the lane's accepted memory replicates (remote sharing).
+    memory_repo: str = ""
+    memory_branch: str = ""
 
     @field_validator("application")
     @classmethod

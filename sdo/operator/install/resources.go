@@ -70,6 +70,10 @@ type Config struct {
 	PermissiveResponder                             bool
 	ResponderNamespaces                             []string
 	MetricsURL                                      string
+	// MemoryUpstream replicates accepted memory through a shared remote
+	// branch. MemoryUpstreamSSHSecret names an existing Secret holding the
+	// ssh "identity" and "known_hosts", mounted read-only.
+	MemoryUpstreamURL, MemoryUpstreamBranch, MemoryUpstreamSSHSecret string
 }
 
 type Plan struct {
@@ -124,6 +128,12 @@ func (c Config) validate() error {
 	}
 	if c.ControllerImage == "" || c.ResponderImage == "" || c.ValidatorImage == "" {
 		return errors.New("controller, responder, and validator images are required")
+	}
+	if (c.MemoryUpstreamURL == "") != (c.MemoryUpstreamBranch == "") || (c.MemoryUpstreamSSHSecret != "" && c.MemoryUpstreamURL == "") {
+		return errors.New("memory upstream requires both a URL and a branch")
+	}
+	if c.MemoryUpstreamSSHSecret != "" && !namespaceName.MatchString(c.MemoryUpstreamSSHSecret) {
+		return fmt.Errorf("memory upstream ssh Secret must be a Kubernetes DNS label: %q", c.MemoryUpstreamSSHSecret)
 	}
 	if strings.TrimSpace(c.Model) == "" {
 		return errors.New("agent model is required")
@@ -353,6 +363,12 @@ func controllerJob(c Config) *batchv1.Job {
 	if c.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-directory", c.registrationDirectory())
 	}
+	if c.MemoryUpstreamURL != "" {
+		args = append(args, "--memory-upstream-url", c.MemoryUpstreamURL, "--memory-upstream-branch", c.MemoryUpstreamBranch)
+		if c.MemoryUpstreamSSHSecret != "" {
+			args = append(args, "--memory-upstream-ssh-dir", MemoryUpstreamSSHDir)
+		}
+	}
 	if !hasArg(args, "--exit-after-closure") && !hasArg(args, "--duration") {
 		args = append(args, "--supervise")
 	}
@@ -422,12 +438,22 @@ func controllerJob(c Config) *batchv1.Job {
 	if c.RegistrationConfigMap != "" {
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: c.registrationDirectory(), ReadOnly: true})
 	}
+	if c.MemoryUpstreamURL != "" && c.MemoryUpstreamSSHSecret != "" {
+		// Readable by the non-root controller uid; ssh accepts a key it does not own.
+		mode := int32(0o444)
+		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "memory-upstream-ssh", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.MemoryUpstreamSSHSecret, DefaultMode: &mode}}})
+		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "memory-upstream-ssh", MountPath: MemoryUpstreamSSHDir, ReadOnly: true})
+	}
 	if devmount.Enabled() {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)
 	}
 	return job
 }
+// MemoryUpstreamSSHDir is where the controller reads the memory remote's ssh
+// identity and known hosts.
+const MemoryUpstreamSSHDir = "/sdo/memory-upstream-ssh"
+
 func (c Config) registrationDirectory() string {
 	if c.RegistrationDirectory != "" {
 		return c.RegistrationDirectory

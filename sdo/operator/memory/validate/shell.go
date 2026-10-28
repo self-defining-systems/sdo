@@ -143,6 +143,7 @@ func CheckShell(ctx context.Context, request Request) ([]Diagnostic, error) {
 		return nil, err
 	}
 	diagnostics = append(diagnostics, clusterLocalDiagnostics(request.Root, paths)...)
+	diagnostics = append(diagnostics, secretDataDiagnostics(request.Root, paths)...)
 	for _, p := range paths {
 		kind, id := kindSource, ""
 		if !filepath.IsLocal(filepath.FromSlash(p)) || strings.Contains(p, "\\") {
