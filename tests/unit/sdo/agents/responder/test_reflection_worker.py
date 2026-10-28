@@ -532,3 +532,27 @@ def test_reflection_default_budget_fits_the_controller_and_eval_deadlines() -> N
 
     response_timeout = NativeInstallConfig.__dataclass_fields__["response_timeout_seconds"].default
     assert DEFAULT_REFLECTION_SECONDS < response_timeout < DRAIN_TIMEOUT_SECONDS
+
+
+def test_builtin_resume_requires_persisted_session_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sdo.agents.responder import reflection_worker
+
+    monkeypatch.delenv("SDO_SESSION_DIR", raising=False)
+    path = _task_path(tmp_path)
+    task = parse_json(path.read_text(), AgentTask())
+    request = ReflectionRequest()
+    assert task.request.Unpack(request)
+    request.session_mode = "resume"
+    request.closure.result.responder_session_id = "session-1"
+    task.request.Pack(request)
+    path.write_text(to_canonical_json(task))
+    selected = Reflector()
+    monkeypatch.setattr(reflection_worker, "_default_reflector", lambda _: selected)
+    publisher = Publisher()
+
+    result = run_reflection_task(path, "result-map", publisher)
+
+    assert selected.kwargs is None
+    assert result.status == "failed"
+    assert result.failure_reason == "session_handoff_invalid"
+    validate(result)

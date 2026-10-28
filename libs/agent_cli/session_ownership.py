@@ -100,7 +100,8 @@ class SessionOwnership:
         try:
             record = _OwnershipRecord(**json.loads(path.read_text(encoding="utf-8")))
             if (
-                record.version != 1
+                type(record.version) is not int
+                or record.version != 1
                 or record.provider != self.provider
                 or record.session_id != session_id
                 or record.state not in {"active", "released"}

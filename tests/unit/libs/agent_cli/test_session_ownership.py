@@ -182,7 +182,12 @@ def test_terminal_output_does_not_release_a_real_process_writer(tmp_path: Path) 
                 on_session_started=lambda _: resumed.set(),
                 **options,
             )
-            assert not resumed.wait(0.05)
+            # Hold the actual process open through the consumer's full startup,
+            # including its CLI health check. An unguarded resume exits 91;
+            # only a blocked consumer reaches this timeout.
+            with pytest.raises(TimeoutError):
+                reader.result(timeout=1)
+            assert not resumed.is_set()
             assert not writer.done(), "test did not hold the actual writer open"
         finally:
             release.touch()
@@ -192,7 +197,15 @@ def test_terminal_output_does_not_release_a_real_process_writer(tmp_path: Path) 
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("version", 2), ("provider", "claude"), ("session_id", "other"), ("state", "closed"), ("role", "other")],
+    [
+        ("version", 2),
+        ("version", True),
+        ("version", 1.0),
+        ("provider", "claude"),
+        ("session_id", "other"),
+        ("state", "closed"),
+        ("role", "other"),
+    ],
 )
 def test_release_must_match_the_exact_versioned_session_identity(tmp_path: Path, field: str, value: object) -> None:
     from libs.agent_cli.session_ownership import SessionHandoffError, SessionOwnership
@@ -228,3 +241,198 @@ def test_process_death_does_not_manufacture_writer_release(tmp_path: Path) -> No
     )
     with pytest.raises(SessionHandoffTimeout):
         SessionOwnership(tmp_path, "codex", timeout_seconds=0.1, role="reflection").claim("session-1", resume=True)
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_open_writer_timeout_is_terminal_without_a_provider_probe(tmp_path: Path, provider: str) -> None:
+    from libs.agent_cli.session_ownership import SessionHandoffTimeout
+
+    announced, close_writer = threading.Event(), threading.Event()
+
+    def checkpoint(_session_id: str) -> None:
+        announced.set()
+        assert close_writer.wait(3)
+
+    options = {
+        "output_schema": {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        "cwd": tmp_path,
+        "access": "danger-full-access",
+        "session_ownership_directory": tmp_path / "ownership",
+    }
+    responder = ScriptedAgent(lambda _: reply(provider, {"ok": True}, session_id="session-1"))
+    reflector = ScriptedAgent(lambda _: reply(provider, {"ok": True}, session_id="session-1"))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        writer = pool.submit(
+            run_structured_turn,
+            provider,
+            "respond",
+            executor=responder.executor,
+            on_session_started=checkpoint,
+            timeout_seconds=2,
+            **options,
+        )
+        try:
+            assert announced.wait(1)
+            started = time.monotonic()
+            with pytest.raises(SessionHandoffTimeout):
+                run_structured_turn(
+                    provider,
+                    "reflect",
+                    executor=reflector.executor,
+                    resume_session_id="session-1",
+                    session_ownership_role="reflection",
+                    timeout_seconds=0.1,
+                    **options,
+                )
+            assert time.monotonic() - started < 2
+            assert not reflector.requests
+        finally:
+            close_writer.set()
+        writer.result()
+
+
+def test_reflection_resumes_are_exclusive_with_each_other(tmp_path: Path) -> None:
+    acquired, release, second_started = threading.Event(), threading.Event(), threading.Event()
+    options = {
+        "output_schema": {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        "cwd": tmp_path,
+        "access": "danger-full-access",
+        "session_ownership_directory": tmp_path / "ownership",
+        "timeout_seconds": 2,
+    }
+    responder = ScriptedAgent(lambda _: reply("codex", {"ok": True}, session_id="session-1"))
+    run_structured_turn("codex", "respond", executor=responder.executor, **options)
+
+    def hold(_session_id: str) -> None:
+        acquired.set()
+        assert release.wait(3)
+
+    first_agent = ScriptedAgent(lambda _: reply("codex", {"ok": True}, session_id="session-1"))
+    second_agent = ScriptedAgent(lambda _: reply("codex", {"ok": True}, session_id="session-1"))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            run_structured_turn,
+            "codex",
+            "reflect",
+            executor=first_agent.executor,
+            resume_session_id="session-1",
+            session_ownership_role="reflection",
+            on_session_started=hold,
+            **options,
+        )
+        try:
+            assert acquired.wait(1)
+            second = pool.submit(
+                run_structured_turn,
+                "codex",
+                "reflect",
+                executor=second_agent.executor,
+                resume_session_id="session-1",
+                session_ownership_role="reflection",
+                on_session_started=lambda _: second_started.set(),
+                **options,
+            )
+            assert not second_started.wait(0.05)
+        finally:
+            release.set()
+        assert first.result().session_id == second.result().session_id == "session-1"
+    assert second_started.is_set()
+
+
+def test_unknown_transport_failure_keeps_ownership_active(tmp_path: Path) -> None:
+    from libs.agent_cli.session_ownership import SessionHandoffTimeout
+
+    def failed_checkpoint(_session_id: str) -> None:
+        raise RuntimeError("transport lost without terminal writer evidence")
+
+    options = {
+        "output_schema": {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        "cwd": tmp_path,
+        "access": "danger-full-access",
+        "session_ownership_directory": tmp_path / "ownership",
+    }
+    producer = ScriptedAgent(lambda _: reply("codex", {"ok": True}, session_id="session-1"))
+    with pytest.raises(RuntimeError, match="transport lost"):
+        run_structured_turn(
+            "codex",
+            "respond",
+            executor=producer.executor,
+            on_session_started=failed_checkpoint,
+            **options,
+        )
+    consumer = ScriptedAgent(lambda _: reply("codex", {"ok": True}, session_id="session-1"))
+    with pytest.raises(SessionHandoffTimeout):
+        run_structured_turn(
+            "codex",
+            "reflect",
+            executor=consumer.executor,
+            resume_session_id="session-1",
+            session_ownership_role="reflection",
+            timeout_seconds=0.1,
+            **options,
+        )
+    assert not consumer.requests
+
+
+def test_local_callback_failure_releases_only_after_process_is_reaped(tmp_path: Path) -> None:
+    binary = tmp_path / "codex"
+    output = "".join(reply("codex", {"ok": True}, session_id="session-1").stdout)
+    binary.write_text(
+        f"#!{sys.executable}\n"
+        "import sys, time\n"
+        "if '--help' in sys.argv: sys.exit(0)\n"
+        f"print({output!r}, end='', flush=True)\n"
+        "time.sleep(3)\n"
+    )
+    binary.chmod(0o700)
+
+    def failed_checkpoint(_session_id: str) -> None:
+        raise RuntimeError("checkpoint rejected")
+
+    options = {
+        "output_schema": {
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        "cwd": tmp_path,
+        "access": "danger-full-access",
+        "session_ownership_directory": tmp_path / "ownership",
+        "timeout_seconds": 2,
+    }
+    with pytest.raises(RuntimeError, match="checkpoint rejected"):
+        run_structured_turn(
+            "codex",
+            "respond",
+            on_session_started=failed_checkpoint,
+            environment={"PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]},
+            **options,
+        )
+    # HostCommandExecutor kills and reaps before propagating the callback
+    # exception. The consumer reads that producer's actual durable release.
+    consumer = ScriptedAgent(lambda _: reply("codex", {"ok": True}, session_id="session-1"))
+    result = run_structured_turn(
+        "codex",
+        "reflect",
+        executor=consumer.executor,
+        resume_session_id="session-1",
+        session_ownership_role="reflection",
+        **options,
+    )
+    assert result.session_id == "session-1"

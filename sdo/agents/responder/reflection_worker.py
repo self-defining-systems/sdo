@@ -142,6 +142,8 @@ def run_reflection_task(
         os.environ.update(environment)
         if invalid_session:
             raise ResponderSessionUnavailable("reflection responder session ID is missing or invalid")
+        if reflector is None and session_mode == "resume" and not os.environ.get("SDO_SESSION_DIR"):
+            raise SessionHandoffError("reflection resume requires the durable incident session directory")
         turn: ReflectionTurn | None = selected.resume(
             session_id=prior_session or "",
             incident_id=outcome.incident_id,

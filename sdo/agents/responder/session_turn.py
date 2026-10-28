@@ -106,7 +106,7 @@ def session_mcp_servers(worktree: Path, provider: str) -> list[McpServer]:
 def session_turn_options(
     provider: str, worktree: Path, *, phase: Literal["responder", "reflection"] = "responder"
 ) -> dict[str, Any]:
-    """Keyword arguments for ``run_structured_turn`` that must match across the session's turns."""
+    """Shared model-facing configuration and phase-bound writer ownership."""
 
     return {
         "session_ownership_role": phase,
