@@ -14,6 +14,7 @@ from benchmarks.sregym.fastloop import admission, cli, hotel_helpers, rbac
 EPOCH = datetime(2030, 1, 1, tzinfo=timezone.utc)
 OVERDUE = "2000-01-01T00:00:00Z"  # a busy_until the controller itself has already let lapse
 CLOSEOUT_MARGIN = wait_for(WaitKind.CLOSEOUT_SETTLE)
+CONTROLLER_JOB = {"metadata": {"uid": "job-1"}, "status": {"active": 1}}
 
 
 @pytest.fixture
@@ -43,6 +44,7 @@ def lane(tmp_path, monkeypatch):
         "controller_failed": None,
     }
     monkeypatch.setattr(admission.LaneAdmission, "_onboarding", lambda self, control: complete)
+    monkeypatch.setattr(admission.LaneAdmission, "_controller_job", lambda self, control: CONTROLLER_JOB)
     monkeypatch.setattr(rbac, "verify_rbac", lambda *args: {"passed": True})
     monkeypatch.setattr(hotel_helpers, "admit_install", lambda *args: {"passed": True, "profile": "ABSENT"})
     monkeypatch.setattr(admission, "workload_identity", lambda *args: {"Deployment/app": {"generation": 1}})
@@ -706,6 +708,95 @@ def test_evidence_from_before_the_resume_is_not_ready(lane, monkeypatch):
     )
     with pytest.raises(admission.StabilizationError, match="did not settle"):
         gate.prove("hotel-reservation-sdo")
+
+
+def stale_clear_rows(gate) -> None:
+    """The controller's last rows are clear but predate the resume, as in run19 c5-hr-f."""
+    stale = (EPOCH - timedelta(seconds=1)).isoformat()
+    healthy = gate.ops.runtime_state
+    gate.ops = SimpleNamespace(
+        runtime_state=lambda control: dict(
+            healthy(control), history=[dict(row, evaluated_at=stale) for row in healthy(control)["history"]]
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("after_exit", "named"),
+    [
+        ({"metadata": {"uid": "job-1"}, "status": {"failed": 1}}, "1 controller pod failed"),
+        ({"metadata": {"uid": "job-2"}, "status": {"active": 1}}, "controller Job was replaced"),
+        (None, "controller Job is gone"),
+    ],
+)
+def test_a_controller_that_exits_during_admission_fails_at_once_with_a_typed_reason(
+    lane, monkeypatch, after_exit, named
+):
+    """run19 c5-hr-f: the controller pod exited 54 s into the window. Its last clear rows were stale and no live
+    process could replace them, yet admission waited the whole 300 s budget and reported only "did not settle"."""
+    gate, calls = lane
+    now = observe_only(gate, monkeypatch)
+    gate.timeout_seconds = 300
+    frozen_wall_clock(monkeypatch, now)
+    stale_clear_rows(gate)
+    monkeypatch.setattr(gate, "_controller_job", lambda control: CONTROLLER_JOB if now[0] < 54 else after_exit)
+    monkeypatch.setattr(
+        admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout="baseline inputs advanced\n")
+    )
+    with pytest.raises(
+        admission.ControllerExitedError, match=f"controller process exited during admission.*{named}"
+    ) as exited:
+        gate.prove("hotel-reservation-sdo")
+    assert isinstance(exited.value, admission.StabilizationError), "callers still see an admission failure"
+    assert exited.value.reason == "controller_exited"
+    assert 54 <= now[0] <= 56, "admission waited after the controller process was gone"
+    assert (gate.directory / "controller.log").read_text() == "baseline inputs advanced\n"
+    rows = (gate.directory / "stabilization-001.jsonl").read_text().splitlines()
+    assert json.loads(rows[-1])["controller_exited"] == named
+
+
+def test_rows_from_a_controller_that_exited_before_the_window_are_not_evidence(lane, monkeypatch):
+    """Rows written after the resume by a process that then exited do not speak for its replacement."""
+    gate, _ = lane
+    now = observe_only(gate, monkeypatch)
+    frozen_wall_clock(monkeypatch, now)
+
+    def prior_closure(control):
+        now[0] = 20.0  # the old process evaluated at +5 and exited at +10; the window opens at +20
+        return {}
+
+    monkeypatch.setattr(gate, "await_prior_closure", prior_closure)
+    replaced = {"metadata": {"uid": "job-1"}, "status": {"active": 1, "failed": 1}}
+    monkeypatch.setattr(gate, "_controller_job", lambda control: CONTROLLER_JOB if now[0] < 10 else replaced)
+    healthy = gate.ops.runtime_state
+
+    def state(control):
+        evaluated = (EPOCH + timedelta(seconds=5 if now[0] < 25 else 25)).isoformat()
+        return dict(
+            healthy(control), history=[dict(row, evaluated_at=evaluated) for row in healthy(control)["history"]]
+        )
+
+    gate.ops = SimpleNamespace(runtime_state=state)
+    proof = gate.prove("hotel-reservation-sdo")
+    assert proof["passed"] is True
+    assert now[0] >= 25, "the exited process's rows admitted the row"
+
+
+def test_admission_reads_the_controller_process_from_the_real_job(lane, monkeypatch):
+    """Producer into consumer: the Job read that names the controller process, and its failed pod count."""
+    gate, _ = lane
+    monkeypatch.undo()
+    cluster: dict[str, object] = {"job": None}
+    monkeypatch.setattr(
+        admission,
+        "kubectl",
+        lambda args, **kwargs: SimpleNamespace(stdout=json.dumps(cluster["job"]) if cluster["job"] else ""),
+    )
+    assert gate._controller_process("hotel-reservation-sdo") is None
+    cluster["job"] = {"metadata": {"uid": "u1"}, "status": {"active": 1}}
+    first = gate._controller_process("hotel-reservation-sdo")
+    cluster["job"] = {"metadata": {"uid": "u1"}, "status": {"active": 1, "failed": 1}}
+    assert gate._controller_process("hotel-reservation-sdo") != first
 
 
 def test_admission_proof_is_controller_and_prober_evidence_only(lane, monkeypatch):
