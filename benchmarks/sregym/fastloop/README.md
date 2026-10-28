@@ -67,22 +67,6 @@ source names share the same publication. The frozen ID is the config digest on
 Docker's classic image store and the manifest digest on its containerd image
 store; both are accepted, and nodes are always checked against the config digest.
 
-## Shared source-built app images
-
-SREGym tags each source-built app image `sregym-src-<identity>`, where the
-identity digests the build context, Dockerfile, build arguments and platform,
-and labels it `sregym.source-identity`. No lane name is part of the ref, so
-every lane deploying the same sources resolves the same image. Before a build,
-the worker bridge holds a host lock for that identity and looks for it in the
-local Docker store, then in the host registry (`sdo/app-src:<tag>`), then in
-the registries listed in `FASTLOOP_APP_IMAGE_REGISTRIES` (comma-separated
-`host:port`, for example an ssh tunnel to another host's registry). Only a miss
-everywhere builds. A build or remote pull is published to every listed registry
-that lacks it. A pulled image must carry its identity label. An unreachable
-extra registry counts as a miss. Each lookup is appended to `app_images.jsonl`
-next to `image_delivery.jsonl`, with its `source` (`local`, `registry:<host>`
-or `build`), `published` registries and `seconds`.
-
 Lane teardown removes only retired lane-owned registries. It leaves the host
 registry and its data intact for other lanes. The host registry is bound to a
 loopback port for uploads; nodes reach it through the kind network. An existing
@@ -93,3 +77,22 @@ Each `image_delivery.jsonl` entry includes `registry` metadata: container name,
 `uploads`, `cache_hits`, `publication_seconds`, `pull_seconds`, `frozen_ids` and
 `manifest_digests`. Total `seconds` includes setup and transfer; retention evidence is recorded
 separately. Use the phase fields to distinguish a first publication from subsequent lane delivery.
+
+## Shared source-built app images
+
+SREGym tags each source-built app image `sregym-src-<identity>`, where the
+identity digests the build context, Dockerfile, build arguments and platform,
+and labels it `sregym.source-identity`. No lane name is part of the ref, so
+every lane deploying the same sources resolves the same image. All hosts share
+one app-image registry, `FASTLOOP_APP_IMAGE_REGISTRY` (`host:port`; default:
+this host's `sdo-fastloop-registry`), as `sdo/app-src:<tag>`. Docker pulls
+plain HTTP only from loopback, so another host names a loopback port that
+relays to the registry host over the LAN. Before a build, the worker bridge
+holds a host lock for that identity and uses the local image carrying it, else
+pulls it from the shared registry, else builds and publishes it there. A pulled
+image must carry its identity label. An unreachable registry is recorded as
+`registry_error` and the lane builds without publishing. Each lookup is
+appended to `app_images.jsonl` next to `image_delivery.jsonl`, with its
+`source` (`local`, `registry` or `build`), `published`, `pull_seconds` and
+`seconds`. Node delivery is unchanged: kind nodes still receive app images
+through the host's image-delivery path above.
