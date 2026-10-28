@@ -158,14 +158,20 @@ func (r ToolResponse) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The release actions are a oneof, which only protojson encodes.
+	pending, err := toolContractJSON(r.RolloutPending)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(struct {
 		plain
-		OptionReports []json.RawMessage `json:"option_reports,omitempty"`
-		Receipt       json.RawMessage   `json:"receipt,omitempty"`
-		Menu          json.RawMessage   `json:"menu,omitempty"`
-		Report        json.RawMessage   `json:"report,omitempty"`
-		Session       json.RawMessage   `json:"session,omitempty"`
-	}{plain(r), optionReports, receipt, menu, report, session})
+		OptionReports  []json.RawMessage `json:"option_reports,omitempty"`
+		Receipt        json.RawMessage   `json:"receipt,omitempty"`
+		Menu           json.RawMessage   `json:"menu,omitempty"`
+		Report         json.RawMessage   `json:"report,omitempty"`
+		Session        json.RawMessage   `json:"session,omitempty"`
+		RolloutPending json.RawMessage   `json:"rollout_pending,omitempty"`
+	}{plain(r), optionReports, receipt, menu, report, session, pending})
 }
 
 // Defining an outer marshaler prevents the embedded ToolResponse marshaler
@@ -231,10 +237,17 @@ func (r *ToolResponse) UnmarshalJSON(data []byte) error {
 	type plain ToolResponse
 	envelope := struct {
 		*plain
-		Receipt json.RawMessage `json:"receipt"`
+		Receipt        json.RawMessage `json:"receipt"`
+		RolloutPending json.RawMessage `json:"rollout_pending"`
 	}{plain: (*plain)(r)}
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return err
+	}
+	if len(envelope.RolloutPending) > 0 && string(envelope.RolloutPending) != "null" {
+		r.RolloutPending = new(contracts.RolloutPending)
+		if err := protojson.Unmarshal(envelope.RolloutPending, r.RolloutPending); err != nil {
+			return err
+		}
 	}
 	if len(envelope.Receipt) > 0 && string(envelope.Receipt) != "null" {
 		r.Receipt = new(contracts.RepairActionReceipt)
