@@ -5,7 +5,7 @@ description: Find and use operational memory by logical ID, or validate authoriz
 
 # Operational memory
 
-Read memory freely; edit only the artifact classes and proposal checkout your task authorizes.
+Memory exists so later incidents are fixed faster and cheaper. Read and reason across all accepted memory; incident-linked entries come first and full files remain readable in the checkout. Edit only the artifact classes and proposal checkout your task authorizes.
 
 1. Find the matching logical IDs in the supplied snapshot or inventory; read a playbook before using it. Check its diagnosis against current resources first, or after applying when the match is ready to mitigate.
 2. Before editing, read the [generated layout and ownership map](references/layout.md); preserve accepted provenance and corpus cases, and the task's actor, phase, accepted base and incident identity.
@@ -15,7 +15,8 @@ Read memory freely; edit only the artifact classes and proposal checkout your ta
 ## Memory principles
 
 - Treat memory as advice and accepted source as intent; check both against live state before acting.
-- Save verified steps even with partial coverage; replay results are information, never a save gate. Any performed repair can be a `RunScript` bash step with relation-derived Env and digest-to-receipt linkage; difficulty never justifies saving nothing. The README explains judgement about when and in what order to run steps, and what to observe and decide. Verified, specific README-only guidance is useful memory; it is never auto-applied. Return `updated` with IDs and scoped `sdk_gaps` for unencoded parts.
+- First judge whether accepted memory already covers the incident, including applied playbooks, matching detectors and unchanged source. Only when existing playbooks match well may you return `no_change` with a short reason and finish; cover every hand repair with an updated playbook or scoped `sdk_gap`, and update or retire applied playbooks that failed, left findings unresolved or needed later hand repair. Otherwise make the smallest useful addition.
+- Save new verified steps even with partial coverage; replay results are information, never a save gate. Any performed repair can be a `RunScript` bash step with relation-derived Env and digest-to-receipt linkage. The README explains judgement about when and in what order to run steps, and what to observe and decide. Verified, specific README-only guidance is useful memory; it is never auto-applied. Return `updated` with IDs and scoped `sdk_gaps` for unencoded parts.
 - Keep one failure mechanism per playbook; refine it when only a resource or parameter differs.
 - Reflection avoids hard-coded service or app names: prefer runtime bindings from findings, Diagnose or responder values; isolate unavoidable names in one logical helper and document app constants in the playbook README.
 - Use detectors to find problems proactively and playbooks to diagnose and mitigate; their relationship need not be one to one.

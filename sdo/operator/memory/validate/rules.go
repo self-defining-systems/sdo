@@ -9,6 +9,8 @@ const (
 	RuleAcceptedOutcome            = "lifecycle.accepted-outcome"
 	RuleVerifiedSource             = "lifecycle.verified-source"
 	RuleReflectionDecision         = "reflection.decision"
+	RuleReflectionUncoveredRepair  = "reflection.uncovered-repair"
+	RuleReflectionStalePlaybook    = "reflection.stale-playbook"
 	RuleReflectionProgramRequired  = "reflection.program-required"
 	RuleReflectionDetectorRequired = "reflection.detector-required"
 	RuleWhitespace                 = "diff.whitespace"

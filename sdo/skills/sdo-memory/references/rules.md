@@ -48,3 +48,6 @@ Missing inputs are errors; the caller supplies the accepted base and authoring r
   the shared check prepares and validates them. Enforced by: `bootstrap.generic-health`.
 
 - A playbook status is omitted/`active` or `retired`; retirement requires a nonempty string `retired_reason`, which is invalid on an active playbook. Enforced by: `playbook.status`.
+
+- Every hand repair needs a changed playbook ID or a typed SDK gap scoped to its resources (name the action ID in the gap reason when no resources were recorded). Enforced by: `reflection.uncovered-repair`.
+- Update or retire each applied playbook that failed, left findings unresolved or needed later hand repair; edits to a peer playbook or an SDK gap do not excuse it. Enforced by: `reflection.stale-playbook`.

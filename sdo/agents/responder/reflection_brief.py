@@ -602,8 +602,12 @@ def incident_brief(
     responder_turn_log: Path | None = None,
     detector_detail: bool = False,
     event_dependence: bool = False,
+    include_memory: bool = True,
 ) -> RenderedPrompt:
     """Render the bounded incident brief for a fresh first reflection attempt.
+
+    ``include_memory`` is false when the reflection request already supplies
+    every accepted detector and playbook, avoiding duplicate excerpts.
 
     ``detector_detail`` adds, for every existing incident detector, its Spec
     description and a bounded excerpt of its match predicate, so the reader can
@@ -618,13 +622,17 @@ def incident_brief(
         named_prompt("reflection_brief.findings", _findings_section(closure)),
         named_prompt("reflection_brief.result", _result_section(result, closure.dispatch_error)),
         named_prompt(
-            "reflection_brief.memory",
-            _logical_memory_section(closure, detector_detail=detector_detail, event_dependence=event_dependence),
-        ),
-        named_prompt(
             "reflection_brief.commands", _commands_section(responder_shell_commands(responder_turn_log, session_id))
         ),
     ]
+    if include_memory:
+        sections.insert(
+            2,
+            named_prompt(
+                "reflection_brief.memory",
+                _logical_memory_section(closure, detector_detail=detector_detail, event_dependence=event_dependence),
+            ),
+        )
     body = _clip(join_prompts("\n\n", sections, part="reflection_brief.separators"), BRIEF_MAX_CHARS)
     return render_prompt(
         "responder", "incident_brief", part="reflection_brief.instructions", len=len(body) // 4, body=body

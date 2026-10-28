@@ -207,3 +207,9 @@ preparation. Recovery uses that receipt to reject re-creation after restart;
 API read failures remain uncertainty, not disappearance. A completed result
 still follows the existing deadline and worker-quiescence checks after Job TTL.
 Existing executions without dispatch receipts retain deadline-based recovery.
+
+## REFLP1 coverage decisions
+
+The shared memory check rejects `no_change` when successful action receipts are not linked to accepted playbook applications, and rejects leaving an applied playbook unchanged after failure, unresolved findings or a later hand repair on its resources. Diagnostics `reflection.uncovered-repair` name the action receipt; `reflection.stale-playbook` names the playbook. A changed playbook ID (including README-only learning) or a resource-scoped typed SDK gap covers hand repair; a stale playbook itself must change or be retired with a reason. SDK gaps and edits to peer playbooks do not excuse stale memory. Replay observations remain informational. Reflection still runs after every incident and resumes the responder session.
+
+Reflection inventories show every accepted detector and playbook with a short excerpt, incident-linked entries first. A fresh-session incident brief supplies the missing responder evidence without repeating or filtering that inventory. Full accepted memory and outcomes remain readable in the checkout.

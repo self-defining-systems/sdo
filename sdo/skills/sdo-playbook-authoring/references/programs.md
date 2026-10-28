@@ -35,7 +35,7 @@ snapshot digests and a protected capture mount are not required. Include accepte
 mitigation reads accepted source. For replay, open.json represents the fault and recordings.json contains
 its observed primitive replies; fixed.json and healthy.json remain readable context, not repair proof.
 
-For every cause with a recorded repair on a closure verified healthy, save diagnose and mitigate programs, a README describing fault
+When accepted playbooks do not already cover a recorded repair on a closure verified healthy, save useful diagnose and mitigate steps and a README describing fault
 handling, and a detector that references its playbook. One detector may reference several playbooks. A missing piece is
 recorded as a coverage gap.
 Replay observes incident detectors, binding selection, diagnosis and mitigation on recorded states. Every outcome, including unavailable evidence or a persistent Match, is information only; it never blocks saving.

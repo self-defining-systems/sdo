@@ -1,4 +1,4 @@
-"""Reflection stays incident-scoped and reserves independent acceptance time."""
+"""Reflection keeps all accepted memory visible and reserves independent acceptance time."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,9 +25,9 @@ def test_incident_memory_finds_relevant_books_beyond_the_inventory_prefix() -> N
     stage = outcome.prior_stages.add(stage="deterministic")
     stage.mitigations.add(playbook_id="book-98", program_revision="applied-revision", result="applied_cleared")
     view = reflection_memory_view(snapshot, outcome)
-    assert [book["id"] for book in view["playbooks"]] == ["book-98", "book-99"]
-    assert [item["id"] for item in view["detectors"]] == ["relevant"]
-    assert view["omitted_playbooks"] == 98
+    assert [book["id"] for book in view["playbooks"]] == ["book-98", "book-99"] + [f"book-{i}" for i in range(98)]
+    assert [item["id"] for item in view["detectors"]] == ["relevant", "unrelated"]
+    assert view["omitted_playbooks"] == 0
     focus = view["incident_context"]
     assert focus["accepted_commit"] == "accepted"
     assert focus["explained_findings"] == 1
@@ -61,13 +61,15 @@ def test_incident_memory_retains_explicit_links_and_owned_programs(link: str) ->
 
     scoped = incident_memory_snapshot(snapshot, outcome)
     assert scoped.accepted_commit == "accepted-revision"
-    assert list(scoped.playbooks) == [book]
+    assert list(scoped.playbooks) == [book] + list(snapshot.playbooks[:-1])
     assert scoped.playbooks[0].scripts[0].content == "owned program"
     view = reflection_memory_view(snapshot, outcome)
     assert view["accepted_commit"] == "accepted-revision"
-    assert [item["id"] for item in view["playbooks"]] == [book.id]
+    assert [item["id"] for item in view["playbooks"]] == [book.id] + [f"unrelated-{i}" for i in range(40)]
     assert view["playbooks"][0]["script_names"] == ["repair.go"]
-    assert [item["id"] for item in view["detectors"]] == (["disabled"] if link == "disabled_detector" else [])
+    assert [item["id"] for item in view["detectors"]] == (["disabled"] if link == "disabled_detector" else []) + [
+        f"unrelated-{i}" for i in range(40)
+    ]
     if link == "disabled_detector":
         assert view["detectors"][0]["description"] == "repair this detector"
     assert len(snapshot.playbooks) == 41
@@ -168,3 +170,38 @@ def test_cleanly_applied_revisions_are_preserved(relative: str) -> None:
         "Keep revisions that applied cleanly unless this incident shows failure or incompleteness; "
         "add or narrowly edit, never rewrite working steps."
     ) in text
+
+
+@pytest.mark.parametrize("mode", ["fresh", "resume"])
+def test_reflection_sessions_show_all_memory_once_with_incident_entries_first(tmp_path: Path, mode: str) -> None:
+    from tests.unit.sdo.agents.responder.test_reflection import _CapturingBackend, _fresh_closure, _outcome
+
+    closure = _fresh_closure(tmp_path)
+    snapshot = closure.request.memory_snapshot
+    del snapshot.playbooks[:]
+    del snapshot.detectors[:]
+    for index in range(45):
+        snapshot.playbooks.add(id=f"unrelated-{index}", markdown=f"advice-{index}")
+        snapshot.detectors.add(id=f"other-{index}", description=f"signature-{index}")
+    snapshot.playbooks.add(id="linked", markdown="already covered")
+    snapshot.detectors.add(id="linked-detector", possible_playbook_ids=["linked"])
+    outcome = _outcome()
+    outcome.applied_playbooks[:] = ["linked"]
+    backend = _CapturingBackend()
+    reflection.SessionReflector(backend).resume(
+        session_id="session",
+        incident_id=outcome.incident_id,
+        worktree=tmp_path,
+        outcome=outcome,
+        history=[],
+        outcome_commit="outcome",
+        session_mode=mode,
+        closure=closure,
+    )
+    prompt = str(backend.calls[0]["prompt"])
+    for index in range(45):
+        assert prompt.count(f'advice-{index}"') == 1
+        assert f"signature-{index}" in prompt
+    assert prompt.index('"id": "linked"') < prompt.index('"id": "unrelated-0"')
+    assert "Inspect only incident-relevant memory" not in prompt
+    assert len(snapshot.playbooks) == 46

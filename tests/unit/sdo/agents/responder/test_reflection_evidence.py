@@ -62,9 +62,10 @@ def test_memory_view_omits_scripts_and_bounds_repeated_memory_text() -> None:
         book.scripts.add(name="inspect.sh", content="script body" * 1000)
     view = memory_view(snapshot)
     assert view["accepted_commit"] == "accepted"
-    assert view["omitted_playbooks"] == 70
+    assert view["omitted_playbooks"] == 0
+    assert len(view["playbooks"]) == 100
     assert "script body" not in json.dumps(view)
-    assert len(json.dumps(view)) < 30_000
+    assert len(json.dumps(view)) < 60_000
 
 
 def test_oversized_capture_item_is_explicit_and_narrow_fields_remain_exact(tmp_path: Path) -> None:

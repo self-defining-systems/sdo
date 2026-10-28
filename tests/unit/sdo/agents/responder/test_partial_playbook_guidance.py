@@ -23,9 +23,14 @@ def test_partial_learning_is_explicit(relative: str) -> None:
     assert "judgement" in text
     assert "replay" in text
     assert "information" in text
-    assert "runscript" in text
-    assert "digest-to-receipt" in text
-    assert "relation-derived env" in text
-    assert "difficulty never justifies saving nothing" in text
+    if relative != "sdo/agents/responder/prompts/reflection.md":
+        assert "runscript" in text
+        assert "digest-to-receipt" in text
+        assert "relation-derived env" in text
+    if relative.endswith("SKILL.md") or relative.endswith("reflection.md"):
+        assert "no_change" in text
+        assert "hand repair" in text
+        assert "left findings unresolved" in text
+        assert "difficulty never justifies saving nothing" not in text
     assert "a readme alone does not establish learning" not in text
     assert "a readme note alone does not capture an executable repair" not in text

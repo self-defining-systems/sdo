@@ -1,6 +1,6 @@
 The controller has committed its authoritative incident outcome. You are reflecting in a fresh session: the responder's session transcript is not available, so rely on the incident brief below and supplied memory context.
 
-Incident brief (built by the broker from the verified closure; about 805 tokens):
+Incident brief (built by the broker from the verified closure; about 687 tokens):
 ## Live evidence at dispatch (closure request)
 Application toy in namespace toy; source commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, deployed commit cccccccccccccccccccccccccccccccccccccccc.
 Detected 1970-01-01T00:00:00+00:00, dispatched 1970-01-01T00:00:00+00:00, responder completed 1970-01-01T00:00:00+00:00, health verified 1970-01-01T00:00:00+00:00.
@@ -76,27 +76,16 @@ Repair actions:
 Verification:
 - none recorded
 
-## Existing operational memory (trusted logical snapshot)
-Health detectors (judge-owned, never edit): none
-- detector-0 (watches: v1/Service, firing: 0, playbooks: ['repair-0'], originatingIncident: prior-toy) [raised a finding in this incident]
-  Description: Toy service port mismatch
-```
-return service.Port != intended.Port
-```
-  Reads Kubernetes Events: no
-Existing playbooks: repair-0
-Excerpt of playbook repair-0:
-```
-# Repair
-Restore the accepted target port.
-```
-
 ## Responder shell commands
 The responder's shell commands are not available for this session.
 End of incident brief.
 
 Reflection request:
-Committed outcomes are authoritative; failed incidents supply filtered learning. Accepted source and developer changes express intent. Operational memory is fallible advice. Fix or delete disabled_setup_detectors. Recovery requires evidence from the intended application behavior. Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Save verified steps with partial coverage, README orchestration and detectors. Replay is informational: NoMatch, persistent Match and unavailable replay never block saving; do not correct them. Keep compile, imports, formatting and receipt provenance checks. Any performed repair can be a RunScript with relation-derived Env and digest-to-receipt linkage; difficulty never justifies saving nothing. Put judgement in the README; Save verified, specific README-only guidance too. Use recorded actions as repair evidence and session observations for fixtures. Learn listed undetected transitions without inferring recovery. The authoring guide starts at /opt/sdo/skills/sdo-memory/SKILL.md. Preserve Go-owned corpus and trust. Unavailable observations remain Unknown. Search full evidence in a temporary file; never infer from truncated output. Edit final operational-memory files only in this isolated checkout. Protect source, outcomes, goal and architecture. Return updated for a validated nonempty diff, including Go-authored edits, with changed playbook IDs. Include scoped sdk_gaps alongside updated for unencoded parts. Use sdk_gap without edits only when nothing useful can be saved. If accepted playbooks cover the repair, return no_change with a reason or a small evidence-backed addition. The broker checks and publishes. Answer in the `reflection` field and leave `incident_result` null.
+Memory exists so later incidents are fixed faster and cheaper. First judge whether accepted memory already covers what happened: consider applied playbooks, matching detectors and unchanged source. Only when existing playbooks already match the incident well may you return no_change with a short reason and finish; cover every hand repair with an updated playbook or scoped sdk_gap, and update or retire applied playbooks that failed, left findings unresolved or needed later hand repair. Read and reason across all accepted memory as needed; incident-linked entries come first and full files remain readable in the checkout.
+
+Otherwise make the smallest evidence-backed addition that improves a future response. Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified steps with partial coverage and useful README-only guidance; put judgement in the README. The authoring guide starts at /opt/sdo/skills/sdo-memory/SKILL.md.
+
+Committed outcomes are authoritative; memory is fallible advice and accepted source expresses intent. Learn only from supported observations; unavailable observations remain Unknown, and never infer from truncated output. Use recorded actions as repair evidence. Replay is informational, not a reason to keep revising. Learn listed undetected transitions without inferring recovery. Edit only authorized operational-memory files in this isolated checkout; preserve source, outcomes, goal, architecture, corpus and trust. Validate changed files and resolve blocking diagnostics. Return updated with changed playbook IDs for a validated nonempty diff, with scoped sdk_gaps for useful work that cannot be encoded. The broker checks and publishes. Answer in the `reflection` field and leave `incident_result` null.
 
 Outcome commit: dddddddddddddddddddddddddddddddddddddddd
 Operational memory snapshot:
@@ -129,7 +118,7 @@ Operational memory snapshot:
   "full_text": "Read relevant accepted files in the proposal checkout through the memory inventory."
 }
 
-Inspect only incident-relevant memory; stage results and coverage summarize existing explanations. Repeated calls carry counts; excerpts identify full committed responses by outcome_call_index and response_json_sha256.
+Stage results and coverage summarize existing explanations. Repeated calls carry counts; excerpts identify full committed responses by outcome_call_index and response_json_sha256.
 Current outcome:
 {
   "schema_version": 1,
