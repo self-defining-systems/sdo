@@ -174,6 +174,7 @@ Historical plumbing regressions have focused checks in the same suites:
 | Restart live recheck | `TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles` preserves fixes and budgets. `TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackState` checks durable outcome evidence without rollback authority. |
 | Physical `.sdo/` tool evidence | The responder loop test rejects physical paths in recorded tool calls; `TestSyntheticWorkerResultsThroughContracts` covers typed worker envelopes; responder validation rejects physical tool evidence. |
 | Cluster grant | `sdo/operator/install` `TestEverySDOIdentityHoldsTheWildcardGrant`: every SDO ServiceAccount resolves to the `*`/`*`/`*` ClusterRole; `ensureClusterGrants` restores it. |
+| Provider writer hand-off | `tests/unit/libs/agent_cli/test_session_ownership.py` runs overlapping writer/resumer schedules, real process exit, crash recovery and malformed-record sweeps; the hermetic gate also checks typed reflection worker failures. |
 | Tool session restart permissions | The responder loop reparses real directory modes; `TestSessionToolServerIgnoresAtomicRequestTemporaryFiles` protects the CLI write protocol. |
 | Capture size and timing | `sdo/operator/operatorcli` draft tests reject oversized captures; the controller checks that the `open@detect` capture never delays or blocks dispatch. |
 | Pre-existing seed formatting | `TestReflectionLearnedProgramCLIAndBroker` authors final files over accepted memory. |

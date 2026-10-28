@@ -151,10 +151,10 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print JSON for scripts (mutations: compact envelope and complete report path)",
     )
-    commands.add_parser("status", help="read fresh findings and detector confirmation; pending is not healthy")
+    commands.add_parser("status", help="read findings and detector confirmation")
     for name, help_text in (
-        ("detect", "run fresh detectors; pending with a reason means health is unproven"),
-        ("check", "run fresh detectors then independent closure verification"),
+        ("detect", "run fresh detectors; pending health is unproven"),
+        ("check", "run detectors and verify closure; --detector ID selects detectors"),
     ):
         check = commands.add_parser(name, help=help_text)
         check.add_argument(
@@ -196,17 +196,17 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
     mitigate = commands.add_parser(
         "mitigate",
-        help="apply independent options in one call; overlaps refused; shows progress and full JSON",
+        help="apply independent options; --finding FINGERPRINT scopes verification; overlapping writes refused",
         description=(
-            "Apply several independent options in one call; overlapping object write sets are refused before writes. "
-            "Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE "
+            "Apply independent options; overlapping writes are refused. "
+            "Repeat --option ID with --param NAME=VALUE, or use --selection-set FILE "
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
-            "--match ID applies a ready playbook_coverage match; --bind narrows it. "
-            "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID; "
-            "reads stay open; past its bound it frees its writes as rollout_stalled. "
-            "A single option also accepts --NAME VALUE parameters. "
-            "Five rounds per incident. "
-            "Script fixes are learnable mitigations; unlinked script bytes are refused as script_unprovenanced."
+            "--match ID selects a playbook_coverage match; --bind narrows it. "
+            "Each option has a receipt; one call uses one of five rounds. --NAME VALUE also sets parameters. "
+            "Pending rollout retains its application ID and allows reads; "
+            "rollout_stalled releases writes at its bound. "
+            "Source reconciliation waits for old objects to drain; persistent differences return source_residual. "
+            "Script fixes are learnable; unlinked bytes are refused as script_unprovenanced."
             + " "
             + WORKING_PROGRAM_HELP
         ),
@@ -278,7 +278,7 @@ def _parser() -> argparse.ArgumentParser:
     ).add_argument("ref", metavar="Kind/namespace/name")
     act = commands.add_parser(
         "act",
-        help=("record one command; outer shell chains run separately; shows progress and a complete JSON report"),
+        help="record a command with --resource Kind/namespace/name",
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts. "
@@ -358,17 +358,13 @@ def verification_help() -> str:
 
 
 def command_surface() -> dict[str, object]:
-    """Generate incident-facing signatures from the same parser that accepts commands."""
+    """Keep one capability line per command; detailed help belongs in the reference."""
     parser = _parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
     return {
-        "commands": {
-            name: " ".join(command.format_usage().removeprefix("usage: ").split())
-            for name, command in subcommands.choices.items()
-        },
-        "mitigation": subcommands.choices["mitigate"].description,
-        "output": "Full JSON: path retains complete evidence. Mutations print progress and the file schema; "
-        "--json keeps mutations compact and prints other complete responses. Extract needed fields.",
+        "commands": {action.dest: action.help for action in subcommands._choices_actions},
+        "reference": "sdo-incident-response/references/commands.md",
+        "output": "Full JSON: read details_file; --json prints full read responses and compact mutation reports.",
     }
 
 

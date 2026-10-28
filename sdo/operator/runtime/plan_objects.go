@@ -24,6 +24,12 @@ type PlanLifecycleClient interface {
 	Delete(context.Context, sdk.ObjectRef, types.UID, string) error
 }
 
+// PlanAcceptanceClient publishes UID-bound records through the same
+// acceptance field manager used by adoption. Source creates require this owner.
+type PlanAcceptanceClient interface {
+	RecordAcceptance(context.Context, sdk.ObjectRef, string, *unstructured.Unstructured) error
+}
+
 // PlanObjectEffect is read-only evidence. DeletedPreImage is informational and
 // must never authorize recreation, including after a controller restart.
 type PlanObjectEffect struct {
@@ -123,7 +129,6 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 	}
 	current := map[sdk.ObjectRef]*unstructured.Unstructured{}
 	originals := map[sdk.ObjectRef]*unstructured.Unstructured{}
-	var refs []sdk.ObjectRef
 	// Capture and validate every pre-image before the first mutation.
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
@@ -154,7 +159,6 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		}
 		current[ref] = object.DeepCopy()
 		originals[ref] = object.DeepCopy()
-		refs = append(refs, ref)
 		result.PreImages = append(result.PreImages, newPlanPreImage(ref, object))
 	}
 	for index, action := range plan.Actions {
@@ -203,13 +207,15 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		if effect != nil {
 			effect.State = "unknown"
 		}
+		var created *unstructured.Unstructured
 		switch patch.Operation {
 		case "create":
 			if _, getErr := e.Client.Get(ctx, patch.Ref); !apierrors.IsNotFound(getErr) {
 				return result, fmt.Errorf("CreateFromSource lost its absence precondition")
 			}
 
-			created, createErr := client.Create(ctx, patch.Ref, patch.After.DeepCopy())
+			var createErr error
+			created, createErr = client.Create(ctx, patch.Ref, patch.After.DeepCopy())
 			if createErr != nil {
 				return result, fmt.Errorf("create receipt unknown")
 			}
@@ -219,6 +225,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 			patch.After.SetUID(created.GetUID())
 			patch.After.SetResourceVersion(created.GetResourceVersion())
 			effect.UID = string(created.GetUID())
+
 		case "delete":
 			live, getErr := e.Client.Get(ctx, patch.Ref)
 			if getErr != nil {
@@ -250,8 +257,14 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		if effect != nil {
 			effect.State = "applied"
 		}
+		if created != nil {
+			// Retain the server receipt before crossing the metadata boundary.
+			if err := e.recordCreatedAcceptance(ctx, *patch, created); err != nil {
+				return result, err
+			}
+		}
 		if patch.Operation != "" {
-			if err := e.observeObjectEffect(ctx, *patch); err != nil {
+			if err := e.observeObjectEffect(ctx, patch); err != nil {
 				return result, err
 			}
 			effect.Confirmed = true
@@ -266,22 +279,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		patch.DirectReadConfirmed = true
 	}
 	complete = true
-	if err := e.reportSourceResiduals(ctx, incident, &result); err != nil {
-		return result, err
-	}
-	if err := e.awaitObserved(ctx, result.Patches); err != nil {
-		return result, err
-	}
-	if pending, err := e.waitAfterSourceWrites(ctx, incident, &result, refs); err != nil {
-		result.RolloutPending = pending
-		return result, err
-	}
-	passed, verifyErr := e.Verifier.Verify(ctx)
-	if verifyErr != nil {
-		return result, fmt.Errorf("object plan verification failed")
-	}
-	result.VerificationPassed = passed
-	result.VerificationCompleted = true
+
 	return result, nil
 }
 
@@ -296,6 +294,9 @@ func (e PlanExecutor) prepareObjectAction(ctx context.Context, incident Incident
 	}
 	if e.Source == nil || incident.SourceCommit == "" {
 		return nil, fmt.Errorf("accepted source is required for CreateFromSource")
+	}
+	if _, ok := e.Client.(PlanAcceptanceClient); !ok {
+		return nil, fmt.Errorf("acceptance record writer is required for CreateFromSource")
 	}
 	source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
 	if err != nil || source == nil || !samePlanRef(source, ref) {
@@ -312,15 +313,12 @@ func (e PlanExecutor) prepareObjectAction(ctx context.Context, incident Incident
 	return desired, nil
 }
 
-func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch PlanPatch) error {
+func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch *PlanPatch) error {
 
-	live, err := e.Client.Get(ctx, patch.Ref)
 	if patch.Operation == "delete" {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("delete observation unknown: named object is not confirmed absent")
+		return e.observeDeletedObject(ctx, *patch)
 	}
+	live, err := e.Client.Get(ctx, patch.Ref)
 	if err != nil || live == nil || !samePlanRef(live, patch.Ref) {
 		return fmt.Errorf("create observation unknown: current object is unavailable")
 	}
@@ -328,11 +326,18 @@ func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch PlanPatch) 
 		return fmt.Errorf("create observation unknown: UID changed or unavailable")
 	}
 
+	if patch.Authorization == "accepted-source" && !acceptanceRecordBound(live, patch.After) {
+		return &AcceptanceRecordError{Ref: patch.Ref, Err: ErrAcceptanceRecordUnavailable}
+	}
+
 	for _, field := range []string{"spec", "data", "binaryData"} {
 		if expected, exists := patch.After.Object[field]; exists && !planValueContains(live.Object[field], expected) {
 			return fmt.Errorf("create observation unknown: source fields differ")
 		}
 	}
+	// The outer cache barrier must include acceptance publication, not only
+	// the earlier create version whose object had no baseline yet.
+	patch.After.SetResourceVersion(live.GetResourceVersion())
 	return nil
 }
 
@@ -362,10 +367,7 @@ func (e PlanExecutor) restoreCreatedObject(ctx context.Context, patch PlanPatch)
 	if err := client.Delete(ctx, patch.Ref, live.GetUID(), live.GetResourceVersion()); err != nil {
 		return fmt.Errorf("create compensation delete failed")
 	}
-	if _, err := e.Client.Get(ctx, patch.Ref); !apierrors.IsNotFound(err) {
-		return fmt.Errorf("create compensation absence is unknown")
-	}
-	return nil
+	return e.observeDeletedObject(ctx, PlanPatch{Operation: "delete", Ref: patch.Ref, Before: live})
 }
 
 func createConditionalObjectPatch(before, after []byte, object *unstructured.Unstructured) ([]byte, error) {
@@ -386,7 +388,7 @@ func objectEffectFor(result *PlanApplicationResult, ref sdk.ObjectRef) *PlanObje
 }
 
 func (e PlanExecutor) reconcileObjectEffect(ctx context.Context, result PlanApplicationResult, index int) (PlanApplicationResult, error) {
-	patch := result.Patches[index]
+	patch := &result.Patches[index]
 	if patch.Operation == "create" && (patch.After == nil || patch.After.GetUID() == "") {
 		return result, fmt.Errorf("create receipt unknown: ownership cannot be inferred without the server UID receipt")
 	}
@@ -403,4 +405,66 @@ func (e PlanExecutor) reconcileObjectEffect(ctx context.Context, result PlanAppl
 	}
 	result.PendingAction = nil
 	return result, nil
+}
+
+// recordCreatedAcceptance uses the server's create response as the acceptance
+// point, never a later read that could absorb another writer's additions.
+func (e PlanExecutor) recordCreatedAcceptance(ctx context.Context, patch PlanPatch, created *unstructured.Unstructured) error {
+	baseline := created.DeepCopy()
+	if err := RecordAcceptance(baseline, patch.After); err != nil {
+		return err
+	}
+	writer := e.Client.(PlanAcceptanceClient)
+	if err := writer.RecordAcceptance(ctx, patch.Ref, baseline.GetAnnotations()[acceptedPathsAnnotation], created); err != nil {
+		return &AcceptanceRecordError{Ref: patch.Ref, Err: err}
+	}
+	return nil
+}
+
+// ObjectDeletionPendingError retains evidence of an accepted delete whose
+// original instance still exists at the observation bound. It grants no repair
+// credit and never authorizes recreation.
+type ObjectDeletionPendingError struct {
+	Ref        sdk.ObjectRef
+	UID        string
+	Finalizers []string
+	Err        error
+}
+
+func (e *ObjectDeletionPendingError) Error() string {
+	return fmt.Sprintf("delete observation pending: %s/%s UID %s is still present: %v", e.Ref.Kind, e.Ref.Name, e.UID, e.Err)
+}
+func (e *ObjectDeletionPendingError) Unwrap() error { return e.Err }
+
+func (e PlanExecutor) observeDeletedObject(ctx context.Context, patch PlanPatch) error {
+	limit := cacheObservationLimit
+	if e.RolloutTimeout > 0 && e.RolloutTimeout < limit {
+		limit = e.RolloutTimeout
+	}
+	observation, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	var last *unstructured.Unstructured
+	for {
+		live, err := e.Client.Get(observation, patch.Ref)
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			if last != nil && observation.Err() != nil {
+				return &ObjectDeletionPendingError{Ref: patch.Ref, UID: string(last.GetUID()), Finalizers: append([]string(nil), last.GetFinalizers()...), Err: observation.Err()}
+			}
+			return fmt.Errorf("delete observation unknown: current read failed: %w", err)
+		}
+		if live == nil || !samePlanRef(live, patch.Ref) || live.GetUID() != patch.Before.GetUID() {
+			return fmt.Errorf("delete observation unknown: named object identity changed")
+		}
+		last = live
+		select {
+		case <-observation.Done():
+			return &ObjectDeletionPendingError{Ref: patch.Ref, UID: string(last.GetUID()), Finalizers: append([]string(nil), last.GetFinalizers()...), Err: observation.Err()}
+		case <-ticker.C:
+		}
+	}
 }

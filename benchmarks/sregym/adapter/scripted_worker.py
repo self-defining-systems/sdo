@@ -439,41 +439,56 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         time.sleep(5)
     healthy = bool(verification.get("healthy"))
     if healthy and os.environ.get("SDO_SCRIPTED_SOURCE_REPAIR") == "1":
-        # A harmless source addition exercises accepted SOURCE publication.
-        # Keep it once per repository so the next incident tests the resulting
-        # lock rather than invalidating it again with another fixture change.
-        path = Path(request.repository_worktree) / "kubernetes/verification-policy.yaml"
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(
-                    {
-                        "apiVersion": "v1",
-                        "kind": "ConfigMap",
-                        "metadata": {"name": "verification-policy", "namespace": request.namespace},
-                        "data": {"verification": "independent-health"},
-                    }
-                )
-                + "\n",
-                encoding="utf-8",
-            )
+        # Refine an existing source object: source publication must not invent
+        # topology that the independent toy judge correctly refuses.
+        marker = "sdo.dev/scripted-verification"
+        candidate = None
+        present = False
+        for path in sorted((Path(request.repository_worktree) / "kubernetes").rglob("*.yaml")):
+            documents = list(yaml.safe_load_all(path.read_text()))
+            for obj in documents:
+                if not isinstance(obj, dict) or obj.get("kind") not in {
+                    "Service",
+                    "Deployment",
+                    "StatefulSet",
+                    "DaemonSet",
+                    "ConfigMap",
+                }:
+                    continue
+                metadata = obj.get("metadata", {})
+                if (
+                    not obj.get("apiVersion")
+                    or not metadata.get("name")
+                    or metadata.get("namespace", request.namespace) != request.namespace
+                ):
+                    continue
+                if metadata.get("annotations", {}).get(marker) == "independent-health":
+                    present = True
+                if candidate is None:
+                    candidate = path, documents, obj
+        if not present:
+            if candidate is None:
+                raise ValueError("scripted source repair requires an existing deployment manifest")
+            path, documents, obj = candidate
+            obj["metadata"].setdefault("annotations", {})[marker] = "independent-health"
+            path.write_text(yaml.safe_dump_all(documents, sort_keys=False))
             action_start = _now()
             _command(["kubectl", "-n", request.namespace, "apply", "-f", str(path)])
             repairs.append(
                 {
                     "action_id": f"source-{len(repairs) + 1}",
                     "kind": "kubectl-apply",
-                    "target": "ConfigMap/verification-policy",
+                    "target": f"{obj['kind']}/{obj['metadata']['name']}",
                     "resources": [
                         {
-                            "api_version": "v1",
-                            "kind": "ConfigMap",
+                            "api_version": obj["apiVersion"],
+                            "kind": obj["kind"],
                             "namespace": request.namespace,
-                            "name": "verification-policy",
+                            "name": obj["metadata"]["name"],
                         }
                     ],
                     "summary": "Recorded scripted verification policy in source",
-                    "details": "Applied the source-backed scripted gate ConfigMap",
+                    "details": "Applied a source-backed annotation without changing topology",
                     "started_at": action_start,
                     "completed_at": _now(),
                     "success": True,

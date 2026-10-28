@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -349,27 +348,12 @@ class SessionReflector:
                 )
                 return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
             prompt = render_prompt("responder", "reflection_resume", part="reflection.instructions", request=request)
-            try:
-                return self.backend.resume(
-                    session_id=session_id,
-                    worktree=worktree,
-                    prompt=prompt,
-                    idempotency_key=idempotency_key,
-                )
-            except ResponderSessionUnavailable as exc:
-                print(render_prompt("responder", "resume_04", part="reflection.instructions", exc=exc), file=sys.stderr)
-                return self.resume(
-                    session_id=session_id,
-                    incident_id=incident_id,
-                    worktree=worktree,
-                    outcome=outcome,
-                    history=history,
-                    outcome_commit=outcome_commit,
-                    session_mode="fresh",
-                    closure=closure,
-                    cause_work=cause_work,
-                    unassigned_work=unassigned_work,
-                )
+            return self.backend.resume(
+                session_id=session_id,
+                worktree=worktree,
+                prompt=prompt,
+                idempotency_key=idempotency_key,
+            )
 
 
 def memory_check_correction(check: ValidationResult, idempotency_key: str) -> RenderedPrompt:
@@ -508,7 +492,7 @@ class CodexSessionBackend:
                 timeout_seconds=timeout_seconds,
                 resume_session_id=session_id,
                 executor=self.executor,
-                **session_turn_options(self.provider, worktree),
+                **session_turn_options(self.provider, worktree, phase="reflection"),
             )
         except StructuredTurnError as exc:
             if session_id is not None and (

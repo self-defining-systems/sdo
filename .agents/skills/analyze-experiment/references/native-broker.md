@@ -21,6 +21,8 @@ complete authoring reflection. The closure's `request.state_changes` (absent in 
 
 `IncidentClosure.source_check_notes` and `OutcomeRecord.source_check_notes` list source or render checks that were unavailable when health verified the closure (accepted source would not render, the source inventory had not loaded). They are information only: the closure stays a success decided by health alone. The notes also list each object that still differs from accepted source ("unexplained drift remains on Kind/name"); an observed source difference no longer contradicts a closure. Absent in older ledgers and outcomes.
 
+`IncidentClosure.frozen` is set when the controller persisted the closure, with the recheck's notes folded in, before the first broker attempt. The ledger's `closure` and the controller state's `pending_closure` must then be byte-identical; a retry rechecks only for contradiction and never rewrites notes or downgrades to unconfirmed. `closure differs from persisted broker evidence in <fields>` names the differing top-level closure fields and fails the closure on its first attempt (non-retryable, reason `BROKER_ERROR`); with frozen closures it is a real controller defect, not live drift. In older runs (no `frozen` key), retries recomputed notes from later live state and hit this error after any interrupted attempt.
+
 
 
 ### Historical Python broker fields
