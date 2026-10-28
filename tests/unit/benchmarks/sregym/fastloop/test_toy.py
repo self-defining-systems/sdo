@@ -22,6 +22,9 @@ def test_toy_recovery_meets_the_warm_lane_protocol(tmp_path, monkeypatch):
 
     deployments = [{"spec": {"replicas": 1}, "status": {"readyReplicas": 1}}] * 3
     monkeypatch.setattr("benchmarks.sregym.fastloop.toy.command", lambda *args: json.dumps({"items": deployments}))
+    from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
+
+    commit_accepted_source(tmp_path, namespace="toy")
     env = SimpleNamespace(kubeconfig=tmp_path / "config", namespace="toy", workspace=tmp_path)
     cluster = SimpleNamespace(list_objects=lambda namespace: [], delete=lambda *args: None, apply=lambda *args: None)
     driver = SregymFaultDriver(
@@ -309,3 +312,27 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
     else:
         with pytest.raises(ValueError, match="scripted toy health refresh"):
             scripted_worker.scripted_health_judge(request, tmp_path)
+
+
+def test_toy_recovery_writes_only_committed_source(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop.toy import ToyWorker
+    from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
+
+    declared = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "source", "namespace": "toy"},
+        "data": {"value": "accepted"},
+    }
+    source = commit_accepted_source(tmp_path, [declared], namespace="toy")
+    (tmp_path / "kubernetes/manifests.yaml").write_text("unaccepted")
+    written = []
+    monkeypatch.setattr("benchmarks.sregym.fastloop.toy.command", lambda *args: written.append(args))
+    monkeypatch.setattr(
+        "benchmarks.sregym.fastloop.baseline_recovery.KubectlApplicationCluster.apply",
+        lambda self, ns, obj: written.append(obj),
+    )
+    ToyWorker(SimpleNamespace(kubeconfig=tmp_path / "config", namespace="toy", workspace=tmp_path)).request("recover")
+    assert written == list(source.manifests)
