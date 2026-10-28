@@ -16,6 +16,7 @@ const (
 	RuleWhitespace                  = "diff.whitespace"
 	RuleSnapshotBudget              = "memory.snapshot-budget"
 	RuleSnapshotProjection          = "memory.snapshot"
+	RuleClusterLocal                = "memory.cluster-local"
 
 	// Structural.
 	RuleUnknownPath      = "layout.unknown-path"

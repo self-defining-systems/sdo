@@ -190,6 +190,10 @@ func ReachabilityTargets(ctx sdk.DetectionContext) ([]ReachabilityTarget, int)
     every TCP port of every eligible Service, sorted by Service and port,
     at most MaxReachabilityTargets. It also returns how many were omitted.
 
+func ReachabilityUnknown(ctx sdk.DetectionContext) []ReachabilityTarget
+    ReachabilityUnknown returns the observed targets whose reachability is
+    unknown until a healthy baseline is measured.
+
 func (t ReachabilityTarget) ID() string
     ID names the target.
 
@@ -197,11 +201,14 @@ type ReachabilityWindow struct {
 	Baseline        *ReachabilityBaseline `json:"baseline,omitempty"`
 	SourceInputs    string                `json:"sourceInputs,omitempty"`
 	ObjectiveDigest string                `json:"objectiveDigest,omitempty"`
-	ObservedAt      time.Time             `json:"observedAt"`
-	Interval        time.Duration         `json:"intervalNs"`
-	Timeout         time.Duration         `json:"timeoutNs"`
-	Failures        int                   `json:"failures"`
-	Targets         []TargetObservations  `json:"targets"`
+	// BaselinePending says the controller could not measure a current baseline
+	// yet. A never-served target is then unknown rather than failing.
+	BaselinePending bool                 `json:"baselinePending,omitempty"`
+	ObservedAt      time.Time            `json:"observedAt"`
+	Interval        time.Duration        `json:"intervalNs"`
+	Timeout         time.Duration        `json:"timeoutNs"`
+	Failures        int                  `json:"failures"`
+	Targets         []TargetObservations `json:"targets"`
 	// Omitted counts derived targets beyond MaxReachabilityTargets.
 	Omitted int            `json:"omitted,omitempty"`
 	Prober  ProberIdentity `json:"prober"`

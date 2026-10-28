@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 import uuid
@@ -114,12 +113,6 @@ def repository_volume_path(environment: FastloopEnvironment) -> str:
     return path
 
 
-# Health detectors capture per-cluster facts (Service UIDs, ClusterIPs, probe times) when a lane
-# first becomes healthy. Independent lanes can never agree on them, and the shared tree keeps
-# one lane's capture, so only these exact files may differ between a lane and the accepted tree.
-CLUSTER_CAPTURE = re.compile(r"\.sdo/diagnostics/detectors/health/[a-z0-9-]+/baseline\.json")
-
-
 def lane_git_command(environment: FastloopEnvironment, volume_path: str, accepted: Path, *git: str) -> tuple[str, ...]:
     """Command that reads a lane's mounted accepted repository outside the kind node.
 
@@ -154,14 +147,13 @@ def _tree_entries(listing: str) -> dict[str, str]:
     return entries
 
 
-def lane_divergence(
-    environment: FastloopEnvironment, volume_path: str, accepted: Path, head: str
-) -> tuple[str, list[str]]:
-    """Newest accepted commit (first-parent history of ``head``) the lane's tree equals, and its capture paths.
+def lane_match(environment: FastloopEnvironment, volume_path: str, accepted: Path, head: str) -> str:
+    """Newest accepted commit (first-parent history of ``head``) whose tree the lane's tree equals.
 
     A lane may have been prepared before peers published, so any accepted commit proves the
     lane holds no private memory; its controller adopts the current head when it resumes.
-    Raises when every candidate differs in anything but per-cluster health captures.
+    Cluster-local captures are controller state outside memory, so no path is exempt: raises
+    naming the paths that differ from the closest accepted commit.
     """
     history = [
         line.split()
@@ -170,17 +162,14 @@ def lane_divergence(
     observed = _command(*lane_git_command(environment, volume_path, accepted, "rev-parse", "HEAD^{tree}"))
     for commit, tree in history:
         if tree == observed:
-            return commit, []
+            return commit
     lane = _tree_entries(_command(*lane_git_command(environment, volume_path, accepted, "ls-tree", "-r", "HEAD")))
     closest: list[str] | None = None
     for commit, _tree in history:
         entries = _tree_entries(_command("git", "-C", str(accepted), "ls-tree", "-r", commit))
         paths = sorted(path for path in lane.keys() | entries.keys() if lane.get(path) != entries.get(path))
-        foreign = [path for path in paths if not CLUSTER_CAPTURE.fullmatch(path)]
-        if not foreign:
-            return commit, paths
-        if closest is None or len(foreign) < len(closest):
-            closest = foreign
+        if closest is None or len(paths) < len(closest):
+            closest = paths
     raise ValueError(
         "eval: lane accepted memory differs; merge through the broker before sharing: "
         + ", ".join(closest or [observed])
@@ -292,7 +281,6 @@ class Attachment:
     node: str
     volume_path: str
     application: str
-    discarded: list[str] = field(default_factory=list)
     matched: list[str] = field(default_factory=list)
 
 
@@ -366,7 +354,6 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
                             "volume_path": a.volume_path,
                             "application": a.application,
                             "matched_commit": a.matched[0] if a.matched else None,
-                            "discarded_cluster_captures": a.discarded,
                             "original_job": a.job,
                         }
                         for a in attachments
@@ -385,9 +372,7 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
             adapter.pause_for_recovery(adapter.KubectlClusterOps(), control_namespace_for(item.environment.namespace))
 
     def compare(item: Attachment) -> None:
-        commit, discarded = lane_divergence(item.environment, item.volume_path, accepted, head)
-        item.matched.append(commit)
-        item.discarded.extend(discarded)
+        item.matched.append(lane_match(item.environment, item.volume_path, accepted, head))
 
     concurrently({item.environment.cluster: lambda item=item: compare(item) for item in attachments})
     save("all-paused")

@@ -2,7 +2,6 @@ package memory
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,9 +10,17 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 )
 
-// ReachabilityBaselinePath is health-judge-owned diagnostic data, alongside
-// the immutable generic detector policy. It contains no executable code.
-const ReachabilityBaselinePath = ".sdo/diagnostics/detectors/health/service-reachability/baseline.json"
+// LegacyReachabilityBaselinePath held one cluster's reachability capture inside
+// accepted memory. Captures are per-cluster controller state now: readers ignore
+// this file, health preparation removes it, and the validator rejects writing it.
+const LegacyReachabilityBaselinePath = ".sdo/diagnostics/detectors/health/service-reachability/baseline.json"
+
+// ReachabilityBaselineStatePath is per-cluster controller state below the
+// lane-private repository mount, outside every operational-memory tree. Each
+// cluster measures its own record; shared memory never carries it.
+func ReachabilityBaselineStatePath(stateRoot string) string {
+	return filepath.Join(stateRoot, ".sdo-runtime", "reachability-baseline.json")
+}
 
 func DecodeReachabilityBaseline(data []byte) (*servicehealth.ReachabilityBaseline, error) {
 	var b servicehealth.ReachabilityBaseline
@@ -31,27 +38,21 @@ func DecodeReachabilityBaseline(data []byte) (*servicehealth.ReachabilityBaselin
 	return &b, nil
 }
 
-// ReadReachabilityBaseline reads only an immutable accepted revision. A missing
-// record preserves ordinary reachability detection; malformed data fails closed.
-func ReadReachabilityBaseline(ctx context.Context, root, revision string) (*servicehealth.ReachabilityBaseline, error) {
-	if _, err := healthGit(ctx, root, "cat-file", "-e", revision+":"+ReachabilityBaselinePath); err != nil {
-		// Distinguish absent data from a missing/unreadable accepted revision.
-		if _, headErr := healthGit(ctx, root, "rev-parse", "--verify", revision+"^{commit}"); headErr != nil {
-			return nil, headErr
-		}
+// ReadReachabilityBaselineState reads this cluster's record. A missing record
+// preserves ordinary reachability detection; malformed data is an error.
+func ReadReachabilityBaselineState(stateRoot string) (*servicehealth.ReachabilityBaseline, error) {
+	data, err := os.ReadFile(ReachabilityBaselineStatePath(stateRoot))
+	if os.IsNotExist(err) {
 		return nil, nil
 	}
-	data, err := healthGit(ctx, root, "show", revision+":"+ReachabilityBaselinePath)
 	if err != nil {
 		return nil, err
 	}
 	return DecodeReachabilityBaseline(data)
 }
 
-// WriteReachabilityBaseline writes an isolated health-judge proposal only.
-// The caller must publish it through the broker; accepted repositories are never
-// passed here by the runtime baseline gate.
-func WriteReachabilityBaseline(root string, b *servicehealth.ReachabilityBaseline) error {
+// WriteReachabilityBaselineState atomically replaces this cluster's record.
+func WriteReachabilityBaselineState(stateRoot string, b *servicehealth.ReachabilityBaseline) error {
 	if err := b.Validate(); err != nil {
 		return err
 	}
@@ -59,9 +60,25 @@ func WriteReachabilityBaseline(root string, b *servicehealth.ReachabilityBaselin
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(root, ReachabilityBaselinePath)
+	path := ReachabilityBaselineStatePath(stateRoot)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	file, err := os.CreateTemp(filepath.Dir(path), ".reachability-baseline-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
