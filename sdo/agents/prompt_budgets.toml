@@ -415,6 +415,10 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
+[template_data.lifecycle-render_validation_feedback_04-validation_attempt]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
 [template_data.lifecycle-render_validation_feedback_02-message]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
@@ -763,7 +767,15 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
+[template_data.responder-reflection_retry-original_request]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
 [template_data.responder-reflection_retry-request]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_retry_request-request]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
