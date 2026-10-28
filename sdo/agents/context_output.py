@@ -76,9 +76,26 @@ def cap_text(text: str, limit: int, *, json_output: bool = False, bytes_limit: b
     path, reference = save_context(text)
     if json_output:
         # JSON paths are literal readable paths, never shell expressions.
-        result = json.dumps(
-            {"summarized": True, "characters": len(text), "details_file": str(path)}, ensure_ascii=False
-        )
+        envelope: dict[str, Any] = {"summarized": True, "characters": len(text), "details_file": str(path)}
+        try:
+            document = json.loads(text)
+        except ValueError:
+            document = None
+        if isinstance(document, dict):
+            # Keep decisive scalar facts without treating absent/omitted fields as success.
+            for key in ("command", "healthy", "targeted_healthy", "success", "exit_code", "error", "summary"):
+                value = document.get(key)
+                if isinstance(value, str):
+                    value = " ".join(value.split())
+                    value = value if len(value) <= 128 else value[:127] + "…"
+                elif value is not None and not isinstance(value, (bool, int, float)):
+                    continue
+                if key in document and size(json.dumps({**envelope, key: value}, ensure_ascii=False)) <= limit:
+                    envelope[key] = value
+            counts = {key: len(value) for key, value in document.items() if isinstance(value, list)}
+            if counts and size(json.dumps({**envelope, "counts": counts}, ensure_ascii=False)) <= limit:
+                envelope["counts"] = counts
+        result = json.dumps(envelope, ensure_ascii=False)
     else:
         result = f"Full: {reference}\n"
     if size(result) > limit:

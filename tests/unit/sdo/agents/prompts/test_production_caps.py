@@ -145,3 +145,20 @@ def test_generic_worker_session_directory_owns_overflow(monkeypatch, tmp_path):
     assert len(prompt.context_files) == 1
     assert prompt.context_files[0].parent == tmp_path / "context"
     assert prompt.context_files[0].stat().st_mode & 0o777 == 0o600
+
+
+def test_large_json_tool_reply_keeps_verdict_and_counts(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    tools_cli._print_response(large_response("status", 100), full_json=True)
+    response = json.loads(capsys.readouterr().out)
+    assert response["command"] == "status"
+    assert response["healthy"] is False
+    assert response["counts"]["findings"] == 100
+    assert response["summary"]
+
+
+def test_provider_boundary_rejects_uncapped_prompt_before_launch(tmp_path):
+    from sdo.agents.prompt_templates import run_agent_turn
+
+    with pytest.raises(TypeError, match="capped renderer"):
+        run_agent_turn("codex", "unbounded prompt", cwd=tmp_path, access="read-only", output_schema={})

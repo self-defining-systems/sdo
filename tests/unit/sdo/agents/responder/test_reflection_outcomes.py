@@ -470,7 +470,7 @@ def test_reflection_prior_evidence_reference_is_readable_during_the_turn(tmp_pat
     )
     assert result.learning_decision == "no_change"
     assert references
-    assert all(not path.exists() for path in references)
+    assert all(path.exists() for path in references)
 
 
 def test_pending_history_survives_contract_and_reflection_projection() -> None:

@@ -13,15 +13,15 @@ raw evidence.
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
+from sdo.agents.context_output import save_context
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from sdo.contracts import DetectorEvaluation, ObjectRef, OutcomeRecord
 
@@ -307,22 +307,14 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
     return {key: value for key, value in view.items() if value is not None and value != [] and value != 0}
 
 
-def history_view(
-    history: Sequence[OutcomeRecord], *, current_incident_id: str, evidence_directory: Path | None = None
-) -> list[dict[str, Any]]:
-    """Every prior incident the request carries (Go keeps the latest few); the current one is shown separately."""
-
-    prior = [record for record in history if record.incident_id != current_incident_id]
+def history_view(history: Sequence[OutcomeRecord], *, current_incident_id: str) -> list[dict[str, Any]]:
+    """Index each prior outcome; complete records survive every turn in the session."""
     views = []
-    for record in prior:
+    for record in history:
+        if record.incident_id == current_incident_id:
+            continue
         view = prior_outcome_view(record)
-        if evidence_directory is not None:
-            # IDs are data, never paths. These private copies live outside the
-            # proposal tree and survive the backend's in-session corrections.
-            name = f"{len(views)}.json"
-            path = evidence_directory / name
-            with open(path, "w", encoding="utf-8", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
-                stream.write(json_format.MessageToJson(record, preserving_proto_field_name=True))
-            view["full_outcome_path"] = str(path)
+        path, _ = save_context(json_format.MessageToJson(record, preserving_proto_field_name=True))
+        view["full_outcome_path"] = str(path)
         views.append(view)
     return views

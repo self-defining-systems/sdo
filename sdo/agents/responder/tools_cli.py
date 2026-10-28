@@ -385,7 +385,11 @@ def command_surface() -> CommandSurface:
     """Generate incident-facing signatures from the same parser that accepts commands."""
     parser = _parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
-    purposes = {action.dest: action.help for action in subcommands._choices_actions}
+    purposes: dict[str, str] = {}
+    for action in subcommands._choices_actions:
+        if not isinstance(action.help, str) or not action.help.strip():
+            raise ValueError(f"{action.dest}: registered commands require a short listing description")
+        purposes[action.dest] = action.help
     descriptions = {
         name: f"sdo {name}: {purposes[name]}; read sdo {name} --help for arguments." for name in subcommands.choices
     }

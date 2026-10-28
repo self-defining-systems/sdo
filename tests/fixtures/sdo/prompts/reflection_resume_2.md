@@ -25,7 +25,7 @@ Operational memory snapshot:
   "full_index_path": "<context file>"
 }
 
-Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; outcome_call_index and response_json_sha256 identify the full response in the committed outcome. Root causes, findings, action receipts and program transitions are retained.
+The outcome summary highlights findings, recorded repairs and the verdict. Full evidence and the complete memory index remain in the referenced session files; open only what the learning decision needs.
 Current outcome:
 {
   "incident_id": "toy-incident",
@@ -84,7 +84,7 @@ Outcome history (prior incidents, bounded summaries; omissions are counted):
   {
     "incident_id": "prior-toy",
     "classification": "success",
-    "full_outcome_path": "<temporary reflection history>/0.json"
+    "full_outcome_path": "<context file>"
   }
 ]
 Full prior outcomes are available at full_outcome_path; open relevant evidence when needed.

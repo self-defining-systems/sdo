@@ -57,6 +57,7 @@ echo "==> Go Execute deadline policy"
 echo "==> Python fast repository ratchets"
 uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/test_polling_policy.py \
+    tests/unit/scripts/test_check_prompt_budgets.py \
     tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_the_scanner_sees_each_wait_shape \
     tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_seconds_literals_in_waits_only_decrease \
     tests/unit/sdo/agents/test_prompt_generalization.py \
