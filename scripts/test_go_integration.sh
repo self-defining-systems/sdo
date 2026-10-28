@@ -15,5 +15,5 @@ uv run python scripts/operator_test_binary.py
 # and execute exactly the node IDs from the same-run cost plan.
 case "${1:-all}" in
   all) uv run --extra test python -m pytest -v --durations=0 -p no:tach -n 2 -m go_integration tests ;;
-  *) uv run --extra test python scripts/python_cost_plan.py --bin "$1" --plan "${2:-.fastloop/test-bin/python-test-plan.json}" ;;
+  *) uv run --extra test python scripts/python_cost_plan.py --bin "$1" --plan "${2:-.fastloop/test-bin/python-test-plan.json}" "${@:3}" ;;
 esac

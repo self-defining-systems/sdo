@@ -243,4 +243,4 @@ jobs:
           name: compiled-python-test-plan
           path: .fastloop/test-bin
       - name: Run oversized Python contracts
-        run: uv run --extra test python scripts/python_cost_plan.py --bin nightly --nightly-index '${{ matrix.bin }}' --plan .fastloop/test-bin/python-test-plan.json
+        run: bash scripts/test_go_integration.sh nightly .fastloop/test-bin/python-test-plan.json --nightly-index '${{ matrix.bin }}'
