@@ -238,11 +238,20 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 			continue
 		}
 		if _, err := executor.waitForRollouts(ctx, l.Request, pending.Refs); err != nil {
-			l.releaseStalledPending(application, pending)
+			l.releaseStalledPending(ctx, application, pending)
 			continue
 		}
-		delete(l.pendingWrites, application)
 		result, hasResult := l.applications[application]
+		if hasResult {
+			// Rollout status alone does not prove accepted-source convergence (old
+			// ReplicaSets and terminating Pods may still be present).
+			if err := executor.observeSourceResiduals(ctx, l.Request, &result); err != nil {
+				l.applications[application] = result
+				l.releaseStalledPending(ctx, application, pending)
+				continue
+			}
+		}
+		delete(l.pendingWrites, application)
 		if !hasResult {
 			l.updatePendingReport(application, pending.AttemptID, false, "verification_unavailable")
 			continue // Restart cannot recreate process-local verification authority.
@@ -297,7 +306,7 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 // applied and unverified, and observation continues: a rollout that completes
 // later settles through the ordinary verification, so a slow healthy rollout
 // keeps its success.
-func (l *ResponderLoop) releaseStalledPending(application string, pending pendingMitigation) {
+func (l *ResponderLoop) releaseStalledPending(ctx context.Context, application string, pending pendingMitigation) {
 	if pending.Released {
 		return
 	}
@@ -318,6 +327,7 @@ func (l *ResponderLoop) releaseStalledPending(application string, pending pendin
 	l.pendingWrites[application] = pending
 	const reason = "rollout_stalled"
 	if result, ok := l.applications[application]; ok {
+		_ = l.Executor.reportSourceResiduals(ctx, l.Request, &result)
 		result.RolloutPending = nil
 		l.applications[application] = result
 		for i := range l.applicationsLog {
