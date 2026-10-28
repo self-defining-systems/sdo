@@ -57,8 +57,8 @@ max_chars = 200
 reason = "Baseline synthetic fixture maximum: 168 Unicode code points; byte-identical template extraction."
 
 [reflection.cause_work]
-max_chars = 1500
-reason = "Per-cause questions are reflection's task: a live astronomy incident's two causes and one unassigned write are 1369 compact JSON code points; larger sets keep the first items of every list inline."
+max_chars = 40000
+reason = "CTXFAIL1: recorded run19 includes 91 per-cause questions across 20 causes, requiring 36482 compact characters before framing. Every question and its scope must remain inline; settled evaluation detail stays optional."
 
 [reflection.history]
 max_chars = 400
@@ -69,20 +69,20 @@ max_chars = 100
 reason = "Portable fixture configuration maximum: 86 Unicode code points, rounded upward to 100."
 
 [reflection.instructions]
-max_chars = 2000
-reason = "REFLP1: purpose-first coverage decision; production-rendered synthetic maximum 1979 Unicode code points, with full memory inventory counted separately."
+max_chars = 2100
+reason = "CTXFAIL1: fresh-session retry instructions render to 1993 characters (2005 after the concurrent reflection edit); retain every literal instruction instead of replacing the aggregate with a partial summary."
 
 [reflection.memory]
 max_chars = 800
 reason = "Baseline synthetic fixture maximum: 766 Unicode code points; byte-identical template extraction."
 
 [reflection.outcome]
-max_chars = 3600
-reason = "Baseline synthetic fixture maximum: 3556 Unicode code points; byte-identical template extraction."
+max_chars = 30000
+reason = "CTXFAIL1: recorded run19 has 24 repair receipts (15624 compact characters), and the existing real-scale sweep has 60. Reserve room for every complete repair action plus incident identity and classification; findings and plan detail remain optional."
 
 [reflection.validation_feedback]
-max_chars = 300
-reason = "Baseline synthetic fixture maximum: 207 Unicode code points; byte-identical template extraction."
+max_chars = 1500
+reason = "CTXFAIL1: recorded validation retries combine multiple required broker diagnostics and their framing; preserve their complete actionable messages instead of dropping later errors."
 
 [reflection_brief.commands]
 max_chars = 100
@@ -268,8 +268,8 @@ max_chars = 12000
 reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
 
 [session_context.reflection_first]
-max_chars = 15000
-reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
+max_chars = 80000
+reason = "CTXFAIL1: required cause questions (40000) and complete repair actions (30000) plus instructions, fresh-session brief and bounded optional indexes must fit one provider message without losing required content."
 
 [session_context.tool_total]
 max_chars = 131072
@@ -424,8 +424,8 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.lifecycle-render_validation_feedback_02-message]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+max_chars = 400
+reason = "CTXFAIL1: a recorded run19 broker rejection has a 314-character diagnostic. Validation messages are required correction instructions and cannot be silently shortened."
 
 [template_data.lifecycle-render_validation_feedback_02-rule]
 max_chars = 256
