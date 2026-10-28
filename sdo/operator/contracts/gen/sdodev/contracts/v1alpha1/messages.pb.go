@@ -3851,8 +3851,14 @@ type StageMitigation struct {
 	// application. These select this attempt's actions in apply_receipt.plan.
 	PlanActionStart int32 `protobuf:"varint,12,opt,name=plan_action_start,json=planActionStart,proto3" json:"plan_action_start,omitempty"`
 	PlanActionCount int32 `protobuf:"varint,13,opt,name=plan_action_count,json=planActionCount,proto3" json:"plan_action_count,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Objects this attempt's applied actions wrote.
+	TouchedObjects []*ObjectRef `protobuf:"bytes,14,rep,name=touched_objects,json=touchedObjects,proto3" json:"touched_objects,omitempty"`
+	// Why an applied attempt that left findings open was not reverted: it
+	// cleared some of them or its diagnosis (partial), an effect cannot be
+	// undone (irreversible), or restoring the preimages failed.
+	KeptReason    string `protobuf:"bytes,15,opt,name=kept_reason,json=keptReason,proto3" json:"kept_reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StageMitigation) Reset() {
@@ -3974,6 +3980,20 @@ func (x *StageMitigation) GetPlanActionCount() int32 {
 		return x.PlanActionCount
 	}
 	return 0
+}
+
+func (x *StageMitigation) GetTouchedObjects() []*ObjectRef {
+	if x != nil {
+		return x.TouchedObjects
+	}
+	return nil
+}
+
+func (x *StageMitigation) GetKeptReason() string {
+	if x != nil {
+		return x.KeptReason
+	}
+	return ""
 }
 
 // Controller-owned evidence of the single optional healthy source-drift turn.
@@ -4505,15 +4525,15 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\vmitigations\x18\x02 \x03(\v2*.sdodev.contracts.v1alpha1.StageMitigationR\vmitigations\x12D\n" +
 	"\x1eremaining_finding_fingerprints\x18\x03 \x03(\tR\x1cremainingFindingFingerprints\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12@\n" +
-	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\"\xfe\a\n" +
+	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\"\xb6\t\n" +
 	"\x0fStageMitigation\x12(\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"playbookId\x12)\n" +
 	"\x10program_revision\x18\x02 \x01(\tR\x0fprogramRevision\x12>\n" +
 	"\bbindings\x18\x03 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12\x17\n" +
 	"\aplan_id\x18\x04 \x01(\tR\x06planId\x12O\n" +
-	"\rapply_receipt\x18\x05 \x01(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\fapplyReceipt\x12\x9d\x01\n" +
-	"\x06result\x18\x06 \x01(\tB\x84\x01\xbaH\x80\x01r~R\x0fapplied_clearedR\x16applied_still_matchingR\x0erollout_failedR\x1arollout_pending_at_handoffR\x11admission_blockedR\vapply_errorR\askippedR\x06result\x12\xfe\x01\n" +
+	"\rapply_receipt\x18\x05 \x01(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\fapplyReceipt\x12\xb4\x01\n" +
+	"\x06result\x18\x06 \x01(\tB\x9b\x01\xbaH\x97\x01r\x94\x01R\x0fapplied_clearedR\x16applied_still_matchingR\x14reverted_ineffectiveR\x0erollout_failedR\x1arollout_pending_at_handoffR\x11admission_blockedR\vapply_errorR\askippedR\x06result\x12\xfe\x01\n" +
 	"\vskip_reason\x18\a \x01(\tB\xdc\x01\xbaH\xd8\x01r\xd5\x01R\x00R\x15multiple_entry_pointsR\rno_mitigationR\x11unbound_parameterR\x1adiagnose_no_longer_matchesR\x14diagnose_unavailableR\x14unexplained_coverageR\x11already_attemptedR\rrepair_policyR\fstage_budgetR\x13plan_not_executableR\vineffectiveR\n" +
 	"skipReason\x12U\n" +
 	"\x13post_apply_diagnose\x18\b \x01(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\x11postApplyDiagnose\x12@\n" +
@@ -4522,7 +4542,10 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	" \x03(\tR\x1cremainingFindingFingerprints\x12\x14\n" +
 	"\x05error\x18\v \x01(\tR\x05error\x12*\n" +
 	"\x11plan_action_start\x18\f \x01(\x05R\x0fplanActionStart\x12*\n" +
-	"\x11plan_action_count\x18\r \x01(\x05R\x0fplanActionCount\"\x89\x01\n" +
+	"\x11plan_action_count\x18\r \x01(\x05R\x0fplanActionCount\x12M\n" +
+	"\x0ftouched_objects\x18\x0e \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x0etouchedObjects\x12P\n" +
+	"\vkept_reason\x18\x0f \x01(\tB/\xbaH,r*R\x00R\apartialR\firreversibleR\x0frollback_failedR\n" +
+	"keptReason\"\x89\x01\n" +
 	"\rDriftReprompt\x120\n" +
 	"\x0ffindings_before\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02 \x00R\x0efindingsBefore\x123\n" +
 	"\x0efindings_after\x18\x02 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00H\x00R\rfindingsAfter\x88\x01\x01B\x11\n" +
@@ -4717,15 +4740,16 @@ var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	58,  // 101: sdodev.contracts.v1alpha1.StageMitigation.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
 	56,  // 102: sdodev.contracts.v1alpha1.StageMitigation.apply_receipt:type_name -> sdodev.contracts.v1alpha1.PlanApplication
 	52,  // 103: sdodev.contracts.v1alpha1.StageMitigation.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	47,  // 104: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	47,  // 105: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	47,  // 106: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	47,  // 107: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	108, // [108:108] is the sub-list for method output_type
-	108, // [108:108] is the sub-list for method input_type
-	108, // [108:108] is the sub-list for extension type_name
-	108, // [108:108] is the sub-list for extension extendee
-	0,   // [0:108] is the sub-list for field type_name
+	47,  // 104: sdodev.contracts.v1alpha1.StageMitigation.touched_objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	47,  // 105: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	47,  // 106: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	47,  // 107: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	47,  // 108: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	109, // [109:109] is the sub-list for method output_type
+	109, // [109:109] is the sub-list for method input_type
+	109, // [109:109] is the sub-list for extension type_name
+	109, // [109:109] is the sub-list for extension extendee
+	0,   // [0:109] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_messages_proto_init() }

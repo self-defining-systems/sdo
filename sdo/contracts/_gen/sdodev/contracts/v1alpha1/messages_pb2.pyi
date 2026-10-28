@@ -781,7 +781,7 @@ class StageReport(_message.Message):
     def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class StageMitigation(_message.Message):
-    __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error", "plan_action_start", "plan_action_count")
+    __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error", "plan_action_start", "plan_action_count", "touched_objects", "kept_reason")
     PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
@@ -795,6 +795,8 @@ class StageMitigation(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     PLAN_ACTION_START_FIELD_NUMBER: _ClassVar[int]
     PLAN_ACTION_COUNT_FIELD_NUMBER: _ClassVar[int]
+    TOUCHED_OBJECTS_FIELD_NUMBER: _ClassVar[int]
+    KEPT_REASON_FIELD_NUMBER: _ClassVar[int]
     playbook_id: str
     program_revision: str
     bindings: _containers.RepeatedCompositeFieldContainer[_program_pb2.Binding]
@@ -808,7 +810,9 @@ class StageMitigation(_message.Message):
     error: str
     plan_action_start: int
     plan_action_count: int
-    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., plan_id: _Optional[str] = ..., apply_receipt: _Optional[_Union[_program_pb2.PlanApplication, _Mapping]] = ..., result: _Optional[str] = ..., skip_reason: _Optional[str] = ..., post_apply_diagnose: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., plan_action_start: _Optional[int] = ..., plan_action_count: _Optional[int] = ...) -> None: ...
+    touched_objects: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    kept_reason: str
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., plan_id: _Optional[str] = ..., apply_receipt: _Optional[_Union[_program_pb2.PlanApplication, _Mapping]] = ..., result: _Optional[str] = ..., skip_reason: _Optional[str] = ..., post_apply_diagnose: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., plan_action_start: _Optional[int] = ..., plan_action_count: _Optional[int] = ..., touched_objects: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., kept_reason: _Optional[str] = ...) -> None: ...
 
 class DriftReprompt(_message.Message):
     __slots__ = ("findings_before", "findings_after")

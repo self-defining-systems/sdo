@@ -13,6 +13,7 @@ from google.protobuf import json_format
 from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import count_chars, render_prompt
 from sdo.agents.responder.reflection_evidence import playbook_description
+from sdo.agents.responder.rollout_release import release_lines
 from sdo.agents.responder.tool_output import write_json
 from sdo.agents.responder.tools_cli import command_purposes, command_surface
 from sdo.contracts import Verdict
@@ -136,8 +137,17 @@ def finding_line(finding: Finding) -> str:
     return line if finding.primary_resource.name in finding.summary else f"{line} [{ref}]"
 
 
+def _stage_disposition(result: str, kept_reason: str) -> str:
+    """What an applied program left behind: cleared, reverted-ineffective or kept-<why>."""
+    if result == "applied_cleared":
+        return "cleared"
+    if result == "reverted_ineffective" or (result == "applied_still_matching" and kept_reason):
+        return (f"kept-{kept_reason}" if kept_reason else result).replace("_", "-")
+    return result
+
+
 def stage_action_lines(reports: Iterable[StageReport]) -> list[str]:
-    """What each automatic action ran, what it wrote and its verdict, one line each.
+    """What each automatic action ran, what it left behind and the objects it wrote, one line each.
 
     Attempts that one application settled with the same verdict are one action.
     """
@@ -146,17 +156,18 @@ def stage_action_lines(reports: Iterable[StageReport]) -> list[str]:
         actions: dict[tuple[str, str | int, str, str, bool, str], dict[str, Any]] = {}
         for index, attempt in enumerate(report.mitigations):
             receipt = attempt.apply_receipt
-            error = attempt.error or receipt.error
+            error = attempt.error or receipt.error or receipt.rollback_error
             key = (
                 attempt.playbook_id,
                 receipt.application_id or index,
-                attempt.result,
+                _stage_disposition(attempt.result, attempt.kept_reason),
                 attempt.skip_reason,
-                receipt.rolled_back,
+                receipt.rolled_back and attempt.result != "reverted_ineffective",
                 error,
             )
             action = actions.setdefault(key, {"targets": [], "writes": 0, "cleared": set()})
-            action["targets"] += [_ref(binding.object) for binding in attempt.bindings]
+            touched = attempt.touched_objects or [binding.object for binding in attempt.bindings]
+            action["targets"] += [_ref(ref) for ref in touched]
             action["writes"] += attempt.plan_action_count
             action["cleared"] |= set(attempt.cleared_finding_fingerprints)
         for (playbook, _, result, skip_reason, rolled_back, error), action in actions.items():
@@ -223,6 +234,15 @@ def _coverage_brief(request: IncidentRequest) -> dict[str, Any]:
     return {"matches": matches, "unexplained_findings": len(open_findings - explained)}
 
 
+def _rollout_pending(request: IncidentRequest) -> list[dict[str, Any]]:
+    """Stalls the stage handed off and stalls left by earlier failed episodes."""
+    pending = [
+        attempt.apply_receipt.rollout_pending for report in request.prior_stages for attempt in report.mitigations
+    ]
+    pending += [blocker for item in request.prior_response_progress for blocker in item.blockers]
+    return [json_format.MessageToDict(item, preserving_proto_field_name=True) for item in pending]
+
+
 def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[str, Any]) -> dict[str, Any]:
     """The first message: open findings, one line per automatic action, pointers to the rest."""
     findings = sorted(request.findings, key=lambda item: _SEVERITY_ORDER.get(item.severity, 1))
@@ -244,6 +264,8 @@ def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[s
         )
     if request.prior_response_progress:
         brief["prior_response_progress"] = prior_response_summary(request)
+    if releases := release_lines(_rollout_pending(request)):
+        brief["rollout_releases"] = releases
     if "playbook_documents" in full:
         brief["playbook_documents"] = dict(full["playbook_documents"])
         brief["playbook_index"] = {item["id"]: _clip(item["description"], 120) for item in full["playbook_index"]}
@@ -265,6 +287,7 @@ def _fit(brief: dict[str, Any]) -> dict[str, Any]:
         return {
             "findings": brief["findings"],
             "stage_actions": brief.get("stage_actions", []),
+            "rollout_releases": brief.get("rollout_releases", []),
             "program_runs": brief.get("program_runs", []),
             "playbook_coverage.matches": brief["playbook_coverage"]["matches"],
             "playbook_documents": list(brief.get("playbook_documents", {})),

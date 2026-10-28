@@ -347,7 +347,7 @@ def test_first_message_lists_uncleared_findings_and_one_line_per_stage_action() 
         assert all(isinstance(line, str) and "\n" not in line for line in brief["findings"])
         actions = brief["stage_actions"]
         assert actions[0] == (
-            "deterministic: service-source-drift on Service/toy/profile -> applied_cleared; 1 write; cleared 2"
+            "deterministic: service-source-drift on Service/toy/profile -> cleared; 1 write; cleared 2"
         )
         assert actions[1].startswith(
             "deterministic: deployment-source-drift -> rollout_failed; error: source_reconcile_partial"
@@ -408,6 +408,47 @@ def test_attempts_settled_by_one_application_are_one_stage_action() -> None:
         ]
 
 
+def test_stage_actions_say_what_each_program_left_behind() -> None:
+    """Per program: cleared, reverted as ineffective, or kept and why, with the objects it wrote."""
+    request = _staged_request(2)
+    stage = request.prior_stages[0]
+    del stage.mitigations[:]
+    cases = [
+        ("port-fix", "applied_cleared", "", ["port"], "Service", "api"),
+        ("oom-memory", "reverted_ineffective", "", [], "Deployment", "media"),
+        ("half-fix", "applied_still_matching", "partial", ["port"], "Service", "geo"),
+        ("pod-recycle", "applied_still_matching", "irreversible", [], "Pod", "media-1"),
+        ("limit-raise", "applied_still_matching", "rollback_failed", [], "Deployment", "rate"),
+    ]
+    for playbook, result, kept, cleared, kind, name in cases:
+        attempt = stage.mitigations.add(
+            playbook_id=playbook,
+            result=result,
+            kept_reason=kept,
+            plan_action_count=1,
+            cleared_finding_fingerprints=cleared,
+        )
+        attempt.apply_receipt.application_id = f"apply-{playbook}"
+        attempt.apply_receipt.applied = True
+        attempt.apply_receipt.rolled_back = result == "reverted_ineffective"
+        if kept == "rollback_failed":
+            attempt.apply_receipt.rollback_error = "rollback conflict on Deployment/rate"
+        binding = attempt.bindings.add(name="target")
+        binding.object.kind = "Namespace"
+        binding.object.name = "toy"
+        touched = attempt.touched_objects.add(kind=kind, namespace="toy", name=name)
+        assert touched.name == name
+    with prepared_incident_data(request) as rendered:
+        assert _brief(rendered)["stage_actions"] == [
+            "deterministic: port-fix on Service/toy/api -> cleared; 1 write; cleared 1",
+            "deterministic: oom-memory on Deployment/toy/media -> reverted-ineffective; 1 write",
+            "deterministic: half-fix on Service/toy/geo -> kept-partial; 1 write; cleared 1",
+            "deterministic: pod-recycle on Pod/toy/media-1 -> kept-irreversible; 1 write",
+            "deterministic: limit-raise on Deployment/toy/rate -> kept-rollback-failed; 1 write;"
+            " error: rollback conflict on Deployment/rate",
+        ]
+
+
 def test_coverage_brief_keeps_only_matches_that_explain_an_open_finding() -> None:
     request = _request()
     request.playbook_coverage.matches.add(playbook_id="settled").explained_finding_fingerprints.append("cleared")
@@ -421,3 +462,27 @@ def test_coverage_brief_keeps_only_matches_that_explain_an_open_finding() -> Non
         assert coverage["unexplained_findings"] == 4
         full = json.loads(incident_facts_path(rendered).read_text())
         assert len(full["playbook_coverage"]["matches"]) == 2
+
+
+def test_stalled_stage_handoff_states_the_blocker_and_its_standard_release() -> None:
+    """A stall handed off by the stage names the one standard action, as the command that runs it."""
+    request = _staged_request(2)
+    stage = request.prior_stages[0]
+    del stage.mitigations[:]
+    attempt = stage.mitigations.add(
+        playbook_id="source-drift",
+        result="rollout_pending_at_handoff",
+        plan_action_count=1,
+        error="rollout_pending: Deployment/geo rollout is pending: cannot progress without another actor: "
+        + "replacement Pod/geo-new Unschedulable: 0/2 nodes are available: " * 4,
+    )
+    blocker = attempt.apply_receipt.rollout_pending.blockers.add(reason="held by its old revision")
+    blocker.ref.kind, blocker.ref.namespace, blocker.ref.name = "Deployment", "toy", "geo"
+    release = blocker.release.add().retire_old_revision.ref
+    release.api_version, release.kind, release.namespace, release.name = "apps/v1", "ReplicaSet", "toy", "geo-old"
+    with prepared_incident_data(request) as rendered:
+        brief = _brief(rendered)
+    assert brief["rollout_releases"] == [
+        "Deployment/toy/geo cannot roll out beside its old revision: "
+        "sdo mitigate RetireOldRevision --ref ReplicaSet/toy/geo-old"
+    ]

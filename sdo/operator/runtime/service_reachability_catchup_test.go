@@ -69,7 +69,9 @@ func reachabilityConfirmed(t *testing.T, observer *ServiceReachabilityObserver, 
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("a reachable Service must not fire: %v %v", findings, err)
 	}
-	return detector.(interface{ Confirmed(sdk.DetectionContext) bool }).Confirmed(snapshot)
+	return detector.(interface {
+		Confirmed(sdk.DetectionContext) bool
+	}).Confirmed(snapshot)
 }
 
 // TestReachabilityObserverFillsARestartedWindowAtTheCatchUpSpacing: a repair
