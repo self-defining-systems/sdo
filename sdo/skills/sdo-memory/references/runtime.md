@@ -178,8 +178,8 @@ A reflection tool reply over 8192 bytes is saved whole to a file; the reply name
 Read shipped authoring references: a section index, or one section by heading or declaration.
 
 The full topic text is saved once to the file named in the reply; search
-that file instead of re-reading the reference. SDK includes detector
-source-diff access before playbook selection.
+that file instead of re-reading the reference. The sdk topic starts with
+the SDK card: exact signatures grouped by fault, one line each.
 
 ## create_corpus
 

@@ -60,8 +60,8 @@ def authoring_reference(topic: ReferenceTopic = "programs", section: str = "") -
     """Read shipped authoring references: a section index, or one section by heading or declaration.
 
     The full topic text is saved once to the file named in the reply; search
-    that file instead of re-reading the reference. SDK includes detector
-    source-diff access before playbook selection.
+    that file instead of re-reading the reference. The sdk topic starts with
+    the SDK card: exact signatures grouped by fault, one line each.
     """
     text = _reference_text(topic)
     path = _reference_file(topic, text)
@@ -85,6 +85,8 @@ def authoring_reference(topic: ReferenceTopic = "programs", section: str = "") -
 def _reference_text(topic: ReferenceTopic) -> str:
     if topic == "sdk":
         paths = [
+            # The card answers most signature questions in one grouped page.
+            SKILLS_ROOT / "sdo-playbook-authoring/references/sdk-card.md",
             SKILLS_ROOT / "sdo-playbook-authoring/references/program-sdk.md",
             SKILLS_ROOT / "sdo-playbook-authoring/references/kubernetes-client.md",
             SKILLS_ROOT / "sdo-detector-authoring/references/sdk.md",

@@ -48,6 +48,8 @@ def test_program_reference_uses_shipped_sdk_and_worked_example(tmp_path: Path, m
     assert "program.ReadView" in reference
     assert "ProbeTCP" in reference
     sdk_reference = _full_reference(authoring_reference("sdk"))
+    assert sdk_reference.startswith("## sdk-card.md\n# Program SDK card"), "the grouped card comes first"
+    assert "- `type EnsureDatabaseUser struct{" in sdk_reference
     assert "# Recorded Kubernetes reads" in sdk_reference
     assert "RESTMapper" in sdk_reference
     assert "type ReadView interface" in sdk_reference
