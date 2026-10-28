@@ -757,3 +757,47 @@ def test_responder_checkpoint_binds_worker_task_and_phase(tmp_path: Path, monkey
     assert documents[0]["phase"] == "responder"
     assert documents[0]["complete"] is True
     assert documents[0]["usage"]["input_tokens"] == result.usage.input_tokens == 120
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_worker_ignores_malformed_controller_fields(provider: str, tmp_path: Path) -> None:
+    from tests.structured_turns import reply
+
+    payload = json_format.MessageToDict(_result(), preserving_proto_field_name=True)
+    payload["drift_reprompt"] = {"findings_before": 0, "findings_after": 0}
+    payload["unresolvedFindings"] = [{"invalid": True}]
+    agent = ScriptedAgent(lambda _: reply(provider, payload, session_id="worker-session", branch="incident_result"))
+    result = execute_incident(
+        evolve(_request(), repository_worktree=str(tmp_path)), provider=provider, executor=agent.executor
+    )
+    assert not result.HasField("drift_reprompt")
+    assert not result.unresolved_findings
+    assert len(agent.requests) == 1
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+@pytest.mark.parametrize("corrected", [True, False])
+def test_worker_schema_violation_gets_one_same_session_correction(
+    provider: str,
+    corrected: bool,
+    tmp_path: Path,
+) -> None:
+    from tests.structured_turns import reply
+
+    valid = json_format.MessageToDict(_result(), preserving_proto_field_name=True)
+    invalid = {**valid, "status": "not-a-status"}
+    outputs = iter([invalid, valid if corrected else invalid])
+    agent = ScriptedAgent(
+        lambda _: reply(provider, next(outputs), session_id="worker-session", branch="incident_result")
+    )
+    request = evolve(_request(), repository_worktree=str(tmp_path))
+    if corrected:
+        result = execute_incident(request, provider=provider, executor=agent.executor)
+        assert result.status == "completed"
+        assert result.usage.llm_calls == 2
+    else:
+        with pytest.raises(ResponderExecutionError, match="status"):
+            execute_incident(request, provider=provider, executor=agent.executor)
+    assert len(agent.requests) == 2
+    assert "contract validation (IncidentResultValidationError)" in agent.prompts[1]
+    assert "worker-session" in agent.argvs[1]

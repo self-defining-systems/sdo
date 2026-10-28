@@ -158,10 +158,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = _CappedParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="prior_stages: automatic repairs. "
-        "prior_response_progress: bounded failed-episode progress, with omissions. "
-        "Keep repairs; admission_blocked names a current rollout prerequisite. "
-        "Full history stays in outcomes.\n\n"
+        epilog="Output: session schema; correct feedback once. "
+        "prior_stages: automatic repairs; prior_response_progress: bounded failed-episode progress with omissions. "
+        "Keep repairs; admission_blocked names a rollout prerequisite.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)

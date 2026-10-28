@@ -105,7 +105,8 @@ def _execute_incident(
             prompt = continuation_prompt(continuation)
         except ValueError as exc:
             raise ResponderExecutionError(f"invalid controller continuation: {exc}") from exc
-    corrected_branch = False
+    corrected_result = False
+    usage: dict[str, int | float] = {}
     options = session_turn_options(selected_provider, Path(request.repository_worktree))
     options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
     while True:
@@ -139,18 +140,33 @@ def _execute_incident(
             raise ResponderExecutionError(str(exc)) from exc
         except StructuredTurnError as exc:
             raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
+        for name, value in turn_usage(completed).items():
+            usage[name] = usage.get(name, 0) + value
         try:
             result = parse_incident_result(
-                unwrap_branch(completed.output_json, "incident_result"), turn_usage(completed)
+                unwrap_branch(completed.output_json, "incident_result"),
+                usage,
+                incident_id=request.incident_id,
             )
             break
         except WrongBranchError as exc:
-            if corrected_branch:
+            if corrected_result:
                 raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
-            corrected_branch = True
+            corrected_result = True
             resume_session_id = completed.session_id
             prompt = branch_correction("incident_result")
-        except (OSError, ValueError) as exc:
+        except ValueError as exc:
+            if not corrected_result:
+                corrected_result = True
+                resume_session_id = completed.session_id
+                prompt = render_prompt(
+                    "responder",
+                    "result_correction",
+                    part="session.instructions",
+                    result_type=type(exc).__name__,
+                    diagnostic=str(exc)[:1000],
+                )
+                continue
             raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
     try:
         if recovery is not None:
@@ -163,8 +179,6 @@ def _execute_incident(
         raise ResponderExecutionError(f"invalid recorded repair actions: {exc}") from exc
     if not result.HasField("responder_session_id"):
         result.responder_session_id = completed.session_id
-    if result.incident_id != request.incident_id:
-        raise ResponderExecutionError(f"{selected_provider} result incident_id does not match request")
     return result
 
 
@@ -173,32 +187,14 @@ def _execute_incident(
 _MODEL_OMITS: dict[str, tuple[str, ...]] = {
     "sdodev.contracts.v1alpha1.IncidentResult": (
         "schema_version",
-        "final_detector_states",
-        "unresolved_findings",
         "proposed_artifact_ids",
         "usage",
         "responder_session_id",
         "error",
         "late_findings_pull",
-        "program_tool_calls",
         "repair_actions",
-        "program_runs",
-        "plan_applications",
-        "response_loops_used",
-        "response_loop_exhausted",
-        "program_failure_signals",
-        "resolution_path",
     ),
     "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),
-    "sdodev.contracts.v1alpha1.DriftEvent": (
-        "source",
-        "operation",
-        "observed_at",
-        "program_id",
-        "manager_at",
-        "investigation_status",
-        "investigation_capture_id",
-    ),
 }
 
 
