@@ -102,6 +102,9 @@ func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(progra
 					write(t, root, ".sdo/playbooks/partial-orchestration/mitigate.go", "package broken\n")
 				}
 			}
+			if mode != "readme-only" && mode != "broken-peer" {
+				linkRecordedRepair(t, root, "targetport-mismatch", "service-targetport-mismatch", outcome, outcome.RepairActions[0])
+			}
 			paths, err := ChangedPaths(context.Background(), root, base)
 			if err != nil {
 				t.Fatal(err)
@@ -109,12 +112,18 @@ func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(progra
 			if _, err := NormalizeAuthoredPlaybooks(root, paths); err != nil {
 				t.Fatal(err)
 			}
-			decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: ids, SdkGaps: []*contracts.SdkGap{{FaultClass: "admission", Primitive: "backend decision", Reason: "requires live policy judgement", ScratchScript: "inspect backend availability"}}}
+			decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: ids, SdkGaps: []*contracts.SdkGap{{FaultClass: "admission", Primitive: "BackendAvailabilityObservation", Reason: "requires live policy judgement", ScratchScript: "inspect backend availability"}}}
 			var notes []sdktest.MitigationReplayResult
 			var observations []Diagnostic
 			ds, err := Check(context.Background(), Request{CoverageGaps: &observations, MitigationReplayNotes: &notes, Root: root, Base: base, Actor: Responder, Phase: ReflectionPhase, Decision: decision, Publication: &PublicationContext{BaseCommit: base, IncidentID: outcome.IncidentId}, OperatorRoot: filepath.Join("..", "..")}, CompileCandidate)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if mode == "readme-only" {
+				if len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
+					t.Fatalf("README-only repair did not require an executable: %v", ds)
+				}
+				return
 			}
 			if mode == "broken-peer" {
 				if len(ds) != 1 || ds[0].Rule != "program.invalid" || !strings.Contains(ds[0].Message, "no diagnose.go") {
@@ -147,7 +156,7 @@ func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(progra
 }
 
 func TestPartialReflectionResultRoundTrips(t *testing.T) {
-	result := &contracts.ReflectionResult{Summary: "saved mechanical step", LearningDecision: "updated", ProposedArtifactIds: []string{"partial-orchestration"}, SdkGaps: []*contracts.SdkGap{{FaultClass: "admission", Primitive: "backend decision", Reason: "requires judgement", ScratchScript: "inspect backend"}}}
+	result := &contracts.ReflectionResult{Summary: "saved mechanical step", LearningDecision: "updated", ProposedArtifactIds: []string{"partial-orchestration"}, SdkGaps: []*contracts.SdkGap{{FaultClass: "admission", Primitive: "BackendAvailabilityObservation", Reason: "requires judgement", ScratchScript: "inspect backend"}}}
 	raw, err := protojson.Marshal(result)
 	if err != nil {
 		t.Fatal(err)

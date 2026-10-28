@@ -37,7 +37,7 @@ def test_logical_reflection_prompt_is_problem_agnostic(
     prompt = _request_text(tmp_path, guidance)
     # Skill locations are environment data; inspect prose without its path prefix.
     static = prompt.split("Current outcome:", 1)[0].replace(str(reflection.SKILLS_ROOT), "<skills>")
-    assert "Edit final operational-memory files only" in prompt
+    assert "Edit only authorized operational-memory files" in prompt
     for recipe in (
         "Finding.ParameterBindings",
         "originatingIncident",

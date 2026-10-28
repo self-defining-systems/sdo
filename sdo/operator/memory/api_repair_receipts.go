@@ -59,10 +59,19 @@ func IncidentAPIRepairReceipts(root, incident string, resources []*contracts.Obj
 	}
 	var result []*contracts.RepairActionReceipt
 	for _, event := range history.Events {
-		if event.Phase != "end" || !paired(event) || event.DryRun || event.Subresource != "" || event.Resource == "secrets" || event.Status < 200 || event.Status >= 300 {
+		if event.Phase != "end" || !paired(event) || event.DryRun || event.Resource == "secrets" || event.Status < 200 || event.Status >= 300 {
 			continue
 		}
-		if event.Verb != "patch" && event.Verb != "put" && event.Verb != "post" && event.Verb != "delete" {
+		// Writes to the object itself, its scale or status, and evictions are
+		// mutations. Exec/attach are not recorded here: the proxy sees the
+		// session, never its command, so a read would look like a repair; sdo
+		// act records those with their exit code.
+		removal := event.Verb == "delete" || (event.Verb == "post" && event.Resource == "pods" && event.Subresource == "eviction")
+		switch {
+		case event.Subresource == "" && (event.Verb == "patch" || event.Verb == "put" || event.Verb == "post" || event.Verb == "delete"):
+		case (event.Subresource == "scale" || event.Subresource == "status") && (event.Verb == "patch" || event.Verb == "put"):
+		case removal && event.Subresource == "eviction":
+		default:
 			continue
 		}
 		for _, ref := range resources {
@@ -84,7 +93,7 @@ func IncidentAPIRepairReceipts(root, incident string, resources []*contracts.Obj
 			}
 			confirmed := false
 			completed := event.Finished
-			if event.Verb == "delete" {
+			if removal {
 				for _, read := range history.Events {
 					if read.Phase == "end" && read.Verb == "get" && read.Status == 404 && read.Subresource == "" && !read.DryRun && read.Group == event.Group && read.Version == event.Version && read.Resource == event.Resource && read.Namespace == event.Namespace && read.Name == event.Name && read.Started.After(event.Finished) && paired(read) {
 						confirmed = true
@@ -92,6 +101,11 @@ func IncidentAPIRepairReceipts(root, incident string, resources []*contracts.Obj
 						break
 					}
 				}
+			} else if event.Verb != "post" {
+				// A 2xx response to a named write is the API server's confirmation.
+				// Response bodies of most kinds (webhooks, RBAC, Jobs, Scale) are
+				// never projected, so they cannot be required.
+				confirmed = true
 			} else {
 				var object struct {
 					APIVersion string `json:"apiVersion"`
@@ -108,7 +122,7 @@ func IncidentAPIRepairReceipts(root, incident string, resources []*contracts.Obj
 				continue
 			}
 			digest := sha256.Sum256([]byte(incident + "\x00" + history.Manifest.Generation + "\x00" + event.RequestID))
-			result = append(result, &contracts.RepairActionReceipt{ActionId: fmt.Sprintf("sdo-api-%x", digest), Kind: "kubernetes-api", Target: ref.GetKind() + "/" + ref.GetName(), Resources: []*contracts.ObjectRef{{ApiVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()}}, Summary: "observed Kubernetes API mutation", Details: "controller-observed " + event.Verb + " with API confirmation; recovery requires independent verification", StartedAt: timestamppb.New(event.Started), CompletedAt: timestamppb.New(completed), Success: true})
+			result = append(result, &contracts.RepairActionReceipt{ActionId: fmt.Sprintf("sdo-api-%x", digest), Kind: "kubernetes-api", Target: ref.GetKind() + "/" + ref.GetName(), Resources: []*contracts.ObjectRef{{ApiVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()}}, Summary: "observed Kubernetes API mutation", Details: "controller-observed " + strings.TrimSuffix(event.Verb+" "+event.Subresource, " ") + " with API confirmation; recovery requires independent verification", StartedAt: timestamppb.New(event.Started), CompletedAt: timestamppb.New(completed), Success: true})
 			break
 		}
 	}

@@ -12,6 +12,7 @@ from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.baseline_recovery import (
     ApplicationBaseline,
     RecoveryCleanup,
+    accepted_restore_baselines,
     reconcile_application,
 )
 from benchmarks.sregym.fastloop.loop import InjectionWindow
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
+    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationCluster
     from benchmarks.sregym.fastloop.wipe import LaneInjectionState
 
@@ -112,12 +114,17 @@ class SregymFaultDriver:
         injection_state: LaneInjectionState | None = None,
         data_faults: Mapping[str, Sequence[str]] | None = None,
         require_full_cleanup: bool = False,
+        row_start_tier2: bool = False,
         require_faulty_oracle: bool = False,
         pre_repair_oracle_path: Path | None = None,
         required_faulty_components: tuple[str, ...] = (),
+        accepted_source: Callable[[], AcceptedSource] | None = None,
     ) -> None:
         if baseline_problem_id is not None and (not isinstance(baseline_problem_id, str) or not baseline_problem_id):
             raise ValueError("baseline_problem_id must be a nonempty string")
+        if type(row_start_tier2) is not bool:
+            raise TypeError("row_start_tier2 must be a boolean")
+        self._row_start_tier2 = row_start_tier2
         self._baseline_problem_id = baseline_problem_id
         self._seed_recovery_verified = False
         if health_timeout_seconds <= 0:
@@ -126,6 +133,11 @@ class SregymFaultDriver:
             raise ValueError("health_poll_seconds must be positive")
         if require_full_cleanup and (not baseline or cluster is None):
             raise ValueError("full cleanup requires an application baseline and cluster")
+        if baseline is not None and accepted_source is None:
+            raise ValueError("application restore requires an accepted source provider")
+        if accepted_source is not None and not callable(accepted_source):
+            raise TypeError("accepted source provider must be callable")
+        self._accepted_source = accepted_source
         if type(require_faulty_oracle) is not bool:
             raise TypeError("require_faulty_oracle must be a boolean")
         if not isinstance(required_faulty_components, tuple) or any(
@@ -225,7 +237,7 @@ class SregymFaultDriver:
                 # The loop owns terminal recording and cleanup, including the failed component.
                 raise
             except Exception as exc:
-                if faults:
+                if faults and not self._row_start_tier2:
                     try:
                         self.recover()
                     except Exception as recovery_error:
@@ -312,6 +324,8 @@ class SregymFaultDriver:
         """
 
         started = self._monotonic()
+        if self._baselines is not None and self._accepted_source is not None:
+            self._baselines = accepted_restore_baselines(self._accepted_source(), self._baselines)
         self._seed_recovery_verified = False
         self.last_cleanup = RecoveryCleanup()
         self.last_full_cleanup_verified = False

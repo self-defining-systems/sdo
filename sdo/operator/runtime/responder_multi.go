@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -237,12 +238,26 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 		if len(pending.Refs) == 0 {
 			continue
 		}
-		if _, err := executor.waitForRollouts(ctx, l.Request, pending.Refs); err != nil {
-			l.releaseStalledPending(application, pending)
+		if observed, err := executor.waitForRollouts(ctx, l.Request, pending.Refs); err != nil {
+			stall := ""
+			var rollout *RolloutPendingError
+			if errors.As(err, &rollout) && rollout.Stalled {
+				stall = observed.GetReason()
+			}
+			l.releaseStalledPending(ctx, application, pending, stall)
 			continue
 		}
-		delete(l.pendingWrites, application)
 		result, hasResult := l.applications[application]
+		if hasResult {
+			// Rollout status alone does not prove accepted-source convergence (old
+			// ReplicaSets and terminating Pods may still be present).
+			if err := executor.observeSourceResiduals(ctx, l.Request, &result); err != nil {
+				l.applications[application] = result
+				l.releaseStalledPending(ctx, application, pending, "")
+				continue
+			}
+		}
+		delete(l.pendingWrites, application)
 		if !hasResult {
 			l.updatePendingReport(application, pending.AttemptID, false, "verification_unavailable")
 			continue // Restart cannot recreate process-local verification authority.
@@ -296,8 +311,10 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 // writes to the responder with typed reason rollout_stalled. Its writes stay
 // applied and unverified, and observation continues: a rollout that completes
 // later settles through the ordinary verification, so a slow healthy rollout
-// keeps its success.
-func (l *ResponderLoop) releaseStalledPending(application string, pending pendingMitigation) {
+// keeps its success. A rollout observed to be unable to progress without
+// another actor (stall names its blocker) releases after the stall grace
+// instead: waiting longer cannot clear it.
+func (l *ResponderLoop) releaseStalledPending(ctx context.Context, application string, pending pendingMitigation, stall string) {
 	if pending.Released {
 		return
 	}
@@ -311,6 +328,9 @@ func (l *ResponderLoop) releaseStalledPending(application string, pending pendin
 	if bound <= 0 {
 		bound = DefaultPendingApplicationStall
 	}
+	if stall != "" {
+		bound = min(bound, rolloutStallGrace)
+	}
 	if time.Since(pending.ReservedAt) < bound {
 		return
 	}
@@ -318,6 +338,7 @@ func (l *ResponderLoop) releaseStalledPending(application string, pending pendin
 	l.pendingWrites[application] = pending
 	const reason = "rollout_stalled"
 	if result, ok := l.applications[application]; ok {
+		_ = l.Executor.reportSourceResiduals(ctx, l.Request, &result)
 		result.RolloutPending = nil
 		l.applications[application] = result
 		for i := range l.applicationsLog {
@@ -325,6 +346,9 @@ func (l *ResponderLoop) releaseStalledPending(application string, pending pendin
 				l.applicationsLog[i].Result = result
 				l.applicationsLog[i].Pending = planApplicationPending(result)
 				l.applicationsLog[i].Error = reason + ": rollout did not converge within " + bound.String() + "; writes remain applied and unverified"
+				if stall != "" {
+					l.applicationsLog[i].Error = reason + ": " + boundedRolloutText(stall, 512) + "; writes remain applied and unverified"
+				}
 			}
 		}
 	}

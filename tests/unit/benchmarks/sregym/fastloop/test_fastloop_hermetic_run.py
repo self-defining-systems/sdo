@@ -240,10 +240,6 @@ class Application:
                     if item and item.get("kind") == kind and item.get("metadata", {}).get("name") == name
                 )
                 item.setdefault("metadata", {})["namespace"] = NAMESPACE
-                if kind == "Deployment" and name in {"rate", "search"}:
-                    item["spec"]["template"]["spec"]["containers"][0]["image"] = (
-                        "yinfangchen/hotelreservation@sha256:" + "a" * 64
-                    )
                 self.apply(NAMESPACE, item)
         self.baseline = deepcopy(self.objects)
 
@@ -673,6 +669,14 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
 ) -> None:
     workspace = tmp_path / "application_workspace"
     shutil.copytree(FIXTURE_SEED, workspace)
+    for path in (workspace / "kubernetes").rglob("*.yaml"):
+        documents = list(yaml.safe_load_all(path.read_text()))
+        for item in documents:
+            if item and item.get("kind") == "Deployment" and item.get("metadata", {}).get("name") in {"rate", "search"}:
+                item["spec"]["template"]["spec"]["containers"][0]["image"] = (
+                    "yinfangchen/hotelreservation@sha256:" + "a" * 64
+                )
+        path.write_text(yaml.safe_dump_all(documents, sort_keys=False))
     diagnostics = workspace / ".sdo/diagnostics"
     diagnostics.mkdir(parents=True)
     (diagnostics / "manifest.yaml").write_text("detectors: []\n")

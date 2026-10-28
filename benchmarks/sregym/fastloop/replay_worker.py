@@ -191,6 +191,14 @@ def replay_scripted_responder(store: CheckpointStore, incident: int, *, source: 
     }
 
 
+def _read_only_git(args: list[str]) -> bool:
+    """Whether ``git`` arguments only inspect a checkout (configuration overrides, then diff or ls-files)."""
+
+    while args[:1] == ["-c"]:
+        args = args[2:]
+    return args[:1] in (["diff"], ["ls-files"])
+
+
 def replay_scripted_reflection(
     store: CheckpointStore, incident: int, *, source: Path, operator_root: Path
 ) -> dict[str, Any]:
@@ -214,6 +222,12 @@ def replay_scripted_reflection(
         binary = root / "sdo-operator"
 
         def command(argv: list[str], *, timeout: int = int(wait_for(WaitKind.ROLLOUT))) -> str:
+            if argv[:3] == ["git", "-C", str(checkout)] and _read_only_git(argv[3:]):
+                # The reflector decides from its own checkout's diff; inspection never writes.
+                inspected = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+                if inspected.returncode:
+                    raise CheckpointError(f"reflection git inspection failed: {inspected.stderr.strip()[-4096:]}")
+                return inspected.stdout
             if argv[0] != "sdo-operator":
                 raise CheckpointError(f"unexpected reflection command: {argv[:3]}")
             if not binary.is_file():

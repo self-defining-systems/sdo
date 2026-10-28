@@ -174,6 +174,7 @@ def test_missing_prerequisites_rejects_before_controller_or_namespace_writes(
             }
         },
     )
+    commit_accepted_source(env.workspace, [deployment])
     save_application_baseline(env.baseline_path, (ApplicationBaseline("hotel", [deployment]),))
     calls = []
 

@@ -197,6 +197,16 @@ pass. The response Job has a separate report grace (default 30 seconds); its
 actual completion may follow `verified_at`. Outcome mitigation and completion
 use the verification timestamp for these closures. Reflection waits for the
 report or grace and retains the controller's receipts and resumable session.
+The responder worker stops a turn still running 5 seconds after the
+verification marker and resumes the same provider session with one short user
+message starting `SDO verified recovery.`; that turn's `incident_result` is the
+report. Count tool calls after this message separately: it is the wrap-up, not
+exploration. The stopped turn's usage checkpoint is published as complete.
+The responder's first message carries `Incident request:` with a bounded
+brief: open findings as `fingerprint: summary` lines (at most 10, the rest
+counted in `findings_omitted`), coverage matches for open findings,
+`stage_actions` (one line per stage application and verdict), `program_runs`
+and `details_file`, the turn-private JSON with the complete request view.
 The benchmark's ordinary grading remains after resolution/learning in
 `fastloop/loop.py`; no grader signal enters controller verification.
 
