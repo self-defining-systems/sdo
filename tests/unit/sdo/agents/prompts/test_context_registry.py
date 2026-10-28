@@ -126,7 +126,8 @@ def test_skill_glob_and_negative_control(tmp_path):
     (skill / "SKILL.md").write_text("word " * 1201)
     (skill / "references").mkdir()
     (skill / "references/new.md").write_text("word " * 2001)
-    assert len(violations(tmp_path)) == 2
+    (skill / "references/new.txt").write_text("x" * 12001)
+    assert len(violations(tmp_path)) == 3
 
 
 def test_every_registered_capability_has_a_production_render_fixture():

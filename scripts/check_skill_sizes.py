@@ -8,15 +8,16 @@ from pathlib import Path
 
 def violations(root: Path) -> list[str]:
     errors = []
-    files = sorted(
-        path
-        for path in root.rglob("*")
-        if path.is_file() and (path.name == "SKILL.md" or "references" in path.relative_to(root).parts)
-    )
+    files = sorted(path for path in root.rglob("*") if path.is_file())
     if not files:
         return [f"{root}: no shipped skill documents found"]
     for path in files:
-        text = path.read_text()
+        try:
+            text = path.read_text()
+        except UnicodeError:
+            if path.stat().st_size > 12000:
+                errors.append(f"{path}: binary skill asset exceeds 12000 bytes")
+            continue
         words, lines = len(text.split()), len(text.splitlines())
         limit = 1200 if path.name == "SKILL.md" else 2000
         chars = 8000 if path.name == "SKILL.md" else 12000

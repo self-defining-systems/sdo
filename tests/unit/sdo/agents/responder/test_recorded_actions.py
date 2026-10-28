@@ -443,6 +443,7 @@ def test_prompt_routes_mutations_through_the_recorder_and_leaves_receipts_to_it(
     prompt = _responder_prompt(_request())
     assert "sdo-incident-response/SKILL.md" in prompt
     workflow = (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
+    workflow += (SKILLS_ROOT / "sdo-incident-response/references/live-repairs.md").read_text()
     assert "Use recorded actions for live mutations" in workflow
     assert "declare every changed resource" in workflow
     assert "never hand-write receipts" in workflow

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
 
-from sdo.agents.prompt_templates import render_prompt
+from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -15,12 +15,12 @@ if TYPE_CHECKING:
     from sdo.contracts import MemoryDiagnostic
 
 
-def render_validation_feedback(validation_attempt: int, diagnostics: Iterable[MemoryDiagnostic]) -> str:
+def render_validation_feedback(validation_attempt: int, diagnostics: Iterable[MemoryDiagnostic]) -> RenderedPrompt:
     """Return the retry section of a prompt, or "" for a first dispatch."""
 
     rows = list(diagnostics)
     if not rows:
-        return ""
+        return named_prompt("reflection.validation_feedback", "")
     lines = [
         render_prompt(
             "lifecycle",
@@ -53,4 +53,6 @@ def render_validation_feedback(validation_attempt: int, diagnostics: Iterable[Me
                 ),
             )
         lines.append(text)
-    return "\n".join(lines) + "\n"
+    return join_prompts("\n", lines, part="reflection.validation_feedback") + named_prompt(
+        "reflection.validation_feedback", "\n"
+    )

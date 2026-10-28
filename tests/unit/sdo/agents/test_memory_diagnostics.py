@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.contracts import MemoryDiagnostic
+from tests.context_helpers import expand_context
 
 
 def test_first_attempt_renders_nothing() -> None:
@@ -36,7 +37,7 @@ def test_memory_conflict_renders_paths_provenance_and_validator_errors() -> None
         rule="program.replay", path=".sdo/playbooks/base/diagnose.go", message="replay failed"
     )
     text = render_validation_feedback(2, [diagnostic])
-    assert "peer-incident" in text
+    assert "peer-incident" in expand_context(text)
     assert "b" * 40 in text
     assert ".sdo/playbooks/base/README.md" in text
     assert "program.replay" in text
