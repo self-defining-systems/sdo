@@ -166,6 +166,65 @@ func TestReflectionStageResultCoverageSweep(t *testing.T) {
 	}
 }
 
+func TestReflectionPendingStageRequiresSameSettledApplication(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		change    func(*contracts.OutcomeRecord)
+		wantStale bool
+	}{
+		{"settled", func(*contracts.OutcomeRecord) {}, false},
+		{"not applied", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].Applied = false }, true},
+		{"verification incomplete", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].VerificationCompleted = false }, true},
+		{"snapshot dry run", func(o *contracts.OutcomeRecord) { o.PriorStages[0].Mitigations[0].ApplyReceipt.DryRun = true }, true},
+		{"snapshot not applied", func(o *contracts.OutcomeRecord) { o.PriorStages[0].Mitigations[0].ApplyReceipt.Applied = false }, true},
+		{"still pending", func(o *contracts.OutcomeRecord) {
+			o.PlanApplications[0].RolloutPending = &contracts.RolloutPending{Reason: "unobserved"}
+		}, true},
+		{"unverified", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].VerificationPassed = false }, true},
+		{"error", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].Error = "read failed" }, true},
+		{"rollback", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].RolledBack = true }, true},
+		{"dry run", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].DryRun = true }, true},
+		{"other application", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].ApplicationId = "other" }, true},
+		{"other program", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].ProgramIds = []string{"peer"} }, true},
+		{"other plan", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].Plan.Rationale = "different action identity" }, true},
+		{"other start", func(o *contracts.OutcomeRecord) { o.PlanApplications[0].StartedAt = timestamppb.New(time.Unix(98, 0)) }, true},
+		{"not later", func(o *contracts.OutcomeRecord) {
+			o.PlanApplications[0].CompletedAt = timestamppb.New(time.Unix(100, 0))
+		}, true},
+		{"ambiguous final", func(o *contracts.OutcomeRecord) {
+			o.PlanApplications = append(o.PlanApplications, proto.Clone(o.PlanApplications[0]).(*contracts.PlanApplication))
+		}, true},
+		{"own finding unresolved", func(o *contracts.OutcomeRecord) {
+			o.PlaybookCoverage = &contracts.PlaybookCoverage{Matches: []*contracts.PlaybookMatch{{PlaybookId: "base", ExplainedFindingFingerprints: []string{"own"}}}}
+			o.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{Status: "firing", Fingerprints: []string{"own"}}}
+		}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			o := repairCoverageOutcome()
+			final := o.PlanApplications[0]
+			final.StartedAt = timestamppb.New(time.Unix(99, 0))
+			stage := o.PriorStages[0].Mitigations[0]
+			stage.ApplyReceipt = proto.Clone(final).(*contracts.PlanApplication)
+			stage.ApplyReceipt.VerificationCompleted, stage.ApplyReceipt.VerificationPassed = false, false
+			stage.ApplyReceipt.RolloutPending = &contracts.RolloutPending{Reason: "readback unavailable"}
+			stage.ApplyReceipt.Error = "rollout_pending"
+			stage.Result, stage.Error = "rollout_pending_at_handoff", "rollout_pending"
+			stage.RemainingFindingFingerprints = []string{"own"}
+			final.CompletedAt = timestamppb.New(time.Unix(101, 0))
+			test.change(o)
+			before := proto.Clone(o)
+			ds := ReflectionRepairDiagnostics(repairTree(t, "peer"), o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
+			gotStale := slices.ContainsFunc(ds, func(d Diagnostic) bool { return d.Rule == RuleReflectionStalePlaybook })
+			if gotStale != test.wantStale {
+				t.Fatalf("stale=%v want %v: %v", gotStale, test.wantStale, ds)
+			}
+			if !proto.Equal(o, before) {
+				t.Fatal("validation changed immutable outcome")
+			}
+		})
+	}
+}
+
 func TestReflectionLaterRepairDoesNotStaleUnrelatedBatchedPlaybook(t *testing.T) {
 	o := repairCoverageOutcome()
 	ref := o.RepairActions[0].Resources[0]

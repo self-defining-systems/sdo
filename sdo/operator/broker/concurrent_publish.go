@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 )
 
@@ -46,7 +47,8 @@ func (e *MemoryConflict) Diagnostic() *contracts.MemoryDiagnostic {
 
 // proposalPatch freezes only the authorized proposal diff relative to its
 // original base. Agent commits, staged/untracked files, modes, binaries and
-// deletions are all captured by Git. The original proposal is never mutated.
+// deletions are all captured by Git. The generated playbook index is left out;
+// it is regenerated on the merged tree. The original proposal is never mutated.
 func (b *Broker) proposalPatch(ctx context.Context, proposal Proposal, candidate string, paths []string) (string, func(), error) {
 	frozen, cleanup, err := b.privateClone(ctx)
 	if err != nil {
@@ -57,6 +59,9 @@ func (b *Broker) proposalPatch(ctx context.Context, proposal Proposal, candidate
 			return nil, err
 		}
 		for _, path := range paths {
+			if path == layout.PlaybookIndexFile {
+				continue
+			}
 			if err := copyChange(candidate, frozen, path); err != nil {
 				return nil, err
 			}
@@ -82,7 +87,7 @@ func (b *Broker) proposalPatch(ctx context.Context, proposal Proposal, candidate
 }
 
 // replayCandidate three-way applies the frozen proposal diff onto the current
-// accepted checkout.
+// accepted checkout and regenerates the playbook index there.
 func (b *Broker) replayCandidate(ctx context.Context, proposal Proposal, candidate, stage, current string, paths []string) error {
 	if _, err := runGit(ctx, stage, "merge-base", "--is-ancestor", proposal.BaseCommit, current); err != nil {
 		return fmt.Errorf("proposal base is not an ancestor of accepted state: %w", err)
@@ -105,6 +110,11 @@ func (b *Broker) replayCandidate(ctx context.Context, proposal Proposal, candida
 			conflicts = slices.Clone(paths)
 		}
 		return b.memoryConflict(ctx, proposal.BaseCommit, current, conflicts, nil)
+	}
+	if slices.ContainsFunc(paths, func(path string) bool { return strings.HasPrefix(path, layout.PlaybooksDir+"/") }) {
+		if _, err := layout.WritePlaybookIndex(stage); err != nil {
+			return fmt.Errorf("regenerate playbook index: %w", err)
+		}
 	}
 	return nil
 }

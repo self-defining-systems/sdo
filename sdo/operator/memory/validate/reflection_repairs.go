@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 )
@@ -66,7 +67,7 @@ func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, 
 			switch {
 			case m.GetResult() == "reverted_ineffective":
 				stale[m.GetPlaybookId()] = "stage reverted it as ineffective"
-			case m.GetResult() != "applied_cleared" || len(m.GetRemainingFindingFingerprints()) > 0 || m.GetError() != "":
+			case !stageApplicationSettled(m, outcome.GetPlanApplications()) && (m.GetResult() != "applied_cleared" || len(m.GetRemainingFindingFingerprints()) > 0 || m.GetError() != ""):
 				stale[m.GetPlaybookId()] = "stage result " + m.GetResult()
 			}
 		}
@@ -163,6 +164,32 @@ func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, 
 		ds = append(ds, Diagnostic{Rule: RuleReflectionStalePlaybook, Message: fmt.Sprintf("applied playbook %q must change: %s", id, stale[id]), Hint: "update this playbook, or retire it with a reason, and include its ID in the updated result; a peer edit or SDK gap does not fix stale memory"})
 	}
 	return ds
+}
+
+// A stage receipt is a handoff snapshot, not a terminal application verdict.
+// Only later verified settlement of that exact execution can supersede a
+// pending snapshot. Final unresolved findings and later hand repairs are still
+// checked separately; peer success or health alone cannot excuse stale memory.
+func stageApplicationSettled(stage *contracts.StageMitigation, applications []*contracts.PlanApplication) bool {
+	initial := stage.GetApplyReceipt()
+	if (stage.GetResult() != "rollout_pending_at_handoff" && stage.GetResult() != "admission_blocked") || initial.GetRolloutPending() == nil || !initial.GetApplied() || initial.GetDryRun() || initial.GetRolledBack() || initial.GetApplicationId() == "" || initial.GetStartedAt() == nil || initial.GetCompletedAt() == nil {
+		return false
+	}
+	var final *contracts.PlanApplication
+	for _, app := range applications {
+		if app.GetApplicationId() == initial.GetApplicationId() {
+			if final != nil {
+				return false // Conflicting or duplicate final identities prove nothing.
+			}
+			final = app
+		}
+	}
+	if final == nil || !final.GetApplied() || final.GetDryRun() || final.GetRolledBack() || final.GetRollbackError() != "" || final.GetError() != "" || final.GetRolloutPending() != nil || !final.GetVerificationCompleted() || !final.GetVerificationPassed() {
+		return false
+	}
+	return slices.Contains(final.GetProgramIds(), stage.GetPlaybookId()) && slices.Equal(final.GetProgramIds(), initial.GetProgramIds()) &&
+		proto.Equal(final.GetPlan(), initial.GetPlan()) && proto.Equal(final.GetStartedAt(), initial.GetStartedAt()) &&
+		final.GetCompletedAt() != nil && final.GetCompletedAt().AsTime().After(initial.GetCompletedAt().AsTime())
 }
 
 // Match the controller's receipt identities, including per-script receipts and

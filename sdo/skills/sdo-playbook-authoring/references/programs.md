@@ -9,6 +9,10 @@ per-cause work. A verified cause with no recorded repair on its own resources is
 causes are still learned. A program that still matches the verified fixed capture needs refinement: Go keeps
 that capture as a NoMatch regression case (`CapturedFixedNoMatchPhase`), never a positive case.
 
+A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
+fault class and originating incident. Preserve accepted provenance; SDO lists it in the generated playbook index.
+The authoring reference tool supplies the routing example.
+
 ## Bindings and values
 
 - `bindings.Objects[role]` holds resource identities; `bindings.Parameter(spec, name)` returns a scalar
@@ -17,6 +21,13 @@ that capture as a NoMatch regression case (`CapturedFixedNoMatchPhase`), never a
 - An emergency literal is a declared parameter the responder supplies and justifies.
 
 ## Source restoration
+
+Choose playbooks by failure mechanism. Admission mutation, resource exhaustion and old-revision
+blockage need separate diagnoses and steps even on one Deployment; link them from findings and explain
+ordering in READMEs. Keep actions together only when one repair needs them. Unrelated unavailable reads
+must not turn a decidable source comparison into Unknown. Preserve earlier cases when refining variants.
+Judge a pending stage by its final receipt: a later verified settlement preserves the working step;
+a handoff snapshot alone does not justify rewriting it.
 
 - `SetField` restores one schema-checked field; named list selectors (`env[name=X]`) and ConfigMap
   JSON/YAML entries (`DocumentFormat`, `DocumentPath`) preserve unrelated values. A missing final

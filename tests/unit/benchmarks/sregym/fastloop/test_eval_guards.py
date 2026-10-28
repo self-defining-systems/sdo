@@ -460,7 +460,7 @@ def test_fresh_guard_accepts_actual_broker_health_bootstrap(
         timeout=60,
     )
     published = json.loads(actual.stdout)
-    assert ".sdo/playbooks/README.md" in published["health_paths"]
+    assert ".sdo/playbooks/health-objective/README.md" in published["health_paths"]
     lineage = setup_lineage(repository, seed)
     assert lineage["accepted_commit"] == published["head"]
     assert [row["actor"] for row in lineage["commits"]] == ["health_judge"]

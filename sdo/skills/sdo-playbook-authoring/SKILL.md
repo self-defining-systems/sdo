@@ -28,14 +28,15 @@ Work in the proposal checkout, in this order. Open other files only when a step 
 5. **Label one corpus case** per new program (rules below): `create_corpus` copies the controller's captures
    (pass `observations` only when none exist, with `repair_receipt_ids`) and writes it in one call. Each program should Match its fault
    capture and NoMatch healthy: decide from what the capture holds (snapshot objects, `pod_admission`, reads
-   `recordings_index` lists); a read the capture lacks replays as Unknown, so keep live-only reads
-   (webhook relations, database catalogs, probes) in Mitigate, as `webhook-ca-sync` does.
+   `recordings_index` lists); a read the capture lacks replays as Unknown, so keep uncaptured live-only reads
+   in Mitigate, as `webhook-ca-sync` does.
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
    playbook IDs, and a summary. It formats changed Go first. Fix each blocking diagnostic as its hint says,
    then check again. Its `next` field says what to do: return, refine replay, or fix diagnostics.
 7. When `next` says return, return the same decision and IDs; do not polish passing memory.
 
-Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps.
+Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. For source repairs, separate independent causes as described in
+[program notes](references/programs.md#source-restoration).
 
 ## Program rules
 
@@ -71,7 +72,9 @@ A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accept
   is open; `fixed`, `healthy`), plus one `RepairReceipt` entry per encoded hand repair (`create_corpus` adds them; a
   `reflection.program-required` hint prints the exact entry otherwise).
 - `open.json`, `fixed.json`, `healthy.json` snapshots, and `accepted.json` when Mitigate reads source.
-  Missing captures never block saving; replay results are information.
+  Missing captures never block saving; replay results are information. Diagnose replays recorded phase
+  reads, including source comparisons, webhooks, database catalogs and pod admission; an unrecorded read
+  is Unknown and names the call. Use its open capture (repair reads are in pre-apply); never invent replies.
 
 ## More detail, only when needed
 
@@ -81,3 +84,7 @@ A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accept
 - Stalled rollouts, database catalogs, routing probes, Service ports, per-cause work:
   [program notes](references/programs.md).
 - Full generated API: [program SDK](references/program-sdk.md).
+
+Generated API sections: [program-01](references/program-sdk/program-01.md),
+[program-02](references/program-sdk/program-02.md), [program-03](references/program-sdk/program-03.md),
+[program-04](references/program-sdk/program-04.md), [routing-01](references/program-sdk/routing-01.md).

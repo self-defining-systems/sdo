@@ -102,7 +102,7 @@ Repair: state the minimal change that restores <RESOURCE_NAME>, and how to verif
 	if err := layout.WritePlaybook(root, layout.Playbook{ID: id, Document: document}); err != nil {
 		return nil, err
 	}
-	if err := layout.IndexPlaybook(root, id); err != nil {
+	if _, err := layout.WritePlaybookIndex(root); err != nil {
 		return nil, err
 	}
 	return []string{readme, layout.PlaybookIndexFile}, nil
