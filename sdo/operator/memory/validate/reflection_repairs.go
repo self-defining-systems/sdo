@@ -83,6 +83,43 @@ func ReflectionRepairDiagnostics(outcome *contracts.OutcomeRecord, decision *con
 			}
 		}
 	}
+	// Prior deterministic stages precede responder repairs even when a legacy
+	// stage omitted its application receipt. Its own bindings still identify
+	// the playbook that needed a later repair.
+	for _, stage := range outcome.GetPriorStages() {
+		for _, m := range stage.GetMitigations() {
+			if stage.GetStage() != "deterministic" || m.GetResult() == "skipped" || m.GetApplyReceipt() != nil {
+				continue
+			}
+			for _, a := range hand {
+				if repairOverlapsPlaybook(outcome, nil, m.GetPlaybookId(), a) {
+					stale[m.GetPlaybookId()] = "needed later hand repair " + a.GetActionId()
+				}
+			}
+		}
+	}
+	remaining := map[string]bool{}
+	for _, evaluation := range outcome.GetFinalHealthDetectorState() {
+		if evaluation.GetStatus() == "firing" || evaluation.GetStatus() == "pending" {
+			for _, fingerprint := range evaluation.GetFingerprints() {
+				remaining[fingerprint] = true
+			}
+		}
+	}
+	applied := map[string]bool{}
+	for _, id := range outcome.GetAppliedPlaybooks() {
+		applied[id] = true
+	}
+	for _, app := range applications {
+		for _, id := range app.GetProgramIds() {
+			applied[id] = true
+		}
+	}
+	for _, match := range outcome.GetPlaybookCoverage().GetMatches() {
+		if applied[match.GetPlaybookId()] && slices.ContainsFunc(match.GetExplainedFindingFingerprints(), func(fingerprint string) bool { return remaining[fingerprint] }) {
+			stale[match.GetPlaybookId()] = "its findings remain unresolved in the final controller observation"
+		}
+	}
 	var ds []Diagnostic
 	for _, a := range hand {
 		if len(changed) > 0 || repairHasSDKGap(a, decision.GetSdkGaps()) {

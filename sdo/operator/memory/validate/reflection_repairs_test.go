@@ -173,3 +173,45 @@ func TestReflectionLaterRepairDoesNotStaleUnrelatedBatchedPlaybook(t *testing.T)
 		t.Fatalf("unrelated batched peer was marked stale: %v", ds)
 	}
 }
+
+func TestReflectionStageBindingsKeepLaterHandRepairVisibleWithoutReceipt(t *testing.T) {
+	o := repairCoverageOutcome()
+	ref := o.RepairActions[0].Resources[0]
+	o.PlanApplications = nil
+	m := o.PriorStages[0].Mitigations[0]
+	m.ApplyReceipt = nil
+	m.Bindings = []*contracts.Binding{{Name: "service", Object: ref}}
+	o.RepairActions[0].ActionId = "manual"
+	o.RepairActions[0].Kind = "exec"
+	ds := ReflectionRepairDiagnostics(o, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"peer"}}, []string{".sdo/playbooks/peer/README.md"})
+	if len(ds) != 1 || ds[0].Rule != "reflection.stale-playbook" || !strings.Contains(ds[0].Message, "base") {
+		t.Fatalf("stale stage playbook lost with its missing application receipt: %v", ds)
+	}
+}
+
+func TestReflectionFinalFindingCoverageIsPlaybookScoped(t *testing.T) {
+	for _, tc := range []struct {
+		name, fingerprint, status string
+		want                      bool
+	}{
+		{"own finding remains", "own", "firing", true},
+		{"own finding pending", "own", "pending", true},
+		{"peer remains", "peer", "firing", false},
+		{"own finding cleared", "own", "clear", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := repairCoverageOutcome()
+			o.PlaybookCoverage = &contracts.PlaybookCoverage{Matches: []*contracts.PlaybookMatch{{PlaybookId: "base", ExplainedFindingFingerprints: []string{"own"}}}}
+			o.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "detector", Status: tc.status, Fingerprints: []string{tc.fingerprint}}}
+			ds := ReflectionRepairDiagnostics(o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
+			if (len(ds) > 0) != tc.want {
+				t.Fatalf("final findings: %v", ds)
+			}
+			for _, d := range ds {
+				if d.Rule != "reflection.stale-playbook" || !strings.Contains(d.Message, "base") {
+					t.Fatalf("wrong rejection: %v", d)
+				}
+			}
+		})
+	}
+}

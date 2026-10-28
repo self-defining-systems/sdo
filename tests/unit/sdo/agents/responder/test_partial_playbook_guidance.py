@@ -27,7 +27,7 @@ def test_partial_learning_is_explicit(relative: str) -> None:
         assert "runscript" in text
         assert "digest-to-receipt" in text
         assert "relation-derived env" in text
-    if relative.endswith("SKILL.md") or relative.endswith("reflection.md"):
+    if relative.endswith(("SKILL.md", "reflection.md")):
         assert "no_change" in text
         assert "hand repair" in text
         assert "left findings unresolved" in text

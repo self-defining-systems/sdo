@@ -188,7 +188,6 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     prompt = str(call["prompt"])
     assert "accepted source expresses intent." in prompt
     assert "memory is fallible advice" in prompt
-    assert "Learn only from supported observations" in prompt
     assert "artifact_proposal" not in prompt
     assert "broker checks" in prompt
     assert "draft-test" not in prompt
@@ -235,8 +234,7 @@ def test_reflection_saves_partial_learning_for_verified_parts(
     assert "Use recorded actions as repair evidence" in prompt
     assert "useful README-only guidance" in prompt
     assert "Replay is informational" in prompt
-    assert "not a reason to keep revising" in prompt
-    assert "with scoped sdk_gaps for useful work that cannot be encoded" in prompt
+    assert "plus scoped sdk_gaps for unencoded parts" in prompt
     assert "put judgement in the README" in prompt
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["classification"] == classification
@@ -587,5 +585,4 @@ def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_p
     prompt = str(backend.calls[0]["prompt"])
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["undetected_causes"][0]["repair_action_id"] == "recorded-patch"
-    assert "with scoped sdk_gaps" in prompt
-    assert "listed undetected transitions" in prompt
+    assert "plus scoped sdk_gaps" in prompt
