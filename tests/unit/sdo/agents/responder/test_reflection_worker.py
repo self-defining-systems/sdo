@@ -4,6 +4,7 @@ import pytest
 from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any
 
+from libs.agent_cli.session_ownership import SessionHandoffError, SessionHandoffTimeout
 from sdo.agents.responder.reflection import ReflectionTurn
 from sdo.agents.responder.reflection_worker import run_reflection_task
 from sdo.contracts import (
@@ -12,11 +13,14 @@ from sdo.contracts import (
     IncidentClosure,
     MemoryDiagnostic,
     OperationalMemorySnapshot,
+    ReflectionDecision,
     ReflectionRequest,
     ReflectionResult,
     parse_json,
     to_canonical_json,
+    validate,
 )
+from tests.context_helpers import expand_context
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 
 FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "go" / "closure_repaired.json"
@@ -205,8 +209,10 @@ def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: P
     task.request.Pack(request)
     path.write_text(to_canonical_json(task), encoding="utf-8")
     fallback = Reflector()
-    run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
-    assert fallback.kwargs["session_mode"] == "fresh"
+    result = run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
+    assert fallback.kwargs is None
+    assert result.status == "failed"
+    assert result.failure_reason == "session_unavailable"
 
     request.session_mode = "unknown"
     request.closure.result.responder_session_id = "responder-session-123"
@@ -220,8 +226,10 @@ def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: P
     task.request.Pack(request)
     path.write_text(to_canonical_json(task), encoding="utf-8")
     fallback = Reflector()
-    run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
-    assert fallback.kwargs["session_mode"] == "fresh"
+    result = run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
+    assert fallback.kwargs is None
+    assert result.status == "failed"
+    assert result.failure_reason == "session_unavailable"
 
 
 def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(
@@ -405,7 +413,7 @@ def test_registered_task_preserves_settled_work_in_actual_session_prompt(
     path.write_text(to_canonical_json(task), encoding="utf-8")
     backend = _CapturingBackend()
     run_reflection_task(path, "result-map", Publisher(), reflector=SessionReflector(backend))
-    prompt = str(backend.calls[0]["prompt"])
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
     assert backend.calls[0]["mode"] == "resume"
     assert disposition in prompt
     assert reason in prompt
@@ -456,7 +464,12 @@ def _timed_out() -> RuntimeError:
 
 @pytest.mark.parametrize(
     ("error", "reason"),
-    [(_timed_out(), "agent_timeout"), (RuntimeError("model I/O exceeds 4194304 bytes"), "agent_failed")],
+    [
+        (_timed_out(), "agent_timeout"),
+        (RuntimeError("model I/O exceeds 4194304 bytes"), "agent_failed"),
+        (SessionHandoffTimeout("writer did not release"), "session_handoff_timeout"),
+        (SessionHandoffError("invalid record"), "session_handoff_invalid"),
+    ],
 )
 def test_failed_reflection_publishes_a_typed_reason_instead_of_failing_the_job(
     tmp_path: Path, error: BaseException, reason: str
@@ -469,6 +482,8 @@ def test_failed_reflection_publishes_a_typed_reason_instead_of_failing_the_job(
     result = parse_json(publisher.payload, AgentResult())
     assert (result.status, result.failure_reason, result.error_summary) == ("failed", reason, str(error))
     assert not result.HasField("response")
+    validate(result)
+    validate(ReflectionDecision(learning_decision="failed", failure_reason=reason))
 
 
 def test_reflection_budget_ends_before_the_frozen_task_deadline(tmp_path: Path) -> None:
@@ -518,3 +533,93 @@ def test_reflection_default_budget_fits_the_controller_and_eval_deadlines() -> N
 
     response_timeout = NativeInstallConfig.__dataclass_fields__["response_timeout_seconds"].default
     assert DEFAULT_REFLECTION_SECONDS < response_timeout < DRAIN_TIMEOUT_SECONDS
+
+
+def test_builtin_resume_requires_persisted_session_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sdo.agents.responder import reflection_worker
+
+    monkeypatch.delenv("SDO_SESSION_DIR", raising=False)
+    path = _task_path(tmp_path)
+    task = parse_json(path.read_text(), AgentTask())
+    request = ReflectionRequest()
+    assert task.request.Unpack(request)
+    request.session_mode = "resume"
+    request.closure.result.responder_session_id = "session-1"
+    task.request.Pack(request)
+    path.write_text(to_canonical_json(task))
+    selected = Reflector()
+    monkeypatch.setattr(reflection_worker, "_default_reflector", lambda _: selected)
+    publisher = Publisher()
+
+    result = run_reflection_task(path, "result-map", publisher)
+
+    assert selected.kwargs is None
+    assert result.status == "failed"
+    assert result.failure_reason == "session_handoff_invalid"
+    validate(result)
+
+
+def _git(path: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", str(path), "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _moved_head_task(tmp_path: Path, *, snapshot_on_base: bool = True, outcome_ancestor: bool = True) -> Path:
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "a").write_text("outcome")
+    _git(tmp_path, "add", "a")
+    _git(tmp_path, "commit", "-qm", "outcome")
+    outcome_commit = _git(tmp_path, "rev-parse", "HEAD")
+    if not outcome_ancestor:
+        _git(tmp_path, "checkout", "-q", "--orphan", "other")
+    (tmp_path / "b").write_text("peer publication")
+    _git(tmp_path, "add", "b")
+    _git(tmp_path, "commit", "-qm", "peer")
+    base = _git(tmp_path, "rev-parse", "HEAD")
+    closure = _closure()
+    request = ReflectionRequest(
+        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit=outcome_commit
+    )
+    request.memory_snapshot.accepted_commit = base if snapshot_on_base else outcome_commit
+    packed = Any()
+    packed.Pack(request)
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-2",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        request=packed,
+        workspace={"proposal_id": "proposal-2", "checkout_path": str(tmp_path), "base_commit": base},
+    )
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    return path
+
+
+def test_memory_conflict_retry_on_a_head_advanced_by_a_peer_still_reflects(tmp_path: Path) -> None:
+    path = _moved_head_task(tmp_path)
+    reflector = Reflector()
+
+    run_reflection_task(path, "result-map", Publisher(), reflector=reflector)
+
+    assert reflector.kwargs is not None
+
+
+@pytest.mark.parametrize(
+    "case",
+    [{"snapshot_on_base": False}, {"outcome_ancestor": False}],
+    ids=["snapshot-not-on-base", "outcome-not-in-base"],
+)
+def test_reflection_still_refuses_a_snapshot_or_base_unrelated_to_the_outcome(
+    tmp_path: Path, case: dict[str, bool]
+) -> None:
+    path = _moved_head_task(tmp_path, **case)
+
+    with pytest.raises(ValueError, match="not bound to committed outcome"):
+        run_reflection_task(path, "result-map", Publisher(), reflector=Reflector())

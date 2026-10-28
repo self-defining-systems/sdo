@@ -9,7 +9,9 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -105,8 +107,9 @@ type PlanExecutor struct {
 	// ApplicationID is durable across restart and selects one script Job.
 	ApplicationID     string
 	scriptActionIndex int
-	// Nested action executors leave dependency recovery to their outer batch.
-	deferDependencyRecovery bool
+	// Nested action executors leave observation, dependency recovery and
+	// terminal verification to their outer batch.
+	deferConvergence bool
 	// PollRollouts returns pending after one observation instead of waiting.
 	PollRollouts bool
 	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error
@@ -132,6 +135,8 @@ type PlanExecutor struct {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	started := time.Now()
+	defer func() { result.Duration = time.Since(started) }()
 	plan = groupDocumentActions(plan)
 	defer func() {
 		if err != nil {
@@ -154,7 +159,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	}()
 	defer func() {
 		var partial *SourceReconcilePartialError
-		if errors.As(err, &partial) {
+		if e.deferConvergence || result.RolloutPending != nil || errors.As(err, &partial) {
 			return
 		}
 		residualErr := e.reportSourceResiduals(ctx, incident, &result)
@@ -174,6 +179,30 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if err == nil || result.Applied || !apierrors.IsConflict(err) {
 			break
 		}
+	}
+	if err == nil && !dryRun && !e.deferConvergence {
+		var objectWrites []PlanPatch
+		var refs []sdk.ObjectRef
+		for _, patch := range result.Patches {
+			if patch.After != nil || patch.Operation == "delete" {
+				objectWrites = append(objectWrites, patch)
+			}
+			if patch.After != nil && patch.Operation != "delete" {
+				refs = append(refs, patch.Ref)
+			}
+		}
+		if err = e.awaitObserved(ctx, objectWrites); err != nil {
+			return result, err
+		}
+		result.RolloutPending, err = e.waitAfterSourceWrites(ctx, incident, &result, refs)
+		if err != nil {
+			return result, err
+		}
+		if err = e.reportSourceResiduals(ctx, incident, &result); err != nil {
+			return result, err
+		}
+		result.VerificationPassed, err = e.Verifier.Verify(ctx)
+		result.VerificationCompleted = err == nil
 	}
 	return result, err
 }
@@ -230,7 +259,6 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	}
 	result.PreImages = make([]PlanPreImage, 0, len(plan.Actions))
 	current := make(map[sdk.ObjectRef]*unstructured.Unstructured)
-	refs := make([]sdk.ObjectRef, 0, len(plan.Actions))
 	// Capture every pre-image before any write, including later actions' targets.
 	for _, action := range plan.Actions {
 		ref, refErr := planActionRef(action)
@@ -257,7 +285,6 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 
 		result.PreImages = append(result.PreImages, newPlanPreImage(ref, object))
 		current[ref] = object.DeepCopy()
-		refs = append(refs, ref)
 	}
 	for actionIndex, action := range plan.Actions {
 		e.report = &result.ActionReports[actionIndex]
@@ -324,22 +351,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	}
 	writesLanded = true
 	result.Applied = true
-	if err := e.reportSourceResiduals(ctx, incident, &result); err != nil {
-		return result, err
-	}
-	if err := e.awaitObserved(ctx, result.Patches); err != nil {
-		return result, err
-	}
-	if pending, err := e.waitAfterSourceWrites(ctx, incident, &result, refs); err != nil {
-		result.RolloutPending = pending
-		return result, err
-	}
-	passed, err := e.Verifier.Verify(ctx)
-	if err != nil {
-		return result, fmt.Errorf("verify plan health: %w", err)
-	}
-	result.VerificationPassed = passed
-	result.VerificationCompleted = true
+
 	return result, nil
 }
 
@@ -765,6 +777,20 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 			return nil, errors.New("nil ScaleWorkload")
 		}
 		return e.prepareAction(ctx, incident, *a, current)
+	case program.RetireOldRevision:
+		// The bound is checked against the live ReplicaSet and its live owner
+		// at write time, so every caller (stage, program, menu) inherits it.
+		if err := e.checkOldRevision(ctx, current); err != nil {
+			return nil, err
+		}
+		if err := unstructured.SetNestedField(next.Object, int64(0), "spec", "replicas"); err != nil {
+			return nil, err
+		}
+	case *program.RetireOldRevision:
+		if a == nil {
+			return nil, errors.New("nil RetireOldRevision")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
 
 	case program.RestartRollout:
 		if a.Ref.Kind != "Deployment" || a.Ref.APIVersion != "apps/v1" {
@@ -888,6 +914,12 @@ func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 			return a.Ref, nil
 		}
 	case *program.ScaleWorkload:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case program.RetireOldRevision:
+		return a.Ref, nil
+	case *program.RetireOldRevision:
 		if a != nil {
 			return a.Ref, nil
 		}
@@ -1070,4 +1102,37 @@ func isRemoveServicePort(action program.Action) bool {
 		return true
 	}
 	return false
+}
+
+type liveRevisionView struct {
+	sets        []appsv1.ReplicaSet
+	deployments []appsv1.Deployment
+}
+
+func (v liveRevisionView) ReplicaSets() []appsv1.ReplicaSet { return v.sets }
+func (v liveRevisionView) Deployments() []appsv1.Deployment { return v.deployments }
+
+// checkOldRevision applies the program ReplicaSet-scale rule to the live
+// ReplicaSet and the live Deployment that controls it.
+func (e PlanExecutor) checkOldRevision(ctx context.Context, current *unstructured.Unstructured) error {
+	var set appsv1.ReplicaSet
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(current.Object, &set); err != nil {
+		return err
+	}
+	view := liveRevisionView{sets: []appsv1.ReplicaSet{set}}
+	if owner := metav1.GetControllerOf(&set); owner != nil && owner.Kind == "Deployment" {
+		live, err := e.Client.Get(ctx, sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: set.Namespace, Name: owner.Name})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		if err == nil {
+			var deployment appsv1.Deployment
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(live.Object, &deployment); err != nil {
+				return err
+			}
+			view.deployments = []appsv1.Deployment{deployment}
+		}
+	}
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: set.Namespace, Name: set.Name}
+	return program.CheckReplicaSetScales(program.Plan{Actions: []program.Action{program.RetireOldRevision{Ref: ref}}}, view)
 }

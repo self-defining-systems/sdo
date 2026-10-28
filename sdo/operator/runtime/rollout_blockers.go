@@ -15,9 +15,10 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
-func (w KubernetesPlanRollouts) rolloutBlocker(ctx context.Context, d *appsv1.Deployment, started time.Time) (*contracts.RolloutBlocker, *AdmissionBlockedError) {
+func (w KubernetesPlanRollouts) rolloutBlocker(ctx context.Context, d *appsv1.Deployment, started time.Time) (*contracts.RolloutBlocker, bool, *AdmissionBlockedError) {
 	sets, setsErr := w.Client.AppsV1().ReplicaSets(d.Namespace).List(ctx, metav1.ListOptions{})
 	pods, podsErr := w.Client.CoreV1().Pods(d.Namespace).List(ctx, metav1.ListOptions{})
 	events, eventsErr := w.Client.CoreV1().Events(d.Namespace).List(ctx, metav1.ListOptions{FieldSelector: "type=Warning"})
@@ -43,14 +44,18 @@ func (w KubernetesPlanRollouts) rolloutBlocker(ctx context.Context, d *appsv1.De
 			blocker.WarningEvents = append(blocker.WarningEvents, boundedRolloutText(read.name+" evidence unavailable: "+read.err.Error(), 512))
 		}
 	}
-	return blocker, w.admissionBlocked(ctx, blocker, observation.admission)
+	return blocker, observation.stalled, w.admissionBlocked(ctx, blocker, observation.admission)
 }
 
 type rolloutObservation struct {
 	admission []string
 	blocker   *contracts.RolloutBlocker
 	pending   bool
-	summary   string
+	// stalled means the rollout cannot progress until another actor changes the
+	// cluster (removes a holder, adds capacity, edits the template). Waiting
+	// only observes, so it can never clear this.
+	stalled bool
+	summary string
 }
 
 // deploymentRolloutBlocker projects one observation without I/O. The same
@@ -69,7 +74,11 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 	reasons := []string{fmt.Sprintf("%d/%d updated, %d ready, %d available; %d old template replicas; observed generation %d/%d", d.Status.UpdatedReplicas, deploymentDesiredReplicas(d), d.Status.ReadyReplicas, d.Status.AvailableReplicas, max(0, d.Status.Replicas-d.Status.UpdatedReplicas), d.Status.ObservedGeneration, d.Generation)}
 	var failures []string
 	var admission []string
+	var stuck []string
 	for _, c := range d.Status.Conditions {
+		if c.Type == appsv1.DeploymentProgressing && c.Status == corev1.ConditionFalse && c.Reason == "ProgressDeadlineExceeded" && d.Status.ObservedGeneration >= d.Generation {
+			stuck = append(stuck, "Progressing "+c.Reason+": "+c.Message)
+		}
 		if c.Type == appsv1.DeploymentReplicaFailure && c.Status == corev1.ConditionTrue || c.Type == appsv1.DeploymentProgressing && c.Status == corev1.ConditionFalse {
 			message := string(c.Type) + " " + c.Reason + ": " + c.Message
 			reasons = append(reasons, message)
@@ -86,11 +95,13 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 		admissionUIDs[d.UID] = d.Status.ObservedGeneration >= d.Generation && d.Status.UpdatedReplicas < deploymentDesiredReplicas(d)
 	}
 	oldSets := map[types.UID]bool{}
+	setNames := map[types.UID]string{}
 	for _, rs := range sets {
 		if rs.Namespace != d.Namespace || !rolloutOwnedBy(rs.OwnerReferences, "Deployment", d.UID) || rs.UID == "" {
 			continue
 		}
 		oldSets[rs.UID] = !sameRolloutTemplate(rs.Spec.Template, d.Spec.Template)
+		setNames[rs.UID] = rs.Name
 		if oldSets[rs.UID] || rs.Spec.Replicas != nil && *rs.Spec.Replicas == 0 {
 			continue
 		}
@@ -108,19 +119,40 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 				if c.Reason == "FailedCreate" && admissionRejection(c.Message) && admissionUIDs[rs.UID] && currentEvidence(c.LastTransitionTime.Time, rs.Status.ObservedGeneration, rs.Generation) {
 					admission = append(admission, message)
 				}
+				// Quota, LimitRange or Pod Security rejections repeat on every
+				// retry until another actor changes the namespace or the
+				// template. The ReplicaSet controller clears the condition on
+				// the next successful create, so a current-template set that
+				// still reports it at its observed generation cannot create its
+				// replacement now. Its transition time (one-second precision,
+				// often set by the write itself) says nothing about staleness.
+				if c.Reason == "FailedCreate" && !admissionRejection(c.Message) && admissionUIDs[rs.UID] && d.Status.ObservedGeneration >= d.Generation {
+					stuck = append(stuck, "replacement "+message)
+				}
 			}
 		}
 	}
 	oldPodRemains := false
 	podFailureRemains := false
+	// A terminating Pod in the namespace can still free the capacity or
+	// placement a replacement needs, so no stall is claimed while one drains.
+	draining := false
+	var holders []string
 	for _, pod := range pods {
+		if pod.Namespace == d.Namespace && pod.DeletionTimestamp != nil && pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			draining = true
+		}
 		if pod.Namespace != d.Namespace || pod.UID == "" || pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			continue
 		}
 		owned, old := false, false
+		holder := ""
 		for uid, isOld := range oldSets {
 			if rolloutOwnedBy(pod.OwnerReferences, "ReplicaSet", uid) {
 				owned, old = true, old || isOld
+				if isOld {
+					holder = "Pod/" + pod.Name + " of ReplicaSet/" + setNames[uid]
+				}
 			}
 		}
 		if !owned {
@@ -137,9 +169,13 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 		}
 		if old {
 			oldPodRemains = true
+			holders = append(holders, holder)
 			reasons = append(reasons, "Pod/"+pod.Name+" still runs old template")
 		}
 		for _, c := range pod.Status.Conditions {
+			if !old && c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
+				stuck = append(stuck, fmt.Sprintf("replacement Pod/%s %s: %s", pod.Name, c.Reason, c.Message))
+			}
 			if c.Status == corev1.ConditionFalse && c.Reason != "" {
 				podFailureRemains = true
 				reasons = append(reasons, fmt.Sprintf("Pod/%s %s: %s", pod.Name, c.Reason, c.Message))
@@ -155,7 +191,37 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 	}
 	// Sort diagnostics for stable replay, keeping the progress counters first.
 	sort.Strings(reasons[1:])
-	blocker := &contracts.RolloutBlocker{Ref: planRefProto(ref), Reason: boundedRolloutText(strings.Join(reasons, "; "), 4096)}
+	pending := oldPodRemains || podFailureRemains || !deployment.DeploymentRolloutComplete(d)
+	stalled := pending && len(stuck) > 0 && !draining
+	cause := ""
+	var release []*contracts.Action
+	if stalled {
+		// Name every old-template holder and the standard release before the
+		// long scheduler text, so even a clipped line tells the next actor
+		// what to change.
+		sort.Strings(stuck)
+		sort.Strings(holders)
+		if len(holders) > 0 {
+			cause = "stalled behind old-template " + strings.Join(holders, ", ") + "; "
+		} else {
+			cause = "stalled with no old-template Pod draining; "
+		}
+		var retired []string
+		for _, action := range program.StalledRolloutRelease(rolloutLists{deployment: *d, sets: sets, pods: pods}, ref) {
+			encoded, err := planActionProto(action)
+			if err != nil {
+				continue
+			}
+			release = append(release, encoded)
+			retired = append(retired, "ReplicaSet/"+encoded.GetRetireOldRevision().GetRef().GetName())
+		}
+		if len(retired) > 0 {
+			cause += "release: RetireOldRevision " + strings.Join(retired, ", ") + "; "
+		}
+		cause += "cannot progress without another actor: " + strings.Join(stuck, "; ")
+		reasons = append([]string{cause}, reasons...)
+	}
+	blocker := &contracts.RolloutBlocker{Ref: planRefProto(ref), Reason: boundedRolloutText(strings.Join(reasons, "; "), 4096), Release: release}
 	for _, event := range events {
 		if event.Type == corev1.EventTypeWarning && event.Namespace == d.Namespace && event.InvolvedObject.Namespace == d.Namespace && uids[event.InvolvedObject.UID] {
 			at := event.LastTimestamp.Time
@@ -176,7 +242,9 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 		blocker.WarningEvents = blocker.WarningEvents[:4]
 	}
 	summary := reasons[0]
-	if len(failures) > 0 {
+	if stalled {
+		summary = cause
+	} else if len(failures) > 0 {
 		sort.Strings(failures)
 		summary = failures[0]
 	} else if len(blocker.WarningEvents) > 0 {
@@ -184,8 +252,19 @@ func deploymentRolloutBlocker(d *appsv1.Deployment, sets []appsv1.ReplicaSet, po
 	} else if len(reasons) > 1 {
 		summary = reasons[1]
 	}
-	return rolloutObservation{admission: admission, blocker: blocker, pending: oldPodRemains || podFailureRemains || !deployment.DeploymentRolloutComplete(d), summary: boundedRolloutText(summary, 200)}
+	return rolloutObservation{admission: admission, blocker: blocker, pending: pending, stalled: stalled, summary: boundedRolloutText(summary, 200)}
 }
+
+// rolloutLists is one Deployment observation as a program read view.
+type rolloutLists struct {
+	deployment appsv1.Deployment
+	sets       []appsv1.ReplicaSet
+	pods       []corev1.Pod
+}
+
+func (l rolloutLists) Deployments() []appsv1.Deployment { return []appsv1.Deployment{l.deployment} }
+func (l rolloutLists) ReplicaSets() []appsv1.ReplicaSet { return l.sets }
+func (l rolloutLists) Pods() []corev1.Pod               { return l.pods }
 
 func rolloutOwnedBy(owners []metav1.OwnerReference, kind string, uid types.UID) bool {
 	if uid == "" {

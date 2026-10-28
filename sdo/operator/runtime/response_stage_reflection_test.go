@@ -66,7 +66,7 @@ func TestResponseStageVerifiedRepairsReachRegisteredReflection(t *testing.T) {
 		if err := task.Request.UnmarshalTo(request); err != nil {
 			t.Fatal(err)
 		}
-		if request.SessionMode != "fresh" || len(validate.VerifiedReflectionCauses(request.Outcome)) != 2 || len(request.Outcome.PlanApplications) != 1 || len(request.Outcome.RepairActions) != 1 {
+		if request.SessionMode != "fresh" || len(validate.VerifiedReflectionCauses(request.Outcome)) != 2 || len(request.Outcome.PlanApplications) != 2 || len(request.Outcome.RepairActions) != 2 {
 			t.Fatalf("reflection did not receive independently verified deterministic repairs: %v", request)
 		}
 		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "accepted playbooks already cover the two verified repairs"})

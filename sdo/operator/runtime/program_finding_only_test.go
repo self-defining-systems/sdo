@@ -182,12 +182,19 @@ func TestRestoreRetiresProgramProducedFindings(t *testing.T) {
 	}
 }
 
-func TestCoverageRequiresDetectorLinkInsteadOfSyntheticProgramIdentity(t *testing.T) {
+// A Match bound from the finding explains it; neither a detector list nor a
+// program ID resembling the rule is the link.
+func TestCoverageExplainsByDiagnosedBindingNotProgramIdentity(t *testing.T) {
 	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
 	finding := sdk.Finding{DetectorID: "drift.routing", RuleID: "routing", Status: sdk.FindingActive, PrimaryResource: ref}
 	run := ProgramRun{ProgramID: "routing", FindingFingerprint: FindingFingerprint(finding), Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}, Verdict: program.Verdict{Result: program.Match}}
 	got := buildPlaybookCoverage([]sdk.Finding{finding}, []ProgramRun{run}, nil, nil)
+	if len(got.Matches) != 1 || len(got.Matches[0].ExplainedFindingFingerprints) != 1 || len(got.UnexplainedFindingFingerprints) != 0 {
+		t.Fatalf("diagnosed binding did not explain its finding: %+v", got)
+	}
+	run.FindingFingerprint = "another/finding"
+	got = buildPlaybookCoverage([]sdk.Finding{finding}, []ProgramRun{run}, nil, nil)
 	if len(got.Matches) != 1 || len(got.Matches[0].ExplainedFindingFingerprints) != 0 || len(got.UnexplainedFindingFingerprints) != 1 {
-		t.Fatalf("retired program identity implied a detector link: %+v", got)
+		t.Fatalf("program identity implied a link without a diagnosed binding: %+v", got)
 	}
 }

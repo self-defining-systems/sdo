@@ -9,14 +9,16 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path  # noqa: TC003 - Pydantic resolves this annotation at runtime.
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from benchmarks.sregym.fastloop.records import IncidentRecord, load_records, write_records
+from benchmarks.sregym.fastloop.records import EVAL_CLEANUP_PASSES, IncidentRecord, load_records, write_records
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
 
 class Encounter(BaseModel):
@@ -33,6 +35,20 @@ class ParallelPlan(BaseModel):
     encounters: list[Encounter] = Field(min_length=1)
     timeout_seconds: int = Field(default=3600, gt=0)
     agent_registrations: Path | None = None
+    provider: Literal["codex", "claude"] = "codex"
+    model: str = Field(default="gpt-6-luna", min_length=1)
+    # Same lane stream settings the other experiment streams carry.
+    capability_mode: Literal["strict", "permissive"] = "strict"
+    permissive_responder: bool = False
+    # Hotel problems have no SREGym LLM diagnosis oracle, so a judged lane exits 1 after a correct closure.
+    diagnosis_grading: Literal["off", "deferred", "inline"] = "off"
+
+    def worker_arguments(self) -> list[str]:
+        """One worker configuration for admission and every encounter in the proof."""
+        arguments = ["--provider", self.provider, "--model", self.model]
+        if self.agent_registrations:
+            arguments.extend(["--agent-registrations", str(self.agent_registrations.resolve())])
+        return arguments
 
     @model_validator(mode="after")
     def distinct_lanes(self) -> Self:
@@ -74,6 +90,18 @@ def preflight_lane(name: str, run_dir: Path, plan: ParallelPlan) -> None:
     assert_shared_lane(environment)
 
 
+def lane_process_environment(environment: FastloopEnvironment, lanes: int) -> dict[str, str]:
+    """One host CPU budget for concurrent lane processes (prepare and encounters): 8 build jobs in total."""
+    jobs = max(1, 8 // lanes)
+    return {
+        **os.environ,
+        "KUBECONFIG": str(environment.kubeconfig),
+        "SREGYM_BASE_KUBECONFIG": str(environment.kubeconfig),
+        "GOMAXPROCS": str(jobs),
+        "GOFLAGS": f"{os.environ.get('GOFLAGS', '')} -p={jobs}".strip(),
+    }
+
+
 def execute_lane(
     name: str, directory: Path, encounters: Sequence[Encounter], plan: ParallelPlan
 ) -> list[IncidentRecord]:
@@ -88,7 +116,15 @@ def execute_lane(
     directory.mkdir(parents=True, exist_ok=True)
     stream = directory / "stream.json"
     stream.write_text(
-        json.dumps({"incidents": [[e.problem] for e in encounters], "diagnosis_grading": "inline"}) + "\n"
+        json.dumps(
+            {
+                "incidents": [[e.problem] for e in encounters],
+                "diagnosis_grading": plan.diagnosis_grading,
+                "capability_mode": plan.capability_mode,
+                "permissive_responder": plan.permissive_responder,
+            }
+        )
+        + "\n"
     )
     command = [
         sys.executable,
@@ -109,20 +145,17 @@ def execute_lane(
         "--inject-before-resume",
         "--require-full-cleanup",
         "--cleanup-passes",
-        "2",
+        str(EVAL_CLEANUP_PASSES),
     ]
-    if plan.agent_registrations:
-        command.extend(["--agent-registrations", str(plan.agent_registrations.resolve())])
-    jobs = max(1, 8 // len(plan.lanes))
-    child_environment = {
-        **os.environ,
-        "KUBECONFIG": str(environment.kubeconfig),
-        "SREGYM_BASE_KUBECONFIG": str(environment.kubeconfig),
-        "GOMAXPROCS": str(jobs),
-        "GOFLAGS": f"{os.environ.get('GOFLAGS', '')} -p={jobs}".strip(),
-    }
+    command.extend(plan.worker_arguments())
     with (directory / "worker.log").open("w") as log:
-        completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False, env=child_environment)
+        completed = subprocess.run(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+            env=lane_process_environment(environment, len(plan.lanes)),
+        )
     path = results / "incidents.jsonl"
     rows = load_records(path) if path.exists() else []
     if completed.returncode or len(rows) != len(encounters):

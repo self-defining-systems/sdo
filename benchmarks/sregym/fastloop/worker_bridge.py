@@ -108,7 +108,10 @@ def main() -> int:
             def isolated_factory(problem_id: str) -> Any:
                 problem = factory(problem_id)
                 if hasattr(problem, "app"):
+                    from benchmarks.sregym.fastloop.source_deployment import configure_source_deployment
+
                     configure_profile(problem.app)
+                    configure_source_deployment(problem.app)
                     prepare_harness_traffic(problem.app, Path(os.environ["KUBECONFIG"]))
                 return problem
 
@@ -211,10 +214,6 @@ def main() -> int:
         if op == "deploy":
             problem = self._problem_factory(str(request["problem_id"]))
             assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
-        if astronomy:
-            from benchmarks.sregym.adapter import route_astronomy_traces
-
-            route_astronomy_traces(Path(os.environ["KUBECONFIG"]))
         return reply
 
     if "FASTLOOP_KIND_CONFIG" in os.environ:

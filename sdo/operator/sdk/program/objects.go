@@ -48,6 +48,11 @@ func validateRuntimeAction(action Action) error {
 			return fmt.Errorf("ScaleWorkload requires a named Deployment, StatefulSet or ReplicaSet")
 		}
 		return a.Replicas.Validate()
+	case RetireOldRevision:
+		if a.Ref.APIVersion != "apps/v1" || a.Ref.Kind != "ReplicaSet" || a.Ref.Name == "" || a.Ref.Namespace == "" {
+			return fmt.Errorf("RetireOldRevision requires one named apps/v1 ReplicaSet")
+		}
+		return nil
 	case Exec:
 		if a.Pod.APIVersion != "v1" || a.Pod.Kind != "Pod" || a.Pod.Namespace == "" || a.Pod.Name == "" || a.Container == "" || len(a.Command) == 0 {
 			return fmt.Errorf("Exec requires one named Pod, container and command")
@@ -65,6 +70,11 @@ func validateRuntimeAction(action Action) error {
 	case *ScaleWorkload:
 		if a == nil {
 			return fmt.Errorf("nil ScaleWorkload")
+		}
+		return validateRuntimeAction(*a)
+	case *RetireOldRevision:
+		if a == nil {
+			return fmt.Errorf("nil RetireOldRevision")
 		}
 		return validateRuntimeAction(*a)
 	case *Exec:

@@ -109,78 +109,13 @@ def prepare_oracle_observability(
     return cores
 
 
-def route_astronomy_traces(kubeconfig: Path, *, run: Run = subprocess.run) -> None:
-    """Match stock Jaeger.create_external_name_service after application deployment."""
-    kube = ["kubectl", "--kubeconfig", str(kubeconfig), "-n", "astronomy-shop"]
-    # Stock removes only legacy Jaeger workloads selected by app-name=jaeger.
-    for kind in ("deployment", "statefulset"):
-        run(
-            [*kube, "delete", kind, "-l", "app-name=jaeger", "--ignore-not-found"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=wait_for(WaitKind.SLOW_COMMAND),
-        )
-    changed = False
-    for name in ("jaeger", "jaeger-agent", "jaeger-collector", "jaeger-query"):
-        existing = run(
-            [*kube, "get", "service", name, "--ignore-not-found", "-o", "json"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=wait_for(WaitKind.SLOW_COMMAND),
-        )
-        if existing.stdout.strip():
-            spec = json.loads(existing.stdout).get("spec", {})
-            if (
-                spec.get("type") == "ExternalName"
-                and spec.get("externalName") == "otel-collector.observe.svc.cluster.local"
-            ):
-                continue
-        changed = True
-        run(
-            [*kube, "delete", "service", name, "--ignore-not-found"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=wait_for(WaitKind.SLOW_COMMAND),
-        )
-        run(
-            [
-                *kube,
-                "create",
-                "service",
-                "externalname",
-                name,
-                "--external-name",
-                "otel-collector.observe.svc.cluster.local",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=wait_for(WaitKind.SLOW_COMMAND),
-        )
-
-    if changed:
-        run(
-            [*kube, "rollout", "restart", "daemonset/otel-collector-agent"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=wait_for(WaitKind.SLOW_COMMAND),
-        )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kubeconfig", type=Path, required=True)
     parser.add_argument("--sregym-dir", type=Path, required=True)
     parser.add_argument("--cluster", required=True)
-    parser.add_argument("--route-astronomy-traces", action="store_true")
     args = parser.parse_args()
     cores = prepare_oracle_observability(kubeconfig=args.kubeconfig, sregym_dir=args.sregym_dir, cluster=args.cluster)
-    if args.route_astronomy_traces:
-        route_astronomy_traces(args.kubeconfig)
     print(json.dumps({"lane_cpu_cap": cores, "namespace": "observe"}))
 
 

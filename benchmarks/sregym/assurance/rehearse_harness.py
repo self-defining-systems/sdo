@@ -10,7 +10,11 @@ loop's source mount:
 * ``baseline``: learn a program, then reuse it (the RH3 machinery on the toy app);
 * ``p51-restart-in-pause``: the controller Pod is replaced inside the injection pause;
 * ``p52-source-repair-refresh``: the responder's own source repair moves accepted
-  memory and the judge refresh rewrites a health detector before closure.
+  memory, triggers a judge refresh after its proposal commit, and closure still
+  completes with a strict receipt after that refresh.
+
+Preflight also imports every SREGym worker module in SREGym's own venv: the toy
+never source-deploys, so it cannot catch a worker import that needs SDO's dependencies.
 
 A new harness may switch lanes only after this exits 0 on one lane. The summary
 JSON (``rehearse-harness-summary.json``) records every scenario's checks.
@@ -21,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.fastloop.cli import CLUSTER_OP_TIMEOUT_SECONDS
+from benchmarks.sregym.fastloop.worker_client import worker_import_error
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -49,7 +55,8 @@ DISK_FLOOR_GIB = 110
 #: What the P51 hang looks like in controller logs: resume gave up on a cache that was never started.
 BLIND_RESUME_LINE = "resume observation of namespace"
 BLIND_RESUME_CAUSE = "context deadline exceeded"
-HEALTH_DETECTORS = ".sdo/diagnostics/detectors/health"
+#: Broker subject of a health-judge refresh commit; ``base`` is the accepted commit the refresh was computed on.
+HEALTH_REFRESH_SUBJECT = re.compile(r"^sdo\((?:[a-z-]+-)?health-refresh-[0-9a-f]+-base-(?P<base>[0-9a-f]{40})\)")
 
 
 @dataclass(frozen=True)
@@ -187,23 +194,51 @@ def _is_ancestor(workspace: Path, commit: str) -> bool:
     return _git(workspace, "merge-base", "--is-ancestor", commit, "HEAD").returncode == 0
 
 
+def _refreshes_after(workspace: Path, proposal: str) -> list[tuple[str, datetime]]:
+    """Judge refresh commits that descend from ``proposal`` and were computed on it or a later commit."""
+
+    listed = _git(workspace, "rev-list", "--ancestry-path", "--format=%H %cI %s", f"{proposal}..HEAD")
+    refreshes: list[tuple[str, datetime]] = []
+    for line in listed.stdout.splitlines():
+        commit, _, rest = line.partition(" ")
+        stamp, _, subject = rest.partition(" ")
+        match = HEALTH_REFRESH_SUBJECT.match(subject)
+        if commit == "commit" or match is None:
+            continue
+        base = match.group("base")
+        if base == proposal or _git(workspace, "merge-base", "--is-ancestor", proposal, base).returncode == 0:
+            refreshes.append((commit, datetime.fromisoformat(stamp)))
+    return refreshes
+
+
 def check_source_repair_refresh(ctx: Context) -> list[Check]:
-    """P52: the incident's own source repair is accepted, and the judge refresh rewrote a health detector after it."""
+    """P52: the incident's own source repair is accepted, triggers a judge refresh after its proposal commit, and the
+    closure still completes with a strict receipt after that refresh."""
 
     checks: list[Check] = []
     for receipt in _receipts(ctx.results):
         label = str(receipt.get("incident_id"))
-        proposal, outcome = receipt.get("proposal_commit"), receipt.get("outcome_commit")
+        proposal = receipt.get("proposal_commit")
         checks.append(Check(f"{label}: own source proposal committed", bool(proposal), f"proposal_commit={proposal}"))
-        if not (proposal and outcome):
+        if not proposal:
             continue
-        touched = _git(ctx.workspace, "diff", "--name-only", str(proposal), str(outcome), "--", HEALTH_DETECTORS)
-        names = touched.stdout.split()
+        refreshes = _refreshes_after(ctx.workspace, str(proposal))
         checks.append(
             Check(
-                f"{label}: judge refresh rewrote a health detector",
-                touched.returncode == 0 and bool(names),
-                f"health paths changed between proposal and outcome: {names[:4]}",
+                f"{label}: judge refresh after own proposal",
+                bool(refreshes),
+                f"health refresh commits based on {str(proposal)[:12]} or later: {[c[:12] for c, _ in refreshes]}",
+            )
+        )
+        ledger = receipt.get("native_ledger") or {}
+        ack = (ledger.get("closure_phase_timestamps") or {}).get("closure_ack")
+        acked = bool(ledger.get("acknowledged")) and bool(ack)
+        after = acked and any(datetime.fromisoformat(str(ack)) >= stamp for _, stamp in refreshes)
+        checks.append(
+            Check(
+                f"{label}: closure acknowledged after the refresh",
+                after,
+                f"closure_ack={ack} refreshes_at={[stamp.isoformat() for _, stamp in refreshes]}",
             )
         )
     if not checks:
@@ -365,13 +400,20 @@ def missing_images(tag: str) -> list[str]:
 
 
 def preflight(
-    code_root: Path, *, load: float | None = None, free_gib: float | None = None, absent_images: list[str] | None = None
+    code_root: Path,
+    *,
+    load: float | None = None,
+    free_gib: float | None = None,
+    absent_images: list[str] | None = None,
+    worker_import_error: str | None = None,
 ) -> list[str]:
     """Reasons the gate must not start (empty when it may)."""
 
     problems = []
     if absent_images:
         problems.append(f"missing images {absent_images}; build them from the freeze: {build_command('<tag>')}")
+    if worker_import_error:
+        problems.append(worker_import_error)
     required = ("benchmarks/sregym/fastloop/cli.py", str(FIXTURES / "baseline.json"))
     problems.extend(
         f"{code_root} is not a harness checkout (missing {relative})"
@@ -586,7 +628,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print(dry_run(code_root, run_dir, args.lane, args.image_tag))
         return 0
-    problems = preflight(code_root, absent_images=missing_images(args.image_tag))
+    problems = preflight(
+        code_root, absent_images=missing_images(args.image_tag), worker_import_error=worker_import_error(code_root)
+    )
     if problems:
         print("rehearse-harness refused to start:\n  " + "\n  ".join(problems), file=sys.stderr)
         return 2

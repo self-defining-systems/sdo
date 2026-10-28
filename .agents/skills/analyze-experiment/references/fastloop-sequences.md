@@ -6,8 +6,19 @@
 and exact-repeat pairs through the ordinary guarded fastloop CLI. Each lane owns
 one accepted history; cross-lane transfer is absent. `sequence.json` freezes the
 code SHA, lane, environment and row order. Per-row `manifest.json` records the
-initial seed and accepted commit; `finished.json` adds the observed final commit,
+initial seed and the pre-reset workspace head; `finished.json` adds the observed final commit,
 ancestry, native incident/result/receipt identity and independent oracle verdict.
+For private native lanes, `results/RUN_ID/reset-generation.json`
+(`sdo.fastloop-reset-generation/v1`) is published atomically by the successful
+row-start reset before setup or injection. It binds a unique generation and run
+identity to the actual post-reset `accepted_before`, planned commit, workspace,
+and separate `pre_reset_head`. The sequence consumes that exact attempt's receipt
+and verifies its start against the seed or predecessor's accepted final commit;
+a missing, foreign or inconsistent generation holds without reinjection. It
+never substitutes the requested seed or the journal's pre-reset head for an
+observed reset result. The original ancestry check remains mandatory, so a real
+rewind after reset still blocks advancement.
+
 These bounds describe observed memory, not causal attribution. Continue to use
 the native request and broker receipt for exact incident inputs.
 
@@ -33,7 +44,7 @@ set and the next app's passing `lane_resources` evidence. Missing completion
 means conversion is incomplete; it grants no injection or learning credit.
 
 Single-row SDO results with `cleanup_skipped_reason: row_start_tier2` advance
-without a recovery timestamp/oracle or two cleanup passes. Their independent
+without a recovery timestamp/oracle or a verified cleanup pass. Their independent
 grade is unchanged; the next invocation's attempt marker requires a tier-2 app
 recreate. Acknowledged, correlated learning is still required by the sequence.
 

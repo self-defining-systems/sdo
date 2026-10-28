@@ -8,9 +8,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.runtime import _responder_instructions
 from sdo.agents.deployer import worker
+from sdo.agents.lifecycle import agents as lifecycle_agents
 from sdo.agents.lifecycle.agents import (
     ActiveTopologyResourceDTO,
     CodexLifecycleBackend,
@@ -45,6 +47,7 @@ from sdo.contracts import (
     OperationalMemorySnapshot,
     OutcomeRecord,
     PriorOutcomeEvidence,
+    ReflectionCauseWork,
     ReflectionWorkItem,
     SourceDeploymentRequest,
     StateChange,
@@ -61,6 +64,7 @@ def incident(
     oversized: bool = False,
     pending: bool = False,
     memory: bool = True,
+    real_scale: bool = False,
 ) -> IncidentRequest:
     request = IncidentRequest(
         schema_version="sdo.dev/v1alpha1",
@@ -97,6 +101,10 @@ def incident(
                 primary_resource=ObjectRef(api_version="v1", kind="Service", namespace="toy", name=name),
             )
         )
+        if real_scale:
+            # Live drift fingerprints run to about 150 characters, evidence to several hundred.
+            request.findings[-1].fingerprint = f"drift/apps/v1/Deployment/toy/{name}/" + "f" * 110
+            request.findings[-1].evidence = f"Observed {name} has no ready endpoints; " * 12
         request.detector_history.append(
             DetectorEvaluation(
                 detector_id=f"detector-{index}",
@@ -165,7 +173,121 @@ class ReflectionCapture:
         return self.resume(session_id="", worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
 
 
-def rendered_cases() -> dict[str, str]:
+def _toy_ref(kind: str, name: str, api_version: str = "v1") -> dict[str, str]:
+    return {"api_version": api_version, "kind": kind, "namespace": "toy", "name": name}
+
+
+def live_shaped_reflection(scale: int = 1) -> SimpleNamespace:
+    """A reflection input with the record shapes of a live outcome; ``scale`` multiplies its lists.
+
+    Live outcomes carry few lists of deep records (repair receipts, plan
+    applications, per-cause questions), unlike the flat findings above.
+    """
+    request = incident(2 * scale, warm=True, drift=True, real_scale=scale > 1)
+    request.namespace_onboarding.namespace = "toy"
+    request.namespace_onboarding.accepted_commit = "a" * 40
+    for index in range(26 * scale):
+        request.namespace_onboarding.objects.add(**_toy_ref("ConfigMap", f"toy-config-{index}"))
+        request.namespace_onboarding.environment_objects.add(
+            ref=ObjectRef(**_toy_ref("Service", f"toy-service-{index}")), digest="sha256:" + "e" * 64
+        )
+    for index in range(2 * scale):
+        request.playbook_coverage.matches.add(
+            playbook_id="repair-0",
+            program_revision="r" * 64,
+            explained_finding_fingerprints=[finding.fingerprint for finding in request.findings[index::2]],
+            can_mitigate=True,
+            verified_successes=3,
+        )
+    plan = {"actions": [{"reconcile_from_source": {"ref": _toy_ref("ConfigMap", "toy-config")}}]}
+    outcome = json_format.ParseDict(
+        {
+            "schema_version": 1,
+            "incident_id": request.incident_id,
+            "classification": "success",
+            "findings": [
+                json_format.MessageToDict(item, preserving_proto_field_name=True) for item in request.findings
+            ],
+            "confirmed_root_causes": [
+                {
+                    "summary": "unexplained drift; restore accepted-source differences unless evidence shows "
+                    "intended drift, then verify",
+                    "resources": [_toy_ref("ConfigMap", f"toy-config-{index}")],
+                    "explained_detectors": ["drift.unexplained"],
+                }
+                for index in range(scale)
+            ],
+            "repair_actions": [
+                {
+                    "action_id": f"sdo-program-toy-mitigation-{index}-r1",
+                    "kind": "program-plan",
+                    "target": f"ConfigMap/toy-config-{index}",
+                    "resources": [_toy_ref("ConfigMap", f"toy-config-{index}")],
+                    "summary": "applied program plan action:ReconcileFromSource",
+                    "details": f"controller confirmed 1 applied resource effects in toy-mitigation-{index}-r1",
+                    "started_at": "2026-01-01T00:00:00.000000000Z",
+                    "completed_at": "2026-01-01T00:00:01.000000000Z",
+                    "success": True,
+                }
+                for index in range(3 * scale)
+            ],
+            "plan_applications": [
+                {
+                    "plan": plan,
+                    "applied": True,
+                    "verification": {"result": "RESULT_MATCH"},
+                    "application_id": f"toy-mitigation-{index}-r1",
+                    "program_ids": ["action:ReconcileFromSource"],
+                    "actions_applied": plan["actions"],
+                    "verification_completed": True,
+                    "action_reports": [{"status": "applied"}],
+                }
+                for index in range(2 * scale)
+            ],
+        },
+        OutcomeRecord(),
+    )
+    question = (
+        "No opening detector observed this recorded configuration repair. Propose diagnosis, mitigation and "
+        "detector coverage from its captured before/after transition."
+    )
+    cause_work = [
+        ReflectionCauseWork(
+            cause_index=index,
+            resources=[ObjectRef(**_toy_ref("ConfigMap", f"toy-config-{index}"))],
+            items=[
+                ReflectionWorkItem(
+                    disposition="question",
+                    question=question,
+                    reason="unbound_write",
+                    resources=[ObjectRef(**_toy_ref("ConfigMap", f"toy-config-{index}"))],
+                )
+            ],
+        )
+        for index in range(scale)
+    ]
+    unassigned = [
+        ReflectionWorkItem(
+            disposition="question",
+            question="A repaired resource is outside confirmed cause groups. Review the write without a cause.",
+            reason="unbound_write",
+            resources=[ObjectRef(**_toy_ref("Service", "toy-service"))],
+        )
+    ]
+    return SimpleNamespace(
+        closure=IncidentClosure(request=request),
+        outcome=outcome,
+        cause_work=cause_work,
+        unassigned_work=unassigned,
+    )
+
+
+def rendered_cases(*, scale: int = 1) -> dict[str, str]:
+    """Golden prompts; ``scale`` multiplies findings and lengthens them to live sizes."""
+
+    def scaled(count: int = 2, **options: bool) -> IncidentRequest:
+        return incident(count * scale, real_scale=scale > 1, **options)
+
     prompts: dict[str, str] = {}
     prompts["responder_continuation"] = continuation_prompt(
         json.dumps(
@@ -220,23 +342,24 @@ def rendered_cases() -> dict[str, str]:
         # of the checkout that runs the production builders.
         patch.setattr(codex, "SKILLS_ROOT", Path("/opt/sdo/skills"))
         patch.setattr(reflection, "SKILLS_ROOT", Path("/opt/sdo/skills"))
+        patch.setattr(lifecycle_agents, "SKILLS_ROOT", Path("/opt/sdo/skills"))
         # Prompt size caps count temporary-path characters; the golden root is
         # a fixed input rather than whatever TMPDIR the runner happens to use.
         patch.setattr(tempfile, "tempdir", "/tmp")
         for name in ("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "SDO_LATE_FINDINGS", "SDO_API_HISTORY_DIR"):
             patch.delenv(name, raising=False)
         for name, request in {
-            "cold_two": incident(memory=False),
-            "cold_five": incident(5, memory=False),
-            "surfaced": incident(),
-            "warm": incident(warm=True),
-            "warm_pending": incident(warm=True, pending=True),
-            "drift": incident(drift=True),
-            "oversized": incident(5, oversized=True),
-            "warm_oversized": incident(warm=True, oversized=True),
+            "cold_two": scaled(memory=False),
+            "cold_five": scaled(5, memory=False),
+            "surfaced": scaled(),
+            "warm": scaled(warm=True),
+            "warm_pending": scaled(warm=True, pending=True),
+            "drift": scaled(drift=True),
+            "oversized": scaled(5, oversized=True),
+            "warm_oversized": scaled(warm=True, oversized=True),
         }.items():
             prompts[f"responder_{name}"] = responder_prompt(request)
-        matched = incident(5, warm=True)
+        matched = scaled(5, warm=True)
         matched.initial_program_runs.add(
             program_id="repair-0",
             can_mitigate=True,
@@ -250,7 +373,7 @@ def rendered_cases() -> dict[str, str]:
             mitigation_selection="restore-port",
             verified_successes=2,
             verified_failures=1,
-            explained_finding_fingerprints=["fingerprint-0"],
+            explained_finding_fingerprints=[matched.findings[0].fingerprint],
         )
         match.bindings.add(name="service").object.CopyFrom(matched.findings[0].primary_resource)
         matched.playbook_coverage.unexplained_finding_fingerprints.extend(
@@ -259,15 +382,15 @@ def rendered_cases() -> dict[str, str]:
         prompts["responder_matched_programs"] = responder_prompt(matched)
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
         patch.setenv("SDO_LATE_FINDINGS", "pull")
-        prompts["responder_optional"] = responder_prompt(incident())
+        prompts["responder_optional"] = responder_prompt(scaled())
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", _responder_instructions())
-        prompts["responder_transport"] = responder_prompt(incident())
+        prompts["responder_transport"] = responder_prompt(scaled())
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
 
         for mode in ("resume", "fresh", "retry"):
             for count in (2, 5):
                 capture = ReflectionCapture()
-                request = incident(count, warm=True, drift=True)
+                request = scaled(count, warm=True, drift=True)
                 closure = IncidentClosure(
                     request=request,
                     result=IncidentResult(
@@ -306,7 +429,7 @@ def rendered_cases() -> dict[str, str]:
             outcome=OutcomeRecord(schema_version=1, incident_id="toy-incident", classification="failed"),
             history=[],
             outcome_commit="d" * 40,
-            closure=IncidentClosure(request=incident(5)),
+            closure=IncidentClosure(request=scaled(5)),
             unassigned_work=[
                 ReflectionWorkItem(
                     program_id="repair-0",
@@ -317,6 +440,20 @@ def rendered_cases() -> dict[str, str]:
             ],
         )
         prompts["reflection_cause_work"] = capture.prompt
+        live_capture = ReflectionCapture()
+        live = live_shaped_reflection(scale)
+        SessionReflector(live_capture).resume(
+            session_id="toy-session",
+            incident_id="toy-incident",
+            worktree=Path("/application"),
+            outcome=live.outcome,
+            history=[],
+            outcome_commit="d" * 40,
+            closure=live.closure,
+            cause_work=live.cause_work,
+            unassigned_work=live.unassigned_work,
+        )
+        prompts["reflection_live_shape"] = live_capture.prompt
 
         prompts["reflection_memory_check_correction"] = reflection.memory_check_correction(
             ValidationResult(1, False, "reflection.program-required: verified cause 1 lacks replay coverage", ""),
@@ -349,7 +486,7 @@ def rendered_cases() -> dict[str, str]:
                 pass
 
         for count in (2, 5):
-            closure = IncidentClosure(request=incident(count, oversized=True))
+            closure = IncidentClosure(request=scaled(count, oversized=True))
             prompts[f"reflection_brief_{count}"] = incident_brief(
                 closure, worktree=Path("/application"), detector_detail=True, event_dependence=True
             )
@@ -446,4 +583,5 @@ def rendered_cases() -> dict[str, str]:
         result_type="IncidentResultValidationError",
         diagnostic="status: invalid value",
     )
+    prompts["incident_verified_final"] = render_prompt("responder", "verified_final", part="session.instructions")
     return prompts

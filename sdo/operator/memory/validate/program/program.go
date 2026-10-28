@@ -119,14 +119,10 @@ func inspect(workspace, module, detectors string, adoption bool) ([]Spec, error)
 		if err := checkProgramReadme(string(readme)); err != nil {
 			return nil, fmt.Errorf("playbook %s README: %w", ID, err)
 		}
-		var metadata struct {
-			FaultClass string `yaml:"fault_class"`
-		}
-		if err := parseProgramFrontmatter(readme, &metadata); err != nil {
+		// fault_class is derived from the ID (layout.PlaybookFaultClass) and
+		// normalized before validation; it is never a program rejection.
+		if err := parseProgramFrontmatter(readme, &struct{}{}); err != nil {
 			return nil, fmt.Errorf("playbook %s README: %w", ID, err)
-		}
-		if metadata.FaultClass != ID {
-			return nil, fmt.Errorf("playbook %s fault_class must match its ID", ID)
 		}
 		methods := map[string]map[string]bool{}
 		for _, path := range files {

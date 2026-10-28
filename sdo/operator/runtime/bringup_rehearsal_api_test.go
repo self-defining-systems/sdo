@@ -186,7 +186,7 @@ func bringupRehearsalAPI(t *testing.T, client *fake.Clientset, install func() er
 					}
 				}
 			}
-			send(200, &metav1.Status{Status: "Success", Code: 200})
+			send(200, &metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: "Success", Code: 200})
 		case http.MethodPost, http.MethodPut:
 			obj, err := scheme.Scheme.New(gvk)
 			if err != nil {

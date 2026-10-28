@@ -41,6 +41,8 @@ def _tool(turn: Turn, *args: str) -> dict[str, Any]:
     first = output.splitlines()[0] if output else ""
     try:
         response = json.loads(first)
+        if isinstance(response, dict) and response.get("summarized") and response.get("details_file"):
+            response = json.loads(Path(response["details_file"]).read_text())
     except json.JSONDecodeError as exc:
         raise PlanError(f"sdo {args[0]} returned no JSON (exit {code}): {output[:300]!r}") from exc
     if not isinstance(response, dict) or response.get("error"):
