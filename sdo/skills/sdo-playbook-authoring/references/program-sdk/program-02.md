@@ -22,6 +22,8 @@ type Diagnoser interface {
 
 type Diff = sdk.SourceDiff
     Diff is the shared accepted-source or baseline comparison result.
+    A delete-style Diagnose matches on diff.PresentButNotInSource(), not
+    SourceAbsent, which stays true after the delete.
 
 type EnsureDatabaseUser struct {
 	Target   DatabaseTarget
@@ -308,15 +310,4 @@ type RestartRollout struct {
 }
 
 type Result string
-
-const (
-	Match          Result = "Match"
-	NoMatch        Result = "NoMatch"
-	Unknown        Result = "Unknown"
-	NeedsJudgement Result = "NeedsJudgement"
-)
-type Rollback struct {
-	Ref        sdk.ObjectRef
-	ToRevision string
-}
 ```
