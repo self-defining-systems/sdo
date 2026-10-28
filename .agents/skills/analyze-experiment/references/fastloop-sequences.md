@@ -44,7 +44,7 @@ set and the next app's passing `lane_resources` evidence. Missing completion
 means conversion is incomplete; it grants no injection or learning credit.
 
 Single-row SDO results with `cleanup_skipped_reason: row_start_tier2` advance
-without a recovery timestamp/oracle or two cleanup passes. Their independent
+without a recovery timestamp/oracle or a verified cleanup pass. Their independent
 grade is unchanged; the next invocation's attempt marker requires a tier-2 app
 recreate. Acknowledged, correlated learning is still required by the sequence.
 
