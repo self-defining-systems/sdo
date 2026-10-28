@@ -38,3 +38,4 @@ def test_nightly_runs_the_same_planner_overflow():
     jobs = yaml.safe_load((ROOT / ".github/workflows/nightly-fuzz.yml").read_text())["jobs"]
     assert "prepare-go" in jobs["overflow"]["needs"]
     assert any("nightly --plan" in s.get("run", "") for s in jobs["overflow"]["steps"])
+    assert any("scripts/test_go_integration.sh nightly" in s.get("run", "") for s in jobs["python-overflow"]["steps"])
