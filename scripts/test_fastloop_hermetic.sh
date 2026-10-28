@@ -59,6 +59,7 @@ runtime_status=0
             tests/unit/sdo/agents/responder/test_writer_termination.py \
             tests/unit/sdo/agents/test_health_judge_worker.py \
             tests/unit/sdo/agents/responder/test_result_publisher.py \
+            tests/unit/sdo/agents/responder/test_incident_context.py \
             tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py \
             tests/unit/benchmarks/sregym/fastloop/test_fastloop_loop.py \
             tests/unit/benchmarks/sregym/fastloop/test_fastloop_cli.py::test_native_install_runs_without_a_selective_reset_because_the_row_start_wipe_owns_it \
