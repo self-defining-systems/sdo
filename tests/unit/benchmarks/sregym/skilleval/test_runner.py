@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from benchmarks.sregym.skilleval.metrics import (
     Usage,
+    check_replay_notes,
     disallowed_paths,
     hand_repairs,
     memory_check_passed,
@@ -183,3 +185,23 @@ def test_replay_judges_each_case_by_its_own_root_cause_programs() -> None:
     ]  # fmt: skip
 
     assert replay_failures(rows) == (2, ["b: drift faulted=Unknown"])
+
+
+def test_check_replay_notes_keep_this_incidents_cases() -> None:
+    stdout = json.dumps(
+        {
+            "mitigation_replay_notes": [
+                {
+                    "program_id": "drift",
+                    "case_id": "a",
+                    "status": "STATUS_REPLAYED",
+                    "effects": ["replay status: replayed", "open diagnosis: Match", "post diagnosis: NoMatch"],
+                },
+                {"program_id": "drift", "case_id": "older", "status": "STATUS_REPLAYED", "effects": []},
+            ]
+        }
+    )
+
+    assert check_replay_notes({"stdout": stdout}, ["a"]) == [
+        {"program_id": "drift", "case_id": "a", "status": "STATUS_REPLAYED", "open": "Match", "post": "NoMatch"}
+    ]

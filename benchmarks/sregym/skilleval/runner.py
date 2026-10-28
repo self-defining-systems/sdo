@@ -31,6 +31,7 @@ from typing import Any
 from benchmarks.sregym.skilleval.metrics import (
     RunMetrics,
     Usage,
+    check_replay_notes,
     decision_kind,
     disallowed_paths,
     hand_repairs,
@@ -316,6 +317,7 @@ def collect(scenario_dir: Path, run_dir: Path, *, label: str, wall_seconds: floa
         replay_cases=list(summary.get("replay_cases") or []),
         replay_exit_code=replay.get("exit_code"),
         replay_rows=replay_verdicts(str(replay.get("stdout") or "")),
+        check_replay=check_replay_notes(summary.get("memory_check"), list(summary.get("replay_cases") or [])),
     )
 
 

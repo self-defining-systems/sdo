@@ -113,6 +113,34 @@ def replay_failures(rows: list[dict[str, Any]]) -> tuple[int, list[str]]:
     return len(cases), [problem for problems in cases.values() for problem in problems]
 
 
+def check_replay_notes(check: dict[str, Any] | None, cases: list[str]) -> list[dict[str, str]]:
+    """The production check's own replay of this incident's cases: status, open and post diagnosis."""
+
+    try:
+        document = json.loads(str((check or {}).get("stdout") or ""))
+    except ValueError:
+        return []
+    notes = []
+    for note in document.get("mitigation_replay_notes") or []:
+        if note.get("case_id") not in cases:
+            continue
+        effects = {
+            key.strip(): value.strip()
+            for key, _, value in (effect.partition(":") for effect in note.get("effects") or [])
+            if key.strip() in ("open diagnosis", "post diagnosis")
+        }
+        notes.append(
+            {
+                "program_id": str(note.get("program_id")),
+                "case_id": str(note.get("case_id")),
+                "status": str(note.get("status")),
+                "open": effects.get("open diagnosis", ""),
+                "post": effects.get("post diagnosis", ""),
+            }
+        )
+    return notes
+
+
 def memory_check_passed(check: dict[str, Any] | None) -> bool | None:
     if not check:
         return None
@@ -136,6 +164,7 @@ class RunMetrics:
     replay_cases: list[str] = field(default_factory=list)
     replay_exit_code: int | None = None
     replay_rows: list[dict[str, Any]] = field(default_factory=list)
+    check_replay: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def replay(self) -> dict[str, Any]:
