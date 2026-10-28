@@ -4,7 +4,7 @@ Example::
 
     uv run python -m benchmarks.sregym.skilleval.runner \\
         --scenarios /mnt/data/shli/sdo-exp/mixed10/skilleval/scenarios \\
-        --skills sdo/skills --label baseline --repeat 2 --parallel 6 \\
+        --skills sdo/skills --label baseline --repeat 2 --parallel 3 \\
         --out /mnt/data/shli/sdo-exp/mixed10/skilleval/runs
 
 Each run copies the scenario, mounts it into the scenario's recorded responder
@@ -12,6 +12,10 @@ image exactly where the live reflection Job had it, mounts ``--skills`` over the
 image's skills root, resumes the responder's Codex session with the recorded
 reflection request (codex, model from the scenario's recorded configuration) and
 records cost, the independent memory check, the diff and replay verdicts.
+
+The host is shared with experiment lanes: at most three runs at once, each
+container at nice 10 with GOMAXPROCS=4, and a run starts only while the 1-minute
+load average is below 40.
 """
 
 from __future__ import annotations
@@ -22,11 +26,12 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.skilleval.metrics import (
     RunMetrics,
@@ -41,7 +46,16 @@ from benchmarks.sregym.skilleval.metrics import (
 )
 from benchmarks.sregym.skilleval.scenario import Scenario
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 ENTRY = Path(__file__).with_name("container_entry.py")
+# Shared-host budget (user, 2026-10-28): runs yield to experiment lanes.
+MAX_PARALLEL = 3
+START_LOAD_LIMIT = 40.0
+CONTAINER_NICE = "10"
+CONTAINER_GOMAXPROCS = "4"
+START_SETTLE_SECONDS = 20.0
 DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_BUDGET_SECONDS = 40 * 60
 CONTAINER_UID = os.getuid()
@@ -95,8 +109,9 @@ def prepare_toolchain(image: str, cache: Path) -> Path:
             "docker", "run", "--rm", "--user", f"{CONTAINER_UID}:{CONTAINER_GID}",
             "-v", f"{staging / 'go'}:/usr/local/go:ro", "-v", f"{staging / 'cache'}:/go:ro",
             "-v", f"{staging / 'bin'}:/out", "-e", "HOME=/tmp", "-e", "GOCACHE=/tmp/go-cache",
-            "-w", "/opt/sdo/sdo/operator", "--entrypoint", "go", image,
-            "build", "-o", "/out/sdo-replay", "./cmd/sdo-replay",
+            "-e", f"GOMAXPROCS={CONTAINER_GOMAXPROCS}",
+            "-w", "/opt/sdo/sdo/operator", "--entrypoint", "nice", image,
+            "-n", CONTAINER_NICE, "go", "build", "-o", "/out/sdo-replay", "./cmd/sdo-replay",
         ],
         check=True,
     )  # fmt: skip
@@ -168,6 +183,7 @@ def docker_command(
         "SDO_AGENT_GUIDANCE": "go",
         "SDO_MEMORY_VALIDATION": "go",
         "SKILLEVAL_EXTRA_SKILLS": ",".join(extra_skills),
+        "GOMAXPROCS": CONTAINER_GOMAXPROCS,
         "SKILLEVAL_POST_ONLY": "1" if post_only else "0",
     }
     if (run_dir / "session" / "api-history").is_dir():
@@ -185,7 +201,22 @@ def docker_command(
         command += ["-v", f"{source}:{target}"]
     for key, value in sorted(environment.items()):
         command += ["-e", f"{key}={value}"]
-    return [*command, "--entrypoint", "python3", scenario.image, "/skilleval/entry.py"]
+    # nice inside the container: the docker CLI's priority does not reach the container's processes.
+    return [*command, "--entrypoint", "nice", scenario.image, "-n", CONTAINER_NICE, "python3", "/skilleval/entry.py"]
+
+
+def wait_for_host_load(
+    limit: float = START_LOAD_LIMIT,
+    *,
+    load: Callable[[], float] = lambda: os.getloadavg()[0],
+    sleep: Callable[[float], None] = time.sleep,
+    poll_seconds: float = 30.0,
+) -> None:
+    """Block until the 1-minute load average is below ``limit``."""
+
+    while (current := load()) >= limit:
+        print(f"host load {current:.1f} >= {limit:g}; waiting to start the next run", file=sys.stderr, flush=True)
+        sleep(poll_seconds)
 
 
 def _fresh_task(scenario_dir: Path, destination: Path, budget_seconds: int) -> None:
@@ -357,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--table-only", action="store_true", help="only rebuild the label's table under --out")
-    parser.add_argument("--parallel", type=int, default=4)
+    parser.add_argument("--parallel", type=int, default=MAX_PARALLEL, help=f"at most {MAX_PARALLEL}")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS)
@@ -366,6 +397,8 @@ def main(argv: list[str] | None = None) -> int:
         "--toolchain-cache", type=Path, default=Path("/mnt/data/shli/cache/skilleval-toolchain"), help="extracted Go"
     )
     args = parser.parse_args(argv)
+    if not 1 <= args.parallel <= MAX_PARALLEL:
+        parser.error(f"--parallel must be between 1 and {MAX_PARALLEL} on this shared host")
     if not (args.skills / "sdo-memory" / "SKILL.md").is_file():
         parser.error(f"{args.skills} is not a skills root (no sdo-memory/SKILL.md)")
     if (args.scenarios / "scenario.json").is_file():
@@ -389,8 +422,16 @@ def main(argv: list[str] | None = None) -> int:
             if (run / "metrics.json").is_file()
         ]
 
+    start_gate = threading.Lock()
+    last_start = [0.0]
+
     def launch(job: tuple[Path, int]) -> dict[str, Any]:
         path, index = job
+        with start_gate:
+            # One start at a time: let the load average see the previous start, then require load1 < limit.
+            time.sleep(max(0.0, last_start[0] + START_SETTLE_SECONDS - time.monotonic()))
+            wait_for_host_load()
+            last_start[0] = time.monotonic()
         try:
             if args.remeasure:
                 metrics = remeasure(
