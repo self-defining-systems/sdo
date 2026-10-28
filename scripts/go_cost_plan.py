@@ -36,6 +36,9 @@ def validate_costs(costs: dict[str, float]) -> None:
 
 
 def check_budget(names: list[str], costs: dict[str, float], *, budget: float = BUDGET) -> None:
+    if not math.isfinite(budget) or budget <= 0:
+        raise ValueError("budget must be finite and positive")
+    validate_costs(costs)
     total = sum(costs.get(name, DEFAULT_COST) for name in names)
     if total > budget:
         raise ValueError(f"shard cost {total:.2f}s exceeds {budget:.2f}s work budget; regenerate the CI plan")
@@ -43,9 +46,7 @@ def check_budget(names: list[str], costs: dict[str, float], *, budget: float = B
 
 def pack(names: list[str], costs: dict[str, float], *, budget: float = BUDGET) -> tuple[list[list[str]], list[str]]:
     """First-fit decreasing grows capacity, never a job deadline or placement list."""
-    if not math.isfinite(budget) or budget <= 0:
-        raise ValueError("budget must be finite and positive")
-    validate_costs(costs)
+    check_budget([], costs, budget=budget)
     if len(names) != len(set(names)):
         raise ValueError("inventory contains duplicate names")
     bins: list[list[str]] = []

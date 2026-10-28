@@ -44,6 +44,8 @@ def test_single_test_over_budget_runs_nightly():
 def test_invalid_measurements_fail_closed(cost):
     with pytest.raises(ValueError, match="cost"):
         planner.pack(["TestOne"], {"TestOne": cost}, budget=210)
+    with pytest.raises(ValueError, match="cost"):
+        planner.check_budget(["TestOne"], {"TestOne": cost}, budget=210)
 
 
 def test_duplicate_test_names_cannot_receive_two_owners(tmp_path, monkeypatch):
