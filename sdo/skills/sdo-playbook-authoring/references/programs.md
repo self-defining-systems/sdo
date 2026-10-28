@@ -5,6 +5,7 @@ mitigation returns typed actions. Import shared SDK helpers (`sdk/observe`, `sdk
 Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
 Detectors detect continuously; playbook Diagnose runs only while handling their findings, using one finding-bound assignment. Read additional objects through ReadView by name or relation.
+Health findings name no roles, so declare one role per object kind: two roles of one kind (aliases) never bind and are refused at save.
 Detectors call `ctx.DiffAgainstSource(ref)` before selection, then bind playbooks through findings.
 `Changed` covers field drift; `SourceAbsent` confirms absence. Unavailable evidence errors.
 Both contexts share recorded comparisons.

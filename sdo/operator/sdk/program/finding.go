@@ -70,6 +70,49 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error) {
 	return b, nil
 }
 
+// CheckFindingRoles rejects object roles that no unnamed finding can bind.
+// Health and generated detectors never name roles: BindFinding fills a role
+// from such a finding only when it is the one unbound role of its kind. So for
+// each declared kind, a finding on one object of that kind (with one object of
+// every other declared kind as related resources) must bind a role of that
+// kind. Kinds where BindFinding refuses the probe need named ParameterBindings
+// from an incident detector, as for a required pair of one kind; those stay
+// allowed. Two optional roles of one kind (aliases) never bind and are refused.
+func CheckFindingRoles(spec ProgramSpec) error {
+	var kinds []Kind
+	roles := map[Kind][]string{}
+	for _, p := range spec.Params {
+		if p.Kind == "" {
+			continue
+		}
+		if roles[p.Kind] == nil {
+			kinds = append(kinds, p.Kind)
+		}
+		roles[p.Kind] = append(roles[p.Kind], p.Name)
+	}
+	for _, kind := range kinds {
+		finding := sdk.Finding{PrimaryResource: sdk.ObjectRef{Kind: string(kind), Name: "finding-object"}}
+		for _, other := range kinds {
+			if other != kind {
+				finding.RelatedResources = append(finding.RelatedResources, sdk.ObjectRef{Kind: string(other), Name: "related-object"})
+			}
+		}
+		bound, err := BindFinding(spec, finding)
+		if err != nil {
+			continue
+		}
+		filled := false
+		for _, name := range roles[kind] {
+			_, ok := bound.Objects[name]
+			filled = filled || ok
+		}
+		if !filled {
+			return fmt.Errorf("program.finding-bindings: program %q: roles %v are all %s, so a finding on one %s binds none of them; declare one role per kind and read other objects through ReadView", spec.ID, roles[kind], kind, kind)
+		}
+	}
+	return nil
+}
+
 type objectIdentity struct{ kind, namespace, name string }
 
 func identity(ref sdk.ObjectRef) objectIdentity {

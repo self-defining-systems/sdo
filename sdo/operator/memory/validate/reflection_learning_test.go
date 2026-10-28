@@ -55,12 +55,11 @@ func TestReflectionLearnsFromSessionFixtureWithoutControllerCapture(t *testing.T
 	if len(ds) != 0 {
 		t.Fatalf("a finding that binds the program's roles must link it without a detector list: %v", ds)
 	}
-	// A finding on another object cannot bind the program; then only a
-	// detector list links it.
+	// A finding on another object cannot bind the program.
 	bound := outcome.Findings
-	outcome.Findings = []*contracts.Finding{{DetectorId: "fixture", Status: "active", Fingerprint: "other", PrimaryResource: &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "other"}}}
+	other := &contracts.Finding{DetectorId: "fixture", Status: "active", Fingerprint: "other", PrimaryResource: &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "other"}}
+	outcome.Findings = []*contracts.Finding{other}
 	ds = ReflectionCoverageGaps(root, outcome, decision)
-	outcome.Findings = bound
 	if len(ds) != 1 || ds[0].Rule != "reflection.detector-required" {
 		t.Fatalf("unlinked program gap not recorded: %v", ds)
 	}
@@ -68,14 +67,23 @@ func TestReflectionLearnsFromSessionFixtureWithoutControllerCapture(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A shared detector covers both its old playbook and the learned program.
+	// Listing the playbook does not bind its roles: the automatic stage would
+	// diagnose it unbound on every repeat, so the gap stays.
 	detectors[0].Manifest.PossiblePlaybooks = append(detectors[0].Manifest.PossiblePlaybooks, "service-targetport-mismatch")
 	if err := layout.WriteDetector(root, detectors[0]); err != nil {
 		t.Fatal(err)
 	}
 	ds = ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 1 || ds[0].Rule != "reflection.detector-required" {
+		t.Fatalf("a detector list without role bindings hid the gap: %v", ds)
+	}
+	// The finding's explicit role binding links it.
+	other.ParameterBindings = map[string]*contracts.ObjectRef{"service": {Kind: "Service", Namespace: "demo", Name: "front"}}
+	ds = ReflectionCoverageGaps(root, outcome, decision)
+	other.ParameterBindings = nil
+	outcome.Findings = bound
 	if len(ds) != 0 {
-		t.Fatalf("shared detector and session fixture left a gap: %v", ds)
+		t.Fatalf("a finding that binds the role left a gap: %v", ds)
 	}
 	if err := os.Remove(filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch/mitigate.go")); err != nil {
 		t.Fatal(err)
@@ -94,6 +102,54 @@ func TestReflectionLearnsFromSessionFixtureWithoutControllerCapture(t *testing.T
 	ds = ReflectionCoverageGaps(root, outcome, decision)
 	if len(ds) != 2 {
 		t.Fatalf("unrelated cause gap not recorded: %v", ds)
+	}
+}
+
+// The reflection link is the automatic stage's binding rule (program.BindFinding):
+// a learned program is linked only when one incident finding binds every role
+// its recorded case binds to the same object. Every other shape leaves the
+// stage diagnosing the program unbound on every repeat (the webhook CA program
+// whose detector listed it but bound only the Namespace never ran).
+func TestReflectionDetectorLinkIsTheStageBindingRule(t *testing.T) {
+	root := t.TempDir()
+	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
+	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, detector := range detectors {
+		if !slices.Contains(detector.Manifest.PossiblePlaybooks, "service-targetport-mismatch") {
+			detector.Manifest.PossiblePlaybooks = append(detector.Manifest.PossiblePlaybooks, "service-targetport-mismatch")
+		}
+		if err := layout.WriteDetector(root, detector); err != nil {
+			t.Fatal(err)
+		}
+	}
+	front := &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "front"}
+	peer := &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "peer"}
+	namespace := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Namespace", Name: "demo"}
+	for _, tc := range []struct {
+		name    string
+		finding *contracts.Finding
+		linked  bool
+	}{
+		{"primary", &contracts.Finding{PrimaryResource: front}, true},
+		{"unique related", &contracts.Finding{PrimaryResource: namespace, RelatedResources: []*contracts.ObjectRef{front}}, true},
+		{"parameter binding", &contracts.Finding{PrimaryResource: namespace, ParameterBindings: map[string]*contracts.ObjectRef{"service": front}}, true},
+		{"listed playbook only", &contracts.Finding{PrimaryResource: namespace, PlaybookIds: []string{"service-targetport-mismatch"}}, false},
+		{"ambiguous kind", &contracts.Finding{PrimaryResource: peer, RelatedResources: []*contracts.ObjectRef{front}}, false},
+		{"other object", &contracts.Finding{PrimaryResource: peer}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{front}}}}
+			addSyntheticFindingRepairProof(outcome)
+			tc.finding.DetectorId, tc.finding.Status, tc.finding.Fingerprint = "fixture", "active", "case"
+			outcome.Findings = []*contracts.Finding{tc.finding}
+			ds := ReflectionCoverageGaps(root, outcome, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}})
+			if tc.linked != (len(ds) == 0) || (!tc.linked && (len(ds) != 1 || ds[0].Rule != RuleReflectionDetectorRequired)) {
+				t.Fatalf("linked=%v, gaps=%v", tc.linked, ds)
+			}
+		})
 	}
 }
 

@@ -197,6 +197,11 @@ type SourceDiff struct {
     resource. Missing source or observation evidence is an error, never a clean
     comparison.
 
+func (d SourceDiff) PresentButNotInSource() bool
+    PresentButNotInSource is true only while the object exists live and accepted
+    source lacks it; unlike SourceAbsent it is false once the object is deleted,
+    so use it as the Diagnose match for delete-style repairs.
+
 type WatchKind struct {
 	APIVersion string
 	Kind       string

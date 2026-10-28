@@ -128,6 +128,27 @@ func (r acceptedResource) recordInstanceAcceptance(ctx context.Context, ref sdk.
 	return err
 }
 
+// defaultRenderSuffix names the probe object of renderDefaults; dry-run never
+// persists it.
+const defaultRenderSuffix = "-sdo-default-render"
+
+// renderDefaults is the server's dry-run create of accepted source alone, under
+// a probe name no live object has: every field the server fills in carries its
+// default value. Recreated objects use it to tell a default from a writer's
+// value. Any refusal leaves the caller without defaults (fail closed).
+func (r acceptedResource) renderDefaults(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	probe := ref
+	probe.Name = ref.Name + defaultRenderSuffix
+	if len(probe.Name) > 253 {
+		return nil, fmt.Errorf("default render name for %s/%s is too long", ref.Kind, ref.Name)
+	}
+	object := source.DeepCopy()
+	object.SetName(probe.Name)
+	object.SetAnnotations(nil)
+	at := acceptedResource{client: r.client, path: strings.TrimSuffix(r.path, "/"+ref.Name) + "/" + probe.Name, namespaced: r.namespaced}
+	return at.applyAs(ctx, probe, object, true, "sdo-deployer")
+}
+
 func (r acceptedResource) applyAs(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool, manager string) (*unstructured.Unstructured, error) {
 	patch, err := json.Marshal(source.Object)
 	if err != nil {
