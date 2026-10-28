@@ -119,7 +119,8 @@ private accepted checkout; the branch, not a host path, is the shared history. C
 branch commits. `sdo(sync): merge accepted memory` commits join history accepted while GitHub was
 unreachable; a `<branch>-unmerged-<commit>` branch holds offline history that overlapped a peer and
 was not merged (a lane-private divergence to report). Controller logs `memory upstream ...
-unavailable` mark those windows.
+unavailable` mark those windows. The playbook index is regenerated from the combined playbooks;
+its changes alone never count as overlapping authored memory.
 
 `fastloop parallel` joins ordinary per-lane rows into output `incidents.jsonl`
 and CSV. `parallel_plan.json` records order/provider/model; `parallel_result.json`

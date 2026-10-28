@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
+	"sdo.dev/operator/memory/layout"
 )
 
 const upstreamBranch = "live/20261028-synthetic"
@@ -199,6 +201,20 @@ func TestUpstreamUnavailableKeepsPublishingLocallyAndCatchesUp(t *testing.T) {
 	head := remoteHead(t, remote)
 	if git(t, rootA, "rev-parse", "HEAD") != head || git(t, rootB, "rev-parse", "HEAD") != head {
 		t.Fatal("lanes did not converge after the remote returned")
+	}
+	generated, err := layout.GeneratePlaybookIndex(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(filepath.Join(rootA, layout.PlaybookIndexFile))
+	if err != nil || !bytes.Equal(actual, generated) {
+		t.Fatalf("converged playbook index is not canonical: %s, %v", actual, err)
+	}
+	index := git(t, rootA, "show", "HEAD:.sdo/playbooks/README.md")
+	for _, entry := range []string{"alpha/README.md", "beta/README.md"} {
+		if !strings.Contains(index, entry) {
+			t.Fatalf("converged index lost %s: %s", entry, index)
+		}
 	}
 	for _, commit := range []string{local.Commit, peer.Commit} {
 		if _, err := runGit(context.Background(), rootA, "merge-base", "--is-ancestor", commit, head); err != nil {
