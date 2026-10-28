@@ -54,18 +54,18 @@ message DriftField {
 message DriftEvent {
   ObjectRef ref = 1;
   repeated DriftField fields = 2;
-  string source = 3;
+  string source = 3 [(controller_owned) = true];
   string manager = 4;
-  string operation = 5;
-  google.protobuf.Timestamp observed_at = 6;
+  string operation = 5 [(controller_owned) = true];
+  google.protobuf.Timestamp observed_at = 6 [(controller_owned) = true];
   string classification = 7 [(buf.validate.field).string = {in: ["fault", "unexplained"]}];
-  string program_id = 8;
-  google.protobuf.Timestamp manager_at = 9;
-  string investigation_status = 10;
+  string program_id = 8 [(controller_owned) = true];
+  google.protobuf.Timestamp manager_at = 9 [(controller_owned) = true];
+  string investigation_status = 10 [(controller_owned) = true];
   string investigation_verdict = 11 [(buf.validate.field).string = {in: ["", "bug", "benign", "unsure"]}];
   string investigation_reason = 12;
   repeated DriftEvidence investigation_evidence = 13;
-  string investigation_capture_id = 14;
+  string investigation_capture_id = 14 [(controller_owned) = true];
 }
 
 message DriftEvidence {
@@ -414,9 +414,9 @@ message RepairActionReceipt {
   // Controller ownerReference chains of written resources, read from the
   // live object before the write. Cause attribution follows these chains,
   // never generated names.
-  repeated ResourceOwners owners = 12;
+  repeated ResourceOwners owners = 12 [(controller_owned) = true];
   // Controller-recorded SHA256 of the exact executed RunScript bytes.
-  string script_digest = 13;
+  string script_digest = 13 [(controller_owned) = true];
 }
 
 // ResourceOwners is one written resource's controller owner chain, nearest
@@ -441,7 +441,7 @@ message IncidentResult {
   repeated AppliedPlaybook applied_playbooks = 5;
   repeated string repair_changes = 6;
   repeated RepairActionReceipt repair_actions = 7;
-  repeated DetectorEvaluation final_detector_states = 8;
+  repeated DetectorEvaluation final_detector_states = 8 [(controller_owned) = true];
   repeated string proposed_artifact_ids = 9;
   repeated VerificationEvidence verification_evidence = 10;
   UsageMetrics usage = 11 [(buf.validate.field).required = true];
@@ -449,20 +449,20 @@ message IncidentResult {
   optional string responder_session_id = 13;
   optional string error = 14;
   LateFindingsPull late_findings_pull = 15;
-  repeated ProgramToolCall program_tool_calls = 16;
-  repeated ProgramRun program_runs = 17;
-  repeated PlanApplication plan_applications = 18;
-  int32 response_loops_used = 19;
-  bool response_loop_exhausted = 20;
-  repeated string program_failure_signals = 21;
-  string resolution_path = 22 [(buf.validate.field).string = {in: ["", "responder", "deterministic"]}];
+  repeated ProgramToolCall program_tool_calls = 16 [(controller_owned) = true];
+  repeated ProgramRun program_runs = 17 [(controller_owned) = true];
+  repeated PlanApplication plan_applications = 18 [(controller_owned) = true];
+  int32 response_loops_used = 19 [(controller_owned) = true];
+  bool response_loop_exhausted = 20 [(controller_owned) = true];
+  repeated string program_failure_signals = 21 [(controller_owned) = true];
+  string resolution_path = 22 [(controller_owned) = true, (buf.validate.field).string = {in: ["", "responder", "deterministic"]}];
   reserved 23;
   reserved 24;
   reserved 25;
   repeated DriftEvent drift_events = 26;
   // Controller verification at terminal responder completion, never worker authority.
-  repeated Finding unresolved_findings = 27;
-  DriftReprompt drift_reprompt = 28;
+  repeated Finding unresolved_findings = 27 [(controller_owned) = true];
+  DriftReprompt drift_reprompt = 28 [(controller_owned) = true];
 }
 
 // A responder claim that it read controller-published findings during its turn.
