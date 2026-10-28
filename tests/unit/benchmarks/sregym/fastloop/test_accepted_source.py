@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +10,6 @@ import pytest
 import yaml
 
 from benchmarks.sregym.fastloop.accepted_source import (
-    CLUSTER_SCOPED_KINDS,
     AcceptedSource,
     manifest_paths_for,
 )
@@ -103,9 +101,9 @@ def test_render_defaults_namespace_drops_secrets_and_rejects_duplicates(tmp_path
         "metadata": {"name": "r", "namespace": "x"},
     }
     source = commit_accepted_source(tmp_path / "ok", [deployment, secret, role], namespace="app")
+    # The owning production renderer excludes explicitly foreign namespace input.
     assert [(v["kind"], v["metadata"].get("namespace")) for v in source.manifests] == [
         ("Deployment", "app"),
-        ("ClusterRole", None),
     ]
     with pytest.raises(ValueError, match="duplicate accepted manifest"):
         _ = commit_accepted_source(tmp_path / "dup", [deployment, deployment], namespace="app").manifests
@@ -126,12 +124,6 @@ def test_invalid_selection_and_namespace_are_rejected(tmp_path: Path) -> None:
     for kwargs in ({"namespace": ""}, {"manifest_paths": ()}, {"manifest_paths": ("../outside",)}):
         with pytest.raises(ValueError, match="accepted"):
             AcceptedSource(tmp_path, **{"namespace": "app", **kwargs})
-
-
-def test_cluster_scoped_kinds_match_the_go_renderer() -> None:
-    text = (ROOT / "sdo/operator/rendered/scope.go").read_text()
-    go_kinds = set(re.findall(r'"([A-Za-z]+)"', re.search(r"case (.*?):\n\t\treturn true", text, re.DOTALL).group(1)))
-    assert go_kinds == CLUSTER_SCOPED_KINDS
 
 
 def test_no_eval_path_reads_the_legacy_rendered_lock() -> None:
@@ -225,3 +217,29 @@ def test_hotel_bootstrap_source_matches_harness_and_remains_restorable(
             obj for obj in reread.manifests if obj["kind"] == "ConfigMap" and obj["metadata"]["name"] == name
         )
         assert restored == accepted[name]
+
+
+def test_plain_manifests_also_use_the_production_renderer(tmp_path, monkeypatch):
+    from benchmarks.sregym.fastloop import accepted_source
+
+    source = commit_accepted_source(tmp_path / "source", [_config("input")])
+    rendered = [_config("production render")]
+    requests = []
+
+    def render(command, args, **kwargs):
+        requests.append((command, json.loads(kwargs["input_text"])))
+        return json.dumps(rendered)
+
+    monkeypatch.setattr(accepted_source, "execute_operator", render)
+    assert source.manifests == tuple(rendered)
+    assert requests == [
+        (
+            "render-source",
+            {
+                "repository": str(source.workspace.resolve()),
+                "revision": source.revision,
+                "namespace": "app",
+                "manifest_paths": ["kubernetes"],
+            },
+        )
+    ]

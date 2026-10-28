@@ -100,3 +100,19 @@ def test_accepted_render_preserves_every_proven_container_memory_floor() -> None
         memory = selected[name]["resources"]["limits"]["memory"]
         assert memory.endswith("Mi"), (name, memory)
         assert int(memory[:-2]) >= minimum, (name, memory, minimum)
+
+
+def test_source_generator_reproduces_accepted_opensearch_policy() -> None:
+    import runpy
+    from copy import deepcopy
+
+    accepted = next(
+        item for item in documents() if item["kind"] == "ConfigMap" and item["metadata"]["name"] == "opensearch-config"
+    )
+    generated = deepcopy(accepted)
+    stock = yaml.safe_load(generated["data"]["opensearch.yml"])
+    for name in ("low", "high", "flood_stage"):
+        stock.pop(f"cluster.routing.allocation.disk.watermark.{name}")
+    generated["data"]["opensearch.yml"] = yaml.safe_dump(stock, sort_keys=False)
+    runpy.run_path(str(ROOT / "apps/astronomy_shop/render.py"))["prepare_baseline"](generated)
+    assert generated == accepted

@@ -38,6 +38,11 @@ def commit_accepted_source(
     if manifests:
         (workspace / path).parent.mkdir(parents=True, exist_ok=True)
         (workspace / path).write_text(yaml.safe_dump_all(manifests))
+    if not (workspace / "kubernetes").exists():
+        # An explicitly empty synthetic inventory still selects a real source
+        # file. Production rendering must never treat missing paths as empty.
+        (workspace / "kubernetes").mkdir()
+        (workspace / "kubernetes/manifests.yaml").write_text("# Synthetic empty inventory.\n")
     git("add", "-A")
     git("commit", "-q", "--allow-empty", "-m", "accepted source")
     if namespace is None:
