@@ -2,10 +2,12 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -94,13 +96,20 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 	w.cache.faults.staleReads = func() int { return 0 }
 	accepted := nativeRepository(t)
 	nativeMemoryFixture(t, accepted)
+	acceptPortProgram(t, accepted)
 	revision := nativeGit(t, accepted, "rev-parse", "HEAD")
 	repository, err := broker.New(accepted, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	native := &NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), Now: w.clock.Now, Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
-		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic simulation"}, nil
+	native := &NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), Now: w.clock.Now, Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, outcome *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
+		// The menu programs are not accepted memory, so their applications are
+		// hand repairs; the shared coverage rule requires an executable step.
+		if !slices.ContainsFunc(outcome.GetRepairActions(), func(a *contracts.RepairActionReceipt) bool { return a.GetSuccess() && len(a.GetResources()) > 0 }) {
+			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic simulation"}, nil
+		}
+		coverRepairsWithPortProgram(t, workspace.Worktree, fmt.Sprintf("menu-repair-%x", sha256.Sum256([]byte(outcome.GetIncidentId())))[:24], outcome)
+		return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: []string{"service-targetport-mismatch"}}, nil
 	})}
 	driver := &menuSimDispatcher{tasks: map[string]*menuSimTask{}, started: make(chan *menuSimTask, 4)}
 	w.config.SourceCommit = revision
@@ -215,6 +224,8 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 			if response.Report.Status == contracts.MitigationReport_STATUS_SUCCESS && response.Healthy {
 				break
 			}
+			// Each try ends with a verification, so each round is one response loop.
+			loop.Handle(ctx, ToolRequest{Command: "verify"})
 		}
 		task.result = completedResult(request.IncidentID)
 		task.result.Timing.StartedAt = w.clock.Now()

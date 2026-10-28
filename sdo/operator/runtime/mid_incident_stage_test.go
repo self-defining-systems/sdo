@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // delayedPortDetector reports the wrong-port fault only once released, like a
@@ -165,5 +166,118 @@ func TestNotesFromEveryPassSurviveTheStagesOwnCallsUntilTheAgentCalls(t *testing
 	}
 	if again := loop.Handle(context.Background(), ToolRequest{Command: "status"}); len(again.PriorStages) != 0 {
 		t.Fatalf("notes repeated: %+v", again.PriorStages)
+	}
+}
+
+// stagedPortDetector reports the wrong-port findings of the first n Services
+// in order, like learned detectors activating one by one mid-incident.
+type stagedPortDetector struct {
+	pipelineDetector
+	order    []string
+	released *atomic.Int32
+}
+
+func (d stagedPortDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	findings, err := d.pipelineDetector.Detect(ctx, view)
+	shown := map[string]bool{}
+	for _, name := range d.order[:d.released.Load()] {
+		shown[name] = true
+	}
+	kept := findings[:0]
+	for _, finding := range findings {
+		if finding.RuleID != "wrong-port" || shown[finding.PrimaryResource.Name] {
+			kept = append(kept, finding)
+		}
+	}
+	return kept, err
+}
+
+// A later pass that clears nothing and applies no program new to the incident
+// settles the stage. The next activation joins the incident for the responder
+// without another pass.
+func TestNoProgressLaterPassSettlesTheStage(t *testing.T) {
+	loop, state := pipelineTestLoopWithServices(t, true, "api2", "api3")
+	registry, err := program.NewRegistry([]program.Diagnoser{pipelineIneffectivePortProgram{}}, []program.Mitigator{pipelineIneffectivePortProgram{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.Programs = registry
+	released := &atomic.Int32{}
+	detector := stagedPortDetector{order: []string{"api", "api2", "api3"}, released: released}
+	dispatcher := &blockingAgent{pipelineScenarioDispatcher: pipelineScenarioDispatcher{loop: loop}, requests: make(chan IncidentRequest, 1), release: make(chan struct{})}
+	defer close(dispatcher.release)
+	config := testControllerConfig()
+	config.Application, config.Namespace = state.Request.Application, "app"
+	config.SourceCommit, config.DeployedCommit = state.Request.SourceCommit, state.Request.DeployedCommit
+	config.RepositoryWorktree = t.TempDir()
+	config.RepairPolicy = "recorded-actions"
+	config.FiringThreshold, config.ClearThreshold = 1, 1
+	config.BatchDebounce = time.Millisecond
+	start := time.Now().UTC()
+	controller, err := NewController(config, []sdk.Detector{detector}, loop.Provider, dispatcher, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := func(i int) {
+		t.Helper()
+		if err := controller.Step(context.Background(), start.Add(time.Duration(i)*time.Second), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		step(i)
+	}
+	effect, ok := controller.PendingDispatchEffect()
+	if !ok {
+		t.Fatal("incident was not admitted")
+	}
+	loop.Request = effect.Request
+	if err := controller.ExecuteDispatchEffect(context.Background(), effect); err != nil {
+		t.Fatal(err)
+	}
+	awaitRequest(t, dispatcher.requests)
+	controller.mu.Lock()
+	controller.responderLoop = loop
+	controller.mu.Unlock()
+	idle := func() {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			controller.mu.Lock()
+			running := controller.midStage.running
+			controller.mu.Unlock()
+			if !running {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatal("later pass did not finish")
+	}
+	// api: the program applies, clears nothing and is reverted, so the pass
+	// left nothing behind (no progress) and settles the stage; api2 then joins
+	// without another write.
+	for i, want := range []int{1, 1} {
+		released.Store(int32(i + 1))
+		step(3 + i)
+		idle()
+		if got := len(loop.PlanApplications()); got != want {
+			t.Fatalf("pass %d: %d applications, want %d", i+1, got, want)
+		}
+	}
+	released.Store(3)
+	step(5)
+	idle()
+	controller.mu.Lock()
+	passes := controller.midStage.passes
+	joined := false
+	for _, finding := range controller.currentIncidentRequest.Findings {
+		joined = joined || finding.PrimaryResource.Name == "api3"
+	}
+	controller.mu.Unlock()
+	if passes != 1 || len(loop.PlanApplications()) != 1 || !loop.PlanApplications()[0].RolledBack {
+		t.Fatalf("a settled stage ran again: passes=%d applications=%d", passes, len(loop.PlanApplications()))
+	}
+	if !joined {
+		t.Fatal("the later finding did not join the incident for the responder")
 	}
 }

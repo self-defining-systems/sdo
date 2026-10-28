@@ -115,7 +115,7 @@ omit incident captures when its controller healthy reference is retained.
 ## Concurrent shared-memory lanes
 
 `fastloop parallel` joins ordinary per-lane rows into output `incidents.jsonl`
-and CSV. `parallel_plan.json` records encounter order; `parallel_result.json`
+and CSV. `parallel_plan.json` records order/provider/model; `parallel_result.json`
 reports requested/completed counts and every lane error. Completed peer evidence
 survives a lane failure. Aggregate `index` follows input order; `lane_id` names
 the private controller/cluster. Original rows and immutable grade checkpoints
@@ -131,9 +131,10 @@ incident inputs. A commit rewind is an eval error.
 
 Lanes overlap but each lane stays sequential, preserving grade-at-closure and
 paused recovery. Oracle values never enter memory. Shared mode rejects seeding,
-archive copy-back and reset. The external attachment report records phases and
-original Jobs. Attachment requires equal initial accepted trees and retains
-private proposal, ledger, capture and session roots. Scripted scheduling, broker
+archive copy-back and reset. The attachment report records phase, cohort, matched
+commits and original Jobs. Lanes must match a commit of accepted history
+exactly (cluster baselines are per-lane controller state, not memory); roots
+stay private. Reports from older runs also list `discarded_cluster_captures`. Scripted scheduling, broker
 and lock tests prove plumbing; live runs establish learning and speedup.
 
 Install-time pending namespace inventory records pre-existing environment UID/configuration/ownership digests independently of healthy onboarding. A rejected health window preserves only matching captured observations; replacement or changed objects remain unexplained presence drift. Check the immutable pending snapshot and install boundary; source-declared faults, health/reachability checks and objects added after that boundary remain active. This rule does not label, delete or recreate environment objects.

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
-from benchmarks.sregym.fastloop.accepted_source import manifest_paths_for
+from benchmarks.sregym.fastloop.accepted_source import manifest_paths_for_environment
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -208,7 +208,7 @@ def collect_fingerprint(
     if installed != accepted:
         raise ValueError("eval: installed accepted-memory commit differs from accepted workspace")
     paths = [environment.baseline_path]
-    for selection in manifest_paths_for(environment.application):
+    for selection in manifest_paths_for_environment(environment):
         path = (environment.workspace / selection).resolve()
         if not path.is_relative_to(environment.workspace.resolve()):
             raise ValueError("eval: manifest selection escapes accepted workspace")

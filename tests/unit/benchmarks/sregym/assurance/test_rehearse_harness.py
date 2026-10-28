@@ -197,39 +197,71 @@ def _git(path: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _repo_with_refresh(tmp_path: Path, *, rewrite_detector: bool) -> tuple[Path, str, str]:
+def _commit(workspace: Path, message: str, when: str) -> str:
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+        check=True,
+        env={"GIT_COMMITTER_DATE": when, "GIT_AUTHOR_DATE": when, "PATH": "/usr/bin:/bin"},
+    )
+    return _git(workspace, "rev-parse", "HEAD")
+
+
+def _repo_with_refresh(tmp_path: Path, *, refresh: str) -> tuple[Path, str]:
+    """Synthetic accepted history: seed, the incident's proposal and outcome, and one judge refresh at ``refresh``."""
+
     workspace = tmp_path / "ws"
     workspace.mkdir()
     _git(workspace, "init", "-q")
-    (workspace / "kubernetes").mkdir()
-    (workspace / "kubernetes/policy.yaml").write_text("a\n", encoding="utf-8")
-    _git(workspace, "add", "-A")
-    _git(workspace, "commit", "-qm", "proposal")
-    proposal = _git(workspace, "rev-parse", "HEAD")
-    (workspace / ".sdo").mkdir()
-    if rewrite_detector:
-        detector = workspace / ".sdo/diagnostics/detectors/health/health-objective"
-        detector.mkdir(parents=True)
-        (detector / "detector.go").write_text("package x\n", encoding="utf-8")
-    (workspace / ".sdo/outcomes.json").write_text("{}", encoding="utf-8")
-    _git(workspace, "add", "-A")
-    _git(workspace, "commit", "-qm", "outcome")
-    return workspace, proposal, _git(workspace, "rev-parse", "HEAD")
+    seed = _commit(workspace, "feat: seed", "2026-01-01T00:00:00+00:00")
+    if refresh == "before-proposal":
+        seed = _commit(workspace, f"sdo(health-refresh-aa-base-{seed}): validated initial", "2026-01-01T00:01:00+00:00")
+    proposal = _commit(workspace, "sdo(i1): validated proposal", "2026-01-01T00:02:00+00:00")
+    outcome = _commit(workspace, "sdo(i1): validated outcome", "2026-01-01T00:02:00+00:00")
+    if refresh == "after-outcome":
+        _commit(workspace, f"sdo(health-refresh-bb-base-{outcome}): validated initial", "2026-01-01T00:03:00+00:00")
+    return workspace, proposal
 
 
-@pytest.mark.parametrize(("rewrite", "ok"), [(True, True), (False, False)])
-def test_source_repair_check_needs_a_health_detector_rewrite_between_proposal_and_outcome(
-    tmp_path: Path, rewrite: bool, ok: bool
+@pytest.mark.parametrize(
+    ("refresh", "ack", "ok"),
+    [
+        ("after-outcome", "2026-01-01T00:04:00.5Z", True),
+        # The refresh the incident's own repair triggers must follow its proposal; an earlier one proves nothing.
+        ("before-proposal", "2026-01-01T00:04:00.5Z", False),
+        ("after-outcome", "2026-01-01T00:02:30Z", False),
+        ("after-outcome", None, False),
+    ],
+)
+def test_source_repair_check_needs_closure_acknowledged_after_the_refresh_its_own_proposal_triggered(
+    tmp_path: Path, refresh: str, ack: str | None, ok: bool
 ) -> None:
-    workspace, proposal, outcome = _repo_with_refresh(tmp_path, rewrite_detector=rewrite)
+    workspace, proposal = _repo_with_refresh(tmp_path, refresh=refresh)
     ctx = _ctx(tmp_path, "p52-source-repair-refresh", workspace=workspace)
-    receipt = {"incident_id": "i1", "proposal_commit": proposal, "outcome_commit": outcome}
+    ledger = {"acknowledged": ack is not None, "closure_phase_timestamps": {"closure_ack": ack} if ack else {}}
+    receipt = {"incident_id": "i1", "proposal_commit": proposal, "native_ledger": ledger}
     (ctx.results / gate.STRICT_RECEIPT).write_text(json.dumps(receipt), encoding="utf-8")
 
     checks = gate.check_source_repair_refresh(ctx)
 
     assert all(check.ok for check in checks) is ok
-    assert any("rewrote a health detector" in check.name for check in checks)
+    assert [check.name for check in checks] == [
+        "i1: own source proposal committed",
+        "i1: judge refresh after own proposal",
+        "i1: closure acknowledged after the refresh",
+    ]
 
 
 def test_source_repair_check_fails_without_a_source_proposal(tmp_path: Path) -> None:
@@ -371,6 +403,23 @@ def test_fastloop_run_wraps_the_cluster_only_when_asked_to_restart_in_the_pause(
     wrapped = _cluster_ops(on, "app")
     assert type(wrapped).__name__ == "RestartControllerInPauseOps"
     assert type(wrapped._inner).__name__ == "HealthyBaselineCaptureOps"  # type: ignore[attr-defined]
+
+
+def test_preflight_refuses_a_freeze_whose_worker_modules_do_not_import() -> None:
+    """The toy rehearsal never source-deploys, so it passed on h9.18 while every astronomy deploy failed."""
+    error = "worker modules do not import in SREGym's venv: ModuleNotFoundError: No module named 'protovalidate'"
+    problems = gate.preflight(REPO_ROOT, load=1.0, free_gib=500, worker_import_error=error)
+    assert problems == [error]
+
+
+def test_the_gate_runs_the_worker_import_check_on_its_code_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(gate, "missing_images", lambda tag: [])
+    code = gate.main(["--code-root", str(tmp_path), "--lane", "7", "--run-dir", str(tmp_path / "run")])
+    assert code == 2
+    assert "SREGym harness is not checked out" in capsys.readouterr().err
+    assert not (tmp_path / "run").exists()
 
 
 def test_up_names_the_freeze_images_and_preflight_names_missing_ones(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"log/slog"
 	"net"
@@ -24,6 +25,10 @@ type WorkspaceEffect struct {
 type ClosureEffect struct {
 	Identity string
 	Closure  IncidentClosure
+	// Freeze marks an unfrozen closure: its recheck runs once, and the closure
+	// with the recheck's notes is persisted as the incident's terminal
+	// identity before the broker receives it.
+	Freeze bool
 }
 
 // committedClosureBroker recovers the receipt of an already committed closure,
@@ -94,8 +99,8 @@ func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 		return ClosureEffect{}, false
 	}
 	for _, effect := range effects {
-		if effect.Kind == lifecyclecore.ProcessClosure {
-			return ClosureEffect{Identity: effect.ID, Closure: incidentClosureState(effect.Closure)}, true
+		if effect.Kind == lifecyclecore.ProcessClosure || effect.Kind == lifecyclecore.FreezeClosure {
+			return ClosureEffect{Identity: effect.ID, Closure: incidentClosureState(effect.Closure), Freeze: effect.Kind == lifecyclecore.FreezeClosure}, true
 		}
 	}
 	return ClosureEffect{}, false
@@ -148,10 +153,17 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	unconfirmed, denied := "", ""
 	var unconfirmedReason contracts.ClosureUnconfirmedReason
 	var unconfirmedStates []DetectorEvaluation
-	closure := effect.Closure
+	// Notes are evidence of this one recheck. Only freezing records them; a
+	// frozen closure's retry rechecks for contradiction and never adds notes.
+	var notes []string
 	if needsRecheck && verificationErr == nil {
 		recheck := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
-		closure.SourceCheckNotes = append(closure.SourceCheckNotes, recheck.DriftNotes...)
+		notes = append(notes, recheck.DriftNotes...)
+		if !effect.Freeze && recheck.Verdict == closureRecheckIncomplete {
+			// The frozen identity was verified when it froze. "Not yet" after a
+			// restart cannot change it, and only a contradiction can retire it.
+			recheck.Verdict = closureRecheckConfirmed
+		}
 		switch recheck.Verdict {
 		case closureRecheckConfirmed:
 			c.clearClosureRecheckWait()
@@ -169,8 +181,8 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 				// Health alone verified the closure; the source checks that
 				// never became available are information on the outcome.
 				c.clearClosureRecheckWait()
-				closure.SourceCheckNotes = append(closure.SourceCheckNotes, recheck.SourceNotes...)
-				slog.Warn("closure_source_check_unavailable", "incident_id", closure.Request.IncidentID, "notes", recheck.SourceNotes)
+				notes = append(notes, recheck.SourceNotes...)
+				slog.Warn("closure_source_check_unavailable", "incident_id", effect.Closure.Request.IncidentID, "notes", recheck.SourceNotes)
 				break
 			}
 			unconfirmed, unconfirmedReason = recheck.Reason, recheck.Unconfirmed
@@ -187,9 +199,13 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		cancel()
 		return err
 	}
+	effectKind := lifecyclecore.ProcessClosure
+	if effect.Freeze {
+		effectKind = lifecyclecore.FreezeClosure
+	}
 	c.mu.Lock()
 	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.pendingClosure == nil ||
-		effect.Identity != lifecyclecore.Identity(c.pendingClosure.Request.IncidentID, c.pendingClosure.Request.RepositoryBaseCommit, lifecyclecore.ProcessClosure) ||
+		effect.Identity != lifecyclecore.Identity(c.pendingClosure.Request.IncidentID, c.pendingClosure.Request.RepositoryBaseCommit, effectKind) ||
 		c.pendingClosure.Request.IncidentID != effect.Closure.Request.IncidentID || !sameIncidentClosure(*c.pendingClosure, effect.Closure) {
 		c.mu.Unlock()
 		cancel()
@@ -240,15 +256,27 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		}
 		return nil
 	}
+	if effect.Freeze {
+		frozen, err := c.freezeClosureLocked(ctx, effect.Identity, notes)
+		if err != nil {
+			c.mu.Unlock()
+			cancel()
+			return err
+		}
+		effect = frozen
+	}
 	broker := c.broker
 	effects, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Drive, At: c.clock(), EffectID: effect.Identity})
-	if stepErr != nil || len(effects) != 1 || effects[0].ID != effect.Identity {
+	if stepErr != nil || len(effects) != 1 || effects[0].ID != effect.Identity || effects[0].Kind != lifecyclecore.ProcessClosure {
 		c.mu.Unlock()
 		cancel()
 		return fmt.Errorf("closure effect changed before execution: %v", stepErr)
 	}
+	// The broker receives the reducer's payload for this identity: the durable
+	// frozen closure, never a copy the driver rewrote.
+	closure := incidentClosureState(effects[0].Closure)
 	c.mu.Unlock()
-	slog.Info("closure_handoff", "incident_id", effect.Closure.Request.IncidentID, "verified_to_handoff_ms", c.clock().Sub(effect.Closure.VerifiedAt).Milliseconds())
+	slog.Info("closure_handoff", "incident_id", closure.Request.IncidentID, "verified_to_handoff_ms", c.clock().Sub(closure.VerifiedAt).Milliseconds())
 	c.goBackground(func() {
 		defer cancel()
 		var receipt ClosureReceipt
@@ -261,6 +289,40 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		c.closureResults <- closureCompletion{effectID: effect.Identity, receipt: receipt, err: processErr}
 	})
 	return nil
+}
+
+// freezeClosureLocked records the recheck's notes on the pending closure,
+// persists it, and returns the frozen closure's broker effect. Callers hold
+// c.mu; it is released while the state is saved.
+func (c *Controller) freezeClosureLocked(ctx context.Context, identity string, notes []string) (ClosureEffect, error) {
+	if _, err := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Freeze, At: c.clock(), EffectID: identity, SourceCheckNotes: notes}); err != nil {
+		return ClosureEffect{}, err
+	}
+	if c.pendingClosure == nil || !c.pendingClosure.Frozen {
+		return ClosureEffect{}, fmt.Errorf("closure effect changed before freezing")
+	}
+	frozen := *cloneIncidentClosure(c.pendingClosure)
+	c.mu.Unlock()
+	err := c.PersistState(ctx)
+	c.mu.Lock()
+	if err != nil {
+		return ClosureEffect{}, fmt.Errorf("persist frozen closure: %w", err)
+	}
+	effects, err := c.closureEffectsLocked()
+	if err != nil {
+		return ClosureEffect{}, err
+	}
+	for _, effect := range effects {
+		if effect.Kind == lifecyclecore.ProcessClosure && sameIncidentClosure(incidentClosureState(effect.Closure), frozen) {
+			if err := c.requireDurableLocked("frozen incident closure", func(state *contracts.ControllerState) bool {
+				return state.ClosureState == contracts.ClosureState_CLOSURE_STATE_PENDING && proto.Equal(state.PendingClosure, effect.Closure)
+			}); err != nil {
+				return ClosureEffect{}, err
+			}
+			return ClosureEffect{Identity: effect.ID, Closure: frozen}, nil
+		}
+	}
+	return ClosureEffect{}, fmt.Errorf("frozen closure has no broker effect")
 }
 
 // closureRecheckVerdict is the only result of the closure-time recheck, so a

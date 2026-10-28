@@ -169,6 +169,9 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 				if err := wire.UnmarshalLenientMigrating([]byte(raw), outcome); err != nil {
 					return nil, err
 				}
+				if structurallyValid {
+					ds = append(ds, ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths)...)
+				}
 				r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
 				if structurallyValid {
 					if err := programvalidation.ValidateScriptOrigins(r.Root, outcome, paths); err != nil {
@@ -273,6 +276,7 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 	if err != nil {
 		return nil, err
 	}
+	ds = append(ds, clusterLocalDiagnostics(r.Root, paths)...)
 	// A scratch index includes new files and agent-local commits while leaving
 	// the proposal index unchanged. Git itself defines the whitespace policy.
 	if structurallyValid {

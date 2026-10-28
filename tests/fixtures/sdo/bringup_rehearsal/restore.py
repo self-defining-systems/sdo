@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from benchmarks.sregym import adapter
 from benchmarks.sregym.fastloop import cli
+from benchmarks.sregym.fastloop.accepted_source import APPLICATION_MANIFEST_PATHS
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, save_application_baseline
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
@@ -52,6 +53,8 @@ def main() -> None:
                 return {"success": healthy}
             raise AssertionError(f"unexpected harness operation {op}")
 
+    # The Go fixture declares this application under deploy/, not kubernetes/.
+    APPLICATION_MANIFEST_PATHS["demo"] = ("deploy/tracing.yaml",)
     worker = ScriptedHarness()
     reset_environment(environment, cluster, worker)
     assert worker.calls == ["clean_start", "health", "baseline_oracle"], worker.calls

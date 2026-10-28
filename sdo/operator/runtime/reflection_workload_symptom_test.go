@@ -143,9 +143,23 @@ func TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms(t *testing
 			}
 		}
 		checkout := task.Workspace.CheckoutPath
-		decision := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"extra-workload-listener"}}
+		decision := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"extra-workload-listener", "workload-host-port"}}
 		publication := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: decision.ProposedArtifactIds}
 		copyFastloopTree(t, fixture, filepath.Join(checkout, ".sdo"))
+		// The combined hand repair also wrote the Deployment the accepted peer
+		// covers. Each changed program links a positive case to the original
+		// receipt and binds its Deployment, so together they cover the repair.
+		copyFastloopTree(t, filepath.Join(fixture, "corpus/workload-host-port"), filepath.Join(checkout, ".sdo/corpus/workload-host-port-combined"))
+		appendControllerRepairReceipts(t, checkout, "extra-workload-listener", outcome)
+		appendControllerRepairReceipts(t, checkout, "workload-host-port-combined", outcome)
+		peer := filepath.Join(checkout, ".sdo/playbooks/workload-host-port/README.md")
+		peerReadme, err := os.ReadFile(peer)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(peer, append(peerReadme, []byte("\nA combined manual Deployment patch can also repair this case.\n")...), 0644); err != nil {
+			return nil, err
+		}
 		// A nonrepairing plan is recorded as unverified information; publication
 		// below independently checks the final authored bytes through the broker.
 		mitigation := filepath.Join(checkout, book, "mitigate.go")

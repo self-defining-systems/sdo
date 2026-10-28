@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
+	"sync"
 )
 
 func objectiveDigest(objective string) string {
@@ -81,64 +81,63 @@ func keepRecordedExclusions(b, earlier *servicehealth.ReachabilityBaseline) {
 // record stays and the next gate tries again.
 var errBaselineDeferred = errors.New("reachability baseline refresh deferred")
 
-// baselineProposalID is unique per accepted revision and measured configuration.
-// A configuration that returns to an earlier value (R, C, R) at a later commit
-// never reuses the first proposal.
-func baselineProposalID(revision memory.HealthRevision, b *servicehealth.ReachabilityBaseline) string {
-	digest := sha256.New()
-	for _, e := range b.Exclusions {
-		fmt.Fprintf(digest, "%s\x00%s\x00", e.Target.ID(), e.Configuration)
-	}
-	return fmt.Sprintf("reachability-baseline-%s-%.12s-%x", revision.RefreshID(), revision.Commit, digest.Sum(nil)[:6])
+// ReachabilityReference is this cluster's reachability baseline together with
+// the accepted health inputs the detector compares it against. The startup gate
+// replaces it in place, so a running controller judges against its own new
+// record without a restart. The zero value holds no record.
+type ReachabilityReference struct {
+	mu                            sync.RWMutex
+	baseline                      *servicehealth.ReachabilityBaseline
+	sourceInputs, objectiveDigest string
 }
 
-// publishReachabilityBaseline is reached only from the trusted, opt-in startup
-// baseline gate before dispatch. It writes an isolated health-judge proposal and
-// uses the ordinary broker ownership/validation path. The accepted checkout is
-// never directly edited. A current record, including an empty one, is retained.
-func publishReachabilityBaseline(ctx context.Context, root string, authority *broker.Broker, revision memory.HealthRevision, detectors []sdk.Detector, snapshot sdk.DetectionContext) (bool, error) {
-	existing, err := memory.ReadReachabilityBaseline(ctx, root, revision.Commit)
-	if err != nil {
-		return false, err
+func (r *ReachabilityReference) set(b *servicehealth.ReachabilityBaseline, revision memory.HealthRevision) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.baseline, r.sourceInputs, r.objectiveDigest = b, revision.SourceInputs, objectiveDigest(revision.Objective)
+}
+
+func (r *ReachabilityReference) bind(w *servicehealth.ReachabilityWindow) {
+	if r == nil {
+		return
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	w.Baseline, w.SourceInputs, w.ObjectiveDigest = r.baseline, r.sourceInputs, r.objectiveDigest
+}
+
+// captureReachabilityBaseline is reached only from the trusted, opt-in startup
+// baseline gate before dispatch. It writes this cluster's controller state; the
+// accepted repository is never touched. A current record, including an empty
+// one, is retained.
+func captureReachabilityBaseline(ctx context.Context, stateRoot string, existing *servicehealth.ReachabilityBaseline, revision memory.HealthRevision, detectors []sdk.Detector, snapshot sdk.DetectionContext) (*servicehealth.ReachabilityBaseline, error) {
 	if baselineMatches(existing, revision, snapshot) {
-		return false, nil
+		return existing, nil
 	}
 	if _, err := healthyBaselineGoal(ctx, detectors, snapshot); err != nil {
-		return false, fmt.Errorf("%w: %w", errBaselineDeferred, err)
+		return nil, fmt.Errorf("%w: %w", errBaselineDeferred, err)
 	}
 	baseline, err := servicehealth.CaptureReachabilityBaseline(snapshot, servicehealth.BaselineAuthorization{SourceInputs: revision.SourceInputs, ObjectiveDigest: objectiveDigest(revision.Objective), Reason: "healthy-baseline", GoalHealthy: true})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if stalenessOnly(existing, revision) {
 		keepRecordedExclusions(baseline, existing)
 	}
-	id := baselineProposalID(revision, baseline)
-	proposal, err := authority.CreateProposalForPhase(ctx, id, broker.InitialPhase)
-	if err != nil {
-		return false, err
+	if err := memory.WriteReachabilityBaselineState(stateRoot, baseline); err != nil {
+		return nil, err
 	}
-	if proposal.BaseCommit != revision.Commit {
-		return false, fmt.Errorf("healthy baseline accepted inputs advanced during measurement")
-	}
-	if err := memory.WriteReachabilityBaseline(proposal.Path, baseline); err != nil {
-		return false, err
-	}
-	receipt, err := authority.Publish(ctx, id, broker.HealthJudge, broker.InitialPhase)
-	if err != nil {
-		return false, err
-	}
-	return receipt.Commit != "", nil
+	return baseline, nil
 }
 
 // acceptStartupReachabilityBaseline requires the existing explicit healthy-
 // baseline opt-in, fresh probes, and independent goal checks throughout capture.
-// A restored investigation/active closure can only consume accepted data, never learn
-// an exclusion from its incident state. Publication asks the builder to adopt
-// the new accepted diagnostic revision before any incident can start.
-func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root string, authority *broker.Broker, enabled bool, observer *ServiceReachabilityObserver, provider SnapshotProvider, detectors []sdk.Detector) error {
-	if !enabled || authority == nil || observer == nil {
+// A restored investigation/active closure can only consume the recorded state,
+// never learn an exclusion from its incident state. It runs at controller
+// startup and on resume, so each cluster measures against the accepted head it
+// runs and never shares the record with another cluster.
+func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root, stateRoot string, enabled bool, observer *ServiceReachabilityObserver, provider SnapshotProvider, reference *ReachabilityReference, detectors []sdk.Detector) error {
+	if !enabled || stateRoot == "" || observer == nil || reference == nil {
 		return nil
 	}
 	c.mu.Lock()
@@ -151,15 +150,20 @@ func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root 
 	if err != nil {
 		return err
 	}
-	existing, err := memory.ReadReachabilityBaseline(ctx, root, revision.Commit)
+	existing, err := memory.ReadReachabilityBaselineState(stateRoot)
 	if err != nil {
-		return err
+		// Recomputable state: measure again rather than crash-loop on it.
+		if c.OnError != nil {
+			c.OnError(fmt.Errorf("discarding unreadable reachability baseline state: %w", err))
+		}
+		existing = nil
 	}
 	current, err := provider.Snapshot(ctx)
 	if err != nil {
 		return err
 	}
 	if baselineMatches(existing, revision, current) {
+		reference.set(existing, revision)
 		return nil
 	}
 	observer.Stop()
@@ -192,16 +196,14 @@ func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root 
 	if err != nil {
 		return err
 	}
-	accepted, err := publishReachabilityBaseline(ctx, root, authority, revision, detectors, snapshot)
+	baseline, err := captureReachabilityBaseline(ctx, stateRoot, existing, revision, detectors, snapshot)
 	if err != nil {
 		if errors.Is(err, errBaselineDeferred) {
 			return c.deferStaleBaseline(ctx, existing, revision, err)
 		}
 		return err
 	}
-	if accepted {
-		return memory.ErrHealthRefreshRequired
-	}
+	reference.set(baseline, revision)
 	return nil
 }
 
@@ -220,16 +222,23 @@ func (c *Controller) deferStaleBaseline(ctx context.Context, existing *servicehe
 	return nil
 }
 
-// loadReachabilityBaseline binds optional accepted data without requiring a
-// health repository from callers that only use the low-level runtime API.
-func loadReachabilityBaseline(ctx context.Context, root, commit string) (*servicehealth.ReachabilityBaseline, string, string, error) {
-	b, err := memory.ReadReachabilityBaseline(ctx, root, commit)
+// loadReachabilityBaseline binds this cluster's recorded state, if any, to the
+// accepted health inputs at commit. A legacy capture inside the accepted tree is
+// never read: it belongs to whichever cluster wrote it. Unreadable state is
+// recomputable, so it is reported and treated as no record.
+func loadReachabilityBaseline(ctx context.Context, stateRoot, root, commit string, onError func(error)) (*ReachabilityReference, error) {
+	reference := &ReachabilityReference{}
+	b, err := memory.ReadReachabilityBaselineState(stateRoot)
+	if err != nil && onError != nil {
+		onError(fmt.Errorf("discarding unreadable reachability baseline state: %w", err))
+	}
 	if err != nil || b == nil {
-		return b, "", "", err
+		return reference, nil
 	}
 	revision, err := memory.HealthInputs(ctx, root, commit)
 	if err != nil {
-		return nil, "", "", err
+		return nil, err
 	}
-	return b, revision.SourceInputs, objectiveDigest(revision.Objective), nil
+	reference.set(b, revision)
+	return reference, nil
 }

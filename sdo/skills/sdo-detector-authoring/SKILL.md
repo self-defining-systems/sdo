@@ -65,8 +65,23 @@ a source exists.
 
 ## Generic reachability baseline
 
-The native healthy-baseline acceptance gate can publish measured, source/config-bound exclusions as health-judge-owned `service-reachability/baseline.json`. Do not infer exclusions from missing successful dials or author them from an incident. Generic reachability reads accepted exclusions from its runtime window and invalidates them when source, objective or target configuration changes; new wrong targetPort failures remain detectable. Service UID/resourceVersion, allocated ClusterIP/IP-family values, NodePort and health-check NodePort do not identify the application configuration; namespace/Service/port identity, headless routing, selector, targetPort/protocol, selected container configuration, referenced ConfigMaps and selecting network policies do. The JSON is visible diagnostic evidence, not an agent waiver or an editable generic detector implementation. Inspect `baseline_status` in finding port metadata when an earlier exclusion no longer applies.
+The controller's opt-in healthy-baseline gate measures exclusions on each cluster and keeps them as that cluster's own state, outside memory. Never write measured values from one cluster (Service UIDs, allocated IPs, probe or capture times) into `.sdo/`: memory holds what to measure and thresholds, not one cluster's measurement, and the check rejects such fields (`memory.cluster-local`). Do not infer exclusions from missing successful dials or author them from an incident. Generic reachability invalidates an exclusion when source, objective or target configuration changes; new wrong targetPort failures remain detectable. Service UID/resourceVersion, allocated ClusterIP/IP-family values, NodePort and health-check NodePort do not identify the application configuration; namespace/Service/port identity, headless routing, selector, targetPort/protocol, selected container configuration, referenced ConfigMaps and selecting network policies do. Inspect `baseline_status` in finding port metadata when an earlier exclusion no longer applies.
 
 For kinds outside the typed getters, use the [generic object interface](references/generic-objects.md).
 
 The controller's verified onboarding window also records immutable measured reachability reference evidence beside the final onboarding record. Consistently refused, never-served declared ports are visible `declared-but-never-served` observations rather than health findings. Unconfirmed probe windows are pending, not clear. Previously serving ports retain the ordinary failure gate; target configuration changes and later successful dials end an exclusion. Agents cannot author or expand this controller-owned install reference.
+
+<!-- reference-topics -->
+## Reference topics
+
+Open only the topic needed for the current edit.
+
+- [sdktest-01](references/replay/sdktest-01.md)
+- [sdktest-02](references/replay/sdktest-02.md)
+- [metrics-01](references/sdk/metrics-01.md)
+- [observe-01](references/sdk/observe-01.md)
+- [sdk-01](references/sdk/sdk-01.md)
+- [sdk-02](references/sdk/sdk-02.md)
+- [servicehealth-01](references/sdk/servicehealth-01.md)
+- [traffic-01](references/sdk/traffic-01.md)
+- [workloadhealth-01](references/sdk/workloadhealth-01.md)

@@ -19,11 +19,11 @@ type ReplicaSetOwnerView interface {
 	ReplicaSets() []appsv1.ReplicaSet
 }
 
-// CheckReplicaSetScales allows a program to scale a ReplicaSet only when the
-// observed ReplicaSet is controlled by a Deployment the program is bound to and
-// is not that Deployment's current revision. Retiring an old revision is the
+// CheckReplicaSetScales allows a program to scale or retire a ReplicaSet only when the
+// observed ReplicaSet is controlled by an observed Deployment and is not that
+// Deployment's current revision. The owner is a relation, not a binding. Retiring an old revision is the
 // only repair a program needs on a ReplicaSet; anything else risks an outage.
-func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView, bindings Bindings) error {
+func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView) error {
 	for _, action := range plan.Actions {
 		var scale ScaleWorkload
 		switch a := action.(type) {
@@ -34,20 +34,27 @@ func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView, bindings Binding
 				continue
 			}
 			scale = *a
+		case RetireOldRevision:
+			scale = ScaleWorkload{Ref: a.Ref}
+		case *RetireOldRevision:
+			if a == nil {
+				continue
+			}
+			scale = ScaleWorkload{Ref: a.Ref}
 		default:
 			continue
 		}
 		if scale.Ref.Kind != "ReplicaSet" {
 			continue
 		}
-		if err := checkReplicaSetScale(scale, view, bindings); err != nil {
+		if err := checkReplicaSetScale(scale, view); err != nil {
 			return fmt.Errorf("%w: ReplicaSet %s/%s: %s", ErrReplicaSetScaleRefused, scale.Ref.Namespace, scale.Ref.Name, err)
 		}
 	}
 	return nil
 }
 
-func checkReplicaSetScale(scale ScaleWorkload, view ReplicaSetOwnerView, bindings Bindings) error {
+func checkReplicaSetScale(scale ScaleWorkload, view ReplicaSetOwnerView) error {
 	if view == nil {
 		return errors.New("no observation of its owner")
 	}
@@ -69,13 +76,6 @@ func checkReplicaSetScale(scale ScaleWorkload, view ReplicaSetOwnerView, binding
 	}
 	if owner == "" {
 		return errors.New("has no controlling Deployment")
-	}
-	bound := false
-	for _, ref := range bindings.Objects {
-		bound = bound || (ref.Kind == "Deployment" && ref.Namespace == set.Namespace && ref.Name == owner)
-	}
-	if !bound {
-		return fmt.Errorf("its owner Deployment %s is not bound to the program", owner)
 	}
 	for _, deployment := range view.Deployments() {
 		if deployment.Namespace != set.Namespace || deployment.Name != owner {

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 BUDGET_PATH = "sdo/agents/prompt_budgets.toml"
+SECTIONS_PATH = "sdo/agents/prompt_sections.json"
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,55 @@ def at_commit(repository: Path, commit: str) -> dict[str, Budget]:
     return parse_budgets(git(repository, "show", f"{commit}:{BUDGET_PATH}")) if exists.returncode == 0 else {}
 
 
+def section_bindings(repository: Path, commit: str) -> dict[str, str]:
+    exists = subprocess.run(
+        ["git", "-C", str(repository), "cat-file", "-e", f"{commit}:{SECTIONS_PATH}"], capture_output=True, check=False
+    )
+    if exists.returncode:
+        return {}
+    document = json.loads(git(repository, "show", f"{commit}:{SECTIONS_PATH}"))
+    if not isinstance(document, dict):
+        raise ValueError("prompt_sections must be a template/placeholder mapping")
+    result = {}
+    for template, placeholders in document.items():
+        if not isinstance(placeholders, dict):
+            raise ValueError(f"{template}: expected placeholder caps")
+        for key, name in placeholders.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError(f"{template}/${key}: expected a budget name")
+            result[f"{template}/${key}"] = name
+    return result
+
+
+def check_section_retargeting(
+    repository: Path, commit: str, parents: Sequence[str], after: dict[str, Budget]
+) -> list[str]:
+    bindings = section_bindings(repository, commit)
+    inherited: dict[str, list[tuple[str, int]]] = {}
+    for parent in parents:
+        limits = at_commit(repository, parent)
+        for key, name in section_bindings(repository, parent).items():
+            if name not in limits:
+                raise ValueError(f"{key}: parent placeholder has no cap {name}")
+            inherited.setdefault(key, []).append((name, limits[name].max_chars))
+    errors = []
+    for key, name in bindings.items():
+        if name not in after:
+            errors.append(f"{key}: missing budget {name}")
+            continue
+        previous = inherited.get(key, [])
+        if (
+            previous
+            and name not in {entry[0] for entry in previous}
+            and after[name].max_chars > max(entry[1] for entry in previous)
+        ):
+            errors.append(
+                f"{key}: retarget would raise the effective cap; raise its original budget in an isolated "
+                "Budget-Reason commit first, or bind a smaller cap"
+            )
+    return errors
+
+
 def check_range(repository: Path, base: str, head: str) -> list[str]:
     """Inspect individual commits, so an increase then decrease cannot hide a raise."""
     errors = []
@@ -100,7 +151,7 @@ def check_range(repository: Path, base: str, head: str) -> list[str]:
             else git(repository, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", commit)
         )
         changed = files.rstrip("\0").split("\0")
-        if BUDGET_PATH not in changed:
+        if BUDGET_PATH not in changed and SECTIONS_PATH not in changed:
             continue
         try:
             # A merge inherits limits whose originating commits are checked
@@ -112,6 +163,9 @@ def check_range(repository: Path, base: str, head: str) -> list[str]:
                     if name not in before or entry.max_chars > before[name].max_chars:
                         before[name] = entry
             after = at_commit(repository, commit)
+            errors.extend(
+                f"{commit[:12]}: {error}" for error in check_section_retargeting(repository, commit, parents, after)
+            )
             message = git(repository, "show", "-s", "--format=%B", commit)
             trailers = git(repository, "interpret-trailers", "--parse", input_text=message)
             errors.extend(

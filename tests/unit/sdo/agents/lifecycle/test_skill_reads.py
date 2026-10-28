@@ -123,3 +123,23 @@ def test_shipped_skill_prompt_paths_are_readable_with_a_private_turn_home(relati
 )
 def test_shipped_skill_root_remains_read_only_and_narrow(command: str) -> None:
     assert _command_escapes_repository(command.format(root=SKILLS_ROOT), REPOSITORY, skill_directories={})
+
+
+def test_renderer_overflow_is_readable_but_other_context_files_are_not(tmp_path):
+    from sdo.agents.lifecycle.agents import _first_repository_escape
+    from sdo.agents.prompt_templates import named_prompt
+
+    prompt = named_prompt("health_judge.active_payload", "evidence " * 20000)
+    assert prompt.context_files
+    path = prompt.context_files[0]
+    assert _first_repository_escape([f"cat {path}"], REPOSITORY, context_files=frozenset(prompt.context_files)) is None
+    assert (
+        _first_repository_escape(
+            [f"cat {tmp_path}/unrelated.txt"], REPOSITORY, context_files=frozenset(prompt.context_files)
+        )
+        is not None
+    )
+    assert (
+        _first_repository_escape([f"sed -i x {path}"], REPOSITORY, context_files=frozenset(prompt.context_files))
+        is not None
+    )

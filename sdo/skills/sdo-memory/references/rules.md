@@ -14,6 +14,8 @@ Every rule names the validator rule IDs that enforce it. The detector and playbo
 - YAML, front matter, and Go files parse. Enforced by: `yaml.parse`, `document.parse`, `go.syntax`.
 - Logical IDs follow their patterns (playbooks `^[a-z][a-z0-9_-]*$`, detectors `^[a-z0-9][a-z0-9_.-]*$`) and are
   unique. Enforced by: `id.pattern`, `id.duplicate`.
+- Memory is shared by every cluster that adopts it: it holds what to measure and thresholds, never one cluster's
+  measurements (Service UIDs, allocated IPs, probe or capture times). Enforced by: `memory.cluster-local`.
 
 ## Ownership
 
@@ -48,3 +50,7 @@ Missing inputs are errors; the caller supplies the accepted base and authoring r
   the shared check prepares and validates them. Enforced by: `bootstrap.generic-health`.
 
 - A playbook status is omitted/`active` or `retired`; retirement requires a nonempty string `retired_reason`, which is invalid on an active playbook. Enforced by: `playbook.status`.
+
+- A hand repair is any successful receipt that no accepted playbook's application performed, including generic menu actions and removals. Every recorded hand repair needs a changed executable program with positive binding metadata and its original `RepairReceipt`; README text and SDK gaps do not encode performed steps. Replay snapshots and verdicts remain informational. Enforced by: `reflection.program-required`.
+- Typed SDK gaps name unavailable observations or effects, never work left to encode. Installed SDK actions are available; a named installed read needs an authoritative unavailable-read error. Enforced by: `reflection.sdk-gap-unavailable`.
+- Update or retire each applied playbook that failed, left findings unresolved or needed later hand repair; edits to a peer playbook or an SDK gap do not excuse it. Enforced by: `reflection.stale-playbook`.

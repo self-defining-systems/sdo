@@ -412,7 +412,7 @@ uv run python -m benchmarks.sregym.adapter.oracle_observability \
   --sregym-dir third_party/sregym
 ```
 
-After applying the seed, use `--route-astronomy-traces` on the same command to
+Tracing Service declarations belong in the accepted application source; the harness does not rewrite them to
 match the stock conductor's Jaeger ExternalName routing. The native benchmark
 adapter also prepares this stack before installing a seeded controller. OpenEBS
 is vendored at the revision recorded in the module; all telemetry runs inside
@@ -523,6 +523,8 @@ A plan is JSON, with absolute paths:
 ```json
 {
   "run_id": "two-problem-proof",
+  "provider": "codex",
+  "model": "gpt-6-luna",
   "accepted_repository": "/local/parallel/accepted",
   "lanes": {"left": "/runs/left", "right": "/runs/right"},
   "encounters": [
@@ -533,24 +535,43 @@ A plan is JSON, with absolute paths:
 }
 ```
 
-Run `uv run python -m benchmarks.sregym.fastloop parallel --plan <plan.json>
---output <new-results-directory> --prepare`. Preparation invokes the ordinary
-native baseline/admission path without injecting a fault, syncs each still-private
-accepted checkout, and clones the first lane as `parallel/accepted` if absent.
-All initial accepted trees must agree; differing learning must first be reconciled
-through the broker. Existing accepted memory is never replaced. An accepted seed
-with initialized health memory avoids independently authoring different initial
-health policies in the two preparation stages.
+The plan-wide `provider` and `model` apply to preparation and every lane. They
+default to `codex` and `gpt-6-luna`; use `claude` and `claude-sonnet-5-5` for a
+same-model Claude proof.
 
-Preparation pauses every controller through the recovery fence, stops all writers,
-binds only their accepted `application` directory, and recreates the same native
-Jobs. Proposal, session, capture, ledger and build roots remain private. Application
+Run `uv run python -m benchmarks.sregym.fastloop parallel --plan <plan.json>
+--output <new-results-directory> --prepare`. The output must not exist yet; this
+is checked before preparation. Preparation runs every unattached lane at once,
+each in its own `parallel-prepare-lane` subprocess (log:
+`<lane>/parallel-setup/<run_id>/prepare.log`). Each invokes the ordinary native
+baseline/admission path without injecting a fault and syncs its still-private
+accepted checkout. Image delivery and redeploys keep their host-wide limits (see
+Host limits), and the lanes share one 8-job build budget. Wall time is the slowest
+lane, not the sum. Then the first prepared lane is cloned as `parallel/accepted` if
+absent. Every lane's accepted tree must equal a commit of the accepted first-parent
+history, except per-cluster health captures (`discarded_cluster_captures`).
+Differing learning must first be reconciled through the broker. Existing accepted
+memory is never replaced. An accepted seed with initialized health memory avoids
+independently authoring different initial health policies in the preparation stages.
+
+The first cohort attaches behind one barrier, after every lane is prepared. It
+pauses every controller through the recovery fence, stops all writers, binds only
+their accepted `application` directory, and recreates the same native Jobs.
+Proposal, session, capture, ledger and build roots remain private. Application
 identity receives a lane suffix, making incident ID namespaces distinct. The
 restricted controller group receives write access to the accepted checkout; Git
 trust is scoped to its accepted mount. The external attachment report preserves
-original Jobs and the last phase for recovery after an interrupted attachment.
-Already attached lanes use `parallel` without `--prepare`; `parallel-attach`
-performs only attachment for prepared idle lanes.
+original Jobs, the cohort, each lane's matched accepted commit and the last phase
+for recovery after an interrupted attachment. If some lanes fail preparation, the
+prepared ones still attach and the command fails naming the others.
+
+A running shared memory can grow. Run `parallel --prepare` with a plan whose new
+lanes are unattached (already attached lanes in the plan are skipped). The new
+lanes join as a later cohort. Only their own controllers pause and stop. Running
+lanes keep publishing, and the live checkout is only read. A lane prepared before
+peers published matches an older accepted commit, and its controller adopts the
+current head when it resumes. Already attached lanes use `parallel` without
+`--prepare`; `parallel-attach` performs only attachment for prepared idle lanes.
 
 Each lane executes in its own subprocess, with explicit kubeconfig and capped
 host build parallelism. Faults assigned to a lane stay ordered. All lane preflights
