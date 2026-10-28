@@ -114,7 +114,11 @@ fast object now means a real read failure, not a slow neighbour. A stalled
 pending reservation releases responder writes after a 2 s grace with
 `rollout_stalled` naming the blocker, not after the 90 s bound.
 The stage applies matched bindings sequentially, re-running Diagnose on fresh
-state after the preceding application's effects converge. A nonmatching or
+state after the preceding application returns. A pending handoff
+(`admission_blocked`, stalled or bounded rollout) keeps the pass: later matches
+still get their fresh diagnosis and may unblock it. Only a failed application
+(`apply_error`, `rollout_failed`) ends the pass; matches after it have no stage
+entry. Runs before this rule ended the pass at the first pending handoff. A nonmatching or
 unavailable diagnosis gets one deferred turn after the other candidates, within
 the same 45 s budget. Each applied mitigation has its own `apply_receipt` and
 `application_id`; `plan_action_start` is zero and `plan_action_count` covers its
