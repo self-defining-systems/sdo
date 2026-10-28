@@ -89,6 +89,7 @@ message Action {
     RunJob run_job = 18;
     RunScript run_script = 19;
     SyncWebhookCA sync_webhook_ca = 20;
+    RetireOldRevision retire_old_revision = 21;
   }
 }
 
@@ -202,6 +203,12 @@ message ScaleWorkload {
   PlanValue replicas = 2 [(buf.validate.field).required = true];
 }
 
+// Scales one old-revision ReplicaSet of its controlling Deployment to zero.
+// Refused for a current revision or a ReplicaSet without an observed owner.
+message RetireOldRevision {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+}
+
 message Exec {
   ObjectRef pod = 1 [(buf.validate.field).required = true];
   string container = 2 [(buf.validate.field).string.min_len = 1];
@@ -239,6 +246,10 @@ message RolloutBlocker {
   ObjectRef ref = 1;
   string reason = 2;
   repeated string warning_events = 3;
+  // The standard release of a rollout whose replacement cannot be placed
+  // beside its old revision. SDO never applies it on its own; the responder
+  // or a learned program does.
+  repeated Action release = 4;
 }
 
 message PlanApplication {

@@ -8,27 +8,30 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
+import sys
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from benchmarks.sregym.adapter import WaitKind, control_namespace_for, kubectl, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
-from benchmarks.sregym.fastloop.parallel_memory import memory_head
+from benchmarks.sregym.fastloop.parallel_memory import memory_ancestry, memory_head
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from benchmarks.sregym.fastloop.parallel import ParallelPlan
 
 NODE_ROOT = "/opt/sdo-parallel"
 PVC_NAME = "sdo-application-repository"
 JOB_NAME = "sdo-controller-run"
+SHARED_ID = "sdo-shared-id"
+T = TypeVar("T")
 
 
 def shared_controller_job(job: dict[str, Any], application: str) -> dict[str, Any]:
@@ -110,12 +113,6 @@ def repository_volume_path(environment: FastloopEnvironment) -> str:
     return path
 
 
-# Health detectors capture per-cluster facts (Service UIDs, ClusterIPs, probe times) when a lane
-# first becomes healthy. Independent lanes can never agree on them, and the shared tree keeps
-# one lane's capture, so only these exact files may differ between a lane and the accepted tree.
-CLUSTER_CAPTURE = re.compile(r"\.sdo/diagnostics/detectors/health/[a-z0-9-]+/baseline\.json")
-
-
 def lane_git_command(environment: FastloopEnvironment, volume_path: str, accepted: Path, *git: str) -> tuple[str, ...]:
     """Command that reads a lane's mounted accepted repository outside the kind node.
 
@@ -141,23 +138,68 @@ def lane_git_command(environment: FastloopEnvironment, volume_path: str, accepte
     )
 
 
-def lane_divergence(environment: FastloopEnvironment, volume_path: str, accepted: Path, tree: str) -> list[str]:
-    """Paths where the lane's accepted tree differs from the shared accepted tree, or [] if equal.
+def _tree_entries(listing: str) -> dict[str, str]:
+    """``git ls-tree -r`` rows keyed by path; values carry mode, type and object id."""
+    entries = {}
+    for line in listing.splitlines():
+        meta, _, path = line.partition("\t")
+        entries[path] = meta
+    return entries
 
-    Raises when any difference is not a per-cluster health capture.
+
+def lane_match(environment: FastloopEnvironment, volume_path: str, accepted: Path, head: str) -> str:
+    """Newest accepted commit (first-parent history of ``head``) whose tree the lane's tree equals.
+
+    A lane may have been prepared before peers published, so any accepted commit proves the
+    lane holds no private memory; its controller adopts the current head when it resumes.
+    Cluster-local captures are controller state outside memory, so no path is exempt: raises
+    naming the paths that differ from the closest accepted commit.
     """
+    history = [
+        line.split()
+        for line in _command("git", "-C", str(accepted), "log", "--first-parent", "--format=%H %T", head).splitlines()
+    ]
     observed = _command(*lane_git_command(environment, volume_path, accepted, "rev-parse", "HEAD^{tree}"))
-    if observed == tree:
-        return []
-    changed = _command(*lane_git_command(environment, volume_path, accepted, "diff", "--name-only", tree, "HEAD"))
-    paths = changed.splitlines()
-    foreign = [path for path in paths if not CLUSTER_CAPTURE.fullmatch(path)]
-    if not paths or foreign:
-        raise ValueError(
-            "eval: lane accepted memory differs; merge through the broker before sharing: "
-            + ", ".join(foreign or [observed])
-        )
-    return paths
+    for commit, tree in history:
+        if tree == observed:
+            return commit
+    lane = _tree_entries(_command(*lane_git_command(environment, volume_path, accepted, "ls-tree", "-r", "HEAD")))
+    closest: list[str] | None = None
+    for commit, _tree in history:
+        entries = _tree_entries(_command("git", "-C", str(accepted), "ls-tree", "-r", commit))
+        paths = sorted(path for path in lane.keys() | entries.keys() if lane.get(path) != entries.get(path))
+        if closest is None or len(paths) < len(closest):
+            closest = paths
+    raise ValueError(
+        "eval: lane accepted memory differs; merge through the broker before sharing: "
+        + ", ".join(closest or [observed])
+    )
+
+
+class LaneStepsFailed(RuntimeError):
+    """Some lanes failed a concurrent step; ``completed`` keeps the lanes that finished."""
+
+    def __init__(self, errors: dict[str, str], completed: dict[str, Any]) -> None:
+        super().__init__(f"eval: lanes failed: {errors}")
+        self.errors = errors
+        self.completed = completed
+
+
+def concurrently(work: dict[str, Callable[[], T]]) -> dict[str, T]:
+    """Run independent per-lane steps together, join every lane, then raise naming each failed lane."""
+    results: dict[str, T] = {}
+    errors: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=max(1, len(work))) as pool:
+        futures = {pool.submit(step): name for name, step in work.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                results[name] = future.result()
+            except Exception as exc:
+                errors[name] = f"{type(exc).__name__}: {exc}"
+    if errors:
+        raise LaneStepsFailed(errors, results)
+    return results
 
 
 def assert_lane_isolation(environments: list[FastloopEnvironment]) -> None:
@@ -239,17 +281,20 @@ class Attachment:
     node: str
     volume_path: str
     application: str
-    discarded: list[str] = field(default_factory=list)
+    matched: list[str] = field(default_factory=list)
 
 
 def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
-    """Pause all lanes, stop all writers, bind, then recreate their existing Jobs.
+    """Pause the joining lanes, stop their writers, bind, then recreate their existing Jobs.
 
-    Prerequisite: prepared idle native controllers, local PVCs and the shared host
-    root mounted during kind creation. No installer or seed-copy path runs here.
-    Failures leave all writers stopped and a durable phase report for recovery.
+    The first cohort creates the shared memory behind one quiescent barrier over all its lanes.
+    Once the memory is live (its identity exists), unattached plan lanes join as a later cohort:
+    only their own writers pause and stop, running lanes keep publishing, and the accepted
+    history is only read. Prerequisite: prepared idle native controllers, local PVCs and the
+    shared host root mounted during kind creation. No installer or seed-copy path runs here.
+    Failures leave the joining lanes' writers stopped and a durable phase report for recovery.
     """
-    from benchmarks.sregym.adapter import KubectlClusterOps, pause_for_recovery
+    from benchmarks.sregym import adapter
 
     accepted = plan.accepted_repository.resolve()
     root = accepted.parent
@@ -258,22 +303,25 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
     filesystem = _command("stat", "-f", "-c", "%T", str(root))
     if filesystem not in {"ext2/ext3", "xfs", "btrfs", "tmpfs", "zfs"}:
         raise ValueError(f"eval: shared lock requires a local filesystem, observed {filesystem}")
-    if _command("git", "-C", str(accepted), "status", "--porcelain"):
-        raise ValueError("eval: accepted memory must be clean before attachment")
-    head = memory_head(accepted)
-    tree = _command("git", "-C", str(accepted), "rev-parse", "HEAD^{tree}")
+    identity = accepted / ".git" / SHARED_ID
+    live = identity.read_text().strip() if identity.exists() else ""
     environments = {name: FastloopEnvironment.load(path.resolve()) for name, path in plan.lanes.items()}
-    if all(e.shared_accepted_id for e in environments.values()):
+    joining = {name: e for name, e in environments.items() if not e.shared_accepted_id}
+    if any(e.shared_accepted_id and e.shared_accepted_id != live for e in environments.values()):
+        raise ValueError("eval: partially attached lanes require explicit recovery from the attachment report")
+    if not joining:
         assert_lane_isolation(list(environments.values()))
         for environment in environments.values():
             assert_shared_lane(environment)
         return
-    if any(e.shared_accepted_id for e in environments.values()):
-        raise ValueError("eval: partially attached lanes require explicit recovery from the attachment report")
+    # Running writers of a live memory may be mid-commit; only the first cohort needs a clean tree.
+    if not live and _command("git", "-C", str(accepted), "status", "--porcelain"):
+        raise ValueError("eval: accepted memory must be clean before attachment")
+    head = memory_head(accepted)
     if len({e.cluster for e in environments.values()}) != len(environments):
         raise ValueError("eval: each lane requires its own kind cluster")
     attachments = []
-    for name, environment in environments.items():
+    for name, environment in joining.items():
         if environment.parallel_root is None or environment.parallel_root.resolve() != root:
             raise ValueError("eval: every lane must mount the same --parallel-root")
         nodes = lane_nodes(environment)
@@ -286,7 +334,6 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
         if len(owners) != 1 or owners[0] not in nodes:
             raise ValueError("eval: repository requires one running controller on a kind node")
         application = f"{environment.application}-{name}"[:30].rstrip("-") + "-" + uuid.uuid4().hex
-        control = control_namespace_for(environment.namespace)
         job = _json(environment, "get", "job", JOB_NAME, "-o", "json", namespace=control)
         shared_controller_job(job, application)
         attachments.append(Attachment(environment, job, owners[0], path, application))
@@ -297,6 +344,7 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
             json.dumps(
                 {
                     "phase": phase,
+                    "cohort": "late" if live else "initial",
                     "accepted_commit": head,
                     "lanes": [
                         {
@@ -305,7 +353,7 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
                             "node": a.node,
                             "volume_path": a.volume_path,
                             "application": a.application,
-                            "discarded_cluster_captures": a.discarded,
+                            "matched_commit": a.matched[0] if a.matched else None,
                             "original_job": a.job,
                         }
                         for a in attachments
@@ -317,24 +365,32 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
         )
 
     save("preflight")
-    # Pause every controller before stopping any; the existing fence rejects pending closure/reflection.
+    # Pause every joining controller before stopping any; the existing fence rejects pending
+    # closure/reflection. Pausing uses this process's KUBECONFIG, so it stays one lane at a time.
     for item in attachments:
         with lane_environment(item.environment):
-            pause_for_recovery(KubectlClusterOps(), control_namespace_for(item.environment.namespace))
-        item.discarded.extend(lane_divergence(item.environment, item.volume_path, accepted, tree))
+            adapter.pause_for_recovery(adapter.KubectlClusterOps(), control_namespace_for(item.environment.namespace))
+
+    def compare(item: Attachment) -> None:
+        item.matched.append(lane_match(item.environment, item.volume_path, accepted, head))
+
+    concurrently({item.environment.cluster: lambda item=item: compare(item) for item in attachments})
     save("all-paused")
-    for item in attachments:
-        kubectl(
-            ["delete", "job", JOB_NAME, "--cascade=foreground", "--wait=true", "--timeout=120s"],
-            namespace=control_namespace_for(item.environment.namespace),
-            kubeconfig=item.environment.kubeconfig,
-        )
+    concurrently(
+        {
+            item.environment.cluster: lambda item=item: kubectl(
+                ["delete", "job", JOB_NAME, "--cascade=foreground", "--wait=true", "--timeout=120s"],
+                namespace=control_namespace_for(item.environment.namespace),
+                kubeconfig=item.environment.kubeconfig,
+            )
+            for item in attachments
+        }
+    )
     save("all-stopped")
-    identity = accepted / ".git" / "sdo-shared-id"
-    if not identity.exists():
+    if not live:
         identity.write_text(uuid.uuid4().hex + "\n")
-    for command in accepted_ownership_commands(NODE_ROOT + "/accepted", host_gid=os.getgid()):
-        _command("docker", "exec", attachments[0].node, *command)
+        for command in accepted_ownership_commands(NODE_ROOT + "/accepted", host_gid=os.getgid()):
+            _command("docker", "exec", attachments[0].node, *command)
     for item in attachments:
         _command(
             "docker",
@@ -347,7 +403,9 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
             item.volume_path + "/application",
         )
     save("all-bound")
-    for (name, environment), item in zip(environments.items(), attachments, strict=True):
+    names = {e.cluster: name for name, e in joining.items()}
+    for item in attachments:
+        environment = item.environment
         kubectl(
             ["create", "-f", "-"],
             namespace=control_namespace_for(environment.namespace),
@@ -355,18 +413,23 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
             input_text=json.dumps(shared_controller_job(item.job, item.application)),
         )
         environment.workspace = accepted
-        environment.parallel_lane, environment.shared_accepted_id = name, identity.read_text().strip()
+        environment.parallel_lane, environment.shared_accepted_id = (
+            names[environment.cluster],
+            identity.read_text().strip(),
+        )
         environment.application = item.application
         # Restart retains Go controller state on its private PVC; refresh the host adapter registry.
         environment.state_path.unlink(missing_ok=True)
         environment.save()
-    for environment in environments.values():
+    for item in attachments:
         kubectl(
             ["wait", "--for=condition=Ready", "pod", "--selector", f"job-name={JOB_NAME}", "--timeout=120s"],
-            namespace=control_namespace_for(environment.namespace),
-            kubeconfig=environment.kubeconfig,
+            namespace=control_namespace_for(item.environment.namespace),
+            kubeconfig=item.environment.kubeconfig,
         )
-        assert_shared_lane(environment)
+        assert_shared_lane(item.environment)
+    # Peers may have published meanwhile; attachment itself never rewinds the one accepted history.
+    memory_ancestry(accepted, head, memory_head(accepted))
     save("attached")
 
 
@@ -478,8 +541,11 @@ def provision_parallel_volume(environment: FastloopEnvironment) -> None:
         )
 
 
-def prepare_shared_lanes(plan: ParallelPlan, report: Path) -> None:
-    """Reuse fastloop's real pre-injection path, stopping at its no-fault callback."""
+def prepare_lane(plan: ParallelPlan, name: str) -> None:
+    """Reuse fastloop's real pre-injection path for one lane, stopping at its no-fault callback.
+
+    Sets this process's KUBECONFIG, so each lane runs in its own process (``prepare_lane_process``).
+    """
     from benchmarks.sregym.adapter import (
         PersistentState,
         native_install_config,
@@ -489,61 +555,125 @@ def prepare_shared_lanes(plan: ParallelPlan, report: Path) -> None:
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.dry_run import NoFaultReady
 
-    environments = [FastloopEnvironment.load(path.resolve()) for path in plan.lanes.values()]
-    if any(environment.shared_accepted_id for environment in environments):
-        attach_shared_memory(plan, report)
-        return
-    for environment in environments:
+    environment = FastloopEnvironment.load(plan.lanes[name].resolve())
+    args = cli.build_parser().parse_args(
+        [
+            "run",
+            "--run-dir",
+            str(environment.run_dir),
+            "--agent",
+            "sdo",
+            "--healthy-baseline",
+            "--no-checkpoints",
+            "--timeout",
+            str(plan.timeout_seconds),
+            *plan.worker_arguments(),
+        ]
+    )
+    directory = environment.run_dir / "parallel-setup" / plan.run_id
+    directory.mkdir(parents=True, exist_ok=True)
+    with lane_environment(environment), cli._worker(environment) as worker:
+        cli.check_host_capacity(args)
+        agent = cli._sdo_agent(args, environment, directory, worker=worker)
+
+        def no_fault() -> Any:
+            raise NoFaultReady
+
+        try:
+            try:
+                agent.resolve(0, "parallel-prepare", no_fault)
+            except NoFaultReady:
+                pass
+            else:
+                raise ValueError("eval: shared preparation never reached the pre-injection gate")
+        finally:
+            agent.close()
+        state = PersistentState.load(environment.state_path)
+        record = state.controllers.get(environment.namespace)
+        if record is None or record.pending is not None:
+            raise ValueError("eval: shared preparation requires an idle native controller registry")
+        sync_existing(native_install_config(runtime_config_from_payload(record.runtime_config)))
+
+
+def prepare_lane_process(plan: ParallelPlan, name: str) -> None:
+    """Prepare one lane in a child process with the lane's own kubeconfig and the shared CPU budget.
+
+    Image delivery and app redeploys inside the child take the host-wide flock admissions,
+    so concurrent lanes keep serial delivery and the redeploy semaphore.
+    """
+    from benchmarks.sregym.fastloop.parallel import lane_process_environment
+
+    environment = FastloopEnvironment.load(plan.lanes[name].resolve())
+    directory = environment.run_dir / "parallel-setup" / plan.run_id
+    directory.mkdir(parents=True, exist_ok=True)
+    plan_path = directory / "plan.json"
+    plan_path.write_text(plan.model_dump_json(indent=2) + "\n")
+    command = [
+        sys.executable,
+        "-m",
+        "benchmarks.sregym.fastloop",
+        "parallel-prepare-lane",
+        "--plan",
+        str(plan_path),
+        "--lane",
+        name,
+    ]
+    log_path = directory / "prepare.log"
+    with log_path.open("a") as log:
+        completed = subprocess.run(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+            env=lane_process_environment(environment, len(plan.lanes)),
+        )
+    if completed.returncode:
+        raise RuntimeError(f"eval: lane {name} preparation exited {completed.returncode}; see {log_path}")
+
+
+def _clone_accepted(source: Path, accepted: Path) -> None:
+    subprocess.run(
+        ["git", "clone", "--no-local", str(source), str(accepted)],
+        check=True,
+        timeout=wait_for(WaitKind.SLOW_COMMAND),
+    )
+
+
+def prepare_shared_lanes(
+    plan: ParallelPlan,
+    report: Path,
+    *,
+    prepare: Callable[[ParallelPlan, str], None] = prepare_lane_process,
+    attach: Callable[[ParallelPlan, Path], None] = attach_shared_memory,
+) -> None:
+    """Prepare every unattached lane at once, then attach behind one barrier.
+
+    Already attached lanes are skipped, so the same command grows a running shared memory
+    with a later cohort. If a lane fails, the prepared lanes still attach and the error names
+    the failed lanes; rerunning prepares and attaches only those.
+    """
+    environments = {name: FastloopEnvironment.load(path.resolve()) for name, path in plan.lanes.items()}
+    for environment in environments.values():
         if (
             environment.parallel_root is None
             or environment.parallel_root.resolve() != plan.accepted_repository.resolve().parent
         ):
             raise ValueError("eval: prepare requires every lane created with the selected --parallel-root")
-        lane_nodes(environment)
-        repository_volume_path(environment)
-    for environment in environments:
-        args = cli.build_parser().parse_args(
-            [
-                "run",
-                "--run-dir",
-                str(environment.run_dir),
-                "--agent",
-                "sdo",
-                "--healthy-baseline",
-                "--no-checkpoints",
-                "--timeout",
-                str(plan.timeout_seconds),
-                *plan.worker_arguments(),
-            ]
-        )
-        directory = environment.run_dir / "parallel-setup" / plan.run_id
-        directory.mkdir(parents=True, exist_ok=True)
-        with lane_environment(environment), cli._worker(environment) as worker:
-            cli.check_host_capacity(args)
-            agent = cli._sdo_agent(args, environment, directory, worker=worker)
-
-            def no_fault() -> Any:
-                raise NoFaultReady
-
-            try:
-                try:
-                    agent.resolve(0, "parallel-prepare", no_fault)
-                except NoFaultReady:
-                    pass
-                else:
-                    raise ValueError("eval: shared preparation never reached the pre-injection gate")
-            finally:
-                agent.close()
-            state = PersistentState.load(environment.state_path)
-            record = state.controllers.get(environment.namespace)
-            if record is None or record.pending is not None:
-                raise ValueError("eval: shared preparation requires an idle native controller registry")
-            sync_existing(native_install_config(runtime_config_from_payload(record.runtime_config)))
+        if not environment.shared_accepted_id:
+            lane_nodes(environment)
+            repository_volume_path(environment)
+    pending = [name for name, environment in environments.items() if not environment.shared_accepted_id]
+    failure: LaneStepsFailed | None = None
+    try:
+        concurrently({name: lambda name=name: prepare(plan, name) for name in pending})
+    except LaneStepsFailed as exc:
+        failure = exc
+    ready = [name for name in plan.lanes if failure is None or name not in failure.errors]
+    if pending and not set(ready) & set(pending):
+        raise failure or RuntimeError("eval: no lane prepared")
     accepted = plan.accepted_repository.resolve()
     if not accepted.exists():
-        subprocess.run(
-            ["git", "clone", "--no-local", str(environments[0].workspace), str(accepted)],
-            check=True,
-            timeout=wait_for(WaitKind.SLOW_COMMAND),
-        )
-    attach_shared_memory(plan, report)
+        _clone_accepted(environments[next(name for name in ready if name in pending)].workspace, accepted)
+    attach(plan.model_copy(update={"lanes": {name: plan.lanes[name] for name in ready}}), report)
+    if failure is not None:
+        raise failure

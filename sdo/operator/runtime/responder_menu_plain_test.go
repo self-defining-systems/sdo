@@ -16,7 +16,7 @@ func TestResponderMenuPlainNeedsNoCapabilities(t *testing.T) {
 	}
 }
 
-func TestResponderMenuPlainFiveRoundsAcrossOptions(t *testing.T) {
+func TestResponderMenuPlainFiveVerifiedRoundsAcrossOptions(t *testing.T) {
 	loop, _ := menuB3Loop(t)
 	loop.MenuConfig = productionResponderMenu()
 	loop.Executor.Verifier = planFakeVerifier{true}
@@ -29,6 +29,7 @@ func TestResponderMenuPlainFiveRoundsAcrossOptions(t *testing.T) {
 		if result.Report == nil {
 			t.Fatalf("missing report: %s", result.Error)
 		}
+		loop.Handle(context.Background(), ToolRequest{Command: "verify"})
 	}
 	menu := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
 	result := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: plainProgramOption(t, menu.Menu, 0), RoundLimit: 1}})

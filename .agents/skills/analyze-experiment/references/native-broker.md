@@ -65,9 +65,11 @@ later incidents; archives are runtime evidence, not operational memory.
 
 For incident restart evidence, read [native incident recovery](native-incident-recovery.md).
 
-### Accepted reachability baseline evidence
+### Per-cluster reachability baseline evidence
 
-The optional health-owned `.sdo/diagnostics/detectors/health/service-reachability/baseline.json` records fresh failed dial samples captured by the trusted, opt-in healthy-baseline gate while all other health detectors and the authored objective independently passed. It is broker-published as `health_judge` in `initial`, followed by detector-bundle adoption. Read version, authorization/source/objective bindings, capture time, exact targets, configuration hashes and measured samples. A missing historical success alone never authorizes an exclusion. A changed source/objective/Service name or target/backend/config/policy invalidates the record for that target; a resulting finding reports `baseline_status`. A restart reuses the accepted record, including an empty record, and restored incidents cannot capture their failures as baseline exclusions. Candidate failures in saved logs are not accepted exclusions without this measured healthy-baseline evidence.
+The opt-in healthy-baseline gate records fresh failed dial samples, captured while all other health detectors and the authored objective independently passed, as per-cluster controller state: `.sdo-runtime/reachability-baseline.json` at the lane's repository volume root (on fastloop lanes, the lane's host PVC directory, not the shared accepted checkout). It is not memory, is never broker-published and differs between lanes by design. Read version, authorization/source/objective bindings, capture time, exact targets, Service UIDs, configuration hashes and measured samples. A missing historical success alone never authorizes an exclusion. A changed source/objective/Service name or target/backend/config/policy invalidates the record for that target; a resulting finding reports `baseline_status`. A restart reuses the cluster's own record, including an empty record, and restored incidents cannot capture their failures as baseline exclusions. A gate that cannot measure logs `reachability baseline unavailable` and keeps running; until a later healthy measurement, the `service-reachability` evaluation reason lists never-served targets as unknown. Candidate failures in saved logs are not accepted exclusions without this measured healthy-baseline evidence.
+
+Older runs committed this record into memory at `.sdo/diagnostics/detectors/health/service-reachability/baseline.json` (`reachability-baseline-…` broker subjects as `health_judge`/`initial`), one lane's capture at a time. Current code never reads that file; a health-judge initial check deletes it, and the `memory.cluster-local` validator rule rejects writing it or other cluster-local fields. Shared-memory attachment no longer tolerates any lane divergence, so attachment reports have no `discarded_cluster_captures`.
 
 For partial repair, reflection publication and retirement evidence, read
 [native reflection](native-reflection.md).
@@ -101,13 +103,18 @@ alone is the baseline. `IncidentRequest.prior_stages` and
 `OutcomeRecord.prior_stages` retain typed controller-owned stage reports.
 Each mitigation identifies the accepted playbook revision, bindings, plan,
 `apply_receipt`, post-apply Diagnose, and cleared/remaining finding fingerprints.
-Results distinguish `applied_cleared`, `applied_still_matching`, `rollout_failed`,
+Results distinguish `applied_cleared`, `applied_still_matching` (with `kept_reason`),
+`reverted_ineffective` (writes restored before handoff), `rollout_failed`,
 `rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`
 (`stage_budget` means the 45 s stage budget ran out before the match was applied).
 `rollout_pending_at_handoff` whose `rollout_pending` reason says `cannot progress
 without another actor` is a stall handoff, a few seconds after the write: the
-replacement Pod is unschedulable (or the progress deadline passed) and the reason
-names the unschedulable Pod and any old-template Pod/ReplicaSet holding its place.
+replacement Pod is unschedulable, its ReplicaSet cannot create it (non-webhook
+`FailedCreate`, e.g. quota or LimitRange), or the progress deadline passed. The
+reason first names any old-template Pod/ReplicaSet holding its place, then the
+release, then the scheduler or create message. `rollout_pending.blockers[].release`
+holds the typed standard release (`RetireOldRevision` of each old revision) when a
+replacement cannot be placed or quota is exceeded; SDO never applies it itself.
 A stall is not a budget expiry. The rollout wait keeps a reserved share of the
 deadline, so every written object has a readback; `observation_error` on a
 fast object now means a real read failure, not a slow neighbour. A stalled

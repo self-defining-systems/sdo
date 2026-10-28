@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from typing import TYPE_CHECKING
 
 from agentshim import CommandResult, HostCommandExecutor
@@ -84,6 +85,8 @@ class RecordingExecutor:
                     )
         if not self.record and path.is_file():
             payload = json.loads(path.read_text(encoding="utf-8"))
+            if "unrecorded" in payload:
+                raise ModelCacheMiss(f"model turn {payload.get('turn_index')} not recorded: {payload['unrecorded']}")
             changed = payload.get("prompt_digest") != prompt_digest
             if payload.get("request_digest") != self.request_digest or changed and not self.ordered:
                 raise ModelCacheMiss(
@@ -127,12 +130,18 @@ class RecordingExecutor:
         }
         wire = json.dumps(payload, separators=(",", ":")).encode()
         if len(wire) > MAX_MODEL_IO_BYTES:
-            raise ValueError(f"model I/O exceeds {MAX_MODEL_IO_BYTES} bytes")
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        temporary = path.with_suffix(".tmp")
-        with os.fdopen(os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600), "wb") as stream:
-            stream.write(wire)
-        temporary.replace(path)
+            # Benchmark evidence never discards the live turn; replay names the gap instead.
+            del payload["events"], payload["returncode"]
+            payload["unrecorded"] = f"model I/O exceeds {MAX_MODEL_IO_BYTES} bytes"
+            wire = json.dumps(payload, separators=(",", ":")).encode()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            temporary = path.with_suffix(".tmp")
+            with os.fdopen(os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600), "wb") as stream:
+                stream.write(wire)
+            temporary.replace(path)
+        except OSError as exc:
+            print(f"model turn not recorded: {exc}", file=sys.stderr)
         return result
 
 

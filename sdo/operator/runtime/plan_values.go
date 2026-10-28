@@ -91,7 +91,7 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 		if a != nil {
 			path = a.Path
 		}
-	case program.ScaleWorkload, *program.ScaleWorkload:
+	case program.ScaleWorkload, *program.ScaleWorkload, program.RetireOldRevision, *program.RetireOldRevision:
 		path = "spec.replicas"
 	case program.RemoveServicePort, *program.RemoveServicePort:
 		// The action owns the removed member, not the retained list. The

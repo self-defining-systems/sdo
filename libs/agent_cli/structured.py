@@ -102,6 +102,21 @@ MEMORY_CHECK_COMMAND = "sdo-operator memory check"
 #: ``$XDG_CACHE_HOME/sdo/codex-homes`` (``~/.cache/sdo/codex-homes``). It must
 #: be outside the workspace and the system temp dir.
 CODEX_HOME_ROOT_ENV = "SDO_CODEX_HOME_ROOT"
+#: Codex settings for every SDO turn. Codex otherwise lists its own bundled
+#: skills and synced remote plugins in the model context; SDO prompts point to
+#: the SDO skill files they need instead. Codex ignores unknown features, and a
+#: resumed turn passes the same settings so it never injects a new context.
+CODEX_SESSION_SETTINGS = (
+    "skills.include_instructions=false",
+    "skills.bundled.enabled=false",
+    "features.plugins=false",
+    "features.remote_plugin=false",
+    "features.recommended_plugins=false",
+    "features.plugin_sharing=false",
+    "features.apps=false",
+    "features.tool_suggest=false",
+    "features.skill_search=false",
+)
 # Optional JSONL file that receives one token-accounting record per turn.
 TURN_USAGE_LOG_ENV = "SDO_TURN_USAGE_LOG"
 
@@ -355,7 +370,8 @@ def run_structured_turn(
             selected, extra_args, extra_env = _provider_for(provider, access, workspace, turn_scope)
             startup = turn_scope.enter_context(StartupTelemetry(provider))
             if provider == "codex":
-                extra_args = [*extra_args, *startup.codex_args()]
+                settings = [argument for setting in CODEX_SESSION_SETTINGS for argument in ("-c", setting)]
+                extra_args = [*extra_args, *settings, *startup.codex_args()]
             if startup.endpoint:
                 executor = startup.executor(executor)
             effective_environment = {**os.environ, **(environment or {}), **extra_env}

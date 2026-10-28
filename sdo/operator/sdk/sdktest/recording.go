@@ -298,6 +298,17 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 		}
 
 		switch call.Method {
+		case "AdmissionWebhooksFor":
+			var subject sdk.ObjectRef
+			if len(args) != 1 {
+				return nil, fmt.Errorf("invalid admission webhook arguments")
+			}
+			if err := json.Unmarshal(args[0], &subject); err != nil {
+				return nil, err
+			}
+			_, _ = recorder.AdmissionWebhooksFor(subject)
+			continue
+
 		case "WebhookCAMatchesSecret":
 			var target program.WebhookCA
 			if len(args) != 1 {

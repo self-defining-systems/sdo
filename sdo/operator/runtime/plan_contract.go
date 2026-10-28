@@ -197,6 +197,8 @@ func planActionProto(action program.Action) (*contracts.Action, error) {
 			return nil, err
 		}
 		return &contracts.Action{Kind: &contracts.Action_ScaleWorkload{ScaleWorkload: &contracts.ScaleWorkload{Ref: planRefProto(a.Ref), Replicas: value}}}, nil
+	case program.RetireOldRevision:
+		return &contracts.Action{Kind: &contracts.Action_RetireOldRevision{RetireOldRevision: &contracts.RetireOldRevision{Ref: planRefProto(a.Ref)}}}, nil
 	case program.Exec:
 		command := make([]*contracts.PlanValue, 0, len(a.Command))
 		for _, v := range a.Command {
@@ -212,6 +214,10 @@ func planActionProto(action program.Action) (*contracts.Action, error) {
 			return planActionProto(*a)
 		}
 	case *program.ScaleWorkload:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case *program.RetireOldRevision:
 		if a != nil {
 			return planActionProto(*a)
 		}
@@ -274,6 +280,8 @@ func planActionState(action *contracts.Action) program.Action {
 		decoded = program.DeletePod{Ref: objectRefState(kind.DeletePod.GetRef())}
 	case *contracts.Action_ScaleWorkload:
 		decoded = program.ScaleWorkload{Ref: objectRefState(kind.ScaleWorkload.GetRef()), Replicas: planValueState(kind.ScaleWorkload.GetReplicas())}
+	case *contracts.Action_RetireOldRevision:
+		decoded = program.RetireOldRevision{Ref: objectRefState(kind.RetireOldRevision.GetRef())}
 	case *contracts.Action_Exec:
 		a := program.Exec{Pod: objectRefState(kind.Exec.GetPod()), Container: kind.Exec.GetContainer()}
 		for _, v := range kind.Exec.GetCommand() {

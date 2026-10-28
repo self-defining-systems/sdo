@@ -498,12 +498,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		defer reachabilityObserver.Stop()
 	}
 	var snapshotProvider SnapshotProvider = kubernetesCache
+	// Each cluster's reachability baseline is controller state below the
+	// lane-private repository mount, never shared accepted memory.
+	var reachabilityReference *ReachabilityReference
 	if trafficObserver != nil || reachabilityObserver != nil {
-		baseline, sourceInputs, objective, err := loadReachabilityBaseline(ctx, resolvedRoot, resolvedSourceCommit)
+		reachabilityReference, err = loadReachabilityBaseline(ctx, *repositoryMountPath, resolvedRoot, resolvedSourceCommit, func(err error) { fmt.Fprintln(stderr, err) })
 		if err != nil {
 			return err
 		}
-		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver, Baseline: baseline, SourceInputs: sourceInputs, ObjectiveDigest: objective}
+		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver, Reference: reachabilityReference}
 	}
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
@@ -1013,6 +1016,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		waitState()
 		return nil
 	}
+	// acceptBaseline runs the reachability baseline gate. It never fails the
+	// controller: a baseline it cannot measure is an unavailable state that
+	// later passes measure again.
+	acceptBaseline := func(gate func(context.Context, *Controller, string, string, bool, *ServiceReachabilityObserver, SnapshotProvider, *ReachabilityReference, []sdk.Detector)) {
+		if launchConfig != nil && options.NativeBroker != nil {
+			gate(runCtx, controller, resolvedRoot, *repositoryMountPath, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, reachabilityReference, detectors)
+		}
+	}
 	persistControllerState := func() {
 		if err := controller.PersistState(ctx); err != nil {
 			fmt.Fprintf(stderr, "persist controller state: %v\n", err)
@@ -1031,11 +1042,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			return fmt.Errorf("sync Kubernetes informer cache: %w", err)
 		}
-		if launchConfig != nil && options.NativeBroker != nil {
-			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, options.NativeBroker.Repository, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, detectors); err != nil {
-				return err
-			}
-		}
+		acceptBaseline(acceptStartupReachabilityBaseline)
 		if err := controller.Step(runCtx, time.Now().UTC(), nil); err != nil {
 			if runCtx.Err() != nil {
 				return nil
@@ -1087,11 +1094,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			// so fail loudly and let the restart name the kind again.
 			return fmt.Errorf("resume observation of namespace %s: %w", *namespace, syncErr)
 		}
-		if launchConfig != nil && options.NativeBroker != nil {
-			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, options.NativeBroker.Repository, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, detectors); err != nil {
-				return err
-			}
-		}
+		acceptBaseline(acceptStartupReachabilityBaseline)
 		kubernetesCache.TakeEvents()
 		if wasPaused && !preserved {
 			kubernetesCache.TakeObjectChanges()
@@ -1128,6 +1131,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if *exitAfterClosure && controller.LastAcknowledgedIncidentID() != "" {
 			return nil
 		}
+		if applied == desired && !applied.Paused {
+			acceptBaseline(retryReachabilityBaseline)
+		}
 		var delay time.Duration
 		switch {
 		case applied != desired:
@@ -1140,6 +1146,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 		default:
 			delay = time.Until(controller.NextWake())
+			if retry := reachabilityReference.retryAt(); !retry.IsZero() {
+				delay = min(delay, time.Until(retry))
+			}
 		}
 		if delay < 0 {
 			delay = 0
@@ -1589,14 +1598,9 @@ func evaluateOnce(
 		}
 		return WriteSourceInventoryReport(stdout, *sourceDriftReport, index, cache.SourceDriftObjects())
 	}
+	// Deployment-time evaluation runs before any controller measured this
+	// cluster, so it judges reachability without a recorded baseline.
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
-	if *appRoot != "" {
-		baseline, sourceInputs, objective, err := loadReachabilityBaseline(ctx, *appRoot, readCommit)
-		if err != nil {
-			return err
-		}
-		trafficProvider.Baseline, trafficProvider.SourceInputs, trafficProvider.ObjectiveDigest = baseline, sourceInputs, objective
-	}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if *proberURL == "" {
 			return errors.New("traffic health evaluation requires a live prober URL")
