@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
@@ -34,7 +35,7 @@ func TestReflectionTextWithPhysicalPathsNeverBlocksLaterReflection(t *testing.T)
 		t.Fatal(err)
 	}
 	var priors [][]*contracts.OutcomeRecord
-	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: 60e9, SessionMode: "fresh"}
+	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: time.Minute, SessionMode: "fresh"}
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		request := &contracts.ReflectionRequest{}
 		if err := task.Request.UnmarshalTo(request); err != nil {
@@ -104,7 +105,7 @@ func TestReflectionReadsOlderOutcomeWithPhysicalPaths(t *testing.T) {
 	nativeGit(t, target, "add", ".")
 	nativeGit(t, target, "commit", "-qm", "older memory")
 	base := nativeGit(t, target, "rev-parse", "HEAD")
-	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: 60e9, SessionMode: "fresh"}
+	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: time.Minute, SessionMode: "fresh"}
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "covered"})
 		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
