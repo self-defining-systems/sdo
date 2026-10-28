@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,10 +27,19 @@ func TestPeerMemoryPublicationNeverBlocksBoundStage(t *testing.T) {
 			nativeMemoryFixture(t, root)
 			base := nativeGit(t, root, "rev-parse", "HEAD")
 			validating, release := make(chan struct{}), make(chan struct{})
-			var once sync.Once
-			unblock := func() { once.Do(func() { close(release) }) }
+			reflectionReady, beginReflection := make(chan struct{}), make(chan struct{})
+			var once, beginOnce sync.Once
+			begin := func() { beginOnce.Do(func() { close(beginReflection) }) }
+			unblock := func() { begin(); once.Do(func() { close(release) }) }
 			defer unblock()
-			peerRepository, err := broker.New(root, t.TempDir(), func(ctx context.Context, _ string, _ []string) error {
+			peerRepository, err := broker.New(root, t.TempDir(), func(ctx context.Context, _ string, paths []string) error {
+				memory := false
+				for _, path := range paths {
+					memory = memory || strings.HasPrefix(path, ".sdo/")
+				}
+				if !memory {
+					return nil
+				}
 				close(validating)
 				select {
 				case <-release:
@@ -40,8 +51,22 @@ func TestPeerMemoryPublicationNeverBlocksBoundStage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			peerBroker := NativeIncidentBroker{Repository: peerRepository, LedgerRoot: t.TempDir(), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
-				return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic source repair"}, nil
+			peerBroker := NativeIncidentBroker{Repository: peerRepository, LedgerRoot: t.TempDir(), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(ctx context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
+				close(reflectionReady)
+				select {
+				case <-beginReflection:
+				case <-ctx.Done():
+					return ReflectionDecision{}, ctx.Err()
+				}
+				path := filepath.Join(workspace.Worktree, ".sdo/playbooks/base/README.md")
+				body, err := os.ReadFile(path)
+				if err != nil {
+					return ReflectionDecision{}, err
+				}
+				if err := os.WriteFile(path, append(body, []byte("Synthetic peer observation for <RESOURCE_NAME>.\n")...), 0644); err != nil {
+					return ReflectionDecision{}, err
+				}
+				return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: []string{"base"}}, nil
 			})}
 			health := newChaosHealthDetector("health")
 			health.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
@@ -81,6 +106,20 @@ func TestPeerMemoryPublicationNeverBlocksBoundStage(t *testing.T) {
 			if !ok {
 				t.Fatal("peer never reached verified closure")
 			}
+			if err := peer.ExecuteClosureEffect(ctx, closure); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-reflectionReady:
+			case result := <-peer.closureResults:
+				t.Fatalf("peer did not reach reflection: %v", result.err)
+			case <-ctx.Done():
+				t.Fatal("peer did not reach reflection")
+			}
+			// Source repair and outcome are already accepted. Only the peer's
+			// memory publication can move HEAD during the new incident below.
+			base = nativeGit(t, root, "rev-parse", "HEAD")
+			cfg.SourceCommit, cfg.DeployedCommit = base, base
 
 			loop, state := pipelineTestLoop(t, false)
 			dispatcher := &pipelineScenarioDispatcher{loop: loop}
@@ -104,11 +143,11 @@ func TestPeerMemoryPublicationNeverBlocksBoundStage(t *testing.T) {
 			if !ok {
 				t.Fatal("incident not open before peer publication")
 			}
-			if err := peer.ExecuteClosureEffect(ctx, closure); err != nil {
-				t.Fatal(err)
-			}
+			begin()
 			select {
 			case <-validating:
+			case result := <-peer.closureResults:
+				t.Fatalf("peer closed before publication validation: %v, receipt=%+v", result.err, result.receipt)
 			case <-ctx.Done():
 				t.Fatal("peer did not enter publication validation")
 			}
@@ -116,9 +155,25 @@ func TestPeerMemoryPublicationNeverBlocksBoundStage(t *testing.T) {
 				unblock()
 				awaitBrokerResult(t, peer.closureResults)
 				peer.processBrokerCompletions()
-				if peer.closureReceipt == nil || peer.closureReceipt.ProposalCommit == "" {
+				if peer.closureReceipt == nil || peer.closureReceipt.ReflectionCommit == "" {
 					t.Fatalf("peer publication failed: %+v", peer.closureFailure)
 				}
+				// A replacement process may have compiled newer accepted memory,
+				// but workspace recovery must use the durable opening request.
+				saved := exportState(t, controller)
+				cfg.SourceCommit = nativeGit(t, root, "rev-parse", "HEAD")
+				restored, err := NewController(cfg, []sdk.Detector{pipelineDetector{}}, loop.Provider, dispatcher, start)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := restored.RestoreState(saved); err != nil {
+					t.Fatal(err)
+				}
+				if err := restored.SetIncidentBroker(controller.broker); err != nil {
+					t.Fatal(err)
+				}
+				controller.Wait()
+				controller = restored
 			}
 			if err := controller.ExecuteWorkspaceEffect(ctx, workspaceEffect); err != nil {
 				t.Fatal(err)
@@ -153,6 +208,9 @@ func TestPeerMemoryPublicationNeverBlocksBoundStage(t *testing.T) {
 			if schedule == "validating" {
 				awaitBrokerResult(t, peer.closureResults)
 				peer.processBrokerCompletions()
+			}
+			if peer.closureReceipt == nil || peer.closureReceipt.ReflectionCommit == "" {
+				t.Fatalf("peer reflection did not publish: %+v", peer.closureFailure)
 			}
 			if head := nativeGit(t, root, "rev-parse", "HEAD"); head == base {
 				t.Fatalf("peer did not advance accepted memory from %s", base)
