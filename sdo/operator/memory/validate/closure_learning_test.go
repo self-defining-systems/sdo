@@ -103,6 +103,8 @@ func TestVerifiedClosureSavesProgramWithoutBaselineAttributionOrObservation(t *t
 	root := t.TempDir()
 	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
 	outcome := closureOutcome("success", &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}})
+	// The detector link is an opening finding that binds the program's role.
+	outcome.Findings = []*contracts.Finding{{DetectorId: "fixture", Status: "active", Fingerprint: "front", PrimaryResource: &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "front"}}}
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
 	ds := ReflectionCoverageGaps(root, outcome, decision)
 	if len(ds) != 0 {
@@ -125,6 +127,7 @@ func TestCauseWithoutATransitionIsAGapAndTheTypedDeclineStaysValid(t *testing.T)
 	front := &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}}
 	worker := &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Deployment", Namespace: "demo", Name: "worker"}}}
 	outcome := closureOutcome("success", front)
+	outcome.Findings = []*contracts.Finding{{DetectorId: "fixture", Status: "active", Fingerprint: "front", PrimaryResource: front.Resources[0]}}
 	outcome.ConfirmedRootCauses = append(outcome.ConfirmedRootCauses, worker)
 	pod := &contracts.ObjectRef{Kind: "Pod", Namespace: "demo", Name: "worker-0"}
 	at := time.Unix(100, 0)
