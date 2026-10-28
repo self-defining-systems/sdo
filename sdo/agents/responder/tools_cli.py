@@ -29,7 +29,8 @@ PLAN_ACTIONS = (
     "ReconcileFromSource converges source-owned configuration, removes additions since acceptance, "
     "and reports residual source differences and remaining old-revision ReplicaSets/Pods. "
     "The Deployment controller and responder handle the rollout.\n"
-    "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
+    "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.\n"
+    "RetireOldRevision scales an old-revision ReplicaSet to zero; stalled rollouts name it as their release."
 )
 
 WORKING_PROGRAM_HELP = (
@@ -220,7 +221,8 @@ def _parser() -> argparse.ArgumentParser:
             "Repeat --option ID with --param NAME=VALUE, or use --selection-set FILE "
             "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
             "--match ID selects a playbook_coverage match; --bind narrows it. "
-            "Each option has a receipt; one call uses one of five rounds. --NAME VALUE also sets parameters. "
+            "Each option has a receipt; writes before your next verify share one of five loops. "
+            "--NAME VALUE also sets parameters. "
             "Pending rollout retains its application ID and allows reads; "
             "rollout_stalled releases writes once stuck or at its bound. "
             "Source reconciliation waits for old objects to drain; persistent differences return source_residual. "

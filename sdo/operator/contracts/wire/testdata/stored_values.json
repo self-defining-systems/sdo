@@ -297,11 +297,18 @@
     "json",
     "yaml"
   ],
+  "sdodev.contracts.v1alpha1.StageMitigation.kept_reason": [
+    "",
+    "irreversible",
+    "partial",
+    "rollback_failed"
+  ],
   "sdodev.contracts.v1alpha1.StageMitigation.result": [
     "admission_blocked",
     "applied_cleared",
     "applied_still_matching",
     "apply_error",
+    "reverted_ineffective",
     "rollout_failed",
     "rollout_pending_at_handoff",
     "skipped"

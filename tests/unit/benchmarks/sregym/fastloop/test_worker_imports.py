@@ -2,43 +2,29 @@
 
 from __future__ import annotations
 
-import ast
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
 
+from benchmarks.sregym.fastloop.worker_client import worker_import_error, worker_modules
+
 ROOT = Path(__file__).resolve().parents[5]
-SREGYM = ROOT / "third_party" / "sregym"
-BRIDGE = ROOT / "benchmarks" / "sregym" / "fastloop" / "worker_bridge.py"
+SREGYM_READY = (ROOT / "third_party" / "sregym" / "pyproject.toml").is_file()
 
 
-def worker_modules() -> list[str]:
-    """Every first-party module the worker bridge can load, eagerly or on a request path."""
-    tree = ast.parse(BRIDGE.read_text())
-    return sorted(
-        {
-            node.module
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("benchmarks.")
-        }
-        | {"benchmarks.sregym.fastloop.worker_bridge"}
-    )
-
-
-@pytest.mark.skipif(not (SREGYM / "pyproject.toml").is_file(), reason="SREGym submodule is not initialized")
+@pytest.mark.skipif(not SREGYM_READY, reason="SREGym submodule is not initialized")
 def test_worker_modules_import_in_the_sregym_environment() -> None:
     """h9.18 astronomy deploys failed: source deployment pulled sdo.contracts (protovalidate) into the worker."""
-    modules = worker_modules()
-    assert "benchmarks.sregym.fastloop.source_deployment" in modules
-    script = "import importlib, sys\nfor name in sys.argv[1:]:\n    importlib.import_module(name)\n"
-    result = subprocess.run(
-        ["uv", "run", "--directory", str(SREGYM), "python", "-c", script, *modules],
-        env={**os.environ, "PYTHONPATH": str(ROOT)},
-        capture_output=True,
-        text=True,
-        timeout=600,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr[-4000:]
+    assert "benchmarks.sregym.fastloop.source_deployment" in worker_modules(ROOT)
+    assert worker_import_error(ROOT) is None
+
+
+@pytest.mark.skipif(not SREGYM_READY, reason="SREGym submodule is not initialized")
+def test_a_module_that_needs_sdo_dependencies_is_named() -> None:
+    error = worker_import_error(ROOT, ["benchmarks.sregym.fastloop.worker_bridge", "sdo.contracts"])
+    assert error is not None
+    assert "protovalidate" in error
+
+
+def test_a_checkout_without_the_harness_is_named(tmp_path: Path) -> None:
+    assert "not checked out" in str(worker_import_error(tmp_path))
