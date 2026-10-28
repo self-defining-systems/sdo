@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/url"
 	"path"
 	"strings"
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -139,6 +141,19 @@ func (r KubernetesRequest) Validate() error {
 	if parts[0] == "api" && len(parts) > index && strings.EqualFold(parts[index], "secrets") {
 		return fmt.Errorf("Secret endpoints are unavailable; use credential references")
 	}
+	if r.Method == "PATCH" {
+		mediaType, _, err := mime.ParseMediaType(r.ContentType)
+		if err != nil {
+			return fmt.Errorf("invalid patch content type: %w", err)
+		}
+		if mediaType == "application/merge-patch+json" {
+			ref, err := rawMergeTarget(r, parts, index)
+			if err != nil {
+				return err
+			}
+			return validateMergeLists(PatchObject{Ref: ref, Type: "merge", Patch: r.Body})
+		}
+	}
 	return nil
 }
 func (a PatchObject) Validate() error {
@@ -168,6 +183,9 @@ func (a PatchObject) Validate() error {
 	}
 	if !json.Valid(a.Patch) {
 		return fmt.Errorf("patch must be valid JSON")
+	}
+	if a.Type == "merge" {
+		return validateMergeLists(a)
 	}
 	return nil
 }
@@ -202,7 +220,7 @@ func (w WaitFor) Validate() error {
 
 var patchScheme = func() *runtime.Scheme {
 	s := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, appsv1.AddToScheme, autoscalingv2.AddToScheme, batchv1.AddToScheme, networkingv1.AddToScheme, policyv1.AddToScheme, rbacv1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, admissionv1.AddToScheme, appsv1.AddToScheme, autoscalingv2.AddToScheme, batchv1.AddToScheme, networkingv1.AddToScheme, policyv1.AddToScheme, rbacv1.AddToScheme} {
 		_ = add(s)
 	}
 	return s
@@ -285,7 +303,15 @@ func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error) 
 			var typed runtime.Object
 			typed, err = patchScheme.New(schema.FromAPIVersionAndKind(a.Ref.APIVersion, a.Ref.Kind))
 			if err == nil {
-				raw, err = strategicpatch.StrategicMergePatch(raw, a.Patch, typed)
+				meta, e := strategicpatch.NewPatchMetaFromStruct(typed)
+				if e != nil {
+					return nil, e
+				}
+				var lookup strategicpatch.LookupPatchMeta = meta
+				if a.Ref.APIVersion == "v1" && a.Ref.Kind == "Service" && namedServicePorts(raw, a.Patch) {
+					lookup = namedPortPatchMeta{LookupPatchMeta: meta}
+				}
+				raw, err = strategicpatch.StrategicMergePatchUsingLookupPatchMeta(raw, a.Patch, lookup)
 			}
 		}
 	}

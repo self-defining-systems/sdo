@@ -55,6 +55,11 @@ func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView, bindings Binding
     is the only repair a program needs on a ReplicaSet; anything else risks an
     outage.
 
+func DocumentWriteRef(action Action) (sdk.ObjectRef, bool)
+    DocumentWriteRef identifies actions that project edits onto an existing
+    object. Their relative order within that object is preserved in its single
+    API write.
+
 func ExpandedSetField(f SetField) bool
     ExpandedSetField reports whether an action uses the structured vocabulary.
 
@@ -70,6 +75,10 @@ func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClie
     RESTMapper cover CRDs. Optional bindings require each role to remain in
     accepted source. Omit them for observations of intentionally source-absent
     objects and derived resources.
+
+func MergeObject(object map[string]any, ref sdk.ObjectRef, desired json.RawMessage) (map[string]any, error)
+    MergeObject projects apply-style updates using the built-in keyed-list
+    schema when available. Custom resources retain JSON merge semantics.
 
 func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
     ProjectPatch is the shared atomic projection used by production and replay.
@@ -124,6 +133,13 @@ type ApplyObject struct {
     fieldManager query parameter.
 
 func (a ApplyObject) Validate() error
+
+type AtomicWriteConflictError struct{ Ref sdk.ObjectRef }
+    AtomicWriteConflictError refuses a plan whose object edits cannot be
+    combined without moving them across an opaque runtime or object-lifecycle
+    effect.
+
+func (e *AtomicWriteConflictError) Error() string
 
 type Bindings struct {
 	Objects ObjectBindings `json:"objects,omitempty"`
@@ -361,6 +377,16 @@ type HTTPRequest struct {
 
 func (h HTTPRequest) Validate() error
 
+type KeyedListReplacementError struct {
+	Ref  sdk.ObjectRef
+	Path string
+}
+    KeyedListReplacementError refuses RFC 7396 replacement of a Kubernetes
+    keyed list. Use a strategic patch to preserve members and their unspecified
+    fields.
+
+func (e *KeyedListReplacementError) Error() string
+
 type Kind string
 
 type KubernetesEffect struct {
@@ -481,6 +507,12 @@ type ProgramSpec struct {
 	ID     string
 	Params []ParamSpec
 }
+
+type RawMergeSchemaError struct{ Path, Reason string }
+    RawMergeSchemaError refuses an opaque document merge without a trustworthy
+    target schema. Use a typed object action for unknown kinds or subresources.
+
+func (e *RawMergeSchemaError) Error() string
 
 type ReadView interface {
 	WebhookCAMatchesSecret(WebhookCA) (bool, error)

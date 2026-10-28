@@ -10,6 +10,8 @@ is an environment reference. Plain `Headers` carry nonsecret values only.
 
 ## Kubernetes objects and subresources
 
+Object edits in a plan write atomically per object; use strategic patches for keyed lists (JSON merge replacement is refused).
+
 - `PatchObject{Ref, Type, Patch}` supports `json`, `merge`, and `strategic` patches.
   JSON patch covers add/remove/replace/move/copy/test, including array insertion.
   Strategic merge uses the registered built-in schema; use JSON/merge for CRDs.

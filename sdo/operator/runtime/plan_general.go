@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	jsonpatch "github.com/evanphx/json-patch"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -301,8 +300,10 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 		var fields map[string]any
 		raw, _ := json.Marshal(a.Object)
 		if !missing && a.Mode != "replace" {
-			old, _ := json.Marshal(before.Object)
-			raw, err = jsonpatch.MergePatch(old, raw)
+			fields, err = program.MergeObject(before.Object, a.Ref, raw)
+			if err == nil {
+				raw, err = json.Marshal(fields)
+			}
 		}
 		if err == nil {
 			err = utiljson.Unmarshal(raw, &fields)

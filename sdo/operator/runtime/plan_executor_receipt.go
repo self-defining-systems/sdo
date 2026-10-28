@@ -53,7 +53,14 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 		landed = landed || !planFieldsMatch(b, bok, a, aok, v, vok, true)
 	}
 	if landed && len(result.ActionsApplied) == index {
-		result.ActionsApplied = append(result.ActionsApplied, result.Plan.Actions[index])
+		count := patch.ActionCount
+		if count < 1 {
+			count = 1
+		}
+		if index+count > len(result.Plan.Actions) {
+			return result, fmt.Errorf("invalid pending action count")
+		}
+		result.ActionsApplied = append(result.ActionsApplied, result.Plan.Actions[index:index+count]...)
 		result.Applied = true
 	}
 	result.PendingAction = nil
@@ -88,6 +95,34 @@ func planFieldsMatch(before any, bok bool, after any, aok bool, live any, lok bo
 	ba, barray := before.([]any)
 	aa, aarray := after.([]any)
 	la, larray := live.([]any)
+	// Empty configuration lists are omitted by canonicalization/API storage.
+	if (barray || aarray || larray) && (barray || !bok) && (aarray || !aok) && (larray || !lok) {
+		if bm, am, lm, ok := namedPlanLists(ba, aa, la); ok {
+			keys := map[string]bool{}
+			for k := range bm {
+				keys[k] = true
+			}
+			for k := range am {
+				keys[k] = true
+			}
+			for k := range keys {
+				b, bo := bm[k]
+				a, ao := am[k]
+				l, lo := lm[k]
+				if bo == ao && planValuesEqual(b, a) {
+					continue
+				}
+				// List membership is not a server-defaulted object field.
+				if (!wantBefore && !ao && lo) || (wantBefore && !bo && lo) {
+					return false
+				}
+				if !planFieldsMatch(b, bo, a, ao, l, lo, wantBefore) {
+					return false
+				}
+			}
+			return true
+		}
+	}
 	if barray && aarray && larray && len(ba) == len(aa) && len(aa) == len(la) {
 		for i := range ba {
 			if !planFieldsMatch(ba[i], true, aa[i], true, la[i], true, wantBefore) {
