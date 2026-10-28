@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 
 DEFAULT_TIMEOUT_SECONDS = wait_for(WaitKind.RESPONSE)
 WORKER_MODULE = "benchmarks.sregym.fastloop.worker_bridge"
-WORKER_IMPORT_TIMEOUT_SECONDS = 600
 
 
 class SregymWorkerError(RuntimeError):
@@ -69,17 +68,18 @@ def worker_import_error(code_root: Path, modules: Sequence[str] | None = None) -
         return f"SREGym harness is not checked out at {sregym_dir}"
     names = list(worker_modules(code_root) if modules is None else modules)
     script = "import importlib, sys\nfor name in sys.argv[1:]:\n    importlib.import_module(name)\n"
+    timeout = wait_for(WaitKind.OPERATION)
     try:
         result = subprocess.run(
             ["uv", "run", "--directory", str(sregym_dir), "python", "-c", script, *names],
             env={**os.environ, "PYTHONPATH": str(code_root)},
             capture_output=True,
             text=True,
-            timeout=WORKER_IMPORT_TIMEOUT_SECONDS,
+            timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return f"worker module imports did not finish in {WORKER_IMPORT_TIMEOUT_SECONDS}s"
+        return f"worker module imports did not finish in {timeout:.0f}s"
     if result.returncode == 0:
         return None
     return f"worker modules do not import in SREGym's venv: {result.stderr.strip()[-2000:]}"
