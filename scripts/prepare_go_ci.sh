@@ -20,17 +20,15 @@ for module in sdo/operator sdo/operator/runtime; do
   (cd "$root/$module" && go build "${build_flags[@]}" ./...)
   destination="$test_build/$module"
   mkdir -p "$destination"
-  # Normal discovery links the test-only graph and records its inventory. Race
-  # preparation uses -c, which starts neither TestMain nor test bodies.
-  if [[ "$mode" == normal ]]; then
-    # Discovery also compiles/links the test-only graph: do it once, and reuse
-    # its exact inventory for capacity planning instead of linking again.
+  # The inventory must use the consumer's race build tags. Discover once while
+  # compiling that graph; normal Python contracts still need their own archives.
+  if [[ "$mode" == race ]]; then
     scope=operator
     if [[ "$module" == sdo/operator/runtime ]]; then scope=runtime; fi
     mkdir -p "$root/.fastloop/test-bin"
-    (cd "$root/$module" && go test -list . -json ./...) > "$root/.fastloop/test-bin/inventory-$scope.json"
+    (cd "$root/$module" && go test -race -list . -json ./...) > "$root/.fastloop/test-bin/inventory-$scope.json"
   else
-    (cd "$root/$module" && go test "${build_flags[@]}" -c -o "$destination/" ./...)
+    (cd "$root/$module" && go test -c -o "$destination/" ./...)
   fi
 done
 if [[ "$mode" == normal ]]; then

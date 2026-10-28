@@ -48,7 +48,7 @@ def measured_costs(events: Iterable[dict[str, Any]]) -> dict[tuple[str, str], fl
             pauses[key] = at
         elif action == "cont" and key in pauses:
             paused[key] = paused.get(key, 0.0) + at - pauses.pop(key)
-        elif action in ("pass", "fail"):
+        elif action in ("pass", "fail", "skip"):
             elapsed = float(event.get("Elapsed", 0))
             if not math.isfinite(elapsed) or elapsed < 0:
                 raise ValueError(f"{key}: timing must be finite and nonnegative")
@@ -71,7 +71,7 @@ def update_profile(path: Path, measured: dict[str, float], run: int, head: str, 
     profile["source_head"] = head
     profile["description"] = (
         "Hosted completed top-level active seconds, including parallel children and excluding pauses. "
-        "All completed timings are refreshed (0.001s resolution floor); "
+        "All pass/fail/skip timings are refreshed (0.001s resolution floor); "
         "unobserved and unfinished names retain their earlier bounds."
     )
     profile["costs"].update(measured)

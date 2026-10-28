@@ -203,11 +203,20 @@ jobs:
         run: bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
 
       - name: Plan capacity from compiled inventory and hosted costs
-        if: matrix.mode == 'normal'
+        if: matrix.mode == 'race'
         id: cost-plan
         run: |
           python3 scripts/go_cost_plan.py --prepared --output .fastloop/test-bin/go-test-plan.json | tee "$RUNNER_TEMP/cost-plan.log"
           grep -E '^(matrix|nightly_matrix)=' "$RUNNER_TEMP/cost-plan.log" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the exact race test plan
+        if: matrix.mode == 'race'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: compiled-go-test-plan
+          path: .fastloop/test-bin/go-test-plan.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Keep only the source-bound test executable
         if: matrix.mode == 'normal'
@@ -343,6 +352,11 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --all-extras
         if: matrix.cost_scope == 'runtime'
+      - name: Download the exact race test plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: compiled-go-test-plan
+          path: .fastloop/test-bin
       - name: Run computed test bin with budget and coverage guards
         if: matrix.cost_scope
         run: python3 scripts/test_${{ matrix.cost_scope }}_shard.py '${{ matrix.cost_bin }}' --plan .fastloop/test-bin/go-test-plan.json

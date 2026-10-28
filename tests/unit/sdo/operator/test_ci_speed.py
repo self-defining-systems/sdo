@@ -247,18 +247,16 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
         expected = [["build", *(["-race"] if mode == "race" else []), "./..."]]
         if mode == "race":
             assert len(commands) == 2
-            assert commands[1][:4] == ["test", "-race", "-c", "-o"]
-            assert commands[1][-1] == "./..."
-            assert "-run" not in commands[1]
+            assert commands[1] == ["test", "-race", "-list", ".", "-json", "./..."]
             assert commands[:1] == expected
         else:
             assert commands[:1] == expected
-            assert commands[1] == ["test", "-list", ".", "-json", "./..."]
+            assert commands[1][:3] == ["test", "-c", "-o"]
             assert commands[1][-1] == "./..."
             if module.endswith("/runtime"):
                 assert commands[2] == ["build", "./..."]
             else:
-                assert all(args[0] != "test" or "-list" in args for args in commands)
+                assert all(args[0] != "test" or "-c" in args for args in commands)
 
 
 def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:

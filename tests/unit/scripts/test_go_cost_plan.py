@@ -83,14 +83,20 @@ func TestFirst(t *testing.T) {}
 func TestSecond(t *testing.T) {}
 func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string) {}) }
 """)
+    (module / "race_only_test.go").write_text(
+        '//go:build race\n\npackage ci\nimport "testing"\nfunc TestRaceOnly(t *testing.T) {}\n'
+    )
+    (module / "normal_only_test.go").write_text(
+        '//go:build !race\n\npackage ci\nimport "testing"\nfunc TestNormalOnly(t *testing.T) { t.Fatal("normal-only test cannot enter a race plan") }\n'
+    )
     profiles = tmp_path / "scripts"
     profiles.mkdir()
     (profiles / "operator_test_costs.json").write_text('{"costs":{}}')
     monkeypatch.setattr(planner, "ROOT", tmp_path)
     source = planner.inventory("")
-    assert source == {"synthetic.example/ci": ["TestFirst", "TestSecond", "FuzzSeed"]}
+    assert source == {"synthetic.example/ci": ["TestFirst", "TestSecond", "TestRaceOnly", "FuzzSeed"]}
     data = planner.plan("operator", source)
-    assert len(data["bins"]) == 3
+    assert len(data["bins"]) == 4
     path = tmp_path / "plan.json"
     path.write_text(json.dumps({"operator": data}))
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))

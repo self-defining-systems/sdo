@@ -84,3 +84,9 @@ def test_zero_resolution_completion_has_positive_cost_floor() -> None:
     assert costs.measured_costs([event("pass", 0, "TestInstant", Elapsed=0)]) == {
         ("sdo.dev/operator/runtime", "TestInstant"): 0.001,
     }
+
+
+def test_skipped_race_helpers_do_not_reserve_a_whole_unknown_job_forever() -> None:
+    assert costs.measured_costs([event("skip", 0, "TestChildProcess", Elapsed=0)]) == {
+        ("sdo.dev/operator/runtime", "TestChildProcess"): 0.001,
+    }

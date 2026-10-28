@@ -75,7 +75,7 @@ def inventory(module: str, *, prepared: bool = False) -> dict[str, list[str]]:
         cached.read_text()
         if prepared
         else subprocess.check_output(
-            ["go", "test", "-list", ".", "-json", "./..."], cwd=ROOT / "sdo/operator" / module, text=True
+            ["go", "test", "-race", "-list", ".", "-json", "./..."], cwd=ROOT / "sdo/operator" / module, text=True
         )
     )
     for line in output.splitlines():
