@@ -35,7 +35,7 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
-from sdo.contracts import ReflectionResult, model_output_schema, validate
+from sdo.contracts import ReflectionResult, model_output_schema, validate, worker_result_payload
 from sdo.contracts import SdkGap as ProtoSdkGap
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
@@ -72,7 +72,9 @@ class ReflectionTurn(BaseModel):
         """Parse the model's reply as the ``ReflectionResult`` it was asked for, then view it as a turn."""
 
         try:
-            result = json_format.ParseDict(payload, ReflectionResult())
+            result = json_format.ParseDict(
+                worker_result_payload(payload, ReflectionResult.DESCRIPTOR), ReflectionResult()
+            )
         except json_format.ParseError as exc:
             raise ValueError(f"invalid reflection result: {exc}") from exc
         validate(result)
@@ -458,7 +460,9 @@ class CodexSessionBackend:
             # Preserve the complete returned proto through validation: Python's
             # view must not discard deprecated payloads or reject a decision
             # before the shared Go diagnostics can drive an in-session correction.
-            decision = json_format.ParseDict(payload, ReflectionResult())
+            decision = json_format.ParseDict(
+                worker_result_payload(payload, ReflectionResult.DESCRIPTOR), ReflectionResult()
+            )
             check = self.memory_checker(worktree, decision, min(VALIDATION_TIMEOUT_SECONDS, remaining()))
             if check.exit_code == 0 and not check.timed_out:
                 return ReflectionTurn.from_model_output(

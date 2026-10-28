@@ -437,4 +437,13 @@ def rendered_cases() -> dict[str, str]:
             correction_feedback=None,
             active_resources=[ActiveTopologyResourceDTO(kind="Service", name="api")],
         )
+    from sdo.agents.prompt_templates import render_prompt
+
+    prompts["incident_result_correction"] = render_prompt(
+        "responder",
+        "result_correction",
+        part="session.instructions",
+        result_type="IncidentResultValidationError",
+        diagnostic="status: invalid value",
+    )
     return prompts

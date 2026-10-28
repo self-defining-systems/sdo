@@ -193,3 +193,48 @@ def test_warm_worker_validates_canonical_task_before_local_workspace_alias(
     assert seen == ["/sdo/proposal"]
     assert "SDO_WORKSPACE_ALIAS" not in os.environ
     assert publisher.published is not None
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_model_controller_fields_cannot_prevent_typed_worker_publication(
+    provider: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.protobuf import json_format
+
+    from sdo.agents.responder.codex import execute_incident
+    from tests.structured_turns import ScriptedAgent, reply
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path / "scratch"))
+    path = tmp_path / "agent-task.json"
+    task = _task(path)
+    request = IncidentRequest()
+    assert task.request.Unpack(request)
+    request.repository_worktree = str(tmp_path)
+    task.workspace.checkout_path = str(tmp_path)
+    task.request.Pack(request)
+    path.write_text(to_canonical_json(task))
+    model_result = _result()
+    del model_result.applied_playbooks[:]
+    del model_result.proposed_artifact_ids[:]
+    payload = json_format.MessageToDict(model_result, preserving_proto_field_name=True)
+    payload["drift_reprompt"] = {"findings_before": 0, "findings_after": 0}
+    payload["plan_applications"] = [{"invalid": True}]
+    agent = ScriptedAgent(lambda _: reply(provider, payload, session_id="worker-session", branch="incident_result"))
+    publisher = RecordingPublisher()
+
+    run_worker_task(
+        path,
+        "result-map",
+        publisher,
+        executor=lambda request: execute_incident(request, provider=provider, executor=agent.executor),
+    )
+
+    assert publisher.published is not None
+    envelope = parse_json(publisher.published[2], AgentResult())
+    result = IncidentResult()
+    assert envelope.response.Unpack(result)
+    assert result.status == "completed"
+    assert not result.HasField("drift_reprompt")
+    assert not result.plan_applications
