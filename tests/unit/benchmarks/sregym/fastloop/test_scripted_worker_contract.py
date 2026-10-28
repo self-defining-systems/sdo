@@ -234,7 +234,9 @@ def test_scripted_reflection_note_commits_for_verified_and_unverified_outcomes(
     if verified:
         # A verified hand repair needs an executable step; README notes are
         # judgement only and the real memory check names the uncovered repair.
-        with pytest.raises(RuntimeError, match=r'reflection\.program-required: recorded hand repair "restore-front-port"'):
+        with pytest.raises(
+            RuntimeError, match=r'reflection\.program-required: recorded hand repair "restore-front-port"'
+        ):
             scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
         return
     turn = scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)

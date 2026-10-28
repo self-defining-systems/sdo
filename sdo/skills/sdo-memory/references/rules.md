@@ -49,6 +49,6 @@ Missing inputs are errors; the caller supplies the accepted base and authoring r
 
 - A playbook status is omitted/`active` or `retired`; retirement requires a nonempty string `retired_reason`, which is invalid on an active playbook. Enforced by: `playbook.status`.
 
-- Every recorded hand repair needs a changed executable program with positive binding metadata and its original `RepairReceipt`; README text and SDK gaps do not encode performed steps. Replay snapshots and verdicts remain informational. Enforced by: `reflection.program-required`.
+- A hand repair is any successful receipt that no accepted playbook's application performed, including generic menu actions and removals. Every recorded hand repair needs a changed executable program with positive binding metadata and its original `RepairReceipt`; README text and SDK gaps do not encode performed steps. Replay snapshots and verdicts remain informational. Enforced by: `reflection.program-required`.
 - Typed SDK gaps name unavailable observations or effects, never work left to encode. Installed SDK actions are available; a named installed read needs an authoritative unavailable-read error. Enforced by: `reflection.sdk-gap-unavailable`.
 - Update or retire each applied playbook that failed, left findings unresolved or needed later hand repair; edits to a peer playbook or an SDK gap do not excuse it. Enforced by: `reflection.stale-playbook`.
