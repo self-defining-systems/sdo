@@ -11,7 +11,7 @@
     "sdo.dev/operator/worker_registry/TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent": "compiler",
     "sdo.dev/operator/broker/TestReflectionRecordsReplayButStillRejectsInvalidCode": "remaining",
     "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage": "compiler-replay",
-    "sdo.dev/operator/memory/validate/TestPartialPlaybookPublication": "remaining",
+    "sdo.dev/operator/memory/validate/TestPartialPlaybookPublication": "broker",
     "sdo.dev/operator/broker/TestCLIAndBrokerAgreeOnUnobservableDetectorLocator": "remaining"
   },
   "costs": {

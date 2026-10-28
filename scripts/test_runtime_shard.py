@@ -86,7 +86,15 @@ COST_FILE = Path(__file__).with_name("runtime_test_costs.json")
 # The Go and job deadlines alone enforce failure.
 SHARD_BUDGET_SECONDS = 5 * 60 * 70 // 100
 # Hosted costs drive all measured placements; no local-only overrides.
-PLACEMENTS: dict[str, str] = {}
+# Run 40611912416 exhausted simulation's hosted deadline while programs and
+# contracts finished in 161.55s and 171.91s. Move 43.53s and 22.80s of measured
+# independent work, leaving the expensive hotel replay on its existing runner.
+PLACEMENTS: dict[str, str] = {
+    "TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence": "reflection-programs",
+    "TestClosureCompletesAcrossRepositoryAdvance": "reflection-programs",
+    "TestResponderDeletedNewProgramCannotRunCachedBinary": "contracts",
+    "TestT1TrustProperty": "contracts",
+}
 
 
 def balanced_partition(names: list[str], patterns: dict[str, str], costs: dict[str, float]) -> dict[str, list[str]]:
