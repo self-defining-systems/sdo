@@ -46,6 +46,6 @@ step picks one of many records at random.
 
 - Visit every seeded record on every iteration: one step per record, up to `traffic.MaxSteps` steps per scenario, and
   split a larger set across scenarios. Build the steps in a Go loop over the seeded IDs.
-- After a write, read back what it changed (the cart is empty after an order, a new post is in the timeline). Some
+- After a write, read back what it changed (an order clears what it consumed, a new record is listed). Some
   failures leave the write's own response successful: a service can ignore an error from a dependency it calls only
   to clean up.
