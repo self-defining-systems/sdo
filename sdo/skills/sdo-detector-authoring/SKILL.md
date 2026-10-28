@@ -46,12 +46,11 @@ Steady traffic remains pending until every scenario has succeeded since observat
 
 Health traffic sees only what it calls. Give each service-to-service edge in `links.yaml` at least one continuous
 health-probe scenario whose request crosses it; a link probe proves only that a connection opens, so a dependency
-that accepts connections but fails requests (a payment call behind checkout) stays invisible without one. Reads rarely
-reach write-path services, so include the application's own write journeys (add to cart and place an order, book,
-post) with a `Marker` naming dedicated synthetic data, modelled on its load generator or tests; send JSON bodies with
-`WithJSON`. Prefer an idempotent or self-cleaning write; journey workloads run only on demand and detect nothing.
-When no request can safely cross an edge, say why in a comment above that link; `traffic.undriven-edge` notes list
-the edges still undriven.
+that accepts connections but fails requests stays invisible without one. Reads rarely reach services that only writes
+call, so include the application's own write journeys (an order, a booking, a post) with a `Marker` naming dedicated
+synthetic data, modelled on its tests or clients; send JSON bodies with `WithJSON`. Prefer an idempotent or
+self-cleaning write; journey workloads run only on demand and detect nothing. When no request can safely cross an
+edge, say why in a comment above that link; `traffic.undriven-edge` notes list the edges still undriven.
 
 ## Metrics detectors (optional input)
 

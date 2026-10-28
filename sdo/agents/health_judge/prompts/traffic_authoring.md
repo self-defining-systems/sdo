@@ -6,7 +6,7 @@ records the application seeds at startup. An isolated prober runs the health wor
 few requests per second; the traffic health detector opens an incident when a scenario violates its SLO, and a
 responder's repair is accepted only when the same scenarios recover. A dependency no continuous scenario calls can
 break unseen, so the health workload must send at least one request across every service-to-service edge you
-declare in links.yaml, the write paths included (placing an order reaches payment; a read never does). Every scenario
+declare in links.yaml, write paths included (services only a write reaches never see a read). Every scenario
 must succeed against the healthy application.
 
 1. Generators: Go package `generators` in `.sdo/diagnostics/traffic/generators/` exporting
@@ -27,7 +27,7 @@ must succeed against the healthy application.
 2. Workloads: a file `.sdo/diagnostics/traffic/workloads/<name>.yaml` with apiVersion sdo.dev/v1alpha1, kind
    TrafficWorkload, name equal to the file name, purpose, ratePerSecond, and scenarios [{id, weight}]. Write
    `health` (purpose health-probe, ratePerSecond at most 4, reads plus the write journeys that reach otherwise
-   uncovered edges, writing only marked synthetic data as the application's own load generator does) and `verify`
+   uncovered edges, writing only marked synthetic data as the application's own tests or clients do) and `verify`
    (purpose verify-burst, ratePerSecond about 12, duration 3s, the same scenarios). Optional: timeout (2s) and
    slo {window, minSamples, maxErrorRate, maxTimeoutRate, latencyPercentile, maxLatency}. Journey workloads run only
    on demand and never feed detection.
