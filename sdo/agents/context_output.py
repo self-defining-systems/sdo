@@ -9,7 +9,10 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -19,6 +22,27 @@ else:
 
 # A spilled section's inline summary must carry at least this much real content.
 MIN_SUMMARY_CHARS = 256
+
+#: Lists a reader acts on first: reflection's per-cause questions, then what was
+#: repaired and how. Other lists follow in document order.
+PRIORITY_LISTS = (
+    "causes",
+    "unassigned",
+    "repair_actions",
+    "plan_applications",
+    "confirmed_root_causes",
+    "undetected_causes",
+    "findings",
+    "matches",
+)
+
+#: Item detail levels, richest first: (string width, nested list items, nested record depth).
+_ITEM_FORMS = ((160, 4, 8), (120, 2, 3), (80, 1, 1), (32, 1, 0))
+
+#: Width of top-level strings, widest first, while the list items still fit.
+_SKELETON_WIDTHS = (160, 80, 32)
+
+_SUMMARY_LABEL = "Summary (partial):\n"
 
 
 class ContextText(str):
@@ -122,28 +146,13 @@ def cap_text(text: str, limit: int, *, json_output: bool = False, bytes_limit: b
         except ValueError:
             document = None
 
-        def project(value: Any, width: int, count: int, depth: int = 0) -> Any:
-            if isinstance(value, str):
-                if value.startswith(("/", "$SDO_SESSION_SCRATCH/", "$SDO_SESSION_DIR/")):
-                    return value  # a shortened file reference must never look usable
-                return value if len(value) <= width else value[:width] + "…"
-            if isinstance(value, list):
-                return [project(child, width, count, depth + 1) for child in value[:count]]
-            if isinstance(value, dict):
-                if depth >= 8:
-                    return {"keys": list(value)}
-                result = {key: project(child, width, count, depth + 1) for key, child in value.items()}
-                for key, child in value.items():
-                    if isinstance(child, list) and len(child) > count:
-                        result[key + "_omitted"] = len(child) - count
-                return result
-            return value
-
         if isinstance(document, dict):
-            for width, count in ((160, 4), (80, 2), (32, 1), (0, 0)):
-                summary = "Summary (partial):\n" + json.dumps(project(document, width, count), ensure_ascii=False)
-                if size(summary) <= remaining:
-                    return ContextText(result + summary, path, degraded=width < 80)
+            fitted = _fit_summary(document, remaining, size)
+            if fitted is not None:
+                summary, degraded = fitted
+                if size(result + summary) > limit:
+                    raise AssertionError(f"summary exceeds its context budget {limit}")
+                return ContextText(result + summary, path, degraded=degraded)
         label = f"Summary ({len(text)} chars; partial):\n"
         if remaining > size(label) + 24:
             head = text[: min(1024, remaining - size(label))]
@@ -153,3 +162,122 @@ def cap_text(text: str, limit: int, *, json_output: bool = False, bytes_limit: b
             return ContextText(result, path, degraded=len(head) < min(len(text), MIN_SUMMARY_CHARS))
         return ContextText(result, path, degraded=True)
     return ContextText(result, path)
+
+
+def _project(value: Any, width: int, count: int, depth: int) -> Any:
+    """Shorten strings, keep ``count`` items per nested list, and drop records below ``depth``."""
+    if isinstance(value, str):
+        if value.startswith(("/", "$SDO_SESSION_SCRATCH/", "$SDO_SESSION_DIR/")):
+            return value  # a shortened file reference must never look usable
+        return value if len(value) <= width else value[:width] + "…"
+    if isinstance(value, list):
+        return [_project(child, width, count, depth) for child in value[:count]]
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        dropped = 0
+        for key, child in value.items():
+            nested = isinstance(child, dict) or (isinstance(child, list) and any(isinstance(c, dict) for c in child))
+            if nested and depth <= 0:
+                dropped += 1
+                continue
+            result[key] = _project(child, width, count, depth - 1 if nested else depth)
+            if isinstance(child, list) and len(child) > count:
+                result[key + "_omitted"] = len(child) - count
+        if dropped:
+            result["fields_omitted"] = dropped
+        return result
+    return value
+
+
+def _count_omitted(target: dict[str, Any], key: str, total: int) -> None:
+    omitted = total - len(target[key])
+    if omitted:
+        target[key + "_omitted"] = omitted
+    else:
+        target.pop(key + "_omitted", None)
+
+
+def _fit_summary(
+    document: dict[str, Any], limit: int, size: Callable[[str], int]
+) -> tuple[str, bool] | None:
+    """The richest JSON summary of ``document`` within ``limit``, and whether it is a placeholder.
+
+    A placeholder leaves a nonempty list with no items. The first top-level
+    string width that avoids one wins; otherwise the fullest attempt does.
+    """
+    best: tuple[int, str, bool] | None = None
+    for width in _SKELETON_WIDTHS:
+        attempt = _fill(document, width, limit, size)
+        if attempt is None:
+            continue
+        if not attempt[2]:
+            return attempt[1], False
+        if best is None or attempt[0] > best[0]:
+            best = attempt
+    return (best[1], best[2]) if best is not None else None
+
+
+def _fill(
+    document: dict[str, Any], width: int, limit: int, size: Callable[[str], int]
+) -> tuple[int, str, bool] | None:
+    """Fill list slots round-robin, priority lists first, each item at the richest form that fits.
+
+    Every list reachable through records is a slot. Slots start empty with their
+    full length counted as omitted, so every list shows its first item before
+    any list shows a second, and only the items that do not fit are counted.
+    Returns the items shown, the rendered summary and whether it is a placeholder.
+    """
+    skeleton = _project(document, width, 0, 8)
+    slots: list[tuple[dict[str, Any], str, list[Any]]] = []
+    pending: list[tuple[dict[str, Any], dict[str, Any]]] = [(document, skeleton)]
+    while pending:
+        source, target = pending.pop(0)
+        for key, child in source.items():
+            if isinstance(child, list) and child:
+                slots.append((target, key, child))
+            elif isinstance(child, dict) and isinstance(target.get(key), dict):
+                pending.append((child, target[key]))
+
+    def rendered() -> str:
+        return _SUMMARY_LABEL + json.dumps(skeleton, ensure_ascii=False)
+
+    if size(rendered()) > limit:
+        return None
+    rank = {key: index for index, key in enumerate(PRIORITY_LISTS)}
+    slots.sort(key=lambda slot: rank.get(slot[1], len(rank)))
+
+    def place(target: dict[str, Any], key: str, items: list[Any], index: int, forms: Sequence[tuple[int, int, int]]) -> bool:
+        """Put ``items[index]`` at the first of ``forms`` that fits, keeping any earlier form otherwise."""
+        visible = target[key]
+        previous = visible[index] if index < len(visible) else None
+        for item_width, count, depth in forms:
+            candidate = _project(items[index], item_width, count, depth)
+            if previous is None:
+                visible.append(candidate)
+            else:
+                visible[index] = candidate
+            _count_omitted(target, key, len(items))
+            if size(rendered()) <= limit:
+                return True
+            if previous is None:
+                visible.pop()
+            else:
+                visible[index] = previous
+            _count_omitted(target, key, len(items))
+        return False
+
+    # Every list first shows one lean item, then those items get richer, then lists grow.
+    for target, key, items in slots:
+        place(target, key, items, 0, _ITEM_FORMS[-1:])
+    for target, key, items in slots:
+        if target[key]:
+            place(target, key, items, 0, _ITEM_FORMS[:-1])
+    growing = [slot for slot in slots if 0 < len(slot[0][slot[1]]) < len(slot[2])]
+    while growing:
+        growing = [
+            (target, key, items)
+            for target, key, items in growing
+            if place(target, key, items, len(target[key]), _ITEM_FORMS) and len(target[key]) < len(items)
+        ]
+    shown = sum(len(target[key]) for target, key, _ in slots)
+    return shown, rendered(), any(not target[key] for target, key, _ in slots)
