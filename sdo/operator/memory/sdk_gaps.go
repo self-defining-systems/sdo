@@ -32,11 +32,26 @@ func (s *JSONStore) appendReflectionAnnotations(ctx context.Context, id string, 
 	if err != nil {
 		return Outcome{}, err
 	}
-	next := proto.Clone(previous.Record).(*contracts.OutcomeRecord)
 	for _, gap := range gaps {
 		if gap == nil {
 			return Outcome{}, fmt.Errorf("nil SDK gap")
 		}
+	}
+	for _, rejection := range rejections {
+		if rejection == nil {
+			return Outcome{}, fmt.Errorf("nil reflection rejection")
+		}
+	}
+	// Agent prose is compared and stored in its logical form, so a retried
+	// annotation is recognized and no later reflection reads a physical path.
+	incoming := proto.Clone(previous.Record).(*contracts.OutcomeRecord)
+	incoming.SdkGaps, incoming.ReflectionRejections = gaps, rejections
+	if incoming, err = LogicalOutcome(incoming); err != nil {
+		return Outcome{}, err
+	}
+	gaps, rejections = incoming.SdkGaps, incoming.ReflectionRejections
+	next := proto.Clone(previous.Record).(*contracts.OutcomeRecord)
+	for _, gap := range gaps {
 		exists := false
 		for _, old := range next.SdkGaps {
 			exists = exists || proto.Equal(old, gap)
@@ -46,9 +61,6 @@ func (s *JSONStore) appendReflectionAnnotations(ctx context.Context, id string, 
 		}
 	}
 	for _, rejection := range rejections {
-		if rejection == nil {
-			return Outcome{}, fmt.Errorf("nil reflection rejection")
-		}
 		exists := false
 		for _, old := range next.ReflectionRejections {
 			// A guard and a recovered result can observe the same rejection at
@@ -101,7 +113,7 @@ func (s *JSONStore) appendReflectionAnnotations(ctx context.Context, id string, 
 		return Outcome{}, err
 	}
 	defer os.Remove(file.Name())
-	if _, err = file.Write(raw); err != nil {
+	if _, err = file.Write(outcome.document); err != nil {
 		file.Close()
 		return Outcome{}, err
 	}

@@ -17,9 +17,13 @@ const maxMidIncidentPasses = 8
 
 // midIncidentStage coalesces the re-runs of the automatic stage over the
 // open incident: one pass at a time, and one more when a match arrived during it.
+// A pass that clears no finding and applies no program new to the incident
+// settles the stage: the responder owns what remains, and later activations
+// join the incident without another pass.
 type midIncidentStage struct {
 	running bool
 	dirty   bool
+	settled bool
 	passes  int
 }
 
@@ -69,6 +73,11 @@ func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Fi
 		c.incidentFindingKeys = findingKeys(request.Findings)
 		c.noteBatchedLocked(request.IncidentID, []sdk.Finding{finding})
 	}
+	// A settled stage hands the finding to the responder with the incident.
+	if c.midStage.settled {
+		c.mu.Unlock()
+		return true
+	}
 	if c.midStage.running {
 		c.midStage.dirty = true
 		c.mu.Unlock()
@@ -105,13 +114,61 @@ func learnedPlaybookExplains(loop *ResponderLoop, finding sdk.Finding) bool {
 	return false
 }
 
+func deterministicStageReport(reports []*contracts.StageReport) *contracts.StageReport {
+	var report *contracts.StageReport
+	for _, prior := range reports {
+		if prior.GetStage() == "deterministic" {
+			report = prior
+		}
+	}
+	return report
+}
+
+func stageAppliedPrograms(report *contracts.StageReport) map[string]bool {
+	applied := map[string]bool{}
+	for _, attempt := range report.GetMitigations() {
+		if attempt.GetResult() != "skipped" {
+			applied[attempt.GetPlaybookId()] = true
+		}
+	}
+	return applied
+}
+
+// stagePassProgressed reports whether a later pass verified a repair of its
+// own (an attempt it added or completed is applied_cleared) or applied a
+// program the incident had not applied before. Findings the responder cleared
+// meanwhile are not the stage's progress.
+func stagePassProgressed(earlier, report *contracts.StageReport) bool {
+	before := map[string]*contracts.StageMitigation{}
+	for _, attempt := range earlier.GetMitigations() {
+		before[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))] = attempt
+	}
+	for _, attempt := range report.GetMitigations() {
+		prior := before[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))]
+		if attempt.GetResult() == "applied_cleared" && prior.GetResult() != "applied_cleared" {
+			return true
+		}
+	}
+	applied := stageAppliedPrograms(earlier)
+	for id := range stageAppliedPrograms(report) {
+		if !applied[id] {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Controller) runMidIncidentPasses(ctx context.Context, incidentID string, loop *ResponderLoop) {
 	for {
-		if err := c.runMidIncidentPass(ctx, incidentID, loop); err != nil {
+		progressed, err := c.runMidIncidentPass(ctx, incidentID, loop)
+		if err != nil {
 			slog.Warn("later automatic stage pass", "incident_id", incidentID, "error", err)
 		}
 		c.mu.Lock()
-		again := c.midStage.dirty && c.midStage.passes < maxMidIncidentPasses && c.incidentOpen &&
+		if err == nil && !progressed {
+			c.midStage.settled = true
+		}
+		again := c.midStage.dirty && !c.midStage.settled && c.midStage.passes < maxMidIncidentPasses && c.incidentOpen &&
 			c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID && !c.responderDone
 		c.midStage.dirty = false
 		if !again {
@@ -125,11 +182,12 @@ func (c *Controller) runMidIncidentPasses(ctx context.Context, incidentID string
 
 // runMidIncidentPass runs the automatic stage again on the responder's own
 // loop, so its applications, rollout waits and receipts are the ones the
-// responder sees, and serialize with its tool calls.
-func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, loop *ResponderLoop) error {
+// responder sees, and serialize with its tool calls. It reports whether the
+// pass made progress (stagePassProgressed).
+func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, loop *ResponderLoop) (bool, error) {
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer cancel()
 	// The pass holds the loop's locks, so no read inside it may hang: twice the
@@ -139,18 +197,13 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	c.mu.Lock()
 	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
 		c.mu.Unlock()
-		return nil
+		return false, nil
 	}
 	c.midStage.passes++
 	request := *cloneIncidentRequest(c.currentIncidentRequest)
 	c.mu.Unlock()
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), PriorStages: cloneStageReports(request.PriorStages)}
-	var earlier *contracts.StageReport
-	for _, prior := range state.PriorStages {
-		if prior.GetStage() == "deterministic" {
-			earlier = prior
-		}
-	}
+	earlier := deterministicStageReport(state.PriorStages)
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true}
 	report, runErr := RunStageAgain(actionCtx, state, stage)
 	notes := stageNotes(earlier, report)
@@ -163,7 +216,7 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	if err := c.PersistState(ctx); err != nil {
 		slog.Warn("persist later automatic stage pass", "incident_id", incidentID, "error", err)
 	}
-	return runErr
+	return stagePassProgressed(earlier, report), runErr
 }
 
 // stageNotes lists what the later pass changed in the report: attempts that are

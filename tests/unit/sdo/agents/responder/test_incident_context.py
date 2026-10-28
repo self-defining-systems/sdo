@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
-from sdo.agents.responder.incident_context import MAX_INCIDENT_SUMMARY_CHARS, incident_data_view, prepared_incident_data
+import pytest
+
+from sdo.agents.responder.incident_context import (
+    MAX_INCIDENT_SUMMARY_CHARS,
+    MAX_INLINE_FINDINGS,
+    incident_data_view,
+    prepared_incident_data,
+)
+from sdo.agents.responder.tools_cli import command_surface
 from sdo.contracts import IncidentRequest, OperationalMemorySnapshot, Verdict
 from tests.context_helpers import incident_document, incident_facts_path
 
@@ -63,8 +72,8 @@ def test_oversized_incident_context_keeps_complete_facts_in_a_private_turn_file(
     request = _request()
     request.findings[-1].evidence = "start " + "large live evidence 界" * 1000 + " end"
     with prepared_incident_data(request) as rendered:
-        assert len(rendered) <= 12000
-        assert "Full:" in rendered
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
+        assert "large live evidence" not in rendered
         details = incident_facts_path(rendered)
         document = json.loads(details.read_text(encoding="utf-8"))
         assert document["findings"][-1]["evidence"] == request.findings[-1].evidence
@@ -123,18 +132,19 @@ def test_bulky_intent_does_not_hide_actionable_findings_and_coverage() -> None:
     match.explained_finding_fingerprints.append("finding-0")
 
     with prepared_incident_data(request) as rendered:
-        assert len(rendered) <= 6000
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
         summary = incident_document(rendered)
-        assert [item["fingerprint"] for item in summary["findings"]] == [
-            item.fingerprint for item in request.findings[: len(summary["findings"])]
+        assert [line.split(":", 1)[0] for line in summary["findings"]] == [
+            item.fingerprint for item in request.findings
         ]
-        assert len(summary["findings"]) + summary.get("findings_omitted", 0) == len(request.findings)
-        assert all(item["primary_resource"]["name"] == f"service-{i}" for i, item in enumerate(summary["findings"]))
-        assert summary["playbook_coverage"] == incident_data_view(request)["playbook_coverage"]
+        assert all(line.endswith(f"[Service/service-{i}]") for i, line in enumerate(summary["findings"]))
+        coverage = summary["playbook_coverage"]
+        assert coverage["matches"][0]["explained_finding_fingerprints"] == ["finding-0"]
+        assert coverage["unexplained_findings"] == 4
         details = incident_facts_path(rendered)
         full = json.loads(details.read_text())
         assert full["intent"]["architecture"] == request.memory_snapshot.architecture_markdown
-        assert "Summary (partial)" in rendered
+        assert "Supplemental architecture" not in rendered
         assert full["findings"] == incident_data_view(request)["findings"]
     assert not details.exists()
 
@@ -152,7 +162,8 @@ def test_accepted_playbook_documents_are_available_without_searching_examples() 
         paths = [Path(value) for value in references.values()]
         assert Path(references["repair"]).read_text() == request.memory_snapshot.playbooks[0].markdown
         assert all(path.stat().st_mode & 0o777 == 0o600 for path in paths)
-        assert document["memory_accepted_commit"] == "accepted"
+        assert document["playbook_index"] == {"repair": "Accepted repair", "other": "Another accepted playbook"}
+        assert json.loads(incident_facts_path(rendered).read_text())["memory_accepted_commit"] == "accepted"
         assert "Check live preconditions" not in rendered
         assert request.SerializeToString() == before
     assert all(not path.exists() for path in paths)
@@ -160,24 +171,28 @@ def test_accepted_playbook_documents_are_available_without_searching_examples() 
 
 def test_incident_carries_the_current_cli_surface_without_tool_discovery() -> None:
     with prepared_incident_data(_request()) as rendered:
-        document = incident_document(rendered, full=True)
-        tools = document["incident_tools"]
-        assert "sdo mitigate --help" in tools["commands"]["mitigate"]
-        assert "sdo act --help" in tools["commands"]["act"]
-        assert "sdo check --help" in tools["commands"]["check"]
+        tools = incident_document(rendered)["incident_tools"]
+        assert "independent options" in tools["commands"]["mitigate"]
+        assert set(tools["commands"]) == set(command_surface()["commands"])
+        assert "--help" in tools["help"]
         assert "Full JSON:" in tools["output"]
         assert "--json" in tools["output"]
+        full = json.loads(incident_facts_path(rendered).read_text())
+        assert "sdo act --help" in full["incident_tools"]["commands"]["act"]
 
 
 def test_verbose_findings_retain_identities_coverage_and_commands_in_summary() -> None:
     request = _request()
     for finding in request.findings:
         finding.evidence = "verbose observation " * 2000
-    request.playbook_coverage.matches.add(playbook_id="repair", can_mitigate=False)
+    request.playbook_coverage.matches.add(
+        playbook_id="repair", can_mitigate=False
+    ).explained_finding_fingerprints.append("finding-0")
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= 6000
         summary = incident_document(rendered)
-        assert len(summary["findings"]) + summary.get("findings_omitted", 0) == 5
+        assert len(summary["findings"]) == 5
+        assert "verbose observation" not in rendered
         assert summary["playbook_coverage"]["matches"][0]["can_mitigate"] is False
         assert "mitigate" in summary["incident_tools"]["commands"]
         details = incident_facts_path(rendered)
@@ -192,46 +207,9 @@ def test_many_finding_summary_keeps_unexplained_counts_and_complete_facts() -> N
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
         summary = incident_document(rendered)
         assert len(summary["findings"]) + summary["findings_omitted"] == 100
-        assert len(summary["findings"]) + summary["findings_omitted"] == 100
-        coverage = summary["playbook_coverage"]
-        assert (
-            len(coverage["unexplained_finding_fingerprints"]) + coverage["unexplained_finding_fingerprints_omitted"]
-            == 100
-        )
+        assert summary["playbook_coverage"]["unexplained_findings"] == 100
         details = incident_facts_path(rendered)
         assert len(json.loads(details.read_text())["findings"]) == 100
-
-
-def test_prior_stage_summary_stays_inline_and_full_receipt_stays_in_private_facts() -> None:
-    from sdo.contracts import StageReport
-
-    request = _request()
-    stage = StageReport(stage="deterministic", remaining_finding_fingerprints=["finding-1"])
-    mitigation = stage.mitigations.add(
-        playbook_id="restore-port",
-        program_revision="accepted-revision",
-        plan_id="plan-1",
-        result="applied_cleared",
-        cleared_finding_fingerprints=["finding-0"],
-    )
-    mitigation.apply_receipt.application_id = "apply-1"
-    mitigation.apply_receipt.applied = True
-    mitigation.apply_receipt.plan.rationale = "full receipt evidence " * 4000
-    mitigation.post_apply_diagnose.verdict.result = Verdict.RESULT_NO_MATCH
-    request.prior_stages.append(stage)
-
-    with prepared_incident_data(request) as rendered:
-        inline = json.loads(rendered.split("\n", 1)[1])
-        prior = inline["prior_stages"][0]
-        assert prior["mitigations"][0]["result"] == "applied_cleared"
-        assert prior["mitigations"][0]["apply_receipt"]["application_id"] == "apply-1"
-        assert prior["remaining_finding_fingerprints"] == ["finding-1"]
-        assert "full receipt evidence" not in rendered
-        full = json.loads(Path(inline["details_file"]).read_text())
-        assert full["prior_stages"][0]["mitigations"][0]["apply_receipt"]["plan"]["rationale"].startswith(
-            "full receipt evidence"
-        )
-        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
 
 
 def test_many_stage_attempts_cannot_displace_bounded_first_prompt() -> None:
@@ -249,9 +227,10 @@ def test_many_stage_attempts_cannot_displace_bounded_first_prompt() -> None:
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
         summary = incident_document(rendered)
-        stage = summary["prior_stages"][0]
-        assert stage["mitigations"][0]["result"] == "apply_error"
-        assert len(stage["mitigations"]) + stage["mitigations_omitted"] == 20
+        actions = summary["stage_actions"]
+        assert "-> apply_error; error: eee" in actions[0]
+        assert len(actions) + summary["stage_actions_omitted"] == 20
+        assert summary["findings"]
         assert "mitigate" in summary["incident_tools"]["commands"]
         details = incident_facts_path(rendered)
         assert len(json.loads(details.read_text())["prior_stages"][0]["mitigations"]) == 20
@@ -304,3 +283,141 @@ def test_prior_progress_summary_preserves_transport_omissions() -> None:
     summary = prior_response_summary(request)
     assert summary["episodes_omitted"] == 23
     assert summary["episodes"][0]["truncated"] is True
+
+
+def _staged_request(findings: int, *, oversized: bool = False) -> IncidentRequest:
+    """The handoff shape: findings are what the stage left; stage receipts name what it cleared."""
+    request = _request()
+    del request.findings[:]
+    for index in range(findings):
+        latent = index % 3 != 0
+        finding = request.findings.add(
+            detector_id="drift.unexplained" if latent else "health-objective",
+            rule_id="unexplained" if latent else "deployment-unavailable",
+            severity="latent" if latent else "critical",
+            summary=("unexplained ConfigMap/extra-" if latent else "Deployment unavailable: api-")
+            + str(index)
+            + (": absent from accepted source" if latent else "")
+            + (" detail" * 400 if oversized else ""),
+            evidence="observed " * (4000 if oversized else 3),
+        )
+        finding.primary_resource.kind = "ConfigMap" if latent else "Deployment"
+        finding.primary_resource.namespace = "toy"
+        finding.primary_resource.name = f"extra-{index}" if latent else f"api-{index}"
+        if latent:
+            finding.fingerprint = f"drift.unexplained/unexplained/toy/ConfigMap/extra-{index}/" + "a" * 64
+    request.memory_snapshot.architecture_markdown = "Architecture. " * (2000 if oversized else 5)
+    for index in range(40 if oversized else 2):
+        request.namespace_onboarding.objects.add().name = f"onboarded-{index}"
+    stage = request.prior_stages.add(stage="deterministic", cleared_finding_fingerprints=["port", "drift-port"])
+    cleared = stage.mitigations.add(
+        playbook_id="service-source-drift",
+        result="applied_cleared",
+        plan_action_count=1,
+        cleared_finding_fingerprints=["port", "drift-port"],
+    )
+    binding = cleared.bindings.add(name="service")
+    binding.object.kind = "Service"
+    binding.object.namespace = "toy"
+    binding.object.name = "profile"
+    cleared.apply_receipt.applied = True
+    cleared.apply_receipt.plan.rationale = "full receipt evidence " * 4000
+    failed = stage.mitigations.add(
+        playbook_id="deployment-source-drift",
+        result="rollout_failed",
+        error="source_reconcile_partial: 2 objects retain source differences " + "x" * 4000,
+    )
+    failed.apply_receipt.applied = True
+    for finding in request.findings:
+        stage.remaining_finding_fingerprints.append(finding.fingerprint or finding.detector_id)
+    return request
+
+
+def _brief(rendered: str) -> dict[str, Any]:
+    assert rendered.startswith("Incident request:\n"), rendered[:80]
+    return json.loads(rendered.split("\n", 1)[1])
+
+
+def test_first_message_lists_uncleared_findings_and_one_line_per_stage_action() -> None:
+    request = _staged_request(4)
+    with prepared_incident_data(request) as rendered:
+        brief = _brief(rendered)
+        assert brief["findings"][0].startswith("health-objective/deployment-unavailable/toy/Deployment/api-0: ")
+        assert len(brief["findings"]) == 4
+        assert all(isinstance(line, str) and "\n" not in line for line in brief["findings"])
+        actions = brief["stage_actions"]
+        assert actions[0] == (
+            "deterministic: service-source-drift on Service/toy/profile -> applied_cleared; 1 write; cleared 2"
+        )
+        assert actions[1].startswith(
+            "deterministic: deployment-source-drift -> rollout_failed; error: source_reconcile_partial"
+        )
+        assert all(len(line) <= 300 for line in actions)
+        assert brief["stage_cleared_findings"] == 2
+        assert "full receipt evidence" not in rendered
+        assert "prior_stages" not in brief
+        assert "intent" not in brief
+        full = json.loads(Path(brief["details_file"]).read_text())
+        assert full["prior_stages"][0]["mitigations"][0]["apply_receipt"]["plan"]["rationale"].startswith(
+            "full receipt evidence"
+        )
+        assert full["findings"][0]["evidence"] == request.findings[0].evidence
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+@pytest.mark.parametrize("count", [1, 5, 13, 25, 100])
+def test_first_message_always_lists_findings_within_budget(count: int, oversized: bool) -> None:
+    """Class guard: the first message never degrades to a field skeleton without findings."""
+    request = _staged_request(count, oversized=oversized)
+    with prepared_incident_data(request) as rendered:
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
+        assert "Summary (partial)" not in rendered
+        assert "Full:" not in rendered
+        brief = _brief(rendered)
+        listed = brief["findings"]
+        assert len(listed) + brief.get("findings_omitted", 0) == count
+        assert len(listed) == min(count, MAX_INLINE_FINDINGS)
+        critical = [line for line in listed if line.startswith("health-objective/")]
+        assert critical == listed[: len(critical)], "critical findings come first"
+        assert brief["stage_actions"]
+        assert "incident_tools" in brief
+
+
+def test_attempts_settled_by_one_application_are_one_stage_action() -> None:
+    request = _staged_request(2)
+    stage = request.prior_stages[0]
+    del stage.mitigations[:]
+    for name in ("geo", "rate", "profile", "user"):
+        attempt = stage.mitigations.add(
+            playbook_id="deployment-source-repair",
+            result="rollout_failed",
+            plan_action_count=1,
+            error="source_reconcile_partial: 8 objects retain source differences",
+            cleared_finding_fingerprints=[f"drift-{name}"],
+        )
+        attempt.apply_receipt.application_id = "apply-1"
+        binding = attempt.bindings.add(name="deployment")
+        binding.object.kind = "Deployment"
+        binding.object.namespace = "toy"
+        binding.object.name = name
+    with prepared_incident_data(request) as rendered:
+        assert _brief(rendered)["stage_actions"] == [
+            "deterministic: deployment-source-repair on Deployment/toy/geo,Deployment/toy/rate,Deployment/toy/profile"
+            " +1 -> rollout_failed; 4 writes; cleared 4; error: source_reconcile_partial: 8 objects retain source"
+            " differences"
+        ]
+
+
+def test_coverage_brief_keeps_only_matches_that_explain_an_open_finding() -> None:
+    request = _request()
+    request.playbook_coverage.matches.add(playbook_id="settled").explained_finding_fingerprints.append("cleared")
+    request.playbook_coverage.matches.add(playbook_id="open").explained_finding_fingerprints.extend(
+        ["finding-1", "cleared"]
+    )
+    with prepared_incident_data(request) as rendered:
+        coverage = incident_document(rendered)["playbook_coverage"]
+        assert [match["playbook_id"] for match in coverage["matches"]] == ["open"]
+        assert coverage["matches"][0]["explained_finding_fingerprints"] == ["finding-1"]
+        assert coverage["unexplained_findings"] == 4
+        full = json.loads(incident_facts_path(rendered).read_text())
+        assert len(full["playbook_coverage"]["matches"]) == 2

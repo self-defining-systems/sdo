@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
 
-from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, turn_usage
+from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, StructuredTurnInterrupted, turn_usage
 from libs.agent_cli.usage_checkpoint import UsageCheckpoint
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
@@ -34,11 +35,36 @@ from sdo.contracts import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agentshim import CommandExecutor
 
 
 class ResponderExecutionError(RuntimeError):
     pass
+
+
+#: Time a running turn keeps after SDO verifies recovery, so an in-flight
+#: command or answer can finish before the session is asked for its result.
+VERIFIED_SETTLE_SECONDS = 5.0
+
+
+def verified_recovery() -> Callable[[], bool] | None:
+    """True once the controller's verification marker has stood for the settle time."""
+    directory = os.environ.get("SDO_API_HISTORY_DIR")
+    if not directory:
+        return None
+    marker = Path(directory) / "incident-verified.json"
+    seen: list[float] = []
+
+    def settled() -> bool:
+        if not seen:
+            if not marker.exists():
+                return False
+            seen.append(time.monotonic())
+        return time.monotonic() - seen[0] >= VERIFIED_SETTLE_SECONDS
+
+    return settled
 
 
 def main() -> int:
@@ -106,6 +132,7 @@ def _execute_incident(
         except ValueError as exc:
             raise ResponderExecutionError(f"invalid controller continuation: {exc}") from exc
     corrected_result = False
+    verified = verified_recovery()
     usage: dict[str, int | float] = {}
     options = session_turn_options(selected_provider, Path(request.repository_worktree))
     options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
@@ -134,10 +161,21 @@ def _execute_incident(
                 executor=executor,
                 on_session_started=recovery.checkpoint if recovery is not None else None,
                 on_usage=checkpoint.publish if checkpoint is not None else None,
+                interrupt_when=verified,
                 **options,
             )
         except SessionRecoveryError as exc:
             raise ResponderExecutionError(str(exc)) from exc
+        except StructuredTurnInterrupted as exc:
+            # SDO verified recovery: the rest of the session only produces the result.
+            for name, value in exc.usage.items():
+                usage[name] = usage.get(name, 0) + value
+            if not exc.session_id:
+                raise ResponderExecutionError(f"{selected_provider} responder stopped before a session") from exc
+            resume_session_id = exc.session_id
+            prompt = render_prompt("responder", "verified_final", part="session.instructions")
+            verified = None
+            continue
         except StructuredTurnError as exc:
             raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
         for name, value in turn_usage(completed).items():
@@ -244,7 +282,12 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
     if extra:
         prompt += named_prompt(
             "responder.additional_context",
-            render_prompt("responder", "incident_01", part="responder.additional_context", extra_instructions=extra),
+            render_prompt(
+                "responder",
+                "incident_01",
+                part="responder.additional_context",
+                extra_instructions=named_prompt("responder.additional_context", extra),
+            ),
         )
     return prompt + named_prompt("responder.incident_data", incident_data)
 

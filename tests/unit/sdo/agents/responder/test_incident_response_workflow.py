@@ -45,8 +45,8 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert "combine only faults that can't be fixed separately" in body
     assert "possible regressions" in body
     assert "complete JSON report" in body
-    assert "warning is informational" in body
-    assert "closed-incident mutations are rejected" in body
+    assert "Once SDO verifies, mutations are rejected" in body
+    assert "SDO soon asks for the result" in body
     assert "still_broken" in body
     assert "Use only help-confirmed options" in body
     assert "on a usage error, read help, don't guess" in body

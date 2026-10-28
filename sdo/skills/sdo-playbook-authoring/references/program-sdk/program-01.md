@@ -42,6 +42,17 @@ func BoundedLogOptions(options corev1.PodLogOptions) (corev1.PodLogOptions, erro
     BoundedLogOptions copies upstream options and enforces finite reads of at
     most 64 KiB.
 
+func CheckFindingRoles(spec ProgramSpec) error
+    CheckFindingRoles rejects object roles that no unnamed finding can bind.
+    Health and generated detectors never name roles: BindFinding fills a role
+    from such a finding only when it is the one unbound role of its kind. So for
+    each declared kind, a finding on one object of that kind (with one object
+    of every other declared kind as related resources) must bind a role of that
+    kind. Kinds where BindFinding refuses the probe need named ParameterBindings
+    from an incident detector, as for a required pair of one kind; those
+    stay allowed. Two optional roles of one kind (aliases) never bind and are
+    refused.
+
 func CheckReads(view ReadView) (sdk.DetectionContext, func() error)
     CheckReads gives one evaluation its own failure tracking. A failed read
     cannot be ignored to turn Unknown into clearance.
@@ -243,27 +254,4 @@ func NormalizeDatabaseUsers(users []DatabaseUser) ([]DatabaseUser, error)
     catalog observations. Duplicate users or roles are refused.
 
 func (u DatabaseUser) Validate() error
-
-type DatabaseUserEffect struct {
-	User     string              `json:"user"`
-	Outcome  DatabaseUserOutcome `json:"outcome"`
-	Roles    []DatabaseRole      `json:"roles"`
-	Verified bool                `json:"verified"`
-}
-    DatabaseUserEffect is the controller's verified result for one
-    EnsureDatabaseUser: the catalog was read back after the write and shows
-    exactly User with Roles. It is nonsecret; credentials appear only as
-    references.
-
-type DatabaseUserOutcome string
-    DatabaseUserOutcome is what a verified EnsureDatabaseUser changed.
-
-const (
-	DatabaseUserCreated        DatabaseUserOutcome = "created"
-	DatabaseUserUpdated        DatabaseUserOutcome = "updated"
-	DatabaseUserAlreadyCorrect DatabaseUserOutcome = "already_correct"
-)
-func DatabaseUserTransition(before []DatabaseUser, a EnsureDatabaseUser) (DatabaseUserOutcome, error)
-    DatabaseUserTransition classifies the change EnsureDatabaseUser makes to the
-    observed catalog before the write.
 ```

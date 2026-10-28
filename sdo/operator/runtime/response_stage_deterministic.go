@@ -24,6 +24,50 @@ const DefaultStageBudget = 45 * time.Second
 
 const stagePlanNotExecutable = "plan_not_executable"
 
+// stageIneffective skips a match whose program revision already applied in
+// this incident for the same findings and left them open (or matching). Its
+// replacement objects, such as the Pod a restart creates, are new bindings
+// but not new evidence. A finding the earlier attempt did not target is.
+const stageIneffective = "ineffective"
+
+// stageIneffectiveTargets maps a program revision to the findings it applied
+// for and did not clear.
+type stageIneffectiveTargets map[string]map[string]bool
+
+func ineffectiveStageTargets(attempts []*contracts.StageMitigation) stageIneffectiveTargets {
+	targets := stageIneffectiveTargets{}
+	for _, attempt := range attempts {
+		targets.add(attempt)
+	}
+	return targets
+}
+
+func (t stageIneffectiveTargets) add(attempt *contracts.StageMitigation) {
+	if attempt.GetResult() != "applied_still_matching" {
+		return
+	}
+	key := attempt.GetPlaybookId() + "\x00" + attempt.GetProgramRevision()
+	if t[key] == nil {
+		t[key] = map[string]bool{}
+	}
+	for _, fp := range append(append([]string(nil), attempt.GetClearedFindingFingerprints()...), attempt.GetRemainingFindingFingerprints()...) {
+		t[key][fp] = true
+	}
+}
+
+func (t stageIneffectiveTargets) covers(id, revision string, targets []string) bool {
+	seen := t[id+"\x00"+revision]
+	if len(seen) == 0 || len(targets) == 0 {
+		return false
+	}
+	for _, fp := range targets {
+		if !seen[fp] {
+			return false
+		}
+	}
+	return true
+}
+
 // DeterministicResponseStage uses the same plan/apply and immutable receipt
 // boundary as the responder, operating only on accepted registry programs.
 type DeterministicResponseStage struct {
@@ -181,10 +225,20 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		attempted[key] = true
 	}
-	// Only diagnoses that wrote nothing receive a second turn. Keep the
-	// opening order; dependencies are learned from live state, never names.
+	ineffective := ineffectiveStageTargets(report.Mitigations)
+	// Only diagnoses that wrote nothing receive a second turn, and only after a
+	// turn that wrote or cleared something: an unchanged cluster would give the
+	// same diagnoses again. Keep the opening order; dependencies are learned
+	// from live state, never names.
 	deferred := map[string]bool{}
+	turnEnd, turnFindings, progressed := len(matches), len(state.Findings), false
 	for index := 0; index < len(matches); index++ {
+		if index == turnEnd {
+			if !progressed && len(state.Findings) >= turnFindings {
+				break
+			}
+			turnEnd, turnFindings, progressed = len(matches), len(state.Findings), false
+		}
 		match := matches[index]
 		if len(state.Findings) == 0 {
 			break
@@ -217,6 +271,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if terminal := loop.terminalPlanError(match.PlaybookId); terminal != nil {
 			attempt.Error = terminal.Error()
 			if err := skip(stagePlanNotExecutable); err != nil {
+				return report, err
+			}
+			continue
+		}
+		if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
+			if err := skip(stageIneffective); err != nil {
 				return report, err
 			}
 			continue
@@ -330,6 +390,8 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, remaining, save); err != nil {
 			return report, err
 		}
+		progressed = true
+		ineffective.add(attempt)
 		// Apply already waited as long as waiting can help, so a pending
 		// handoff (admission-blocked, stalled or bounded) keeps the pass: each
 		// later match diagnoses the live state afresh and may be the actor the

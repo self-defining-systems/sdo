@@ -67,7 +67,7 @@ func BuildWorkingProgram(ctx context.Context, config Config, id string) (_ *Work
 	if err = os.MkdirAll(filepath.Join(directory, "generated"), 0755); err != nil {
 		return nil, "", err
 	}
-	if err = generatePrograms(directory, module, specs); err != nil {
+	if err = generatePrograms(directory, module, specs, nil); err != nil {
 		return nil, "", err
 	}
 	main := fmt.Sprintf("package main\nimport(\"log\";\"sdo.dev/operator/runtime\";%q)\nfunc main(){r,e:=generated.Programs();if e!=nil{log.Fatal(e)};runtime.ServeWorkingProgram(r)}\n", module+"/generated")

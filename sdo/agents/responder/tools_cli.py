@@ -381,8 +381,8 @@ class CommandSurface(TypedDict):
     output: str
 
 
-def command_surface() -> CommandSurface:
-    """Generate incident-facing signatures from the same parser that accepts commands."""
+def command_purposes() -> dict[str, str]:
+    """Each registered command's short listing description, in parser order."""
     parser = _parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
     purposes: dict[str, str] = {}
@@ -390,8 +390,14 @@ def command_surface() -> CommandSurface:
         if not isinstance(action.help, str) or not action.help.strip():
             raise ValueError(f"{action.dest}: registered commands require a short listing description")
         purposes[action.dest] = action.help
+    return {name: purposes[name] for name in subcommands.choices}
+
+
+def command_surface() -> CommandSurface:
+    """Generate incident-facing signatures from the same parser that accepts commands."""
     descriptions = {
-        name: f"sdo {name}: {purposes[name]}; read sdo {name} --help for arguments." for name in subcommands.choices
+        name: f"sdo {name}: {purpose}; read sdo {name} --help for arguments."
+        for name, purpose in command_purposes().items()
     }
     for name, description in descriptions.items():
         if len(description) > budget_for("session_context.tool_description"):
