@@ -10,6 +10,8 @@ import (
 
 func structuredPlanAction(action program.Action) bool {
 	switch a := action.(type) {
+	case program.RetryAdmission, *program.RetryAdmission:
+		return true
 	case program.CreateFromSource, *program.CreateFromSource, program.DeleteObject, *program.DeleteObject:
 		return true
 	case program.SetField:

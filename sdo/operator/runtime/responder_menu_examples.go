@@ -38,6 +38,7 @@ var menuActionExamples = sync.OnceValue(func() map[string]map[string]any {
 		program.DeletePod{Ref: pod},
 		program.ScaleWorkload{Ref: deployment, Replicas: program.FromSource(deployment, "spec.replicas")},
 		program.RetireOldRevision{Ref: replicaSet},
+		program.RetryAdmission{Ref: replicaSet},
 		program.Exec{Pod: pod, Container: "app", Command: []program.Value{program.FromSource(deployment, "spec.template.spec.containers[0].command[0]")}},
 		program.RemoveServicePort{Ref: service, Name: "obsolete", Reason: reason},
 		program.EnsureDatabaseUser{Target: target, User: "app", Roles: []program.DatabaseRole{{Database: "app", Name: "readWrite"}}, Password: credential, Reason: reason},
