@@ -48,12 +48,12 @@ func CheckReads(view ReadView) (sdk.DetectionContext, func() error)
     CheckReads gives one evaluation its own failure tracking. A failed read
     cannot be ignored to turn Unknown into clearance.
 
-func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView, bindings Bindings) error
+func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView) error
     CheckReplicaSetScales allows a program to scale a ReplicaSet only when the
-    observed ReplicaSet is controlled by a Deployment the program is bound to
-    and is not that Deployment's current revision. Retiring an old revision
-    is the only repair a program needs on a ReplicaSet; anything else risks an
-    outage.
+    observed ReplicaSet is controlled by an observed Deployment and is not that
+    Deployment's current revision. The owner is a relation, not a binding.
+    Retiring an old revision is the only repair a program needs on a ReplicaSet;
+    anything else risks an outage.
 
 func DocumentWriteRef(action Action) (sdk.ObjectRef, bool)
     DocumentWriteRef identifies actions that project edits onto an existing
