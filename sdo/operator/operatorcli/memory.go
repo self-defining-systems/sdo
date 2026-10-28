@@ -234,6 +234,9 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		if _, err := validate.NormalizeAuthoredPlaybooks(absolute, paths); err != nil {
 			return exitInfra, err
 		}
+		if _, err := validate.NormalizeCapturedCorpus(absolute, paths); err != nil {
+			return exitInfra, err
+		}
 	}
 	var replayNotes []sdktest.MitigationReplayResult
 	var coverageGaps []validate.Diagnostic
