@@ -271,12 +271,18 @@ def wipe_environment(
     provision_credentials: Callable[[str], None],
     planned_commit: str,
     timeout_seconds: float,
+    provenance_path: Path | None = None,
 ) -> Tier1Receipt:
     """Tier 1 for one fastloop lane: its SDO control namespace, harness leftovers, seed and controller registry."""
     from benchmarks.sregym.adapter import allowed_namespaces, control_namespace_for
+    from benchmarks.sregym.fastloop.parallel_memory import memory_head
+    from benchmarks.sregym.fastloop.reset_provenance import publish_reset_generation
 
+    if provenance_path is not None and provenance_path.exists():
+        raise WipeError("eval: reset generation already published; refusing to reset an existing attempt")
+    before = memory_head(environment.workspace) if provenance_path is not None else None
     control = control_namespace_for(environment.namespace)
-    return run_tier1(
+    receipt = run_tier1(
         cluster,
         inventory=inventory_path(environment.kubeconfig),
         keep_namespaces=allowed_namespaces(set(applications)) - {control},
@@ -286,6 +292,9 @@ def wipe_environment(
         forget_controller=lambda: environment.state_path.unlink(missing_ok=True),
         timeout_seconds=timeout_seconds,
     )
+    if provenance_path is not None and before is not None:
+        publish_reset_generation(provenance_path, environment.workspace, planned_commit, before)
+    return receipt
 
 
 class Tier2Trigger(StrEnum):

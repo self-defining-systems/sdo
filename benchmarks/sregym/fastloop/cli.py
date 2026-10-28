@@ -663,6 +663,7 @@ def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnviron
         applications=application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace),
         provision_credentials=credentials_hook(args.credentials_hook.resolve(), environment.kubeconfig),
         planned_commit=planned,
+        provenance_path=environment.run_dir / "results" / args.run_id / "reset-generation.json",
         timeout_seconds=wait_for(WaitKind.ROLLOUT),
     )
     logger.info(
@@ -753,6 +754,7 @@ def _run(args: argparse.Namespace) -> int:
         raise SystemExit("--sweep-service requires an SDO --stream run")
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
+    args.run_id = run_id
     results_dir = environment.run_dir / "results" / run_id
     stream_config = load_stream_config(args.stream) if args.stream else None
     stream: tuple[tuple[str, ...], ...] = stream_config.incidents if stream_config else ()
