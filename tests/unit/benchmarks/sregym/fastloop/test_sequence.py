@@ -145,9 +145,10 @@ def test_restart_holds_incomplete_row_without_reinjection(plan: SequencePlan) ->
         run_sequence(plan, execute=lambda *_args: pytest.fail("reinjected uncertain row"))
 
 
-def test_changed_plan_cannot_adopt_old_evidence(plan: SequencePlan) -> None:
+@pytest.mark.parametrize("updates", [{"code_sha": "b" * 40}, {"load_gate": 64}])
+def test_changed_plan_cannot_adopt_old_evidence(plan: SequencePlan, updates: dict[str, object]) -> None:
     run_sequence(plan, execute=finish)
-    changed = plan.model_copy(update={"code_sha": "b" * 40})
+    changed = plan.model_copy(update=updates)
     with pytest.raises(ValueError, match="sequence identity"):
         run_sequence(changed, execute=finish)
 
