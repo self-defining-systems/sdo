@@ -215,6 +215,14 @@ def test_a_cold_preparation_keeps_its_progress_within_the_job_deadline() -> None
         assert save["if"].startswith("always()")
         assert "job.status == 'success' && github.sha" in save["with"]["key"]
         assert "partial-" in save["with"]["key"]
+        # Consumers hash go.sum right after checkout; later steps add go.sum files, so the key
+        # must use the hash pinned before them or the delta is saved where no consumer looks.
+        assert "hashFiles" not in save["with"]["key"]
+        assert "steps.gosum.outputs.value" in save["with"]["key"]
+        gosum = steps.index(next(step for step in steps if step.get("id") == "gosum"))
+        assert gosum < steps.index(
+            next(step for step in steps if "scripts/init_test_prereqs.py" in step.get("run", ""))
+        )
         # A rerun, or the PR's next push, resumes from the newest delta of the PR; consumers only
         # ever look for the exact completed key.
         assert resume["with"]["restore-keys"].strip() == save["with"]["key"].split("${{ job.status")[0].strip()

@@ -47,6 +47,11 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
+      - name: Pin the module hash consumers will compute
+        # Later steps check out more go.sum files, and the delta key must match
+        # the one consumers compute right after their checkout.
+        id: gosum
+        run: echo "value=${{ hashFiles('**/go.sum') }}" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.26.8"
@@ -94,9 +99,9 @@ jobs:
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ runner.temp }}/sdo-go-delta-normal
-          key: ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-${{ github.sha }}
           restore-keys: |
-            ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-
       - name: Apply this PR's earlier normal delta
         if: matrix.mode == 'normal' && github.event_name != 'push' && steps.resume-normal.outputs.cache-matched-key != ''
         run: python3 scripts/go_ci_cache_delta.py apply --delta "${{ runner.temp }}/sdo-go-delta-normal" gocache=${{ runner.temp }}/sdo-go-build-normal mod=$HOME/go/pkg/mod test-bin=.fastloop/test-bin@content
@@ -119,9 +124,9 @@ jobs:
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ runner.temp }}/sdo-go-delta-race
-          key: ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-${{ github.sha }}
           restore-keys: |
-            ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-
       - name: Apply this PR's earlier race delta
         if: matrix.mode == 'race' && github.event_name != 'push' && steps.resume-race.outputs.cache-matched-key != ''
         run: python3 scripts/go_ci_cache_delta.py apply --delta "${{ runner.temp }}/sdo-go-delta-race" gocache=${{ runner.temp }}/sdo-go-build-race
@@ -196,7 +201,7 @@ jobs:
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ runner.temp }}/sdo-go-delta-normal
-          key: ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ job.status == 'success' && github.sha || format('partial-{0}-{1}', github.run_id, github.run_attempt) }}
+          key: ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-${{ job.status == 'success' && github.sha || format('partial-{0}-{1}', github.run_id, github.run_attempt) }}
       - name: Export what this PR added to the base race build
         if: always() && matrix.mode == 'race' && github.event_name != 'push' && steps.snapshot-race.outcome == 'success'
         id: export-race
@@ -206,7 +211,7 @@ jobs:
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ${{ runner.temp }}/sdo-go-delta-race
-          key: ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ job.status == 'success' && github.sha || format('partial-{0}-{1}', github.run_id, github.run_attempt) }}
+          key: ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-${{ job.status == 'success' && github.sha || format('partial-{0}-{1}', github.run_id, github.run_attempt) }}
 
   python:
     name: ${{ matrix.name }}
