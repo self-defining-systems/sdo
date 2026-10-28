@@ -144,8 +144,14 @@ def test_a_cold_preparation_keeps_its_progress_within_the_job_deadline() -> None
     preparation = workflow()["jobs"]["prepare-go"]
     steps = preparation["steps"]
     compile_step = next(step for step in steps if "scripts/prepare_go_ci.sh" in step.get("run", ""))
-    # The compile step stops early enough to save its archives before the job is cancelled.
-    assert 0 < compile_step["timeout-minutes"] < preparation["timeout-minutes"]
+    # The compile stops early enough to save its archives before the job is cancelled, and
+    # stops every compiler: a step timeout leaves children writing the cache during the save.
+    command = shlex.split(compile_step["run"])
+    assert command[:2] == ["timeout", "--kill-after=5s"]
+    assert "--foreground" not in command
+    deadline = int(command[2].removesuffix("s"))
+    assert 0 < deadline + 5 + 60 <= preparation["timeout-minutes"] * 60
+    assert "timeout-minutes" not in compile_step
     for mode in ("normal", "race"):
         publisher = next(
             step
