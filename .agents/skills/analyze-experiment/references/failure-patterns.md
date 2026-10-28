@@ -52,6 +52,12 @@ Inspect firing/clearing thresholds, debounce state, snapshot versions, durable c
 
 The prober dials each declared edge afresh every interval and the finding needs `failures` consecutive failed dials of an edge that had connected before. The caller may still hold an old connection, so user-facing probes can stay healthy for the whole fault. Check that the edge and port are grounded in the application source, that the fix restored fresh connectivity for the same edge (the finding must clear), and that no finding appeared for an edge the prober never reached (those are never reported: the prober's own identity may simply not be admitted there). Detection time is the first failed dial plus about `failures` intervals; a link detector should not carry the scenario detector's 9 s minimum duration.
 
+## Health clears while a write-path fault remains
+
+**Signature:** SDO health clears (no open finding, closure verified) while the grader still fails a fault in a service that only write journeys reach (for example payment behind checkout), in first and repeat alike.
+
+Compare the health workload's scenarios (and their `DependsOn`) with the `links.yaml` edges: an edge no health-probe scenario crosses is invisible to traffic health unless the fault also breaks fresh connections. The accepted commit's `SDO-Coverage-Gap:` trailers and `memory check` output list such edges as `traffic.undriven-edge`; a comment above the link in `links.yaml` gives the judge's reason when it chose not to drive one. Classify as health-objective coverage (owner: health judge), not responder quality.
+
 ## Workload-health finding
 
 **Signature:** a finding from detector `workload-health` with a `workload-pod-*`, `workload-container-*`, `workload-init-container-stuck` or `workload-deployment-*` rule. Runs whose seed predates the detector have no such records.

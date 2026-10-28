@@ -51,10 +51,13 @@ commands:
         as is) to .git/sdo-reflection-decision.json
         or --decision FILE. The returned result must use the same decision and
         logical IDs. A broker memory.conflict carries the newer accepted commit,
-        conflicting paths, peer incidents and validator errors; merge both
-        incidents' intent and preserve accepted learning before resubmitting.
+        conflicting paths, peer incidents and validator errors. The correction
+        checkout keeps your edits on the newer commit with conflict markers only
+        where they collided; merge both incidents' intent there and preserve
+        accepted learning before resubmitting.
         Coverage gaps (a verified cause without a program, a skipped healthy replay,
-        a recorded fault no detector reaches) never fail the check: they print as
+        a recorded fault no detector reaches, a links.yaml edge no health-probe
+        scenario drives: traffic.undriven-edge) never fail the check: they print as
         coverage_gap lines, or in the JSON coverage_gaps field. Replay outcomes and
         reasons use program.replay-observation and are retained with reflection.
         Exit 0 when clean,

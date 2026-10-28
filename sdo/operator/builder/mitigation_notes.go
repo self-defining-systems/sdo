@@ -38,24 +38,42 @@ func (workspace *Workspace) MitigationReplayResults() ([]sdktest.MitigationRepla
 	return results, nil
 }
 
+// trafficCoverageNotes is the generated traffic test's file of undriven
+// dependency edges, beside the program replay's coverage-gaps.json.
+const trafficCoverageNotes = "traffic-coverage-gaps.json"
+
 // CoverageGaps reads the generated replay's non-blocking notes, such as a
 // recorded incident the learned detectors do not reach.
 func (workspace *Workspace) CoverageGaps() ([]string, error) {
 	gaps := append([]string(nil), workspace.advisorySetupErrors...)
-	data, err := os.ReadFile(filepath.Join(workspace.Directory, "generated", "coverage-gaps.json"))
-	if os.IsNotExist(err) {
-		return append(gaps, workspace.advisoryTestErrors...), nil
-	}
+	recorded, err := workspace.generatedNotes("coverage-gaps.json")
 	if err != nil {
 		return gaps, err
 	}
+	gaps = append(gaps, recorded...)
+	return append(gaps, workspace.advisoryTestErrors...), nil
+}
+
+// TrafficCoverageGaps reads the generated traffic test's non-blocking notes:
+// the declared dependency edges no health-probe scenario drives.
+func (workspace *Workspace) TrafficCoverageGaps() ([]string, error) {
+	return workspace.generatedNotes(trafficCoverageNotes)
+}
+
+func (workspace *Workspace) generatedNotes(name string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(workspace.Directory, "generated", name))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
 	if len(data) > 1<<20 {
-		return gaps, fmt.Errorf("coverage gap notes exceed 1 MiB")
+		return nil, fmt.Errorf("%s notes exceed 1 MiB", name)
 	}
 	var recorded []string
 	if err := json.Unmarshal(data, &recorded); err != nil {
-		return gaps, fmt.Errorf("decode coverage gap notes: %w", err)
+		return nil, fmt.Errorf("decode %s: %w", name, err)
 	}
-	gaps = append(gaps, recorded...)
-	return append(gaps, workspace.advisoryTestErrors...), nil
+	return recorded, nil
 }

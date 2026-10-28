@@ -35,6 +35,7 @@ var internalRules = map[string]string{
 	RuleArchitectureAlone:       "architecture belongs to the deployer lifecycle stage",
 
 	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
+	RuleTrafficUndrivenEdge:        "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches driving every edge",
 }
 
 // ruleIDs returns every rule constant declared in rules.go.
