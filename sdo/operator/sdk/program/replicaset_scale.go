@@ -19,7 +19,7 @@ type ReplicaSetOwnerView interface {
 	ReplicaSets() []appsv1.ReplicaSet
 }
 
-// CheckReplicaSetScales allows a program to scale a ReplicaSet only when the
+// CheckReplicaSetScales allows a program to scale or retire a ReplicaSet only when the
 // observed ReplicaSet is controlled by an observed Deployment and is not that
 // Deployment's current revision. The owner is a relation, not a binding. Retiring an old revision is the
 // only repair a program needs on a ReplicaSet; anything else risks an outage.
@@ -34,6 +34,13 @@ func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView) error {
 				continue
 			}
 			scale = *a
+		case RetireOldRevision:
+			scale = ScaleWorkload{Ref: a.Ref}
+		case *RetireOldRevision:
+			if a == nil {
+				continue
+			}
+			scale = ScaleWorkload{Ref: a.Ref}
 		default:
 			continue
 		}

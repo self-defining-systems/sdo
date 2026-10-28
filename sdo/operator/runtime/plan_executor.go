@@ -9,7 +9,9 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -775,6 +777,20 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 			return nil, errors.New("nil ScaleWorkload")
 		}
 		return e.prepareAction(ctx, incident, *a, current)
+	case program.RetireOldRevision:
+		// The bound is checked against the live ReplicaSet and its live owner
+		// at write time, so every caller (stage, program, menu) inherits it.
+		if err := e.checkOldRevision(ctx, current); err != nil {
+			return nil, err
+		}
+		if err := unstructured.SetNestedField(next.Object, int64(0), "spec", "replicas"); err != nil {
+			return nil, err
+		}
+	case *program.RetireOldRevision:
+		if a == nil {
+			return nil, errors.New("nil RetireOldRevision")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
 
 	case program.RestartRollout:
 		if a.Ref.Kind != "Deployment" || a.Ref.APIVersion != "apps/v1" {
@@ -898,6 +914,12 @@ func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 			return a.Ref, nil
 		}
 	case *program.ScaleWorkload:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case program.RetireOldRevision:
+		return a.Ref, nil
+	case *program.RetireOldRevision:
 		if a != nil {
 			return a.Ref, nil
 		}
@@ -1080,4 +1102,37 @@ func isRemoveServicePort(action program.Action) bool {
 		return true
 	}
 	return false
+}
+
+type liveRevisionView struct {
+	sets        []appsv1.ReplicaSet
+	deployments []appsv1.Deployment
+}
+
+func (v liveRevisionView) ReplicaSets() []appsv1.ReplicaSet  { return v.sets }
+func (v liveRevisionView) Deployments() []appsv1.Deployment { return v.deployments }
+
+// checkOldRevision applies the program ReplicaSet-scale rule to the live
+// ReplicaSet and the live Deployment that controls it.
+func (e PlanExecutor) checkOldRevision(ctx context.Context, current *unstructured.Unstructured) error {
+	var set appsv1.ReplicaSet
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(current.Object, &set); err != nil {
+		return err
+	}
+	view := liveRevisionView{sets: []appsv1.ReplicaSet{set}}
+	if owner := metav1.GetControllerOf(&set); owner != nil && owner.Kind == "Deployment" {
+		live, err := e.Client.Get(ctx, sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: set.Namespace, Name: owner.Name})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		if err == nil {
+			var deployment appsv1.Deployment
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(live.Object, &deployment); err != nil {
+				return err
+			}
+			view.deployments = []appsv1.Deployment{deployment}
+		}
+	}
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: set.Namespace, Name: set.Name}
+	return program.CheckReplicaSetScales(program.Plan{Actions: []program.Action{program.RetireOldRevision{Ref: ref}}}, view)
 }
