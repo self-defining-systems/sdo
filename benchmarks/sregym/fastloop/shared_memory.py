@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import uuid
 from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, control_namespace_for, kubectl, wait_for
@@ -102,6 +103,56 @@ def repository_volume_path(environment: FastloopEnvironment) -> str:
     return path
 
 
+# Health detectors capture per-cluster facts (Service UIDs, ClusterIPs, probe times) when a lane
+# first becomes healthy. Independent lanes can never agree on them, and the shared tree keeps
+# one lane's capture, so only these exact files may differ between a lane and the accepted tree.
+CLUSTER_CAPTURE = re.compile(r"\.sdo/diagnostics/detectors/health/[a-z0-9-]+/baseline\.json")
+
+
+def lane_git_command(environment: FastloopEnvironment, volume_path: str, accepted: Path, *git: str) -> tuple[str, ...]:
+    """Command that reads a lane's mounted accepted repository outside the kind node.
+
+    Kind node images ship no git and the lane repository is owned by the controller
+    uid, so a throwaway root container built from the lane's own controller image
+    (which ships git) reads the host side of the node bind mount. The accepted
+    checkout's objects are visible read-only for tree comparison.
+    """
+    if environment.parallel_root is None:
+        raise ValueError("eval: shared lanes require --parallel-root at kind creation")
+    try:
+        relative = PurePosixPath(volume_path).relative_to(NODE_ROOT)
+    except ValueError:
+        raise ValueError(f"eval: lane volume {volume_path} is outside the shared node root {NODE_ROOT}") from None
+    if ".." in relative.parts:
+        raise ValueError(f"eval: lane volume {volume_path} escapes the shared node root")
+    host = environment.parallel_root.resolve() / relative
+    return (
+        *("docker", "run", "--rm", "--network", "none", "--user", "0", "--entrypoint", "git"),
+        *("-e", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/accepted/.git/objects"),
+        *("-v", f"{host}:/lane:ro", "-v", f"{accepted.resolve()}:/accepted:ro", environment.images.controller),
+        *("-c", "safe.directory=/lane/application", "-C", "/lane/application", *git),
+    )
+
+
+def lane_divergence(environment: FastloopEnvironment, volume_path: str, accepted: Path, tree: str) -> list[str]:
+    """Paths where the lane's accepted tree differs from the shared accepted tree, or [] if equal.
+
+    Raises when any difference is not a per-cluster health capture.
+    """
+    observed = _command(*lane_git_command(environment, volume_path, accepted, "rev-parse", "HEAD^{tree}"))
+    if observed == tree:
+        return []
+    changed = _command(*lane_git_command(environment, volume_path, accepted, "diff", "--name-only", tree, "HEAD"))
+    paths = changed.splitlines()
+    foreign = [path for path in paths if not CLUSTER_CAPTURE.fullmatch(path)]
+    if not paths or foreign:
+        raise ValueError(
+            "eval: lane accepted memory differs; merge through the broker before sharing: "
+            + ", ".join(foreign or [observed])
+        )
+    return paths
+
+
 def assert_lane_isolation(environments: list[FastloopEnvironment]) -> None:
     for attribute in ("cluster", "kubeconfig", "run_dir", "private_tmp", "application"):
         values = [getattr(e, attribute) for e in environments]
@@ -181,6 +232,7 @@ class Attachment:
     node: str
     volume_path: str
     application: str
+    discarded: list[str] = field(default_factory=list)
 
 
 def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
@@ -246,6 +298,7 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
                             "node": a.node,
                             "volume_path": a.volume_path,
                             "application": a.application,
+                            "discarded_cluster_captures": a.discarded,
                             "original_job": a.job,
                         }
                         for a in attachments
@@ -261,11 +314,7 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
     for item in attachments:
         with lane_environment(item.environment):
             pause_for_recovery(KubectlClusterOps(), control_namespace_for(item.environment.namespace))
-        observed = _command(
-            "docker", "exec", item.node, "git", "-C", item.volume_path + "/application", "rev-parse", "HEAD^{tree}"
-        )
-        if observed != tree:
-            raise ValueError("eval: lane accepted memory differs; merge through the broker before sharing")
+        item.discarded.extend(lane_divergence(item.environment, item.volume_path, accepted, tree))
     save("all-paused")
     for item in attachments:
         kubectl(

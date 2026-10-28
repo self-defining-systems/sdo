@@ -1,13 +1,16 @@
 """Parallel orchestration preserves lane order and joins every failure."""
 
+import ast
 import json
 import subprocess
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.sregym.fastloop import shared_memory
 from benchmarks.sregym.fastloop.parallel import Encounter, ParallelPlan, run_parallel
 from benchmarks.sregym.fastloop.records import IncidentRecord
 
@@ -338,3 +341,68 @@ def test_parallel_plan_defaults_and_worker_registration_round_trip(tmp_path):
         ["run", "--agent", "sdo", "--run-dir", str(tmp_path), *restored.worker_arguments()]
     )
     assert (args.provider, args.model, args.agent_registrations) == ("codex", "gpt-6-luna", registrations)
+
+
+def _lane(tmp_path):
+    return SimpleNamespace(parallel_root=tmp_path / "root", images=SimpleNamespace(controller="sdo-controller:frozen"))
+
+
+def test_lane_tree_is_read_by_a_git_container_because_kind_nodes_ship_no_git(tmp_path):
+    command = shared_memory.lane_git_command(
+        _lane(tmp_path), "/opt/sdo-parallel/lanes/kind-a", tmp_path / "accepted", "rev-parse", "HEAD^{tree}"
+    )
+    assert command[:2] == ("docker", "run")
+    assert "exec" not in command
+    assert f"{tmp_path.resolve()}/root/lanes/kind-a:/lane:ro" in command
+    assert command[command.index("--entrypoint") + 1] == "git"
+    assert "sdo-controller:frozen" in command
+    assert command[-2:] == ("rev-parse", "HEAD^{tree}")
+
+
+@pytest.mark.parametrize("volume", ["/elsewhere/lanes/kind-a", "/opt/sdo-parallel/../etc"])
+def test_lane_tree_rejects_volumes_outside_the_shared_root(tmp_path, volume):
+    with pytest.raises(ValueError, match="eval: lane volume"):
+        shared_memory.lane_git_command(_lane(tmp_path), volume, tmp_path, "status")
+
+
+BASELINE = ".sdo/diagnostics/detectors/health/service-reachability/baseline.json"
+
+
+def _divergence(monkeypatch, tmp_path, lane_tree, changed):
+    def command(*argv):
+        return lane_tree if "rev-parse" in argv else "\n".join(changed)
+
+    monkeypatch.setattr(shared_memory, "_command", command)
+    return shared_memory.lane_divergence(_lane(tmp_path), "/opt/sdo-parallel/lanes/kind-a", tmp_path, "tree-a")
+
+
+def test_lanes_may_differ_only_in_per_cluster_health_captures(monkeypatch, tmp_path):
+    assert _divergence(monkeypatch, tmp_path, "tree-a", []) == []
+    assert _divergence(monkeypatch, tmp_path, "tree-b", [BASELINE]) == [BASELINE]
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        [],
+        [".sdo/playbooks/fix/README.md"],
+        [BASELINE, ".sdo/outcomes/x.json"],
+        [".sdo/diagnostics/detectors/health/a/b/baseline.json"],
+    ],
+)
+def test_any_other_lane_divergence_is_refused(monkeypatch, tmp_path, changed):
+    with pytest.raises(ValueError, match="merge through the broker"):
+        _divergence(monkeypatch, tmp_path, "tree-b", changed)
+
+
+def test_attachment_never_runs_tools_inside_nodes_that_kind_images_lack():
+    tree = ast.parse(Path(shared_memory.__file__).read_text())
+    node_commands = [
+        {part.value for part in call.args if isinstance(part, ast.Constant)}
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and getattr(call.func, "id", "") == "_command"
+        and [part.value for part in call.args[:2] if isinstance(part, ast.Constant)] == ["docker", "exec"]
+    ]
+    assert node_commands, "attachment no longer execs in nodes; drop this ratchet"
+    assert not [command for command in node_commands if "git" in command]
