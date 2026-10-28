@@ -35,7 +35,7 @@ def test_legacy_astronomy_problem_gets_telemetry_before_deployment(monkeypatch: 
         SimpleNamespace(
             import_module=lambda name: module
             if name.endswith(".worker")
-            else SimpleNamespace(probe_pod_manifest=lambda *args: {})
+            else SimpleNamespace(probe_pod_manifest=lambda *args: {}, _build_image=None)
         ),
     )
     assert worker_bridge.main() == {"deployed": True}

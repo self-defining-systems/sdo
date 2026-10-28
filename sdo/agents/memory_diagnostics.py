@@ -15,8 +15,14 @@ if TYPE_CHECKING:
     from sdo.contracts import MemoryDiagnostic
 
 
-def render_validation_feedback(validation_attempt: int, diagnostics: Iterable[MemoryDiagnostic]) -> RenderedPrompt:
-    """Return the retry section of a prompt, or "" for a first dispatch."""
+def render_validation_feedback(
+    validation_attempt: int, diagnostics: Iterable[MemoryDiagnostic], *, kept_edits: bool = False
+) -> RenderedPrompt:
+    """Return the retry section of a prompt, or "" for a first dispatch.
+
+    ``kept_edits`` states that the broker carried the rejected edits forward
+    instead of rolling the checkout back.
+    """
 
     rows = list(diagnostics)
     if not rows:
@@ -24,7 +30,7 @@ def render_validation_feedback(validation_attempt: int, diagnostics: Iterable[Me
     lines = [
         render_prompt(
             "lifecycle",
-            "render_validation_feedback_01",
+            "render_validation_feedback_04" if kept_edits else "render_validation_feedback_01",
             part="reflection.validation_feedback",
             validation_attempt=validation_attempt,
         )

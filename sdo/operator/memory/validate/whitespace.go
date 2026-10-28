@@ -47,7 +47,11 @@ func checkWhitespace(ctx context.Context, r Request) ([]Diagnostic, error) {
 	for _, line := range strings.Split(string(out), "\n") {
 		if m := whitespaceLocation.FindStringSubmatch(line); m != nil {
 			n, _ := strconv.Atoi(m[2])
-			ds = append(ds, Diagnostic{Rule: RuleWhitespace, Path: m[1], Line: n, Message: m[3], Hint: "remove whitespace errors from added lines"})
+			hint := "remove whitespace errors from added lines"
+			if strings.Contains(m[3], "conflict marker") {
+				hint = "resolve the conflict: merge both sides' intent and delete the markers"
+			}
+			ds = append(ds, Diagnostic{Rule: RuleWhitespace, Path: m[1], Line: n, Message: m[3], Hint: hint})
 		}
 	}
 	if len(ds) == 0 {

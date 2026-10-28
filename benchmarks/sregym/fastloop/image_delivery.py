@@ -133,7 +133,8 @@ def registry_delivery(
 
     Content-derived tags locate cached manifests; nodes always pull their exact
     digest. Both HTTP manifest bytes and CRI config IDs must match the frozen
-    local image, including on a cache hit. Lane teardown retains this registry.
+    local image (its config or, on a containerd image store, manifest digest),
+    including on a cache hit. Lane teardown retains this registry.
     """
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", cluster):
         raise ValueError(f"invalid kind lane name: {cluster!r}")
@@ -188,7 +189,9 @@ def registry_delivery(
                 raise RuntimeError(f"registry push returned no manifest digest for {image}")
             manifest = _manifest(host, key, match[1])
             stats["uploads"] += 1
-        if manifest is None or manifest.config != expected:
+        # Docker's classic store reports the config digest as the image ID; its
+        # containerd image store reports the manifest digest. Either pins the bytes.
+        if manifest is None or expected not in {manifest.config, manifest.digest}:
             raise ValueError(f"registry image identity differs from frozen image {image}: expected {expected}")
         if cached:
             stats["cache_hits"] += 1
@@ -210,8 +213,8 @@ def registry_delivery(
                 ["docker", "exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force", immutable, image_ref(image)]
             )
             installed = json.loads(_run(["docker", "exec", node, "crictl", "inspecti", image]).stdout)
-            if installed["status"]["id"] != expected:
-                raise ValueError(f"{node} image identity differs from frozen image {image}: expected {expected}")
+            if installed["status"]["id"] != manifest.config:
+                raise ValueError(f"{node} image identity differs from frozen image {image}: expected {manifest.config}")
             evidence[node][image] = digest
         stats["pull_seconds"] += time.monotonic() - started
     return evidence

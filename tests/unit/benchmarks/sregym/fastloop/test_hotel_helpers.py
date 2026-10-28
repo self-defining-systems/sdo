@@ -217,7 +217,9 @@ def test_worker_injection_guard_is_unconditional_and_precedes_inject(monkeypatch
         "importlib",
         SimpleNamespace(
             import_module=lambda name: (
-                module if name.endswith(".worker") else SimpleNamespace(probe_pod_manifest=lambda *args: {})
+                module
+                if name.endswith(".worker")
+                else SimpleNamespace(probe_pod_manifest=lambda *args: {}, _build_image=None)
             )
         ),
     )
@@ -288,7 +290,9 @@ def test_worker_deploy_uses_absent_profile_without_changing_problem_identity(mon
         "importlib",
         SimpleNamespace(
             import_module=lambda name: (
-                module if name.endswith(".worker") else SimpleNamespace(probe_pod_manifest=lambda *args: {})
+                module
+                if name.endswith(".worker")
+                else SimpleNamespace(probe_pod_manifest=lambda *args: {}, _build_image=None)
             )
         ),
     )

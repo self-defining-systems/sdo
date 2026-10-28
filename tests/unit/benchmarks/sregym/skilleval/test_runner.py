@@ -12,7 +12,7 @@ from benchmarks.sregym.skilleval.metrics import (
     programs_written,
     replay_failures,
 )
-from benchmarks.sregym.skilleval.runner import docker_command, table, toolchain_image
+from benchmarks.sregym.skilleval.runner import docker_command, table, toolchain_image, wait_for_host_load
 from benchmarks.sregym.skilleval.scenario import Scenario, ScenarioSource
 
 if TYPE_CHECKING:
@@ -67,7 +67,9 @@ def test_docker_command_mounts_the_scenario_where_the_live_job_had_it(tmp_path: 
     assert environment["SDO_BASE_COMMIT"] == "a" * 40
     assert environment["SDO_PHASE"] == "reflection"
     assert command[command.index("-w") + 1] == "/workspace/proposal/checkout"
-    assert command[-2:] == ["sdo-sregym-responder:le-test", "/skilleval/entry.py"]
+    assert command[-5:] == ["sdo-sregym-responder:le-test", "-n", "10", "python3", "/skilleval/entry.py"]
+    assert command[command.index("--entrypoint") + 1] == "nice"
+    assert environment["GOMAXPROCS"] == "4"
 
 
 def test_fresh_reflection_uses_a_private_codex_home(tmp_path: Path) -> None:
@@ -208,3 +210,12 @@ def test_check_replay_notes_keep_this_incidents_cases() -> None:
     assert check_replay_notes({"stdout": stdout}, ["a"]) == [
         {"program_id": "drift", "case_id": "a", "status": "STATUS_REPLAYED", "open": "Match", "post": "NoMatch"}
     ]
+
+
+def test_runs_start_only_below_the_load_limit() -> None:
+    loads = iter([82.0, 41.0, 39.5])
+    slept: list[float] = []
+
+    wait_for_host_load(40.0, load=lambda: next(loads), sleep=slept.append, poll_seconds=30.0)
+
+    assert slept == [30.0, 30.0]
