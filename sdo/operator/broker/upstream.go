@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,9 +19,14 @@ const upstreamRef = "refs/sdo/upstream"
 // holds the publishing lock for long.
 const upstreamTimeout = 45 * time.Second
 
-// maxUpstreamRetries bounds re-replays after the remote branch moved between
-// the sync and the push of one publication.
+// maxUpstreamRetries bounds sync rounds when the remote moves while this
+// lane pushes local history.
 const maxUpstreamRetries = 5
+
+// upstreamRaceDeadline bounds re-replays of one publication that keeps losing
+// the push race to peers. Jittered backoff between attempts lets a lane whose
+// round trip is slower than its peers' publication cadence win eventually.
+var upstreamRaceDeadline = 3 * time.Minute
 
 // Upstream is a shared Git remote branch that the lane's accepted repository
 // replicates. Lanes of one application on any host publish through their own
@@ -237,13 +243,20 @@ func (b *Broker) pushRef(ctx context.Context, repository, commit, branch string)
 // shared check as a concurrent local publication.
 func (b *Broker) withUpstream(ctx context.Context, publish func() error) func() error {
 	return func() error {
-		for attempt := 1; ; attempt++ {
+		deadline := time.Now().Add(upstreamRaceDeadline)
+		for attempt := 0; ; attempt++ {
 			if err := b.syncUpstream(ctx); err != nil {
 				return err
 			}
 			err := publish()
-			if !errors.Is(err, errUpstreamMoved) || attempt >= maxUpstreamRetries {
+			if !errors.Is(err, errUpstreamMoved) || time.Now().After(deadline) {
 				return err
+			}
+			backoff := min(250*time.Millisecond<<min(attempt, 5), 8*time.Second)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff/2 + rand.N(backoff)):
 			}
 		}
 	}
