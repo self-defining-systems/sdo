@@ -104,3 +104,13 @@ def test_concurrent_writers_never_lose_a_lane(tmp_path: Path) -> None:
         thread.join()
     assert not errors
     assert len(LaneRegistry(path).read().lanes) == 20
+
+
+def test_remove_only_idle_or_held_lanes(tmp_path: Path) -> None:
+    registry = LaneRegistry(tmp_path / "lanes.json")
+    registry.add(ready("a"))
+    registry.add(lane("b"))
+    with pytest.raises(RegistryError, match="expected"):
+        registry.remove("b", expect={"ready", "held"})
+    registry.remove("a", expect={"ready", "held"})
+    assert [item.id for item in registry.read().lanes] == ["b"]

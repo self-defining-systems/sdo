@@ -44,6 +44,10 @@ def main(argv: list[str] | None = None) -> int:
     attach.add_argument("--problem", required=True)
     attach.add_argument("--accepted", type=Path, required=True, help="<app memory root>/accepted")
     attach.add_argument("--report", type=Path, required=True)
+    remove = commands.add_parser("remove", help="forget a ready or held lane after its cluster was deleted")
+    remove.add_argument("--registry", type=Path, required=True)
+    remove.add_argument("--lane", required=True)
+    remove.add_argument("--note", required=True)
     for verb in ("pair", "prepare"):
         worker = commands.add_parser(verb, help=f"host-side {verb} process started by the pool owner")
         worker.add_argument("--spec", type=Path, required=True)
@@ -64,6 +68,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if summary["held"] == 0 else 1
     if args.command == "lanes":
         sys.stdout.write(LaneRegistry(args.registry).read().model_dump_json(indent=2) + "\n")
+        return 0
+    if args.command == "remove":
+        LaneRegistry(args.registry).remove(args.lane, expect={"ready", "held"})
+        print(f"removed {args.lane}: {args.note}", flush=True)
         return 0
     if args.command == "release":
         lane = release_hold(LaneRegistry(args.registry), args.lane, args.note)

@@ -118,6 +118,17 @@ class LaneRegistry:
         self.update(lambda registry: (*registry.lanes, lane))
         return lane
 
+    def remove(self, lane_id: str, *, expect: Collection[LaneState]) -> None:
+        """Forget a torn-down lane; only lanes doing no work may leave the registry."""
+
+        def change(registry: Registry) -> tuple[Lane, ...]:
+            current = registry.lane(lane_id)
+            if current.state not in expect:
+                raise RegistryError(f"pool: lane {lane_id} is {current.state}, expected {sorted(expect)}")
+            return tuple(lane for lane in registry.lanes if lane.id != lane_id)
+
+        self.update(change)
+
     def transition(self, lane_id: str, *, expect: Collection[LaneState], **changes: object) -> Lane:
         """Change one lane only if it is in an expected state; the whole update is validated."""
         result: list[Lane] = []
