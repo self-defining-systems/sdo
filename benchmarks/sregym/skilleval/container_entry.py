@@ -83,6 +83,32 @@ def _reflect() -> dict[str, object]:
     }
 
 
+def _replay(checkout: Path, fixtures: Path) -> dict[str, object]:
+    """Replay the cases; a case without its own accepted inventory replays against an empty one."""
+
+    groups: dict[bool, Path] = {}
+    for case in sorted(path for path in fixtures.iterdir() if path.is_dir()):
+        inventory = (case / "accepted.json").is_file() or (case / "accepted.yaml").is_file()
+        group = groups.setdefault(inventory, fixtures.parent / f"replay-{'own' if inventory else 'empty'}-inventory")
+        group.mkdir(exist_ok=True)
+        case.rename(group / case.name)
+    empty = fixtures.parent / "empty-inventory.json"
+    empty.write_text("[]\n", encoding="utf-8")
+    merged: dict[str, object] = {"exit_code": 0, "timed_out": False, "stdout": "", "stderr": "", "seconds": 0.0}
+    for inventory, group in sorted(groups.items()):
+        argv = [str(REPLAY_BINARY), "-sdo", str(checkout / ".sdo"), "-operator", str(OPERATOR_ROOT)]
+        argv += ["-fixtures", str(group)] + ([] if inventory else ["-source", str(empty)])
+        result = _run(argv, cwd=checkout, timeout=900)
+        merged["stdout"] = str(merged["stdout"]) + str(result.get("stdout") or "")
+        merged["stderr"] = str(merged["stderr"]) + str(result.get("stderr") or "")
+        merged["seconds"] = float(merged["seconds"]) + float(result.get("seconds") or 0.0)  # pyright: ignore[reportArgumentType]
+        merged["timed_out"] = bool(merged["timed_out"]) or bool(result.get("timed_out"))
+        if result.get("exit_code") != 0:
+            merged["exit_code"] = result.get("exit_code")
+        shutil.rmtree(group)
+    return merged
+
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     task = json.loads(TASK.read_text(encoding="utf-8"))
@@ -113,19 +139,7 @@ def main() -> int:
     cases = _incident_cases(checkout, task["request"]["outcome"]["incident_id"], fixtures)
     summary["replay_cases"] = cases
     if cases and REPLAY_BINARY.is_file():
-        summary["replay"] = _run(
-            [
-                str(REPLAY_BINARY),
-                "-sdo",
-                str(checkout / ".sdo"),
-                "-operator",
-                str(OPERATOR_ROOT),
-                "-fixtures",
-                str(fixtures),
-            ],
-            cwd=checkout,
-            timeout=900,
-        )
+        summary["replay"] = _replay(checkout, fixtures)
     (OUT / "entry-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: value for key, value in summary.items() if key in ("status", "failure_reason")}))
     return 0

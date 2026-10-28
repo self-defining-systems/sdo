@@ -324,18 +324,20 @@ def collect(scenario_dir: Path, run_dir: Path, *, label: str, wall_seconds: floa
 def table(rows: list[dict[str, Any]]) -> str:
     header = (
         "| scenario | label | status | calls | input M (cached M) | output k | min | check "
-        "| programs/hand repairs | replay cases passed | only allowed files |"
+        "| programs/hand repairs | replay cases passed | check: fault Match | only allowed files |"
     )
-    lines = [header, "|" + "---|" * 11]
+    lines = [header, "|" + "---|" * 12]
     for row in rows:
         usage = row["usage"]
         replay = f"{row['replay']['passed']}/{row['replay']['cases']}" if row["replay"]["cases"] else "-"
+        check = row["check_open_match"]
+        check_replay = f"{check['match']}/{check['cases']}" if check["cases"] else "-"
         lines.append(
             f"| {row['scenario']} | {row['label']} | {row['status']} | {usage['model_calls']} | "
             f"{usage['input_tokens'] / 1e6:.1f} ({usage['cached_input_tokens'] / 1e6:.1f}) | "
             f"{usage['output_tokens'] / 1e3:.1f} | {row['wall_seconds'] / 60:.1f} | "
             f"{'-' if row['memory_check_pass'] is None else ('pass' if row['memory_check_pass'] else 'FAIL')} | "
-            f"{len(row['programs_written'])}/{len(row['hand_repairs'])} | {replay} | "
+            f"{len(row['programs_written'])}/{len(row['hand_repairs'])} | {replay} | {check_replay} | "
             f"{'yes' if not row['disallowed_paths'] else 'NO'} |"
         )
     return "\n".join(lines)

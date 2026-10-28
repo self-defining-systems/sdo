@@ -165,12 +165,15 @@ def test_table_renders_one_row_per_run() -> None:
         "hand_repairs": ["Deployment/b", "Deployment/c"],
         "replay_cases": ["drift-case"],
         "replay": {"cases": 1, "passed": 1, "failures": []},
+        "check_open_match": {"cases": 2, "match": 1},
         "disallowed_paths": [],
     }
 
     lines = table([row]).splitlines()
 
-    assert lines[-1] == "| synthetic | baseline | completed | 5 | 2.0 (1.5) | 4.0 | 1.5 | pass | 1/2 | 1/1 | yes |"
+    assert (
+        lines[-1] == "| synthetic | baseline | completed | 5 | 2.0 (1.5) | 4.0 | 1.5 | pass | 1/2 | 1/1 | 1/2 | yes |"
+    )
 
 
 def test_replay_judges_each_case_by_its_own_root_cause_programs() -> None:

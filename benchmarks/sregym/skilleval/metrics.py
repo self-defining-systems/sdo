@@ -173,6 +173,15 @@ class RunMetrics:
         return {"cases": cases, "passed": cases - len(failed), "failures": failures}
 
     @property
+    def check_open_match(self) -> dict[str, int]:
+        """The production check's replay of this incident's cases: how many diagnose the fault capture."""
+
+        return {
+            "cases": len(self.check_replay),
+            "match": sum(1 for note in self.check_replay if note["open"] == "Match"),
+        }
+
+    @property
     def programs_per_hand_repair(self) -> float | None:
         if not self.hand_repairs:
             return None
@@ -182,6 +191,7 @@ class RunMetrics:
         data = asdict(self)
         data["programs_per_hand_repair"] = self.programs_per_hand_repair
         data["replay"] = self.replay
+        data["check_open_match"] = self.check_open_match
         return data
 
 
