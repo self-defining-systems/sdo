@@ -188,9 +188,9 @@ Create a positive replay fixture from recorded session observations or optional 
 Pass observations to use the snapshot and primitive replies already in
 the responder session; include accepted_json for source-reading plans.
 Missing controller captures do not block this mode. Without observations,
-copy the selected available capture and peer context. Include original timed
-RepairReceipt observations for each recorded repair encoded by these
-programs. Replay snapshots and verdicts are informational.
+copy the selected available capture and peer context. repair_receipt_ids
+names the outcome's hand repairs these programs encode; their exact
+RepairReceipt entries are added for you. Replay snapshots and verdicts are informational.
 
 ## evidence_inventory
 

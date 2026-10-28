@@ -203,6 +203,53 @@ def prepare_corpus(
     return {"case_id": case_id, "open_phase": open_phase}
 
 
+def repair_receipt_recordings(root: Path, incident_id: str, receipt_ids: list[str]) -> list[dict[str, object]]:
+    """RepairReceipt entries for named hand repairs, read from the committed outcome.
+
+    The shape is memory.CaptureRepairReceipts', which the memory check links to the outcome.
+    """
+    if not receipt_ids:
+        return []
+    from google.protobuf import json_format
+
+    from sdo.contracts import OutcomeRecord
+
+    path = root / ".sdo/outcomes" / (hashlib.sha256(incident_id.encode()).hexdigest() + ".json")
+    outcome = json_format.Parse(path.read_text(), OutcomeRecord(), ignore_unknown_fields=True)
+    repairs = {a.action_id: a for a in outcome.repair_actions if a.success and a.HasField("started_at")}
+    unknown = [receipt for receipt in receipt_ids if receipt not in repairs]
+    if unknown:
+        raise ValueError(f"no successful recorded repair {unknown}; this outcome's repairs are {sorted(repairs)}")
+    entries: list[dict[str, object]] = []
+    for receipt in receipt_ids:
+        action = repairs[receipt]
+        result: dict[str, object] = {"script_digest": action.script_digest} if action.script_digest else {}
+        result |= {
+            "id": action.action_id,
+            "incident_id": incident_id,
+            "success": True,
+            "started_at": action.started_at.ToJsonString(),
+            "completed_at": action.completed_at.ToJsonString(),
+        }
+        resources = [
+            {
+                key: value
+                for key, value in (
+                    ("api_version", ref.api_version),
+                    ("kind", ref.kind),
+                    ("namespace", ref.namespace),
+                    ("name", ref.name),
+                )
+                if value or key in ("kind", "name")
+            }
+            for ref in action.resources
+        ]
+        if resources:
+            result["resources"] = resources
+        entries.append({"method": "RepairReceipt", "arguments": [], "result": result})
+    return entries
+
+
 def prepare_session_corpus(
     root: Path,
     incident_id: str,
@@ -210,16 +257,19 @@ def prepare_session_corpus(
     program_ids: list[str],
     bindings: dict[str, ResourceBinding],
     observations: SessionObservations,
+    repair_receipt_ids: list[str] | None = None,
 ) -> dict[str, str]:
     """Materialize observed session inputs without requiring a controller capture."""
     if not re.fullmatch(r"[a-z][a-z0-9_-]*", case_id) or not incident_id:
         raise ValueError("corpus requires a logical case ID and a provisioned incident")
     if not isinstance(json.loads(observations.snapshot_json), dict):
         raise ValueError("session snapshot must be a JSON object")
-    if not isinstance(json.loads(observations.recordings_json), list):
+    recordings = json.loads(observations.recordings_json)
+    if not isinstance(recordings, list):
         raise ValueError("session recordings must be a JSON array")
     if observations.accepted_json is not None:
         json.loads(observations.accepted_json)
+    receipts = repair_receipt_recordings(root, incident_id, repair_receipt_ids or [])
     target = root / ".sdo/corpus" / case_id
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir()
@@ -227,7 +277,9 @@ def prepare_session_corpus(
     # mitigation supplies a repaired post-state; these files prove no repair.
     for name in ("open.json", "fixed.json", "healthy.json"):
         (target / name).write_text(observations.snapshot_json)
-    (target / "recordings.json").write_text(observations.recordings_json)
+    (target / "recordings.json").write_text(
+        json.dumps(recordings + receipts) if receipts else observations.recordings_json
+    )
     (target / "labels.json").write_text(
         json.dumps(
             {
@@ -254,20 +306,28 @@ def install_authoring_tools(server: FastMCP, root: Path) -> None:
         observations: SessionObservations | None = None,
         open_phase: OpenPhase = "detect",
         peer_bindings: dict[str, ResourceBinding] | None = None,
+        repair_receipt_ids: list[str] | None = None,
     ) -> dict[str, str]:
         """Create a positive replay fixture from recorded session observations or optional captures.
 
         Pass observations to use the snapshot and primitive replies already in
         the responder session; include accepted_json for source-reading plans.
         Missing controller captures do not block this mode. Without observations,
-        copy the selected available capture and peer context. Include original timed
-        RepairReceipt observations for each recorded repair encoded by these
-        programs. Replay snapshots and verdicts are informational.
+        copy the selected available capture and peer context. repair_receipt_ids
+        names the outcome's hand repairs these programs encode; their exact
+        RepairReceipt entries are added for you. Replay snapshots and verdicts are informational.
         """
         if observations is not None:
             return prepare_session_corpus(
-                root, os.environ.get("SDO_INCIDENT_ID", ""), case_id, program_ids, bindings, observations
+                root,
+                os.environ.get("SDO_INCIDENT_ID", ""),
+                case_id,
+                program_ids,
+                bindings,
+                observations,
+                repair_receipt_ids,
             )
+        # Captured recordings already carry every receipt (memory.CaptureRepairReceipts).
         return prepare_corpus(
             root,
             Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus")),

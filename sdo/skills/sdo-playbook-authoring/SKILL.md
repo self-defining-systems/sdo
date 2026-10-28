@@ -23,7 +23,8 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    package and spec) and `README.md` with front matter `schema_version: 1`, `owner: responder`,
    `originating_incident: <incident id>`, `description: <one line>`. The README holds only judgement and
    ordering: when to use it, what first, what to check after. SDO adds `fault_class` and the index entry.
-5. **Label one corpus case** per new program (rules below), with `create_corpus` or by hand.
+5. **Label one corpus case** per new program (rules below): `create_corpus` with the session snapshot and
+   `repair_receipt_ids` (the receipts it encodes) writes it in one call.
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
    playbook IDs, and a summary. It formats changed Go first. Fix each blocking diagnostic as its hint says,
    then check again. Replay notes and `coverage_gaps` are information, not errors.
@@ -59,8 +60,8 @@ A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accept
     resource the linked receipts repaired, or its recorded owner.
   - `provenance.incident_id`: this incident. `script_origins`: RunScript sha256 to receipt ID.
 - `recordings.json`: the replies Diagnose reads, `{"phase", "method", "arguments", "result"}` (empty phase
-  is open; `fixed`, `healthy`), plus one `RepairReceipt` entry per encoded hand repair. The
-  `reflection.program-required` hint prints the exact entry to append.
+  is open; `fixed`, `healthy`), plus one `RepairReceipt` entry per encoded hand repair (`create_corpus` adds them; a
+  `reflection.program-required` hint prints the exact entry otherwise).
 - `open.json`, `fixed.json`, `healthy.json` snapshots, and `accepted.json` when Mitigate reads source.
   Missing captures never block saving; replay results are information.
 
