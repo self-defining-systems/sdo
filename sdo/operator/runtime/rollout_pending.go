@@ -50,9 +50,11 @@ func (e PlanExecutor) waitForRollouts(ctx context.Context, incident IncidentRequ
 	if errors.As(err, &admission) {
 		return admission.Pending, admission
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errRolloutStalled) {
 		return nil, err
 	}
+	// A stalled rollout is handed off as pending: its writes stay applied, and
+	// the blocker names what another actor must change.
 	pending := &contracts.RolloutPending{Reason: "rollout is settling; writes remain applied and are not independently verified"}
 	var blocked *rolloutBlockedError
 	if errors.As(err, &blocked) {

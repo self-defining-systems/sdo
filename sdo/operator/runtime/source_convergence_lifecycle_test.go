@@ -60,7 +60,8 @@ func TestSourceConvergenceBeforeTerminalReceipt(t *testing.T) {
 				result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: actions}, false)
 				var partial *SourceReconcilePartialError
 				if persistent {
-					if !errors.As(err, &partial) || result.VerificationPassed || time.Since(started) < executor.RolloutTimeout {
+					// Waiting keeps at most a quarter of the bound for the final readbacks.
+					if elapsed := time.Since(started); !errors.As(err, &partial) || result.VerificationPassed || elapsed < executor.RolloutTimeout*3/4 || elapsed > executor.RolloutTimeout+100*time.Millisecond {
 						t.Fatalf("residual did not wait for bound: result=%+v observations=%d err=%v", result, rollout.observations, err)
 					}
 				} else if err != nil || !result.VerificationPassed || !result.ActionReports[0].SourceReconcile.Converged {

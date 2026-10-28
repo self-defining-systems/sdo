@@ -160,7 +160,8 @@ func TestSourceConvergenceWaitsForKubernetesOldObjects(t *testing.T) {
 			}
 			ref := addedFieldsRef()
 			executor := PlanExecutor{Client: contextAwareSourceClient{&planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}}, Source: planFakeSource{source: source}, Rollouts: KubernetesPlanRollouts{Client: kube}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: time.Second}
-			deadline := time.Now().Add(350 * time.Millisecond)
+			started := time.Now()
+			deadline := started.Add(350 * time.Millisecond)
 			result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions", ResponseDeadline: deadline}, reconcilePlan(ref), false)
 			report := result.ActionReports[0].SourceReconcile
 			if drains {
@@ -170,7 +171,8 @@ func TestSourceConvergenceWaitsForKubernetesOldObjects(t *testing.T) {
 			} else {
 				var partial *SourceReconcilePartialError
 				var pending *RolloutPendingError
-				if errors.As(err, &pending) || result.RolloutPending != nil || !errors.As(err, &partial) || report.Converged || result.VerificationPassed || time.Now().Before(deadline) || !strings.Contains(strings.Join(report.ResidualPaths, " "), "old-pod") {
+				// Waiting keeps at most a quarter of the bound for the final readback.
+				if errors.As(err, &pending) || result.RolloutPending != nil || !errors.As(err, &partial) || report.Converged || report.ObservationError != "" || result.VerificationPassed || time.Now().Before(started.Add(deadline.Sub(started)*3/4)) || !strings.Contains(strings.Join(report.ResidualPaths, " "), "old-pod") {
 					t.Fatalf("deadline lost residual: report=%v err=%v", report, err)
 				}
 			}
