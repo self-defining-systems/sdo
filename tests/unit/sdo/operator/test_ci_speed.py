@@ -303,7 +303,8 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
             assert commands[0][:3] == ["test", "-c", "-o"]
             assert commands[0][-1] == "./..."
             if module.endswith("/runtime"):
-                assert commands[1] == ["build", "./prober"]
+                assert ["build", "./prober"] in commands
+                assert any(args[0] == "vet" for args in commands)
 
 
 def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:

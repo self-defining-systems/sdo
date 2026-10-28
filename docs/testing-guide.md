@@ -965,3 +965,11 @@ uv run python scripts/check_session_context.py /absolute/path/to/rollout.jsonl -
 ```
 
 The reader measures canonical Codex response items or Claude messages, including list-valued custom tool outputs and resumed messages, without double counting event mirrors. Missing or unsupported evidence fails closed. A gate failure points to the measured dimension and configured cap. This is a context-shape check; model repair quality still requires the separately authorized replay/live tiers. Keep recorded inputs read-only and measurement outputs outside the repository.
+
+Python CI downloads `prepared-python-go-tools` from its own workflow run.
+`scripts/python_go_tools.sh prepare` builds the real operator, native receipt
+checker and submission guard; its tar archive preserves executable modes.
+The `env` command requires all three and verifies the operator's source stamp
+before selecting the adapter binaries. Missing or stale artifacts fail before
+pytest instead of starting an unbudgeted adapter build. Normal preparation also
+vets benchmark mains so static analysis reuses the exact source graph.

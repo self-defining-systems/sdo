@@ -34,6 +34,8 @@ for module in sdo/operator sdo/operator/runtime; do
   fi
 done
 if [[ "$mode" == normal ]]; then
+  # Python static analysis vets benchmark mains against the same source graph.
+  bash "$root/scripts/check_go_mains.sh"
   # Generated traffic probers explicitly disable CGO; those archives have
   # different build IDs from the ordinary hosted graph.
   (cd "$root/sdo/operator/runtime" && CGO_ENABLED=0 go build ./prober)
