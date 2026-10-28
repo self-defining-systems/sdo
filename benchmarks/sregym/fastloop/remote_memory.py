@@ -239,15 +239,28 @@ def github_known_hosts(known_hosts: Path) -> str:
     return "\n".join(rows) + "\n"
 
 
-def apply_ssh_secret(environment: FastloopEnvironment, identity: Path, known_hosts: Path) -> None:
-    """Copy the host's existing key into the lane's control namespace; the key is never printed."""
+def github_identity() -> Path:
+    """The host's existing private key that ssh offers to github.com (the first that exists)."""
+
+    resolved = subprocess.run(["ssh", "-G", "git@github.com"], capture_output=True, text=True, check=False)
+    for line in resolved.stdout.splitlines():
+        key, _, value = line.partition(" ")
+        if key.lower() == "identityfile":
+            candidate = Path(value.strip()).expanduser()
+            if candidate.is_file():
+                return candidate
+    raise ValueError("eval: this host has no ssh identity for github.com; run `ssh -T git@github.com` here")
+
+
+def render_ssh_secret(environment: FastloopEnvironment, identity: Path, known_hosts: Path) -> str:
+    """The lane Secret holding the host's existing key and GitHub's host keys; the key is never printed."""
 
     if not identity.is_file():
         raise ValueError(f"eval: ssh identity {identity} does not exist")
     with tempfile.TemporaryDirectory() as scratch:
         hosts = Path(scratch) / "known_hosts"
         hosts.write_text(github_known_hosts(known_hosts), encoding="utf-8")
-        rendered = kubectl(
+        return kubectl(
             [
                 *("create", "secret", "generic", SSH_SECRET, "--dry-run=client", "-o", "json"),
                 f"--from-file=identity={identity}",
@@ -256,12 +269,6 @@ def apply_ssh_secret(environment: FastloopEnvironment, identity: Path, known_hos
             namespace=control_namespace_for(environment.namespace),
             kubeconfig=environment.kubeconfig,
         ).stdout
-    kubectl(
-        ["apply", "-f", "-"],
-        namespace=control_namespace_for(environment.namespace),
-        kubeconfig=environment.kubeconfig,
-        input_text=rendered,
-    )
 
 
 REPOSITORY = "/workspace/application"
@@ -283,12 +290,15 @@ def _pod_tar(environment: FastloopEnvironment, pod: str, script: str, data: byte
     return completed.stdout
 
 
+BIND_RECORD = "memory-bind.json"
+
+
 def bind_lane_to_branch(
     environment: FastloopEnvironment,
     endpoint: MemoryEndpoint,
     *,
-    identity: Path,
-    known_hosts: Path,
+    identity: Path | None = None,
+    known_hosts: Path | None = None,
     seed: bool = False,
 ) -> str:
     """Bind one prepared, idle lane's accepted repository to the run branch.
@@ -297,48 +307,69 @@ def bind_lane_to_branch(
     from it (first lane of the app) or adopts the branch history with the lane's own tree,
     copies it back through the paused controller, and recreates the controller Job with
     the upstream and the read-only key. Works for any lane PVC; nothing is shared on disk.
+    Every input is checked before the lane is touched, and ``run_dir/memory-bind.json``
+    records the original Job once the repository is replaced, so a rerun after a failure
+    finishes the binding instead of needing a running controller.
     """
     from benchmarks.sregym import adapter
     from benchmarks.sregym.fastloop.shared_memory import JOB_NAME, _json, lane_environment, shared_controller_job
 
     control = control_namespace_for(environment.namespace)
-    pods = _json(environment, "get", "pods", "--selector", f"job-name={JOB_NAME}", "-o", "json", namespace=control)
-    running = [p["metadata"]["name"] for p in pods["items"] if p.get("status", {}).get("phase") == "Running"]
-    if len(running) != 1:
-        raise ValueError("eval: binding requires one running controller")
-    pod = running[0]
-    job = _json(environment, "get", "job", JOB_NAME, "-o", "json", namespace=control)
-    # Incident IDs derive from the application name, so lanes sharing a branch need distinct ones.
-    application = f"{environment.problem_application or environment.application}-{environment.cluster}"
-    application = application[:30].rstrip("-") + "-" + uuid.uuid4().hex
-    with lane_environment(environment):
-        adapter.pause_for_recovery(adapter.KubectlClusterOps(), control)
-    with tempfile.TemporaryDirectory(prefix="sdo-memory-bind-") as scratch:
-        local = Path(scratch) / "application"
-        local.mkdir()
-        archive = _pod_tar(environment, pod, f"tar -C {REPOSITORY} -cf - .")
-        subprocess.run(["tar", "-C", str(local), "-xf", "-"], input=archive, check=True)
-        if seed:
-            ensure_run_branch(endpoint, local)
-        commit = adopt_run_branch(local, endpoint)
-        (local / ".git" / "sdo-shared-id").write_text(shared_identity(endpoint) + "\n", encoding="utf-8")
-        packed = subprocess.run(["tar", "-C", str(local), "-cf", "-", "."], capture_output=True, check=True).stdout
-        staged = REPOSITORY + ".bind"
-        _pod_tar(
-            environment,
-            pod,
-            f'rm -rf "{staged}" && mkdir "{staged}" && tar -C "{staged}" -xf - && '
-            f'rm -rf "{REPOSITORY}.old" && mv "{REPOSITORY}" "{REPOSITORY}.old" && mv "{staged}" "{REPOSITORY}" && '
-            f'rm -rf "{REPOSITORY}.old"',
-            packed,
-        )
+    secret = render_ssh_secret(
+        environment, identity or github_identity(), known_hosts or Path.home() / ".ssh/known_hosts"
+    )
+    record_path = environment.run_dir / BIND_RECORD
+    record = json.loads(record_path.read_text(encoding="utf-8")) if record_path.is_file() else None
+    if record is not None and (record["repo"], record["branch"]) != (endpoint.repo, endpoint.branch):
+        raise ValueError(f"eval: lane was bound to {record['repo']} {record['branch']}; prepare a new lane")
+    if record is None:
+        pods = _json(environment, "get", "pods", "--selector", f"job-name={JOB_NAME}", "-o", "json", namespace=control)
+        running = [p["metadata"]["name"] for p in pods["items"] if p.get("status", {}).get("phase") == "Running"]
+        if len(running) != 1:
+            raise ValueError("eval: binding requires one running controller")
+        pod = running[0]
+        job = _json(environment, "get", "job", JOB_NAME, "-o", "json", namespace=control)
+        # Incident IDs derive from the application name, so lanes sharing a branch need distinct ones.
+        application = f"{environment.problem_application or environment.application}-{environment.cluster}"
+        application = application[:30].rstrip("-") + "-" + uuid.uuid4().hex
+        with lane_environment(environment):
+            adapter.pause_for_recovery(adapter.KubectlClusterOps(), control)
+        with tempfile.TemporaryDirectory(prefix="sdo-memory-bind-") as scratch:
+            local = Path(scratch) / "application"
+            local.mkdir()
+            archive = _pod_tar(environment, pod, f"tar -C {REPOSITORY} -cf - .")
+            subprocess.run(["tar", "-C", str(local), "-xf", "-"], input=archive, check=True)
+            if seed:
+                ensure_run_branch(endpoint, local)
+            commit = adopt_run_branch(local, endpoint)
+            (local / ".git" / "sdo-shared-id").write_text(shared_identity(endpoint) + "\n", encoding="utf-8")
+            packed = subprocess.run(["tar", "-C", str(local), "-cf", "-", "."], capture_output=True, check=True).stdout
+            staged = REPOSITORY + ".bind"
+            _pod_tar(
+                environment,
+                pod,
+                f'rm -rf "{staged}" && mkdir "{staged}" && tar -C "{staged}" -xf - && '
+                f'rm -rf "{REPOSITORY}.old" && mv "{REPOSITORY}" "{REPOSITORY}.old" && mv "{staged}" "{REPOSITORY}" && '
+                f'rm -rf "{REPOSITORY}.old"',
+                packed,
+            )
+        record = {
+            "repo": endpoint.repo,
+            "branch": endpoint.branch,
+            "commit": commit,
+            "application": application,
+            "job": job,
+        }
+        temporary = record_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(record_path)
     kubectl(
-        ["delete", "job", JOB_NAME, "--cascade=foreground", "--wait=true", "--timeout=120s"],
+        ["delete", "job", JOB_NAME, "--ignore-not-found=true", "--cascade=foreground", "--wait=true", "--timeout=120s"],
         namespace=control,
         kubeconfig=environment.kubeconfig,
     )
-    apply_ssh_secret(environment, identity, known_hosts)
-    recreated = controller_job_with_upstream(shared_controller_job(job, application), endpoint)
+    kubectl(["apply", "-f", "-"], namespace=control, kubeconfig=environment.kubeconfig, input_text=secret)
+    recreated = controller_job_with_upstream(shared_controller_job(record["job"], record["application"]), endpoint)
     kubectl(
         ["create", "-f", "-"], namespace=control, kubeconfig=environment.kubeconfig, input_text=json.dumps(recreated)
     )
@@ -347,7 +378,7 @@ def bind_lane_to_branch(
         namespace=control,
         kubeconfig=environment.kubeconfig,
     )
-    environment.application = application
+    environment.application = record["application"]
     environment.memory_repo, environment.memory_branch = endpoint.repo, endpoint.branch
     # The harness treats the lane as a prepared shared lane reading a refreshed branch mirror.
     environment.workspace = create_memory_mirror(environment.run_dir / "memory-mirror", endpoint)
@@ -355,40 +386,4 @@ def bind_lane_to_branch(
     environment.parallel_lane = environment.parallel_lane or environment.cluster
     environment.state_path.unlink(missing_ok=True)
     environment.save()
-    return commit
-
-
-def close_run_branch(endpoint: MemoryEndpoint, row: str, *, message: str, url: str | None = None) -> str:
-    """End of run: tag the run branch head and add one README index row on main."""
-
-    head = remote_head(endpoint, url)
-    if not head:
-        raise ValueError(f"eval: run branch {endpoint.branch} does not exist")
-    if "\n" in row or not row.startswith("|"):
-        raise ValueError("eval: the README row must be one Markdown table row")
-    tag = f"{endpoint.branch}-final"
-    with tempfile.TemporaryDirectory(prefix="sdo-memory-close-") as scratch:
-        index = Path(scratch) / "index"
-        _git(None, "clone", "--quiet", "--depth", "1", "--branch", "main", "--", url or endpoint.url, str(index))
-        _git(index, "fetch", "--quiet", "--depth", "1", "origin", head)
-        _git(
-            index, "-c", "user.name=SDO run", "-c", "user.email=sdo-run@invalid", "tag", "-a", tag, "-m", message, head
-        )
-        readme = index / "README.md"
-        text = readme.read_text(encoding="utf-8") if readme.exists() else ""
-        if endpoint.branch not in text:
-            readme.write_text(text.rstrip("\n") + "\n" + row + "\n", encoding="utf-8")
-            _git(index, "add", "README.md")
-            _git(
-                index,
-                "-c",
-                "user.name=SDO run",
-                "-c",
-                "user.email=sdo-run@invalid",
-                "commit",
-                "--quiet",
-                "-m",
-                f"index {endpoint.branch}",
-            )
-        _git(index, "push", "--quiet", "origin", "HEAD:refs/heads/main", f"refs/tags/{tag}")
-    return tag
+    return record["commit"]

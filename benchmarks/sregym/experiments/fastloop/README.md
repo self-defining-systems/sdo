@@ -521,11 +521,12 @@ are refused (main holds only the README index):
 Use `run_branch(label)` for `live/<yyyymmdd>-<run-label>`. Create the branch once from the app's seed
 (`ensure_run_branch(endpoint, seed)`), and prepare every lane of that app from the same seed (or a clone of
 the branch), so each lane's tree equals a branch commit. For each prepared idle lane, on its own host,
-call `bind_lane_to_branch(environment, endpoint, identity=~/.ssh/id_ed25519,
-known_hosts=~/.ssh/known_hosts, seed=<first lane of the app>)`. It pauses the controller, seeds the
+call `bind_lane_to_branch(environment, endpoint, seed=<first lane of the app>)` (the key defaults to the one
+ssh offers github.com on that host; hosts differ). It checks the key first, pauses the controller, seeds the
 branch from the first lane, makes every other lane adopt the branch history (its tree must equal a
 branch commit), copies the host's existing GitHub key into the lane Secret `sdo-memory-upstream-ssh`
-(mounted read-only; never printed) and recreates the controller with the upstream. Each lane keeps
+(mounted read-only; never printed) and recreates the controller with the upstream. `run_dir/memory-bind.json` lets a rerun finish a
+binding that failed after the repository was replaced. Each lane keeps
 its private PVC and a unique application name. The harness then treats it as a prepared shared
 lane (no wipe, reseed, reset or reinstall): `fastloop.json` points `workspace` at a host mirror of
 the branch that every shared-identity read and memory-head read refreshes from GitHub. The broker pushes and fetches directly; a lost push
