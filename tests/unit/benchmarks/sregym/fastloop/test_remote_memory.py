@@ -175,3 +175,22 @@ def test_host_mirror_follows_the_branch_and_carries_the_shared_identity(tmp_path
     before = git(plain, "rev-parse", "HEAD")
     refresh_memory_mirror(plain)
     assert git(plain, "rev-parse", "HEAD") == before
+
+
+def test_bind_checks_the_key_before_touching_the_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import remote_memory, shared_memory
+
+    touched: list[object] = []
+    monkeypatch.setattr(shared_memory, "_json", lambda *args, **kwargs: touched.append(args))
+    monkeypatch.setattr(remote_memory, "kubectl", lambda *args, **kwargs: touched.append(args))
+    lane = SimpleNamespace(namespace="sdo-toy", kubeconfig=tmp_path / "kubeconfig", run_dir=tmp_path)
+    with pytest.raises(ValueError, match="does not exist"):
+        remote_memory.bind_lane_to_branch(
+            lane,  # type: ignore[arg-type]
+            ENDPOINT,
+            identity=tmp_path / "missing",
+            known_hosts=tmp_path / "known_hosts",
+        )
+    assert touched == []

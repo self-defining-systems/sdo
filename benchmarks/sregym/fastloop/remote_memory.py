@@ -387,3 +387,39 @@ def bind_lane_to_branch(
     environment.state_path.unlink(missing_ok=True)
     environment.save()
     return record["commit"]
+
+
+def close_run_branch(endpoint: MemoryEndpoint, row: str, *, message: str, url: str | None = None) -> str:
+    """End of run: tag the run branch head and add one README index row on main."""
+
+    head = remote_head(endpoint, url)
+    if not head:
+        raise ValueError(f"eval: run branch {endpoint.branch} does not exist")
+    if "\n" in row or not row.startswith("|"):
+        raise ValueError("eval: the README row must be one Markdown table row")
+    tag = f"{endpoint.branch}-final"
+    with tempfile.TemporaryDirectory(prefix="sdo-memory-close-") as scratch:
+        index = Path(scratch) / "index"
+        _git(None, "clone", "--quiet", "--depth", "1", "--branch", "main", "--", url or endpoint.url, str(index))
+        _git(index, "fetch", "--quiet", "--depth", "1", "origin", head)
+        _git(
+            index, "-c", "user.name=SDO run", "-c", "user.email=sdo-run@invalid", "tag", "-a", tag, "-m", message, head
+        )
+        readme = index / "README.md"
+        text = readme.read_text(encoding="utf-8") if readme.exists() else ""
+        if endpoint.branch not in text:
+            readme.write_text(text.rstrip("\n") + "\n" + row + "\n", encoding="utf-8")
+            _git(index, "add", "README.md")
+            _git(
+                index,
+                "-c",
+                "user.name=SDO run",
+                "-c",
+                "user.email=sdo-run@invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                f"index {endpoint.branch}",
+            )
+        _git(index, "push", "--quiet", "origin", "HEAD:refs/heads/main", f"refs/tags/{tag}")
+    return tag
