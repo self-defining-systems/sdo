@@ -194,6 +194,6 @@ harness-owned container name), `uploads`, `cache_hits`, `publication_seconds`,
 one-time build publication from each lane's CRI pull/unpack. A cache hit verifies
 manifest bytes and frozen image identity before skipping upload; nodes pull by
 manifest digest and verify their CRI config IDs. Total delivery `seconds`
-includes registry setup and retention; it excludes waiting for the host-wide
-image-delivery lock. Older entries lack this object. A fallback can retain
+includes registry setup and transfer; it excludes retention and waiting for
+the host-wide image-delivery lock. Older entries lack this object. A fallback can retain
 partial registry metrics; use `path` and `success` to establish the result.

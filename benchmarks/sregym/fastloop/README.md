@@ -73,5 +73,5 @@ the existing loud, recorded archive fallback.
 
 Each `image_delivery.jsonl` entry includes `registry` metadata: container name,
 `uploads`, `cache_hits`, `publication_seconds`, `pull_seconds`, `frozen_ids` and
-`manifest_digests`. Total `seconds` also includes setup and retention; use the
-phase fields to distinguish a first publication from subsequent lane delivery.
+`manifest_digests`. Total `seconds` includes setup and transfer; retention evidence is recorded
+separately. Use the phase fields to distinguish a first publication from subsequent lane delivery.
