@@ -1,5 +1,15 @@
 ## Source restoration
 
+Choose the playbook by failure mechanism, not merely the kind of object repaired.
+A source-drift step diagnoses the bound object's difference from accepted source and restores that difference.
+Admission mutation, genuine resource exhaustion and old-revision rollout blockage are independent mechanisms:
+give them separate diagnoses and steps, even when they affect the same Deployment. Link the relevant playbooks
+from findings and explain ordering in their READMEs. Keep coupled actions together only when one repair needs them.
+Do not add unrelated observations as prerequisites to a working source-drift diagnosis; their unavailability
+must not turn an otherwise decidable source comparison into Unknown. Refine the existing step for resource or
+parameter variants; add a separate step when the cause or required evidence changes. Preserve earlier cases and
+check both the repaired variant and prior variants when changing a shared step; replay remains informational.
+
 Keep source-restoration mitigators for image, readiness and ConfigMap faults when diagnosis supports them.
 Prefer a narrow, schema-checked SetField when diagnosis identifies the damaged field; named list selectors and
 ConfigMap JSON/YAML entries preserve unrelated values. Use `program.FromSource(ref, path)` for an accepted-source field value,

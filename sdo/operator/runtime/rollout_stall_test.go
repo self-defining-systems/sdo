@@ -170,9 +170,16 @@ func TestSourceReadbackBudgetIsPerObject(t *testing.T) {
 			if elapsed := time.Since(started); elapsed > bound+time.Second {
 				t.Fatalf("readbacks extended the deadline: %s", elapsed)
 			}
-			var partial *SourceReconcilePartialError
-			if !errors.As(err, &partial) || len(partial.Results) != 1 || result.VerificationPassed {
-				t.Fatalf("slow object was not the only residual: %v", err)
+			if mode == "slow-readback" {
+				var pending *RolloutPendingError
+				if !errors.As(err, &pending) || len(pending.Pending.GetBlockers()) != 1 || pending.Pending.Blockers[0].Ref.Name != slowRef.Name || result.RolloutPending == nil || result.VerificationPassed {
+					t.Fatalf("slow readback was not the only pending observation: %v", err)
+				}
+			} else {
+				var partial *SourceReconcilePartialError
+				if !errors.As(err, &partial) || len(partial.Results) != 1 || result.RolloutPending != nil || result.VerificationPassed {
+					t.Fatalf("slow object was not the only residual: %v", err)
+				}
 			}
 			for i, report := range result.ActionReports {
 				source := report.SourceReconcile
