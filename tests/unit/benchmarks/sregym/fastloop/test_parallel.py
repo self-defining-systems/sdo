@@ -13,6 +13,7 @@ import pytest
 from benchmarks.sregym.fastloop import shared_memory
 from benchmarks.sregym.fastloop.parallel import Encounter, ParallelPlan, run_parallel
 from benchmarks.sregym.fastloop.records import IncidentRecord
+from benchmarks.sregym.fastloop.stream import load_stream_config
 
 
 def record(problem, lane, index=0):
@@ -161,7 +162,15 @@ def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monk
     from benchmarks.sregym.fastloop.parallel import execute_lane
     from benchmarks.sregym.fastloop.records import write_records
 
-    selected = ParallelPlan(**{**plan(tmp_path).model_dump(), "provider": provider, "model": model})
+    selected = ParallelPlan(
+        **{
+            **plan(tmp_path).model_dump(),
+            "provider": provider,
+            "model": model,
+            "capability_mode": "permissive",
+            "permissive_responder": True,
+        }
+    )
     for name, run_dir in selected.lanes.items():
         FastloopEnvironment(
             run_dir=run_dir,
@@ -180,6 +189,8 @@ def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monk
 
         args = build_parser().parse_args(argv[3:])
         assert (args.provider, args.model) == (provider, model)
+        stream = load_stream_config(args.stream)
+        assert (stream.capability_mode, stream.permissive_responder) == ("permissive", True)
         assert kwargs["env"]["SREGYM_BASE_KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["GOMAXPROCS"] == "4"
@@ -406,3 +417,12 @@ def test_attachment_never_runs_tools_inside_nodes_that_kind_images_lack():
     ]
     assert node_commands, "attachment no longer execs in nodes; drop this ratchet"
     assert not [command for command in node_commands if "git" in command]
+
+
+def test_accepted_checkout_is_owned_by_the_controller_uid_and_shared_with_the_host_group():
+    commands = shared_memory.accepted_ownership_commands("/opt/sdo-parallel/accepted", host_gid=1001)
+    assert commands[0] == ("chown", "-R", "65532:1001", "/opt/sdo-parallel/accepted")
+    assert ("chmod", "-R", "g+rwX", "/opt/sdo-parallel/accepted") in commands
+    assert any(
+        command[:3] == ("find", "/opt/sdo-parallel/accepted", "-type") and "g+s" in command for command in commands
+    )

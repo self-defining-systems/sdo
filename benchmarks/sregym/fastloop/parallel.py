@@ -35,6 +35,9 @@ class ParallelPlan(BaseModel):
     agent_registrations: Path | None = None
     provider: Literal["codex", "claude"] = "codex"
     model: str = Field(default="gpt-6-luna", min_length=1)
+    # Same lane stream settings the other experiment streams carry.
+    capability_mode: Literal["strict", "permissive"] = "strict"
+    permissive_responder: bool = False
 
     def worker_arguments(self) -> list[str]:
         """One worker configuration for admission and every encounter in the proof."""
@@ -97,7 +100,15 @@ def execute_lane(
     directory.mkdir(parents=True, exist_ok=True)
     stream = directory / "stream.json"
     stream.write_text(
-        json.dumps({"incidents": [[e.problem] for e in encounters], "diagnosis_grading": "inline"}) + "\n"
+        json.dumps(
+            {
+                "incidents": [[e.problem] for e in encounters],
+                "diagnosis_grading": "inline",
+                "capability_mode": plan.capability_mode,
+                "permissive_responder": plan.permissive_responder,
+            }
+        )
+        + "\n"
     )
     command = [
         sys.executable,

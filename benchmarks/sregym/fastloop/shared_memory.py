@@ -51,14 +51,21 @@ def shared_controller_job(job: dict[str, Any], application: str) -> dict[str, An
         raise ValueError("eval: controller Job lacks one application identity")
     args[args.index("--application") + 1] = application
     environment = {row["name"]: row for row in containers[0].get("env", [])}
-    for name, value in {
-        "GIT_CONFIG_COUNT": "1",
-        "GIT_CONFIG_KEY_0": "safe.directory",
-        "GIT_CONFIG_VALUE_0": "/workspace/application",
-    }.items():
-        environment[name] = {"name": name, "value": value}
     containers[0]["env"] = list(environment.values())
     return result
+
+
+def accepted_ownership_commands(path: str, *, host_gid: int) -> list[tuple[str, ...]]:
+    """Node-side commands giving the controller uid ownership and the host group write access.
+
+    Git refuses to read a repository owned by another uid (also through the operator's sync Pod),
+    so the controller uid owns the checkout; the host keeps access through its group.
+    """
+    return [
+        ("chown", "-R", f"65532:{host_gid}", path),
+        ("chmod", "-R", "g+rwX", path),
+        ("find", path, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"),
+    ]
 
 
 def _command(*args: str) -> str:
@@ -326,9 +333,8 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
     identity = accepted / ".git" / "sdo-shared-id"
     if not identity.exists():
         identity.write_text(uuid.uuid4().hex + "\n")
-    # Retain host ownership; restricted controller FSGroup65532 may write this tree.
-    _command("docker", "exec", attachments[0].node, "chgrp", "-R", "65532", NODE_ROOT + "/accepted")
-    _command("docker", "exec", attachments[0].node, "chmod", "-R", "g+rwX", NODE_ROOT + "/accepted")
+    for command in accepted_ownership_commands(NODE_ROOT + "/accepted", host_gid=os.getgid()):
+        _command("docker", "exec", attachments[0].node, *command)
     for item in attachments:
         _command(
             "docker",
