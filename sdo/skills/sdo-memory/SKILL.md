@@ -21,7 +21,7 @@ Memory exists so later incidents are fixed faster and cheaper. Read and reason a
 - Reflection avoids hard-coded service or app names: prefer runtime bindings from findings, Diagnose or responder values; isolate unavoidable names in one logical helper and document app constants in the playbook README.
 - Use detectors to find problems proactively and playbooks to diagnose and mitigate; their relationship need not be one to one.
 - Refine a playbook whose mitigation failed or was undone, or set `status: retired` and a nonempty `retired_reason` in its front matter; retired playbooks remain in history but are not compiled or offered.
-- Keep memory small and current: give each playbook README a one-line `description:` in its YAML front matter; maintain its index and merge duplicates.
+- Keep memory small and current: give each playbook README a one-line `description:` in its YAML front matter; merge duplicates. SDO generates the playbook index from each README's first heading; never edit it.
 - A script fix is a first-class learnable mitigation with relation-derived Values, within incident budgets.
 - Preserve [credential references](../sdo-incident-response/references/database-credentials.md), never resolved values: typed database repairs accept env or namespace-local ConfigMap keys and optional literal assignment names; only the executor resolves them.
 - Exclude benchmark/grader details, secrets and physical paths from memory text; physical layout is only for checkout edits and tooling, while prose and results use logical IDs.

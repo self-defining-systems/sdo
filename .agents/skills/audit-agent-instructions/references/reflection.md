@@ -13,7 +13,7 @@ The task selects resume/fresh mode; do not infer the mode from the role name.
    coverage, with role bindings and real recorded-observation replay evidence.
    Missing captures alone do not block evidence already recorded in the session.
 4. Edit only authorized final files in the proposal checkout, preserve accepted
-   corpus/provenance and update the index. A README alone is not executable learning.
+   corpus/provenance; SDO generates the index. A README alone is not executable learning.
 5. Run the shared memory check, correct diagnostics and return the same typed
    decision and logical IDs; report concrete typed SDK gaps for unsupported causes.
 
