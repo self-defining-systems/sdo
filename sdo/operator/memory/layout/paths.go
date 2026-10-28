@@ -355,6 +355,39 @@ func LogicalText(value string) (string, error) {
 	return value, nil
 }
 
+// physicalPathToken is one physical memory path inside prose: the memory root
+// followed by path characters, either separator.
+var physicalPathToken = regexp.MustCompile(`\.sdo[/\\][A-Za-z0-9._/\\-]*`)
+
+// LogicalizeText rewrites every physical memory path in free text to a logical
+// reference: script:<playbook>/<name>, playbook:<id>, detector:<id>, or
+// memory:<relative path> for anything else. Unlike LogicalText it never fails,
+// so stored agent prose can always be shown to a worker.
+func LogicalizeText(value string) string {
+	// A rewritten path can itself hold a nested memory path; each pass removes
+	// one level.
+	for ContainsPhysicalPath(value) {
+		value = physicalPathToken.ReplaceAllStringFunc(value, logicalReference)
+	}
+	return value
+}
+
+func logicalReference(token string) string {
+	relative := strings.ReplaceAll(token[len(Dir)+1:], `\`, "/")
+	trimmed := strings.TrimRight(relative, "./")
+	parts := strings.Split(trimmed, "/")
+	suffix := relative[len(trimmed):]
+	switch {
+	case len(parts) == 4 && parts[0] == "playbooks" && parts[2] == PlaybookScriptsDir && ValidPlaybookID(parts[1]) && strings.HasSuffix(parts[3], ".sh"):
+		return "script:" + parts[1] + "/" + parts[3] + suffix
+	case len(parts) >= 2 && parts[0] == "playbooks" && ValidPlaybookID(parts[1]):
+		return "playbook:" + parts[1] + suffix
+	case len(parts) >= 4 && parts[0] == "diagnostics" && parts[1] == "detectors" && ValidDetectorID(parts[3]):
+		return "detector:" + parts[3] + suffix
+	}
+	return "memory:" + relative
+}
+
 // PlaybookID translates a physical playbook reference to its logical ID. A
 // logical ID is returned unchanged.
 func PlaybookID(reference string) (string, error) {
