@@ -46,6 +46,7 @@ class SequencePlan(BaseModel):
     rows: list[SequenceRow] = Field(min_length=2)
     lease: str = "le-hu"
     coord: str = "/mnt/data/shli/coord/coord"
+    load_gate: int = Field(default=52, gt=0, strict=True)
     timeout_seconds: int = Field(default=int(wait_for(WaitKind.RESPONSE)), gt=0)
     # Retained as experiment provenance. Automatic program trust gating was
     # removed; this value grants no execution or publication authority.
@@ -134,10 +135,10 @@ def execute_row(plan: SequencePlan, index: int, results: Path) -> None:
     # Keep transient load admission from turning an unstarted row into an
     # uncertain interruption. Lease loss still stops immediately.
     subprocess.run([plan.coord, "check", environment.cluster, "--lease", plan.lease], check=True)
-    while os.getloadavg()[0] >= 40:
+    while os.getloadavg()[0] >= plan.load_gate:
         subprocess.run([plan.coord, "check", environment.cluster, "--lease", plan.lease], check=True)
         time.sleep(wait_for(WaitKind.PROBE))
-    subprocess.run([plan.coord, "gate", "--lease", plan.lease], check=True)
+    subprocess.run([plan.coord, "gate", str(plan.load_gate), "--lease", plan.lease], check=True)
     subprocess.run([plan.coord, "check", environment.cluster, "--lease", plan.lease], check=True)
     with (directory / "stdout.log").open("a") as out, (directory / "stderr.log").open("a") as error:
         result = subprocess.run(command, cwd=plan.code_root, stdout=out, stderr=error, check=False)
@@ -218,7 +219,7 @@ def run_sequence(plan: SequencePlan, *, execute: Callable[[SequencePlan, int, Pa
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         identity = plan.model_dump(mode="json")
         saved = plan.journal_dir / "sequence.json"
-        if saved.exists() and json.loads(saved.read_text()) != identity:
+        if saved.exists() and SequencePlan.model_validate_json(saved.read_text()).model_dump(mode="json") != identity:
             raise ValueError("eval: sequence identity changed; use a new run directory")
         head = memory_head(plan.code_root)
         if head != plan.code_sha:

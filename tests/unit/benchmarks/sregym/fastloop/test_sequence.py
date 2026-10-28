@@ -205,11 +205,16 @@ def test_native_ledger_must_belong_to_the_row_incident(plan: SequencePlan) -> No
         run_sequence(plan, execute=execute)
 
 
-def test_busy_host_waits_before_starting_the_guarded_native_runner(plan: SequencePlan, monkeypatch) -> None:
+@pytest.mark.parametrize(("configured_gate", "expected_gate"), [(None, 52), (36, 36), (64, 64)])
+def test_busy_host_waits_before_starting_the_guarded_native_runner(
+    plan: SequencePlan, monkeypatch, configured_gate: int | None, expected_gate: int
+) -> None:
     from benchmarks.sregym.fastloop import sequence
     from benchmarks.sregym.fastloop.cli import build_parser
 
-    loads = iter([(41.0, 0, 0), (10.0, 0, 0)])
+    if configured_gate is not None:
+        plan = SequencePlan.model_validate({**plan.model_dump(), "load_gate": configured_gate})
+    loads = iter([(expected_gate + 0.5, 0, 0), (expected_gate, 0, 0), (expected_gate - 0.5, 0, 0)])
     sleeps = []
     commands = []
     monkeypatch.setattr(sequence.os, "getloadavg", lambda: next(loads))
@@ -222,7 +227,9 @@ def test_busy_host_waits_before_starting_the_guarded_native_runner(plan: Sequenc
     monkeypatch.setattr(sequence.subprocess, "run", run)
     results = plan.environment_dir / "results" / "phase4-51-000" / "incidents.jsonl"
     sequence.execute_row(plan, 0, results)
-    assert sleeps, "busy-host admission must wait before starting a row"
+    assert len(sleeps) == 2, "at-or-above admission must wait, below must proceed"
+    assert [plan.coord, "gate", str(expected_gate), "--lease", plan.lease] in commands
+    assert commands.index([plan.coord, "gate", str(expected_gate), "--lease", plan.lease]) < len(commands) - 1
     command = commands[-1]
     boundary = command.index("--")
     assert command[boundary + 1] == "benchmarks.sregym.fastloop"
@@ -364,3 +371,18 @@ def test_interrupted_retry_attempt_still_holds_uncertain_work(plan):
         run_sequence(plan, execute=interrupted)
     with pytest.raises(RuntimeError, match="incomplete.*never reinject"):
         run_sequence(plan, execute=lambda *_args: pytest.fail("reinjected uncertain retry attempt"))
+
+
+@pytest.mark.parametrize("gate", [0, -1, 52.5, True])
+def test_sequence_rejects_invalid_load_gate(plan: SequencePlan, gate: object) -> None:
+    with pytest.raises(ValueError, match="load_gate"):
+        SequencePlan.model_validate({**plan.model_dump(), "load_gate": gate})
+
+
+def test_sequence_resumes_saved_plan_without_new_default_gate(plan: SequencePlan) -> None:
+    run_sequence(plan, execute=finish)
+    saved = plan.journal_dir / "sequence.json"
+    identity = json.loads(saved.read_text())
+    identity.pop("load_gate", None)
+    saved.write_text(json.dumps(identity))
+    run_sequence(plan, execute=lambda *_args: pytest.fail("re-executed finished row"))
