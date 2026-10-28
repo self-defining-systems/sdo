@@ -92,3 +92,20 @@ func TestCheckFindingRolesKeepsNamedPairsAndOptionalPeers(t *testing.T) {
 		t.Fatal("optional aliases next to a required role accepted")
 	}
 }
+
+// A webhook repair program binds whichever of the failing Namespace or workload
+// the finding names, then reads the webhook through ReadView.AdmissionWebhooksFor.
+func TestWebhookRepairRolesBindFromNamespaceAndWorkloadFindings(t *testing.T) {
+	spec := program.ProgramSpec{ID: "webhook-repair", Params: []program.ParamSpec{{Name: "namespace", Kind: "Namespace"}, {Name: "workload", Kind: "Deployment"}}}
+	if err := program.CheckFindingRoles(spec); err != nil {
+		t.Fatal(err)
+	}
+	namespace := sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: "app"}
+	workload := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"}
+	for role, finding := range map[string]sdk.Finding{"namespace": {PrimaryResource: namespace}, "workload": {PrimaryResource: workload}} {
+		got, err := program.BindFinding(spec, finding)
+		if err != nil || len(got.Objects) != 1 || got.Objects[role] != finding.PrimaryResource {
+			t.Fatalf("%s finding: %+v %v", role, got, err)
+		}
+	}
+}

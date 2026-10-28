@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from sdo.agents.responder.rollout_release import release_lines
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
@@ -82,11 +84,13 @@ def format_selection_response(
             )
         return len(rendered.encode()) + 1
 
+    releases = release_lines([response["rollout_pending"]]) if response.get("rollout_pending") else []
     if not response.get("option_reports"):
         if response.get("rollout_pending"):
             lines = text.splitlines()
             application = _bounded_text(response.get("application_id", "unknown"), 80)
             lines[0] = f"This action: rollout pending; application={application}."
+            lines[1:1] = releases
             return clamp_mutation_summary("\n".join(lines), path, response, json_output=json_output), path
         return text, path
     actions = option_action_results(response)
@@ -96,6 +100,7 @@ def format_selection_response(
     unresolved = len(actions) - pending - failed - succeeded
     lines = text.splitlines()
     lines[0] = f"Options: {succeeded} succeeded; {pending} pending; {failed} failed; {unresolved} unresolved."
+    lines[1:1] = releases
     rows = []
     for action in actions:
         execution = (action["report"].get("execution") or [{}])[0]

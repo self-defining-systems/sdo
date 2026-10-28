@@ -26,6 +26,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 SCHEMA_VERSION = "sdo.fastloop-incident/v2"
+#: Eval rows verify one full cleanup pass with the official recovery oracle.
+#: A second pass only re-proves that cleanup is repeatable, which credential-slot
+#: rehearsals check; on astronomy it costs another ~170 s alert-silence oracle.
+EVAL_CLEANUP_PASSES = 1
 AgentName = Literal["sdo", "codex"]
 #: What let harness fault recovery run once the row was over: SDO's natural closure, a closure SDO
 #: permanently failed or retired, the reflection deadline with SDO still working, or no SDO incident.

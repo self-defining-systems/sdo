@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ import yaml
 from benchmarks.sregym.fastloop.accepted_source import (
     AcceptedSource,
     manifest_paths_for,
+    manifest_paths_for_environment,
 )
 from benchmarks.sregym.fastloop.baseline_recovery import (
     ApplicationBaseline,
@@ -19,6 +21,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
     declared_source_identities,
     save_application_baseline,
 )
+from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import REAL_RUN, commit_accepted_source
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -120,6 +123,45 @@ def test_manifest_selection_reads_only_the_selected_files(tmp_path: Path) -> Non
     assert [v["metadata"]["name"] for v in AcceptedSource(workspace, "app").manifests] == ["mine", "other"]
 
 
+def _astronomy_environment(tmp_path: Path) -> FastloopEnvironment:
+    pdb = {"apiVersion": "policy/v1", "kind": "PodDisruptionBudget", "metadata": {"name": "opensearch-pdb"}}
+    workspace = tmp_path / "workspace"
+    commit_accepted_source(workspace, [pdb], path="kubernetes/astronomy-shop.yaml")
+    commit_accepted_source(workspace, [pdb], path="kubernetes/opentelemetry-demo.yaml")
+    return FastloopEnvironment(
+        run_dir=tmp_path / "run",
+        cluster="synthetic",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="astronomy-shop",
+        application="opentelemetry-demo-astronomy-shop",
+        workspace=workspace,
+        sregym_dir=tmp_path / "harness",
+        private_tmp=None,
+    )
+
+
+def test_shared_attachment_keeps_the_problem_applications_manifests(tmp_path: Path) -> None:
+    environment = _astronomy_environment(tmp_path)
+    # Shared attach renames the application exactly like shared_memory.attach_shared_memory does.
+    environment.parallel_lane = "c4-as-0"
+    environment.application = f"{environment.application}-{environment.parallel_lane}"[:30].rstrip("-") + "-" + "a" * 32
+    source = AcceptedSource.of(environment)
+    assert source.manifest_paths == ("kubernetes/astronomy-shop.yaml",)
+    assert [v["metadata"]["name"] for v in source.manifests] == ["opensearch-pdb"]
+    assert manifest_paths_for_environment(environment) == source.manifest_paths
+
+
+def test_attached_environment_without_a_problem_application_raises(tmp_path: Path) -> None:
+    environment = _astronomy_environment(tmp_path)
+    environment.problem_application = ""
+    environment.parallel_lane = "c4-as-0"
+    environment.application = "opentelemetry-demo-ast-" + "a" * 32
+    with pytest.raises(ValueError, match="problem application"):
+        AcceptedSource.of(environment)
+    with pytest.raises(ValueError, match="problem application"):
+        manifest_paths_for_environment(environment)
+
+
 def test_invalid_selection_and_namespace_are_rejected(tmp_path: Path) -> None:
     for kwargs in ({"namespace": ""}, {"manifest_paths": ()}, {"manifest_paths": ("../outside",)}):
         with pytest.raises(ValueError, match="accepted"):
@@ -217,6 +259,18 @@ def test_hotel_bootstrap_source_matches_harness_and_remains_restorable(
             obj for obj in reread.manifests if obj["kind"] == "ConfigMap" and obj["metadata"]["name"] == name
         )
         assert restored == accepted[name]
+
+
+def test_no_caller_keys_manifests_by_the_renamed_application() -> None:
+    offenders = [
+        f"{path.relative_to(ROOT)}:{node.lineno}"
+        for path in (BENCHMARK / "fastloop").rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "manifest_paths_for"
+        and any(isinstance(a, ast.Attribute) and a.attr == "application" for a in node.args)
+    ]
+    assert offenders == []
 
 
 def test_plain_manifests_also_use_the_production_renderer(tmp_path, monkeypatch):

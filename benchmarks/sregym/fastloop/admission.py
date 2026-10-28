@@ -105,8 +105,9 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
             for pod in selected
         ):
             raise ValueError(f"restore invariant: workload not Ready: {row['kind']}/{metadata['name']}")
+        # A roll is a pod replaced or restarted. The object's generation is no roll signal: SDO's own
+        # acceptance apply bumps it on an unchanged workload (a recreated Deployment's first adoption).
         workloads[f"{row['kind']}/{metadata['name']}"] = {
-            "generation": metadata.get("generation"),
             "pods": sorted(
                 (
                     pod["metadata"]["uid"],

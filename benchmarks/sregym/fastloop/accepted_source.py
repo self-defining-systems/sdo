@@ -29,7 +29,24 @@ _REVISION = re.compile(r"^[0-9a-f]{40,64}$")
 
 
 def manifest_paths_for(application: str) -> tuple[str, ...]:
+    """Manifest selection for a problem application name (never a lane-qualified one)."""
     return APPLICATION_MANIFEST_PATHS.get(application, DEFAULT_MANIFEST_PATHS)
+
+
+def manifest_paths_for_environment(environment: Any) -> tuple[str, ...]:
+    """The one environment-to-manifests mapping: keyed by the problem application, never ``environment.application``.
+
+    Shared attachment renames ``environment.application`` to a lane-qualified
+    name; that name selects nothing. An environment without a recorded problem
+    application cannot say which manifests it deploys, so it raises.
+    """
+    application = environment.problem_application
+    if not application:
+        raise ValueError(
+            f"environment {environment.application!r} has no problem application; "
+            "it cannot select its accepted manifests"
+        )
+    return manifest_paths_for(application)
 
 
 @dataclass(frozen=True)
@@ -52,7 +69,7 @@ class AcceptedSource:
 
     @classmethod
     def of(cls, environment: Any) -> AcceptedSource:
-        return cls(environment.workspace, environment.namespace, manifest_paths_for(environment.application))
+        return cls(environment.workspace, environment.namespace, manifest_paths_for_environment(environment))
 
     def _git(self, *args: str) -> str:
         result = subprocess.run(

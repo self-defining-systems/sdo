@@ -90,7 +90,7 @@ func CaptureReachabilityBaseline(ctx sdk.DetectionContext, a BaselineAuthorizati
 	if err := b.Validate(); err != nil {
 		return nil, err
 	}
-	w.Baseline = nil
+	w.Baseline, w.BaselinePending = nil, false
 	findings, err := NewReachabilityDetector(sdk.DetectorSpec{}).Detect(context.Background(), baselineContext{ctx, w})
 	if err != nil {
 		return nil, err
@@ -334,6 +334,37 @@ func excludedReachabilityTarget(ctx sdk.DetectionContext, w ReachabilityWindow, 
 		}
 	}
 	return reachabilityBaselineStatus(ctx, w, target) == "accepted-exclusion"
+}
+
+// unknownReachabilityTarget reports a target whose failure cannot be judged: no
+// current baseline says whether it is declared but never served, and this
+// observation has never seen it serve. A target seen serving is judged as usual.
+func unknownReachabilityTarget(w ReachabilityWindow, o TargetObservations) bool {
+	if !w.BaselinePending || o.LastSuccess != nil {
+		return false
+	}
+	for _, s := range o.Samples {
+		if s.OK {
+			return false
+		}
+	}
+	return true
+}
+
+// ReachabilityUnknown returns the observed targets whose reachability is unknown
+// until a healthy baseline is measured.
+func ReachabilityUnknown(ctx sdk.DetectionContext) []ReachabilityTarget {
+	unknown := []ReachabilityTarget{}
+	w, ok := ReachabilityFrom(ctx)
+	if !ok {
+		return unknown
+	}
+	for _, o := range w.Targets {
+		if unknownReachabilityTarget(w, o) {
+			unknown = append(unknown, o.Target)
+		}
+	}
+	return unknown
 }
 
 func (w ReachabilityWindow) baselineCapturedAt() time.Time {

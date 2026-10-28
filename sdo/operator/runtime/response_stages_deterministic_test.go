@@ -365,7 +365,9 @@ func (pipelineIneffectivePortProgram) Mitigate(_ context.Context, _ program.Read
 	return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromObserved(b.Objects["service"], "spec.ports[0].targetPort"), Reason: "synthetic ineffective repair"}}}, nil
 }
 
-func TestDeterministicResponseStageStillMatchingIsRetainedAndReported(t *testing.T) {
+// An ineffective reversible write is restored before handoff and reported as
+// such; the diagnosis that justified the revert is retained in the report.
+func TestDeterministicResponseStageStillMatchingIsRevertedAndReported(t *testing.T) {
 	loop, state := pipelineTestLoop(t, true)
 	registry, err := program.NewRegistry([]program.Diagnoser{pipelineIneffectivePortProgram{}}, []program.Mitigator{pipelineIneffectivePortProgram{}})
 	if err != nil {
@@ -377,11 +379,11 @@ func TestDeterministicResponseStageStillMatchingIsRetainedAndReported(t *testing
 		t.Fatal(err)
 	}
 	attempt := report.Mitigations[0]
-	if attempt.Result != "applied_still_matching" || attempt.ApplyReceipt.RolledBack || attempt.PostApplyDiagnose.Verdict.Result != contracts.Verdict_RESULT_MATCH || len(state.Findings) != 2 {
+	if attempt.Result != "reverted_ineffective" || !attempt.ApplyReceipt.RolledBack || attempt.PostApplyDiagnose.Verdict.Result != contracts.Verdict_RESULT_MATCH || len(state.Findings) != 2 {
 		t.Fatalf("report=%v, findings=%v", report, state.Findings)
 	}
-	if len(loop.PlanApplications()) != 1 || loop.PlanApplications()[0].RolledBack {
-		t.Fatalf("automatic rollback: %+v", loop.PlanApplications())
+	if len(loop.PlanApplications()) != 1 || !loop.PlanApplications()[0].RolledBack {
+		t.Fatalf("ineffective write was not reverted: %+v", loop.PlanApplications())
 	}
 }
 
