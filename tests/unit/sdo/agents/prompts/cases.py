@@ -446,4 +446,5 @@ def rendered_cases() -> dict[str, str]:
         result_type="IncidentResultValidationError",
         diagnostic="status: invalid value",
     )
+    prompts["incident_verified_final"] = render_prompt("responder", "verified_final", part="session.instructions")
     return prompts

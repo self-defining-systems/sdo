@@ -344,5 +344,6 @@
   "responder/turn_01": {
     "idempotency_key": "template_data.responder-turn_01-idempotency_key",
     "prompt": "template_data.responder-turn_01-prompt"
-  }
+  },
+  "responder/verified_final": {}
 }
