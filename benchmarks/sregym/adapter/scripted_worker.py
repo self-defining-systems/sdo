@@ -313,6 +313,33 @@ def _assess_policy_drift(request: IncidentRequest, event: DriftEvent, label: Dri
     return label
 
 
+def _health_related(request: IncidentRequest, objects: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """Objects a non-drift health finding names directly or selects through an accepted Service."""
+
+    related: set[tuple[str, str]] = set()
+    for finding in request.findings:
+        if finding.detector_id.startswith("drift."):
+            continue
+        ref = finding.primary_resource
+        if (ref.kind, ref.name) in objects:
+            related.add((ref.kind, ref.name))
+        workloads = {
+            (kind, name) for kind, name in objects - related if kind in {"Deployment", "StatefulSet", "DaemonSet"}
+        }
+        if ref.kind != "Service" or not workloads:
+            continue
+        try:
+            selector = _tool("source", f"Service/{request.namespace}/{ref.name}")["source"]["spec"].get("selector")
+            for kind, name in sorted(workloads) if selector else ():
+                source = _tool("source", f"{kind}/{request.namespace}/{name}")["source"]
+                labels = source["spec"]["template"]["metadata"].get("labels") or {}
+                if all(labels.get(key) == value for key, value in selector.items()):
+                    related.add((kind, name))
+        except (KeyError, TypeError, RuntimeError):
+            continue
+    return related
+
+
 def scripted_responder(request: IncidentRequest) -> IncidentResult:
     if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
         from .scripted_replay import replay_recorded_repair as replay
@@ -383,13 +410,9 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
     first = _tool("verify")
     if not first.get("healthy"):
         # Unknown drift alone is not repair authority. A separate health
-        # finding on the same object still authorizes source-backed recovery.
-        health_resources = {
-            (finding.primary_resource.kind, finding.primary_resource.name)
-            for finding in request.findings
-            if not finding.detector_id.startswith("drift.")
-        }
-        seen: set[tuple[str, str]] = unsure - health_resources
+        # finding on the object, or on a Service selecting its pods, still
+        # authorizes source-backed recovery.
+        seen: set[tuple[str, str]] = unsure - _health_related(request, unsure)
         seen.update((ref["kind"], ref["name"]) for repair in repairs for ref in repair["resources"])
         changed = request.state_changes.changes if request.state_changes else []
         candidates = [
