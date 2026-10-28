@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Hosted caches saved on refs/pull/N are private to that PR. A PR can also
+  # restore its base branch's caches, so pushes to every branch PRs target seed
+  # the prepared Go builds; otherwise each new PR compiles cold.
   push:
-    branches: [main]
+    branches: [main, "vic-lsh/dev/**"]
   pull_request:
   # GitHub merge queue: CI must report on the queue's temporary
   # gh-readonly-queue/... branch or the queue waits until it times out. Every
@@ -13,7 +16,8 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+  # A cancelled base-branch run saves no cache; only PR runs replace each other.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every action is pinned to a commit (the tag it was taken from is in the
 # comment), and uv installs exactly uv.lock.
@@ -77,7 +81,27 @@ jobs:
           uv sync --locked --all-extras
           uv run python scripts/check_ci_budget.py
       - name: Compile dependency graphs outside operation timeouts
-        run: bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
+        id: compile
+        # A cold compile (160-265 s on this runner) stops here, not at the job
+        # deadline, so its archives are saved below and a rerun resumes from
+        # them. GNU timeout signals its whole process group: a step timeout
+        # leaves compilers writing the cache while it is archived.
+        run: timeout --kill-after=5s 170s bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
+      - name: Keep a cold normal compile's progress for the rerun
+        if: failure() && steps.compile.outcome == 'failure' && matrix.mode == 'normal'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-normal
+            ~/go/pkg/mod
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-partial-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Keep a cold race compile's progress for the rerun
+        if: failure() && steps.compile.outcome == 'failure' && matrix.mode == 'race'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/sdo-go-build-race
+          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-partial-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Plan capacity from compiled inventory and hosted costs
         if: matrix.mode == 'race'
