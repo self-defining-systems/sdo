@@ -136,8 +136,17 @@ def finding_line(finding: Finding) -> str:
     return line if finding.primary_resource.name in finding.summary else f"{line} [{ref}]"
 
 
+def _stage_disposition(result: str, kept_reason: str) -> str:
+    """What an applied program left behind: cleared, reverted-ineffective or kept-<why>."""
+    if result == "applied_cleared":
+        return "cleared"
+    if result == "reverted_ineffective" or (result == "applied_still_matching" and kept_reason):
+        return (f"kept-{kept_reason}" if kept_reason else result).replace("_", "-")
+    return result
+
+
 def stage_action_lines(reports: Iterable[StageReport]) -> list[str]:
-    """What each automatic action ran, what it wrote and its verdict, one line each.
+    """What each automatic action ran, what it left behind and the objects it wrote, one line each.
 
     Attempts that one application settled with the same verdict are one action.
     """
@@ -146,17 +155,18 @@ def stage_action_lines(reports: Iterable[StageReport]) -> list[str]:
         actions: dict[tuple[str, str | int, str, str, bool, str], dict[str, Any]] = {}
         for index, attempt in enumerate(report.mitigations):
             receipt = attempt.apply_receipt
-            error = attempt.error or receipt.error
+            error = attempt.error or receipt.error or receipt.rollback_error
             key = (
                 attempt.playbook_id,
                 receipt.application_id or index,
-                attempt.result,
+                _stage_disposition(attempt.result, attempt.kept_reason),
                 attempt.skip_reason,
-                receipt.rolled_back,
+                receipt.rolled_back and attempt.result != "reverted_ineffective",
                 error,
             )
             action = actions.setdefault(key, {"targets": [], "writes": 0, "cleared": set()})
-            action["targets"] += [_ref(binding.object) for binding in attempt.bindings]
+            touched = attempt.touched_objects or [binding.object for binding in attempt.bindings]
+            action["targets"] += [_ref(ref) for ref in touched]
             action["writes"] += attempt.plan_action_count
             action["cleared"] |= set(attempt.cleared_finding_fingerprints)
         for (playbook, _, result, skip_reason, rolled_back, error), action in actions.items():

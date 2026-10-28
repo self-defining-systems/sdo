@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -144,7 +145,12 @@ func TestReflectionCoverageCannotExcusePeersOrRelabelHandRepairs(t *testing.T) {
 func TestReflectionStageResultCoverageSweep(t *testing.T) {
 	// A typed ineffective skip names a playbook that already failed to clear
 	// its findings in this incident, so it is stale like its applied attempt.
-	for _, result := range []string{"applied_cleared", "applied_still_matching", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped", "skipped/stage_budget", "skipped/ineffective"} {
+	// Every result the contract allows is swept, so a new one must decide.
+	results := append(wire.StringIn(&contracts.StageMitigation{}, "result"), "skipped/stage_budget", "skipped/ineffective")
+	if !slices.Contains(results, "reverted_ineffective") {
+		t.Fatalf("stage results: %v", results)
+	}
+	for _, result := range results {
 		t.Run(result, func(t *testing.T) {
 			o := repairCoverageOutcome()
 			o.PriorStages[0].Mitigations[0].Result, o.PriorStages[0].Mitigations[0].SkipReason, _ = strings.Cut(result, "/")
@@ -152,6 +158,9 @@ func TestReflectionStageResultCoverageSweep(t *testing.T) {
 			want := result != "applied_cleared" && result != "skipped" && result != "skipped/stage_budget"
 			if (len(ds) > 0) != want {
 				t.Fatalf("result %s: %v", result, ds)
+			}
+			if result == "reverted_ineffective" && !strings.Contains(ds[0].Message, "reverted it as ineffective") {
+				t.Fatalf("reflection is not told the stage reverted the playbook: %v", ds)
 			}
 		})
 	}

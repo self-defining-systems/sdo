@@ -101,7 +101,8 @@ alone is the baseline. `IncidentRequest.prior_stages` and
 `OutcomeRecord.prior_stages` retain typed controller-owned stage reports.
 Each mitigation identifies the accepted playbook revision, bindings, plan,
 `apply_receipt`, post-apply Diagnose, and cleared/remaining finding fingerprints.
-Results distinguish `applied_cleared`, `applied_still_matching`, `rollout_failed`,
+Results distinguish `applied_cleared`, `applied_still_matching` (with `kept_reason`),
+`reverted_ineffective` (writes restored before handoff), `rollout_failed`,
 `rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`
 (`stage_budget` means the 45 s stage budget ran out before the match was applied).
 `rollout_pending_at_handoff` whose `rollout_pending` reason says `cannot progress

@@ -253,9 +253,10 @@ func TestNoProgressLaterPassSettlesTheStage(t *testing.T) {
 		}
 		t.Fatal("later pass did not finish")
 	}
-	// api: the program is new to the incident (progress); api2: the same
-	// program applies again and clears nothing (no progress).
-	for i, want := range []int{1, 2} {
+	// api: the program applies, clears nothing and is reverted, so the pass
+	// left nothing behind (no progress) and settles the stage; api2 then joins
+	// without another write.
+	for i, want := range []int{1, 1} {
 		released.Store(int32(i + 1))
 		step(3 + i)
 		idle()
@@ -273,7 +274,7 @@ func TestNoProgressLaterPassSettlesTheStage(t *testing.T) {
 		joined = joined || finding.PrimaryResource.Name == "api3"
 	}
 	controller.mu.Unlock()
-	if passes != 2 || len(loop.PlanApplications()) != 2 {
+	if passes != 1 || len(loop.PlanApplications()) != 1 || !loop.PlanApplications()[0].RolledBack {
 		t.Fatalf("a settled stage ran again: passes=%d applications=%d", passes, len(loop.PlanApplications()))
 	}
 	if !joined {
