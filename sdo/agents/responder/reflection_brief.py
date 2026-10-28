@@ -62,7 +62,12 @@ def _ref(ref: ObjectRef) -> str:
 def _fenced(text: str) -> str:
     fence = "~~~~" if "```" in text else "```"
     return render_prompt(
-        "responder", "fenced_01", part="reflection_brief.instructions", fence=fence, text=text, fence_2=fence
+        "responder",
+        "fenced_01",
+        part="reflection_brief.instructions",
+        fence=fence,
+        text=named_prompt("reflection_brief.findings", text, required=False),
+        fence_2=fence,
     )
 
 
@@ -145,7 +150,8 @@ def _states(label: str, evaluations: Sequence[DetectorEvaluation]) -> list[str]:
         )
         rendered.append(f"{state.detector_id}={state.status}{detail}{error}")
     return [
-        render_prompt("responder", "states_04", part="reflection_brief.instructions", label=label) + "; ".join(rendered)
+        render_prompt("responder", "states_04", part="reflection_brief.instructions", label=label)
+        + named_prompt("reflection_brief.findings", "; ".join(rendered), required=False)
     ]
 
 
@@ -179,7 +185,11 @@ def _findings_section(closure: IncidentClosure) -> str:
                 "responder",
                 "namespace_onboarding",
                 part="reflection_brief.findings",
-                onboarding_json=to_canonical_json(request.namespace_onboarding),
+                onboarding_json=named_prompt(
+                    "template_data.responder-namespace_onboarding-onboarding_json",
+                    to_canonical_json(request.namespace_onboarding),
+                    required=False,
+                ),
             )
         )
     if request.HasField("state_changes"):
@@ -217,9 +227,21 @@ def _findings_section(closure: IncidentClosure) -> str:
             part="reflection_brief.instructions",
             incident_id=prior.incident_id,
             match_reason=prior.match_reason,
-            list=list(prior.root_cause_summaries),
-            list_2=list(prior.repair_action_summaries),
-            list_3=list(prior.applied_playbook_ids),
+            list=named_prompt(
+                "template_data.responder-findings_section_09-list",
+                json.dumps(list(prior.root_cause_summaries)),
+                required=False,
+            ),
+            list_2=named_prompt(
+                "template_data.responder-findings_section_09-list_2",
+                json.dumps(list(prior.repair_action_summaries)),
+                required=False,
+            ),
+            list_3=named_prompt(
+                "template_data.responder-findings_section_09-list_3",
+                json.dumps(list(prior.applied_playbook_ids)),
+                required=False,
+            ),
         )
         for prior in request.relevant_outcomes
     )
@@ -558,10 +580,12 @@ def incident_brief(
     result = closure.result if closure.HasField("result") else None
     session_id = None if result is None else result.responder_session_id
     sections = [
-        named_prompt("reflection_brief.findings", _findings_section(closure)),
-        named_prompt("reflection_brief.result", _result_section(result, closure.dispatch_error)),
+        named_prompt("reflection_brief.findings", _findings_section(closure), required=False),
+        named_prompt("reflection_brief.result", _result_section(result, closure.dispatch_error), required=False),
         named_prompt(
-            "reflection_brief.commands", _commands_section(responder_shell_commands(responder_turn_log, session_id))
+            "reflection_brief.commands",
+            _commands_section(responder_shell_commands(responder_turn_log, session_id)),
+            required=False,
         ),
     ]
     if include_memory:
@@ -570,6 +594,7 @@ def incident_brief(
             named_prompt(
                 "reflection_brief.memory",
                 _logical_memory_section(closure, detector_detail=detector_detail, event_dependence=event_dependence),
+                required=False,
             ),
         )
     body = join_prompts("\n\n", sections, part="reflection_brief.separators")

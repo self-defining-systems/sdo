@@ -615,5 +615,9 @@ def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_p
         closure=_fresh_closure(tmp_path),
     )
     prompt = expand_context(str(backend.calls[0]["prompt"]))
-    current = json.JSONDecoder().raw_decode(prompt.split("Current outcome:\n", 1)[1].lstrip())[0]
-    assert current["undetected_causes"][0]["repair_action_id"] == "recorded-patch"
+    current_text = prompt.split("Current outcome:\n", 1)[1].lstrip()
+    decoder = json.JSONDecoder()
+    required, end = decoder.raw_decode(current_text)
+    details, _ = decoder.raw_decode(current_text[end:].lstrip())
+    assert required["classification"] == outcome.classification
+    assert details["undetected_causes"][0]["repair_action_id"] == "recorded-patch"

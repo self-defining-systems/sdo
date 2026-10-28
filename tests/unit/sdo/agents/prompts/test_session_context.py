@@ -6,6 +6,7 @@ import pytest
 
 from benchmarks.sregym.adapter.context_preflight import check_context_shapes
 from benchmarks.sregym.assurance.scripted_codex.wire import Rollout
+from sdo.agents.context_output import budget_for
 from sdo.agents.session_context import measure_session
 
 
@@ -17,8 +18,10 @@ def test_live_shape_preflight_measures_production_producers(tmp_path):
     assert measured["responder"]["total_tool_output_chars"] < 131072
 
 
-@pytest.mark.parametrize(("message", "output"), [("x" * 15001, ""), ("small", "x" * 131073)])
-def test_gate_negative_controls_use_the_provider_session_file(tmp_path, message, output):
+@pytest.mark.parametrize("dimension", ["message", "tool"])
+def test_gate_negative_controls_use_the_provider_session_file(tmp_path, dimension):
+    message = "x" * (budget_for("session_context.reflection_first") + 1) if dimension == "message" else "small"
+    output = "x" * (budget_for("session_context.tool_total") + 1) if dimension == "tool" else ""
     rollout = Rollout.create(tmp_path, cwd=str(tmp_path))
     rollout.user_message(message)
     rollout.function_call_output("call", output, 0)

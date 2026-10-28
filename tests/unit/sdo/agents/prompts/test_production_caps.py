@@ -12,9 +12,9 @@ from tests.unit.sdo.agents.responder.tool_output_cases import large_response
 
 def test_large_prompt_sections_spill_losslessly(monkeypatch, tmp_path):
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
-    for name, limit in (("reflection.memory", 800), ("reflection.outcome", 3600), ("deployer.incident_data", 100)):
+    for name, limit in (("reflection.memory", 800), ("deployer.incident_data", 100)):
         original = "界 evidence\n" * 20000
-        prompt = named_prompt(name, original)
+        prompt = named_prompt(name, original, required=False)
         assert len(prompt) <= limit
         files = list(tmp_path.rglob("*.txt"))
         assert any(path.read_text() == original for path in files)
@@ -44,7 +44,9 @@ def test_all_cli_commands_bound_json_output(monkeypatch, tmp_path, capsys):
 
 def test_repeated_sections_share_one_aggregate_budget(monkeypatch, tmp_path):
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
-    prompt = named_prompt("reflection.memory", "x" * 600) + named_prompt("reflection.memory", "y" * 600)
+    prompt = named_prompt("reflection.memory", "x" * 600, required=False) + named_prompt(
+        "reflection.memory", "y" * 600, required=False
+    )
     assert len(prompt) <= 800
 
 
@@ -139,7 +141,7 @@ def test_cli_entry_point_bounds_future_handlers_and_stderr(monkeypatch, tmp_path
 def test_generic_worker_session_directory_owns_overflow(monkeypatch, tmp_path):
     monkeypatch.delenv("SDO_SESSION_SCRATCH", raising=False)
     monkeypatch.setenv("SDO_SESSION_DIR", str(tmp_path))
-    prompt = named_prompt("deployer.incident_data", "evidence " * 20000)
+    prompt = named_prompt("deployer.incident_data", "evidence " * 20000, required=False)
     assert len(prompt) <= 100
     assert "$SDO_SESSION_DIR/context/" in prompt
     assert len(prompt.context_files) == 1

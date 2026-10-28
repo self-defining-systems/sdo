@@ -34,9 +34,8 @@ Operational memory snapshot:
 
 Full outcome and memory index: referenced files; open only what you need.
 Current outcome:
+{"incident_id":"toy-incident","classification":"success","repair_actions":[],"full_current_outcome_path":"<context file>"}
 {
-  "incident_id": "toy-incident",
-  "classification": "success",
   "findings": [
     {
       "detector_id": "detector-0",
@@ -140,10 +139,8 @@ Current outcome:
     }
   ],
   "confirmed_root_causes": [],
-  "repair_actions": [],
   "plan_applications": [],
-  "undetected_causes": [],
-  "full_current_outcome_path": "<context file>"
+  "undetected_causes": []
 }
 
 Outcome history (prior incidents, compact): none

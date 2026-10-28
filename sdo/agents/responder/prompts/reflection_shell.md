@@ -8,3 +8,5 @@ Controller outcome at ${outcome_commit}:
 ${outcome_json}
 
 ${history_section}
+
+${work_section}
