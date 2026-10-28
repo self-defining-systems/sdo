@@ -495,8 +495,7 @@ def _up(args: argparse.Namespace) -> int:
             cluster_scoped(KubectlLaneCluster(environment.kubeconfig).list_objects()),
         )
     environment.save()
-    if deployed.get("deployed") is True and deployed.get("health", {}).get("healthy"):
-        LaneInjectionState(environment.kubeconfig, environment.namespace).recreated()
+    if app_recreated:
         AttemptMarker(environment.run_dir).end(())
     if environment.parallel_root is not None:
         from benchmarks.sregym.fastloop.shared_memory import provision_parallel_volume

@@ -38,8 +38,9 @@ Explicit `up --redeploy` and dirty-lane bring-up share the row reset transaction
 `wipe-receipt.json` may report `tier2_trigger=explicit_redeploy`. The durable
 last-injection journal is pending before recreation can write; only healthy source
 deployment and completed recapture clear it. Missing or interrupted history stays
-dirty. A fresh healthy deployment establishes clean history without an injection;
-known clean warm lanes retain the fast path. Control state reset stays separate.
+dirty. A plain application reapply cannot clear unknown data history; only the full
+recreation transaction establishes that fact. Known clean warm lanes retain the
+fast path. Control state reset stays separate.
 
 ## Ordered mixed-app dispatch
 
