@@ -80,8 +80,10 @@ def _manifest(host: str, repository: str, selector: str) -> RegistryManifest | N
         raise ValueError(f"registry manifest digest mismatch: {repository}@{selector}")
     if selector.startswith("sha256:") and digest != selector:
         raise ValueError(f"registry returned unexpected manifest digest: {repository}@{selector}")
-    config = json.loads(raw).get("config", {}).get("digest", "")
-    if not _DIGEST.fullmatch(config):
+    document = json.loads(raw)
+    descriptor = document.get("config") if isinstance(document, dict) else None
+    config = descriptor.get("digest") if isinstance(descriptor, dict) else None
+    if not isinstance(config, str) or not _DIGEST.fullmatch(config):
         raise ValueError(f"registry manifest has no image config identity: {repository}@{selector}")
     return RegistryManifest(digest, config)
 
@@ -177,6 +179,7 @@ def registry_delivery(
         tag = "sha256-" + expected.removeprefix("sha256:")
         local = f"{host}/{key}:{tag}"
         manifest = _manifest(host, key, tag)
+        cached = manifest is not None
         if manifest is None:
             _run(["docker", "tag", expected, local])
             pushed = _run(["docker", "push", "--platform", "linux/" + architecture, local])
@@ -185,10 +188,10 @@ def registry_delivery(
                 raise RuntimeError(f"registry push returned no manifest digest for {image}")
             manifest = _manifest(host, key, match[1])
             stats["uploads"] += 1
-        else:
-            stats["cache_hits"] += 1
         if manifest is None or manifest.config != expected:
             raise ValueError(f"registry image identity differs from frozen image {image}: expected {expected}")
+        if cached:
+            stats["cache_hits"] += 1
         digest = manifest.digest
         stats["manifest_digests"][image] = digest
         stats["publication_seconds"] += time.monotonic() - started

@@ -155,8 +155,10 @@ def test_existing_wrong_content_tag_is_never_a_cache_hit(registry):
         manifests[key] = json.dumps({"config": {"digest": OTHER_CONFIG}}).encode()
     state["node_config"] = CONFIG
     before = len(commands)
+    metrics = {}
     with pytest.raises(ValueError, match="identity"):
-        image_delivery.registry_delivery("img1-b", ["controller:frozen"])
+        image_delivery.registry_delivery("img1-b", ["controller:frozen"], metrics=metrics)
+    assert metrics["cache_hits"] == 0
     assert not any("pull" in argv for argv, _ in commands[before:])
     assert len([argv for argv, _ in commands if argv[:2] == ["docker", "push"]]) == 1
 
@@ -256,3 +258,13 @@ def test_identical_images_under_different_source_names_publish_once(registry):
     evidence = image_delivery.registry_delivery("img1-a", ["controller:one", "mirror.local:5000/copy:two"])
     assert len([argv for argv, _ in commands if argv[:2] == ["docker", "push"]]) == 1
     assert len(set(evidence["img1-a-worker"].values())) == 1
+
+
+@pytest.mark.parametrize("document", [None, [], {"config": None}, {"config": []}, {"config": {"digest": 7}}])
+def test_malformed_cached_manifest_has_actionable_identity_error(registry, document):
+    _, manifests, _, _ = registry
+    image_delivery.registry_delivery("img1-a", ["controller:frozen"])
+    for key in manifests:
+        manifests[key] = json.dumps(document).encode()
+    with pytest.raises(ValueError, match="config identity"):
+        image_delivery.registry_delivery("img1-b", ["controller:frozen"])
