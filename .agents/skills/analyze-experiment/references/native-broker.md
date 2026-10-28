@@ -2,17 +2,8 @@
 
 ## Broker incident ledger
 
-Incident workspace preparation uses the full accepted commit bound in the
-durable opening request. It clones that immutable revision under a per-proposal
-lock, independently of the shared publication lock held during peer validation.
-Newer memory is incorporated at later publication/rebuild boundaries. Compare
-`incident_opened` with `workspace_prepared` in lifecycle telemetry; current logs
-also emit `incident_workspace_preparing` and `incident_workspace_prepared` with
-`bound_commit`, the resulting `base_commit`, `duration_ms`, and any error. A
-workspace's base must remain the opening revision even when a peer commits in
-between. Older builds selected the latest head only after waiting for the shared
-broker lock, so a long pre-stage gap could be peer validation time rather than
-program execution or a controller restart.
+For bound incident workspaces and publication-wait evidence, read
+[ordered response stages](response-stages.md).
 
 Source repairs change source identity (all non-`.sdo` inputs participate). Diff, reconcile and closure render accepted source directly; no rendered lock or image evidence exists.
 
