@@ -1383,20 +1383,52 @@ def collect_followup_incident(
     return resolution
 
 
-def _closeout_settled(receipt: dict[str, Any]) -> bool:
-    """Whether the two volatile close-out signals the strict receipt samples have settled.
+def _closeout_settled(document: dict[str, Any], *, incident_id: str = "") -> bool:
+    """ACK plus incident-bound reflection and rollout completion, from either read edge.
 
-    ``completed`` is the durable responder result's terminal status and
-    ``remaining_worktrees`` is the shared worktree directory the controller drains
-    asynchronously at acknowledge. The reflection-drain predicate can return while
-    either is still settling on composite incidents, so the gate must not sample
-    until both are quiescent.
+    Controller state projects unfinished broker reflection/rollout work into its
+    queue. A receipt carries the underlying ledger instead. Neither edge may
+    treat an early non-success ACK as terminal reflection evidence. This is a
+    sampling gate; strict receipt validation still owns evidence acceptance.
     """
 
-    if receipt.get("schema_version") == "sdo.production-receipt/v2":
-        ledger = receipt.get("native_ledger")
-        return isinstance(ledger, dict) and ledger.get("acknowledged") is True
-    return receipt.get("completed") is True and receipt.get("remaining_worktrees") == []
+    if incident_id:
+        return (
+            document.get("last_acknowledged_incident_id") == incident_id
+            and not document.get("queued_reflections_unknown")
+            and incident_id not in queued_reflection_ids(document)
+        )
+    if document.get("schema_version") == "sdo.production-receipt/v2":
+        ledger = document.get("native_ledger")
+        if not isinstance(ledger, dict) or ledger.get("acknowledged") is not True:
+            return False
+        if not document.get("incident_id") or ledger.get("incident_id") != document.get("incident_id"):
+            return False
+        if ledger.get("requires_reflection"):
+            decision = ledger.get("reflection_decision")
+            if ledger.get("reflection_processed") is not True or not isinstance(decision, dict):
+                return False
+            if not decision.get("learning_decision"):
+                return False
+            if decision.get("learning_decision") == "updated" and not ledger.get("reflection_commit"):
+                return False
+        expected = ledger.get("rollout_expectation")
+        if expected:
+            if (
+                not isinstance(expected, dict)
+                or expected.get("incident_id") != ledger.get("incident_id")
+                or expected.get("reflection_commit") != ledger.get("reflection_commit")
+            ):
+                return False
+            return any(
+                isinstance(attempt, dict)
+                and attempt.get("success") is True
+                and attempt.get("expectation") == expected
+                and attempt.get("observed_detector_fingerprint") == expected.get("after_detector_fingerprint")
+                for attempt in ledger.get("rollout_receipts", [])
+            )
+        return True
+    return document.get("completed") is True and document.get("remaining_worktrees") == []
 
 
 def _collect_settled_receipt(
@@ -1982,13 +2014,11 @@ def controller_job_failure(job: dict[str, Any]) -> str | None:
 def _wait_for_reflection_drain(
     ops: ClusterOps, control: str, incident_id: str, deadline_at: datetime, clock: Clock
 ) -> dict[str, Any]:
-    """Wait for broker acknowledgment, until the incident's reflection deadline.
+    """Wait for ACK, incident-bound reflection and rollout within the existing deadline.
 
-    A successful closure's reflection and detector rollout precede its
-    acknowledgment. A non-success closure is acknowledged on its outcome commit;
-    its queued reflection and any detector rollout follow, and the next
-    problem's admission waits for them through ``incident_work_open``. Stops early,
-    typed, when the controller Job is terminal: no owner is left to acknowledge.
+    Non-success outcomes acknowledge before queued reflection and rollout. The
+    controller's queue projection keeps that incident unsettled through both.
+    A terminal controller Job stops the wait with a typed failure.
     """
 
     timeout = max(0.0, (deadline_at - clock.now()).total_seconds())
@@ -2016,7 +2046,7 @@ def _wait_for_reflection_drain(
             except PersistentControllerError as exc:
                 error = f"observation failed: {exc}"
             else:
-                if observed.acknowledged:
+                if _closeout_settled(state, incident_id=incident_id):
                     return state
             _raise_terminal_controller_job(ops, control, incident_id)
         if budget.left() <= 0:

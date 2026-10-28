@@ -73,13 +73,15 @@ def test_native_closeout_settles_on_acknowledged_go_ledger() -> None:
     assert persistent._closeout_settled(
         {
             "schema_version": "sdo.production-receipt/v2",
-            "native_ledger": {"acknowledged": True},
+            "incident_id": "incident-1",
+            "native_ledger": {"incident_id": "incident-1", "acknowledged": True},
         }
     )
     assert not persistent._closeout_settled(
         {
             "schema_version": "sdo.production-receipt/v2",
-            "native_ledger": {"acknowledged": False},
+            "incident_id": "incident-1",
+            "native_ledger": {"incident_id": "incident-1", "acknowledged": False},
         }
     )
 
