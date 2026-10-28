@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -143,7 +144,8 @@ func TestTwoClustersAdoptingOneAcceptedTreeEachKeepTheirOwnBaseline(t *testing.T
 		}
 		c.reference = reference
 		c.provider = TrafficSnapshotProvider{Base: c.snapshots, Reachability: c.observer, Reference: reference}
-		if err := acceptStartupReachabilityBaseline(ctx, &Controller{}, root, c.state, true, c.observer, c.provider, reference, []sdk.Detector{healthyGoal()}); err != nil {
+		acceptStartupReachabilityBaseline(ctx, &Controller{}, root, c.state, true, c.observer, c.provider, reference, []sdk.Detector{healthyGoal()})
+		if err := reference.Unavailable(); err != nil {
 			t.Fatalf("startup capture: %v", err)
 		}
 		c.observer.Stop()
@@ -217,7 +219,8 @@ func TestLegacyTreeCaptureIsIgnored(t *testing.T) {
 	if findings := reachabilityFindings(t, ctx, TrafficSnapshotProvider{Base: snapshots, Reachability: observer, Reference: reference}); len(findings) != 1 {
 		t.Fatalf("legacy tree capture hid a failure on an unmeasured cluster: %+v", findings)
 	}
-	if err := acceptStartupReachabilityBaseline(ctx, &Controller{}, root, state, true, observer, TrafficSnapshotProvider{Base: snapshots, Reachability: observer, Reference: reference}, reference, []sdk.Detector{healthyGoal()}); err != nil {
+	acceptStartupReachabilityBaseline(ctx, &Controller{}, root, state, true, observer, TrafficSnapshotProvider{Base: snapshots, Reachability: observer, Reference: reference}, reference, []sdk.Detector{healthyGoal()})
+	if err := reference.Unavailable(); err != nil {
 		t.Fatal(err)
 	}
 	if b := stateBaseline(t, state); b == nil || len(b.Exclusions) != 1 {
@@ -313,13 +316,9 @@ func TestStartupReachabilityBaselineNeverCapturesRestoredIncident(t *testing.T) 
 	for _, c := range []*Controller{{incidentOpen: true}, {currentIncidentRequest: &IncidentRequest{}}, {pendingClosure: &IncidentClosure{}, closureState: contracts.ClosureState_CLOSURE_STATE_PENDING}, {closureReceipt: &ClosureReceipt{}, closureState: contracts.ClosureState_CLOSURE_STATE_COMMITTED}, {pendingClosure: &IncidentClosure{}, closureReceipt: &ClosureReceipt{}, closureState: contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING}} {
 		// Nil observation dependencies deliberately panic if a restored incident
 		// reaches measurement, rather than proving only that capture was skipped.
-		if err := acceptStartupReachabilityBaseline(context.Background(), c, root, state, true, &ServiceReachabilityObserver{}, nil, &ReachabilityReference{}, nil); err != nil {
-			t.Fatal(err)
-		}
+		acceptStartupReachabilityBaseline(context.Background(), c, root, state, true, &ServiceReachabilityObserver{}, nil, &ReachabilityReference{}, nil)
 	}
-	if err := acceptStartupReachabilityBaseline(context.Background(), &Controller{}, root, state, false, &ServiceReachabilityObserver{}, nil, &ReachabilityReference{}, nil); err != nil {
-		t.Fatal(err)
-	}
+	acceptStartupReachabilityBaseline(context.Background(), &Controller{}, root, state, false, &ServiceReachabilityObserver{}, nil, &ReachabilityReference{}, nil)
 	if b := stateBaseline(t, state); b != nil {
 		t.Fatalf("restored incident captured a baseline: %+v", b)
 	}
@@ -447,12 +446,15 @@ func firingGoal() sdk.Detector {
 
 func (g *baselineGate) accept(goal sdk.Detector) error {
 	head, tree := g.head(), nativeGit(g.t, g.root, "rev-parse", "HEAD^{tree}")
-	err := acceptStartupReachabilityBaseline(g.ctx, g.controller, g.root, g.state, true, g.observer, g.provider, g.reference, []sdk.Detector{goal})
+	acceptStartupReachabilityBaseline(g.ctx, g.controller, g.root, g.state, true, g.observer, g.provider, g.reference, []sdk.Detector{goal})
 	g.observer.Stop()
 	if g.head() != head || nativeGit(g.t, g.root, "rev-parse", "HEAD^{tree}") != tree {
 		g.t.Fatal("the startup gate changed the accepted repository")
 	}
-	return err
+	if err := g.reference.Unavailable(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (g *baselineGate) baseline() *servicehealth.ReachabilityBaseline {
@@ -528,7 +530,7 @@ func TestStartupReachabilityBaselineStalenessNeverAddsAnExclusion(t *testing.T) 
 }
 
 // A stale record with a goal that is firing now is kept and retried at the next
-// gate; it must not make Run or resume fail.
+// gate; the baseline is only unavailable, which cannot make Run or resume fail.
 func TestStartupReachabilityBaselineKeepsAStaleRecordWhileTheGoalIsFiring(t *testing.T) {
 	g := newBaselineGate(t, func() *mutableSnapshots { return withMode("") })
 	if err := g.accept(healthyGoal()); err != nil {
@@ -536,8 +538,9 @@ func TestStartupReachabilityBaselineKeepsAStaleRecordWhileTheGoalIsFiring(t *tes
 	}
 	first := g.baseline().Exclusions[0].Configuration
 	g.snapshots.set(withMode("restored").snapshot)
-	if err := g.accept(firingGoal()); err != nil {
-		t.Fatalf("a firing goal made the gate fail: %v", err)
+	var unavailable *BaselineUnavailableError
+	if err := g.accept(firingGoal()); !errors.As(err, &unavailable) {
+		t.Fatalf("a firing goal did not leave the baseline unavailable: %v", err)
 	}
 	if g.baseline().Exclusions[0].Configuration != first || len(g.logged) == 0 {
 		t.Fatalf("stale record not kept and logged: logged=%v", g.logged)
@@ -552,4 +555,93 @@ func TestStartupReachabilityBaselineKeepsAStaleRecordWhileTheGoalIsFiring(t *tes
 
 func withReachability(s sdktest.Snapshot, w servicehealth.ReachabilityWindow) sdk.DetectionContext {
 	return trafficContext{DetectionContext: s, reachability: &w}
+}
+
+// After a first try that changed the accepted source, the controller resumes
+// while the application is still unhealthy. No current baseline can be measured;
+// that is a state, not a controller failure: the never-served port is unknown
+// rather than an incident, and once the goal heals the retry measures a record
+// that the running detector judges against.
+func TestResumeOnUnhealthyAppKeepsObservingAndMeasuresOnceHealthy(t *testing.T) {
+	g := newBaselineGate(t, func() *mutableSnapshots { return withMode("") })
+	if err := g.accept(healthyGoal()); err != nil {
+		t.Fatalf("first capture: %v", err)
+	}
+	previous := g.baseline()
+	if err := os.WriteFile(filepath.Join(g.root, "application-config.yaml"), []byte("version: 2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, g.root, "add", "application-config.yaml")
+	nativeGit(t, g.root, "commit", "-qm", "first try changed the source")
+	now := time.Date(2026, 10, 28, 18, 0, 0, 0, time.UTC)
+	g.controller.now = func() time.Time { return now }
+
+	var unavailable *BaselineUnavailableError
+	if err := g.accept(firingGoal()); !errors.As(err, &unavailable) {
+		t.Fatalf("resume on an unhealthy app did not leave the baseline unavailable: %v", err)
+	}
+	if !g.baseline().CapturedAt.Equal(previous.CapturedAt) {
+		t.Fatal("an unhealthy app wrote a baseline")
+	}
+	if len(g.logged) == 0 || !errors.As(g.logged[len(g.logged)-1], &unavailable) {
+		t.Fatalf("unavailable baseline not reported: %v", g.logged)
+	}
+	for i := 0; i < g.observer.config.Failures; i++ {
+		g.observer.Cycle(g.ctx)
+	}
+	if findings := reachabilityFindings(t, g.ctx, g.provider); len(findings) != 0 {
+		t.Fatalf("a never-served port fired without a current baseline: %+v", findings)
+	}
+	snapshot, err := g.provider.Snapshot(g.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability"})
+	if reason := detectorConfirmationReason(detector, snapshot); !detectorConfirmed(detector, snapshot) || !strings.Contains(reason, "unknown") {
+		t.Fatalf("reachability not reported unknown: confirmed=%v reason=%q", detectorConfirmed(detector, snapshot), reason)
+	}
+
+	// Not due yet, then due while an incident is open: nothing is measured, and
+	// the attempt moves forward instead of spinning the loop.
+	g.retry(healthyGoal())
+	if g.reference.Unavailable() == nil {
+		t.Fatal("retry measured before it was due")
+	}
+	now = now.Add(reachabilityBaselineCheck)
+	g.controller.incidentOpen = true
+	g.retry(healthyGoal())
+	if g.reference.Unavailable() == nil || !g.reference.retryAt().After(now) {
+		t.Fatalf("skipped retry did not move forward: %v", g.reference.retryAt())
+	}
+	g.controller.incidentOpen = false
+
+	now = now.Add(reachabilityBaselineCheck)
+	g.retry(healthyGoal())
+	if err := g.reference.Unavailable(); err != nil {
+		t.Fatalf("healthy app did not get a baseline: %v", err)
+	}
+	if !g.reference.retryAt().IsZero() {
+		t.Fatal("a current record still schedules retries")
+	}
+	measured := g.baseline()
+	if measured.Authorization.SourceInputs == previous.Authorization.SourceInputs || len(measured.Exclusions) != 1 {
+		t.Fatalf("no baseline for the changed source: %+v", measured)
+	}
+	for i := 0; i < g.observer.config.Failures; i++ {
+		g.observer.Cycle(g.ctx)
+	}
+	if findings := reachabilityFindings(t, g.ctx, g.provider); len(findings) != 0 {
+		t.Fatalf("detector did not judge against the new record: %+v", findings)
+	}
+	if snapshot, err = g.provider.Snapshot(g.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if reason := detectorConfirmationReason(detector, snapshot); reason != "" {
+		t.Fatalf("still unknown after the baseline: %q", reason)
+	}
+}
+
+func (g *baselineGate) retry(goal sdk.Detector) {
+	retryReachabilityBaseline(g.ctx, g.controller, g.root, g.state, true, g.observer, g.provider, g.reference, []sdk.Detector{goal})
+	g.observer.Stop()
 }

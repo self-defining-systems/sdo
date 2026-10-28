@@ -1016,6 +1016,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		waitState()
 		return nil
 	}
+	// acceptBaseline runs the reachability baseline gate. It never fails the
+	// controller: a baseline it cannot measure is an unavailable state that
+	// later passes measure again.
+	acceptBaseline := func(gate func(context.Context, *Controller, string, string, bool, *ServiceReachabilityObserver, SnapshotProvider, *ReachabilityReference, []sdk.Detector)) {
+		if launchConfig != nil && options.NativeBroker != nil {
+			gate(runCtx, controller, resolvedRoot, *repositoryMountPath, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, reachabilityReference, detectors)
+		}
+	}
 	persistControllerState := func() {
 		if err := controller.PersistState(ctx); err != nil {
 			fmt.Fprintf(stderr, "persist controller state: %v\n", err)
@@ -1034,11 +1042,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			return fmt.Errorf("sync Kubernetes informer cache: %w", err)
 		}
-		if launchConfig != nil && options.NativeBroker != nil {
-			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, *repositoryMountPath, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, reachabilityReference, detectors); err != nil {
-				return err
-			}
-		}
+		acceptBaseline(acceptStartupReachabilityBaseline)
 		if err := controller.Step(runCtx, time.Now().UTC(), nil); err != nil {
 			if runCtx.Err() != nil {
 				return nil
@@ -1090,11 +1094,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			// so fail loudly and let the restart name the kind again.
 			return fmt.Errorf("resume observation of namespace %s: %w", *namespace, syncErr)
 		}
-		if launchConfig != nil && options.NativeBroker != nil {
-			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, *repositoryMountPath, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, reachabilityReference, detectors); err != nil {
-				return err
-			}
-		}
+		acceptBaseline(acceptStartupReachabilityBaseline)
 		kubernetesCache.TakeEvents()
 		if wasPaused && !preserved {
 			kubernetesCache.TakeObjectChanges()
@@ -1131,6 +1131,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if *exitAfterClosure && controller.LastAcknowledgedIncidentID() != "" {
 			return nil
 		}
+		if applied == desired && !applied.Paused {
+			acceptBaseline(retryReachabilityBaseline)
+		}
 		var delay time.Duration
 		switch {
 		case applied != desired:
@@ -1143,6 +1146,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 		default:
 			delay = time.Until(controller.NextWake())
+			if retry := reachabilityReference.retryAt(); !retry.IsZero() {
+				delay = min(delay, time.Until(retry))
+			}
 		}
 		if delay < 0 {
 			delay = 0
