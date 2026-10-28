@@ -15,7 +15,7 @@ import (
 // detector lists are never required, because health and generated detectors
 // list only their own playbook and reflection cannot edit them.
 func programLinksFinding(spec program.ProgramSpec, finding sdk.Finding) bool {
-	if len(candidateBindings(spec, finding)) > 0 {
+	if _, err := program.BindFinding(spec, finding); err == nil {
 		return true
 	}
 	for _, reference := range finding.Playbooks {

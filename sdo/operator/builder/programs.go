@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
@@ -71,13 +73,50 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 	if err != nil {
 		return err
 	}
-	if err := generatePrograms(workspace, module, programs); err != nil {
+	if err := generatePrograms(workspace, module, programs, changedPrograms(ctx, config.ApplicationRoot, programs)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func generatePrograms(root, module string, programs []programvalidation.Spec) error {
+// changedPrograms names the playbooks the candidate edits: uncommitted changes
+// under .sdo/playbooks, as staged by the broker and left by an agent before its
+// self-check. Accepted programs are not re-judged by declaration rules added
+// later, so an outcome publication never fails on memory it did not touch.
+// Without Git history every program is checked.
+func changedPrograms(ctx context.Context, applicationRoot string, programs []programvalidation.Spec) []string {
+	all := make([]string, 0, len(programs))
+	for _, item := range programs {
+		all = append(all, item.ID)
+	}
+	output, err := exec.CommandContext(ctx, "git", "-C", applicationRoot, "status", "--porcelain", "--untracked-files=all", "--", layout.PlaybooksDir).Output()
+	if err != nil {
+		return all
+	}
+	changed := map[string]bool{}
+	for _, line := range strings.Split(string(output), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		for _, name := range strings.Split(line[3:], " -> ") {
+			rest, ok := strings.CutPrefix(strings.Trim(name, "\""), layout.PlaybooksDir+"/")
+			if id, _, found := strings.Cut(rest, "/"); ok && found {
+				changed[id] = true
+			}
+		}
+	}
+	var ids []string
+	for _, id := range all {
+		if changed[id] {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// generatePrograms writes the registry and its generated tests. roleChecked
+// names the programs whose object roles must be bindable from unnamed findings.
+func generatePrograms(root, module string, programs []programvalidation.Spec, roleChecked []string) error {
 	var source strings.Builder
 	source.WriteString("package generated\n\nimport (\n\t\"sdo.dev/operator/sdk/program\"\n")
 	for index, item := range programs {
@@ -102,10 +141,19 @@ func generatePrograms(root, module string, programs []programvalidation.Spec) er
 	}
 	// Declaration validation is structural policy, independent of replay results
 	// and available corpus cases. Never make it an informational replay note.
+	checked := make([]string, 0, len(roleChecked))
+	for _, id := range roleChecked {
+		checked = append(checked, strconv.Quote(id))
+	}
 	declarations := `package generated
-import "testing"
+import ("testing";"sdo.dev/operator/sdk/program")
 func TestProgramRegistrationContracts(t *testing.T) {
- if _, err := Programs(); err != nil { t.Fatal(err) }
+ registry, err := Programs(); if err != nil { t.Fatal(err) }
+ checked := map[string]bool{}
+ for _, id := range []string{` + strings.Join(checked, ",") + `} { checked[id] = true }
+ for _, spec := range registry.List() {
+  if checked[spec.ID] { if err := program.CheckFindingRoles(spec); err != nil { t.Error(err) } }
+ }
 }
 `
 	if err := os.WriteFile(filepath.Join(root, "generated", "program_declarations_test.go"), []byte(declarations), 0o644); err != nil {
