@@ -428,20 +428,28 @@ RUNSCRIPT_PORT_REPAIR = (
     'kubectl -n "$NAMESPACE" patch service "$SERVICE" --type=json '
     """-p '[{"op":"replace","path":"/spec/ports/0/targetPort","value":8080}]'"""
 )
-RUNSCRIPT_MITIGATE = f"""package targetport
-
-import (
-\t"context"
-
-\t"sdo.dev/operator/sdk/program"
+RUNSCRIPT_MITIGATE = "\n".join(
+    [
+        "package targetport",
+        "",
+        "import (",
+        '\t"context"',
+        "",
+        '\t"sdo.dev/operator/sdk/program"',
+        ")",
+        "",
+        "func (Program) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {",
+        '\tref := b.Objects["service"]',
+        "\tenv := map[string]program.Value{"
+        + '"NAMESPACE": program.FromObserved(ref, "metadata.namespace"), '
+        + '"SERVICE": program.FromObserved(ref, "metadata.name")}',
+        "\treturn program.Plan{Actions: []program.Action{program.RunScript{"
+        + f"Script: `{RUNSCRIPT_PORT_REPAIR}`, "
+        + 'Env: env, Reason: "restore the recorded Service port"}}}, nil',
+        "}",
+        "",
+    ]
 )
-
-func (Program) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {{
-\tref := b.Objects["service"]
-\tenv := map[string]program.Value{{"NAMESPACE": program.FromObserved(ref, "metadata.namespace"), "SERVICE": program.FromObserved(ref, "metadata.name")}}
-\treturn program.Plan{{Actions: []program.Action{{program.RunScript{{Script: `{RUNSCRIPT_PORT_REPAIR}`, Env: env, Reason: "restore the recorded Service port"}}}}}}, nil
-}}
-"""
 
 
 def test_recorded_readme_only_reflection_is_corrected_once_into_a_runscript_step(tmp_path: Path) -> None:

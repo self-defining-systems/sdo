@@ -41,7 +41,10 @@ def test_sdo_act_records_a_linkable_receipt(
     lines = recorded_actions.actions_path().read_text().splitlines()
     receipt = json_format.ParseDict(json.loads(lines[-1])["receipt"], RepairActionReceipt())
     assert receipt.kind == entry["kind"]
-    assert receipt.success and receipt.started_at.seconds and receipt.completed_at.seconds
-    assert receipt.action_id.startswith("sdo-act-") and list(receipt.resources)
+    assert receipt.success
+    assert receipt.started_at.seconds
+    assert receipt.completed_at.seconds
+    assert receipt.action_id.startswith("sdo-act-")
+    assert list(receipt.resources)
     # No script bytes are claimed; reflection links the step by receipt identity.
     assert not receipt.script_digest
