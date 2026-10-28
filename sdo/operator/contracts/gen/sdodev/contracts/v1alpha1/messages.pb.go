@@ -3543,8 +3543,12 @@ type IncidentClosure struct {
 	// only: health alone decided the closure.
 	SourceCheckNotes        []string                 `protobuf:"bytes,26,rep,name=source_check_notes,json=sourceCheckNotes,proto3" json:"source_check_notes,omitempty"`
 	StatePersistenceFailure *StatePersistenceFailure `protobuf:"bytes,27,opt,name=state_persistence_failure,json=statePersistenceFailure,proto3" json:"state_persistence_failure,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// Set durably before the first broker attempt, with the closure-time
+	// recheck's notes folded in. A frozen closure is the incident's terminal
+	// identity: every later attempt, across restarts, sends these exact bytes.
+	Frozen        bool `protobuf:"varint,28,opt,name=frozen,proto3" json:"frozen,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *IncidentClosure) Reset() {
@@ -3743,6 +3747,13 @@ func (x *IncidentClosure) GetStatePersistenceFailure() *StatePersistenceFailure 
 		return x.StatePersistenceFailure
 	}
 	return nil
+}
+
+func (x *IncidentClosure) GetFrozen() bool {
+	if x != nil {
+		return x.Frozen
+	}
+	return false
 }
 
 // Controller-owned evidence from one response stage. Finding credit describes
@@ -4457,7 +4468,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01:\x9d\x02\xbaH\x99\x02\x1a\x80\x01\n" +
 	"\x1etimeline.last_seen_after_first\x120last_seen_at must not precede first_activated_at\x1a,this.last_seen_at >= this.first_activated_at\x1a\x93\x01\n" +
 	"\x1ctimeline.cleared_after_first\x12.cleared_at must not precede first_activated_at\x1aC!has(this.cleared_at) || this.cleared_at >= this.first_activated_atB\r\n" +
-	"\v_cleared_at\"\xd1\x0f\n" +
+	"\v_cleared_at\"\xe9\x0f\n" +
 	"\x0fIncidentClosure\x12L\n" +
 	"\arequest\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentRequestB\x06\xbaH\x03\xc8\x01\x01R\arequest\x12A\n" +
 	"\x06result\x18\x02 \x01(\v2).sdodev.contracts.v1alpha1.IncidentResultR\x06result\x12*\n" +
@@ -4485,7 +4496,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x12unconfirmed_reason\x18\x18 \x01(\x0e23.sdodev.contracts.v1alpha1.ClosureUnconfirmedReasonR\x11unconfirmedReason\x12-\n" +
 	"\x12unconfirmed_detail\x18\x19 \x01(\tR\x11unconfirmedDetail\x12,\n" +
 	"\x12source_check_notes\x18\x1a \x03(\tR\x10sourceCheckNotes\x12n\n" +
-	"\x19state_persistence_failure\x18\x1b \x01(\v22.sdodev.contracts.v1alpha1.StatePersistenceFailureR\x17statePersistenceFailureB\x11\n" +
+	"\x19state_persistence_failure\x18\x1b \x01(\v22.sdodev.contracts.v1alpha1.StatePersistenceFailureR\x17statePersistenceFailure\x12\x16\n" +
+	"\x06frozen\x18\x1c \x01(\bR\x06frozenB\x11\n" +
 	"\x0f_dispatch_errorB\x14\n" +
 	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\x98\x02\n" +
 	"\vStageReport\x12\x1d\n" +
