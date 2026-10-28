@@ -61,15 +61,29 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 		return nil
 	}
 	var partial []*contracts.SourceReconcileResult
+	unread := 0
+	for index, action := range result.Plan.Actions {
+		if isSourceReconcile(action) && index < len(result.ActionsApplied) && index < len(result.ActionReports) {
+			unread++
+		}
+	}
 	for index, action := range result.Plan.Actions {
 		if !isSourceReconcile(action) || index >= len(result.ActionsApplied) || index >= len(result.ActionReports) {
 			continue
 		}
+		// Each object's readback gets its share of what remains, so one slow read
+		// never consumes the readbacks of the objects after it.
+		readCtx, cancel := context.WithCancel(ctx)
+		if deadline, ok := ctx.Deadline(); ok {
+			cancel()
+			readCtx, cancel = context.WithTimeout(ctx, time.Until(deadline)/time.Duration(unread))
+		}
+		unread--
 		ref, _ := planActionRef(action)
 		previous := result.ActionReports[index].SourceReconcile
 		report := &contracts.SourceReconcileResult{Ref: planRefProto(ref)}
 		result.ActionReports[index].SourceReconcile = report
-		observed, err := e.Client.Get(ctx, ref)
+		observed, err := e.Client.Get(readCtx, ref)
 		if err == nil && (observed == nil || !samePlanRef(observed, ref)) {
 			err = errors.New("object identity unavailable")
 		}
@@ -84,13 +98,13 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 		if err != nil {
 			// A deadline cannot erase already measured unresolved work. Preserve its
 			// paths as pending evidence, qualified by the unavailable final read.
-			if ctx.Err() != nil && previous != nil {
+			if readCtx.Err() != nil && previous != nil {
 				report.ResidualPaths = append([]string(nil), previous.ResidualPaths...)
 				report.AdditionsKnown = previous.AdditionsKnown
 			}
 			report.ObservationError = "direct object readback unavailable or identity changed"
 		} else {
-			source, sourceErr := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, ref)
+			source, sourceErr := acceptedIncidentManifest(readCtx, e.Source, incident.SourceCommit, incident.Namespace, ref)
 			if sourceErr != nil || source == nil || !samePlanRef(source, ref) {
 				report.ObservationError = "accepted source unavailable for readback comparison"
 			} else {
@@ -98,7 +112,7 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 				if observer, ok := e.Rollouts.(interface {
 					SourceRolloutResiduals(context.Context, *unstructured.Unstructured) ([]string, error)
 				}); ok {
-					paths, observeErr := observer.SourceRolloutResiduals(ctx, observed)
+					paths, observeErr := observer.SourceRolloutResiduals(readCtx, observed)
 					report.ResidualPaths = append(report.ResidualPaths, paths...)
 					sort.Strings(report.ResidualPaths)
 					if observeErr != nil {
@@ -107,6 +121,7 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 				}
 			}
 		}
+		cancel()
 		report.Converged = len(report.ResidualPaths) == 0 && report.ObservationError == ""
 		if !report.Converged {
 			partial = append(partial, report)
@@ -212,12 +227,17 @@ func preserveSourceControllerFields(next, observed *unstructured.Unstructured) {
 	}
 }
 
-// waitSourceConvergence uses the remaining shared rollout budget. Ordinary
-// source-field residuals are terminal after rollout; old-template capacity may
-// still disappear after Deployment status reports completion.
-func (e PlanExecutor) waitSourceConvergence(ctx context.Context, incident IncidentRequest, result *PlanApplicationResult) (*contracts.RolloutPending, error) {
+// waitSourceConvergence polls until waitCtx ends. Ordinary source-field
+// residuals are terminal after rollout; old-template capacity may still
+// disappear after Deployment status reports completion. The final readback
+// uses readCtx, the reserved remainder of the same deadline.
+func (e PlanExecutor) waitSourceConvergence(waitCtx, readCtx context.Context, incident IncidentRequest, result *PlanApplicationResult) (*contracts.RolloutPending, error) {
 	for {
-		err := e.observeSourceResiduals(ctx, incident, result)
+		observeCtx := waitCtx
+		if waitCtx.Err() != nil {
+			observeCtx = readCtx
+		}
+		err := e.observeSourceResiduals(observeCtx, incident, result)
 		if err == nil {
 			return nil, nil
 		}
@@ -231,18 +251,17 @@ func (e PlanExecutor) waitSourceConvergence(ctx context.Context, incident Incide
 				rolling = rolling || strings.HasPrefix(path, "rollout.")
 			}
 		}
-		if !rolling {
+		if !rolling || observeCtx == readCtx {
+			// Preserve the last measured residual, even when the final API read can
+			// no longer run under the original deadline.
 			return nil, terminalSourceResiduals(result, err)
 		}
-		if e.PollRollouts && ctx.Err() == nil {
+		if e.PollRollouts {
 			pending := &contracts.RolloutPending{Reason: "source rollout is settling; writes remain applied and are not independently verified"}
 			return pending, &RolloutPendingError{Pending: pending}
 		}
 		select {
-		case <-ctx.Done():
-			// Preserve the last measured residual, even when the final API read can no
-			// longer run under the original deadline.
-			return nil, terminalSourceResiduals(result, err)
+		case <-waitCtx.Done():
 		case <-time.After(100 * time.Millisecond):
 		}
 	}

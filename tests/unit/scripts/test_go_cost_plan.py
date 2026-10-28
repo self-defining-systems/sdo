@@ -27,11 +27,13 @@ def test_budget_guard_rejects_overfull_shard():
         planner.check_budget(["TestOld", "TestNewExpensive"], {"TestOld": 140, "TestNewExpensive": 140}, budget=210)
 
 
-def test_unknown_names_have_conservative_cost_and_deterministic_ownership():
+def test_unknown_names_have_provisional_cost_and_deterministic_ownership():
     names = [f"TestNew{i}" for i in range(30)]
     bins, nightly = planner.pack(names, {}, budget=210)
     assert bins == planner.pack(list(reversed(names)), {}, budget=210)[0]
-    assert len(bins) == len(names)
+    # An unmeasured test reserves a small provisional slice, never a whole bin.
+    assert len(bins) < len(names)
+    assert all(sum(planner.DEFAULT_COST for _ in b) <= 210 for b in bins)
     assert sorted(n for b in bins for n in b) == sorted(names)
     assert not nightly
 
@@ -100,7 +102,8 @@ func TestNormalOnly(t *testing.T) { t.Fatal("normal-only test cannot enter a rac
     source = planner.inventory("")
     assert source == {"synthetic.example/ci": ["TestFirst", "TestRaceOnly", "FuzzSeed"]}
     data = planner.plan("operator", source)
-    assert len(data["bins"]) == 3
+    assert len(data["bins"]) == 1
+    assert data["unmeasured"] == ["FuzzSeed", "TestFirst", "TestRaceOnly"]
     path = tmp_path / "plan.json"
     path.write_text(json.dumps({"operator": data}))
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
@@ -165,7 +168,8 @@ def test_local_measurements_have_conservative_bounds_until_hosted_costs_exist(tm
     data = planner.plan("runtime", {"runtime": ["TestLocal", "TestHosted", "TestUnmeasured"]})
     assert data["costs"]["TestLocal"] == 10
     assert data["costs"]["TestHosted"] == 2
-    assert data["costs"]["TestUnmeasured"] == planner.BUDGET
+    assert data["costs"]["TestUnmeasured"] == planner.DEFAULT_COST
+    assert data["unmeasured"] == ["TestLocal", "TestUnmeasured"]
 
 
 @pytest.mark.go_integration

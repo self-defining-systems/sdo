@@ -104,6 +104,15 @@ Each mitigation identifies the accepted playbook revision, bindings, plan,
 Results distinguish `applied_cleared`, `applied_still_matching`, `rollout_failed`,
 `rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`
 (`stage_budget` means the 45 s stage budget ran out before the match was applied).
+`rollout_pending_at_handoff` whose `rollout_pending` reason says `cannot progress
+without another actor` is a stall handoff, a few seconds after the write: the
+replacement Pod is unschedulable (or the progress deadline passed) and the reason
+names the unschedulable Pod and any old-template Pod/ReplicaSet holding its place.
+A stall is not a budget expiry. The rollout wait keeps a reserved share of the
+deadline, so every written object has a readback; `observation_error` on a
+fast object now means a real read failure, not a slow neighbour. A stalled
+pending reservation releases responder writes after a 2 s grace with
+`rollout_stalled` naming the blocker, not after the 90 s bound.
 The stage applies matched bindings sequentially, re-running Diagnose on fresh
 state after the preceding application's effects converge. A nonmatching or
 unavailable diagnosis gets one deferred turn after the other candidates, within

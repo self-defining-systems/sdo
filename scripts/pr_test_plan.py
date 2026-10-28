@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,8 +32,27 @@ def build(go: dict, python: dict, policy: dict) -> dict:
     for name, seconds in python["costs"].items():
         items["python:" + name] = {"kind": "python", "name": name, "seconds": seconds}
     seconds = {key: item["seconds"] for key, item in items.items()}
+    # A test with no recorded cost must run (and so be measured) in the PR, and
+    # so must the guards of memory validation, publication and compilation:
+    # cheap filler never displaces them. Only measured cost sends work nightly.
+    unmeasured = {f"go:{scope}:{name}" for scope, data in go.items() for name in data.get("unmeasured", [])}
+    unmeasured |= {"python:" + name for name in python.get("unmeasured", [])}
+    protected = [re.compile(pattern) for pattern in policy.get("protected_patterns", [])]
+    priority = {
+        key
+        for key, item in items.items()
+        if any(pattern.search(" ".join([key, *item.get("packages", [])])) for pattern in protected)
+    }
+    for key in items:
+        items[key]["priority"] = key in priority or key in unmeasured
     bins, nightly = costs.pack(
-        list(items), seconds, budget=policy["contract_work_seconds"], max_bins=policy["contract_jobs"]
+        list(items),
+        seconds,
+        budget=policy["contract_work_seconds"],
+        max_bins=policy["contract_jobs"],
+        required=frozenset(unmeasured),
+        priority=frozenset(priority),
+        priority_seconds=policy.get("protected_share", 0.0) * policy["contract_jobs"] * policy["contract_work_seconds"],
     )
     assigned = [name for members in bins for name in members] + nightly
     if sorted(assigned) != sorted(items) or len(assigned) != len(set(assigned)):
@@ -85,7 +105,7 @@ def main() -> None:
     print(f"Nightly: {len(data['nightly'])} tests; fixed PR contract jobs: {data['policy']['contract_jobs']}")
     if args.nightly_manifest:
         lines = [
-            "# CIROOT1 nightly test inventory",
+            "# Deferred (nightly) test inventory",
             "",
             "Generated from compiled/collected inventories and measured costs; never a placement input.",
             "",
@@ -99,6 +119,8 @@ def main() -> None:
                 if item["seconds"] > data["policy"]["contract_work_seconds"]
                 else "fixed PR work capacity; cheaper regression coverage takes priority"
             )
+            if item.get("priority"):
+                reason += " (protected guard beyond the protected share)"
             lines.append(f"| `{key}` | {item['seconds']:.3f} | {reason} |")
         args.nightly_manifest.write_text("\n".join(lines) + "\n")
 

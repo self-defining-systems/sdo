@@ -25,11 +25,17 @@ class PythonPlan(TypedDict):
     bins: list[list[str]]
     nightly: list[str]
     costs: dict[str, float]
+    unmeasured: list[str]
 
 
 def build_plan(names: list[str], costs: dict[str, float]) -> PythonPlan:
     bins, nightly = _go.pack(names, costs)
-    return {"bins": bins, "nightly": nightly, "costs": {n: costs.get(n, _go.DEFAULT_COST) for n in names}}
+    return {
+        "bins": bins,
+        "nightly": nightly,
+        "costs": {n: costs.get(n, _go.DEFAULT_COST) for n in names},
+        "unmeasured": sorted(n for n in names if n not in costs),
+    }
 
 
 def main() -> None:
