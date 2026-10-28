@@ -119,3 +119,89 @@ func TestPlanExecutorAtomicLostReceiptReconcilesWholeObject(t *testing.T) {
 		t.Fatalf("rollback used %d writes, want one forward + one reverse", client.attempts)
 	}
 }
+
+func TestPlanExecutorAtomicSingletonGeneralRollback(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprint(partial), func(t *testing.T) {
+			a := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "a"}
+			b := a
+			b.Name = "b"
+			c := a
+			c.Name = "c"
+			client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}
+			for _, ref := range []sdk.ObjectRef{a, b, c} {
+				o := planObject(ref, nil)
+				o.Object["data"] = map[string]any{"x": "old"}
+				o.SetLabels(map[string]string{"state": "old"})
+				o.SetUID(types.UID("uid-" + ref.Name))
+				o.SetResourceVersion("1")
+				client.objects[ref] = o
+			}
+			actions := []program.Action{program.PatchObject{Ref: a, Type: "merge", Patch: json.RawMessage(`{"data":{"x":"new"}}`)}, program.PatchObject{Ref: a, Type: "merge", Patch: json.RawMessage(`{"data":{"y":"added"}}`)}, program.PatchObject{Ref: b, Type: "merge", Patch: json.RawMessage(`{"metadata":{"labels":{"state":"new"}}}`)}}
+			if partial {
+				actions = append(actions, program.PatchObject{Ref: c, Type: "merge", Patch: json.RawMessage(`{"data":{"x":"new"}}`)})
+			}
+			executor := PlanExecutor{Client: &singletonFailureClient{planFakeClient: client, fail: partial, target: c}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+			result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: actions}, false)
+			if partial {
+				if err == nil {
+					t.Fatal("expected injected failure")
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = executor.Rollback(context.Background(), result); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := client.objects[b].GetLabels()["state"]; got != "old" {
+				t.Fatalf("singleton metadata not restored: %s (partial=%v)", got, partial)
+			}
+		})
+	}
+}
+
+type singletonFailureClient struct {
+	*planFakeClient
+	fail   bool
+	target sdk.ObjectRef
+}
+
+func (c *singletonFailureClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
+	if c.fail && ref == c.target {
+		return fmt.Errorf("injected write failure")
+	}
+	return c.planFakeClient.Patch(ctx, ref, kind, patch)
+}
+
+func TestPlanExecutorApplyNamedServicePortNumberChange(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	object := planObject(ref, map[string]any{"ports": []any{map[string]any{"name": "http", "port": int64(80), "targetPort": int64(8000)}, map[string]any{"name": "other", "port": int64(90)}}})
+	object.SetUID("original")
+	object.SetResourceVersion("1")
+	client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}}
+	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	desired := planObject(ref, map[string]any{"ports": []any{map[string]any{"name": "http", "port": int64(8080)}}})
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.ApplyObject{Ref: ref, Object: desired.Object}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports, _ := program.FieldValue(client.objects[ref].Object, "spec.ports")
+	if len(ports.([]any)) != 2 {
+		t.Fatalf("duplicate named ports: %v", ports)
+	}
+	for path, want := range map[string]any{"spec.ports[name=http].port": int64(8080), "spec.ports[name=http].targetPort": int64(8000), "spec.ports[name=other].port": int64(90)} {
+		got, e := program.FieldValue(client.objects[ref].Object, path)
+		if e != nil || fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("%s: %v %v", path, got, e)
+		}
+	}
+	if err = executor.Rollback(context.Background(), result); err != nil {
+		t.Fatal(err)
+	}
+	port, _ := program.FieldValue(client.objects[ref].Object, "spec.ports[name=http].port")
+	if fmt.Sprint(port) != "80" {
+		t.Fatalf("port not restored: %v", port)
+	}
+}

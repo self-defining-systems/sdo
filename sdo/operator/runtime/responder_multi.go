@@ -90,10 +90,6 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 			l.refuseSelection(response, mitigationPlanningReason(err, "direct_plan_failed"), err.Error())
 			return
 		}
-		if err = plan.Validate(); err != nil {
-			l.refuseSelection(response, mitigationPlanningReason(err, "direct_plan_failed"), err.Error())
-			return
-		}
 		refs, err := l.menuPlanWriteRefs(plan)
 		for _, ref := range refs {
 			if ref.Kind == "*" && len(set.Options) > 1 {
@@ -129,8 +125,14 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		entry.action = nil
 		prepared = append(prepared, preparedMenuOption{selected, entry, plan})
 	}
+	// Resolve the entire batch write set before structural validation so a raw
+	// API request cannot hide an overlapping object behind a validation error.
 	// Dry-run the real executor's policy and structural checks for every option.
 	for _, item := range prepared {
+		if err := item.plan.Validate(); err != nil {
+			l.refuseSelection(response, "direct_plan_failed", err.Error())
+			return
+		}
 		if _, err := l.Executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: item.entry.programID, bindings: item.entry.bindings, targetFingerprints: item.selection.FindingFingerprints}}), item.plan, true); err != nil {
 			l.refuseSelection(response, mitigationPlanningReason(err, "direct_plan_failed"), err.Error())
 			return
