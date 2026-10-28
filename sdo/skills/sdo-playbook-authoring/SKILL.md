@@ -25,13 +25,14 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    package and spec) and `README.md` with front matter `schema_version: 1`, `owner: responder`,
    `originating_incident: <incident id>`, `description: <one line>`. The README holds only judgement and
    ordering: when to use it, what first, what to check after. SDO adds `fault_class` and the index entry.
-5. **Label one corpus case** per new program (rules below): `create_corpus` with the session snapshot and
-   `repair_receipt_ids` (the receipts it encodes) writes it in one call. Do not hunt for more evidence to
-   make replay Match; an Unknown replay is information.
+5. **Label one corpus case** per new program (rules below): `create_corpus` copies the controller's captures
+   (pass `observations` only when none exist, with `repair_receipt_ids`) and writes it in one call. Each program should Match its fault
+   capture and NoMatch healthy: decide from what the capture holds (snapshot objects, `pod_admission`, reads
+   `recordings_index` lists); a read the capture lacks replays as Unknown.
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
    playbook IDs, and a summary. It formats changed Go first. Fix each blocking diagnostic as its hint says,
-   then check again. Replay notes and `coverage_gaps` are information, not errors.
-7. As soon as the check passes, return the same decision and IDs; do not polish passing memory.
+   then check again. Its `next` field says what to do: return, refine replay, or fix diagnostics.
+7. When `next` says return, return the same decision and IDs; do not polish passing memory.
 
 Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps.
 
@@ -48,7 +49,8 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
 - `RunScript`: inline bash byte-identical to the recorded command, application inputs only through
   relation-derived Env, and digest-to-receipt linkage in `script_origins`.
 - Credentials stay references (env or ConfigMap key); never read Secret data.
-- Leave the `health-objective` playbook and health detectors alone; the health judge owns them.
+- Learn into incident playbooks. The health judge owns `health-objective` and health detectors: never edit
+  them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
 - When the check reports that no finding binds a program's roles (`reflection.detector-required`), copy
   `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/incidents/<id>/`,
   keep its manifest and `Spec` in step, and bind the role in `ParameterBindings`.

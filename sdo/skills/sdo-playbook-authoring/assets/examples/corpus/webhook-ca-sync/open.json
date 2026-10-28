@@ -1,3 +1,9 @@
 {
- "namespace": "demo"
+ "namespace": "demo",
+ "pod_admission": {
+  "namespace": "demo",
+  "source_pod": "web-1",
+  "admitted": false,
+  "rejection": "Internal error occurred: failed calling webhook \"pod-policy.example.dev\": failed to call webhook: Post \"https://pod-policy.policy.svc:443/mutate\": tls: failed to verify certificate: x509: certificate signed by unknown authority"
+ }
 }

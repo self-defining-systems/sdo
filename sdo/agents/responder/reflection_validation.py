@@ -114,17 +114,50 @@ class CheckMemoryReply:
                 if decision
                 else "the same decision"
             )
-            step = (
-                f"passed: return {returned} now. mitigation_replay_notes and coverage_gaps are information, not work."
-            )
+            disagreements = _replay_disagreements(result.stdout)
+            if disagreements:
+                step = (
+                    f"passed; replay disagrees for {'; '.join(disagreements)}. Each program should Match its fault "
+                    "capture and NoMatch healthy: decide from what the capture holds (snapshot objects, pod_admission, "
+                    f"reads listed by recordings_index) and check again; after two refinements return {returned}."
+                )
+            else:
+                step = f"passed: return {returned} now. coverage_gaps are information, not work."
         elif result.timed_out:
-            step = "timed out: check again once; replay notes are information, not work."
+            step = "timed out: check again once."
         else:
-            step = (
-                "fix each diagnostic as its hint says, then check again; "
-                "mitigation_replay_notes and coverage_gaps are information, not work."
-            )
+            step = "fix each diagnostic as its hint says, then check again; replay is judged once the check passes."
         return cls(step, result.exit_code, result.timed_out, result.stdout, result.stderr)
+
+
+def _replay_disagreements(stdout: str) -> list[str]:
+    """Programs whose replay does not Match their fault capture or NoMatch healthy."""
+    try:
+        notes = json.loads(stdout).get("mitigation_replay_notes") or []
+    except (ValueError, AttributeError):
+        return []
+    found = []
+    for note in notes:
+        if not isinstance(note, dict):
+            continue
+        effects = note.get("effects") or []
+        diagnosis = {
+            phase: next((e.split(": ", 1)[1] or "none" for e in effects if e.startswith(f"{phase} diagnosis: ")), "")
+            for phase in ("open", "healthy")
+        }
+        if "healthy diagnosis is not NoMatch" in effects and diagnosis["healthy"] in ("", "NoMatch"):
+            diagnosis["healthy"] = "not NoMatch"
+        wrong = [
+            f"{phase} {value}"
+            for phase, value, want in (
+                ("open", diagnosis["open"], "Match"),
+                ("healthy", diagnosis["healthy"], "NoMatch"),
+            )
+            if value and value != want
+        ]
+        if wrong:
+            found.append(f"{note.get('program_id')} on case {note.get('case_id')} ({', '.join(wrong)})")
+    return found
 
 
 def validation_server(

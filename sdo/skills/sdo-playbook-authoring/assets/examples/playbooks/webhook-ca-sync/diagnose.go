@@ -3,6 +3,7 @@ package webhookcasync
 
 import (
 	"context"
+	"strings"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -12,6 +13,20 @@ type Program struct{}
 
 func (Program) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "webhook-ca-sync", Params: []program.ParamSpec{{Name: "configuration", Kind: "MutatingWebhookConfiguration", Required: true}}}
+}
+
+// Diagnose decides from what every capture holds: the frozen Pod admission
+// dry run. Mitigate reads the webhook relation live, when it applies.
+func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
+	admission, observed := v.PodAdmission()
+	if !observed || admission.Error != "" {
+		return program.Verdict{Result: program.Unknown}, nil
+	}
+	rejection := admission.Rejection
+	if admission.Admitted || !strings.Contains(rejection, "failed calling webhook") || !(strings.Contains(rejection, "x509") || strings.Contains(rejection, "unknown authority")) {
+		return program.Verdict{Result: program.NoMatch}, nil
+	}
+	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: b.Objects["configuration"], Fact: "Pod admission fails webhook TLS verification", Observed: rejection, Expected: "admitted"}}}, nil
 }
 
 // staleCA finds the bound configuration's webhook entries whose caBundle differs from
@@ -37,15 +52,4 @@ func staleCA(v program.ReadView, b program.Bindings) ([]program.WebhookCA, error
 		}
 	}
 	return stale, nil
-}
-
-func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
-	stale, err := staleCA(v, b)
-	if err != nil {
-		return program.Verdict{}, err
-	}
-	if len(stale) == 0 {
-		return program.Verdict{Result: program.NoMatch}, nil
-	}
-	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: b.Objects["configuration"], Fact: "webhook caBundle differs from its serving Secret", Observed: stale[0].Webhook, Expected: stale[0].SecretName}}}, nil
 }

@@ -30,6 +30,21 @@
   }
  },
  {
+  "phase": "healthy",
+  "method": "DiffAgainstSource",
+  "arguments": [
+   {
+    "api_version": "apps/v1",
+    "kind": "Deployment",
+    "namespace": "demo",
+    "name": "widget"
+   }
+  ],
+  "result": {
+   "changed": false
+  }
+ },
+ {
   "method": "RepairReceipt",
   "arguments": {},
   "result": {

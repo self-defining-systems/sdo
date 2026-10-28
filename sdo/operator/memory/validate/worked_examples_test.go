@@ -21,7 +21,7 @@ const workedExamples = "../../../skills/sdo-playbook-authoring/assets/examples"
 
 // The authoring skill points reflection at these worked examples, so they pass
 // the same reflection check a learned playbook must: compile, format, labels,
-// receipt links and an open-phase Match on their own corpus case. The example
+// receipt links, a Match on their own fault capture and NoMatch on healthy. The example
 // incident detector compiles and loads with them. One tree and
 // one check cover every example, so a new example costs no extra compile.
 func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
@@ -100,7 +100,7 @@ func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
 	}
 	for _, id := range ids {
 		if !slices.ContainsFunc(notes, func(n sdktest.MitigationReplayResult) bool {
-			return n.ProgramID == id && slices.Contains(n.Effects, "open diagnosis: Match")
+			return n.ProgramID == id && slices.Contains(n.Effects, "open diagnosis: Match") && slices.Contains(n.Effects, "healthy diagnosis: NoMatch")
 		}) {
 			var mine []string
 			for _, n := range notes {
@@ -108,7 +108,7 @@ func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
 					mine = append(mine, string(n.Status)+": "+strings.Join(n.Effects, "; "))
 				}
 			}
-			t.Errorf("example %s does not Match its own open capture: %v", id, mine)
+			t.Errorf("example %s does not Match its fault capture and NoMatch healthy: %v", id, mine)
 		}
 	}
 }

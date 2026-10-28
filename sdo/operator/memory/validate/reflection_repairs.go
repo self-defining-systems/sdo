@@ -155,7 +155,9 @@ func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, 
 	}
 	slices.Sort(ids)
 	for _, id := range ids {
-		if changed[id] {
+		// The health judge owns its playbook; a failed generic application is
+		// learned as incident playbooks for the hand repairs that followed.
+		if changed[id] || id == layout.HealthObjectivePlaybook {
 			continue
 		}
 		ds = append(ds, Diagnostic{Rule: RuleReflectionStalePlaybook, Message: fmt.Sprintf("applied playbook %q must change: %s", id, stale[id]), Hint: "update this playbook, or retire it with a reason, and include its ID in the updated result; a peer edit or SDK gap does not fix stale memory"})

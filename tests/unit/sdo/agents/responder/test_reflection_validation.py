@@ -314,7 +314,28 @@ async def test_check_memory_reply_leads_with_the_next_step(
     reply = json.loads(block.text)
     assert next(iter(reply)) == "next", "the instruction leads so a capped reply keeps it"
     assert expected in reply["next"]
-    assert "information" in reply["next"]
     if exit_code == 0:
+        assert "information" in reply["next"]
         assert '"updated"' in reply["next"]
         assert '["book"]' in reply["next"]
+
+
+async def test_check_memory_pass_names_programs_whose_replay_disagrees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each new program should Match its fault capture and NoMatch healthy; a pass says which do not."""
+    notes = [
+        {"program_id": "good", "case_id": "a", "effects": ["open diagnosis: Match", "healthy diagnosis: NoMatch"]},
+        {"program_id": "weak", "case_id": "b", "effects": ["open diagnosis: Unknown", "healthy diagnosis: Unknown"]},
+    ]
+    body = json.dumps({"diagnostics": [], "mitigation_replay_notes": notes})
+    _validator(tmp_path, f"print({body!r})\n", monkeypatch)
+    server = validation_server(tmp_path)
+    (block,) = await server.call_tool(
+        "check_memory", {"learning_decision": "updated", "summary": "s", "proposed_artifact_ids": ["good", "weak"]}
+    )
+    step = json.loads(block.text)["next"]
+    assert "weak" in step
+    assert "open Unknown" in step
+    assert "healthy Unknown" in step
+    assert "good" not in step.split("passed")[1].split("Each program")[0]
