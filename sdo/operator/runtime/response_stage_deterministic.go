@@ -330,9 +330,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, remaining, save); err != nil {
 			return report, err
 		}
-		// A later diagnosis must observe converged effects. An unsettled or
-		// failed application hands the remaining work to the responder.
-		if attempt.ApplyReceipt.GetRolloutPending() != nil || attempt.Error != "" {
+		// Apply already waited as long as waiting can help, so a pending
+		// handoff (admission-blocked, stalled or bounded) keeps the pass: each
+		// later match diagnoses the live state afresh and may be the actor the
+		// rollout needs. A failed application hands the rest to the responder.
+		if attempt.ApplyReceipt.GetRolloutPending() == nil && attempt.Error != "" {
 			break
 		}
 	}
