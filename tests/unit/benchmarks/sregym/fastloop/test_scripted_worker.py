@@ -440,3 +440,40 @@ def test_scripted_responder_removes_added_objects_and_restores_config_from_sourc
     assert patch[:6] == ["kubectl", "-n", "hotel", "patch", "configmap", "cfg"]
     assert "--type=merge" in patch
     assert {action.kind for action in result.repair_actions} == {"kubectl-delete", "kubectl-patch"}
+
+
+@pytest.mark.parametrize("change", ["empty", "corpus", "playbook", "committed", "staged"])
+def test_existing_scripted_program_reports_actual_checkout_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True)
+
+    git("init", "-q")
+    git("config", "user.email", "fixture@example.invalid")
+    git("config", "user.name", "Synthetic fixture")
+    program = tmp_path / ".sdo/playbooks" / scripted_worker.PROGRAM_ID / "diagnose.go"
+    program.parent.mkdir(parents=True)
+    program.write_text("package fixture\n")
+    git("add", ".")
+    git("commit", "-qm", "synthetic accepted program")
+    base = git("rev-parse", "HEAD").strip()
+    monkeypatch.setenv("SDO_BASE_COMMIT", base)
+    monkeypatch.delenv("SDO_SCRIPTED_REPLAY_SLOT", raising=False)
+    if change != "empty":
+        path = program if change == "playbook" else tmp_path / ".sdo/corpus/repeat/labels.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n")
+        if change in {"committed", "staged"}:
+            git("add", ".")
+        if change == "committed":
+            git("commit", "-qm", "synthetic prepared corpus")
+    checked: list[list[str]] = []
+    monkeypatch.setattr(scripted_worker, "_check_reflection", lambda _root, ids: checked.append(ids))
+    turn = scripted_worker.ScriptedReflector().resume(worktree=tmp_path, incident_id="synthetic-repeat")
+    assert turn.learning_decision == ("no_change" if change == "empty" else "updated")
+    expected_ids = [scripted_worker.PROGRAM_ID] if change == "playbook" else []
+    assert turn.playbook_ids == expected_ids
+    assert checked == ([] if change == "empty" else [expected_ids])
