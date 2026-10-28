@@ -322,7 +322,7 @@ def run_structured_turn(
         try:
             with ExitStack() as scope:
                 if provider == "claude":
-                    scope.enter_context(capacity.opus_session(model))
+                    scope.enter_context(capacity.opus_session(model, workspace=Path(cwd)))
                     if capacity.wait_deadline is not None:
                         if capacity.remaining_seconds <= 0:
                             raise capacity.exhausted("provider retry budget exhausted", session_id=session_id or "")

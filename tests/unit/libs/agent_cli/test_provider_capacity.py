@@ -218,6 +218,33 @@ def test_opus_refuses_to_run_without_shared_pool(tmp_path: Path) -> None:
     assert not agent.requests
 
 
+@pytest.mark.parametrize("location", ["checkout", "child", "symlink"])
+def test_pool_metadata_cannot_enter_the_agent_checkout(tmp_path: Path, location: str) -> None:
+    workspace = tmp_path / "checkout"
+    workspace.mkdir()
+    directory = workspace if location == "checkout" else workspace / "pool"
+    if location == "symlink":
+        link = tmp_path / "pool-link"
+        link.symlink_to(directory)
+        directory = link
+    manager = ProviderCapacity(environment={"SDO_OPUS_POOL_DIR": str(directory)})
+    agent = ScriptedAgent(lambda _: reply("claude", {"answer": "ok"}, session_id="s-1"))
+    with pytest.raises(ProviderRateLimited, match="outside.*workspace"):
+        run_structured_turn(
+            "claude",
+            "prompt",
+            output_schema=SCHEMA,
+            cwd=workspace,
+            access="read-only",
+            model="opus",
+            executor=agent.executor,
+            provider_capacity=manager,
+        )
+    assert not agent.requests
+    assert not list(workspace.rglob("*.lock"))
+    assert not (directory / "capacity").exists()
+
+
 @pytest.mark.parametrize(
     "kwargs", [{"initial_delay_seconds": 0}, {"max_delay_seconds": -1}, {"max_wait_seconds": float("inf")}]
 )
@@ -252,6 +279,8 @@ sys.stdin.read()
 def test_backoff_releases_opus_token_and_retry_resumes_the_existing_session(tmp_path: Path) -> None:
     clock = Clock()
     pool_root = tmp_path / "pool"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     calls = 0
     sleeps = []
 
@@ -285,7 +314,7 @@ def test_backoff_releases_opus_token_and_retry_resumes_the_existing_session(tmp_
         "claude",
         "prompt",
         output_schema=SCHEMA,
-        cwd=tmp_path,
+        cwd=workspace,
         access="read-only",
         model="opus",
         executor=agent.executor,

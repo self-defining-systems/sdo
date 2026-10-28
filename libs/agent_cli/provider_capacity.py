@@ -213,14 +213,17 @@ class ProviderCapacity:
             raise self.exhausted("provider retry budget exhausted", session_id=session_id)
 
     @contextmanager
-    def opus_session(self, model: str | None) -> Iterator[None]:
+    def opus_session(self, model: str | None, *, workspace: Path | None = None) -> Iterator[None]:
         if model is not None and "opus" not in model.lower():
             yield
             return
         directory = self.environment.get("SDO_OPUS_POOL_DIR", "").strip()
         if not directory:
             raise self.exhausted("Opus requires a shared filesystem pool", kind="concurrency")
-        pool = OpusPool(Path(directory), int(self.environment.get("SDO_OPUS_MAX_SESSIONS", "8")))
+        root = Path(directory).resolve()
+        if workspace is not None and root.is_relative_to(workspace.resolve()):
+            raise self.exhausted("Opus pool must be outside the agent workspace", kind="concurrency")
+        pool = OpusPool(root, int(self.environment.get("SDO_OPUS_MAX_SESSIONS", "8")))
         try:
             handle = pool.try_acquire()
             if handle is None:

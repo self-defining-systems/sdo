@@ -12,6 +12,8 @@ Opus) require an explicitly configured shared lock pool. Capacity defaults to
 eight and is configured with `SDO_OPUS_MAX_SESSIONS`. Every host, lane and role
 using the account must use the **same filesystem directory** and capacity.
 An inconsistent capacity is rejected; there is no per-lane or local fallback.
+The turn boundary also rejects pool paths inside the agent checkout, including
+symlink aliases, before creating metadata or starting the CLI.
 The directory must support cross-client `flock` locks, including NFS lock
 recovery. Keep its lock files in place: unlinking a locked inode breaks exclusion.
 Drain all clients before changing capacity.
