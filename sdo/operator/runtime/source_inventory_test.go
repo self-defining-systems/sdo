@@ -150,6 +150,7 @@ func acceptInventoryFindings(findings []sdk.Finding) []sdk.DriftEvent {
 	}
 	return labels
 }
+
 // Latent source drift is shown to the responder and the outcome; the closure
 // follows health alone.
 func TestLatentAllHealthClearClosureCarriesInventoryDriftAsInformation(t *testing.T) {

@@ -30,6 +30,11 @@ const stagePlanNotExecutable = "plan_not_executable"
 // but not new evidence. A finding the earlier attempt did not target is.
 const stageIneffective = "ineffective"
 
+// stageRevertedIneffective is an applied attempt that cleared none of its
+// findings while its diagnosis still matched, whose writes the stage restored
+// before handoff so the responder starts from the original fault.
+const stageRevertedIneffective = "reverted_ineffective"
+
 // stageIneffectiveTargets maps a program revision to the findings it applied
 // for and did not clear.
 type stageIneffectiveTargets map[string]map[string]bool
@@ -43,7 +48,7 @@ func ineffectiveStageTargets(attempts []*contracts.StageMitigation) stageIneffec
 }
 
 func (t stageIneffectiveTargets) add(attempt *contracts.StageMitigation) {
-	if attempt.GetResult() != "applied_still_matching" {
+	if attempt.GetResult() != "applied_still_matching" && attempt.GetResult() != stageRevertedIneffective {
 		return
 	}
 	key := attempt.GetPlaybookId() + "\x00" + attempt.GetProgramRevision()
@@ -212,6 +217,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	loop.mu.Lock()
 	defer loop.mu.Unlock()
 	matches := stageCandidates(state)
+	var appliedHere []*contracts.StageMitigation
 	attempted := map[string]bool{}
 	// A later pass may complete a binding an earlier one only skipped, because
 	// its finding had not activated yet. A skip wrote nothing, so that attempt
@@ -391,6 +397,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			return report, err
 		}
 		progressed = true
+		appliedHere = append(appliedHere, attempt)
 		ineffective.add(attempt)
 		// Apply already waited as long as waiting can help, so a pending
 		// handoff (admission-blocked, stalled or bounded) keeps the pass: each
@@ -399,6 +406,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if attempt.ApplyReceipt.GetRolloutPending() == nil && attempt.Error != "" {
 			break
 		}
+	}
+	if err := stage.revertIneffective(ctx, loop, state, report, appliedHere, save); err != nil {
+		return report, err
 	}
 	// Once all opening faults have verified repairs, let the remaining health
 	// detectors' own windows roll over before handoff.
@@ -757,6 +767,7 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 			if receipt, err = recordedPlanContract(application); err != nil {
 				return err
 			}
+			item.attempt.TouchedObjects = touchedObjects(attemptApplication(application, item.attempt).Result)
 		}
 	}
 	// Pending rollouts still get one fresh diagnosis/detector observation.

@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 MAX_FILE_EDITS_BYTES = 48 << 20
+# Written next to a checkpoint's result when its file edits could not be recorded.
+UNRECORDED_FILE_EDITS = "file_edits_unrecorded.json"
 
 
 @dataclass(frozen=True)

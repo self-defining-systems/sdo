@@ -16,10 +16,11 @@ Per-action results, provenance and errors guide the responder across five incide
 Intermediate reports grant neither independent outcomes nor trust credit.
 Mitigate may run again: when its rollout stays pending, the runtime re-plans on fresh observations and
 applies the next plan until it repeats an earlier plan (at most three follow-ups). Write a repair
-that depends on what its write causes as one Mitigate over current state, e.g. also retiring an old-template
-ReplicaSet once new pods are Unschedulable beside it. Select that ReplicaSet by its controller ownerReference to
-its Deployment and an older `deployment.kubernetes.io/revision`, never by name; the owner need not be bound.
-Scaling a current revision or an unowned ReplicaSet is refused as `replicaset_scale_refused`. Once a stalled rollout is released, a later responder write ends the
+that depends on what its write causes as one Mitigate over current state, e.g. also returning
+`program.StalledRolloutRelease(v, deployment)` after a source write: it retires (`RetireOldRevision`) each old
+revision that holds the place of a replacement that cannot be placed or created, and returns nothing otherwise.
+It selects by controller ownerReference and revision, never by name; the owner need not be bound.
+Retiring or scaling a current revision or an unowned ReplicaSet is refused as `replicaset_scale_refused`. Once a stalled rollout is released, a later responder write ends the
 program's credit for it. Prose in the README never runs.
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,

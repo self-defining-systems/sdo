@@ -325,3 +325,46 @@ func TestStaleExclusionsNameOnlyTargetsWhoseConfigurationChanged(t *testing.T) {
 		t.Fatalf("no record cannot be stale: %+v", got)
 	}
 }
+
+// Without a current baseline the detector cannot tell a declared-but-never-served
+// port from one broken before observation began: such a port is unknown, not an
+// incident. A port seen serving still fires, the detector stays confirmed (closure
+// is never held on a measurement that waits for closure), and capture judges the
+// raw window.
+func TestReachabilityWithoutBaselineReportsNeverServedTargetsUnknown(t *testing.T) {
+	s := reachabilitySnapshot{Snapshot: geoSnapshot(intstr.FromInt32(8083), true), window: window(geoTarget(samples(servicehealth.DialRefused, false, false, false)))}
+	s.window.BaselinePending = true
+	detector := servicehealth.NewReachabilityDetector(reachabilitySpec()).(interface {
+		Confirmed(sdk.DetectionContext) bool
+		ConfirmationReason(sdk.DetectionContext) string
+	})
+	if got := detectReachability(t, s); len(got) != 0 {
+		t.Fatalf("never-served port fired without a baseline: %+v", got)
+	}
+	if !detector.Confirmed(s) {
+		t.Fatal("an unknown target held the detector unconfirmed")
+	}
+	if unknown := servicehealth.ReachabilityUnknown(s); len(unknown) != 1 || unknown[0].Service != "geo" {
+		t.Fatalf("unknown targets: %+v", unknown)
+	}
+	if reason := detector.ConfirmationReason(s); !strings.Contains(reason, "unknown") || !strings.Contains(reason, "geo:8083") {
+		t.Fatalf("unknown not reported: %q", reason)
+	}
+	auth := servicehealth.BaselineAuthorization{SourceInputs: strings.Repeat("a", 64), ObjectiveDigest: strings.Repeat("b", 64), Reason: "healthy-baseline", GoalHealthy: true}
+	if b, err := servicehealth.CaptureReachabilityBaseline(s, auth); err != nil || len(b.Exclusions) != 1 {
+		t.Fatalf("capture judged the pending window instead of the measured one: %+v %v", b, err)
+	}
+	at := s.window.Targets[0].Samples[0].At.Add(-time.Second)
+	s.window.Targets[0].LastSuccess = &at
+	if got := detectReachability(t, s); len(got) != 1 {
+		t.Fatalf("a port seen serving was hidden without a baseline: %+v", got)
+	}
+	if unknown := servicehealth.ReachabilityUnknown(s); len(unknown) != 0 {
+		t.Fatalf("a served port reported unknown: %+v", unknown)
+	}
+	s.window.BaselinePending = false
+	s.window.Targets[0].LastSuccess = nil
+	if reason := detector.ConfirmationReason(s); reason != "" {
+		t.Fatalf("a confirmed window with no pending baseline gave a reason: %q", reason)
+	}
+}

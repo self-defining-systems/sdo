@@ -165,3 +165,16 @@ def test_reflection_turn_over_four_mib_records_each_line_once_and_replays(tmp_pa
     assert RecordingExecutor(tmp_path, request_json="{}", live=None).run(_request("reflect"), replayed) == result
     assert replayed.stdout_lines == streamed.stdout_lines == output
     assert replayed.stderr_lines == ["notice\n"]
+
+
+def test_oversized_live_turn_returns_its_result_and_replay_names_the_gap(tmp_path: Path) -> None:
+    """Benchmark evidence limits never discard a finished live model turn."""
+    line = "x" * (1 << 20) + "\n"
+    fake = FakeExecutor(FakeRun(stdout=[line] * 65))
+    recorder = RecordingExecutor(tmp_path, request_json="{}", live=fake, record=True)
+
+    assert recorder.run(_request("large"), Sink()).stdout == line * 65
+    with pytest.raises(ModelCacheMiss, match="not recorded: model I/O exceeds"):
+        RecordingExecutor(tmp_path, request_json="{}", live=None).run(_request("large"), Sink())
+    with pytest.raises(ModelCacheMiss, match="not recorded: model I/O exceeds"):
+        RecordingExecutor(tmp_path, request_json="{}", live=None, ordered=True).run(_request("large"), Sink())

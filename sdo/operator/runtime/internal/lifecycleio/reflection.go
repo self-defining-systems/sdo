@@ -55,15 +55,21 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 		event.Kind = lifecyclecore.ReflectionInspected
 		event.Workspace = &contracts.ProposalWorkspace{ProposalId: lifecyclecore.ReflectionTaskID(id, effect.OutcomeCommit, effect.Attempt), CheckoutPath: proposal.Path, BaseCommit: proposal.BaseCommit}
 	case lifecyclecore.DispatchReflection:
+		// A correction after a rejection is its own timeline step; phases are
+		// recorded once, so reusing the first names would hide its duration.
+		dispatch, pickedUp := "reflection_dispatch", "worker_result_picked_up"
+		if effect.Attempt > 1 {
+			dispatch, pickedUp = "reflection_retry_dispatch", "retry_worker_result_picked_up"
+		}
 		if d.Phase != nil {
-			err = d.Phase("reflection_dispatch")
+			err = d.Phase(dispatch)
 			if err != nil {
 				break
 			}
 		}
 		event.Decision, err = d.Reflect(ctx, effect)
 		if err == nil && d.Phase != nil {
-			err = d.Phase("worker_result_picked_up")
+			err = d.Phase(pickedUp)
 		}
 		event.Kind = lifecyclecore.ReflectionCompleted
 	case lifecyclecore.ReviewReflection:
@@ -100,6 +106,11 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 			if diagnostics, typed := broker.RejectionDiagnostics(err); typed {
 				event.Kind = lifecyclecore.ReflectionRejected
 				event.Diagnostics = diagnostics
+				if d.Phase != nil {
+					if err := d.Phase("reflection_rejected"); err != nil {
+						return event, err
+					}
+				}
 				return event, nil
 			}
 		}
