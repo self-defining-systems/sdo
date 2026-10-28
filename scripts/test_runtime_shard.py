@@ -85,8 +85,13 @@ COST_FILE = Path(__file__).with_name("runtime_test_costs.json")
 # Report when work exceeds 70% of the unchanged five-minute controller job.
 # The Go and job deadlines alone enforce failure.
 SHARD_BUDGET_SECONDS = 5 * 60 * 70 // 100
-# Hosted costs drive all measured placements; no local-only overrides.
-PLACEMENTS: dict[str, str] = {}
+# Hosted run 40611902688 at 05a69b4e: the simulation job hit its cap,
+# while rendered finished with headroom. Exchange the 110.05s hotel-script
+# case and the 45.61s Mongo case without disturbing the other six allocations.
+PLACEMENTS: dict[str, str] = {
+    "TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker": "rendered",
+    "TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker": "simulation",
+}
 
 
 def balanced_partition(names: list[str], patterns: dict[str, str], costs: dict[str, float]) -> dict[str, list[str]]:
