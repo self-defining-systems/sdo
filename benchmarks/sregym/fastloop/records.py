@@ -70,10 +70,14 @@ class TokenCounts(_PersistedModel):
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cache_read_input_tokens(self) -> int:
+        """Cache reads under agentshim 0.7's name, so readers never take ``cached_input_tokens`` to include writes."""
+        return self.cached_input_tokens
+
     def __add__(self, other: TokenCounts) -> TokenCounts:
-        return TokenCounts(
-            **{name: getattr(self, name) + getattr(other, name) for name in TokenCounts.model_fields}
-        )
+        return TokenCounts(**{name: getattr(self, name) + getattr(other, name) for name in TokenCounts.model_fields})
 
     @classmethod
     def from_usage(cls, usage: object) -> TokenCounts:

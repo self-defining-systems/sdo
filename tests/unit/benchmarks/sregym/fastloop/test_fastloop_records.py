@@ -176,8 +176,8 @@ def test_not_injected_round_trip_is_excluded_from_incident_statistics(tmp_path: 
 
 
 def test_a_claude_rows_tokens_keep_every_priced_class_so_its_cost_is_complete(tmp_path: Path) -> None:
-    from agentshim import cost_usd, default_pricing, price_for
     from agentshim import TokenUsage as ProviderTokens
+    from agentshim import cost_usd, default_pricing, price_for
 
     from benchmarks.sregym.analysis.incident_cost import PricingContext, TokenUsage
 
@@ -230,7 +230,11 @@ def test_token_counts_add_every_class() -> None:
     right = TokenCounts(input_tokens=5, cache_write_input_tokens=1, cache_write_1h_input_tokens=1, output_tokens=1)
 
     assert left + right == TokenCounts(
-        input_tokens=15, cached_input_tokens=2, cache_write_input_tokens=4, cache_write_1h_input_tokens=1, output_tokens=5
+        input_tokens=15,
+        cached_input_tokens=2,
+        cache_write_input_tokens=4,
+        cache_write_1h_input_tokens=1,
+        output_tokens=5,
     )
 
 

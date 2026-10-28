@@ -14,7 +14,10 @@ if TYPE_CHECKING:
 def test_configured_provider_and_model_are_resolved_and_logged(capsys: pytest.CaptureFixture[str]) -> None:
     environ = {"SDO_AGENT_PROVIDER": " Claude ", "SDO_RESPONDER_MODEL": "claude-haiku-5-5"}
     assert resolve_agent("responder", "responder", environ) == ResolvedAgent("responder", "claude", "claude-haiku-5-5")
-    assert capsys.readouterr().err.strip() == "sdo-agent-resolved role=responder provider=claude model=claude-haiku-5-5"
+    assert (
+        capsys.readouterr().err.strip()
+        == "sdo-agent-resolved role=responder provider=claude model=claude-haiku-5-5 effort=medium"
+    )
 
 
 def test_unconfigured_provider_defaults_to_codex_with_default_model(capsys: pytest.CaptureFixture[str]) -> None:
@@ -111,12 +114,18 @@ def test_every_agent_turn_takes_its_effort_from_the_resolved_agent() -> None:
     for path in root.rglob("*.py"):
         tree = ast.parse(path.read_text("utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.keyword) and node.arg == "reasoning_effort":
-                if isinstance(node.value, ast.Constant):
-                    offenders.append(f"{path.relative_to(root)}:{node.value.lineno} literal {node.value.value!r}")
-            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "run_structured_turn":
-                if not any(keyword.arg == "reasoning_effort" for keyword in node.keywords):
-                    offenders.append(f"{path.relative_to(root)}:{node.lineno} turn without reasoning_effort")
+            if (
+                isinstance(node, ast.keyword)
+                and node.arg == "reasoning_effort"
+                and isinstance(node.value, ast.Constant)
+            ):
+                offenders.append(f"{path.relative_to(root)}:{node.value.lineno} literal {node.value.value!r}")
+            if (
+                isinstance(node, ast.Call)
+                and getattr(node.func, "id", None) == "run_structured_turn"
+                and not any(keyword.arg == "reasoning_effort" for keyword in node.keywords)
+            ):
+                offenders.append(f"{path.relative_to(root)}:{node.lineno} turn without reasoning_effort")
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 positional = list(zip(reversed(node.args.args), reversed(node.args.defaults), strict=False))
                 for argument, default in [*positional, *zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True)]:

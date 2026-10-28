@@ -47,7 +47,7 @@ def agent_effort(environ: Mapping[str, str] | None = None) -> str:
     """The configured effort every SDO agent runs at (``DEFAULT_AGENT_EFFORT`` when unset)."""
 
     environ = os.environ if environ is None else environ
-    effort = agent_effort(environ)
+    effort = environ.get(EFFORT_ENV, "").strip().lower() or DEFAULT_AGENT_EFFORT
     if effort not in AGENT_EFFORTS:
         raise ValueError(f"unsupported agent effort {effort!r} ({EFFORT_ENV} must be one of {AGENT_EFFORTS})")
     return effort

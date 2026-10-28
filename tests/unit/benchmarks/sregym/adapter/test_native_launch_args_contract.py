@@ -65,6 +65,7 @@ def _install() -> NativeInstallConfig:
         model="model",
         kubeconfig=root / "lane.kubeconfig",
         agent_provider="claude",
+        agent_effort="high",
         repair_policy="recorded-actions",
         late_findings="pull",
         reflection_session="fresh",

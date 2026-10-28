@@ -19,9 +19,9 @@ from libs.agent_cli.structured import (
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.context_output import save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
-from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
+from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
