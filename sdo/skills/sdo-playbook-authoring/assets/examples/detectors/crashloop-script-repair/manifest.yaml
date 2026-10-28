@@ -1,0 +1,23 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: crashloop-script-repair
+constructor: New
+class: incident
+owner: responder
+watches:
+    - apiVersion: apps/v1
+      kind: Deployment
+    - apiVersion: v1
+      kind: Pod
+interval: 30s
+persistence:
+    firing: 1
+    clearing: 2
+batching:
+    severity: critical
+    debounce: "0"
+possiblePlaybooks:
+    - crashloop-script-repair
+originatingIncident: worked-example
+originatingCommit: example-outcome-commit

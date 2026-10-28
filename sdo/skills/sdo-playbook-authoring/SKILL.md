@@ -26,7 +26,8 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    `originating_incident: <incident id>`, `description: <one line>`. The README holds only judgement and
    ordering: when to use it, what first, what to check after. SDO adds `fault_class` and the index entry.
 5. **Label one corpus case** per new program (rules below): `create_corpus` with the session snapshot and
-   `repair_receipt_ids` (the receipts it encodes) writes it in one call.
+   `repair_receipt_ids` (the receipts it encodes) writes it in one call. Do not hunt for more evidence to
+   make replay Match; an Unknown replay is information.
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
    playbook IDs, and a summary. It formats changed Go first. Fix each blocking diagnostic as its hint says,
    then check again. Replay notes and `coverage_gaps` are information, not errors.
@@ -48,8 +49,9 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   relation-derived Env, and digest-to-receipt linkage in `script_origins`.
 - Credentials stay references (env or ConfigMap key); never read Secret data.
 - Leave the `health-objective` playbook and health detectors alone; the health judge owns them.
-- When the check reports that no finding binds a program's roles (`reflection.detector-required`), add an
-  incident detector with `sdo-detector-authoring`.
+- When the check reports that no finding binds a program's roles (`reflection.detector-required`), copy
+  `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/incidents/<id>/`,
+  keep its manifest and `Spec` in step, and bind the role in `ParameterBindings`.
 
 ## Corpus labels
 
