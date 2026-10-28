@@ -13,6 +13,7 @@ from google.protobuf import json_format
 from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import count_chars, render_prompt
 from sdo.agents.responder.reflection_evidence import playbook_description
+from sdo.agents.responder.rollout_release import release_lines
 from sdo.agents.responder.tool_output import write_json
 from sdo.agents.responder.tools_cli import command_purposes, command_surface
 from sdo.contracts import Verdict
@@ -233,6 +234,15 @@ def _coverage_brief(request: IncidentRequest) -> dict[str, Any]:
     return {"matches": matches, "unexplained_findings": len(open_findings - explained)}
 
 
+def _rollout_pending(request: IncidentRequest) -> list[dict[str, Any]]:
+    """Stalls the stage handed off and stalls left by earlier failed episodes."""
+    pending = [
+        attempt.apply_receipt.rollout_pending for report in request.prior_stages for attempt in report.mitigations
+    ]
+    pending += [blocker for item in request.prior_response_progress for blocker in item.blockers]
+    return [json_format.MessageToDict(item, preserving_proto_field_name=True) for item in pending]
+
+
 def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[str, Any]) -> dict[str, Any]:
     """The first message: open findings, one line per automatic action, pointers to the rest."""
     findings = sorted(request.findings, key=lambda item: _SEVERITY_ORDER.get(item.severity, 1))
@@ -254,6 +264,8 @@ def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[s
         )
     if request.prior_response_progress:
         brief["prior_response_progress"] = prior_response_summary(request)
+    if releases := release_lines(_rollout_pending(request)):
+        brief["rollout_releases"] = releases
     if "playbook_documents" in full:
         brief["playbook_documents"] = dict(full["playbook_documents"])
         brief["playbook_index"] = {item["id"]: _clip(item["description"], 120) for item in full["playbook_index"]}
@@ -275,6 +287,7 @@ def _fit(brief: dict[str, Any]) -> dict[str, Any]:
         return {
             "findings": brief["findings"],
             "stage_actions": brief.get("stage_actions", []),
+            "rollout_releases": brief.get("rollout_releases", []),
             "program_runs": brief.get("program_runs", []),
             "playbook_coverage.matches": brief["playbook_coverage"]["matches"],
             "playbook_documents": list(brief.get("playbook_documents", {})),

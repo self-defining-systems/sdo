@@ -61,11 +61,11 @@ func CheckReads(view ReadView) (sdk.DetectionContext, func() error)
     cannot be ignored to turn Unknown into clearance.
 
 func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView) error
-    CheckReplicaSetScales allows a program to scale a ReplicaSet only when the
-    observed ReplicaSet is controlled by an observed Deployment and is not that
-    Deployment's current revision. The owner is a relation, not a binding.
-    Retiring an old revision is the only repair a program needs on a ReplicaSet;
-    anything else risks an outage.
+    CheckReplicaSetScales allows a program to scale or retire a ReplicaSet
+    only when the observed ReplicaSet is controlled by an observed Deployment
+    and is not that Deployment's current revision. The owner is a relation,
+    not a binding. Retiring an old revision is the only repair a program needs
+    on a ReplicaSet; anything else risks an outage.
 
 func DocumentWriteRef(action Action) (sdk.ObjectRef, bool)
     DocumentWriteRef identifies actions that project edits onto an existing
@@ -131,6 +131,16 @@ TYPES
 type Action interface {
 	// Has unexported methods.
 }
+
+func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action
+    StalledRolloutRelease returns the standard release of a Deployment
+    rollout whose replacement cannot get the place the old revision holds:
+    a current-revision Pod is Unschedulable, or its ReplicaSet cannot create
+    Pods because the namespace quota is exceeded. It is one RetireOldRevision
+    for each old revision that still keeps a replica, in name order, and nothing
+    otherwise, so a crashing, merely slow or misconfigured rollout never loses
+    the revision that still serves. SDO offers the same actions to the responder
+    when it hands off a stalled rollout.
 
 type AdmissionWebhook struct {
 	Configuration  sdk.ObjectRef      `json:"configuration"`
@@ -229,26 +239,4 @@ type CreateFromSource struct {
 	Reason string
 }
     CreateFromSource restores a missing named object from accepted source.
-
-type CredentialRef struct {
-	Env       string                  `json:"env,omitempty"`
-	ConfigMap *ConfigMapCredentialRef `json:"config_map,omitempty"`
-}
-    CredentialRef selects exactly one reference kind. Values are resolved only
-    by the executor and never enter plans or recordings.
-
-func (r CredentialRef) Validate() error
-
-type DatabaseAuth struct {
-	Database string        `json:"database"`
-	Username CredentialRef `json:"username"`
-	Password CredentialRef `json:"password"`
-}
-    DatabaseAuth authenticates catalog access inside the selected container. Nil
-    Auth uses the database's existing local unauthenticated bootstrap policy.
-
-type DatabaseRole struct {
-	Database string `json:"database"`
-	Name     string `json:"name"`
-}
 ```

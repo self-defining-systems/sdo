@@ -462,3 +462,27 @@ def test_coverage_brief_keeps_only_matches_that_explain_an_open_finding() -> Non
         assert coverage["unexplained_findings"] == 4
         full = json.loads(incident_facts_path(rendered).read_text())
         assert len(full["playbook_coverage"]["matches"]) == 2
+
+
+def test_stalled_stage_handoff_states_the_blocker_and_its_standard_release() -> None:
+    """A stall handed off by the stage names the one standard action, as the command that runs it."""
+    request = _staged_request(2)
+    stage = request.prior_stages[0]
+    del stage.mitigations[:]
+    attempt = stage.mitigations.add(
+        playbook_id="source-drift",
+        result="rollout_pending_at_handoff",
+        plan_action_count=1,
+        error="rollout_pending: Deployment/geo rollout is pending: cannot progress without another actor: "
+        + "replacement Pod/geo-new Unschedulable: 0/2 nodes are available: " * 4,
+    )
+    blocker = attempt.apply_receipt.rollout_pending.blockers.add(reason="held by its old revision")
+    blocker.ref.kind, blocker.ref.namespace, blocker.ref.name = "Deployment", "toy", "geo"
+    release = blocker.release.add().retire_old_revision.ref
+    release.api_version, release.kind, release.namespace, release.name = "apps/v1", "ReplicaSet", "toy", "geo-old"
+    with prepared_incident_data(request) as rendered:
+        brief = _brief(rendered)
+    assert brief["rollout_releases"] == [
+        "Deployment/toy/geo cannot roll out beside its old revision: "
+        "sdo mitigate RetireOldRevision --ref ReplicaSet/toy/geo-old"
+    ]

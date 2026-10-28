@@ -110,6 +110,8 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 			kind = "delete_pod"
 		case program.ScaleWorkload, *program.ScaleWorkload:
 			kind = "scale_workload"
+		case program.RetireOldRevision, *program.RetireOldRevision:
+			kind = "retire_old_revision"
 		case program.RemoveServicePort, *program.RemoveServicePort:
 			kind = "remove_service_port"
 		case program.EnsureDatabaseUser, *program.EnsureDatabaseUser:
@@ -174,6 +176,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			action = &program.DeletePod{}
 		case "scale_workload":
 			action = &program.ScaleWorkload{}
+		case "retire_old_revision":
+			action = &program.RetireOldRevision{}
 		case "remove_service_port":
 			action = &program.RemoveServicePort{}
 		case "ensure_database_user":
@@ -224,6 +228,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		case *program.DeletePod:
 			decoded = append(decoded, *value)
 		case *program.ScaleWorkload:
+			decoded = append(decoded, *value)
+		case *program.RetireOldRevision:
 			decoded = append(decoded, *value)
 		case *program.RemoveServicePort:
 			decoded = append(decoded, *value)

@@ -62,6 +62,9 @@ func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 		if action.Message().Name() == "SyncWebhookCA" && f.Name() == "secret_key" {
 			schema.Description = "Sync a named Secret key into one webhook caBundle privately; receipts expose only the reference and digest."
 		}
+		if action.Message().Name() == "RetireOldRevision" && f.Name() == "ref" {
+			schema.Description = "Old-revision ReplicaSet whose Pod holds the place of an Unschedulable replacement; scaled to zero. Refused for the current revision."
+		}
 		if action.Message().Name() == "EnsureDatabaseUser" && f.Name() == "target" {
 			schema.Description = "Database Pod/container and catalog; target.auth authenticates catalog reads separately from the create-user password. Failures name the safe execution stage; correct source-declared references before retrying."
 		}
