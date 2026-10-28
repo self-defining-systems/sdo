@@ -16,6 +16,7 @@ Use existing gates when extending a contract. New agent implementations and comm
 | `scripts/update_prompt_goldens.py` | Regenerate normalized prompt goldens after intentional changes. |
 | `scripts/check_prompt_budgets.py` | Every commit's budget raises require an isolated manifest-only commit and `Budget-Reason:` trailer; decreases need no exception. |
 | `scripts/check_session_context.py` | Read a Codex/Claude provider session file and reject excessive first/continuation messages or accumulated tool text. |
+| `benchmarks/sregym/skilleval/runner.py` | Offline reflection evaluation from frozen Codex/Claude scenarios. Native writer ownership is recreated only for private transcript copies; host admission caps offline Opus jobs. Metrics dedupe Claude request IDs against the responder prefix and price token classes rather than cumulative session USD. Focused contracts: `tests/unit/benchmarks/sregym/skilleval/`. |
 | `benchmarks/sregym/adapter/context_preflight.py` | Offline real-scale shapes through production producers and the scripted provider's session writer. Fastloop preflight and the hermetic Python shard run the gate. |
 
 Run `scripts/format_code.sh` and `scripts/check_errors.sh` after code edits. Focused validation commands and cost boundaries live in [the testing guide](testing-guide.md).
