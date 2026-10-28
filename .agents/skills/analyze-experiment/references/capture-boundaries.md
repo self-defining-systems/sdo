@@ -157,3 +157,20 @@ zero usage or borrow a fixed-phase sample to explain opening state.
 CA bundles in generic capture objects and typed webhook observations are SHA256 projections. `WebhookCAMatchesSecret` records only its reference arguments and boolean result. `SyncWebhookCA` receipts carry the reference-only action plus `action_reports[].webhook_ca_digest`; CA bytes and Secret documents never enter these receipts. The operation is irreversible and has no stored preimage.
 
 Generic action recordings and application JSON/protobuf receipts apply that same CA projection to response bodies, before/after images and delete preimages, including embedded last-applied annotation JSON. Raw compensation images remain private execution state; published digests must never be interpreted as certificate bytes for replaying writes.
+
+## Snapshot file form
+
+Captures and corpus snapshots written since CORPUS1 use `object_snapshot_version: 2`:
+every captured object is stored once, in `objects`. The typed lists (`pods`,
+`services`, `configMaps`, ...) are omitted and rebuilt from the namespace-local
+objects on load. Version 1 files carry each namespace-local object twice (in
+`objects` and its typed list) and stay readable. A snapshot whose typed lists
+are not exactly its objects keeps them and is written as version 1.
+With `jq`, filter `.objects[] | select(.kind == "Pod")` rather than `.pods`;
+the reflection tool `capture_fields` serves typed sections for both forms.
+
+Provenance digests name snapshot content. `sdktest.SnapshotDigest` hashes the
+canonical form, so the version 1 and version 2 files of one capture have the
+same digest; a label digest of the exact old file bytes also still matches.
+Measured on the shared astronomy corpus (2026-10-28, 43 cases): 194.3 MB to
+64.0 MB, with replay and validation verdicts unchanged on every case.

@@ -405,7 +405,8 @@ def install_evidence_tools(server: FastMCP) -> None:
         """Read captured resource fields or primitive recordings on demand.
 
         Fields are dotted paths; list indices are numeric (spec.containers.0.image).
-        Null collections are empty. Results are paginated; the shared reply cap
+        Null collections are empty. Sections of a capture that stores each object
+        once, in objects, are rebuilt from those objects. Results are paginated; the shared reply cap
         saves large complete pages to a session file. Extract relevant fields
         from that file. Missing fields are null, never evidence that a primitive succeeded.
         """

@@ -41,6 +41,10 @@ func CheckRenameInvariance(t testing.TB, p program.Diagnoser, c CorpusCase)
     names, IPs, digest-pinned images, binary ConfigMap data, and HTTP paths stay
     fixed because the corpus cannot safely substitute their external targets.
 
+func CorpusSnapshotFile(dir, name string) string
+    CorpusSnapshotFile resolves a case file. open.json and healthy.json are
+    omitted when they equal fixed.json; the case then references fixed.json.
+
 func ExternalNameEndpointViolations(detector sdk.Detector, serviceNames []string) []string
     ExternalNameEndpointViolations checks that a detector never reports an
     ExternalName Service because it lacks ready endpoints or backing pods.
@@ -78,6 +82,11 @@ func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginR
 func SnapshotDigest(raw []byte) (string, error)
     SnapshotDigest hashes a snapshot's canonical form, so provenance compares
     snapshot content rather than one file layout.
+
+func SnapshotMatchesDigest(raw []byte, digest string) bool
+    SnapshotMatchesDigest accepts a recorded digest of either the exact
+    file bytes (cases written before the objects-only form) or the canonical
+    snapshot.
 
 func ValidateCorpusProvenance(dir string) error
     ValidateCorpusProvenance checks that persisted case snapshots still match
@@ -227,12 +236,4 @@ func (v *RecordingReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoint
 func (v *RecordingReadView) ScopedServices(namespace string) ([]corev1.Service, error)
 
 func (v *RecordingReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
-
-func (v *RecordingReadView) TrafficWindow(name string) (traffic.Window, bool)
-
-func (v *RecordingReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error)
-
-func (v *RecordingReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
-
-func (v *RecordingReadView) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
 ```

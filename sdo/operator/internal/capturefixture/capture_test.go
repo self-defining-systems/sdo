@@ -1,8 +1,8 @@
 package capturefixture
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 

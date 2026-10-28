@@ -5,11 +5,14 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"sdo.dev/operator/internal/capturefixture"
 )
 
 func TestNormalizeCapturedCorpusStoresEachSnapshotOnce(t *testing.T) {
 	root := t.TempDir()
-	fixed, open := `{"namespace":"app","object_snapshot_version":2}`, `{"namespace":"app","object_snapshot_version":2,"objects":[]}`
+	fixed := string(capturefixture.FromView(t, `{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"api"}}]}`))
+	open := string(capturefixture.FromView(t, `{"namespace":"app"}`))
 	files := map[string]string{
 		// A writer copied fixed.json into open.json and healthy.json.
 		".sdo/corpus/copied/open.json":    fixed,

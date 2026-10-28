@@ -23,9 +23,9 @@ from google.protobuf import json_format
 from sdo.agents.health_judge import run_judge_task
 from sdo.agents.responder import (
     KubernetesResultPublisher,
-    capture_sections,
     ReflectionTurn,
     await_standby_claim,
+    capture_sections,
     recorded_actions,
     run_reflection_task,
     run_worker_task,
@@ -635,7 +635,9 @@ def _captured_policy_pair(capture: Path, open_at: str) -> tuple[str, str] | None
     opened_path, fixed_path = capture / f"open@{open_at}.json", capture / "fixed.json"
     if not opened_path.is_file() or not fixed_path.is_file():
         return None
-    opened, fixed = (capture_sections(json.loads(path.read_text(encoding="utf-8"))) for path in (opened_path, fixed_path))
+    opened, fixed = (
+        capture_sections(json.loads(path.read_text(encoding="utf-8"))) for path in (opened_path, fixed_path)
+    )
     fixed_policies = {item["metadata"]["name"]: item for item in (fixed.get("networkPolicies") or [])}
     for item in opened.get("networkPolicies") or []:
         name = item["metadata"]["name"]

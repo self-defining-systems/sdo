@@ -167,7 +167,7 @@ verification_blockers[{detector_id,reason}], drift[], drift_events[]
 - When captured, filename: open@detect.json; provenance open_at: detect.
 - When captured, filename: open@pre-apply.json; provenance open_at: pre-apply.
 - Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.
-Select only files actually supplied by the controller. Supported phase values do not promise capture availability.
+Select only files actually supplied by the controller. Supported phase values do not promise capture availability. Captures store each object once, in objects; capture_fields serves the typed sections.
 
 ## Tool reply budget
 
@@ -206,7 +206,8 @@ independent validation. Read relevant fields rather than entire captures.
 Read captured resource fields or primitive recordings on demand.
 
 Fields are dotted paths; list indices are numeric (spec.containers.0.image).
-Null collections are empty. Results are paginated; the shared reply cap
+Null collections are empty. Sections of a capture that stores each object
+once, in objects, are rebuilt from those objects. Results are paginated; the shared reply cap
 saves large complete pages to a session file. Extract relevant fields
 from that file. Missing fields are null, never evidence that a primitive succeeded.
 

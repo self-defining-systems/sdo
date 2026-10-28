@@ -7,6 +7,8 @@ and object bindings for the confirmed cause. Keep originating incident attributi
 snapshot digests and a protected capture mount are not required. Include accepted.json when the executed
 mitigation reads accepted source. For replay, open.json represents the fault and recordings.json contains
 its observed primitive replies; fixed.json and healthy.json remain readable context, not repair proof.
+A case stores each distinct snapshot once: leave out open.json or healthy.json when it would equal fixed.json,
+and the loader uses fixed.json in its place.
 
 When accepted playbooks do not already cover a recorded repair on a closure verified healthy, save useful diagnose and mitigate steps and a README describing fault
 handling, and a detector that references its playbook. One detector may reference several playbooks. A missing piece is
