@@ -22,7 +22,7 @@ func (v *ReplayReadView) WebhookCAMatchesSecret(t program.WebhookCA) (bool, erro
 		return false, err
 	}
 	var r bool
-	err := v.replay("WebhookCAMatchesSecret", []any{t}, &r)
+	err := v.Recorded("WebhookCAMatchesSecret", []any{t}, &r)
 	return r, err
 }
 func (s Snapshot) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error) {
@@ -39,7 +39,7 @@ func (v *RecordingReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]progr
 }
 func (v *ReplayReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.AdmissionWebhook, error) {
 	var r []program.AdmissionWebhook
-	err := v.replay("AdmissionWebhooksFor", []any{subject}, &r)
+	err := v.Recorded("AdmissionWebhooksFor", []any{subject}, &r)
 	return r, err
 }
 func (s Snapshot) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.AdmissionWebhook, error) {

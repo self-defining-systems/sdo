@@ -246,10 +246,18 @@ def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
         env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
         check=True,
     )
+    download_commands = [
+        shlex.split(args)
+        for line in calls.read_text().splitlines()
+        for _, args in [line.split(":", 1)]
+        if shlex.split(args)[:2] == ["mod", "download"]
+    ]
+    assert download_commands
+    assert all(args[2] == "-modfile" and args[3].endswith(".mod") for args in download_commands)
     downloaded = {
         directory
         for directory, args in (line.split(":", 1) for line in calls.read_text().splitlines())
-        if args == "mod download all"
+        if shlex.split(args)[:2] == ["mod", "download"] and shlex.split(args)[-1] == "all"
     }
     modules = {str(ROOT / "sdo/operator" / name) for name in ("sdk", "core", "runtime", "contracts")} | {
         str(ROOT / "sdo/operator")
@@ -303,7 +311,8 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
             assert commands[0][:3] == ["test", "-c", "-o"]
             assert commands[0][-1] == "./..."
             if module.endswith("/runtime"):
-                assert commands[1] == ["build", "./prober"]
+                assert ["build", "./prober"] in commands
+                assert any(args[0] == "vet" for args in commands)
 
 
 def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:

@@ -225,7 +225,8 @@ def _parser() -> argparse.ArgumentParser:
             "--NAME VALUE also sets parameters. "
             "Pending rollout retains its application ID and allows reads; "
             "rollout_stalled releases writes once stuck or at its bound. "
-            "Source reconciliation waits for old objects to drain; persistent differences return source_residual. "
+            "Source reconciliation waits for old objects to drain; observed differences return source_residual, "
+            "unavailable readback stays pending and unverified. "
             "Script fixes are learnable; unlinked bytes are refused as script_unprovenanced."
             + " "
             + WORKING_PROGRAM_HELP

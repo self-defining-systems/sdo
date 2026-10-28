@@ -100,8 +100,8 @@ func TestSourceReconcileReportsOldRolloutWithoutMutation(t *testing.T) {
 					t.Fatalf("missing read-only rollout residual: %+v", report)
 				}
 			} else if mode == "identity changed" || mode == "sets unavailable" || mode == "pods unavailable" {
-				var partial *SourceReconcilePartialError
-				if !errors.As(err, &partial) || report.Converged || report.ObservationError == "" || result.VerificationPassed {
+				var pending *RolloutPendingError
+				if !errors.As(err, &pending) || result.RolloutPending == nil || result.ActionReports[0].Status != "applied" || report.Converged || report.ObservationError == "" || len(report.ResidualPaths) != 0 || result.VerificationPassed {
 					t.Fatalf("unknown rollout earned credit: %+v %v", report, err)
 				}
 			} else if report == nil || !report.Converged || len(report.ResidualPaths) != 0 {
