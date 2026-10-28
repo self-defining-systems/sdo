@@ -19,7 +19,7 @@ import (
 // settleSourceDependencies shares the existing rollout budget. Recovery is a
 // single pass over the pre-recovery Pod identities, never an ongoing restart loop.
 func (e PlanExecutor) settleSourceDependencies(ctx context.Context, incident IncidentRequest, result *PlanApplicationResult) error {
-	if e.deferDependencyRecovery {
+	if e.deferConvergence {
 		return nil
 	}
 	recovery, ok := e.Rollouts.(interface {
@@ -339,6 +339,9 @@ func (e PlanExecutor) waitAfterSourceWrites(ctx context.Context, incident Incide
 		}
 		return nil, err
 	}
+	// Keep nonterminal evidence before a wait can exhaust the API read budget.
+	// Observing a residual here never refuses an accepted write.
+	_ = e.observeSourceResiduals(ctx, incident, result)
 	if len(refs) > 0 {
 		pending, err := e.waitForRollouts(ctx, incident, refs)
 		if err != nil {

@@ -127,10 +127,13 @@ func TestSourceReconcileReportsOldRolloutWithoutMutation(t *testing.T) {
 // Exercise actual Kubernetes old-template observation through the executor and
 // persisted repair projection, including old Pods outliving complete status.
 func TestSourceConvergenceWaitsForKubernetesOldObjects(t *testing.T) {
-	for _, drains := range []bool{false, true} {
-		t.Run(map[bool]string{false: "bounded-residual", true: "drains"}[drains], func(t *testing.T) {
+	for _, mode := range []string{"drains", "bounded-residual", "rollout-blocked"} {
+		drains := mode == "drains"
+		t.Run(mode, func(t *testing.T) {
 			deployment, current, stale := reconcileRolloutObjects(t)
-			deployment.Status.Replicas = 1
+			if mode != "rollout-blocked" {
+				deployment.Status.Replicas = 1
+			}
 			controller := true
 			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old-pod", Namespace: stale.Namespace, OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: stale.Name, UID: stale.UID, Controller: &controller}}}}
 			kube := fake.NewSimpleClientset(deployment, current, stale, pod)
@@ -156,7 +159,7 @@ func TestSourceConvergenceWaitsForKubernetesOldObjects(t *testing.T) {
 				t.Fatal(err)
 			}
 			ref := addedFieldsRef()
-			executor := PlanExecutor{Client: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}, Source: planFakeSource{source: source}, Rollouts: KubernetesPlanRollouts{Client: kube}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: time.Second}
+			executor := PlanExecutor{Client: contextAwareSourceClient{&planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}}, Source: planFakeSource{source: source}, Rollouts: KubernetesPlanRollouts{Client: kube}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: time.Second}
 			deadline := time.Now().Add(350 * time.Millisecond)
 			result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions", ResponseDeadline: deadline}, reconcilePlan(ref), false)
 			report := result.ActionReports[0].SourceReconcile
@@ -180,4 +183,13 @@ func TestSourceConvergenceWaitsForKubernetesOldObjects(t *testing.T) {
 			}
 		})
 	}
+}
+
+type contextAwareSourceClient struct{ *planFakeClient }
+
+func (c contextAwareSourceClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.planFakeClient.Get(ctx, ref)
 }

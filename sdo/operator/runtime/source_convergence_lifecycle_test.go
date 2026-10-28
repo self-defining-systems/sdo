@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -31,7 +32,7 @@ func (r *convergingSourceRollout) SourceRolloutResiduals(context.Context, *unstr
 // Run the real executor's write producer into its receipt and repair consumer.
 // Sweep both document and object dispatch and a nested general-plan dispatch.
 func TestSourceConvergenceBeforeTerminalReceipt(t *testing.T) {
-	for _, dispatch := range []string{"document", "object", "general"} {
+	for _, dispatch := range []string{"document", "object", "general", "runtime"} {
 		for _, persistent := range []bool{false, true} {
 			t.Run(dispatch+map[bool]string{false: "/converges", true: "/bounded"}[persistent], func(t *testing.T) {
 				ref := addedFieldsRef()
@@ -42,11 +43,19 @@ func TestSourceConvergenceBeforeTerminalReceipt(t *testing.T) {
 				if dispatch == "general" {
 					actions = append(actions, program.WaitFor{Ref: ref, Path: "/metadata/name", Equals: ref.Name, Timeout: time.Second, Interval: time.Millisecond})
 				}
+				podRef := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: ref.Namespace, Name: "synthetic"}
+				if dispatch == "runtime" {
+					actions = append(actions, program.Exec{Pod: podRef, Container: "app", Command: []program.Value{program.FromParam("command")}})
+				}
 				rollout := &convergingSourceRollout{persistent: persistent}
 				client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: addedFieldsLive()}}}
+				pod := planObject(podRef, map[string]any{})
+				pod.SetUID("pod")
+				pod.SetResourceVersion("1")
+				client.objects[podRef] = pod
 				client.objects[ref].SetUID("workload")
 				client.objects[ref].SetResourceVersion("1")
-				executor := PlanExecutor{Client: client, Source: convergenceTestSource{planFakeSource{source: addedFieldsSource()}}, Rollouts: rollout, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: 350 * time.Millisecond}
+				executor := PlanExecutor{Values: program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "command", ValueKind: program.StringValue, Default: "/bin/true"}}}}, Client: convergenceExecClient{client}, Source: convergenceTestSource{planFakeSource{source: addedFieldsSource()}}, Rollouts: rollout, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: 350 * time.Millisecond}
 				started := time.Now()
 				result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: actions}, false)
 				var partial *SourceReconcilePartialError
@@ -60,6 +69,9 @@ func TestSourceConvergenceBeforeTerminalReceipt(t *testing.T) {
 				receipt, encodeErr := result.Proto()
 				if encodeErr != nil {
 					t.Fatal(encodeErr)
+				}
+				if err := wire.Validate(receipt); err != nil {
+					t.Fatal(err)
 				}
 				restored := planApplicationState(receipt).Result
 				repairs := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "source", Result: restored, StartedAt: time.Now(), CompletedAt: time.Now()}}, nil)
@@ -95,6 +107,9 @@ func TestPendingSourceConvergenceKeepsAttributionUntilObservation(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
+			if err := wire.Validate(encoded); err != nil {
+				t.Fatal(err)
+			}
 			result = planApplicationState(encoded).Result
 			repairs := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "source", Result: result, Pending: true}}, nil)
 			if len(repairs) == 0 || repairs[0].Success {
@@ -121,4 +136,10 @@ func TestPendingSourceConvergenceKeepsAttributionUntilObservation(t *testing.T) 
 			}
 		})
 	}
+}
+
+type convergenceExecClient struct{ *lifecycleTestClient }
+
+func (convergenceExecClient) Exec(context.Context, sdk.ObjectRef, string, []string) (int, error) {
+	return 0, nil
 }

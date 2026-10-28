@@ -140,10 +140,6 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 			result.ActionsApplied = append(result.ActionsApplied, a)
 		}
 		if stepErr != nil {
-			var partial *SourceReconcilePartialError
-			if errors.As(stepErr, &partial) {
-				complete = true
-			}
 			return result, stepErr
 		}
 	}
@@ -156,7 +152,7 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	r.ActionReports = newPlanReports(r.Plan)
 	if !isGeneralAction(action) {
 		nested := e
-		nested.deferDependencyRecovery = true
+		nested.deferConvergence = true
 		return nested.Apply(ctx, incident, r.Plan, dry)
 	}
 	if ca, ok := action.(program.SyncWebhookCA); ok {

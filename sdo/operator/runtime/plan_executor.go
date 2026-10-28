@@ -105,8 +105,9 @@ type PlanExecutor struct {
 	// ApplicationID is durable across restart and selects one script Job.
 	ApplicationID     string
 	scriptActionIndex int
-	// Nested action executors leave dependency recovery to their outer batch.
-	deferDependencyRecovery bool
+	// Nested action executors leave observation, dependency recovery and
+	// terminal verification to their outer batch.
+	deferConvergence bool
 	// PollRollouts returns pending after one observation instead of waiting.
 	PollRollouts bool
 	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error
@@ -156,7 +157,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	}()
 	defer func() {
 		var partial *SourceReconcilePartialError
-		if e.deferDependencyRecovery || result.RolloutPending != nil || errors.As(err, &partial) {
+		if e.deferConvergence || result.RolloutPending != nil || errors.As(err, &partial) {
 			return
 		}
 		residualErr := e.reportSourceResiduals(ctx, incident, &result)
@@ -177,7 +178,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 			break
 		}
 	}
-	if err == nil && !dryRun && !e.deferDependencyRecovery {
+	if err == nil && !dryRun && !e.deferConvergence {
 		var objectWrites []PlanPatch
 		var refs []sdk.ObjectRef
 		for _, patch := range result.Patches {

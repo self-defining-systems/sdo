@@ -293,7 +293,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: "exec", Irreversible: true})
 		default:
 			nested := e
-			nested.deferDependencyRecovery = true
+			nested.deferConvergence = true
 			applied, applyErr := nested.Apply(ctx, incident, program.Plan{Actions: []program.Action{original}}, false)
 			result.Patches = append(result.Patches, applied.Patches...)
 			result.PreImages = append(result.PreImages, applied.PreImages...)
@@ -308,10 +308,6 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				result.ActionsApplied = append(result.ActionsApplied, original)
 			}
 			if applyErr != nil {
-				var partial *SourceReconcilePartialError
-				if errors.As(applyErr, &partial) {
-					complete = true
-				}
 				return result, applyErr
 			}
 			continue
