@@ -197,3 +197,9 @@ Preimages and API receipts are retained, with explicit gaps for opaque effects;
 undo remains an explicit responder decision.
 
 Raw document merge requests resolve a built-in schema from their API URL; any supplied reference must match. Unknown schemas and subresources return `RawMergeSchemaError`. Media-type parameters do not bypass keyed-list validation. Apply-style named Service ports merge by name, preserving unspecified fields when their port numbers change.
+
+## Recorded repair coverage
+
+Every successful hand-repair receipt needs an executable typed SDK or RunScript step in a changed program. Its positive case lists that program ID, binds the repaired resources (or their recorded controller owners), and includes the original timed `RepairReceipt` observation in `recordings.json`. Use the existing `ScriptOriginReceipt` shape for typed plans too: exact original ID, incident, success, times, resources and script digest when present. Separate cases/programs may cover the resources of one grouped receipt together. A new metadata-only case needs no snapshots or other primitive replies; replay remains informational. Preserve accepted cases and add a new case for this incident.
+
+README carries judgement and ordering. An SDK gap is typed and names an actually unavailable observation or effect; installed actions and unencoded recorded repairs are not gaps. Save their executable steps, including partial ones, even when diagnosis or replay is unavailable.

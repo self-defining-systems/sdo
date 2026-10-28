@@ -103,8 +103,8 @@ def accepted_reflection(tmp_path: Path, memory_binary: Path, monkeypatch: pytest
     ("provider", "backend_type"), [("codex", CodexSessionBackend), ("claude", ClaudeSessionBackend)]
 )
 @pytest.mark.parametrize("fresh", [False, True])
-def test_uncovered_repair_reprompts_once_for_a_scoped_sdk_gap(
-    accepted_reflection: Path,
+def test_uncovered_repair_reprompts_once_for_an_executable_step(
+    learned_reflection: Path,
     provider: str,
     backend_type: type[CodexSessionBackend],
     fresh: bool,
@@ -113,29 +113,21 @@ def test_uncovered_repair_reprompts_once_for_a_scoped_sdk_gap(
         if len(agent.requests) == 1:
             payload = {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"}
         else:
-            assert "reflection.uncovered-repair" in agent.prompts[-1]
+            assert "reflection.program-required" in agent.prompts[-1]
             assert "repair-catalog" in agent.prompts[-1]
             payload = {
-                "summary": "missing repair capability",
-                "learning_decision": "sdk_gap",
-                "no_change_reason": "catalog write cannot be encoded",
-                "sdk_gaps": [
-                    {
-                        "fault_class": "catalog",
-                        "primitive": "catalog write",
-                        "reason": "catalog write capability unavailable",
-                        "scratch_script": "catalog repair",
-                        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "api"}],
-                    }
-                ],
+                "summary": "saved executable routing step",
+                "learning_decision": "updated",
+                "proposed_artifact_ids": ["service-targetport-mismatch"],
             }
+
         return reply(provider, payload, session_id="reflection-session", branch="reflection")
 
     agent = ScriptedAgent(respond)
     backend = backend_type(executor=agent.executor)
-    kwargs = {"worktree": accepted_reflection, "prompt": "reflect", "idempotency_key": "one-dispatch"}
+    kwargs = {"worktree": learned_reflection, "prompt": "reflect", "idempotency_key": "one-dispatch"}
     result = backend.fresh(**kwargs) if fresh else backend.resume(session_id="responder-session", **kwargs)
-    assert result.learning_decision == "sdk_gap"
+    assert result.learning_decision == "updated"
     assert len(agent.requests) == 2
     assert result.usage["llm_calls"] == 2
 
@@ -379,6 +371,23 @@ def learned_reflection(accepted_reflection: Path, monkeypatch: pytest.MonkeyPatc
         "fixed_sha256": hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest(),
     }
     (corpus / "labels.json").write_text(json.dumps(label))
+    recordings = json.loads((corpus / "recordings.json").read_text())
+    for receipt in data["repair_actions"]:
+        recordings.append(
+            {
+                "method": "RepairReceipt",
+                "result": {
+                    "id": receipt["action_id"],
+                    "incident_id": data["incident_id"],
+                    "success": receipt["success"],
+                    "started_at": receipt["started_at"],
+                    "completed_at": receipt["completed_at"],
+                    "resources": receipt["resources"],
+                },
+            }
+        )
+    (corpus / "recordings.json").write_text(json.dumps(recordings))
+
     capture = root.with_suffix(".capture")
     (capture / "healthy").mkdir(parents=True)
     (capture / "healthy/healthy.json").write_text(json.dumps(fixed))
@@ -460,3 +469,28 @@ def test_missing_healthy_capture_keeps_the_learned_detector_without_reprompt(
     assert (root / ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go").exists()
     checked = check_reflection_result(root, result.to_result(), 120)
     assert checked.exit_code == 0, checked.stdout + checked.stderr
+
+
+@pytest.mark.parametrize("backend_type", [CodexSessionBackend, ClaudeSessionBackend])
+def test_shared_acceptance_of_decline_reason_survives_python_view(
+    tmp_path: Path, prepare_reflection_memory, backend_type: type[CodexSessionBackend]
+) -> None:
+    prepare_reflection_memory(tmp_path)
+    reason = "The controller recorded recovery without a successful repair receipt."
+    agent = ScriptedAgent(
+        lambda _: reply(
+            backend_type.provider,
+            {
+                "summary": "No repair to learn",
+                "learning_decision": "no_change",
+                "no_change_reason": reason,
+                "decline_reason": "no_recorded_repair",
+            },
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    result = backend_type(executor=agent.executor).fresh(worktree=tmp_path, prompt="reflect", idempotency_key="decline")
+    assert result.no_change_reason == reason
+    assert result.decline_reason == "no_recorded_repair"
+    assert len(agent.requests) == 1

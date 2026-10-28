@@ -109,12 +109,6 @@ class ReflectionTurn(BaseModel):
             raise ValueError("reflection requires logical playbook IDs")
         if len(set(self.playbook_ids)) != len(self.playbook_ids):
             raise ValueError("reflection playbook IDs must be unique")
-        if (
-            self.decline_reason == "no_recorded_repair"
-            and self.learning_decision == "no_change"
-            and self.no_change_reason != "no recorded repair"
-        ):
-            raise ValueError("no_recorded_repair no_change uses the canonical no recorded repair reason")
         if self.learning_decision == "no_change" and self.sdk_gaps:
             raise ValueError("no_change reflection cannot report SDK gaps")
         if self.learning_decision in {"no_change", "sdk_gap"}:

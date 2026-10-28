@@ -12,7 +12,7 @@ Declare object and value parameters, group actions that must run together, and s
 failure context for the report returned to the same responder session.
 Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse, generalization and retirement; that skill also defines ownership and logical IDs.
 
-1. First judge whether all accepted memory already covers the incident: applied playbooks, matching detectors and unchanged source. Read across unrelated memory as needed. Only when existing playbooks match well may you return `no_change` with a short reason and finish; cover every hand repair with an updated playbook or scoped `sdk_gap`, and update or retire applied playbooks that failed, left findings unresolved or needed later hand repair; otherwise make the smallest useful addition.
+1. First judge whether all accepted memory already covers the incident: applied playbooks, matching detectors and unchanged source. Read across unrelated memory as needed. Only when existing playbooks match well may you return `no_change` with a short reason and finish; cover every recorded hand repair with an executable typed SDK or `RunScript` step, and update or retire applied playbooks that failed, left findings unresolved or needed later hand repair; otherwise make the smallest useful addition.
    Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps.
 2. For deterministic programs, read [program authoring](references/programs.md) before editing and the
    [generated program SDK](references/program-sdk.md) before choosing API types. The
@@ -23,7 +23,7 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
    digest-to-receipt linkage. Put judgement about when and in
    what order to run steps in the README, with observations and decisions that guide it.
    Stop the ongoing cause or producer before restarting its victims; if the repair cannot, state that limitation in the README.
-   Save README-only playbooks with verified, specific guidance too; these are never auto-applied. Add detector coverage. A detector may surface multiple playbooks;
+   README text holds only judgement and ordering; every recorded repair needs an executable step linked to its original receipt. Add detector coverage. A detector may surface multiple playbooks;
    `DetectionContext.DiffAgainstSource` observes field drift and source absence before playbook selection.
    Use the responder's recorded actions and existing session observations to build the replay fixture.
    Controller captures and the evidence tools are optional sources, never prerequisites for learning.
@@ -33,8 +33,7 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
 5. Run the complete memory check. Compilation, imports, changed-source formatting and receipt provenance
    remain required. Replay runs as information: NoMatch, persistent Match and unavailable observations
    never block saving. Scope diagnosis to the step's resources for useful live decisions.
-   Return `updated` with changed playbook IDs and scoped `sdk_gaps` for unencoded parts of the same repair.
-   Use `sdk_gap` without edits only when no mechanical step or useful guidance can be saved.
+   Return `updated` with changed playbook IDs. Typed `sdk_gaps` name actually unavailable observations or effects; work not encoded yet is not a gap and cannot excuse a recorded repair.
    Controller-listed `undetected_causes` permit new detector coverage for measured repair transitions;
    bind the replay case to their captured open/fixed configuration without claiming independent health proof.
 

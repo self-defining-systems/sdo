@@ -1,6 +1,9 @@
 package runtime
 
 import (
+	"os"
+	"path/filepath"
+	"sdo.dev/operator/memory"
 	"testing"
 	"time"
 
@@ -36,17 +39,52 @@ func TestControllerRepairReceiptsFeedReflectionCoverage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			o := &contracts.OutcomeRecord{RepairActions: result.RepairActions, PlanApplications: result.PlanApplications}
-			ds := validate.ReflectionRepairDiagnostics(o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
+			o := &contracts.OutcomeRecord{Classification: "success", RepairActions: result.RepairActions, PlanApplications: result.PlanApplications}
+			ds := validate.ReflectionRepairDiagnostics(t.TempDir(), o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
 			wantGap := kind == "hand" || kind == "hand-script"
 			if (len(ds) > 0) != wantGap {
 				t.Fatalf("kind=%s diagnostics=%v", kind, ds)
 			}
 			for _, d := range ds {
-				if d.Rule != validate.RuleReflectionUncoveredRepair {
+				if d.Rule != validate.RuleReflectionProgramRequired {
 					t.Fatalf("unexpected rejection: %v", d)
 				}
 			}
 		})
+	}
+}
+
+// Exercise the production capture producer when a scripted reflector copies
+// original receipts into an authored positive case, as prepare_corpus does.
+func appendControllerRepairReceipts(t *testing.T, root, caseID string, outcome *contracts.OutcomeRecord) {
+	t.Helper()
+	target := filepath.Join(root, ".sdo/corpus", caseID, "recordings.json")
+	raw, err := os.ReadFile(target)
+	if os.IsNotExist(err) {
+		raw = []byte("[]")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	sessions := t.TempDir()
+	capture, err := memory.IncidentCorpusDir(sessions, outcome.IncidentId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(capture, 0755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(capture, "open@detect-recordings.json")
+	if err := os.WriteFile(source, raw, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.CaptureRepairReceipts(sessions, outcome.IncidentId, outcome); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, raw, 0644); err != nil {
+		t.Fatal(err)
 	}
 }

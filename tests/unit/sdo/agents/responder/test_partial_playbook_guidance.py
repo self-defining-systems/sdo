@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[5]
 def test_partial_learning_is_explicit(relative: str) -> None:
     text = (ROOT / relative).read_text().lower()
     assert "partial" in text
-    assert "readme-only" in text
+    assert "readme" in text
     assert "judgement" in text
     assert "replay" in text
     assert "information" in text
@@ -30,6 +30,8 @@ def test_partial_learning_is_explicit(relative: str) -> None:
     if relative.endswith(("SKILL.md", "reflection.md")):
         assert "no_change" in text
         assert "hand repair" in text
+        assert "executable" in text
+        assert "not encoded yet" in text
         assert "left findings unresolved" in text
         assert "difficulty never justifies saving nothing" not in text
     assert "a readme alone does not establish learning" not in text

@@ -126,7 +126,27 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 					if err := os.WriteFile(readme, authoredREADME, 0o644); err != nil {
 						return nil, err
 					}
-					response = &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}}
+					programReadme := filepath.Join(checkout, ".sdo/playbooks/service-targetport-mismatch/README.md")
+					programText, err := os.ReadFile(programReadme)
+					if err != nil {
+						return nil, err
+					}
+					if err := os.WriteFile(programReadme, append(programText, []byte("\nThe current controller receipt confirms this repair step.\n")...), 0644); err != nil {
+						return nil, err
+					}
+					caseDir := filepath.Join(checkout, ".sdo/corpus/current-repair")
+					if err := os.MkdirAll(caseDir, 0755); err != nil {
+						return nil, err
+					}
+					labels, err := os.ReadFile(filepath.Join(checkout, ".sdo/corpus/targetport-mismatch/labels.json"))
+					if err != nil {
+						return nil, err
+					}
+					if err := os.WriteFile(filepath.Join(caseDir, "labels.json"), labels, 0644); err != nil {
+						return nil, err
+					}
+					appendControllerRepairReceipts(t, checkout, "current-repair", reflectionFixtureOutcome("direct-files"))
+					response = &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base", "service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}}
 					if scenario == "malformed then fixed" {
 						if err := os.WriteFile(readme, []byte("malformed README\n"), 0o644); err != nil {
 							return nil, err
@@ -188,7 +208,7 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 					t.Fatal("update was not committed")
 				}
 				ledger, err := native.readLedger("direct-files")
-				if err != nil || len(ledger.GetReflectionDecision().GetPlaybookIds()) != 1 || ledger.GetReflectionDecision().GetPlaybookIds()[0] != "base" {
+				if err != nil || len(ledger.GetReflectionDecision().GetPlaybookIds()) != 2 || ledger.GetReflectionDecision().GetPlaybookIds()[0] != "base" {
 					t.Fatalf("accepted playbook IDs not durable: %v %v", ledger, err)
 				}
 				for rel, want := range map[string][]byte{".sdo/playbooks/base/README.md": authoredREADME, ".sdo/diagnostics/detectors/incidents/cache/detector.go": authoredGo} {
@@ -604,7 +624,7 @@ func reflectionFixtureResources() []*contracts.ObjectRef {
 	return []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}
 }
 func reflectionFixtureGap() *contracts.SdkGap {
-	return &contracts.SdkGap{FaultClass: "synthetic-routing", Primitive: "fixture-coverage", Reason: "transport fixture records an explicit SDK coverage gap", ScratchScript: "scratch/fixture", Resources: reflectionFixtureResources()}
+	return &contracts.SdkGap{FaultClass: "synthetic-routing", Primitive: "FixtureUnavailableObservation", Reason: "transport fixture records an explicit SDK coverage gap", ScratchScript: "scratch/fixture", Resources: reflectionFixtureResources()}
 }
 
 func reflectionFixtureOutcome(incidentID string) *contracts.OutcomeRecord {

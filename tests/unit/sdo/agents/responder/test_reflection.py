@@ -230,12 +230,10 @@ def test_reflection_saves_partial_learning_for_verified_parts(
         diagnostics=[MemoryDiagnostic(rule="program.replay", message="Correct the fixed case")] if retry else [],
     )
     prompt = str(backend.calls[0]["prompt"])
-    assert "Preserve verified steps with partial coverage" in prompt
+    assert "Preserve verified partial steps" in prompt
     assert "Use recorded actions as repair evidence" in prompt
-    assert "useful README-only guidance" in prompt
     assert "Replay is informational" in prompt
-    assert "plus scoped sdk_gaps for unencoded parts" in prompt
-    assert "put judgement in the README" in prompt
+    assert "README holds only judgement and ordering" in prompt
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["classification"] == classification
     assert current["repair_actions"][0]["details"] == outcome.repair_actions[0].details
@@ -480,25 +478,27 @@ def _verified_repeat_outcome() -> OutcomeRecord:
     )
 
 
-def test_typed_no_recorded_repair_decline_has_a_canonical_reason() -> None:
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "no recorded repair",
+        "No successful repair was recorded.",
+        "The controller observed recovery without intervention.",
+    ],
+)
+def test_typed_no_recorded_repair_decline_preserves_the_specific_reason(reason: str) -> None:
     from sdo.agents.responder.reflection import ReflectionTurn
 
     turn = ReflectionTurn.from_model_output(
         {
             "summary": "No recorded repair touched the cause.",
             "learning_decision": "no_change",
-            "no_change_reason": "no recorded repair",
+            "no_change_reason": reason,
             "decline_reason": "no_recorded_repair",
         }
     )
     assert turn.decline_reason == "no_recorded_repair"
-    with pytest.raises(ValueError, match="canonical"):
-        ReflectionTurn(
-            summary="Missing observation",
-            learning_decision="no_change",
-            no_change_reason="some inferred absence",
-            decline_reason="no_recorded_repair",
-        )
+    assert turn.to_result().no_change_reason == reason
 
 
 def test_large_evidence_principle_is_stated_once(tmp_path: Path) -> None:
@@ -585,4 +585,3 @@ def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_p
     prompt = str(backend.calls[0]["prompt"])
     current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
     assert current["undetected_causes"][0]["repair_action_id"] == "recorded-patch"
-    assert "plus scoped sdk_gaps" in prompt

@@ -68,13 +68,7 @@ Irreversible Pod deletion or Exec never grants restart mutation or recreation au
 
 ## Corpus evidence
 
-Partial mechanical coverage is useful: save each verified step as a program; the README explains orchestration
-and judgement about when and in what order to run steps (what to observe, decide and why).
-Any performed repair can be a `RunScript` bash step with relation-derived Env and digest-to-receipt linkage;
-When accepted playbooks already match well and no uncovered repair remains, return no_change promptly. Verified, specific README-only playbooks are allowed
-and never auto-applied. Return `updated` with IDs and scoped `sdk_gaps` for unencoded parts of the same repair.
-Advice, not validator-checked: add detector coverage; one detector may surface several playbooks. Reflection
-can edit only responder-owned incident detectors. Missing executable coverage is a gap, not a refusal.
+Partial mechanical coverage is useful: save every recorded hand repair as an executable typed SDK or RunScript step, with relation-derived Env and digest-to-receipt linkage. README text holds only judgement and ordering. When accepted playbooks already match well and no uncovered repair remains, return no_change promptly. Typed SDK gaps describe actually unavailable observations or effects, never work not encoded yet. Missing executable coverage of recorded hand repairs is blocking; detector coverage and replay results remain informational.
 
 - Build replay fixtures from recorded session observations when available. Missing or inconclusive replay
   is recorded with its reason and never rejects publication; retain RunScript receipt linkage. Enforced by: `program.mitigation-not-repaired`.

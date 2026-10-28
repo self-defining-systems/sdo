@@ -256,8 +256,8 @@ def install_authoring_tools(server: FastMCP, root: Path) -> None:
         Pass observations to use the snapshot and primitive replies already in
         the responder session; include accepted_json for source-reading plans.
         Missing controller captures do not block this mode. Without observations,
-        copy the selected available capture and peer context. In both modes the
-        save gate executes mitigation and requires diagnosis to become NoMatch.
+        copy the selected available capture and peer context. Include original timed RepairReceipt observations for each recorded repair
+        encoded by these programs. Replay snapshots and verdicts are informational.
         """
         if observations is not None:
             return prepare_session_corpus(

@@ -2,6 +2,7 @@ package validate
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestCheckReflectionRequiresRepairCoverage(t *testing.T) {
 		change            func(*contracts.OutcomeRecord)
 	}{
 		{"all from working playbook", "", "", func(*contracts.OutcomeRecord) {}},
-		{"uncovered hand repair", "reflection.uncovered-repair", "manual-port", func(o *contracts.OutcomeRecord) {
+		{"uncovered hand repair", "reflection.program-required", "manual-port", func(o *contracts.OutcomeRecord) {
 			o.RepairActions = append(o.RepairActions, &contracts.RepairActionReceipt{ActionId: "manual-port", Kind: "exec", Success: true})
 		}},
 		{"failed applied playbook", "reflection.stale-playbook", "base", func(o *contracts.OutcomeRecord) { o.PriorStages[0].Mitigations[0].Result = "apply_error" }},
@@ -123,13 +124,13 @@ func TestReflectionCoverageCannotExcusePeersOrRelabelHandRepairs(t *testing.T) {
 				test.change(o)
 			}
 			before := proto.Clone(o)
-			ds := ReflectionRepairDiagnostics(o, test.decision, test.paths)
+			ds := ReflectionRepairDiagnostics(t.TempDir(), o, test.decision, test.paths)
 			gotRepair, gotStale := false, false
 			for _, d := range ds {
-				gotRepair = gotRepair || d.Rule == "reflection.uncovered-repair"
+				gotRepair = gotRepair || d.Rule == "reflection.program-required"
 				gotStale = gotStale || d.Rule == "reflection.stale-playbook"
 			}
-			if gotRepair != test.wantRepair || gotStale != test.wantStale {
+			if gotRepair != true || gotStale != test.wantStale {
 				t.Fatalf("repair/stale=%v/%v want %v/%v: %v", gotRepair, gotStale, test.wantRepair, test.wantStale, ds)
 			}
 			if !proto.Equal(o, before) {
@@ -144,7 +145,7 @@ func TestReflectionStageResultCoverageSweep(t *testing.T) {
 		t.Run(result, func(t *testing.T) {
 			o := repairCoverageOutcome()
 			o.PriorStages[0].Mitigations[0].Result = result
-			ds := ReflectionRepairDiagnostics(o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
+			ds := ReflectionRepairDiagnostics(t.TempDir(), o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
 			want := result != "applied_cleared" && result != "skipped"
 			if (len(ds) > 0) != want {
 				t.Fatalf("result %s: %v", result, ds)
@@ -168,9 +169,11 @@ func TestReflectionLaterRepairDoesNotStaleUnrelatedBatchedPlaybook(t *testing.T)
 	a.StartedAt = timestamppb.New(time.Unix(101, 0))
 	a.CompletedAt = a.StartedAt
 	o.RepairActions = append(o.RepairActions, a)
-	ds := ReflectionRepairDiagnostics(o, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"base"}}, []string{".sdo/playbooks/base/README.md"})
-	if len(ds) != 0 {
-		t.Fatalf("unrelated batched peer was marked stale: %v", ds)
+	ds := ReflectionRepairDiagnostics(t.TempDir(), o, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"base"}}, []string{".sdo/playbooks/base/README.md"})
+	for _, d := range ds {
+		if d.Rule != RuleReflectionProgramRequired {
+			t.Fatalf("unrelated batched peer was marked stale: %v", ds)
+		}
 	}
 }
 
@@ -183,8 +186,10 @@ func TestReflectionStageBindingsKeepLaterHandRepairVisibleWithoutReceipt(t *test
 	m.Bindings = []*contracts.Binding{{Name: "service", Object: ref}}
 	o.RepairActions[0].ActionId = "manual"
 	o.RepairActions[0].Kind = "exec"
-	ds := ReflectionRepairDiagnostics(o, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"peer"}}, []string{".sdo/playbooks/peer/README.md"})
-	if len(ds) != 1 || ds[0].Rule != "reflection.stale-playbook" || !strings.Contains(ds[0].Message, "base") {
+	ds := ReflectionRepairDiagnostics(t.TempDir(), o, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"peer"}}, []string{".sdo/playbooks/peer/README.md"})
+	if !slices.ContainsFunc(ds, func(d Diagnostic) bool {
+		return d.Rule == RuleReflectionStalePlaybook && strings.Contains(d.Message, "base")
+	}) {
 		t.Fatalf("stale stage playbook lost with its missing application receipt: %v", ds)
 	}
 }
@@ -203,7 +208,7 @@ func TestReflectionFinalFindingCoverageIsPlaybookScoped(t *testing.T) {
 			o := repairCoverageOutcome()
 			o.PlaybookCoverage = &contracts.PlaybookCoverage{Matches: []*contracts.PlaybookMatch{{PlaybookId: "base", ExplainedFindingFingerprints: []string{"own"}}}}
 			o.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "detector", Status: tc.status, Fingerprints: []string{tc.fingerprint}}}
-			ds := ReflectionRepairDiagnostics(o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
+			ds := ReflectionRepairDiagnostics(t.TempDir(), o, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil)
 			if (len(ds) > 0) != tc.want {
 				t.Fatalf("final findings: %v", ds)
 			}

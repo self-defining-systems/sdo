@@ -12,9 +12,8 @@ import (
 
 // ReflectionRepairDiagnostics binds the fast no-change path to controller
 // receipts, not the model's explanation. Reported changed IDs are checked
-// against the real diff by ReflectionDiagnostics. README-only learning remains
-// valid; executable coverage and replay are separate, informational checks.
-func ReflectionRepairDiagnostics(outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision, paths []string) []Diagnostic {
+// against the real diff by ReflectionDiagnostics. Recorded hand repairs require executable steps; replay remains informational.
+func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision, paths []string) []Diagnostic {
 	if decision == nil || (outcome.GetReflectionSkipReason() == "no_session" && decision.GetLearningDecision() == "no_change" && decision.GetNoChangeReason() == "no_session") {
 		return nil
 	}
@@ -120,12 +119,9 @@ func ReflectionRepairDiagnostics(outcome *contracts.OutcomeRecord, decision *con
 			stale[match.GetPlaybookId()] = "its findings remain unresolved in the final controller observation"
 		}
 	}
-	var ds []Diagnostic
-	for _, a := range hand {
-		if len(changed) > 0 || repairHasSDKGap(a, decision.GetSdkGaps()) {
-			continue
-		}
-		ds = append(ds, Diagnostic{Rule: RuleReflectionUncoveredRepair, Message: fmt.Sprintf("repair %q (%s) is not covered by an updated playbook or scoped SDK gap", a.GetActionId(), a.GetTarget()), Hint: "save the useful repair in a changed playbook and return its ID, or name the missing capability in a typed SDK gap scoped to this repair"})
+	ds := recordedRepairProgramDiagnostics(root, outcome, hand, changed)
+	if len(hand) > 0 {
+		ds = append(ds, recordedRepairSDKGapDiagnostics(outcome, decision.GetSdkGaps())...)
 	}
 	ids := make([]string, 0, len(stale))
 	for id := range stale {
@@ -169,25 +165,6 @@ func applicationOwnsRepair(app *contracts.PlanApplication, a *contracts.RepairAc
 			}
 		}
 		return suffix != ""
-	}
-	return false
-}
-
-func repairHasSDKGap(a *contracts.RepairActionReceipt, gaps []*contracts.SdkGap) bool {
-	for _, gap := range gaps {
-		if len(a.GetResources()) == 0 {
-			if a.GetActionId() != "" && strings.Contains(gap.GetReason(), a.GetActionId()) {
-				return true
-			}
-			continue
-		}
-		covered := true
-		for _, ref := range a.GetResources() {
-			covered = covered && slices.ContainsFunc(gap.GetResources(), func(other *contracts.ObjectRef) bool { return equalCauseResource(ref, other) })
-		}
-		if covered {
-			return true
-		}
 	}
 	return false
 }
