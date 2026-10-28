@@ -48,8 +48,9 @@ def _deliver_images(
     reason = ""
     path = "registry"
     evidence: dict[str, dict[str, str]] = {}
+    registry: dict[str, Any] = {}
     try:
-        evidence = registry_delivery(cluster, images)
+        evidence = registry_delivery(cluster, images, metrics=registry)
     except (subprocess.SubprocessError, RuntimeError, ValueError, KeyError, OSError) as error:
         reason = str(error)
         if isinstance(error, subprocess.CalledProcessError):
@@ -78,6 +79,7 @@ def _deliver_images(
                         "cluster": cluster,
                         "success": False,
                         "disk": disk,
+                        "registry": registry,
                     },
                 )
             raise
@@ -90,6 +92,7 @@ def _deliver_images(
         "cluster": cluster,
         "success": True,
         "disk": disk,
+        "registry": registry,
     }
     try:
         record["retention"] = retain_lane_images(cluster, images)

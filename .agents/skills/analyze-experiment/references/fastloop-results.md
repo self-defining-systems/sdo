@@ -185,3 +185,15 @@ table exposes `oracle_invalid`. Do not count an excluded fault as fixed or unfix
 Historical C64 candidates: as-e/000 and as-e/001, and the first/repeat rows for
 seed42 astronomy slots 6, 8, 39 and 40 (TRIAGE3 reported eight affected rows;
 confirm row/slot overlap before re-grading). Raw historical grades remain intact.
+
+### Shared host image registry
+
+New image-delivery entries include a `registry` object with `registry` (the
+harness-owned container name), `uploads`, `cache_hits`, `publication_seconds`,
+`pull_seconds`, `frozen_ids` and `manifest_digests`. These fields distinguish
+one-time build publication from each lane's CRI pull/unpack. A cache hit verifies
+manifest bytes and frozen image identity before skipping upload; nodes pull by
+manifest digest and verify their CRI config IDs. Total delivery `seconds`
+includes registry setup and retention; it excludes waiting for the host-wide
+image-delivery lock. Older entries lack this object. A fallback can retain
+partial registry metrics; use `path` and `success` to establish the result.

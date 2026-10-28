@@ -148,7 +148,7 @@ def test_cleanup_follows_successful_delivery_and_is_in_evidence(monkeypatch, tmp
     events = []
     monkeypatch.setattr(toy_images, "assert_host_disk_headroom", lambda **kw: events.append("disk") or {"passed": True})
 
-    def deliver(*args):
+    def deliver(*args, **kwargs):
         events.append("registry")
         if fallback:
             raise RuntimeError("offline")
@@ -190,7 +190,7 @@ def test_failed_delivery_never_rotates_retention(monkeypatch, tmp_path):
 
     monkeypatch.setattr(toy_images, "assert_host_disk_headroom", lambda **kw: {"passed": True})
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise RuntimeError("delivery failed")
 
     monkeypatch.setattr(toy_images, "registry_delivery", fail)

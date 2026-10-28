@@ -1,7 +1,7 @@
-"""Lane-owned registry delivery, retaining original image names on every node.
+"""Host-owned registry delivery, retaining original image names on every node.
 
-Follows https://kind.sigs.k8s.io/docs/user/local-registry/ . No shared registry
-or Docker storage is pruned; an existing container must prove lane ownership.
+One publication per frozen image, shared by every lane on the kind network.
+No shared registry or Docker storage is pruned by lane teardown.
 """
 
 from __future__ import annotations
@@ -12,7 +12,9 @@ import platform
 import re
 import subprocess
 import time
+import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
@@ -45,21 +47,57 @@ def _wait_registry(host: str) -> None:
         except OSError:
             pass
         time.sleep(0.1)
-    raise RuntimeError(f"lane registry {host} did not become ready")
+    raise RuntimeError(f"host registry {host} did not become ready")
 
 
-def registry_delivery(cluster: str, images: list[str]) -> dict[str, dict[str, str]]:
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", cluster):
-        raise ValueError(f"invalid kind lane name: {cluster!r}")
-    name = cluster + "-registry"
+HOST_REGISTRY_NAME = "sdo-fastloop-registry"
+_REGISTRY_LABEL = "sdo.fastloop.registry"
+_REGISTRY_OWNER = "host-v1"
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_MANIFEST_TYPES = "application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
+
+
+@dataclass(frozen=True)
+class RegistryManifest:
+    digest: str
+    config: str
+
+
+def _manifest(host: str, repository: str, selector: str) -> RegistryManifest | None:
+    """Only absence is a cache miss; corrupt or unavailable content fails closed."""
+    request = urllib.request.Request(
+        f"http://{host}/v2/{repository}/manifests/{selector}", headers={"Accept": _MANIFEST_TYPES}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=wait_for(WaitKind.PROBE)) as response:
+            raw = response.read(4 * 1024 * 1024 + 1)
+            digest = response.headers.get("Docker-Content-Digest", "")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+    if len(raw) > 4 * 1024 * 1024 or digest != "sha256:" + hashlib.sha256(raw).hexdigest():
+        raise ValueError(f"registry manifest digest mismatch: {repository}@{selector}")
+    if selector.startswith("sha256:") and digest != selector:
+        raise ValueError(f"registry returned unexpected manifest digest: {repository}@{selector}")
+    config = json.loads(raw).get("config", {}).get("digest", "")
+    if not _DIGEST.fullmatch(config):
+        raise ValueError(f"registry manifest has no image config identity: {repository}@{selector}")
+    return RegistryManifest(digest, config)
+
+
+def _host_registry() -> str:
+    name = HOST_REGISTRY_NAME
     inspected = subprocess.run(["docker", "container", "inspect", name], capture_output=True, text=True, check=False)
     if inspected.returncode == 0:
         info = json.loads(inspected.stdout)[0]
-        if (info.get("Config", {}).get("Labels") or {}).get("sdo.fastloop.lane") != cluster:
+        if (info.get("Config", {}).get("Labels") or {}).get(_REGISTRY_LABEL) != _REGISTRY_OWNER:
             raise RuntimeError(f"refusing unowned registry container {name}")
         if not info["State"]["Running"]:
             _run(["docker", "start", name])
     else:
+        if "No such container" not in inspected.stderr:
+            inspected.check_returncode()
         _run(
             [
                 "docker",
@@ -67,7 +105,7 @@ def registry_delivery(cluster: str, images: list[str]) -> dict[str, dict[str, st
                 "-d",
                 "--restart=unless-stopped",
                 "--label",
-                "sdo.fastloop.lane=" + cluster,
+                f"{_REGISTRY_LABEL}={_REGISTRY_OWNER}",
                 "-p",
                 "127.0.0.1::5000",
                 "--name",
@@ -81,49 +119,103 @@ def registry_delivery(cluster: str, images: list[str]) -> dict[str, dict[str, st
     # Docker may reassign an ephemeral published port when a network is added.
     info = json.loads(_run(["docker", "container", "inspect", name]).stdout)[0]
     port = info["NetworkSettings"]["Ports"]["5000/tcp"][0]["HostPort"]
+    host = "127.0.0.1:" + port
+    _wait_registry(host)
+    return host
+
+
+def registry_delivery(
+    cluster: str, images: list[str], *, metrics: dict[str, Any] | None = None
+) -> dict[str, dict[str, str]]:
+    """Called under load_images' host-wide image-delivery admission lock.
+
+    Content-derived tags locate cached manifests; nodes always pull their exact
+    digest. Both HTTP manifest bytes and CRI config IDs must match the frozen
+    local image, including on a cache hit. Lane teardown retains this registry.
+    """
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", cluster):
+        raise ValueError(f"invalid kind lane name: {cluster!r}")
+    host = _host_registry()
     nodes = _run(["kind", "get", "nodes", "--name", cluster]).stdout.splitlines()
     if not nodes:
         raise RuntimeError(f"no kind nodes for {cluster}")
-    host = "127.0.0.1:" + port
-    _wait_registry(host)
     directory = "/etc/containerd/certs.d/" + host
     for node in nodes:
         _run(["docker", "exec", node, "mkdir", "-p", directory])
         _run(
             ["docker", "exec", "-i", node, "cp", "/dev/stdin", directory + "/hosts.toml"],
-            input=f'[host."http://{name}:5000"]\n  capabilities = ["pull", "resolve"]\n',
+            input=f'[host."http://{HOST_REGISTRY_NAME}:5000"]\n  capabilities = ["pull", "resolve"]\n',
         )
+    architecture = "arm64" if platform.machine().lower() in {"aarch64", "arm64"} else "amd64"
+    # Freeze all identities before publication, and tag by ID rather than a
+    # mutable source tag so a concurrent build cannot substitute other bytes.
+    frozen = {
+        image: _run(
+            ["docker", "image", "inspect", "--platform", "linux/" + architecture, "--format", "{{.Id}}", image]
+        ).stdout.strip()
+        for image in dict.fromkeys(images)
+    }
+    for image, expected in frozen.items():
+        if not _DIGEST.fullmatch(expected):
+            raise ValueError(f"invalid frozen image identity for {image}: {expected!r}")
+    stats = metrics if metrics is not None else {}
+    stats.update(
+        registry=HOST_REGISTRY_NAME,
+        uploads=0,
+        cache_hits=0,
+        publication_seconds=0.0,
+        pull_seconds=0.0,
+        frozen_ids=frozen,
+        manifest_digests={},
+    )
     evidence: dict[str, dict[str, str]] = {node: {} for node in nodes}
-    for image in dict.fromkeys(images):
-        # One repository per original name, independent of tag. Stable paths let
-        # the registry reuse layers across tags and roles without name collisions.
-        repository = image_ref(image).split("@", 1)[0].rsplit(":", 1)[0]
-        key = hashlib.sha256(repository.encode()).hexdigest()[:16]
-        local = f"{host}/sdo/{key}:current"
-        _run(["docker", "tag", image, local])
-        architecture = "arm64" if platform.machine().lower() in {"aarch64", "arm64"} else "amd64"
-        pushed = _run(["docker", "push", "--platform", "linux/" + architecture, local])
-        match = re.search(r"digest: (sha256:[0-9a-f]{64})", pushed.stdout + pushed.stderr)
-        if match is None:
-            raise RuntimeError(f"registry push returned no manifest digest for {image}")
-        digest = match[1]
+    for image, expected in frozen.items():
+        started = time.monotonic()
+        # A single repository also deduplicates identical bytes published under
+        # different source names; image identity, not a lane/tag, owns the cache.
+        key = "sdo/images"
+        tag = "sha256-" + expected.removeprefix("sha256:")
+        local = f"{host}/{key}:{tag}"
+        manifest = _manifest(host, key, tag)
+        if manifest is None:
+            _run(["docker", "tag", expected, local])
+            pushed = _run(["docker", "push", "--platform", "linux/" + architecture, local])
+            match = re.search(r"digest: (sha256:[0-9a-f]{64})", pushed.stdout + pushed.stderr)
+            if match is None:
+                raise RuntimeError(f"registry push returned no manifest digest for {image}")
+            manifest = _manifest(host, key, match[1])
+            stats["uploads"] += 1
+        else:
+            stats["cache_hits"] += 1
+        if manifest is None or manifest.config != expected:
+            raise ValueError(f"registry image identity differs from frozen image {image}: expected {expected}")
+        digest = manifest.digest
+        stats["manifest_digests"][image] = digest
+        stats["publication_seconds"] += time.monotonic() - started
+        immutable = f"{host}/{key}@{digest}"
+        started = time.monotonic()
         for node in nodes:
-            # CRI uses hosts.toml and unpacks the image. Tag under the original
-            # ref so existing manifests and IfNotPresent semantics keep working.
-            _run(["docker", "exec", node, "crictl", "pull", local])
+            # CRI uses hosts.toml and unpacks shared layers. Preserve the source
+            # ref for application manifests and IfNotPresent semantics.
+            _run(["docker", "exec", node, "crictl", "pull", immutable])
             rows = _run(
                 ["docker", "exec", node, "ctr", "-n", "k8s.io", "images", "ls", "-q", "target.digest==" + digest]
             ).stdout.splitlines()
-            if local not in rows:
-                raise RuntimeError(f"{node} pulled unexpected registry content for {image}")
-            _run(["docker", "exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force", local, image_ref(image)])
-            _run(["docker", "exec", node, "crictl", "inspecti", image])
+            if immutable not in rows:
+                raise ValueError(f"{node} pulled unexpected manifest digest for {image}")
+            _run(
+                ["docker", "exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force", immutable, image_ref(image)]
+            )
+            installed = json.loads(_run(["docker", "exec", node, "crictl", "inspecti", image]).stdout)
+            if installed["status"]["id"] != expected:
+                raise ValueError(f"{node} image identity differs from frozen image {image}: expected {expected}")
             evidence[node][image] = digest
+        stats["pull_seconds"] += time.monotonic() - started
     return evidence
 
 
 def remove_registry(cluster: str) -> None:
-    """Remove only the registry container whose label proves lane ownership."""
+    """Remove a retired lane-owned registry; never remove the shared host cache."""
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", cluster):
         raise ValueError(f"invalid kind lane name: {cluster!r}")
     name = cluster + "-registry"
@@ -193,7 +285,9 @@ def main() -> int:
 
     from benchmarks.sregym.fastloop.toy_images import load_images
 
-    parser = argparse.ArgumentParser(description="Deliver through a lane registry, with a recorded automatic fallback")
+    parser = argparse.ArgumentParser(
+        description="Deliver through the shared host registry, with a recorded automatic fallback"
+    )
     parser.add_argument("--cluster", required=True)
     parser.add_argument("--run-dir", type=Path, required=True)
     from benchmarks.sregym.fastloop.host_limits import HostLimits
