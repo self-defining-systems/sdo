@@ -268,3 +268,29 @@ def test_malformed_cached_manifest_has_actionable_identity_error(registry, docum
         manifests[key] = json.dumps(document).encode()
     with pytest.raises(ValueError, match="config identity"):
         image_delivery.registry_delivery("img1-b", ["controller:frozen"])
+
+
+def test_containerd_image_store_ids_are_manifest_digests_and_deliver_through_the_registry(registry):
+    """Docker's containerd image store reports the manifest digest as the image ID (classic: the config digest).
+
+    Both are one immutable identity of the frozen image; neither may send delivery to the kind-load fallback.
+    """
+    commands, _, state, _ = registry
+    raw = json.dumps({"schemaVersion": 2, "config": {"digest": CONFIG}, "layers": []}).encode()
+    manifest_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    state.update(config=manifest_digest, push_config=CONFIG, node_config=CONFIG)
+    metrics = {}
+    first = image_delivery.registry_delivery("img1-a", ["app:frozen"], metrics=metrics)
+    second_metrics = {}
+    second = image_delivery.registry_delivery("img1-b", ["app:frozen"], metrics=second_metrics)
+    assert set(first["img1-a-worker"].values()) == set(second["img1-b-worker"].values()) == {manifest_digest}
+    assert (metrics["uploads"], second_metrics["cache_hits"]) == (1, 1)
+    assert len([argv for argv, _ in commands if argv[:2] == ["docker", "push"]]) == 1
+
+
+def test_containerd_image_store_still_rejects_a_node_holding_other_content(registry):
+    _, _, state, _ = registry
+    raw = json.dumps({"schemaVersion": 2, "config": {"digest": CONFIG}, "layers": []}).encode()
+    state.update(config="sha256:" + hashlib.sha256(raw).hexdigest(), push_config=CONFIG, node_config=OTHER_CONFIG)
+    with pytest.raises(ValueError, match="identity"):
+        image_delivery.registry_delivery("img1-a", ["app:frozen"])
