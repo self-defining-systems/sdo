@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import shlex
@@ -128,6 +129,45 @@ def test_go_shards_restore_the_completed_preparation_cache() -> None:
         assert any("ci-prepared" in step["with"]["key"] for step in caches), name
 
 
+def test_pull_requests_restore_a_prepared_cache_from_their_base_branch() -> None:
+    """PR caches are private to refs/pull/N; only base-branch pushes can seed them."""
+    configuration = workflow()
+    # PyYAML reads the bare `on:` key as boolean True.
+    pushed = configuration[True]["push"]["branches"]
+    for base in ("main", "vic-lsh/dev/sdo-improve"):
+        assert any(fnmatch.fnmatch(base, pattern.replace("**", "*")) for pattern in pushed), base
+    # A cancelled base-branch run saves nothing, so only PR runs cancel each other.
+    assert configuration["concurrency"]["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
+
+
+def test_a_cold_preparation_keeps_its_progress_within_the_job_deadline() -> None:
+    preparation = workflow()["jobs"]["prepare-go"]
+    steps = preparation["steps"]
+    compile_step = next(step for step in steps if "scripts/prepare_go_ci.sh" in step.get("run", ""))
+    # The compile step stops early enough to save its archives before the job is cancelled.
+    assert 0 < compile_step["timeout-minutes"] < preparation["timeout-minutes"]
+    for mode in ("normal", "race"):
+        publisher = next(
+            step
+            for step in steps
+            if step.get("if") == f"matrix.mode == '{mode}'" and step.get("uses", "").startswith("actions/cache@")
+        )
+        progress = [
+            step
+            for step in steps
+            if step.get("uses", "").startswith("actions/cache/save@") and f"matrix.mode == '{mode}'" in step["if"]
+        ]
+        assert len(progress) == 1, mode
+        assert f"steps.{compile_step['id']}.outcome == 'failure'" in progress[0]["if"]
+        # Same paths, or the next run's restore cannot match the archive.
+        assert progress[0]["with"]["path"].strip() == publisher["with"]["path"].strip()
+        # A rerun resumes from the progress, but consumers only ever see a completed preparation.
+        newest_fallback = publisher["with"]["restore-keys"].split()[0]
+        assert progress[0]["with"]["key"].startswith(newest_fallback)
+        assert "github.sha" not in progress[0]["with"]["key"]
+        assert publisher["with"]["key"].endswith("-${{ github.sha }}")
+
+
 def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
     """Controller jobs run offline on the module graph that preparation caches."""
     controller = workflow()["jobs"]["contracts"]
@@ -207,7 +247,7 @@ def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
     jobs = workflow()["jobs"]
     preparation = jobs["prepare-go"]
     assert preparation["strategy"]["matrix"]["mode"] == ["normal", "race"]
-    caches = [step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache")]
+    caches = [step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache@")]
     assert {step["if"] for step in caches} == {"matrix.mode == 'normal'", "matrix.mode == 'race'"}
     assert sum("~/go/pkg/mod" in step["with"]["path"] for step in caches) == 1
     for name in ("contracts",):
