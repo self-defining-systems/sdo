@@ -114,6 +114,13 @@ omit incident captures when its controller healthy reference is retained.
 
 ## Concurrent shared-memory lanes
 
+Lanes bound to a GitHub memory branch (`fastloop.json` `memory_repo`/`memory_branch`) each have a
+private accepted checkout; the branch, not a host path, is the shared history. Compare lanes by
+branch commits. `sdo(sync): merge accepted memory` commits join history accepted while GitHub was
+unreachable; a `<branch>-unmerged-<commit>` branch holds offline history that overlapped a peer and
+was not merged (a lane-private divergence to report). Controller logs `memory upstream ...
+unavailable` mark those windows.
+
 `fastloop parallel` joins ordinary per-lane rows into output `incidents.jsonl`
 and CSV. `parallel_plan.json` records order/provider/model; `parallel_result.json`
 reports requested/completed counts and every lane error. Completed peer evidence
