@@ -3,6 +3,11 @@ package runtime
 import (
 	"context"
 	"errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"os"
+	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/validate"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -77,6 +82,17 @@ func TestSourceReadbackUnavailableRemainsPendingUntilObserved(t *testing.T) {
 			if repairs := ProgramRepairReceipts(loop.applicationsLog, nil); len(repairs) == 0 || repairs[0].Success {
 				t.Fatalf("unobserved repair credited: %+v", repairs)
 			}
+			// Clear the independent peer through the API. Healthy peers cannot
+			// substitute for the missing evidence of this source write.
+			typed := client.PlanObjectClient.(TypedPlanClient)
+			peer, err := typed.Client.AppsV1().Deployments("app").Get(context.Background(), "api", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			peer.Spec.Template.Spec.Containers[0].Image = "good:v1"
+			if _, err := typed.Client.AppsV1().Deployments("app").Update(context.Background(), peer, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
 			loop.settlePending(context.Background())
 			if loop.applications[entry.ID].VerificationPassed {
 				t.Fatal("health bypassed missing readback")
@@ -84,11 +100,23 @@ func TestSourceReadbackUnavailableRemainsPendingUntilObserved(t *testing.T) {
 			client.unavailable = false
 			loop.settlePending(context.Background())
 			settled := loop.applications[entry.ID]
-			if !settled.VerificationCompleted || settled.RolloutPending != nil || !settled.ActionReports[0].SourceReconcile.Converged {
+			if !settled.VerificationCompleted || !settled.VerificationPassed || settled.RolloutPending != nil || !settled.ActionReports[0].SourceReconcile.Converged {
 				t.Fatalf("readback recovery failed to settle: %+v", settled)
 			}
-			if settled.VerificationPassed {
-				t.Fatal("unrepaired peer finding received health clearance")
+			// The actual final receipt producer feeds the reflection consumer.
+			// Its earlier pending snapshot must not force a working step to change.
+			result, err := incidentResultContract(IncidentResult{PlanApplications: loop.PlanApplications()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".sdo/playbooks", p.Spec().ID), 0755); err != nil {
+				t.Fatal(err)
+			}
+			outcome := &contracts.OutcomeRecord{PlanApplications: result.PlanApplications, PriorStages: state.PriorStages}
+			ds := validate.ReflectionRepairDiagnostics(root, outcome, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "existing step verified after readback recovered"}, nil)
+			if len(ds) > 0 {
+				t.Fatalf("settled repair forced memory churn: %v", ds)
 			}
 			if client.writes != 1 {
 				t.Fatalf("observation repeated write: %d", client.writes)

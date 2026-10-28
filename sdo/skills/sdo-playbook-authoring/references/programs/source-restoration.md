@@ -9,6 +9,8 @@ Do not add unrelated observations as prerequisites to a working source-drift dia
 must not turn an otherwise decidable source comparison into Unknown. Refine the existing step for resource or
 parameter variants; add a separate step when the cause or required evidence changes. Preserve earlier cases and
 check both the repaired variant and prior variants when changing a shared step; replay remains informational.
+Judge a pending stage by its final application receipt: a later verified settlement of the same execution
+preserves the working step. A handoff snapshot alone does not prove the program needs rewriting.
 
 Keep source-restoration mitigators for image, readiness and ConfigMap faults when diagnosis supports them.
 Prefer a narrow, schema-checked SetField when diagnosis identifies the damaged field; named list selectors and
