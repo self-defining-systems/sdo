@@ -1,0 +1,47 @@
+{
+ "deployments": [
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "annotations": {
+     "deployment.kubernetes.io/revision": "2",
+     "sdo.dev/accepted-paths": "{\"source\":\"7db0531a0fdf931bc9333eb3843056b263e389176626effcbc70252dd236ef57\",\"uid\":\"widget-uid\",\"paths\":[\"spec.replicas\",\"spec.selector.matchLabels.app\",\"spec.template.metadata.labels.app\",\"spec.template.spec.containers[0].image\",\"spec.template.spec.containers[0].name\",\"spec.template.spec.containers[0].resources.requests.cpu\"]}"
+    },
+    "name": "widget",
+    "namespace": "demo",
+    "resourceVersion": "8",
+    "uid": "widget-uid"
+   },
+   "spec": {
+    "replicas": 1,
+    "selector": {
+     "matchLabels": {
+      "app": "widget"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "app": "widget"
+      }
+     },
+     "spec": {
+      "containers": [
+       {
+        "image": "widget:1",
+        "name": "widget",
+        "resources": {
+         "requests": {
+          "cpu": "100m"
+         }
+        }
+       }
+      ]
+     }
+    }
+   }
+  }
+ ],
+ "namespace": "demo"
+}

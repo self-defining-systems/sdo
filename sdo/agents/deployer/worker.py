@@ -18,7 +18,7 @@ from sdo.agents.lifecycle import (
 )
 from sdo.agents.prompt_templates import render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
-from sdo.agents.provider import MODEL_ENV, resolve_agent
+from sdo.agents.provider import ResolvedAgent, resolve_agent
 from sdo.agents.responder import (
     AGENT_SKILLS,
     KubernetesResultPublisher,
@@ -71,8 +71,8 @@ class SourceProposalDraft(BaseModel):
     expected_workload_ids: list[str]
 
 
-def _provider(model: str) -> Literal["codex", "claude"]:
-    return "claude" if resolve_agent("deployer", model).provider == "claude" else "codex"
+def _provider(agent: ResolvedAgent) -> Literal["codex", "claude"]:
+    return "claude" if agent.provider == "claude" else "codex"
 
 
 def _source_path(value: str) -> str:
@@ -100,7 +100,7 @@ def _workload_id(value: str) -> str:
 def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDeploymentResult:
     """Let the built-in coding agent edit a proposal and return a constrained plan."""
 
-    provider = _provider("deployment")
+    agent = resolve_agent("deployer", "deployment")
     prompt = render_prompt(
         "deployer",
         "source_deployment",
@@ -113,13 +113,13 @@ def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDe
         registry_host_2=repr(request.registry_host + "/"),
     )
     turn = run_structured_turn(
-        provider,
+        _provider(agent),
         prompt,
         output_schema=SourceProposalDraft.model_json_schema(),
         cwd=checkout,
         access="workspace-write",
-        model=os.environ.get(MODEL_ENV["deployment"]) or None,
-        reasoning_effort="high",
+        model=agent.model,
+        reasoning_effort=agent.effort,
         timeout_seconds=1800,
     )
     draft = SourceProposalDraft.model_validate_json(turn.output_json)
@@ -150,11 +150,9 @@ def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDe
 def describe_architecture(request: ArchitectureRequest, checkout: Path) -> ArchitectureResult:
     """Generate a source-grounded handoff after the broker accepted source."""
 
-    provider = _provider("lifecycle")
-    if provider == "codex":
-        architect = CodexLifecycleBackend(model=os.environ.get(MODEL_ENV["lifecycle"]) or None)
-    else:
-        architect = ClaudeLifecycleBackend(model=os.environ.get(MODEL_ENV["lifecycle"]) or None)
+    agent = resolve_agent("deployer", "lifecycle")
+    backend = CodexLifecycleBackend if _provider(agent) == "codex" else ClaudeLifecycleBackend
+    architect = backend(model=agent.model, reasoning_effort=agent.effort)
     if not request.source_topology_fingerprint or not request.source_resources:
         raise ValueError("architecture requires trusted accepted-source inventory")
     handoff = architect.run_deployer(

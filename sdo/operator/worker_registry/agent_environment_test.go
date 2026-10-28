@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -15,14 +16,23 @@ func TestAgentEnvironmentNamesMatchPythonManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var manifest struct {
-		Provider string            `json:"provider"`
-		Models   map[string]string `json:"models"`
+		Provider      string            `json:"provider"`
+		Effort        string            `json:"effort"`
+		DefaultEffort string            `json:"default_effort"`
+		Efforts       []string          `json:"efforts"`
+		Models        map[string]string `json:"models"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		t.Fatal(err)
 	}
 	if manifest.Provider != ProviderEnvironment {
 		t.Errorf("provider variable: manifest %q, Go %q", manifest.Provider, ProviderEnvironment)
+	}
+	if manifest.Effort != EffortEnvironment {
+		t.Errorf("effort variable: manifest %q, Go %q", manifest.Effort, EffortEnvironment)
+	}
+	if !reflect.DeepEqual(manifest.Efforts, AgentEfforts) || !slices.Contains(AgentEfforts, manifest.DefaultEffort) {
+		t.Errorf("efforts differ: manifest %v (default %q), Go %v", manifest.Efforts, manifest.DefaultEffort, AgentEfforts)
 	}
 	manifestModels := map[string]bool{}
 	for _, name := range manifest.Models {
@@ -38,7 +48,7 @@ func TestAgentEnvironmentNamesMatchPythonManifest(t *testing.T) {
 }
 
 func TestAgentEnvironmentSetsEveryModelVariable(t *testing.T) {
-	environment, err := AgentEnvironment("codex", "m")
+	environment, err := AgentEnvironment("codex", "m", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,5 +62,26 @@ func TestAgentEnvironmentSetsEveryModelVariable(t *testing.T) {
 	}
 	if len(environment) != len(ModelEnvironments)+1 {
 		t.Errorf("unexpected extra variables: %v", environment)
+	}
+}
+
+func TestAgentEnvironmentCarriesTheConfiguredEffortToEveryWorker(t *testing.T) {
+	environment, err := AgentEnvironment("claude", "claude-opus-5-5", "medium")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if environment[EffortEnvironment] != "medium" || environment[ProviderEnvironment] != "claude" {
+		t.Fatalf("effort or provider missing: %v", environment)
+	}
+	if environment, err = AgentEnvironment("", "", "high"); err != nil || environment[EffortEnvironment] != "high" {
+		t.Fatalf("effort without provider: %v, %v", environment, err)
+	}
+}
+
+func TestAgentEnvironmentRefusesAnUnknownEffort(t *testing.T) {
+	for _, effort := range []string{"extreme", "Medium", " medium"} {
+		if _, err := AgentEnvironment("claude", "m", effort); err == nil {
+			t.Errorf("effort %q accepted", effort)
+		}
 	}
 }

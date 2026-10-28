@@ -55,6 +55,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	validatorImage := flags.String("validator-image", "", "isolated validator image")
 	model := flags.String("model", "", "responder model")
 	backend := flags.String("responder-backend", "codex", "responder backend")
+	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
 	schemaIdentity := flags.String("schema-identity", "", "expected SDK schema identity (defaults to installed sources)")
 	brokerMode := flags.String("broker-mode", "", "broker mode")
 	workerMountMode := flags.String("worker-mount-mode", "", "worker mount mode")
@@ -135,7 +136,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ExitAfterClosure: *exitAfterClosure,
 		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
-		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
+		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
 	}
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)

@@ -329,3 +329,12 @@ def test_install_records_abort_target_before_transport_call(tmp_path, monkeypatc
     monkeypatch.setattr(native_operator, "execute_operator", interrupted)
     with pytest.raises(NativeOperatorError, match="interrupted install"):
         install_existing(config)
+
+
+def test_adapter_agent_efforts_match_the_production_provider() -> None:
+    # The adapter reads the shared manifest so SREGym's venv can import it without agentshim.
+    from benchmarks.sregym.adapter import native_operator
+    from sdo.agents import provider
+
+    assert native_operator.AGENT_EFFORTS == provider.AGENT_EFFORTS
+    assert native_operator.DEFAULT_AGENT_EFFORT == provider.DEFAULT_AGENT_EFFORT
