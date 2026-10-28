@@ -112,12 +112,16 @@ class SregymFaultDriver:
         injection_state: LaneInjectionState | None = None,
         data_faults: Mapping[str, Sequence[str]] | None = None,
         require_full_cleanup: bool = False,
+        row_start_tier2: bool = False,
         require_faulty_oracle: bool = False,
         pre_repair_oracle_path: Path | None = None,
         required_faulty_components: tuple[str, ...] = (),
     ) -> None:
         if baseline_problem_id is not None and (not isinstance(baseline_problem_id, str) or not baseline_problem_id):
             raise ValueError("baseline_problem_id must be a nonempty string")
+        if type(row_start_tier2) is not bool:
+            raise TypeError("row_start_tier2 must be a boolean")
+        self._row_start_tier2 = row_start_tier2
         self._baseline_problem_id = baseline_problem_id
         self._seed_recovery_verified = False
         if health_timeout_seconds <= 0:
@@ -225,7 +229,7 @@ class SregymFaultDriver:
                 # The loop owns terminal recording and cleanup, including the failed component.
                 raise
             except Exception as exc:
-                if faults:
+                if faults and not self._row_start_tier2:
                     try:
                         self.recover()
                     except Exception as recovery_error:

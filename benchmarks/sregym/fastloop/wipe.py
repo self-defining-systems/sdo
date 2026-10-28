@@ -289,6 +289,7 @@ def wipe_environment(
 
 
 class Tier2Trigger(StrEnum):
+    EXPLICIT_REDEPLOY = "explicit_redeploy"
     UNCLEAN_ATTEMPT = "unclean_attempt"
     PREVIOUS_ROW_UNRECOVERED = "previous_row_unrecovered"
     CURRENT_ROW_DATA_FAULTS = "current_row_data_faults"
@@ -401,6 +402,10 @@ class LaneInjectionState:
         self._write(
             problems, tuple(f"{problem}: {fault}" for problem in problems for fault in catalog[problem]), complete=True
         )
+
+    def recreated(self) -> None:
+        """Only successful whole-application recreation establishes a clean lane."""
+        self._write(("source-recreation",), (), complete=True)
 
     def reason(self) -> Tier2Reason | None:
         unknown = Tier2Reason(Tier2Trigger.LANE_INJECTION_UNKNOWN, "lane's last injection state is unknown")
@@ -539,6 +544,7 @@ def run_tier2(
     namespaces: Collection[str],
     deploy: Callable[[], None],
     host_limits: HostLimits | None = None,
+    injection_state: LaneInjectionState | None = None,
     timeout_seconds: float,
     poll_seconds: float = wait_for(WaitKind.SAMPLE),
     clock: Callable[[], float] = time.monotonic,
@@ -553,6 +559,8 @@ def run_tier2(
     recreated: tuple[str, ...] = ()
     force_finalized = tier1.force_finalized
     if reason is not None:
+        if injection_state is not None:
+            injection_state.begin(("source-recreation",))
         with (host_limits or HostLimits.from_env()).admit("redeploy"):
             recreated = tuple(sorted(namespaces))
             force_finalized += remove_until_gone(
@@ -564,6 +572,8 @@ def run_tier2(
                 sleep=sleep,
             )
             deploy()
+            if injection_state is not None:
+                injection_state.recreated()
     return WipeReceipt(
         tier1.seconds,
         tier1.removed,

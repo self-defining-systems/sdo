@@ -359,7 +359,11 @@ def _up(args: argparse.Namespace) -> int:
                 health = cached_worker.request(
                     "health", namespace=previous.namespace, timeout=wait_for(WaitKind.SLOW_COMMAND)
                 )
-            if health.get("healthy"):
+            if (
+                health.get("healthy")
+                and LaneInjectionState(previous.kubeconfig, previous.namespace).reason() is None
+                and AttemptMarker(previous.run_dir).pending() is None
+            ):
                 if previous.dev_mount is not None and previous.state_path.is_file():
                     return _reset(argparse.Namespace(run_dir=previous.run_dir, dev_mount=previous.dev_mount))
                 from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
@@ -402,6 +406,7 @@ def _up(args: argparse.Namespace) -> int:
         },
         log_path=run_dir / "worker.log",
     )
+    app_recreated = False
     with worker:
         cluster = worker.request(
             "attach_existing" if args.reuse_cluster_only else "cluster",
@@ -409,13 +414,44 @@ def _up(args: argparse.Namespace) -> int:
             log_dir=str(run_dir),
             timeout=CLUSTER_OP_TIMEOUT_SECONDS,
         )
-        deployed = worker.request(
-            "deploy",
-            problem_id=args.problem,
-            baseline_path=str(placeholder.baseline_path),
-            redeploy=args.redeploy,
-            timeout=DEPLOY_OP_TIMEOUT_SECONDS,
+        history = (
+            LaneInjectionState(prior.kubeconfig, prior.namespace).reason() or AttemptMarker(prior.run_dir).pending()
+            if prior is not None
+            else None
         )
+        if prior is not None and cluster["cluster"] == prior.cluster and (args.redeploy or history is not None):
+            from benchmarks.sregym.adapter import control_namespace_for
+            from benchmarks.sregym.fastloop.reset import KubectlResetCluster, require_terminal_reflection
+            from benchmarks.sregym.fastloop.wipe import Tier1Receipt, Tier2Reason, Tier2Trigger
+
+            require_terminal_reflection(prior)
+            started = time.monotonic()
+            KubectlResetCluster(prior.kubeconfig, control_namespace_for(prior.namespace)).reset_controller(
+                prior.seed_commit or "HEAD",
+                preserve_repository=True,
+            )
+            reason = (
+                Tier2Reason(Tier2Trigger.EXPLICIT_REDEPLOY, "explicit redeploy from accepted source")
+                if args.redeploy
+                else history
+            )
+            assert reason is not None
+            deployed = recreate_application(
+                prior,
+                worker,
+                reason,
+                Tier1Receipt(time.monotonic() - started, (), False, ()),
+                run_dir,
+            )
+            app_recreated = True
+        else:
+            deployed = worker.request(
+                "deploy",
+                problem_id=args.problem,
+                baseline_path=str(placeholder.baseline_path),
+                redeploy=args.redeploy,
+                timeout=DEPLOY_OP_TIMEOUT_SECONDS,
+            )
         app = worker.request("app_info", problem_id=args.problem)
     environment = FastloopEnvironment.model_validate(
         {
@@ -434,13 +470,13 @@ def _up(args: argparse.Namespace) -> int:
     )
     cluster = KubectlApplicationCluster(environment.kubeconfig)
     namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
-    if deployed.get("deployed") is True:
+    if deployed.get("deployed") is True and not app_recreated:
         save_application_baseline(
             environment.baseline_path,
             tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
             installed=True,
         )
-    else:
+    elif not app_recreated:
         from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
 
         seal_existing_install(environment.baseline_path, cluster, environment.namespace)
@@ -459,6 +495,9 @@ def _up(args: argparse.Namespace) -> int:
             cluster_scoped(KubectlLaneCluster(environment.kubeconfig).list_objects()),
         )
     environment.save()
+    if deployed.get("deployed") is True and deployed.get("health", {}).get("healthy"):
+        LaneInjectionState(environment.kubeconfig, environment.namespace).recreated()
+        AttemptMarker(environment.run_dir).end(())
     if environment.parallel_root is not None:
         from benchmarks.sregym.fastloop.shared_memory import provision_parallel_volume
 
@@ -685,6 +724,45 @@ def _recapture_application_baseline(environment: FastloopEnvironment) -> None:
     )
 
 
+def recreate_application(
+    environment: FastloopEnvironment,
+    worker: SregymWorker,
+    reason: Tier2Reason,
+    tier1: Tier1Receipt,
+    results_dir: Path,
+) -> dict[str, Any]:
+    """The reset transaction shared by explicit redeploy and row-start recreation."""
+    deployed: dict[str, Any] = {}
+
+    def deploy() -> None:
+        deployed.update(
+            worker.request(
+                "deploy",
+                problem_id=environment.deploy_problem,
+                baseline_path=str(environment.baseline_path),
+                redeploy=True,
+                timeout=DEPLOY_OP_TIMEOUT_SECONDS,
+            )
+        )
+        if deployed.get("deployed") is not True or not deployed.get("health", {}).get("healthy"):
+            raise RuntimeError("eval: recreated application did not prove healthy deployment")
+        _recapture_application_baseline(environment)
+
+    run_tier2(
+        reason,
+        tier1,
+        cluster=KubectlLaneCluster(environment.kubeconfig),
+        namespaces=application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
+        if environment.baseline_path.is_file()
+        else (environment.namespace,),
+        deploy=deploy,
+        host_limits=HostLimits.from_env(environment.worker_env),
+        injection_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
+        timeout_seconds=wait_for(WaitKind.ROLLOUT),
+    ).write(results_dir)
+    return deployed
+
+
 def _application_needs_redeploy(
     environment: FastloopEnvironment,
     marker: AttemptMarker,
@@ -879,23 +957,15 @@ def _run(args: argparse.Namespace) -> int:
         marker.begin()
     with _worker(environment) as worker:
         worker_ready = time.monotonic()
-        if tier1 is not None:
-
-            def redeploy_application() -> None:
-                deploy_with_setup_proof(environment, worker, results_dir, allow_reuse=False, redeploy=True)
-                _recapture_application_baseline(environment)
-
+        if tier1 is not None and redeploy_reason is not None:
+            recreate_application(environment, worker, redeploy_reason, tier1, results_dir)
+        elif tier1 is not None:
             run_tier2(
-                redeploy_reason,
+                None,
                 tier1,
                 cluster=KubectlLaneCluster(environment.kubeconfig),
-                namespaces=(
-                    application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
-                    if redeploy_reason is not None
-                    else ()
-                ),
-                deploy=redeploy_application,
-                host_limits=HostLimits.from_env(environment.worker_env),
+                namespaces=(),
+                deploy=lambda: None,
                 timeout_seconds=wait_for(WaitKind.ROLLOUT),
             ).write(results_dir)
         if redeploy_reason is None:
@@ -942,6 +1012,7 @@ def _run(args: argparse.Namespace) -> int:
             injection_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
             data_faults=data_faults,
             require_full_cleanup=args.require_full_cleanup,
+            row_start_tier2=config.row_start_tier2,
             require_faulty_oracle=getattr(args, "require_faulty_oracle", False),
             required_faulty_components=tuple(getattr(args, "require_faulty_component", [])),
             pre_repair_oracle_path=results_dir / "pre-repair-oracle.json"

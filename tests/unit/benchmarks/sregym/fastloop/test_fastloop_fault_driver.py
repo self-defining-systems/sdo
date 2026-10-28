@@ -550,3 +550,23 @@ def test_partial_composite_failure_keeps_full_recorded_injection_span() -> None:
     assert driver.last_injection_window is not None
     assert driver.last_injection_window.started_at == datetime.fromtimestamp(1790000000.0, tz=timezone.utc)
     assert driver.last_injection_window.finished_at == datetime.fromtimestamp(1790000015.0, tz=timezone.utc)
+
+
+@pytest.mark.parametrize("recreate", [False, True])
+def test_partial_composite_failure_has_one_reset_owner(recreate: bool) -> None:
+    class PartialWorker(FakeWorker):
+        injections = 0
+
+        def request(self, op, **kwargs):
+            if op == "inject":
+                self.injections += 1
+                if self.injections == 2:
+                    raise RuntimeError("partial injection")
+                return {**super().request(op, **kwargs), "fault": 0, "faults": [0]}
+            return super().request(op, **kwargs)
+
+    worker = PartialWorker()
+    driver = SregymFaultDriver(worker, namespace="hotel", row_start_tier2=recreate)
+    with pytest.raises(FastloopFaultError, match="partial injection"):
+        driver.inject_composite(("first", "second"))
+    assert ("recover" in [op for op, _ in worker.requests]) is (not recreate)
