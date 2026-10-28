@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sdo.dev/operator/memory/layout"
+	"slices"
 	"strings"
 	"sync"
 
