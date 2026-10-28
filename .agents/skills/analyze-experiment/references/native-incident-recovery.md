@@ -76,11 +76,21 @@ A source reconcile with post-write admission or rollout residuals records `sourc
 The built-in worker stores versioned writer ownership under the incident session's
 `thread-ownership/<sha256(provider:session_id)>.json`, serialized by a stable
 sibling `.lock` file. `active` means the writer has not confirmed closure;
-`released` is persisted only after the provider process terminates. Reflection
+`released` is persisted after process reaping or a positive Kubernetes observation
+that the recorded owner cannot still write. The owner records its namespace, Pod
+name, immutable UID and container from the downward API before exposing its
+provider session. For the exact UID, a terminal Pod phase or the current agent
+container terminated under `restartPolicy: Never` permits release; an exact named
+GET returning NotFound also confirms absence of that recorded Pod. Another UID,
+lastState alone, deletion/heartbeat age, timeouts and API errors never confirm
+release. `termination_confirmation` in the same record retains the observed
+worker identity, kind/reason, observation time and available container finish,
+exit and resource-version evidence through subsequent resumes. Reflection
 waits at most 30 seconds (within its existing turn budget) for that release,
 then exclusively claims the same session. The role transfers from responder to
 reflection permanently; stale responders cannot reclaim it. An OS lock released
-by a process crash does not prove writer release. Restart reads the same record:
+by a process crash does not itself prove writer release. Restart reads the same
+record and may obtain the positive Kubernetes confirmation above:
 missing/malformed identity yields `session_handoff_invalid`, an unreleased writer
 yields `session_handoff_timeout`, and an unavailable provider session yields
 `session_unavailable`. These are terminal failed reflection decisions, with no

@@ -56,6 +56,7 @@ runtime_status=0
             tests/unit/libs/agent_cli/test_structured.py \
             tests/unit/libs/agent_cli/test_session_ownership.py \
             tests/unit/sdo/agents/responder/test_reflection_worker.py \
+            tests/unit/sdo/agents/responder/test_writer_termination.py \
             tests/unit/sdo/agents/test_health_judge_worker.py \
             tests/unit/sdo/agents/responder/test_result_publisher.py \
             tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py \

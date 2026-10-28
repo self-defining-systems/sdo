@@ -62,7 +62,12 @@ from agentshim import (
 from agentshim.execution.host import ProcessCommandHandle
 from agentshim.providers.codex import install_rules
 
-from libs.agent_cli.session_ownership import HANDOFF_TIMEOUT_SECONDS, SessionOwnership
+from libs.agent_cli.session_ownership import (
+    HANDOFF_TIMEOUT_SECONDS,
+    SessionOwnership,
+    WorkerIdentity,
+    WorkerTermination,
+)
 from libs.agent_cli.startup import StartupTelemetry
 
 if TYPE_CHECKING:
@@ -245,6 +250,8 @@ def run_structured_turn(
     on_usage: Callable[[dict[str, int | float], bool], None] | None = None,
     session_ownership_directory: Path | None = None,
     session_ownership_role: Literal["responder", "reflection"] = "responder",
+    session_ownership_worker: WorkerIdentity | None = None,
+    session_termination_observer: Callable[[WorkerIdentity, float], WorkerTermination | None] | None = None,
 ) -> StructuredTurn:
     """Run one structured turn, fresh or resumed, and return its output.
 
@@ -275,6 +282,8 @@ def run_structured_turn(
             session_ownership_directory,
             provider,
             role=session_ownership_role,
+            worker=session_ownership_worker,
+            termination_observer=session_termination_observer,
             timeout_seconds=min(timeout_seconds, HANDOFF_TIMEOUT_SECONDS)
             if timeout_seconds is not None
             else HANDOFF_TIMEOUT_SECONDS,

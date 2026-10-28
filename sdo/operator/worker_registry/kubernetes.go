@@ -528,13 +528,14 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		mounts = append(mounts, corev1.VolumeMount{Name: "credentials", MountPath: "/sdo/credentials", ReadOnly: true})
 		volumes = append(volumes, corev1.Volume{Name: "credentials", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: e.CredentialsSecret}}})
 	}
-	env := []corev1.EnvVar{
+	env := workerIdentityEnvironment()
+	env = append(env, []corev1.EnvVar{
 		{Name: "SDO_REQUEST_CONFIGMAP", Value: request.ConfigMap},
 		{Name: "SDO_RESULT_CONFIGMAP", Value: resultName},
 		{Name: "SDO_NAMESPACE", Value: e.Namespace},
 		{Name: "SDO_REQUEST_SHA256", Value: taskRequestDigest(task)},
 		{Name: "SDO_CODEX_HOME_ROOT", Value: CodexHomesMountPath},
-	}
+	}...)
 	if e.SessionPVCSubPath != "" {
 		env = append(env, corev1.EnvVar{Name: "SDO_SESSION_DIR", Value: "/sdo/session"})
 		if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
@@ -560,6 +561,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline}, corev1.EnvVar{Name: "SDO_CAPTURED_CORPUS_DIR", Value: captureDirectory})
 	}
 	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true, "SDO_STARTUP_TIMING_PATH": true}
+	for _, identity := range workerIdentityEnvironment() {
+		reserved[identity.Name] = true
+	}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {
@@ -682,4 +686,19 @@ type RequestPayloadConflictError struct{ ConfigMap string }
 
 func (e *RequestPayloadConflictError) Error() string {
 	return fmt.Sprintf("existing agent request ConfigMap %q has different payload", e.ConfigMap)
+}
+
+// The Pod itself captures its immutable identity before publishing a provider session.
+func workerIdentityEnvironment() []corev1.EnvVar {
+	result := []corev1.EnvVar{{Name: "SDO_WORKER_CONTAINER", Value: "agent"}}
+	for _, entry := range []struct{ name, field string }{
+		{"SDO_WORKER_NAMESPACE", "metadata.namespace"},
+		{"SDO_WORKER_POD_NAME", "metadata.name"},
+		{"SDO_WORKER_POD_UID", "metadata.uid"},
+	} {
+		result = append(result, corev1.EnvVar{Name: entry.name, ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: entry.field},
+		}})
+	}
+	return result
 }

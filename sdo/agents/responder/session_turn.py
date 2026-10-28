@@ -19,6 +19,7 @@ from agentshim import StdioMcpServer
 
 from sdo.agents.prompt_templates import render_prompt
 from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, VALIDATION_TOOL_TIMEOUT_SECONDS
+from sdo.agents.responder.writer_termination import KubernetesWriterObserver, worker_identity
 
 if TYPE_CHECKING:
     from typing import Any
@@ -110,6 +111,8 @@ def session_turn_options(
 
     return {
         "session_ownership_role": phase,
+        "session_ownership_worker": worker_identity(),
+        "session_termination_observer": KubernetesWriterObserver(),
         "session_ownership_directory": Path(os.environ["SDO_SESSION_DIR"]) / "thread-ownership"
         if os.environ.get("SDO_SESSION_DIR")
         else None,
