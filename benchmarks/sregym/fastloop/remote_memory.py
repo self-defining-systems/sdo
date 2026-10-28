@@ -188,7 +188,7 @@ def create_memory_mirror(destination: Path, endpoint: MemoryEndpoint, url: str |
     branch (``refresh_memory_mirror``) and treat the lane as a prepared shared lane: no reseed,
     reset or reinstall.
     """
-    from benchmarks.sregym.adapter.native_operator import MEMORY_MIRROR_MARKER, refresh_memory_mirror
+    from benchmarks.sregym.adapter import MEMORY_MIRROR_MARKER, refresh_memory_mirror
 
     if destination.exists():
         shutil.rmtree(destination)

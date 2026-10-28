@@ -151,7 +151,7 @@ def test_close_tags_the_branch_and_indexes_it_on_main_once(tmp_path: Path) -> No
 
 
 def test_host_mirror_follows_the_branch_and_carries_the_shared_identity(tmp_path: Path) -> None:
-    from benchmarks.sregym.adapter.native_operator import refresh_memory_mirror
+    from benchmarks.sregym.adapter import refresh_memory_mirror
     from benchmarks.sregym.fastloop.parallel_memory import memory_head
     from benchmarks.sregym.fastloop.remote_memory import create_memory_mirror, shared_identity
 
