@@ -190,3 +190,34 @@ def test_every_agent_render_preserves_all_required_parts(monkeypatch, tmp_path):
     for scale in (1, 20):
         rendered_cases(scale=scale)
     assert renders > 0
+
+
+@pytest.mark.parametrize("api_history", [False, True])
+def test_fresh_retry_survives_final_provider_transport(monkeypatch, tmp_path, api_history):
+    from pathlib import Path
+
+    from sdo.agents.responder import reflection
+    from tests.unit.sdo.agents.prompts.cases import rendered_cases
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    request = rendered_cases()["reflection_fresh_retry_5"]
+    if api_history:
+        monkeypatch.setenv("SDO_API_HISTORY_DIR", "/synthetic-history")
+    else:
+        monkeypatch.delenv("SDO_API_HISTORY_DIR", raising=False)
+
+    class Captured(Exception):
+        pass
+
+    def capture(_provider, prompt, **_options):
+        assert "Current outcome:" in prompt
+        assert sum(len(part.text) for part in prompt.parts if part.name == "reflection.instructions") <= budget_for(
+            "reflection.instructions"
+        )
+        raise Captured
+
+    monkeypatch.setattr(reflection, "run_structured_turn", capture)
+    with pytest.raises(Captured):
+        reflection.CodexSessionBackend().fresh(
+            worktree=Path("/application"), prompt=request, idempotency_key="reflection:synthetic:outcome"
+        )
