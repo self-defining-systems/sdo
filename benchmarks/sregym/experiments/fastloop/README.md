@@ -518,7 +518,9 @@ are refused (main holds only the README index):
 {"hotel-reservation": {"repo": "vibesys-playground/hotel-reservation-sdo", "branch": "live/20261028-mixed10"}}
 ```
 
-Use `run_branch(label)` for `live/<yyyymmdd>-<run-label>`. For each prepared idle lane, on its own host,
+Use `run_branch(label)` for `live/<yyyymmdd>-<run-label>`. Create the branch once from the app's seed
+(`ensure_run_branch(endpoint, seed)`), and prepare every lane of that app from the same seed (or a clone of
+the branch), so each lane's tree equals a branch commit. For each prepared idle lane, on its own host,
 call `bind_lane_to_branch(environment, endpoint, identity=~/.ssh/id_ed25519,
 known_hosts=~/.ssh/known_hosts, seed=<first lane of the app>)`. It pauses the controller, seeds the
 branch from the first lane, makes every other lane adopt the branch history (its tree must equal a
