@@ -10,7 +10,11 @@ GOLDENS = Path(__file__).resolve().parents[5] / "tests/fixtures/sdo/prompts"
 
 
 def normalize_prompt(prompt: str) -> str:
-    prompt = re.sub(r"(?:\$SDO_SESSION_SCRATCH/context|/tmp/sdo-context)/[0-9a-f]{24}\.txt", "<context file>", prompt)
+    prompt = re.sub(
+        r"(?:\$SDO_SESSION_SCRATCH/context|\$SDO_SESSION_DIR/context|/tmp/sdo-context)/[0-9a-f]{24}\.txt",
+        "<context file>",
+        prompt,
+    )
     prompt = re.sub(r'"/tmp/sdo/[^"\n]+-incident\.json"', '"<temporary incident facts file>"', prompt)
     prompt = re.sub(r'"[^"\n]*/sdo-playbooks-[^/"\n]+/(\d+\.md)"', r'"<temporary playbook documents>/\1"', prompt)
     prompt = re.sub(

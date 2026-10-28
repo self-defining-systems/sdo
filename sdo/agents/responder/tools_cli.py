@@ -12,7 +12,7 @@ import time
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn, TypedDict
 
 from sdo.agents.context_output import budget_for, cap_text
 from sdo.agents.responder import recorded_actions
@@ -149,7 +149,7 @@ class _CappedParser(argparse.ArgumentParser):
     def print_help(self, file=None) -> None:
         self._print_message(cap_text(self.format_help(), self._limit() - 1) + "\n", file or sys.stdout)
 
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         text = self.format_usage() + f"{self.prog}: error: {message}\n"
         self.exit(2, cap_text(text, self._limit() - 1) + "\n")
 
@@ -375,7 +375,13 @@ def verification_help() -> str:
     return commands.choices["verify"].format_help()
 
 
-def command_surface() -> dict[str, object]:
+class CommandSurface(TypedDict):
+    commands: dict[str, str]
+    mitigation: str
+    output: str
+
+
+def command_surface() -> CommandSurface:
     """Generate incident-facing signatures from the same parser that accepts commands."""
     parser = _parser()
     subcommands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
@@ -811,6 +817,9 @@ def main(argv: list[str] | None = None) -> int:
                 combined, limit - 1, json_output="--json" in arguments, bytes_limit=command in MUTATION_COMMANDS
             )
             print(text)
+
+
+print_tool_response = _print_response
 
 
 if __name__ == "__main__":

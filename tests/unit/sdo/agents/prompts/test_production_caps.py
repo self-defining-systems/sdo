@@ -95,6 +95,13 @@ async def test_registered_mcp_tools_on_real_scale_inputs(monkeypatch, tmp_path):
         assert isinstance(result, list)
         text = "\n".join(block.text for block in result)
         assert len(text.encode()) <= budget_for("tool_reply." + name), name
+        if name == "capture_fields":
+            import os
+
+            path = Path(os.path.expandvars(text.split("Full: ", 1)[1].splitlines()[0]))
+            page = json.loads(path.read_text())
+            assert len(page["items"]) == 8
+            assert page["items"][0]["spec"]["data"] == "界" * 16000
 
 
 def test_generic_summary_preserves_json_shape_and_complete_paths(monkeypatch, tmp_path):
@@ -127,3 +134,14 @@ def test_cli_entry_point_bounds_future_handlers_and_stderr(monkeypatch, tmp_path
     assert len(saved) == 1
     assert "new command " * 10000 in saved[0].read_text()
     assert "new error " * 10000 in saved[0].read_text()
+
+
+def test_generic_worker_session_directory_owns_overflow(monkeypatch, tmp_path):
+    monkeypatch.delenv("SDO_SESSION_SCRATCH", raising=False)
+    monkeypatch.setenv("SDO_SESSION_DIR", str(tmp_path))
+    prompt = named_prompt("deployer.incident_data", "evidence " * 20000)
+    assert len(prompt) <= 100
+    assert "$SDO_SESSION_DIR/context/" in prompt
+    assert len(prompt.context_files) == 1
+    assert prompt.context_files[0].parent == tmp_path / "context"
+    assert prompt.context_files[0].stat().st_mode & 0o777 == 0o600

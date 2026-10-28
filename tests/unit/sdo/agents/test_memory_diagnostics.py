@@ -36,7 +36,7 @@ def test_memory_conflict_renders_paths_provenance_and_validator_errors() -> None
     conflict.validator_errors.add(
         rule="program.replay", path=".sdo/playbooks/base/diagnose.go", message="replay failed"
     )
-    text = render_validation_feedback(2, [diagnostic])
+    text = expand_context(render_validation_feedback(2, [diagnostic]))
     assert "peer-incident" in expand_context(text)
     assert "b" * 40 in text
     assert ".sdo/playbooks/base/README.md" in text

@@ -43,7 +43,8 @@ def budget_for(name: str) -> int:
 
 def save_context(text: str) -> tuple[Path, str]:
     """Content-addressed private evidence survives all turns in the session."""
-    scratch = os.environ.get("SDO_SESSION_SCRATCH")
+    scratch_variable = "SDO_SESSION_SCRATCH" if os.environ.get("SDO_SESSION_SCRATCH") else "SDO_SESSION_DIR"
+    scratch = os.environ.get(scratch_variable)
     directory = Path(scratch) / "context" if scratch else Path("/tmp/sdo-context")
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     digest = hashlib.sha256(text.encode()).hexdigest()[:24]
@@ -60,7 +61,7 @@ def save_context(text: str) -> tuple[Path, str]:
                     raise ValueError("context digest collision") from None
         finally:
             temporary.unlink(missing_ok=True)
-    reference = f"$SDO_SESSION_SCRATCH/context/{path.name}" if scratch else str(path)
+    reference = f"${scratch_variable}/context/{path.name}" if scratch else str(path)
     return path, reference
 
 
@@ -93,7 +94,7 @@ def cap_text(text: str, limit: int, *, json_output: bool = False, bytes_limit: b
 
         def project(value: Any, width: int, count: int, depth: int = 0) -> Any:
             if isinstance(value, str):
-                if value.startswith(("/", "$SDO_SESSION_SCRATCH/")):
+                if value.startswith(("/", "$SDO_SESSION_SCRATCH/", "$SDO_SESSION_DIR/")):
                     return value  # a shortened file reference must never look usable
                 return value if len(value) <= width else value[:width] + "…"
             if isinstance(value, list):

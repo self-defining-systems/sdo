@@ -164,7 +164,7 @@ def _execute_incident(
                     "result_correction",
                     part="session.instructions",
                     result_type=type(exc).__name__,
-                    diagnostic=str(exc)[:1000],
+                    diagnostic=str(exc),
                 )
                 continue
             raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
@@ -247,6 +247,9 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
             render_prompt("responder", "incident_01", part="responder.additional_context", extra_instructions=extra),
         )
     return prompt + named_prompt("responder.incident_data", incident_data)
+
+
+render_incident_prompt = _responder_prompt
 
 
 if __name__ == "__main__":

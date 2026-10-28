@@ -416,7 +416,7 @@ def _readonly_skill_access(command: str, raw_path: str) -> bool:
                 chunks[-1].append(token)
     except ValueError:
         return False
-    readers = {"cat", "find", "ls", "head", "tail", "sed", "rg", "grep", "stat", "wc", "test", "["}
+    readers = {"cat", "find", "ls", "head", "tail", "sed", "rg", "grep", "jq", "stat", "wc", "test", "["}
     matching = [chunk for chunk in chunks if raw_path in chunk]
     forbidden = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
     return bool(matching) and all(
@@ -454,9 +454,10 @@ def _command_escapes_repository(
         skills = skill_directories.get(variable)
         home = skills.parent if skills is not None else Path("/__untrusted_cli_home__")
         audited_command = re.sub(r"\$(?:" + variable + r"\b|\{" + variable + r"\})", str(home), audited_command)
-    scratch = os.environ.get("SDO_SESSION_SCRATCH")
-    if scratch:
-        audited_command = re.sub(r"\$(?:SDO_SESSION_SCRATCH\b|\{SDO_SESSION_SCRATCH\})", scratch, audited_command)
+    for variable in ("SDO_SESSION_SCRATCH", "SDO_SESSION_DIR"):
+        scratch = os.environ.get(variable)
+        if scratch:
+            audited_command = re.sub(r"\$(?:" + variable + r"\b|\{" + variable + r"\})", scratch, audited_command)
     write_only_paths = {match.group(1) for match in _WRITE_REDIRECT_ABSOLUTE_PATH.finditer(audited_command)}
     for raw_path in _ABSOLUTE_PATH.findall(audited_command):
         candidate = Path(raw_path)

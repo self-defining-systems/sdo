@@ -13,10 +13,13 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from sdo.agents.responder.codex import _responder_prompt
-from sdo.agents.responder.incident_context import prepared_incident_data
-from sdo.agents.responder.reflection import _logical_learning_request
-from sdo.agents.responder.tools_cli import _print_response, command_surface
+from sdo.agents.responder import (
+    command_surface,
+    prepared_incident_data,
+    print_tool_response,
+    render_incident_prompt,
+    render_reflection_prompt,
+)
 from sdo.agents.session_context import measure_session
 from sdo.contracts import IncidentClosure, IncidentRequest, OperationalMemorySnapshot, OutcomeRecord
 
@@ -81,8 +84,8 @@ def check_context_shapes(
     os.environ["SDO_SESSION_SCRATCH"] = str(directory)
     try:
         with prepared_incident_data(request) as data:
-            responder = _responder_prompt(request, incident_data=data)
-        reflection = _logical_learning_request(
+            responder = render_incident_prompt(request, incident_data=data)
+        reflection = render_reflection_prompt(
             outcome=outcome,
             history=[],
             outcome_commit="b" * 40,
@@ -116,7 +119,7 @@ def check_context_shapes(
             for json_output in (False, True):
                 output = io.StringIO()
                 with redirect_stdout(output):
-                    _print_response(response, full_json=json_output)
+                    print_tool_response(response, full_json=json_output)
                 rollouts["responder"].function_call_output(f"{index}-{json_output}", output.getvalue(), 0)
         metrics = {role: measure_session(rollout.path) for role, rollout in rollouts.items()}
         for role, measured in metrics.items():
@@ -132,3 +135,6 @@ def check_context_shapes(
 def context_preflight() -> dict[str, dict[str, int]]:
     with TemporaryDirectory(prefix="sdo-context-preflight-") as directory:
         return check_context_shapes(Path(directory))
+
+
+run_context_preflight = context_preflight

@@ -261,6 +261,10 @@
   "responder/reflection_shell_fresh": {
     "request": "template_data.responder-reflection_shell_fresh-request"
   },
+  "responder/result_correction": {
+    "result_type": "template_data.responder-result_correction-result_type",
+    "diagnostic": "template_data.responder-result_correction-diagnostic"
+  },
   "responder/result_section_01": {},
   "responder/result_section_02": {
     "dispatch_error": "template_data.responder-result_section_02-dispatch_error"

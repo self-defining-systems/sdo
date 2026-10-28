@@ -34,7 +34,6 @@ CaptureSection = Literal[
     "events",
     "recordings",
 ]
-_MAX_CHARS = 12_000
 
 
 class ResourceSummary(BaseModel):
@@ -84,7 +83,6 @@ class CapturePage(BaseModel):
     items: list[Any] = Field(default_factory=list)
     total: int
     next_offset: int | None = None
-    oversized_indices: list[int] = Field(default_factory=list)
 
 
 def capture_inventory(captures: Path) -> dict[str, Any]:
@@ -221,19 +219,10 @@ def read_capture(
         sha256=hashlib.sha256(raw).hexdigest(),
         total=len(items),
     )
-    budget = 0
     stop = min(len(items), offset + limit)
-    for index in range(offset, stop):
-        value = {field: _field(items[index], field) for field in fields} if fields else items[index]
-        size = len(json.dumps(value))
-        if size > _MAX_CHARS:
-            page.oversized_indices.append(index)
-            continue
-        if budget + size > _MAX_CHARS:
-            stop = index
-            break
-        page.items.append(value)
-        budget += size
+    page.items.extend(
+        {field: _field(item, field) for field in fields} if fields else item for item in items[offset:stop]
+    )
     if stop < len(items):
         page.next_offset = stop
     return page.model_dump()
@@ -306,9 +295,9 @@ def install_evidence_tools(server: FastMCP) -> None:
         """Read captured resource fields or primitive recordings on demand.
 
         Fields are dotted paths; list indices are numeric (spec.containers.0.image).
-        Null collections are empty. Results are paginated and bounded to 12000
-        characters; oversized_indices identifies items needing narrower fields.
-        Missing fields are null, never evidence that a primitive succeeded.
+        Null collections are empty. Results are paginated; the shared reply cap
+        saves large complete pages to a session file. Extract relevant fields
+        from that file. Missing fields are null, never evidence that a primitive succeeded.
         """
         return CapturePage.model_validate(
             read_capture(

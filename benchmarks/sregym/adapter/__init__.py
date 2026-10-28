@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, SdoBounds, WaitKind, wait_for
     from benchmarks.sregym.adapter.cluster_resources import kubectl
+    from benchmarks.sregym.adapter.context_preflight import run_context_preflight as run_context_preflight
     from benchmarks.sregym.adapter.driver import (
         DeployedLifecycle,
         DeployedLifecycleContext,
@@ -103,6 +104,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.scripted_worker import scripted_judge_seed
 
 _EXPORTS: dict[str, str] = {
+    "run_context_preflight": "context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS": "image_entrypoints",
     "assert_image_entrypoints": "image_entrypoints",
     "image_entrypoint_script": "image_entrypoints",
@@ -188,6 +190,7 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "run_context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS",
     "assert_image_entrypoints",
     "image_entrypoint_script",

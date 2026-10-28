@@ -99,7 +99,12 @@ def test_every_template_placeholder_has_a_cap_entry():
     discovered = {}
     for path in sorted((ROOT / "sdo/agents").rglob("prompts/*.md")):
         key = f"{path.parents[1].name}/{path.stem}"
-        identifiers = set(Template(path.read_text()).get_identifiers())
+        template = Template(path.read_text())
+        identifiers = {
+            match.group("named") or match.group("braced")
+            for match in template.pattern.finditer(template.template)
+            if match.group("named") or match.group("braced")
+        }
         assert key in manifest, f"{path}: missing placeholder budgets"
         assert identifiers == set(manifest[key]), path
         for budget_name in manifest[key].values():

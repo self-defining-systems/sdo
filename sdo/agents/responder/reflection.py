@@ -203,8 +203,12 @@ def _logical_learning_request(
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     snapshot = closure.request.memory_snapshot
-    linked = {finding.detector_id for finding in outcome.findings}
-    linked.update(playbook for finding in outcome.findings for playbook in finding.playbook_ids)
+    findings = [*outcome.findings, *closure.request.findings]
+    linked = {finding.detector_id for finding in findings}
+    linked.update(playbook for finding in findings for playbook in finding.playbook_ids)
+    linked.update([*outcome.applied_playbooks, *outcome.confirmed_playbooks, *outcome.rejected_playbooks])
+    linked.update(run.program_id for run in outcome.program_runs)
+    linked.update(match.playbook_id for match in closure.request.playbook_coverage.matches)
     memory_index = memory_view(snapshot, linked_ids=linked)
     _, memory_path = save_context(json.dumps(memory_index, indent=2))
     _, outcome_path = save_context(json_format.MessageToJson(outcome, preserving_proto_field_name=True))
@@ -566,3 +570,6 @@ class ClaudeSessionBackend(CodexSessionBackend):
     """Resume the responder's own Claude Code session to reflect on its outcome."""
 
     provider: ClassVar[AgentProvider] = "claude"
+
+
+render_reflection_prompt = _logical_learning_request

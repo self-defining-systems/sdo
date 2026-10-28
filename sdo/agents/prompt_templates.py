@@ -106,13 +106,18 @@ def render_prompt(role: str, name: str, /, *, part: str, **values: object) -> Re
     template = Template((Path(__file__).parent / role / "prompts" / f"{name}.md").read_bytes().decode("utf-8"))
     manifest = json.loads(Path(__file__).with_name("prompt_sections.json").read_text())
     configured = manifest.get(f"{role}/{name}")
-    identifiers = set(template.get_identifiers())
+    identifiers = {
+        match.group("named") or match.group("braced")
+        for match in template.pattern.finditer(template.template)
+        if match.group("named") or match.group("braced")
+    }
     if configured is None or set(configured) != identifiers:
         raise ValueError(f"Missing prompt placeholder budget entries: {role}/{name}")
+    for budget_name in configured.values():
+        budget_for(budget_name)
     template.substitute(values)  # validate missing placeholders before writing evidence
     parts: list[PromptPart] = []
     cursor = 0
-    role = part.split(".", 1)[0]
     for match in template.pattern.finditer(template.template):
         if match.start() > cursor:
             parts.append(PromptPart(part, template.template[cursor : match.start()]))
