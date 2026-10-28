@@ -120,11 +120,14 @@ type ReachabilityWindow struct {
 	Baseline        *ReachabilityBaseline `json:"baseline,omitempty"`
 	SourceInputs    string                `json:"sourceInputs,omitempty"`
 	ObjectiveDigest string                `json:"objectiveDigest,omitempty"`
-	ObservedAt      time.Time             `json:"observedAt"`
-	Interval        time.Duration         `json:"intervalNs"`
-	Timeout         time.Duration         `json:"timeoutNs"`
-	Failures        int                   `json:"failures"`
-	Targets         []TargetObservations  `json:"targets"`
+	// BaselinePending says the controller could not measure a current baseline
+	// yet. A never-served target is then unknown rather than failing.
+	BaselinePending bool                 `json:"baselinePending,omitempty"`
+	ObservedAt      time.Time            `json:"observedAt"`
+	Interval        time.Duration        `json:"intervalNs"`
+	Timeout         time.Duration        `json:"timeoutNs"`
+	Failures        int                  `json:"failures"`
+	Targets         []TargetObservations `json:"targets"`
 	// Omitted counts derived targets beyond MaxReachabilityTargets.
 	Omitted int            `json:"omitted,omitempty"`
 	Prober  ProberIdentity `json:"prober"`
@@ -297,6 +300,26 @@ func (d reachabilityDetector) Confirmed(ctx sdk.DetectionContext) bool {
 	return true
 }
 
+// ConfirmationReason explains an incomplete window, and otherwise names the
+// targets whose verdict is unknown until a healthy baseline is measured. Unknown
+// targets never hold the detector unconfirmed: the measurement waits for every
+// incident to close, so holding closure on it could never finish.
+func (d reachabilityDetector) ConfirmationReason(ctx sdk.DetectionContext) string {
+	if !d.Confirmed(ctx) {
+		return "observation window is incomplete"
+	}
+	unknown := ReachabilityUnknown(ctx)
+	if len(unknown) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(unknown))
+	for _, target := range unknown {
+		ids = append(ids, target.ID())
+	}
+	sort.Strings(ids)
+	return "reachability unknown until a healthy baseline is measured: " + strings.Join(ids, ", ")
+}
+
 // ReachabilityCatchingUp returns the targets whose Service gained its ready
 // backend so recently that fewer than Failures dials follow the transition,
 // none of them failed. Confirmed counts only dials made after the Service's
@@ -388,7 +411,7 @@ func (d reachabilityDetector) Detect(_ context.Context, ctx sdk.DetectionContext
 	admitting := map[string][]string{}
 	order := make([]string, 0)
 	for _, observed := range observations {
-		if excludedReachabilityTarget(ctx, window, observed.Target) {
+		if excludedReachabilityTarget(ctx, window, observed.Target) || unknownReachabilityTarget(window, observed) {
 			continue
 		}
 		service, exists := services[observed.Target.Service]

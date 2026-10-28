@@ -7,7 +7,7 @@ Fastloop runs write `results/<run-id>/incidents.jsonl` and `incidents.csv`, one 
 For injection occurrence, grade checkpoints and per-fault probe semantics, read [fault tracking evidence](fault-tracking.md).
 
 
-New native broker ledgers expose `closure_phase_timestamps` as UTC instants and `reflection_skipped_reason`; fastloop rows expose `closure_phase_seconds`, the elapsed seconds since each preceding observed closure phase. Missing phases mean that path did not execute or that the run predates instrumentation. The immutable outcome document is committed before reflection, so join later phases from the broker ledger using the incident ID and outcome commit.
+New native broker ledgers expose `closure_phase_timestamps` as UTC instants and `reflection_skipped_reason`; fastloop rows expose `closure_phase_seconds`, the elapsed seconds since each preceding observed closure phase. Missing phases mean that path did not execute or that the run predates instrumentation. Each phase is recorded once, at its first occurrence. A rejected reflection adds `reflection_rejected`, then `reflection_retry_dispatch` and `retry_worker_result_picked_up` for the correction turn (later corrections share them). `network_canaries_started` to `network_canaries_passed` is the canary Jobs alone. Rows before these phases charge correction turns and broker publication work to `network_canaries_passed`; read `reflection_rejections` in the strict receipt before calling that phase slow. The immutable outcome document is committed before reflection, so join later phases from the broker ledger using the incident ID and outcome commit.
 
 Native `OutcomeRecord.resolution_path` is `responder` when populated. `playbook_coverage` records incident-open matches and unexplained findings; rows retain it even if receipt validation fails. Every current native receipt requires one successful responder Job. Program selections, raw agent actions, final verification and explicit rollbacks are recorded separately. See [agent-selected repair evidence](automatic-repair.md).
 
@@ -131,9 +131,10 @@ incident inputs. A commit rewind is an eval error.
 
 Lanes overlap but each lane stays sequential, preserving grade-at-closure and
 paused recovery. Oracle values never enter memory. Shared mode rejects seeding,
-archive copy-back and reset. The external attachment report records phases and
-original Jobs. Attachment requires equal initial accepted trees and retains
-private proposal, ledger, capture and session roots. Scripted scheduling, broker
+archive copy-back and reset. The attachment report records phase, cohort, matched
+commits and original Jobs. Lanes must match a commit of accepted history
+exactly (cluster baselines are per-lane controller state, not memory); roots
+stay private. Reports from older runs also list `discarded_cluster_captures`. Scripted scheduling, broker
 and lock tests prove plumbing; live runs establish learning and speedup.
 
 Install-time pending namespace inventory records pre-existing environment UID/configuration/ownership digests independently of healthy onboarding. A rejected health window preserves only matching captured observations; replacement or changed objects remain unexplained presence drift. Check the immutable pending snapshot and install boundary; source-declared faults, health/reachability checks and objects added after that boundary remain active. This rule does not label, delete or recreate environment objects.

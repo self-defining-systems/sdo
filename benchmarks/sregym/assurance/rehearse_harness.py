@@ -13,6 +13,9 @@ loop's source mount:
   memory, triggers a judge refresh after its proposal commit, and closure still
   completes with a strict receipt after that refresh.
 
+Preflight also imports every SREGym worker module in SREGym's own venv: the toy
+never source-deploys, so it cannot catch a worker import that needs SDO's dependencies.
+
 A new harness may switch lanes only after this exits 0 on one lane. The summary
 JSON (``rehearse-harness-summary.json``) records every scenario's checks.
 """
@@ -34,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.fastloop.cli import CLUSTER_OP_TIMEOUT_SECONDS
+from benchmarks.sregym.fastloop.worker_client import worker_import_error
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -396,13 +400,20 @@ def missing_images(tag: str) -> list[str]:
 
 
 def preflight(
-    code_root: Path, *, load: float | None = None, free_gib: float | None = None, absent_images: list[str] | None = None
+    code_root: Path,
+    *,
+    load: float | None = None,
+    free_gib: float | None = None,
+    absent_images: list[str] | None = None,
+    worker_import_error: str | None = None,
 ) -> list[str]:
     """Reasons the gate must not start (empty when it may)."""
 
     problems = []
     if absent_images:
         problems.append(f"missing images {absent_images}; build them from the freeze: {build_command('<tag>')}")
+    if worker_import_error:
+        problems.append(worker_import_error)
     required = ("benchmarks/sregym/fastloop/cli.py", str(FIXTURES / "baseline.json"))
     problems.extend(
         f"{code_root} is not a harness checkout (missing {relative})"
@@ -617,7 +628,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print(dry_run(code_root, run_dir, args.lane, args.image_tag))
         return 0
-    problems = preflight(code_root, absent_images=missing_images(args.image_tag))
+    problems = preflight(
+        code_root, absent_images=missing_images(args.image_tag), worker_import_error=worker_import_error(code_root)
+    )
     if problems:
         print("rehearse-harness refused to start:\n  " + "\n  ".join(problems), file=sys.stderr)
         return 2

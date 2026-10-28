@@ -141,12 +141,9 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 		return err
 	}
 	for _, entry := range entries {
-		if manifest.ID == "service-reachability" && entry.Name() == "baseline.json" && !entry.IsDir() {
-			data, err := os.ReadFile(filepath.Join(base, entry.Name()))
-			if err != nil {
-				return err
-			}
-			if _, err := DecodeReachabilityBaseline(data); err != nil {
+		if filepath.Join(base, entry.Name()) == filepath.Join(root, LegacyReachabilityBaselinePath) && !entry.IsDir() {
+			// A pre-move cluster capture: strip it, never require or decode it.
+			if err := os.Remove(filepath.Join(base, entry.Name())); err != nil {
 				return err
 			}
 			continue

@@ -10,6 +10,7 @@ import contextlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,7 @@ from agentshim.testing import FakeRun, scripted_turn
 from libs.agent_cli.structured import (
     ACCESS_MODES,
     AGENT_PROVIDERS,
+    CODEX_SESSION_SETTINGS,
     DETECTOR_GATEWAY_COMMAND,
     MEMORY_CHECK_COMMAND,
     TURN_USAGE_LOG_ENV,
@@ -848,3 +850,63 @@ def test_rejected_setup_output_still_records_spent_tokens(tmp_path: Path, monkey
     assert record["usage"]["input_tokens"] == 1000
     assert record["usage"]["output_tokens"] == 100
     assert record["cost_usd"] > 0
+
+
+def _config_overrides(argv: list[str]) -> list[str]:
+    return [argv[index + 1] for index, token in enumerate(argv) if token == "-c"]
+
+
+@pytest.mark.parametrize("access", ACCESS_MODES)
+def test_codex_turns_load_no_codex_bundled_skills_plugins_or_skill_list(access: str, tmp_path: Path) -> None:
+    """SDO skills reach the model as file pointers in its prompt, never as an injected list."""
+    _, agent = _run("codex", tmp_path, access=access)
+    (argv,) = agent.argvs
+    overrides = _config_overrides(argv)
+    for setting in (
+        "skills.include_instructions=false",
+        "skills.bundled.enabled=false",
+        "features.plugins=false",
+        "features.remote_plugin=false",
+        "features.recommended_plugins=false",
+        "features.apps=false",
+    ):
+        assert setting in overrides
+
+
+def test_resuming_a_codex_session_keeps_its_configuration(tmp_path: Path) -> None:
+    """Codex appends a resumed turn to its rollout; a changed context would be injected anew.
+
+    Reflection resumes the responder session for its prompt cache, so the
+    resumed turn must ask for exactly the configuration the fresh turn had.
+    """
+    _, fresh = _run("codex", tmp_path, access="danger-full-access")
+    _, resumed = _run(
+        "codex",
+        tmp_path,
+        access="danger-full-access",
+        resume_session_id="s-1",
+        run=reply("codex", {"answer": "ok"}, session_id=None),
+    )
+    assert _config_overrides(resumed.argvs[0]) == _config_overrides(fresh.argvs[0])
+
+
+@pytest.mark.skipif(shutil.which("codex") is None, reason="needs the Codex CLI")
+def test_the_installed_codex_shows_the_model_no_skill_list_or_bundled_skills(tmp_path: Path) -> None:
+    """The settings keep their meaning in the Codex release the image ships (no model call)."""
+    home = tmp_path / "home"
+    skill = home / "skills" / "sdo-memory"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: sdo-memory\ndescription: synthetic\n---\nbody\n")
+    settings = [argument for setting in CODEX_SESSION_SETTINGS for argument in ("-c", setting)]
+    rendered = subprocess.run(
+        ["codex", "debug", "prompt-input", *settings, "hello"],
+        env={**os.environ, "CODEX_HOME": str(home)},
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    ).stdout
+    assert "<skills_instructions>" not in rendered
+    assert "<recommended_plugins>" not in rendered
+    assert not (home / "skills" / ".system").exists()

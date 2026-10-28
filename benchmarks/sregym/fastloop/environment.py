@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path  # noqa: TC003 - Pydantic resolves this annotation at runtime.
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from benchmarks.sregym.fastloop.lane_installability import LaneTopology  # noqa: TC001 - Pydantic runtime schema.
 
@@ -36,6 +36,8 @@ class FastloopEnvironment(BaseModel):
     kubeconfig: Path
     namespace: str
     application: str
+    #: The problem's application. Shared attachment renames ``application`` per lane; this never changes.
+    problem_application: str = ""
     description: str = ""
     workspace: Path
     sregym_dir: Path
@@ -62,6 +64,14 @@ class FastloopEnvironment(BaseModel):
         if not slug or len(slug) > 63:
             raise ValueError(f"application cannot be represented as a Kubernetes DNS label: {value!r}")
         return slug
+
+    @model_validator(mode="after")
+    def record_problem_application(self) -> FastloopEnvironment:
+        # An unattached environment's application is the problem application. An attached one
+        # (parallel_lane set) was renamed, so only an explicit record can say what it deploys.
+        if not self.problem_application and not self.parallel_lane:
+            self.problem_application = self.application
+        return self
 
     @property
     def path(self) -> Path:

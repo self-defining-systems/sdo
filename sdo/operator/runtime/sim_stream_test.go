@@ -41,10 +41,10 @@ const simStreamMaxTicks = 6000
 // responder and a scripted broker on a virtual clock. Effects are executed by
 // the pump (drain), never concurrently with the test goroutine's reads.
 type simWorld struct {
-	t              *testing.T
+	t *testing.T
 	// driftOnly names services whose fault no health detector covers: the
 	// controller sees it as drift only, so a verified closure may leave it.
-	driftOnly map[string]bool
+	driftOnly      map[string]bool
 	rng            *rand.Rand
 	clock          *simClock
 	kube           *simKube

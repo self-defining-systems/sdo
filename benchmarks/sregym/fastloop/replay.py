@@ -16,7 +16,12 @@ from google.protobuf.json_format import ParseError
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.checkpoint_limits import MAX_BROKER_BYTES, MAX_RESULT_BYTES, MAX_TASK_BYTES
-from benchmarks.sregym.fastloop.file_edits import FileEdit, decode_file_edits, encode_file_edits
+from benchmarks.sregym.fastloop.file_edits import (
+    UNRECORDED_FILE_EDITS,
+    FileEdit,
+    decode_file_edits,
+    encode_file_edits,
+)
 from sdo.contracts import AgentResult, AgentTask, parse_json
 
 STAGES = frozenset({"responder", "reflection", "broker"})
@@ -38,6 +43,8 @@ class StageCheckpoint:
     captures: dict[str, bytes] = field(default_factory=dict)
     broker: dict[str, Any] | None = None
     file_edits: tuple[FileEdit, ...] | None = None
+    # Why the recorder could not capture this checkpoint's file edits.
+    unrecorded_file_edits: str | None = None
 
 
 class CheckpointStore:
@@ -54,6 +61,7 @@ class CheckpointStore:
         captures: dict[str, bytes] | None = None,
         broker: dict[str, Any] | None = None,
         file_edits: tuple[FileEdit, ...] | None = None,
+        unrecorded_file_edits: str | None = None,
     ) -> Path:
         directory = self._directory(incident, stage)
         _bounded(request.encode(), MAX_TASK_BYTES, "dispatch request")
@@ -69,7 +77,11 @@ class CheckpointStore:
             digests[name] = hashlib.sha256(data).hexdigest()
         edit_data = encode_file_edits(file_edits) if file_edits is not None else None
         edit_digest = hashlib.sha256(edit_data).hexdigest() if edit_data is not None else None
-        manifest = {"version": 1, "captures": digests, "broker": broker, "file_edits": edit_digest}
+        if file_edits is not None and unrecorded_file_edits is not None:
+            raise CheckpointError("a checkpoint has either recorded or unrecorded file edits")
+        manifest: dict[str, Any] = {"version": 1, "captures": digests, "broker": broker, "file_edits": edit_digest}
+        if unrecorded_file_edits is not None:
+            manifest["unrecorded_file_edits"] = unrecorded_file_edits
         encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         _bounded(encoded, MAX_BROKER_BYTES, "broker validation result")
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -138,7 +150,10 @@ class CheckpointStore:
             if hashlib.sha256(data).hexdigest() != edit_digest:
                 raise CheckpointError("recorded file edit digest mismatch")
             edits = decode_file_edits(data)
-        return StageCheckpoint(request, result, manifest["captures"], captures, broker, edits)
+        unrecorded = manifest.get("unrecorded_file_edits")
+        if unrecorded is not None and (not isinstance(unrecorded, str) or edits is not None):
+            raise CheckpointError("invalid unrecorded file edit reason")
+        return StageCheckpoint(request, result, manifest["captures"], captures, broker, edits, unrecorded)
 
     def _directory(self, incident: int, stage: str) -> Path:
         if incident < 0 or stage not in STAGES:
@@ -195,6 +210,7 @@ def capture_checkpoints(
     results: dict[str, str] = {}
     exported: list[dict[str, Any]] = []
     edits_by_request: dict[str, tuple[FileEdit, ...]] = {}
+    unrecorded_by_request: dict[str, str] = {}
     for path in sorted((receipt_dir / "sdo_runtime" / "sessions").glob("*/checkpoints/*/request.json")):
         wire = path.read_text(encoding="utf-8")
         if not _could_belong_to_incident(wire, incident_id):
@@ -203,6 +219,12 @@ def capture_checkpoints(
         edits_path = path.with_name("file_edits.json")
         if edits_path.is_file():
             edits_by_request[hashlib.sha256(wire.encode()).hexdigest()] = decode_file_edits(edits_path.read_bytes())
+        unrecorded_path = path.with_name(UNRECORDED_FILE_EDITS)
+        if unrecorded_path.is_file():
+            reason = _json_envelope(unrecorded_path.read_text(encoding="utf-8")).get("reason")
+            if not isinstance(reason, str):
+                raise CheckpointError(f"invalid {UNRECORDED_FILE_EDITS}")
+            unrecorded_by_request[hashlib.sha256(wire.encode()).hexdigest()] = reason
         data = {"agent-task.json": wire}
         result_path = path.with_name("result.json")
         if result_path.is_file():
@@ -261,6 +283,7 @@ def capture_checkpoints(
             captures=captures,
             broker=ledger,
             file_edits=edits_by_request.get(hashlib.sha256(request.encode()).hexdigest()),
+            unrecorded_file_edits=unrecorded_by_request.get(hashlib.sha256(request.encode()).hexdigest()),
         )
     broker_task = stages.get("reflection")
     if ledger is not None and broker_task is not None and results.get(broker_task[0]) is not None:
@@ -274,6 +297,7 @@ def capture_checkpoints(
             captures=_referenced_captures(receipt_dir, incident_id, result),
             broker=ledger,
             file_edits=edits_by_request.get(hashlib.sha256(request.encode()).hexdigest()),
+            unrecorded_file_edits=unrecorded_by_request.get(hashlib.sha256(request.encode()).hexdigest()),
         )
 
 
@@ -409,6 +433,8 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
     """Validate a newly re-executed worker result with the real Go broker."""
     if checkpoint.result is None:
         raise CheckpointError("broker replay requires a recorded worker result")
+    if checkpoint.unrecorded_file_edits is not None:
+        raise CheckpointError(f"not replayable: file edits not recorded: {checkpoint.unrecorded_file_edits}")
     _bounded(checkpoint.request.encode(), MAX_TASK_BYTES, "dispatch request")
     _bounded(checkpoint.result.encode(), MAX_RESULT_BYTES, "worker result checkpoint limit")
     _validate_envelopes(checkpoint.request, checkpoint.result)

@@ -57,8 +57,8 @@ max_chars = 200
 reason = "Baseline synthetic fixture maximum: 168 Unicode code points; byte-identical template extraction."
 
 [reflection.cause_work]
-max_chars = 700
-reason = "Expanded synthetic coverage includes per-cause reflection work and complete backend prefix/history additions; maximum 626 Unicode code points."
+max_chars = 1500
+reason = "Per-cause questions are reflection's task: a live astronomy incident's two causes and one unassigned write are 1369 compact JSON code points; larger sets keep the first items of every list inline."
 
 [reflection.history]
 max_chars = 400
@@ -121,8 +121,8 @@ max_chars = 5400
 reason = "Reduced to the existing incident tool-output cap; complete facts and generated summaries share the production renderer."
 
 [responder.instructions]
-max_chars = 513
-reason = "Measured workflow-routing and late-finding instructions: 466 Unicode code points, with 10 percent headroom; the full real transport prefix remains 1322 of 1500."
+max_chars = 545
+reason = "Measured workflow-routing and late-finding instructions with both skill file paths: 495 Unicode code points, with 10 percent headroom; Codex no longer injects a skill list."
 
 [session.incident_data]
 max_chars = 100
@@ -352,6 +352,10 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.health_judge-health_judge-round_index_2]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge-skills_root]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
@@ -704,8 +708,8 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.responder-namespace_onboarding-onboarding_json]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+max_chars = 600
+reason = "Onboarding identity summary keeps its scalars and the first object of each list inline (256 left both lists empty for 52 live objects)."
 
 [template_data.responder-ref_01-api_version]
 max_chars = 256

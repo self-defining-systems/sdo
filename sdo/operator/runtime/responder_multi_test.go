@@ -80,7 +80,8 @@ func TestMultiMitigationPendingReadsAndOverlap(t *testing.T) {
 		t.Fatalf("pending conflict not refused: %+v", overlap)
 	}
 	disjoint := multiCall(t, loop, `[{"option_id":"SetField","parameters":{"ref":"Service/app/backend","path":"spec.ports[0].targetPort","value":"8080","reason":"restore route"}}]`)
-	if disjoint.Error != "" || loop.LoopsUsed() != 2 {
+	// No verification separates the two batches: one act→verify loop.
+	if disjoint.Error != "" || loop.LoopsUsed() != 1 {
 		t.Fatalf("disjoint repair refused: %+v", disjoint)
 	}
 }

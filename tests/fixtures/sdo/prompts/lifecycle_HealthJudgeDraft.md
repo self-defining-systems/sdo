@@ -47,8 +47,8 @@ No validator feedback is available for the first round.
 Author deterministic Go detector code and deterministic Go tests using only sdo.dev/operator/sdk's
 DetectionContext snapshot methods and Kubernetes API types already available to SDO diagnostics. The application
 checkout is intentionally not expected to contain the controller SDK. The trusted SDK reference is
-references/sdk.md of the `sdo-detector-authoring` skill (read it from the skill directory, which is the one place
-outside this checkout you may read). This session cannot edit files, so ignore the skill's file-editing workflow
+/opt/sdo/skills/sdo-detector-authoring/references/sdk.md (the skill directory is the one place outside this
+checkout you may read). This session cannot edit files, so ignore the skill's file-editing workflow
 and return the source in the structured fields.
 
 Repository isolation is part of the evidence contract. Inspect only the current application checkout. Never use
