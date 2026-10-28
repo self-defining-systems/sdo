@@ -557,3 +557,69 @@ def test_builtin_resume_requires_persisted_session_storage(tmp_path: Path, monke
     assert result.status == "failed"
     assert result.failure_reason == "session_handoff_invalid"
     validate(result)
+
+
+def _git(path: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", str(path), "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _moved_head_task(tmp_path: Path, *, snapshot_on_base: bool = True, outcome_ancestor: bool = True) -> Path:
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "a").write_text("outcome")
+    _git(tmp_path, "add", "a")
+    _git(tmp_path, "commit", "-qm", "outcome")
+    outcome_commit = _git(tmp_path, "rev-parse", "HEAD")
+    if not outcome_ancestor:
+        _git(tmp_path, "checkout", "-q", "--orphan", "other")
+    (tmp_path / "b").write_text("peer publication")
+    _git(tmp_path, "add", "b")
+    _git(tmp_path, "commit", "-qm", "peer")
+    base = _git(tmp_path, "rev-parse", "HEAD")
+    closure = _closure()
+    request = ReflectionRequest(
+        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit=outcome_commit
+    )
+    request.memory_snapshot.accepted_commit = base if snapshot_on_base else outcome_commit
+    packed = Any()
+    packed.Pack(request)
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-2",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        request=packed,
+        workspace={"proposal_id": "proposal-2", "checkout_path": str(tmp_path), "base_commit": base},
+    )
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    return path
+
+
+def test_memory_conflict_retry_on_a_head_advanced_by_a_peer_still_reflects(tmp_path: Path) -> None:
+    path = _moved_head_task(tmp_path)
+    reflector = Reflector()
+
+    run_reflection_task(path, "result-map", Publisher(), reflector=reflector)
+
+    assert reflector.kwargs is not None
+
+
+@pytest.mark.parametrize(
+    "case",
+    [{"snapshot_on_base": False}, {"outcome_ancestor": False}],
+    ids=["snapshot-not-on-base", "outcome-not-in-base"],
+)
+def test_reflection_still_refuses_a_snapshot_or_base_unrelated_to_the_outcome(
+    tmp_path: Path, case: dict[str, bool]
+) -> None:
+    path = _moved_head_task(tmp_path, **case)
+
+    with pytest.raises(ValueError, match="not bound to committed outcome"):
+        run_reflection_task(path, "result-map", Publisher(), reflector=Reflector())

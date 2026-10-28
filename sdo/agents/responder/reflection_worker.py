@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
@@ -80,6 +81,24 @@ def _default_reflector(guidance: ReflectionGuidance) -> SessionReflector:
     return SessionReflector(backend, guidance=guidance)
 
 
+def _binds_committed_outcome(checkout: Path, *, outcome_commit: str, base_commit: str, snapshot_commit: str) -> bool:
+    """The snapshot describes the workspace base, and the base contains the incident's outcome.
+
+    A memory-conflict retry rebuilds the workspace on the current accepted head, which peers sharing
+    the memory may have advanced past the outcome commit.
+    """
+    if snapshot_commit != base_commit:
+        return False
+    if base_commit == outcome_commit:
+        return True
+    ancestry = subprocess.run(
+        ["git", "-C", str(checkout), "merge-base", "--is-ancestor", outcome_commit, base_commit],
+        capture_output=True,
+        check=False,
+    )
+    return ancestry.returncode == 0
+
+
 def run_reflection_task(
     task_path: Path,
     result_name: str,
@@ -110,9 +129,11 @@ def run_reflection_task(
             closure.result.program_tool_calls.extend(outcome.program_tool_calls)
         if not closure.result.plan_applications:
             closure.result.plan_applications.extend(outcome.plan_applications)
-    if (
-        request.memory_snapshot.accepted_commit != request.outcome_commit
-        or task.workspace.base_commit != request.outcome_commit
+    if not _binds_committed_outcome(
+        Path(task.workspace.checkout_path),
+        outcome_commit=request.outcome_commit,
+        base_commit=task.workspace.base_commit,
+        snapshot_commit=request.memory_snapshot.accepted_commit,
     ):
         raise ValueError("reflection memory snapshot is not bound to committed outcome")
     closure.request.memory_snapshot.CopyFrom(request.memory_snapshot)
