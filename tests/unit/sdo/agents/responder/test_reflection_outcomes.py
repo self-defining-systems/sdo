@@ -354,7 +354,15 @@ def test_reflection_prompt_repeated_sweep_payload_is_bounded(tmp_path: Path) -> 
     small_prompt = _prompt([], small, tmp_path)
     large_prompt = _prompt([], large, tmp_path)
     assert len(large_prompt) - len(small_prompt) < 100
-    assert large_prompt.count("FailedMount") < 40
+    from sdo.agents.context_output import budget_for
+    from sdo.agents.prompt_templates import RenderedPrompt
+
+    assert isinstance(large_prompt, RenderedPrompt)
+    assert sum(
+        len(part.text) for part in large_prompt.parts if part.name == "reflection.outcome_details"
+    ) <= budget_for("reflection.outcome_details")
+    assert large_prompt.count("FailedMount") == small_prompt.count("FailedMount")
+    assert large.repair_actions[0].details in large_prompt
     assert expand_context(large_prompt).count("FailedMount") >= 40
 
 

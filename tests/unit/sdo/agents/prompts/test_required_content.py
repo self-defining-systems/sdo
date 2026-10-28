@@ -134,6 +134,18 @@ def test_recorded_scale_questions_and_repairs_reach_the_real_session_prompt(monk
         for action in live.outcome.repair_actions
     ]
     assert len(view["repair_actions"]) == 24
+    import os
+
+    # Required full-data references retain exact read authority through wrapping.
+    outcome_file = Path(os.path.expandvars(view["full_current_outcome_path"]))
+    assert outcome_file in prompt.context_files
+    assert json.loads(outcome_file.read_text())["incident_id"] == live.outcome.incident_id
+    work = next(
+        part.text for part in prompt.parts if part.name == "reflection.cause_work" and part.text.startswith("{")
+    )
+    work_file = Path(os.path.expandvars(json.loads(work)["full_work_path"]))
+    assert work_file in prompt.context_files
+    assert len(json.loads(work_file.read_text())["causes"]) == 20
     assert len(prompt) <= budget_for("session_context.reflection_first")
 
 

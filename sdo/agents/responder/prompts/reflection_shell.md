@@ -9,4 +9,5 @@ ${outcome_json}
 
 ${history_section}
 
+Per-cause work:
 ${work_section}

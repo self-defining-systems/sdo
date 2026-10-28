@@ -17,7 +17,7 @@ from libs.agent_cli.structured import (
     turn_usage,
 )
 from sdo.agents.code_paths import agent_guidance
-from sdo.agents.context_output import save_context
+from sdo.agents.context_output import ContextText, save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
@@ -195,7 +195,7 @@ def reflection_work_view(work_json: str) -> RenderedPrompt:
     metadata is explicit so a compact view cannot imply that it did not exist.
     """
     work = json.loads(work_json)
-    _, full_path = save_context(work_json)
+    work_file, full_path = save_context(work_json)
     fields = {"question", "disposition", "reason", "program_id", "resources"}
 
     def questions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -223,13 +223,31 @@ def reflection_work_view(work_json: str) -> RenderedPrompt:
         "unassigned_settled_items_omitted": sum(not item.get("question") for item in work["unassigned"]),
         "full_work_path": full_path,
     }
+
+    def details(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "item_index": index,
+                **({key: value for key, value in item.items() if key not in fields} if item.get("question") else item),
+            }
+            for index, item in enumerate(items)
+        ]
+
     return join_prompts(
         "\n",
         [
-            named_prompt("reflection.cause_work", json.dumps(required, separators=(",", ":"))),
+            named_prompt("reflection.cause_work", ContextText(json.dumps(required, separators=(",", ":")), work_file)),
             named_prompt(
                 "reflection.cause_details",
-                json.dumps({"details": [*work["causes"], *work["unassigned"]]}),
+                json.dumps(
+                    {
+                        "causes": [
+                            {"cause_index": cause.get("cause_index", 0), "items": details(cause.get("items", []))}
+                            for cause in work["causes"]
+                        ],
+                        "unassigned": details(work["unassigned"]),
+                    }
+                ),
                 required=False,
             ),
         ],
@@ -258,7 +276,7 @@ def _logical_learning_request(
     linked.update(match.playbook_id for match in closure.request.playbook_coverage.matches)
     memory_index = reflection_memory_view(snapshot, outcome, linked_ids=linked)
     _, memory_path = save_context(json.dumps(memory_index, indent=2))
-    _, outcome_path = save_context(json_format.MessageToJson(outcome, preserving_proto_field_name=True))
+    outcome_file, outcome_path = save_context(json_format.MessageToJson(outcome, preserving_proto_field_name=True))
     outcome_view = current_outcome_view(outcome)
     outcome_summary = {
         key: outcome_view[key]
@@ -291,7 +309,9 @@ def _logical_learning_request(
     outcome_prompt = join_prompts(
         "\n",
         [
-            named_prompt("reflection.outcome", json.dumps(required_outcome, separators=(",", ":"))),
+            named_prompt(
+                "reflection.outcome", ContextText(json.dumps(required_outcome, separators=(",", ":")), outcome_file)
+            ),
             named_prompt("reflection.outcome_details", json.dumps(optional_outcome, indent=2), required=False),
         ],
         part="reflection.outcome",
@@ -307,11 +327,16 @@ def _logical_learning_request(
             },
             separators=(",", ":"),
         )
-        work_section = render_prompt(
-            "responder",
-            "learning_01",
-            part="reflection.cause_work",
-            work_json=reflection_work_view(work_json),
+        work_data = reflection_work_view(work_json)
+        work_section = (
+            work_data
+            if agent_guidance() == "shell"
+            else render_prompt(
+                "responder",
+                "learning_01",
+                part="reflection.cause_work",
+                work_json=work_data,
+            )
         )
     if agent_guidance() == "shell":
         return render_prompt(
