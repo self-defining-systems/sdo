@@ -61,6 +61,7 @@ def incident(
     oversized: bool = False,
     pending: bool = False,
     memory: bool = True,
+    real_scale: bool = False,
 ) -> IncidentRequest:
     request = IncidentRequest(
         schema_version="sdo.dev/v1alpha1",
@@ -97,6 +98,10 @@ def incident(
                 primary_resource=ObjectRef(api_version="v1", kind="Service", namespace="toy", name=name),
             )
         )
+        if real_scale:
+            # Live drift fingerprints run to about 150 characters, evidence to several hundred.
+            request.findings[-1].fingerprint = f"drift/apps/v1/Deployment/toy/{name}/" + "f" * 110
+            request.findings[-1].evidence = f"Observed {name} has no ready endpoints; " * 12
         request.detector_history.append(
             DetectorEvaluation(
                 detector_id=f"detector-{index}",
@@ -165,7 +170,12 @@ class ReflectionCapture:
         return self.resume(session_id="", worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
 
 
-def rendered_cases() -> dict[str, str]:
+def rendered_cases(*, scale: int = 1) -> dict[str, str]:
+    """Golden prompts; ``scale`` multiplies findings and lengthens them to live sizes."""
+
+    def scaled(count: int = 2, **options: bool) -> IncidentRequest:
+        return incident(count * scale, real_scale=scale > 1, **options)
+
     prompts: dict[str, str] = {}
     prompts["responder_continuation"] = continuation_prompt(
         json.dumps(
@@ -226,17 +236,17 @@ def rendered_cases() -> dict[str, str]:
         for name in ("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "SDO_LATE_FINDINGS", "SDO_API_HISTORY_DIR"):
             patch.delenv(name, raising=False)
         for name, request in {
-            "cold_two": incident(memory=False),
-            "cold_five": incident(5, memory=False),
-            "surfaced": incident(),
-            "warm": incident(warm=True),
-            "warm_pending": incident(warm=True, pending=True),
-            "drift": incident(drift=True),
-            "oversized": incident(5, oversized=True),
-            "warm_oversized": incident(warm=True, oversized=True),
+            "cold_two": scaled(memory=False),
+            "cold_five": scaled(5, memory=False),
+            "surfaced": scaled(),
+            "warm": scaled(warm=True),
+            "warm_pending": scaled(warm=True, pending=True),
+            "drift": scaled(drift=True),
+            "oversized": scaled(5, oversized=True),
+            "warm_oversized": scaled(warm=True, oversized=True),
         }.items():
             prompts[f"responder_{name}"] = responder_prompt(request)
-        matched = incident(5, warm=True)
+        matched = scaled(5, warm=True)
         matched.initial_program_runs.add(
             program_id="repair-0",
             can_mitigate=True,
@@ -250,7 +260,7 @@ def rendered_cases() -> dict[str, str]:
             mitigation_selection="restore-port",
             verified_successes=2,
             verified_failures=1,
-            explained_finding_fingerprints=["fingerprint-0"],
+            explained_finding_fingerprints=[matched.findings[0].fingerprint],
         )
         match.bindings.add(name="service").object.CopyFrom(matched.findings[0].primary_resource)
         matched.playbook_coverage.unexplained_finding_fingerprints.extend(
@@ -259,15 +269,15 @@ def rendered_cases() -> dict[str, str]:
         prompts["responder_matched_programs"] = responder_prompt(matched)
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
         patch.setenv("SDO_LATE_FINDINGS", "pull")
-        prompts["responder_optional"] = responder_prompt(incident())
+        prompts["responder_optional"] = responder_prompt(scaled())
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", _responder_instructions())
-        prompts["responder_transport"] = responder_prompt(incident())
+        prompts["responder_transport"] = responder_prompt(scaled())
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
 
         for mode in ("resume", "fresh", "retry"):
             for count in (2, 5):
                 capture = ReflectionCapture()
-                request = incident(count, warm=True, drift=True)
+                request = scaled(count, warm=True, drift=True)
                 closure = IncidentClosure(
                     request=request,
                     result=IncidentResult(
@@ -306,7 +316,7 @@ def rendered_cases() -> dict[str, str]:
             outcome=OutcomeRecord(schema_version=1, incident_id="toy-incident", classification="failed"),
             history=[],
             outcome_commit="d" * 40,
-            closure=IncidentClosure(request=incident(5)),
+            closure=IncidentClosure(request=scaled(5)),
             unassigned_work=[
                 ReflectionWorkItem(
                     program_id="repair-0",
@@ -349,7 +359,7 @@ def rendered_cases() -> dict[str, str]:
                 pass
 
         for count in (2, 5):
-            closure = IncidentClosure(request=incident(count, oversized=True))
+            closure = IncidentClosure(request=scaled(count, oversized=True))
             prompts[f"reflection_brief_{count}"] = incident_brief(
                 closure, worktree=Path("/application"), detector_detail=True, event_dependence=True
             )
@@ -446,4 +456,5 @@ def rendered_cases() -> dict[str, str]:
         result_type="IncidentResultValidationError",
         diagnostic="status: invalid value",
     )
+    prompts["incident_verified_final"] = render_prompt("responder", "verified_final", part="session.instructions")
     return prompts

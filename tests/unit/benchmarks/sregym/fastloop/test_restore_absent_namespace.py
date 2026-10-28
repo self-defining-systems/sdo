@@ -25,6 +25,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
     reconcile_application,
 )
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -127,6 +128,13 @@ def test_fault_driver_recovery_survives_a_fault_deleted_infrastructure_namespace
             ApplicationBaseline("social-network", [app]),
         ),
         cluster=cluster,
+        accepted_source=fixed_source_provider(
+            (
+                ApplicationBaseline("policy-system", [obj("ServiceAccount", "default", "policy-system")]),
+                ApplicationBaseline("social-network", [app]),
+            ),
+            "social-network",
+        ),
     )
 
     driver.recover()

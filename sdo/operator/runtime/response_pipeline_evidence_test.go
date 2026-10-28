@@ -110,7 +110,7 @@ func TestResponseStageRejoinRetainsDeterministicApplicationEvidence(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.PlanApplications) != 1 || len(result.ConfirmedRootCauses) != 2 || len(result.RepairActions) != 1 || dispatcher.automatic != 0 || result.ResponderSessionID != "resumed-session" {
+	if len(result.PlanApplications) != 2 || len(result.ConfirmedRootCauses) != 2 || len(result.RepairActions) != 2 || dispatcher.automatic != 0 || result.ResponderSessionID != "resumed-session" {
 		t.Fatalf("stage evidence lost on durable rejoin: %+v", result)
 	}
 }
@@ -349,7 +349,7 @@ func TestSimScheduleDeterministicPipelineEvidence(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(result.ConfirmedRootCauses) != 2 || len(result.PlanApplications) != 1 || len(result.RepairActions) != 1 {
+				if len(result.ConfirmedRootCauses) != 2 || len(result.PlanApplications) != 2 || len(result.RepairActions) != 2 {
 					t.Fatalf("tick=%d lost immutable repair evidence: %+v", tick, result)
 				}
 			}

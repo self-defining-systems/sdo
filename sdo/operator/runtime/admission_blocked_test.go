@@ -11,6 +11,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"strings"
@@ -69,16 +70,17 @@ func TestAdmissionBlockedStageHandsOffWithoutUndoOrRepeat(t *testing.T) {
 	if time.Since(started) > time.Second {
 		t.Fatal("stage waited on admission prerequisite")
 	}
-	applied := 0
+	blocked := 0
 	for _, attempt := range report.Mitigations {
-		if attempt.GetApplyReceipt().GetApplied() {
-			applied++
-			if attempt.Result != "admission_blocked" || attempt.ApplyReceipt.GetRolledBack() || !strings.Contains(attempt.Error, "app-policy") {
-				t.Fatalf("stage lost admission handoff or repair: %v", attempt)
-			}
+		if attempt.PlaybookId != (pipelineImageProgram{}).Spec().ID {
+			continue
+		}
+		blocked++
+		if attempt.Result != "admission_blocked" || !attempt.GetApplyReceipt().GetApplied() || attempt.ApplyReceipt.GetRolledBack() || !strings.Contains(attempt.Error, "app-policy") {
+			t.Fatalf("stage lost admission handoff or repair: %v", attempt)
 		}
 	}
-	if applied == 0 {
+	if blocked == 0 {
 		t.Fatal("stage never applied repair")
 	}
 	before := len(loop.PlanApplications())
@@ -368,5 +370,49 @@ func TestAdmissionReplicaSetConditionRequiresBothObservedGenerations(t *testing.
 				}
 			}
 		}
+	}
+}
+
+// pendingDeploymentRollout settles every non-Deployment write and hands each
+// Deployment rollout back with err.
+type pendingDeploymentRollout struct{ err error }
+
+func (r pendingDeploymentRollout) Wait(_ context.Context, refs []sdk.ObjectRef) error {
+	for _, ref := range refs {
+		if ref.Kind == "Deployment" {
+			return r.err
+		}
+	}
+	return nil
+}
+
+// Apply already waited as long as waiting can help. A pending handoff that is
+// admission-blocked, stalled or bounded must not end the pass: the next match
+// gets its own fresh diagnosis, and it may be the actor the rollout needs.
+func TestStagePendingHandoffKeepsIndependentMatchesInThePass(t *testing.T) {
+	stalled := &rolloutBlockedError{blockers: []*contracts.RolloutBlocker{{Ref: &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}, Reason: "replacement Pod cannot schedule"}}, cause: errRolloutStalled}
+	for name, rollouts := range map[string]PlanRollouts{
+		"admission_blocked": admissionRolloutsFor("api"),
+		"stalled":           pendingDeploymentRollout{err: stalled},
+		"bounded":           pendingDeploymentRollout{err: context.DeadlineExceeded},
+	} {
+		t.Run(name, func(t *testing.T) {
+			loop, state := pipelineTestLoop(t, false)
+			loop.Executor.Rollouts = rollouts
+			report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, Budget: 20 * time.Second}).Run(context.Background(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.Coverage.Matches[0].PlaybookId != (pipelineImageProgram{}).Spec().ID {
+				t.Fatal("fixture order: the Deployment repair must be first")
+			}
+			results := map[string]string{}
+			for _, attempt := range report.Mitigations {
+				results[attempt.PlaybookId] = attempt.Result
+			}
+			if len(loop.PlanApplications()) != 2 || results[(pipelinePortProgram{}).Spec().ID] != "applied_cleared" || !strings.HasPrefix(results[(pipelineImageProgram{}).Spec().ID], map[string]string{"admission_blocked": "admission_blocked"}[name]) {
+				t.Fatalf("pending handoff ended the pass: results=%v applications=%d", results, len(loop.PlanApplications()))
+			}
+		})
 	}
 }

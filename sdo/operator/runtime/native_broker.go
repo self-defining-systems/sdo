@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/runtime/lifecyclecore"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -130,6 +131,41 @@ type ControllerRolloutHandoff struct {
 	Receipt     ClosureReceipt
 }
 
+// ClosureIdentityError reports a closure whose contents differ from the frozen
+// closure the broker already stored for the incident. The controller hands the
+// broker its durable frozen closure, so a retry cannot change the comparison.
+type ClosureIdentityError struct {
+	IncidentID string
+	// Fields names the top-level IncidentClosure fields that differ.
+	Fields []string
+}
+
+func (e *ClosureIdentityError) Error() string {
+	return fmt.Sprintf("closure differs from persisted broker evidence in %s", strings.Join(e.Fields, ", "))
+}
+
+func (e *ClosureIdentityError) NonRetryable() bool { return true }
+
+func differingFields(stored, projected proto.Message) []string {
+	left, right := stored.ProtoReflect(), projected.ProtoReflect()
+	fields := left.Descriptor().Fields()
+	var names []string
+	for index := 0; index < fields.Len(); index++ {
+		field := fields.Get(index)
+		only := func(message protoreflect.Message) proto.Message {
+			copy := message.Type().New()
+			if message.Has(field) {
+				copy.Set(field, message.Get(field))
+			}
+			return copy.Interface()
+		}
+		if !proto.Equal(only(left), only(right)) {
+			names = append(names, string(field.Name()))
+		}
+	}
+	return names
+}
+
 type closurePhaseContextKey struct{}
 
 func recordClosurePhase(ctx context.Context, phase string) error {
@@ -205,7 +241,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			return fmt.Errorf("project closure: %w", err)
 		}
 		if ledger.Closure != nil && !proto.Equal(ledger.Closure, projected) {
-			return errors.New("closure differs from persisted broker evidence")
+			return &ClosureIdentityError{IncidentID: id, Fields: differingFields(ledger.Closure, projected)}
 		}
 		prepared, err := n.Repository.ProposalInfo(id, broker.ProposalPhase)
 		if err != nil && ledger.Receipt == nil {

@@ -122,6 +122,88 @@ func TestLostAcceptanceRecordKeepsOtherManagersAdditions(t *testing.T) {
 	}
 }
 
+// A recreate that carries the earlier instance's record (an installer
+// re-applying the object with its annotations) keeps that acceptance point:
+// the record follows the live UID. Fields it accepted, still at their accepted
+// values, stay accepted even though the recreating writer now owns them (the
+// creating request owns every server default). A changed value and a field
+// the record never had stay differences. hotel rerun17: two Deployments
+// reported 11 server-default paths as residual forever.
+func TestRecreatedObjectKeepsItsCarriedAcceptanceRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		affinity corev1.ServiceAffinity
+		stripped bool
+		changed  bool
+	}{
+		{"defaults unchanged", corev1.ServiceAffinityNone, false, false},
+		{"default changed meanwhile", corev1.ServiceAffinityClientIP, false, true},
+		// No earlier record to carry: defaults are decided by value against
+		// the server's render of accepted source.
+		{"stripped record, default value", corev1.ServiceAffinityNone, true, false},
+		{"stripped record, writer value", corev1.ServiceAffinityClientIP, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			controller, api, source, closeServer := adoptionController(t, 8080)
+			defer closeServer()
+			ctx := context.Background()
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+			diff := func() (program.Diff, error) {
+				snapshot := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*api.service.DeepCopy()}}
+				return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}.DiffAgainstSource(ref)
+			}
+			// Server defaults present when SDO first accepts the Service.
+			api.service.Spec.Type, api.service.Spec.SessionAffinity = corev1.ServiceTypeClusterIP, corev1.ServiceAffinityNone
+			start := time.Unix(10, 0).UTC()
+			if err := controller.StepEvents(ctx, start, nil); err != nil {
+				t.Fatal(err)
+			}
+			if result, err := diff(); err != nil || result.Changed {
+				t.Fatalf("adopted Service not accepted: %+v %v", result, err)
+			}
+			carried := api.service.Annotations[acceptedPathsAnnotation]
+			restored, err := NewController(controller.config, nil, adoptionSnapshot{api: api}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restored.ConfigureDrift(*controller.drift)
+			if err := restored.RestoreState(exportState(t, controller)); err != nil {
+				t.Fatal(err)
+			}
+			recreated := *driftService(8080)
+			recreated.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}
+			recreated.UID, recreated.ResourceVersion = "recreated", "1"
+			recreated.Spec.Type, recreated.Spec.SessionAffinity = corev1.ServiceTypeClusterIP, tc.affinity
+			recreated.Annotations = map[string]string{acceptedPathsAnnotation: carried, "example.com/maintenance": "true"}
+			recreated.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "kubectl-client-side-apply", Operation: metav1.ManagedFieldsOperationUpdate, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:metadata":{"f:annotations":{"f:example.com/maintenance":{},"f:sdo.dev/accepted-paths":{}}},"f:spec":{"f:ports":{"k:{\"port\":80,\"protocol\":\"TCP\"}":{"f:targetPort":{}}},"f:sessionAffinity":{},"f:type":{}}}`)}}}
+			if tc.stripped {
+				delete(recreated.Annotations, acceptedPathsAnnotation)
+			}
+			api.service, api.owners = recreated, nil
+			if _, err := diff(); !errors.Is(err, ErrAcceptanceRecordUnavailable) {
+				t.Fatalf("a record of another instance compared as current: %v", err)
+			}
+			restored.adoptionNeeded = true
+			if err := restored.StepEvents(ctx, start.Add(time.Second), nil); err != nil {
+				t.Fatal(err)
+			}
+			if !acceptanceRecordCurrent(serviceObject(t, &api.service), source.object) {
+				t.Fatal("recreated object was not re-recorded")
+			}
+			if result, err := diff(); err != nil || !result.Changed {
+				t.Fatalf("re-stamp absorbed a field the carried record never had: %+v %v", result, err)
+			}
+			delete(api.service.Annotations, "example.com/maintenance")
+			if result, err := diff(); err != nil || result.Changed != tc.changed {
+				t.Fatalf("carried acceptance point: changed=%v, want %v: %+v %v", result.Changed, tc.changed, result, err)
+			}
+			if (api.renders > 0) != tc.stripped {
+				t.Fatalf("default render runs only when no record can be carried: renders=%d", api.renders)
+			}
+		})
+	}
+}
+
 func serviceObject(t *testing.T, service *corev1.Service) *unstructured.Unstructured {
 	t.Helper()
 	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(service)

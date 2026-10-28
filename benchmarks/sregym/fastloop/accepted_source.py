@@ -17,46 +17,14 @@ from functools import cached_property
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
 from benchmarks.sregym.adapter import WaitKind, execute_operator, wait_for
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-# Mirrors ClusterScopedKind in sdo/operator/rendered/scope.go (parity is tested).
-CLUSTER_SCOPED_KINDS = frozenset(
-    {
-        "Namespace",
-        "Node",
-        "PersistentVolume",
-        "ClusterRole",
-        "ClusterRoleBinding",
-        "CustomResourceDefinition",
-        "APIService",
-        "StorageClass",
-        "VolumeAttachment",
-        "CSIDriver",
-        "CSINode",
-        "RuntimeClass",
-        "PriorityClass",
-        "MutatingWebhookConfiguration",
-        "ValidatingWebhookConfiguration",
-        "ValidatingAdmissionPolicy",
-        "ValidatingAdmissionPolicyBinding",
-        "ClusterTrustBundle",
-        "CertificateSigningRequest",
-        "IngressClass",
-        "PodSecurityPolicy",
-        "IPAddress",
-        "ServiceCIDR",
-    }
-)
-
 DEFAULT_MANIFEST_PATHS = ("kubernetes",)
 # Applications whose ``kubernetes/`` holds more than the deployed manifest set.
 APPLICATION_MANIFEST_PATHS = {"opentelemetry-demo-astronomy-shop": ("kubernetes/astronomy-shop.yaml",)}
-_MANIFEST_SUFFIXES = (".yaml", ".yml", ".json")
 _REVISION = re.compile(r"^[0-9a-f]{40,64}$")
 
 
@@ -105,22 +73,8 @@ class AcceptedSource:
 
     @cached_property
     def manifests(self) -> tuple[dict[str, Any], ...]:
-        """Rendered non-Secret objects, namespace-defaulted; duplicates are an error."""
-        tree = self._git("ls-tree", "-r", "--name-only", self.revision).split("\n")
-        files = sorted(
-            {
-                candidate
-                for selection in self.manifest_paths
-                for candidate in tree
-                if (candidate == selection or candidate.startswith(selection + "/"))
-                and (candidate.endswith(_MANIFEST_SUFFIXES) or PurePosixPath(candidate).name == "Kustomization")
-            }
-        )
-        if any(
-            PurePosixPath(path).name in {"kustomization.yaml", "kustomization.yml", "Kustomization"} for path in files
-        ):
-            # Keep generator evaluation at the production source owner. Only
-            # non-secret objects cross this transport into benchmark records.
+        """Use the production renderer for plain manifests and generators alike."""
+        try:
             rendered = json.loads(
                 execute_operator(
                     "render-source",
@@ -136,30 +90,10 @@ class AcceptedSource:
                     ),
                 )
             )
-            if not isinstance(rendered, list) or any(
-                not isinstance(obj, dict) or obj.get("kind") == "Secret" for obj in rendered
-            ):
-                raise ValueError("accepted source renderer returned invalid non-secret inventory")
-            return tuple(rendered)
-        objects: list[dict[str, Any]] = []
-        seen: set[tuple[str, str, str]] = set()
-        for path in files:
-            for document in yaml.safe_load_all(self._git("show", f"{self.revision}:{path}")):
-                if not isinstance(document, dict):
-                    continue
-                value = json.loads(json.dumps(document, default=str))
-                metadata = value.get("metadata") or {}
-                kind, name = value.get("kind"), metadata.get("name")
-                if not (value.get("apiVersion") and kind and name) or kind == "Secret":
-                    continue
-                if kind in CLUSTER_SCOPED_KINDS:
-                    metadata.pop("namespace", None)
-                else:
-                    metadata.setdefault("namespace", self.namespace)
-                value["metadata"] = metadata
-                identity = (kind, metadata.get("namespace", ""), name)
-                if identity in seen:
-                    raise ValueError(f"duplicate accepted manifest for {kind}/{name} in {path}")
-                seen.add(identity)
-                objects.append(value)
-        return tuple(objects)
+        except RuntimeError as error:
+            raise ValueError(f"accepted source render failed at {self.revision}: {error}") from error
+        if not isinstance(rendered, list) or any(
+            not isinstance(obj, dict) or obj.get("kind") == "Secret" for obj in rendered
+        ):
+            raise ValueError("accepted source renderer returned invalid non-secret inventory")
+        return tuple(rendered)

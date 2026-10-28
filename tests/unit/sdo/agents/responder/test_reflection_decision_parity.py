@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from sdo.agents.responder.reflection import CodexSessionBackend
+from tests.context_helpers import expand_context
 from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
@@ -99,5 +100,5 @@ def test_worker_corrects_result_contract_before_python_conversion(
     )
     assert result.learning_decision == "no_change"
     assert calls == 2
-    assert "reflection.decision" in agent.prompts[1]
+    assert "reflection.decision" in expand_context(agent.prompts[1])
     assert "reflection-session" in agent.requests[1].argv

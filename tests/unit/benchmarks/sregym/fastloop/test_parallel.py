@@ -1,15 +1,19 @@
 """Parallel orchestration preserves lane order and joins every failure."""
 
+import ast
 import json
 import subprocess
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.sregym.fastloop import shared_memory
 from benchmarks.sregym.fastloop.parallel import Encounter, ParallelPlan, run_parallel
 from benchmarks.sregym.fastloop.records import IncidentRecord
+from benchmarks.sregym.fastloop.stream import load_stream_config
 
 
 def record(problem, lane, index=0):
@@ -152,12 +156,21 @@ def test_parallel_prepare_runs_before_any_lane_preflight(monkeypatch, tmp_path):
     assert calls == ["prepare", "run"]
 
 
-def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monkeypatch, tmp_path):
+@pytest.mark.parametrize(("provider", "model"), [("codex", "gpt-6-luna"), ("claude", "claude-sonnet-5-5")])
+def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monkeypatch, tmp_path, provider, model):
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
     from benchmarks.sregym.fastloop.parallel import execute_lane
     from benchmarks.sregym.fastloop.records import write_records
 
-    selected = plan(tmp_path)
+    selected = ParallelPlan(
+        **{
+            **plan(tmp_path).model_dump(),
+            "provider": provider,
+            "model": model,
+            "capability_mode": "permissive",
+            "permissive_responder": True,
+        }
+    )
     for name, run_dir in selected.lanes.items():
         FastloopEnvironment(
             run_dir=run_dir,
@@ -174,7 +187,11 @@ def test_lane_process_overrides_ambient_kubeconfig_and_caps_host_build_jobs(monk
     def command(argv, **kwargs):
         from benchmarks.sregym.fastloop.cli import build_parser
 
-        assert build_parser().parse_args(argv[argv.index("benchmarks.sregym.fastloop") + 1 :]).cleanup_passes == 1
+        args = build_parser().parse_args(argv[argv.index("benchmarks.sregym.fastloop") + 1 :])
+        assert args.cleanup_passes == 1
+        assert (args.provider, args.model) == (provider, model)
+        stream = load_stream_config(args.stream)
+        assert (stream.capability_mode, stream.permissive_responder) == ("permissive", True)
         assert kwargs["env"]["SREGYM_BASE_KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["KUBECONFIG"] == str(tmp_path / "left" / "config")
         assert kwargs["env"]["GOMAXPROCS"] == "4"
@@ -279,3 +296,134 @@ def test_two_scripted_lanes_use_real_loop_grading_and_paused_recovery(tmp_path):
     for name in selected.lanes:
         assert events[name][:6] == ["inject", "closure", "oracle", "learn", "pause", "recover"]
     assert all(row.memory_before_commit == row.memory_after_commit for row in rows)
+
+
+@pytest.mark.parametrize(("provider", "model"), [("codex", "gpt-6-luna"), ("claude", "claude-sonnet-5-5")])
+def test_parallel_prepare_passes_plan_model_to_real_run_parser(monkeypatch, tmp_path, provider, model):
+    from contextlib import nullcontext
+
+    from benchmarks.sregym.fastloop import cli, shared_memory
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    selected = ParallelPlan(**{**plan(tmp_path).model_dump(), "provider": provider, "model": model})
+    for name, run_dir in selected.lanes.items():
+        FastloopEnvironment(
+            run_dir=run_dir,
+            cluster=name,
+            kubeconfig=run_dir / "config",
+            namespace="app",
+            application=f"app-{name}",
+            workspace=run_dir / "application",
+            sregym_dir=tmp_path / "sregym",
+            private_tmp=run_dir / "tmp",
+            parallel_root=tmp_path,
+        ).save()
+    monkeypatch.setattr(shared_memory, "lane_nodes", lambda *_: [])
+    monkeypatch.setattr(shared_memory, "repository_volume_path", lambda *_: "/synthetic")
+    monkeypatch.setattr(cli, "_worker", lambda *_: nullcontext(object()))
+    monkeypatch.setattr(cli, "check_host_capacity", lambda *_: None)
+
+    class Prepared(Exception):
+        pass
+
+    def agent(args, *_args, **_kwargs):
+        assert (args.provider, args.model) == (provider, model)
+        raise Prepared
+
+    monkeypatch.setattr(cli, "_sdo_agent", agent)
+    with pytest.raises(Prepared):
+        shared_memory.prepare_shared_lanes(selected, tmp_path / "attachment.json")
+
+
+@pytest.mark.parametrize("fields", [{"provider": "unknown"}, {"model": ""}])
+def test_parallel_plan_rejects_invalid_worker_settings(tmp_path, fields):
+    with pytest.raises(ValueError, match="provider|model"):
+        ParallelPlan(**{**plan(tmp_path).model_dump(), **fields})
+
+
+def test_parallel_plan_defaults_and_worker_registration_round_trip(tmp_path):
+    selected = plan(tmp_path)
+    assert (selected.provider, selected.model) == ("codex", "gpt-6-luna")
+    registrations = tmp_path / "registrations"
+    selected = ParallelPlan(**{**selected.model_dump(), "agent_registrations": registrations})
+    restored = ParallelPlan.model_validate_json(selected.model_dump_json())
+    from benchmarks.sregym.fastloop.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["run", "--agent", "sdo", "--run-dir", str(tmp_path), *restored.worker_arguments()]
+    )
+    assert (args.provider, args.model, args.agent_registrations) == ("codex", "gpt-6-luna", registrations)
+
+
+def _lane(tmp_path):
+    return SimpleNamespace(parallel_root=tmp_path / "root", images=SimpleNamespace(controller="sdo-controller:frozen"))
+
+
+def test_lane_tree_is_read_by_a_git_container_because_kind_nodes_ship_no_git(tmp_path):
+    command = shared_memory.lane_git_command(
+        _lane(tmp_path), "/opt/sdo-parallel/lanes/kind-a", tmp_path / "accepted", "rev-parse", "HEAD^{tree}"
+    )
+    assert command[:2] == ("docker", "run")
+    assert "exec" not in command
+    assert f"{tmp_path.resolve()}/root/lanes/kind-a:/lane:ro" in command
+    assert command[command.index("--entrypoint") + 1] == "git"
+    assert "sdo-controller:frozen" in command
+    assert command[-2:] == ("rev-parse", "HEAD^{tree}")
+
+
+@pytest.mark.parametrize("volume", ["/elsewhere/lanes/kind-a", "/opt/sdo-parallel/../etc"])
+def test_lane_tree_rejects_volumes_outside_the_shared_root(tmp_path, volume):
+    with pytest.raises(ValueError, match="eval: lane volume"):
+        shared_memory.lane_git_command(_lane(tmp_path), volume, tmp_path, "status")
+
+
+BASELINE = ".sdo/diagnostics/detectors/health/service-reachability/baseline.json"
+
+
+def _divergence(monkeypatch, tmp_path, lane_tree, changed):
+    def command(*argv):
+        return lane_tree if "rev-parse" in argv else "\n".join(changed)
+
+    monkeypatch.setattr(shared_memory, "_command", command)
+    return shared_memory.lane_divergence(_lane(tmp_path), "/opt/sdo-parallel/lanes/kind-a", tmp_path, "tree-a")
+
+
+def test_lanes_may_differ_only_in_per_cluster_health_captures(monkeypatch, tmp_path):
+    assert _divergence(monkeypatch, tmp_path, "tree-a", []) == []
+    assert _divergence(monkeypatch, tmp_path, "tree-b", [BASELINE]) == [BASELINE]
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        [],
+        [".sdo/playbooks/fix/README.md"],
+        [BASELINE, ".sdo/outcomes/x.json"],
+        [".sdo/diagnostics/detectors/health/a/b/baseline.json"],
+    ],
+)
+def test_any_other_lane_divergence_is_refused(monkeypatch, tmp_path, changed):
+    with pytest.raises(ValueError, match="merge through the broker"):
+        _divergence(monkeypatch, tmp_path, "tree-b", changed)
+
+
+def test_attachment_never_runs_tools_inside_nodes_that_kind_images_lack():
+    tree = ast.parse(Path(shared_memory.__file__).read_text())
+    node_commands = [
+        {part.value for part in call.args if isinstance(part, ast.Constant)}
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and getattr(call.func, "id", "") == "_command"
+        and [part.value for part in call.args[:2] if isinstance(part, ast.Constant)] == ["docker", "exec"]
+    ]
+    assert node_commands, "attachment no longer execs in nodes; drop this ratchet"
+    assert not [command for command in node_commands if "git" in command]
+
+
+def test_accepted_checkout_is_owned_by_the_controller_uid_and_shared_with_the_host_group():
+    commands = shared_memory.accepted_ownership_commands("/opt/sdo-parallel/accepted", host_gid=1001)
+    assert commands[0] == ("chown", "-R", "65532:1001", "/opt/sdo-parallel/accepted")
+    assert ("chmod", "-R", "g+rwX", "/opt/sdo-parallel/accepted") in commands
+    assert any(
+        command[:3] == ("find", "/opt/sdo-parallel/accepted", "-type") and "g+s" in command for command in commands
+    )

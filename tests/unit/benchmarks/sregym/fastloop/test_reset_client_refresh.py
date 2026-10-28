@@ -16,6 +16,7 @@ class Lane:
     def __init__(self, *, refresh_succeeds: bool = True) -> None:
         self.objects = [
             {
+                "apiVersion": "apps/v1",
                 "kind": "Deployment",
                 "metadata": {"name": "frontend", "namespace": "hotel-reservation"},
                 "spec": {"replicas": 1},
@@ -71,7 +72,7 @@ def environment(tmp_path: Path) -> FastloopEnvironment:
         private_tmp=None,
         seed_commit="a" * 40,
     )
-    commit_accepted_source(env.workspace, namespace="hotel-reservation")
+    commit_accepted_source(env.workspace, Lane().objects, namespace="hotel-reservation")
     baseline = ApplicationBaseline("hotel-reservation", Lane().objects)
     env.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     return env

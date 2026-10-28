@@ -412,7 +412,7 @@ uv run python -m benchmarks.sregym.adapter.oracle_observability \
   --sregym-dir third_party/sregym
 ```
 
-After applying the seed, use `--route-astronomy-traces` on the same command to
+Tracing Service declarations belong in the accepted application source; the harness does not rewrite them to
 match the stock conductor's Jaeger ExternalName routing. The native benchmark
 adapter also prepares this stack before installing a seeded controller. OpenEBS
 is vendored at the revision recorded in the module; all telemetry runs inside
@@ -523,6 +523,8 @@ A plan is JSON, with absolute paths:
 ```json
 {
   "run_id": "two-problem-proof",
+  "provider": "codex",
+  "model": "gpt-6-luna",
   "accepted_repository": "/local/parallel/accepted",
   "lanes": {"left": "/runs/left", "right": "/runs/right"},
   "encounters": [
@@ -532,6 +534,10 @@ A plan is JSON, with absolute paths:
   "timeout_seconds": 3600
 }
 ```
+
+The plan-wide `provider` and `model` apply to preparation and every lane. They
+default to `codex` and `gpt-6-luna`; use `claude` and `claude-sonnet-5-5` for a
+same-model Claude proof.
 
 Run `uv run python -m benchmarks.sregym.fastloop parallel --plan <plan.json>
 --output <new-results-directory> --prepare`. Preparation invokes the ordinary

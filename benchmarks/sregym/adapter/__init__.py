@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, SdoBounds, WaitKind, wait_for
     from benchmarks.sregym.adapter.cluster_resources import kubectl
+    from benchmarks.sregym.adapter.context_preflight import run_context_preflight as run_context_preflight
     from benchmarks.sregym.adapter.driver import (
         DeployedLifecycle,
         DeployedLifecycleContext,
@@ -61,7 +62,7 @@ if TYPE_CHECKING:
         stop_runtime,
         sync_existing,
     )
-    from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability, route_astronomy_traces
+    from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability
     from benchmarks.sregym.adapter.persistent import (
         REJECTED_RECEIPT_FILENAME,
         STRICT_RECEIPT_FILENAME,
@@ -103,6 +104,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.scripted_worker import scripted_judge_seed
 
 _EXPORTS: dict[str, str] = {
+    "run_context_preflight": "context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS": "image_entrypoints",
     "assert_image_entrypoints": "image_entrypoints",
     "image_entrypoint_script": "image_entrypoints",
@@ -138,7 +140,6 @@ _EXPORTS: dict[str, str] = {
     "SCRIPTED_REPLAY_SLOTS": "scripted_replay_catalog",
     "scripted_judge_seed": "scripted_worker",
     "prepare_oracle_observability": "oracle_observability",
-    "route_astronomy_traces": "oracle_observability",
     "bind_state": "processes",
     "runtime_config_payload": "persistent",
     "runtime_config_from_payload": "persistent",
@@ -188,6 +189,7 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "run_context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS",
     "assert_image_entrypoints",
     "image_entrypoint_script",
@@ -222,7 +224,6 @@ __all__ = [
     "SCRIPTED_REPLAY_SLOTS",
     "scripted_judge_seed",
     "prepare_oracle_observability",
-    "route_astronomy_traces",
     "bind_state",
     "runtime_config_payload",
     "runtime_config_from_payload",

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -22,9 +23,17 @@ type lifecycleTestClient struct {
 	*planFakeClient
 	creates, deletes int
 	ignoreDelete     bool
+	deleteReads      int
+	deleted          map[sdk.ObjectRef]bool
 }
 
 func (c *lifecycleTestClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if c.deleted[ref] && c.deleteReads > 0 {
+		c.deleteReads--
+		if c.deleteReads == 0 {
+			delete(c.objects, ref)
+		}
+	}
 	if c.objects[ref] == nil {
 		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: ref.Kind}, ref.Name)
 	}
@@ -50,7 +59,11 @@ func (c *lifecycleTestClient) Delete(_ context.Context, ref sdk.ObjectRef, uid t
 		return apierrors.NewConflict(schema.GroupResource{Resource: ref.Kind}, ref.Name, errors.New("identity changed"))
 	}
 	c.deletes++
-	if !c.ignoreDelete {
+	if c.deleted == nil {
+		c.deleted = map[sdk.ObjectRef]bool{}
+	}
+	c.deleted[ref] = true
+	if !c.ignoreDelete && c.deleteReads == 0 {
 		delete(c.objects, ref)
 	}
 	return nil
@@ -96,6 +109,7 @@ func TestPlanExecutorCreateFromSourceAndCompensate(t *testing.T) {
 			if _, ok := planApplicationState(proto).Result.Plan.Actions[0].(program.CreateFromSource); !ok {
 				t.Fatal("contract lost create")
 			}
+			client.deleteReads = 3
 			if err := e.Rollback(context.Background(), result); err != nil {
 				t.Fatal(err)
 			}
@@ -152,7 +166,7 @@ func TestPlanDeleteMustObserveAbsenceAndNeverRecreate(t *testing.T) {
 	before.SetResourceVersion("1")
 	client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}, ignoreDelete: true}
 
-	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+	e := PlanExecutor{RolloutTimeout: 30 * time.Millisecond, Client: client, Source: lifecycleTestSource{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 	result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "fixture"}}}, false)
 	if err == nil || result.VerificationCompleted || result.ObjectEffects[0].Confirmed || client.creates != 0 {
 		t.Fatal("missing absence evidence treated as success or recreation")
@@ -334,4 +348,162 @@ func (s lifecycleTestSource) AcceptedScopedManifest(ctx context.Context, commit,
 		return nil, rendered.ErrAcceptedManifestAbsent
 	}
 	return s.AcceptedManifest(ctx, commit, ref)
+}
+
+// Run the real lifecycle producer into the real source-diff consumer: existence
+// alone cannot prove that a recreated instance has an acceptance identity.
+func TestSourceCreateEstablishesCurrentInstanceAcceptance(t *testing.T) {
+	for _, kind := range []string{"ConfigMap", "Service", "Deployment"} {
+		t.Run(kind, func(t *testing.T) {
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: kind, Namespace: "app", Name: "restored"}
+			if kind == "Deployment" {
+				ref.APIVersion = "apps/v1"
+			}
+			source := planObject(ref, map[string]any{"replicas": float64(1)})
+			if kind == "ConfigMap" {
+				delete(source.Object, "spec")
+				source.Object["data"] = map[string]any{"script": "synthetic"}
+			}
+			client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}}
+			e := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: source}}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+			result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions", Namespace: "app"}, program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: ref, Reason: "fixture"}}}, false)
+			if err != nil || !result.VerificationPassed {
+				t.Fatalf("create: %v", err)
+			}
+			live := client.objects[ref]
+			snapshot := &sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live.DeepCopy()}}
+			view := LiveReadView{DetectionContext: snapshot, Source: e.Source, SourceCommit: "accepted"}
+			if _, err := view.DiffAgainstSource(ref); err != nil {
+				t.Fatalf("created instance cannot be compared: %v", err)
+			}
+			if !acceptanceRecordBound(live, source) {
+				t.Fatal("baseline is not bound to created UID")
+			}
+			live.SetUID("replacement")
+			snapshot.Objects[0] = *live.DeepCopy()
+			if _, err := view.DiffAgainstSource(ref); !errors.Is(err, ErrAcceptanceRecordUnavailable) {
+				t.Fatalf("replacement inherited acceptance: %v", err)
+			}
+		})
+	}
+}
+
+func TestDeleteWaitsForAbsenceBeforeContinuingLifecycleBatch(t *testing.T) {
+	for _, kind := range []string{"Job", "Pod", "NetworkPolicy"} {
+		t.Run(kind, func(t *testing.T) {
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: kind, Namespace: "app", Name: "producer"}
+			if kind == "Job" {
+				ref.APIVersion = "batch/v1"
+			}
+			if kind == "NetworkPolicy" {
+				ref.APIVersion = "networking.k8s.io/v1"
+			}
+			before := planObject(ref, nil)
+			before.SetUID("old")
+			before.SetResourceVersion("1")
+			next := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "next"}
+			source := planObject(next, nil)
+			source.Object["data"] = map[string]any{"key": "value"}
+			client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}, deleteReads: 3}
+			e := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{next: source}}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			result, err := e.Apply(ctx, IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions", Namespace: "app"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "fixture"}, program.CreateFromSource{Ref: next, Reason: "fixture"}}}, false)
+			if err != nil || !result.VerificationPassed || client.creates != 1 || !result.ObjectEffects[0].Confirmed {
+				t.Fatalf("asynchronous delete aborted plan: %+v %v", result, err)
+			}
+		})
+	}
+}
+
+func (c *lifecycleTestClient) RecordAcceptance(_ context.Context, ref sdk.ObjectRef, record string, live *unstructured.Unstructured) error {
+	object := c.objects[ref]
+	if object == nil || object.GetUID() != live.GetUID() || object.GetResourceVersion() != live.GetResourceVersion() {
+		return fmt.Errorf("acceptance identity conflict")
+	}
+	object.SetAnnotations(AcceptanceRecordObject(ref, record, live).GetAnnotations())
+	object.SetResourceVersion("3")
+	return nil
+}
+
+type failedAcceptanceClient struct {
+	*lifecycleTestClient
+	replace, discard bool
+}
+
+func (c failedAcceptanceClient) RecordAcceptance(_ context.Context, ref sdk.ObjectRef, _ string, _ *unstructured.Unstructured) error {
+	if c.replace {
+		c.objects[ref].SetUID("other-writer")
+	}
+	if c.discard {
+		return nil
+	}
+	return errors.New("synthetic acceptance write failure")
+}
+
+func TestSourceCreateCannotSucceedWithoutPublishedInstanceAcceptance(t *testing.T) {
+	for _, mode := range []string{"write-failed", "replacement", "write-not-observed"} {
+		t.Run(mode, func(t *testing.T) {
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "restored"}
+			source := planObject(ref, nil)
+			delete(source.Object, "spec")
+			source.Object["data"] = map[string]any{"key": "safe"}
+			raw := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}}
+			client := failedAcceptanceClient{lifecycleTestClient: raw, replace: mode == "replacement", discard: mode == "write-not-observed"}
+			e := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: source}}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+			result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: ref, Reason: "fixture"}}}, false)
+			var recordErr *AcceptanceRecordError
+			if !errors.As(err, &recordErr) || result.VerificationCompleted || !result.Applied || len(result.ActionsApplied) != 1 || result.ObjectEffects[0].Confirmed {
+				t.Fatalf("unpublished acceptance gained credit or lost create receipt: %+v %v", result, err)
+			}
+			if mode == "replacement" && raw.deletes != 0 {
+				t.Fatal("acceptance failure compensated somebody else's UID")
+			}
+		})
+	}
+}
+
+type replacingDeleteClient struct{ *lifecycleTestClient }
+
+func (c replacingDeleteClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid types.UID, version string) error {
+	if err := c.lifecycleTestClient.Delete(ctx, ref, uid, version); err != nil {
+		return err
+	}
+	c.objects[ref].SetUID("replacement")
+	return nil
+}
+func TestDeleteObservationPreservesBoundAndRejectsReplacement(t *testing.T) {
+	for _, replacement := range []bool{false, true} {
+		t.Run(fmt.Sprint(replacement), func(t *testing.T) {
+			ref := sdk.ObjectRef{APIVersion: "batch/v1", Kind: "Job", Namespace: "app", Name: "terminating"}
+			before := planObject(ref, nil)
+			before.SetUID("original")
+			before.SetResourceVersion("1")
+			before.SetFinalizers([]string{"example.test/hold"})
+			raw := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}, ignoreDelete: true}
+			var client PlanObjectClient = raw
+			if replacement {
+				client = replacingDeleteClient{raw}
+			}
+			e := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, RolloutTimeout: 30 * time.Millisecond}
+			started := time.Now()
+			result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "fixture"}}}, false)
+			if err == nil || result.VerificationCompleted || result.ObjectEffects[0].Confirmed || raw.creates != 0 || raw.deletes != 1 {
+				t.Fatalf("unconfirmed deletion granted credit: %+v %v", result, err)
+			}
+			var pending *ObjectDeletionPendingError
+			if replacement {
+				if errors.As(err, &pending) {
+					t.Fatal("replacement mistaken for terminating original")
+				}
+			} else {
+				if !errors.As(err, &pending) || pending.UID != "original" || len(pending.Finalizers) != 1 || !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("lost typed terminating evidence: %v", err)
+				}
+			}
+			if time.Since(started) > time.Second {
+				t.Fatal("delete exceeded observation budget")
+			}
+		})
+	}
 }

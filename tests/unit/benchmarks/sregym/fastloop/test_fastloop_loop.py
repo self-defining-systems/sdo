@@ -1091,3 +1091,29 @@ def test_closure_grade_precedes_resolution_export_and_skips_recovery(tmp_path: P
     assert len(deployed) == 1
     assert "hotel-reservation" not in deployed[0]
     assert lane.contents["hotel-reservation"] == {"pvc/mongodb-geo", "pod/geo"}
+
+
+@pytest.mark.parametrize("failure", ["invalid", "interrupt"])
+def test_recreation_owns_cleanup_even_when_injection_or_agent_fails(tmp_path: Path, failure: str) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class FailedAgent(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            inject()
+            if failure == "invalid":
+                raise InvalidInjectionError({"reason": "partial injection"})
+            raise KeyboardInterrupt
+
+    config = replace(_config(tmp_path, 1), row_start_tier2=True)
+    if failure == "interrupt":
+        with pytest.raises(KeyboardInterrupt):
+            run_incidents(FailedAgent(clock), driver, config, monotonic=clock.monotonic)
+    else:
+        row = run_incidents(FailedAgent(clock), driver, config, monotonic=clock.monotonic)[0]
+        assert row.infra_error == "injection_invalid"
+        assert row.recovery_error is None
+        assert row.cleanup_skipped_reason == "row_start_tier2"
+    assert driver.events == ["inject:p1"]

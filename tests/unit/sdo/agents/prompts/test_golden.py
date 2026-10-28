@@ -10,6 +10,11 @@ GOLDENS = Path(__file__).resolve().parents[5] / "tests/fixtures/sdo/prompts"
 
 
 def normalize_prompt(prompt: str) -> str:
+    prompt = re.sub(
+        r"(?:\$SDO_SESSION_SCRATCH/context|\$SDO_SESSION_DIR/context|/tmp/sdo-context)/[0-9a-f]{24}\.txt",
+        "<context file>",
+        prompt,
+    )
     prompt = re.sub(r'"/tmp/sdo/[^"\n]+-incident\.json"', '"<temporary incident facts file>"', prompt)
     prompt = re.sub(r'"[^"\n]*/sdo-playbooks-[^/"\n]+/(\d+\.md)"', r'"<temporary playbook documents>/\1"', prompt)
     prompt = re.sub(
@@ -45,3 +50,14 @@ def test_fixture_skill_root_is_independent_of_checkout(monkeypatch, tmp_path: Pa
     prompts = rendered_cases()
     assert "Read /opt/sdo/skills/sdo-incident-response/SKILL.md" in prompts["responder_cold_two"]
     assert "guide starts at /opt/sdo/skills/sdo-memory/SKILL.md" in prompts["reflection_resume_2"]
+
+
+def test_production_instructions_never_spill_to_context_files() -> None:
+    """Instructions must fit their cap; only data sections may spill to referenced files.
+
+    A spilled opening part means the instruction text itself overflowed (for example
+    after a merge combined two edits under the lower of two caps), so the agent would
+    see a partial summary of its own instructions.
+    """
+    for name, prompt in rendered_cases().items():
+        assert not normalize_prompt(prompt).startswith("Full: <context file>\nSummary ("), name

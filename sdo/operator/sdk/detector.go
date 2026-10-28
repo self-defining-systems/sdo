@@ -240,6 +240,9 @@ type SourceDiff struct {
 	Text    string `json:"text,omitempty"`
 }
 
+// PresentButNotInSource is true only while the object exists live and accepted source lacks it; unlike SourceAbsent it is false once the object is deleted, so use it as the Diagnose match for delete-style repairs.
+func (d SourceDiff) PresentButNotInSource() bool { return d.Changed && d.SourceAbsent }
+
 type DetectionContext interface {
 	// DiffAgainstSource compares a captured resource with accepted source, including
 	// source absence. Runtime reads are frozen per snapshot and recorded for replay.

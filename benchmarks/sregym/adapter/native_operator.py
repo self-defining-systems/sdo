@@ -16,13 +16,14 @@ import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
-from benchmarks.sregym.protocol.native_receipt import native_production_receipt
-from sdo.contracts import ControllerObservation, ControllerObservationRequest, validate
+
+if TYPE_CHECKING:
+    from sdo.contracts import ControllerObservation
 
 _OPERATOR_MODULE = Path(__file__).resolve().parents[3] / "sdo" / "operator"
 _IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
@@ -261,6 +262,9 @@ def observe_controller_state(
     incident_id: str = "",
     timeout: float = wait_for(WaitKind.COMMAND),
 ) -> ControllerObservation:
+    # The SREGym worker runs execute_operator without SDO's contract dependencies.
+    from sdo.contracts import ControllerObservation, ControllerObservationRequest, validate
+
     request = ControllerObservationRequest(known_incident_ids=sorted(known or ()), incident_id=incident_id)
     payload = json_format.MessageToDict(request, preserving_proto_field_name=True)
     payload["state"] = state
@@ -415,6 +419,8 @@ def _kubectl_json(config: NativeInstallConfig, *args: str) -> dict[str, Any]:
 def collect_native_receipt(
     config: NativeInstallConfig, incident_id: str, *, sync_repository: bool = False
 ) -> dict[str, Any]:
+    from benchmarks.sregym.protocol.native_receipt import native_production_receipt
+
     evidence = read_incident_evidence(config, incident_id, sync_repository=sync_repository)
     # Early closure intentionally retires responder Jobs. The frozen request,
     # lifecycle timestamps, result and acknowledged broker decision outlive them.

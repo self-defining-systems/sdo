@@ -70,3 +70,18 @@ The native healthy-baseline acceptance gate can publish measured, source/config-
 For kinds outside the typed getters, use the [generic object interface](references/generic-objects.md).
 
 The controller's verified onboarding window also records immutable measured reachability reference evidence beside the final onboarding record. Consistently refused, never-served declared ports are visible `declared-but-never-served` observations rather than health findings. Unconfirmed probe windows are pending, not clear. Previously serving ports retain the ordinary failure gate; target configuration changes and later successful dials end an exclusion. Agents cannot author or expand this controller-owned install reference.
+
+<!-- reference-topics -->
+## Reference topics
+
+Open only the topic needed for the current edit.
+
+- [sdktest-01](references/replay/sdktest-01.md)
+- [sdktest-02](references/replay/sdktest-02.md)
+- [metrics-01](references/sdk/metrics-01.md)
+- [observe-01](references/sdk/observe-01.md)
+- [sdk-01](references/sdk/sdk-01.md)
+- [sdk-02](references/sdk/sdk-02.md)
+- [servicehealth-01](references/sdk/servicehealth-01.md)
+- [traffic-01](references/sdk/traffic-01.md)
+- [workloadhealth-01](references/sdk/workloadhealth-01.md)

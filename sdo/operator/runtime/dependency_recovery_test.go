@@ -59,7 +59,7 @@ func TestGeneratedConfigMapCreateRecyclesOnlyBlockedMountedPods(t *testing.T) {
 		obj.ResourceVersion = "2"
 		return false, nil, nil
 	})
-	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Source: rendered.Source{Repository: root, ManifestPaths: []string{"deploy"}}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: planFakeVerifier{true}}
+	executor := PlanExecutor{Client: TypedPlanClient{Client: bridgeFake(t, client)}, Source: rendered.Source{Repository: root, ManifestPaths: []string{"deploy"}}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: planFakeVerifier{true}}
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "startup"}
 	inventory, err := executor.Source.(rendered.Source).AcceptedInventory(context.Background(), revision, "app")
 	if err != nil {
