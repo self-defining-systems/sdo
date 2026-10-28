@@ -109,6 +109,10 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
 }
 ```
 
+## Incident result ownership
+
+Return only the agent-owned fields in the session output schema: `incident_id`, `status`, `confirmed_root_causes`, `applied_playbooks`, `repair_changes`, `verification_evidence`, `timing`, `drift_events`. Controller-owned fields, including drift counts, are derived independently. Contract validation feedback permits one correction in the same session; preserve completed repairs. Receipts and controller facts are never model-authored.
+
 ## Mitigation menu and responder continuity
 
 The menu is a convenience over direct commands. It lists accepted Mitigators with their declared object and value parameters, plus registered raw actions as one-action plans. Execution uses the ordinary PlanExecutor under existing controller RBAC and always-on executor checks. The menu adds no selection ledger, quiescence, provenance, health-reader or credential-delta preconditions. Reports return what ran, per-action results, value provenance and any error to the same responder session, with up to five rounds per incident. Pick from the menu when an option fits; if it fails, read the report and pick another or fix it directly. Current unexplained objects have controller-checked removal options; typed failure reasons guide recovery. EnsureDatabaseUser accepts env or namespace-local ConfigMap key credential references, optionally narrowed to one literal assignment. Only the executor resolves values into private stdin; plans, receipts and recordings retain references. Direct Secret keys require a separate security review. Author Mitigators as self-contained repairs with declared parameters and specific failure context. Intermediate reports are not independent incident outcomes or program trust credit. prior_response_progress retains successful receipts and blockers from failed episodes of the same open problem. admission_blocked names the webhook/configuration that prevents rollout; applied writes remain.
