@@ -91,9 +91,35 @@ func recordedRepairProgramDiagnostics(root string, outcome *contracts.OutcomeRec
 		if linked && !slices.Contains(covered, false) {
 			continue
 		}
-		ds = append(ds, Diagnostic{Rule: RuleReflectionProgramRequired, Message: fmt.Sprintf("recorded hand repair %q (%s) requires an executable typed SDK or RunScript step; README text and SDK gaps do not encode a performed repair", receipt.GetActionId(), receipt.GetTarget()), Hint: "return updated with the changed program ID; link its positive case to this original RepairReceipt and bind the repaired resources. Replay snapshots and verdicts remain informational"})
+		ds = append(ds, Diagnostic{Rule: RuleReflectionProgramRequired, Message: fmt.Sprintf("recorded hand repair %q (%s) requires an executable typed SDK or RunScript step; README text and SDK gaps do not encode a performed repair", receipt.GetActionId(), receipt.GetTarget()), Hint: programRequiredHint(outcome.GetIncidentId(), receipt, linked, covered)})
 	}
 	return ds
+}
+
+// programRequiredHint states the exact corpus change that links a receipt:
+// the recordings entry is the one caseHasRepairReceipt accepts, so pasting it
+// verbatim cannot miss a field. Replay stays informational.
+func programRequiredHint(incident string, receipt *contracts.RepairActionReceipt, linked bool, covered []bool) string {
+	var unbound []string
+	for index, ref := range receipt.GetResources() {
+		if !linked || !covered[index] {
+			unbound = append(unbound, ref.GetKind()+" "+ref.GetNamespace()+"/"+ref.GetName())
+		}
+	}
+	bind := ""
+	if len(unbound) > 0 {
+		bind = " and bind " + strings.Join(unbound, ", ") + " (or a recorded owner) under labels.json bindings.objects"
+	}
+	if linked {
+		return "a case already links this receipt; in that case" + bind + "; replay results stay informational"
+	}
+	link := program.ScriptOriginReceipt{ID: receipt.GetActionId(), IncidentID: incident, Success: true, StartedAt: receipt.GetStartedAt().AsTime(), CompletedAt: receipt.GetCompletedAt().AsTime(), ScriptDigest: receipt.GetScriptDigest()}
+	for _, ref := range receipt.GetResources() {
+		link.Resources = append(link.Resources, sdk.ObjectRef{APIVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()})
+	}
+	result, _ := json.Marshal(link)
+	entry, _ := json.Marshal(sdktest.PrimitiveCall{Method: "RepairReceipt", Arguments: json.RawMessage("{}"), Result: result})
+	return "encode it in a mitigate.go of a playbook listed in proposed_artifact_ids; in a corpus case (.sdo/corpus/<case>/) whose labels.json root_cause_program_ids lists that playbook" + bind + ", append this entry to its recordings.json: " + string(entry)
 }
 
 func caseHasRepairReceipt(c sdktest.CorpusCase, incident string, receipt *contracts.RepairActionReceipt) bool {

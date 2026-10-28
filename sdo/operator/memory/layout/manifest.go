@@ -118,15 +118,15 @@ func (m DetectorManifest) Validate() error {
 		watches[watch] = true
 	}
 	if duration, err := time.ParseDuration(m.Interval); err != nil || duration <= 0 {
-		return fmt.Errorf("detector %s has invalid interval", m.ID)
+		return fmt.Errorf("detector %s has invalid interval %q: use a positive Go duration such as \"30s\"", m.ID, m.Interval)
 	}
 	severity := m.Batching.Severity
 	if m.Persistence.Firing < 1 || m.Persistence.Clearing < 1 || (severity != "info" && severity != "warn" && severity != "critical") {
-		return fmt.Errorf("detector %s has invalid persistence or batching", m.ID)
+		return fmt.Errorf("detector %s has invalid persistence or batching: persistence firing and clearing must be at least 1 and batching severity info, warn or critical", m.ID)
 	}
 	if m.Batching.Debounce != "0" {
 		if duration, err := time.ParseDuration(m.Batching.Debounce); err != nil || duration <= 0 {
-			return fmt.Errorf("detector %s has invalid debounce", m.ID)
+			return fmt.Errorf("detector %s has invalid debounce %q: use \"0\" or a positive Go duration such as \"30s\"", m.ID, m.Batching.Debounce)
 		}
 	}
 	return nil

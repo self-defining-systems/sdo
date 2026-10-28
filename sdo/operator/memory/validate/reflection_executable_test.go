@@ -186,3 +186,63 @@ func TestUnverifiedPeerDoesNotBlockExecutablePartialPublication(t *testing.T) {
 		t.Fatalf("unverified peer made executable partial learning all-or-nothing: %v", ds)
 	}
 }
+
+// The program-required hint is the exact change: appending its recordings.json
+// entry to a case that labels and binds the program clears the diagnostic.
+func TestProgramRequiredHintEntryClearsTheDiagnostic(t *testing.T) {
+	root := goodTree(t)
+	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
+	at := time.Date(2026, 10, 28, 16, 1, 2, 345678901, time.UTC)
+	ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}
+	receipt := &contracts.RepairActionReceipt{ActionId: "manual-port", Kind: "exec", Success: true, ScriptDigest: "abc", Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}
+	o := &contracts.OutcomeRecord{IncidentId: "learn", Classification: "success", RepairActions: []*contracts.RepairActionReceipt{receipt}}
+	d := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
+	paths := []string{".sdo/playbooks/service-targetport-mismatch/mitigate.go"}
+	ds := ReflectionRepairDiagnostics(root, o, d, paths)
+	if len(ds) != 1 || ds[0].Rule != RuleReflectionProgramRequired {
+		t.Fatalf("unlinked repair: %v", ds)
+	}
+	for _, want := range []string{"proposed_artifact_ids", "root_cause_program_ids", "Service demo/front", "recordings.json"} {
+		if !strings.Contains(ds[0].Hint, want) {
+			t.Fatalf("hint does not say %q: %s", want, ds[0].Hint)
+		}
+	}
+	_, entry, ok := strings.Cut(ds[0].Hint, "append this entry to its recordings.json: ")
+	if !ok {
+		t.Fatalf("hint carries no recordings entry: %s", ds[0].Hint)
+	}
+	var call sdktest.PrimitiveCall
+	if err := json.Unmarshal([]byte(entry), &call); err != nil {
+		t.Fatalf("hint entry is not one recording: %v %s", err, entry)
+	}
+	path := filepath.Join(root, ".sdo/corpus/targetport-mismatch/recordings.json")
+	var calls []json.RawMessage
+	raw, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(raw, &calls) != nil {
+		t.Fatal(err)
+	}
+	calls = append(calls, json.RawMessage(entry))
+	if err := os.WriteFile(path, mustRepairJSON(t, calls), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if ds := ReflectionRepairDiagnostics(root, o, d, paths); len(ds) != 0 {
+		t.Fatalf("hint entry did not link the repair: %v", ds)
+	}
+}
+
+// A linked case that leaves a repaired resource unbound names that resource.
+func TestProgramRequiredNamesTheUnboundResource(t *testing.T) {
+	root := goodTree(t)
+	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
+	at := time.Unix(100, 0)
+	front := &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "front"}
+	extra := &contracts.ObjectRef{Kind: "ConfigMap", Namespace: "demo", Name: "front-config"}
+	receipt := &contracts.RepairActionReceipt{ActionId: "manual-port", Kind: "exec", Success: true, Resources: []*contracts.ObjectRef{front, extra}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}
+	o := &contracts.OutcomeRecord{IncidentId: "learn", Classification: "success", RepairActions: []*contracts.RepairActionReceipt{receipt}}
+	linkRecordedRepair(t, root, "targetport-mismatch", "service-targetport-mismatch", o, receipt)
+	d := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
+	ds := ReflectionRepairDiagnostics(root, o, d, []string{".sdo/playbooks/service-targetport-mismatch/mitigate.go"})
+	if len(ds) != 1 || !strings.Contains(ds[0].Hint, "ConfigMap demo/front-config") || strings.Contains(ds[0].Hint, "Service demo/front,") {
+		t.Fatalf("unbound resource not named: %v", ds)
+	}
+}

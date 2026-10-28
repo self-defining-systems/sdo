@@ -203,8 +203,11 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 
 // ReflectionDiagnostics binds a decision and logical IDs to actual file changes.
 func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Diagnostic {
+	failWith := func(message, hint string) []Diagnostic {
+		return []Diagnostic{{Rule: RuleReflectionDecision, Message: message, Hint: hint}}
+	}
 	fail := func(message string) []Diagnostic {
-		return []Diagnostic{{Rule: RuleReflectionDecision, Message: message, Hint: "write the intended decision JSON to .git/" + DecisionFile + " before running memory check, then return the same decision; expected " + DecisionShape}}
+		return failWith(message, "pass the decision fields to check_memory (or write them to .git/"+DecisionFile+" before running memory check), then return the same decision; expected "+DecisionShape)
 	}
 	if d == nil {
 		return fail("reflection requires an explicit learning decision")
@@ -242,14 +245,14 @@ func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Di
 			}
 		}
 		if !changed {
-			return fail(fmt.Sprintf("reported playbook %q is absent from the diff", id))
+			return failWith(fmt.Sprintf("reported playbook %q is absent from the diff", id), "proposed_artifact_ids lists exactly the playbooks whose .sdo/playbooks/<id>/ files changed; detector IDs do not belong there")
 		}
 	}
 	for _, p := range paths {
 		kind, id, ok := layout.Classify(p)
 		id, _, _ = strings.Cut(id, "/")
 		if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript || kind == layout.KindPlaybookProgram) && !seen[id] {
-			return fail(fmt.Sprintf("changed playbook %q is missing from the result", id))
+			return failWith(fmt.Sprintf("changed playbook %q is missing from the result", id), fmt.Sprintf("add %q to proposed_artifact_ids, or revert its files", id))
 		}
 	}
 	return nil

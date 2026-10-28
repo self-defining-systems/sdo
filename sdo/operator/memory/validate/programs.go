@@ -78,7 +78,7 @@ func (s *run) programRules(ctx context.Context) error {
 			return nil
 		}
 		if err == nil && !bytes.Equal(data, formatted) {
-			s.add(Semantic, Diagnostic{Rule: "go.format", Path: rel, Message: fmt.Sprintf("Go source %s is not gofmt formatted", rel)})
+			s.add(Semantic, Diagnostic{Rule: "go.format", Path: rel, Message: fmt.Sprintf("Go source %s is not gofmt formatted", rel), Hint: "run gofmt -w " + rel})
 		}
 		return nil
 	})

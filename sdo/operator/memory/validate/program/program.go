@@ -257,7 +257,7 @@ func checkCorpusLabels(root string, programs []Spec, retired map[string]bool) er
 			return err
 		}
 		if len(caseData.RootCauseProgramIDs) == 0 && len(caseData.NoMatchProgramIDs) == 0 {
-			return fmt.Errorf("corpus %s needs root_cause_program_ids or no_match_program_ids", entry.Name())
+			return fmt.Errorf("corpus %s needs root_cause_program_ids or no_match_program_ids in labels.json: list the program IDs whose Diagnose must Match this case's open.json under root_cause_program_ids, or those that must NoMatch it (a healthy or fixed state) under no_match_program_ids", entry.Name())
 		}
 		for _, ID := range append(caseData.RootCauseProgramIDs, caseData.NoMatchProgramIDs...) {
 			if !known[ID] {

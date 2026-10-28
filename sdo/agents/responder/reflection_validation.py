@@ -129,6 +129,7 @@ def validation_server(
 
         Supply the typed decision fields directly; this tool writes the result
         JSON outside the authored tree. Return the same decision and logical IDs.
+        It first gofmt-formats Go files changed under .sdo/.
         Legacy decision_path files are also supported. One call waits for final
         diagnostics. Compile/import/format/provenance checks remain required;
         replay verdicts are information and never block saving. The broker repeats the check.
@@ -155,6 +156,7 @@ def validation_server(
         return await run_check(decision_path)
 
     async def run_check(decision_path: str | None) -> ValidationResult:
+        await _format_changed_memory_go(checkout)
         argv = ["sdo-operator", "memory", "check", "--json"]
         if decision_path is not None:
             argv.extend(["--decision", decision_path])
@@ -199,6 +201,32 @@ def validation_server(
         )
 
     return server
+
+
+async def _format_changed_memory_go(checkout: Path) -> None:
+    """gofmt the Go files this session changed under .sdo/; accepted bytes stay untouched.
+
+    Formatting is mechanical, so a go.format diagnostic would only cost a round.
+    Without git or gofmt the check reports formatting as before.
+    """
+    try:
+        status = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain", "-z", "--untracked-files=all", "--", ".sdo",
+            cwd=checkout, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        listing, _ = await status.communicate()
+        if status.returncode != 0:
+            return
+        paths = [entry[3:] for entry in listing.decode().split("\0") if entry[3:].endswith(".go") and entry[:2] != " D"]
+        existing = [path for path in paths if (checkout / path).is_file()]
+        if existing:
+            gofmt = await asyncio.create_subprocess_exec(
+                "gofmt", "-w", "--", *existing,
+                cwd=checkout, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            await gofmt.wait()
+    except OSError:
+        return
 
 
 def main() -> None:

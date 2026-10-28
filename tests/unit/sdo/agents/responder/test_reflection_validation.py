@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import pathlib
+import shutil
 import sys
 from typing import TYPE_CHECKING
 
@@ -257,3 +258,40 @@ async def test_every_reflection_tool_reply_stays_within_the_shared_budget(tmp_pa
     assert "line 399" not in block.text
     # The bound sits on the server's single dispatch path, so no registered tool can bypass it.
     assert type(server).call_tool is not FastMCP.call_tool
+
+
+@pytest.mark.skipif(shutil.which("gofmt") is None, reason="needs the Go toolchain")
+async def test_check_memory_formats_changed_memory_go_before_checking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Formatting is mechanical: the tool fixes changed sources instead of reporting go.format."""
+    import subprocess
+
+    checkout = tmp_path / "checkout"
+    (checkout / ".sdo/playbooks/fixture").mkdir(parents=True)
+    accepted = checkout / ".sdo/playbooks/fixture/accepted.go"
+    accepted.write_text("package fixture\nfunc  Accepted() {}\n")
+    subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+    subprocess.run(["git", "add", "."], cwd=checkout, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "accepted"], cwd=checkout, check=True
+    )
+    changed = checkout / ".sdo/playbooks/fixture/diagnose.go"
+    changed.write_text("package fixture\nfunc  Diagnose() {\n x := 1\n _ = x\n}\n")
+    outside = checkout / "main.go"
+    outside.write_text("package main\nfunc  main() {}\n")
+    _validator(
+        tmp_path,
+        """import sys
+from pathlib import Path
+source = Path(".sdo/playbooks/fixture/diagnose.go").read_text()
+sys.exit(0 if source == "package fixture\\n\\nfunc Diagnose() {\\n\\tx := 1\\n\\t_ = x\\n}\\n" else 3)
+""",
+        monkeypatch,
+    )
+    server = validation_server(checkout)
+    result = await server.call_tool("check_memory", {"learning_decision": "updated", "summary": "s"})
+    (block,) = result
+    assert json.loads(block.text)["exit_code"] == 0
+    assert accepted.read_text() == "package fixture\nfunc  Accepted() {}\n", "accepted bytes are never rewritten"
+    assert outside.read_text() == "package main\nfunc  main() {}\n", "only operational memory is formatted"
