@@ -69,6 +69,7 @@ func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRe
 	}
 	started := time.Now()
 	var blockers []*contracts.RolloutBlocker
+	stalled := 0
 	for _, ref := range refs {
 		if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
 			continue
@@ -78,12 +79,18 @@ func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRe
 			return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
 		}
 		if !deployment.DeploymentRolloutComplete(object) {
-			blocker, _, admission := w.rolloutBlocker(ctx, object, started)
+			blocker, stuck, admission := w.rolloutBlocker(ctx, object, started)
 			if admission != nil {
 				return admission
 			}
 			blockers = append(blockers, blocker)
+			if stuck {
+				stalled++
+			}
 		}
+	}
+	if len(blockers) > 0 && stalled == len(blockers) {
+		return &rolloutBlockedError{blockers: blockers, cause: errRolloutStalled}
 	}
 	if len(blockers) > 0 {
 		return &rolloutBlockedError{blockers: blockers, cause: context.DeadlineExceeded}

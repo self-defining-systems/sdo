@@ -15,6 +15,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -227,4 +228,45 @@ func (c *hangingReadClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstru
 func (c *hangingReadClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
 	c.patched[ref] = true
 	return c.planFakeClient.Patch(ctx, ref, kind, patch)
+}
+
+// A pending reservation whose rollout cannot progress releases its writes to
+// the responder after the stall grace, not the much longer time bound: the
+// responder's own repair of that Deployment must not wait on a lock no wait
+// can clear. The real Kubernetes observation produces the stall.
+func TestStalledPendingReservationReleasesToResponder(t *testing.T) {
+	loop, _, option := rollLoop(t, rollProgram{})
+	if loop.PendingStallTimeout != 0 && loop.PendingStallTimeout < time.Minute {
+		t.Fatalf("setup: test needs the default stall bound, got %s", loop.PendingStallTimeout)
+	}
+	controller := true
+	two, one := int32(2), int32(1)
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: rollWeb.Namespace, Name: rollWeb.Name, UID: "web-uid", Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &two, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "web", Image: "web:2"}}}}},
+		Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 2, UpdatedReplicas: 1, AvailableReplicas: 1}}
+	owner := []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: rollWeb.Name, UID: deployment.UID, Controller: &controller}}
+	current := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: rollWeb.Namespace, Name: "web-new", UID: "rs-new", OwnerReferences: owner}, Spec: appsv1.ReplicaSetSpec{Replicas: &one, Template: *deployment.Spec.Template.DeepCopy()}}
+	stale := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: rollWeb.Namespace, Name: rollOldRS.Name, UID: "rs-old", OwnerReferences: owner}, Spec: appsv1.ReplicaSetSpec{Replicas: &one, Template: *deployment.Spec.Template.DeepCopy()}}
+	stale.Spec.Template.Spec.Containers[0].Image = "web:1"
+	oldPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: rollWeb.Namespace, Name: "web-old-0", UID: "old-pod", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: stale.Name, UID: stale.UID, Controller: &controller}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	newPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: rollWeb.Namespace, Name: rollNewPod.Name, UID: "new-pod", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: current.Name, UID: current.UID, Controller: &controller}}},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable, Message: "0/1 nodes are available: 1 node(s) didn't match pod anti-affinity rules."}}}}
+	loop.Executor.Rollouts = KubernetesPlanRollouts{Client: fake.NewSimpleClientset(deployment, current, stale, oldPod, newPod)}
+	first := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
+	if first.RolloutPending == nil || !strings.Contains(first.RolloutPending.Reason, "cannot progress") {
+		t.Fatalf("setup: expected a stalled rollout: %+v %+v", first.RolloutPending, first.Report)
+	}
+	time.Sleep(rolloutStallGrace)
+	report := loop.Handle(context.Background(), ToolRequest{Command: "report", ReportQuery: &contracts.MitigationReportQuery{AttemptId: first.Report.GetAttemptId()}})
+	if report.Report.GetReasonCode() != "rollout_stalled" || report.Report.GetStatus() == contracts.MitigationReport_STATUS_SUCCESS {
+		t.Fatalf("stalled reservation still holds its writes: %+v", report.Report)
+	}
+	for _, application := range loop.applicationsLog {
+		if application.ID == first.ApplicationID && !strings.Contains(application.Error, "Pod/web-old-0") {
+			t.Fatalf("released application does not name its blocker: %q", application.Error)
+		}
+	}
+	scale := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: "ScaleWorkload", RoundLimit: 1}, Parameters: map[string]string{"ref": "Deployment/app/web", "replicas": "1"}})
+	if scale.Report.GetReasonCode() == "pending_write_conflict" {
+		t.Fatalf("responder waited on a stalled lock: %s", scale.Error)
+	}
 }
