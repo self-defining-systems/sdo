@@ -32,9 +32,10 @@ func TestRepeatCorpusCopiesEvidenceWithoutChangingProgram(t *testing.T) {
 			}
 			bindings := map[string][]program.Bindings{"routing": {{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "target"}}}}}
 			paths, err := RecordRepeatCorpus(root, captures, "incident", bindings, map[string]string{CapturedInstanceKey("routing", bindings["routing"][0]): phase})
-			if err != nil || len(paths) != 5 {
+			if err != nil || len(paths) != 4 {
 				t.Fatalf("repeat corpus: %v %v", paths, err)
 			}
+			assertSnapshotsStoredOnce(t, filepath.Join(root, filepath.Dir(paths[0])), "open.json", "fixed.json")
 			if err := ValidateCapturedCorpusDirectory(captures, root, "incident", paths); err != nil {
 				t.Fatal(err)
 			}

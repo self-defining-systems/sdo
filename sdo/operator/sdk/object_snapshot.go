@@ -16,6 +16,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // ObjectReader reads an exact, versioned identity. Returned objects are private copies.
@@ -105,26 +106,43 @@ func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructur
 	return nil, fmt.Errorf("%w: %s/%s %s/%s", ErrObjectNotCaptured, ref.APIVersion, ref.Kind, ref.Namespace, ref.Name)
 }
 
+// TypedObjectFields returns target's typed Kubernetes list fields, the ones
+// DecodeTypedObjects fills. They are a projection of the generic objects.
+func TypedObjectFields(target any) []reflect.Value {
+	var fields []reflect.Value
+	v := reflect.ValueOf(target).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		if _, ok := typedObjectKind(v.Field(i)); ok {
+			fields = append(fields, v.Field(i))
+		}
+	}
+	return fields
+}
+
+func typedObjectKind(field reflect.Value) (schema.GroupVersionKind, bool) {
+	if !field.CanSet() || field.Kind() != reflect.Slice {
+		return schema.GroupVersionKind{}, false
+	}
+	elem := field.Type().Elem()
+	if elem == reflect.TypeOf(unstructured.Unstructured{}) || elem.Kind() != reflect.Struct || !reflect.PointerTo(elem).Implements(reflect.TypeOf((*runtime.Object)(nil)).Elem()) {
+		return schema.GroupVersionKind{}, false
+	}
+	probe := reflect.New(elem).Interface().(runtime.Object)
+	gvks, _, err := objectScheme.ObjectKinds(probe)
+	if err != nil || len(gvks) == 0 {
+		return schema.GroupVersionKind{}, false
+	}
+	return gvks[0], true
+}
+
 // DecodeTypedObjects maintains the legacy typed fixture edge without a kind map.
 // New kinds remain in Objects and are available through ObjectReader.
 func DecodeTypedObjects(target any, objects []unstructured.Unstructured) error {
-	v := reflect.ValueOf(target).Elem()
-	for i := 0; i < v.NumField(); i++ {
-		field := v.Field(i)
-		if !field.CanSet() || field.Kind() != reflect.Slice {
-			continue
-		}
+	for _, field := range TypedObjectFields(target) {
+		gvk, _ := typedObjectKind(field)
 		elem := field.Type().Elem()
-		if elem == reflect.TypeOf(unstructured.Unstructured{}) || elem.Kind() != reflect.Struct || !reflect.PointerTo(elem).Implements(reflect.TypeOf((*runtime.Object)(nil)).Elem()) {
-			continue
-		}
-		probe := reflect.New(elem).Interface().(runtime.Object)
-		gvks, _, err := objectScheme.ObjectKinds(probe)
-		if err != nil || len(gvks) == 0 {
-			continue
-		}
 		for _, object := range objects {
-			if object.GroupVersionKind() != gvks[0] {
+			if object.GroupVersionKind() != gvk {
 				continue
 			}
 			value := reflect.New(elem)

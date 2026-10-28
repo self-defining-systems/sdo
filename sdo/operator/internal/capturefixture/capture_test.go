@@ -1,6 +1,7 @@
 package capturefixture
 
 import (
+	"fmt"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -26,7 +27,7 @@ func TestBoundaryUsesCaptureProjection(t *testing.T) {
 	if strings.Contains(text, "managedFields") || strings.Contains(text, "last-applied-configuration") {
 		t.Fatalf("boundary skipped the capture projection: %s", text)
 	}
-	if !strings.Contains(text, `"uid":"uid-front"`) || !strings.Contains(text, `"object_snapshot_version":1`) {
+	if !strings.Contains(text, `"uid":"uid-front"`) || !strings.Contains(text, fmt.Sprintf(`"object_snapshot_version":%d`, sdktest.ObjectsOnlySnapshotVersion)) {
 		t.Fatalf("boundary lost captured identity or version: %s", text)
 	}
 }

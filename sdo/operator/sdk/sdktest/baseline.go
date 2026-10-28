@@ -1,9 +1,7 @@
 package sdktest
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,10 +30,8 @@ func LoadSnapshots(dir string) ([]Snapshot, error) {
 		if err != nil {
 			return nil, err
 		}
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.DisallowUnknownFields()
-		var snapshot Snapshot
-		if err := decoder.Decode(&snapshot); err != nil {
+		snapshot, err := decodeSnapshotStrict(raw)
+		if err != nil {
 			return nil, fmt.Errorf("snapshot %s: %w", filepath.Base(path), err)
 		}
 		if err := snapshot.ValidateObservation(); err != nil {

@@ -89,6 +89,10 @@ func ServiceExpectsEndpoints(service corev1.Service) bool
     for missing ready endpoints or pods.
 
 func SortObjects(objects []unstructured.Unstructured)
+func TypedObjectFields(target any) []reflect.Value
+    TypedObjectFields returns target's typed Kubernetes list fields, the ones
+    DecodeTypedObjects fills. They are a projection of the generic objects.
+
 func TypedObjects(view any) []unstructured.Unstructured
     TypedObjects is the compatibility edge for existing typed detector views and
     old fixtures. It discovers zero-argument Kubernetes slice getters by type;
@@ -252,9 +256,4 @@ const (
 	SeverityLatent   FindingSeverity = "latent"
 )
 type FindingStatus string
-
-const (
-	FindingActive   FindingStatus = "active"
-	FindingResolved FindingStatus = "resolved"
-)
 ```

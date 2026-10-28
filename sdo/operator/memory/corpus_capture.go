@@ -191,7 +191,7 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 		} else {
 			for _, phase := range []string{"open@pre-apply", "open@settle", "open@detect"} {
 				data, readErr := os.ReadFile(filepath.Join(trusted, phase+".json"))
-				if readErr == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == label.Provenance.OpenSHA256 {
+				if readErr == nil && sdktest.SnapshotMatchesDigest(data, label.Provenance.OpenSHA256) {
 					openName = phase + ".json"
 					break
 				}
@@ -227,11 +227,19 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 			if err != nil {
 				return fmt.Errorf("read trusted captured %s: %w", name, err)
 			}
-			got, err := os.ReadFile(filepath.Join(dir, name))
+			got, err := os.ReadFile(sdktest.CorpusSnapshotFile(dir, name))
 			if err != nil {
 				return err
 			}
-			if string(got) != string(want) {
+			same := string(got) == string(want)
+			if name != "recordings.json" {
+				// Snapshots compare by content: an earlier capture layout and the
+				// objects-only form of the same snapshot are equal.
+				gotDigest, gotErr := sdktest.SnapshotDigest(got)
+				wantDigest, wantErr := sdktest.SnapshotDigest(want)
+				same = gotErr == nil && wantErr == nil && gotDigest == wantDigest
+			}
+			if !same {
 				return fmt.Errorf("corpus %s %s differs from captured incident snapshot", entry.Name(), strings.TrimSuffix(name, ".json"))
 			}
 		}

@@ -21,6 +21,8 @@ import (
 )
 
 type Snapshot struct {
+	// ObjectSnapshotVersion 1 stores namespace-local objects in Objects and in
+	// the typed lists; ObjectsOnlySnapshotVersion stores them in Objects only.
 	ObjectSnapshotVersion int                         `json:"object_snapshot_version,omitempty"`
 	Admission             *sdk.PodAdmissionResult     `json:"pod_admission,omitempty"`
 	Objects               []unstructured.Unstructured `json:"objects,omitempty"`
@@ -28,18 +30,18 @@ type Snapshot struct {
 	SourceName         string `json:"-"`
 	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
 	NamespaceName      string                                  `json:"namespace"`
-	ConfigMapList      []corev1.ConfigMap                      `json:"configMaps"`
-	ServiceList        []corev1.Service                        `json:"services"`
-	PodList            []corev1.Pod                            `json:"pods"`
-	DeploymentList     []appsv1.Deployment                     `json:"deployments"`
-	StatefulSetList    []appsv1.StatefulSet                    `json:"statefulSets"`
-	ReplicaSetList     []appsv1.ReplicaSet                     `json:"replicaSets"`
-	HPAList            []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers"`
-	PDBList            []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets"`
-	EndpointList       []corev1.Endpoints                      `json:"endpoints"`
-	EndpointSliceList  []discoveryv1.EndpointSlice             `json:"endpointSlices"`
-	NetworkPolicyList  []networkingv1.NetworkPolicy            `json:"networkPolicies"`
-	EventList          []corev1.Event                          `json:"events"`
+	ConfigMapList      []corev1.ConfigMap                      `json:"configMaps,omitempty"`
+	ServiceList        []corev1.Service                        `json:"services,omitempty"`
+	PodList            []corev1.Pod                            `json:"pods,omitempty"`
+	DeploymentList     []appsv1.Deployment                     `json:"deployments,omitempty"`
+	StatefulSetList    []appsv1.StatefulSet                    `json:"statefulSets,omitempty"`
+	ReplicaSetList     []appsv1.ReplicaSet                     `json:"replicaSets,omitempty"`
+	HPAList            []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers,omitempty"`
+	PDBList            []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets,omitempty"`
+	EndpointList       []corev1.Endpoints                      `json:"endpoints,omitempty"`
+	EndpointSliceList  []discoveryv1.EndpointSlice             `json:"endpointSlices,omitempty"`
+	NetworkPolicyList  []networkingv1.NetworkPolicy            `json:"networkPolicies,omitempty"`
+	EventList          []corev1.Event                          `json:"events,omitempty"`
 	ObservedAtTime     *time.Time                              `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"traffic,omitempty"`

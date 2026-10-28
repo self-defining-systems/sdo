@@ -8,7 +8,6 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,7 +176,8 @@ type CorpusProvenance struct {
 }
 
 // LoadCorpusCase reads open.json, fixed.json, healthy.json, recordings.json,
-// and labels.json from one .sdo/corpus/<case> directory.
+// and labels.json from one .sdo/corpus/<case> directory. A case stores each
+// distinct snapshot once: an absent open.json or healthy.json is fixed.json.
 func LoadCorpusCase(dir string) (CorpusCase, error) { return loadCorpusCase(dir, true) }
 
 // LoadCorpusMetadata reads labels and available receipt recordings without
@@ -186,11 +186,12 @@ func LoadCorpusMetadata(dir string) (CorpusCase, error) { return loadCorpusCase(
 
 func loadCorpusCase(dir string, snapshots bool) (CorpusCase, error) {
 	var c CorpusCase
+	var open, fixed, healthy snapshotFields
 	for _, item := range []struct {
 		name   string
 		target any
 	}{
-		{"open.json", &c.Open}, {"fixed.json", &c.Fixed}, {"healthy.json", &c.Healthy}, {"recordings.json", &c.Recordings},
+		{"open.json", &open}, {"fixed.json", &fixed}, {"healthy.json", &healthy}, {"recordings.json", &c.Recordings},
 		{"labels.json", &struct {
 			RootCauseProgramIDs    *[]string          `json:"root_cause_program_ids"`
 			NoMatchProgramIDs      *[]string          `json:"no_match_program_ids"`
@@ -205,7 +206,7 @@ func loadCorpusCase(dir string, snapshots bool) (CorpusCase, error) {
 		if !snapshots && (item.name == "open.json" || item.name == "fixed.json" || item.name == "healthy.json") {
 			continue
 		}
-		path := filepath.Join(dir, item.name)
+		path := CorpusSnapshotFile(dir, item.name)
 		raw, err := os.ReadFile(path)
 		if !snapshots && item.name == "recordings.json" && os.IsNotExist(err) {
 			continue
@@ -219,8 +220,17 @@ func loadCorpusCase(dir string, snapshots bool) (CorpusCase, error) {
 			return c, fmt.Errorf("corpus %s: %w", path, err)
 		}
 	}
-	for _, snapshot := range []Snapshot{c.Open, c.Fixed, c.Healthy} {
-		if err := snapshot.ValidateObservation(); err != nil {
+	if !snapshots {
+		return c, nil
+	}
+	for _, loaded := range []struct {
+		fields *snapshotFields
+		target *Snapshot
+	}{{&open, &c.Open}, {&fixed, &c.Fixed}, {&healthy, &c.Healthy}} {
+		if err := loaded.fields.into(loaded.target); err != nil {
+			return c, fmt.Errorf("corpus %s: %w", dir, err)
+		}
+		if err := loaded.target.ValidateObservation(); err != nil {
 			return c, err
 		}
 	}
@@ -228,8 +238,28 @@ func loadCorpusCase(dir string, snapshots bool) (CorpusCase, error) {
 	return c, nil
 }
 
+// CorpusSnapshotFile resolves a case file. open.json and healthy.json are
+// omitted when they equal fixed.json; the case then references fixed.json.
+func CorpusSnapshotFile(dir, name string) string {
+	path := filepath.Join(dir, name)
+	if name != "open.json" && name != "healthy.json" {
+		return path
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		return path
+	}
+	fixed := filepath.Join(dir, "fixed.json")
+	if _, err := os.Lstat(fixed); err != nil {
+		// Without any snapshot, report the first one replay needs.
+		return path
+	}
+	return fixed
+}
+
 // ValidateCorpusProvenance checks that persisted case snapshots still match
 // their recorded controller capture, or an explicitly labeled NoMatch case.
+// Digests name snapshot content: either the exact file bytes or the canonical
+// snapshot, so both stored forms of one capture match.
 func ValidateCorpusProvenance(dir string) error {
 	c, err := LoadCorpusCase(dir)
 	if err != nil {
@@ -248,11 +278,11 @@ func ValidateCorpusProvenance(dir string) error {
 		return errors.New("captured corpus cannot also be synthetic")
 	}
 	for name, digest := range map[string]string{"open.json": c.Provenance.OpenSHA256, "fixed.json": c.Provenance.FixedSHA256, "healthy.json": c.Provenance.FixedSHA256} {
-		data, err := os.ReadFile(filepath.Join(dir, name))
+		data, err := os.ReadFile(CorpusSnapshotFile(dir, name))
 		if err != nil {
 			return err
 		}
-		if digest == "" || fmt.Sprintf("%x", sha256.Sum256(data)) != digest {
+		if !SnapshotMatchesDigest(data, digest) {
 			return fmt.Errorf("corpus %s does not match captured snapshot digest", name)
 		}
 	}

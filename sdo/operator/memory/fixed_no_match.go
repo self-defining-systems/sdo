@@ -18,7 +18,7 @@ import (
 // positive case and earns no trust. Re-materializing after model edits preserves
 // this regression until the ordinary replay gate accepts a corrected program.
 func RecordFixedNoMatchCorpus(root, captures, incident string, instances map[string][]program.Bindings, origins ...map[string]string) ([]string, error) {
-	fixed, err := os.ReadFile(filepath.Join(captures, "fixed.json"))
+	fixed, err := readCapturedSnapshot(filepath.Join(captures, "fixed.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,8 @@ func RecordFixedNoMatchCorpus(root, captures, incident string, instances map[str
 			if err := os.MkdirAll(directory, 0755); err != nil {
 				return nil, err
 			}
-			files := map[string][]byte{"open.json": fixed, "fixed.json": fixed, "healthy.json": fixed, "recordings.json": recordings, "labels.json": raw}
+			// Open and healthy are this fixed snapshot; the case references it.
+			files := map[string][]byte{"fixed.json": fixed, "recordings.json": recordings, "labels.json": raw}
 			for _, name := range slices.Sorted(maps.Keys(files)) {
 				if err := os.WriteFile(filepath.Join(directory, name), files[name], 0644); err != nil {
 					return nil, err

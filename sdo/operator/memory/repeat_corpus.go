@@ -19,7 +19,7 @@ import (
 // reflection validator and broker before accepting it; this grants no credit.
 // Healthy peer associations come from accepted cases, never a new model claim.
 func RecordRepeatCorpus(root, captures, incidentID string, instances map[string][]program.Bindings, origins ...map[string]string) (paths []string, err error) {
-	fixed, err := os.ReadFile(filepath.Join(captures, "fixed.json"))
+	fixed, err := readCapturedSnapshot(filepath.Join(captures, "fixed.json"))
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func RecordRepeatCorpus(root, captures, incidentID string, instances map[string]
 	for _, id := range slices.Sorted(maps.Keys(instances)) {
 		for _, binding := range instances[id] {
 			phase := capturedInstancePhase(id, binding, origins)
-			opened, err := os.ReadFile(filepath.Join(captures, "open@"+phase+".json"))
+			opened, err := readCapturedSnapshot(filepath.Join(captures, "open@"+phase+".json"))
 			if err != nil {
 				return nil, err
 			}
@@ -95,7 +95,8 @@ func RecordRepeatCorpus(root, captures, incidentID string, instances map[string]
 			if err != nil {
 				return nil, err
 			}
-			cases[name] = map[string][]byte{"open.json": opened, "fixed.json": fixed, "healthy.json": fixed, "recordings.json": recordings, "labels.json": encoded}
+			// The healthy snapshot is the verified fixed one; the case references it.
+			cases[name] = map[string][]byte{"open.json": opened, "fixed.json": fixed, "recordings.json": recordings, "labels.json": encoded}
 		}
 	}
 	created := []string{}
@@ -124,6 +125,20 @@ func RecordRepeatCorpus(root, captures, incidentID string, instances map[string]
 		}
 	}
 	return paths, nil
+}
+
+// readCapturedSnapshot returns a controller capture in its canonical stored
+// form, so cases copied from an earlier capture layout are also compact.
+func readCapturedSnapshot(path string) ([]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err := sdktest.CanonicalSnapshot(raw)
+	if err != nil {
+		return nil, fmt.Errorf("captured snapshot %s: %w", filepath.Base(path), err)
+	}
+	return canonical, nil
 }
 
 // CapturedInstanceKey ties recording origin to one program and exact bindings.
