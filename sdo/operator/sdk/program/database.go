@@ -45,6 +45,7 @@ type DatabaseTarget struct {
 	Shell     string        `json:"shell,omitempty"`
 }
 
+// DatabaseRole is one directly granted role in a named database.
 type DatabaseRole struct {
 	Database string `json:"database"`
 	Name     string `json:"name"`

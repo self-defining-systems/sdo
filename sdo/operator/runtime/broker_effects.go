@@ -78,11 +78,21 @@ func (c *Controller) ExecuteWorkspaceEffect(ctx context.Context, effect Workspac
 		return err
 	}
 	broker := c.broker
+	base := c.currentIncidentRequest.RepositoryBaseCommit
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING
 	c.mu.Unlock()
 	c.goBackground(func() {
 		defer cancel()
-		workspace, prepareErr := broker.PrepareIncident(actionCtx, effect.IncidentID)
+		started := time.Now()
+		slog.Info("incident_workspace_preparing", "incident_id", effect.IncidentID, "bound_commit", base)
+		var workspace IncidentWorkspace
+		var prepareErr error
+		if bound, ok := broker.(revisionBoundIncidentBroker); ok {
+			workspace, prepareErr = bound.PrepareIncidentAt(actionCtx, effect.IncidentID, base)
+		} else {
+			workspace, prepareErr = broker.PrepareIncident(actionCtx, effect.IncidentID)
+		}
+		slog.Info("incident_workspace_prepared", "incident_id", effect.IncidentID, "bound_commit", base, "base_commit", workspace.BaseCommit, "duration_ms", time.Since(started).Milliseconds(), "error", prepareErr)
 		c.workspaceResults <- workspaceCompletion{workspace: workspace, err: prepareErr}
 	})
 	return nil
