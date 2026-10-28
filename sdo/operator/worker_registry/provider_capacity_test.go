@@ -1,9 +1,64 @@
 package worker_registry
 
 import (
+	"context"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"testing"
 )
+
+func TestHostProviderCapacityReachesColdAndStandbyJobs(t *testing.T) {
+	for _, standby := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cold", true: "standby"}[standby], func(t *testing.T) {
+			_, executor, task := standbyFixture(t)
+			executor.Environment = map[string]string{
+				"SDO_OPUS_POOL_MODE": "per_host", "SDO_OPUS_POOL_HOST_ID": "chelan4",
+				"SDO_OPUS_POOL_HOST_PATH": "/opt/sdo-parallel/opus-pool", "SDO_OPUS_MAX_SESSIONS": "3",
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if standby {
+				pool := NewStandbyPool(executor, "responder", "app")
+				if err := pool.Ensure(ctx); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				created := make(chan struct{}, 1)
+				executor.OnPhase = notifyTestJobCreated(created)
+				finished := make(chan error, 1)
+				t.Cleanup(func() { cancel(); <-finished })
+				go func() { _, err := executor.Execute(ctx, task); finished <- err }()
+				select {
+				case <-created:
+				case err := <-finished:
+					finished <- err
+					t.Fatalf("worker stopped before Job creation: %v", err)
+				}
+			}
+			jobs, err := executor.Client.BatchV1().Jobs(executor.Namespace).List(ctx, metav1.ListOptions{})
+			if err != nil || len(jobs.Items) != 1 {
+				t.Fatalf("worker Job missing: %v %+v", err, jobs)
+			}
+			pod := jobs.Items[0].Spec.Template.Spec
+			found := false
+			for _, volume := range pod.Volumes {
+				if volume.Name == "opus-pool" {
+					found = volume.HostPath != nil && volume.HostPath.Path == "/opt/sdo-parallel/opus-pool" && *volume.HostPath.Type == corev1.HostPathDirectory
+				}
+			}
+			if !found {
+				t.Fatal("worker did not mount existing host pool")
+			}
+			env := map[string]string{}
+			for _, value := range pod.Containers[0].Env {
+				env[value.Name] = value.Value
+			}
+			if env["SDO_OPUS_POOL_DIR"] != "/sdo/opus-pool" || env["SDO_OPUS_MAX_SESSIONS"] != "3" || env["SDO_OPUS_POOL_HOST_ID"] != "chelan4" || env["SDO_OPUS_POOL_MODE"] != "per_host" {
+				t.Fatalf("host allocation lost: %+v", env)
+			}
+		})
+	}
+}
 
 func TestProviderCapacitySharedNFSMountAndEnvironment(t *testing.T) {
 	env := map[string]string{"SDO_OPUS_POOL_NFS_SERVER": "nfs.example", "SDO_OPUS_POOL_NFS_PATH": "/shared/opus", "SDO_OPUS_MAX_SESSIONS": "8"}
@@ -26,7 +81,16 @@ func TestProviderCapacitySharedNFSMountAndEnvironment(t *testing.T) {
 }
 
 func TestProviderCapacityRefusesPartialMountConfiguration(t *testing.T) {
-	for _, env := range []map[string]string{{"SDO_OPUS_POOL_NFS_SERVER": "server"}, {"SDO_OPUS_POOL_NFS_PATH": "/pool"}, {"SDO_OPUS_MAX_SESSIONS": "0"}} {
+	for _, env := range []map[string]string{
+		{"SDO_OPUS_POOL_NFS_SERVER": "server"}, {"SDO_OPUS_POOL_NFS_PATH": "/pool"}, {"SDO_OPUS_MAX_SESSIONS": "0"},
+		{"SDO_OPUS_POOL_MODE": "private"},
+		{"SDO_OPUS_POOL_MODE": "per_host", "SDO_OPUS_POOL_HOST_ID": "chelan4"},
+		{"SDO_OPUS_POOL_MODE": "per_host", "SDO_OPUS_POOL_HOST_PATH": "/pool"},
+		{"SDO_OPUS_POOL_HOST_PATH": "/pool"},
+		{"SDO_OPUS_POOL_MODE": "per_host", "SDO_OPUS_POOL_HOST_ID": "chelan4", "SDO_OPUS_POOL_HOST_PATH": "/pool", "SDO_OPUS_POOL_NFS_SERVER": "server", "SDO_OPUS_POOL_NFS_PATH": "/pool"},
+		{"SDO_OPUS_POOL_MODE": "per_host", "SDO_OPUS_POOL_HOST_ID": "chelan4", "SDO_OPUS_POOL_HOST_PATH": "/pool/../other"},
+		{"SDO_OPUS_POOL_MODE": "per_host", "SDO_OPUS_POOL_HOST_ID": "chelan4", "SDO_OPUS_POOL_HOST_PATH": "/"},
+	} {
 		if err := ApplyProviderCapacity(&corev1.PodSpec{}, env); err == nil {
 			t.Fatalf("accepted %+v", env)
 		}
