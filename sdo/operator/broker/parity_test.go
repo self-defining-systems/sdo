@@ -120,8 +120,17 @@ func TestCLIAndBrokerAgreeOnAcceptanceFourthShard(t *testing.T) {
 	testCLIAndBrokerAgreeOnAcceptance(t, 3)
 }
 
+// The second group exceeded its package deadline on hosted runners. Keep the
+// measured slow cases in the existing compiler job with the same parallel cap.
+func TestCLIAndBrokerAgreeOnAcceptanceFifthShard(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 4)
+}
+
 func acceptanceCaseShard(index int, name string) int {
 	switch name {
+	case "existing program adds unproven positive case", "unverified peer script",
+		"verified cause executable with unverified peer":
+		return 4
 	case "unverified peer no verified", "accepted case needs no current capture",
 		"program repeat has no detector", "program replay failure", "program mitigation skips unreplayable effect":
 		return 3

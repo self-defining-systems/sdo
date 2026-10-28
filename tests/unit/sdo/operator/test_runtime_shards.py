@@ -99,6 +99,9 @@ def test_schedule_shard_runs_all_seeds_with_a_five_minute_race_budget(monkeypatc
         output = "\n".join(json.dumps({"Action": "output", "Output": name + "\n"}) for name in names)
         return subprocess.CompletedProcess(command, 0, stdout=output)
 
+    # This synthetic inventory tests invocation flags, independently of the
+    # hosted placement anchors covered by the allocation tests below.
+    monkeypatch.setattr(shards, "PLACEMENTS", {})
     monkeypatch.setattr(shards.subprocess, "run", run)
     monkeypatch.setattr(shards, "run_tests", lambda command, **kwargs: calls.append(command))
     monkeypatch.setattr(sys, "argv", ["test_runtime_shard.py", "--shard", "schedules"])
@@ -183,3 +186,15 @@ def test_runtime_report_uses_seventy_percent_of_hosted_job(monkeypatch: pytest.M
     shards.run_tests(["go", "test"], started=0)
     controller = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]["controller"]
     assert calls[0]["budget_seconds"] == controller["timeout-minutes"] * 60 * 0.7 == 210
+
+
+def test_hosted_slow_reflection_cases_retain_exact_coverage() -> None:
+    names = [
+        "TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker",
+        "TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker",
+        *shards.PLACEMENTS,
+    ]
+    planned = shards.balanced_partition(names, shards.PATTERNS, dict.fromkeys(names, 20.0))
+    assert sorted(name for members in planned.values() for name in members) == sorted(names)
+    for name, target in shards.PLACEMENTS.items():
+        assert planned[target].count(name) == 1
