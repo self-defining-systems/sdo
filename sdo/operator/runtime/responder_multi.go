@@ -24,7 +24,7 @@ type preparedMenuOption struct {
 
 func (l *ResponderLoop) refuseSelection(response *ToolResponse, reason, detail string) {
 	response.Error = detail
-	response.Report = &contracts.MitigationReport{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, AttemptId: fmt.Sprintf("mitigation-%s-refused-%d", l.sessionID, len(l.calls)), RequestId: "refused", AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_REFUSED, FailedPhase: "acceptance", ReasonCode: reason, RemainingBatches: uint32(max(0, l.batchLimit()-l.batches))}
+	response.Report = &contracts.MitigationReport{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, AttemptId: fmt.Sprintf("mitigation-%s-refused-%d", l.sessionID, len(l.calls)), RequestId: "refused", AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_REFUSED, FailedPhase: "acceptance", ReasonCode: reason, RemainingBatches: uint32(l.loopsRemaining())}
 }
 
 // Prepare every option and compare full object identities before the first write.
@@ -50,7 +50,7 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		l.refuseSelection(response, "invalid_selection", "selection_set requires version 1 and 1..32 options")
 		return
 	}
-	if l.batches >= l.batchLimit() {
+	if l.loopsRemaining() == 0 {
 		response.Error = "response loop budget exhausted"
 		return
 	}
@@ -139,12 +139,12 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 			return
 		}
 	}
-	l.batches++
+	l.spendLoop()
 	if err := l.persistToolState(ctx); err != nil {
 		response.Error = err.Error()
 		return
 	}
-	combined := &contracts.MitigationReport{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, RequestId: fmt.Sprintf("batch-%d", len(l.calls)), AttemptId: fmt.Sprintf("batch-%s-%d", l.sessionID, l.batches), AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_SUCCESS, RemainingBatches: uint32(max(0, l.batchLimit()-l.batches)), Rounds: []*contracts.MitigationRoundReport{{RoundIndex: 1, RoundId: fmt.Sprintf("batch-%d", l.batches)}}}
+	combined := &contracts.MitigationReport{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, RequestId: fmt.Sprintf("batch-%d", len(l.calls)), AttemptId: fmt.Sprintf("batch-%s-%d", l.sessionID, len(l.menuReports)+1), AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_SUCCESS, RemainingBatches: uint32(l.loopsRemaining()), Rounds: []*contracts.MitigationRoundReport{{RoundIndex: 1, RoundId: fmt.Sprintf("batch-%d", len(l.menuReports)+1)}}}
 	for _, item := range prepared {
 		part := ToolResponse{Command: "mitigate"}
 		l.executeMenuEntry(ctx, item.entry, &contracts.MitigationSelection{OptionId: item.selection.OptionId, RoundLimit: 1}, nil, item.selection.FindingFingerprints, &part, false)
