@@ -2,16 +2,25 @@ package runtime
 
 import (
 	"fmt"
+
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
-// programExplainsFinding requires an authored finding-to-playbook link and the
-// exact diagnosed finding. Resource overlap alone is only a candidate binding.
-func programExplainsFinding(finding sdk.Finding, id string) bool {
+// programLinksFinding says a finding can bind the program: its resources fill
+// the program's roles, or its detector lists the playbook as a binding hint.
+// It is the candidate rule of SelectProgramCandidates. A finding is explained
+// only when that binding's diagnosis matches (matchedFindingFingerprints);
+// detector lists are never required, because health and generated detectors
+// list only their own playbook and reflection cannot edit them.
+func programLinksFinding(spec program.ProgramSpec, finding sdk.Finding) bool {
+	if len(candidateBindings(spec, finding)) > 0 {
+		return true
+	}
 	for _, reference := range finding.Playbooks {
 		linked, err := layout.PlaybookID(reference)
-		if err == nil && linked == id {
+		if err == nil && linked == spec.ID {
 			return true
 		}
 	}
@@ -49,9 +58,6 @@ func (l *ResponderLoop) mitigationIncident(selected []selectedPlan) IncidentRequ
 						targeted = true
 					}
 				}
-			}
-			if programExplainsFinding(finding, plan.programID) && coverageFindingRelated(l.lastDiagnosisView, finding, plan.bindings) {
-				targeted = true
 			}
 		}
 		if targeted {

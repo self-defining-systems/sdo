@@ -52,8 +52,17 @@ func TestReflectionLearnsFromSessionFixtureWithoutControllerCapture(t *testing.T
 	addSyntheticFindingRepairProof(outcome)
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
 	ds := ReflectionCoverageGaps(root, outcome, decision)
+	if len(ds) != 0 {
+		t.Fatalf("a finding that binds the program's roles must link it without a detector list: %v", ds)
+	}
+	// A finding on another object cannot bind the program; then only a
+	// detector list links it.
+	bound := outcome.Findings
+	outcome.Findings = []*contracts.Finding{{DetectorId: "fixture", Status: "active", Fingerprint: "other", PrimaryResource: &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "other"}}}
+	ds = ReflectionCoverageGaps(root, outcome, decision)
+	outcome.Findings = bound
 	if len(ds) != 1 || ds[0].Rule != "reflection.detector-required" {
-		t.Fatalf("missing detector gap not recorded: %v", ds)
+		t.Fatalf("unlinked program gap not recorded: %v", ds)
 	}
 	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
 	if err != nil {

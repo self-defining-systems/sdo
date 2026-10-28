@@ -15,7 +15,10 @@ import (
 )
 
 // ReflectionCoverageGaps notes each verified cause that reflection left without
-// executable learning: no replayable program, or a program no detector lists.
+// executable learning: no replayable program, or a program no finding links.
+// The link is the runtime's candidate rule: a finding's resources bind the
+// program's roles, or its detector lists the playbook. Health and generated
+// detectors need no edit to reach a learned program.
 // These cause-level notes remain informational. ReflectionRepairDiagnostics
 // separately makes RuleReflectionProgramRequired blocking for each recorded
 // hand repair; detector coverage and replay are still advisory. Memory that
@@ -66,7 +69,7 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 					continue
 				}
 				hasProgram = true
-				hasDetector = hasDetector || linked[spec.ID]
+				hasDetector = hasDetector || linked[spec.ID] || findingBindsCase(outcome, c.Bindings.Objects)
 			}
 		}
 		resources := make([]string, 0, len(cause.GetResources()))
@@ -77,7 +80,7 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 		case !hasProgram:
 			gaps = append(gaps, Diagnostic{Rule: RuleReflectionProgramRequired, Message: fmt.Sprintf("verified cause %d (%s) has no replayable diagnose and mitigation program", cause.GetCauseIndex(), strings.Join(resources, ", "))})
 		case !hasDetector:
-			gaps = append(gaps, Diagnostic{Rule: RuleReflectionDetectorRequired, Message: fmt.Sprintf("verified cause %d (%s) has a program, but no detector lists it in possiblePlaybooks", cause.GetCauseIndex(), strings.Join(resources, ", "))})
+			gaps = append(gaps, Diagnostic{Rule: RuleReflectionDetectorRequired, Message: fmt.Sprintf("verified cause %d (%s) has a program, but no finding binds its roles and no detector lists it", cause.GetCauseIndex(), strings.Join(resources, ", "))})
 		}
 	}
 	return gaps
@@ -109,4 +112,27 @@ func bindingsCoverCause(bindings map[string]sdk.ObjectRef, resources []*contract
 		}
 	}
 	return true
+}
+
+// findingBindsCase reports whether one incident finding names every object the
+// case binds, so the runtime binds the program from that finding.
+func findingBindsCase(outcome *contracts.OutcomeRecord, bindings map[string]sdk.ObjectRef) bool {
+	if len(bindings) == 0 {
+		return false
+	}
+	for _, finding := range outcome.GetFindings() {
+		refs := append([]*contracts.ObjectRef{finding.GetPrimaryResource()}, finding.GetRelatedResources()...)
+		for _, ref := range finding.GetParameterBindings() {
+			refs = append(refs, ref)
+		}
+		all := true
+		for _, bound := range bindings {
+			candidate := &contracts.ObjectRef{Kind: bound.Kind, Namespace: bound.Namespace, Name: bound.Name}
+			all = all && slices.ContainsFunc(refs, func(ref *contracts.ObjectRef) bool { return equalCauseResource(ref, candidate) })
+		}
+		if all {
+			return true
+		}
+	}
+	return false
 }
