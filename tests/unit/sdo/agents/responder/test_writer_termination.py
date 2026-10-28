@@ -23,6 +23,12 @@ def test_oom_killed_owner_allows_reflection_after_positive_termination_observati
 
     def read_pod(identity, timeout):
         observed.append(identity)
+        if len(observed) == 1:
+            return {
+                "metadata": {"namespace": "control", "name": "responder", "uid": "uid-1"},
+                "spec": {"restartPolicy": "Never"},
+                "status": {"phase": "Running", "containerStatuses": [{"name": "agent", "state": {"running": {}}}]},
+            }
         return {
             "metadata": {"namespace": "control", "name": "responder", "uid": "uid-1"},
             "spec": {"restartPolicy": "Never"},
@@ -39,7 +45,12 @@ def test_oom_killed_owner_allows_reflection_after_positive_termination_observati
         }
 
     observer = KubernetesWriterObserver(read_pod=read_pod)
-    consumer = ScriptedAgent(lambda _: reply("codex", {"ok": True}, session_id="session-1"))
+
+    def reflect(_request):
+        assert len(observed) == 2, "resumed before observing termination"
+        return reply("codex", {"ok": True}, session_id="session-1")
+
+    consumer = ScriptedAgent(reflect)
     result = run_structured_turn(
         "codex",
         "reflect",
@@ -53,13 +64,13 @@ def test_oom_killed_owner_allows_reflection_after_positive_termination_observati
         access="danger-full-access",
         executor=consumer.executor,
         resume_session_id="session-1",
-        timeout_seconds=1,
+        timeout_seconds=2,
         session_ownership_directory=tmp_path,
         session_ownership_role="reflection",
         session_termination_observer=observer,
     )
     assert result.session_id == "session-1"
-    assert observed == [worker]
+    assert observed == [worker, worker]
     (record,) = tmp_path.glob("*.json")
     confirmation = json.loads(record.read_text())["termination_confirmation"]
     assert confirmation["worker"]["pod_uid"] == "uid-1"
