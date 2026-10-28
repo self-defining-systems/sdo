@@ -17,7 +17,7 @@ SETUP_MARGIN = 90.0
 BUDGET = JOB_SECONDS - SETUP_MARGIN
 # Unmeasured names own a whole bin, so a new slow test cannot overload peers.
 DEFAULT_COST = BUDGET
-DEDICATED = re.compile(r"^Test(?:Replay|Chaos|Exhaustive|Explorer)")
+DEDICATED = re.compile(r"^Test(?:Chaos|Exhaustive|Explorer)")
 
 
 class CostPlan(TypedDict):

@@ -11,17 +11,9 @@ export GOFLAGS="${GOFLAGS:--p=2 -trimpath}"
 case " $GOFLAGS " in *" -p="*) ;; *) GOFLAGS="$GOFLAGS -p=2" ;; esac
 case " $GOFLAGS " in *" -trimpath "*) ;; *) GOFLAGS="$GOFLAGS -trimpath" ;; esac
 uv run python scripts/operator_test_binary.py
-# Compile the runtime fixture once before the short process-level timeouts.
-(cd sdo/operator/runtime && go test -run '^$' .)
-# Compile the bootstrap fixture and generated detector/controller dependencies.
-(cd sdo/operator && go build -o "$root/.fastloop/test-bin/setup" "$root/tests/unit/benchmarks/sregym/fastloop/fixtures/setup.go")
-# Recorded reflection streams share the existing replay allocation. Every new
-# integration file defaults to external; the local all mode remains exhaustive.
-recording=tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py
+# Preparation owns fixture compilation. Consumers verify the source-bound CLI
+# and execute exactly the node IDs from the same-run cost plan.
 case "${1:-all}" in
-  all) paths=(tests) ;;
-  external) paths=("--ignore=$recording" tests) ;;
-  replay) paths=("$recording") ;;
-  *) echo "unknown Go integration shard: $1" >&2; exit 2 ;;
+  all) uv run --extra test python -m pytest -v --durations=0 -p no:tach -n 2 -m go_integration tests ;;
+  *) uv run --extra test python scripts/python_cost_plan.py --bin "$1" --plan "${2:-.fastloop/test-bin/python-test-plan.json}" ;;
 esac
-uv run --extra test pytest -v --durations=15 -p no:tach -n 2 -m go_integration "${paths[@]}"

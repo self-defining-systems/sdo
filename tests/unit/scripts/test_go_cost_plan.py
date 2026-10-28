@@ -125,3 +125,9 @@ def test_profiles_fit_work_budget_with_setup_margin():
             assert sum(profile[n] for n in members) <= planner.JOB_SECONDS - planner.SETUP_MARGIN
             planner.check_budget(members, profile)
         assert all(profile[n] > planner.BUDGET for n in nightly)
+
+
+def test_go_replay_is_budgeted_without_sharing_a_python_job():
+    data = planner.plan("runtime", {"sdo.dev/operator/runtime": ["TestReplayNewBehavior", "TestChaosBounded"]})
+    assert data["bins"] == [["TestReplayNewBehavior"]]
+    assert "TestChaosBounded" not in data["packages"]

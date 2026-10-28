@@ -63,13 +63,15 @@ def measured_costs(events: Iterable[dict[str, Any]]) -> dict[tuple[str, str], fl
     return result
 
 
-def update_profile(path: Path, measured: dict[str, float], run: int, head: str, write: bool) -> None:
+def update_profile(
+    path: Path, measured: dict[str, float], run: int, head: str, write: bool, description: str | None = None
+) -> None:
     if not measured:
         raise ValueError(f"no completed timings for {path.name}")
     profile = json.loads(path.read_text())
     profile["source_run"] = run
     profile["source_head"] = head
-    profile["description"] = (
+    profile["description"] = description or (
         "Hosted completed top-level active seconds, including parallel children and excluding pauses. "
         "All pass/fail/skip timings are refreshed (0.001s resolution floor); "
         "unobserved and unfinished names retain their earlier bounds."
@@ -83,7 +85,9 @@ def update_profile(path: Path, measured: dict[str, float], run: int, head: str, 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--log", type=Path, required=True)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--log", type=Path)
+    inputs.add_argument("--pytest-costs", type=Path, nargs="+")
     parser.add_argument("--run", type=int, required=True)
     parser.add_argument("--head", required=True)
     parser.add_argument("--scope", choices=("all", "runtime", "operator"), default="all")
@@ -91,6 +95,27 @@ def main() -> None:
     args = parser.parse_args()
     if args.run <= 0 or len(args.head) != 40 or any(c not in "0123456789abcdef" for c in args.head):
         parser.error("positive hosted run and full lowercase source commit SHA required")
+    if args.pytest_costs:
+        costs: dict[str, float] = {}
+        for path in args.pytest_costs:
+            for node, seconds in json.loads(path.read_text()).items():
+                if (
+                    isinstance(seconds, bool)
+                    or not isinstance(seconds, (int, float))
+                    or not math.isfinite(seconds)
+                    or seconds <= 0
+                ):
+                    raise ValueError(f"{node}: pytest cost must be finite positive seconds")
+                costs[node] = max(costs.get(node, 0), seconds)
+        update_profile(
+            ROOT / "scripts/python_integration_test_costs.json",
+            costs,
+            args.run,
+            args.head,
+            args.write,
+            "Hosted pytest setup/call/teardown seconds; unobserved nodes retain earlier bounds.",
+        )
+        return
     measured = measured_costs(read_events(args.log.read_text().splitlines()))
     runtime: dict[str, float] = {}
     operator: dict[str, float] = {}

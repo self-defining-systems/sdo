@@ -173,7 +173,7 @@ def test_go_shards_restore_the_completed_preparation_cache() -> None:
     warm = jobs["prepare-go"]
     assert warm["timeout-minutes"] == 5
     assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
-    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+    for name in ("python", "controller", "go-integration", "chaos"):
         assert "prepare-go" in jobs[name]["needs"]
         caches = [step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
         assert any("ci-prepared" in step["with"]["key"] for step in caches), name
@@ -266,7 +266,7 @@ def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
     caches = [step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache")]
     assert {step["if"] for step in caches} == {"matrix.mode == 'normal'", "matrix.mode == 'race'"}
     assert sum("~/go/pkg/mod" in step["with"]["path"] for step in caches) == 1
-    for name in ("controller", "replay", "chaos"):
+    for name in ("controller", "chaos"):
         keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
         assert any("ci-prepared-v4-normal-" in key for key in keys)
         assert any("ci-prepared-v4-race-" in key for key in keys)
@@ -292,7 +292,7 @@ def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> Non
 
 
 def test_downstream_cache_archives_never_unpack_into_the_same_path() -> None:
-    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+    for name in ("python", "controller", "go-integration", "chaos"):
         steps = workflow()["jobs"][name]["steps"]
         restored = [
             line.strip()
@@ -327,7 +327,7 @@ def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
         )
         for mode in ("normal", "race")
     }
-    for name in ("python", "controller", "go-integration", "replay", "chaos"):
+    for name in ("python", "controller", "go-integration", "chaos"):
         for step in jobs[name]["steps"]:
             if step.get("uses", "").startswith("actions/cache"):
                 mode = "race" if "v4-race-" in step["with"]["key"] else "normal"
@@ -469,11 +469,10 @@ def test_nightly_fuzz_campaigns_cover_each_target_within_one_job_budget() -> Non
         assert all(f"func {target}(" in sources for target in targets)
 
 
-def test_recorded_reflection_contracts_share_existing_replay_job() -> None:
+def test_all_integration_contracts_use_collected_cost_bins() -> None:
     jobs = workflow()["jobs"]
-    external = jobs["go-integration"]
-    replay = jobs["replay"]
-    assert any("scripts/test_go_integration.sh external" in step.get("run", "") for step in external["steps"])
-    assert any("scripts/test_go_integration.sh replay" in step.get("run", "") for step in replay["steps"])
-    assert "needs.changes.outputs.python == 'true'" in replay["if"]
-    assert external["timeout-minutes"] == replay["timeout-minutes"] == 5
+    integration = jobs["go-integration"]
+    assert "needs.prepare-go.outputs.python_matrix" in integration["strategy"]["matrix"]
+    assert any(step.get("with", {}).get("name") == "compiled-python-test-plan" for step in integration["steps"])
+    assert "replay" not in jobs
+    assert integration["timeout-minutes"] == 5

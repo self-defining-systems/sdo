@@ -25,3 +25,13 @@ The race preparation publishes the plan as a workflow artifact. Consumers downlo
 that artifact from the same run; the independent normal cache carries only the CLI
 and normal build graph. Discovery and execution both use `-race`, preserving tests
 with build tags and excluding normal-only latency probes from the race inventory.
+
+Go replay tests use the same computed runtime bins. Go-backed Python contracts
+(including recorded provider reflection) use `python_cost_plan.py` and the same
+`pack`/budget guard. Normal preparation collects exact pytest node IDs through
+`pytest_ci.py` and publishes a separate same-run artifact. Consumers run numeric
+bins through `test_go_integration.sh`; `all` remains the exhaustive local mode.
+Every report records all pytest phases in a JSON timing artifact. Refresh the
+Python cost profile with `update_go_test_costs.py --pytest-costs <reports...>
+--run <id> --head <sha> --write`. Unknown and oversized nodes follow the same
+isolation/nightly rules as Go tests. No file-name placement list is maintained.

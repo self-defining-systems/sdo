@@ -14,7 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize("shard", ["all", "external", "replay"])
+@pytest.mark.parametrize("shard", ["all", "0", "nightly"])
 def test_go_integration_initializes_inputs_before_starting_pytest(tmp_path: Path, shard: str) -> None:
     scripts = tmp_path / "scripts"
     scripts.mkdir()
@@ -35,7 +35,7 @@ def test_go_integration_initializes_inputs_before_starting_pytest(tmp_path: Path
             "    out.write(json.dumps([pathlib.Path(sys.argv[0]).name, *args]) + '\\n')\n"
             "ready = pathlib.Path(os.environ['INITIALIZED'])\n"
             "if args == ['run', 'python', 'scripts/init_test_prereqs.py']: ready.touch()\n"
-            "if 'pytest' in args and not ready.exists(): sys.exit(62)\n"
+            "if ('pytest' in args or 'scripts/python_cost_plan.py' in args) and not ready.exists(): sys.exit(62)\n"
         )
         path.chmod(0o755)
     result = subprocess.run(
@@ -53,14 +53,9 @@ def test_go_integration_initializes_inputs_before_starting_pytest(tmp_path: Path
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [json.loads(line) for line in events.read_text().splitlines()]
     assert calls[0] == ["uv", "run", "python", "scripts/init_test_prereqs.py"]
-    assert any("pytest" in call for call in calls)
-
-    pytest_call = next(call for call in calls if "pytest" in call)
-    recording = "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py"
-    if shard == "external":
-        assert "--ignore=" + recording in pytest_call
+    if shard == "all":
+        pytest_call = next(call for call in calls if "pytest" in call)
         assert pytest_call[-1] == "tests"
-    elif shard == "replay":
-        assert pytest_call[-1] == recording
     else:
-        assert pytest_call[-1] == "tests"
+        plan_call = next(call for call in calls if "scripts/python_cost_plan.py" in call)
+        assert plan_call[plan_call.index("--bin") + 1] == shard

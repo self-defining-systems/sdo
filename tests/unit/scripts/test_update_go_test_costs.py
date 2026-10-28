@@ -90,3 +90,23 @@ def test_skipped_race_helpers_do_not_reserve_a_whole_unknown_job_forever() -> No
     assert costs.measured_costs([event("skip", 0, "TestChildProcess", Elapsed=0)]) == {
         ("sdo.dev/operator/runtime", "TestChildProcess"): 0.001,
     }
+
+
+def test_structured_pytest_costs_update_the_python_profile_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    profile = scripts / "python_integration_test_costs.json"
+    profile.write_text('{"costs":{"old.py::test_old":1}}')
+    report = tmp_path / "report.json"
+    report.write_text('{"new.py::test_new":12.5}')
+    monkeypatch.setattr(costs, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        "sys.argv", ["update", "--pytest-costs", str(report), "--run", "123", "--head", "b" * 40, "--write"]
+    )
+    costs.main()
+    result = json.loads(profile.read_text())
+    assert result["costs"] == {"old.py::test_old": 1, "new.py::test_new": 12.5}
+    assert result["source_run"] == 123
+    assert sorted(p.name for p in scripts.iterdir()) == ["python_integration_test_costs.json"]
