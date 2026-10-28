@@ -76,6 +76,9 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
 	supervise := flags.Bool("supervise", false, "rebuild and relaunch after closure")
 	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
+	upstreamURL := flags.String("memory-upstream-url", "", "shared remote Git URL the accepted repository replicates")
+	upstreamBranch := flags.String("memory-upstream-branch", "", "remote branch for this run's accepted memory")
+	upstreamSSH := flags.String("memory-upstream-ssh-dir", "", "read-only directory with the ssh identity and known_hosts for the memory remote")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	var deployedManifestPaths repeatable
@@ -139,6 +142,9 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	}
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)
+	}
+	if *upstreamURL != "" || *upstreamBranch != "" || *upstreamSSH != "" {
+		launch.MemoryUpstream = &contracts.MemoryUpstream{Url: *upstreamURL, Branch: *upstreamBranch, SshDir: *upstreamSSH}
 	}
 	if err := wire.Validate(launch); err != nil {
 		return builder.RunConfig{}, false, err

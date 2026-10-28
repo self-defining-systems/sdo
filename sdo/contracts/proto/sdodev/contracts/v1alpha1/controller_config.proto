@@ -143,8 +143,21 @@ message ControllerConfig {
   optional bool responder_standby = 78;
   // Fixed tool image for application-local RunScript Jobs.
   string script_image = 79;
+  // Shared remote branch the accepted repository replicates, so lanes of one
+  // application on several hosts share one accepted memory. Unset keeps the
+  // accepted repository local.
+  MemoryUpstream memory_upstream = 80;
   // Named programming-model plugin set. An omitted value preserves Go.
   CodePathConfig code_path = 100;
+}
+
+message MemoryUpstream {
+  string url = 1 [(buf.validate.field).string.min_len = 1];
+  // One branch per run; never the repository's main branch.
+  string branch = 2 [(buf.validate.field).string.min_len = 1];
+  // Read-only directory holding an ssh identity file and known_hosts for the
+  // remote; empty uses the transport's own configuration.
+  string ssh_dir = 3;
 }
 
 // Code paths compose implementations at independently named runtime seams.

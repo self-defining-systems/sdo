@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -29,6 +30,17 @@ type Upstream struct {
 	URL    string
 	Branch string
 	Env    []string
+}
+
+// SSHEnv selects the identity and known hosts in a read-only directory, such
+// as a mounted copy of the host's existing key. Nothing else from the user's
+// ssh configuration applies.
+func SSHEnv(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	identity, hosts := filepath.Join(dir, "identity"), filepath.Join(dir, "known_hosts")
+	return []string{"GIT_SSH_COMMAND=ssh -F /dev/null -i " + identity + " -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=" + hosts}
 }
 
 func (u Upstream) validate() error {

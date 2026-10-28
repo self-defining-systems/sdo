@@ -81,6 +81,11 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}
+	if upstream := config.GetMemoryUpstream(); upstream != nil {
+		if err := repository.SetUpstream(broker.Upstream{URL: upstream.GetUrl(), Branch: upstream.GetBranch(), Env: broker.SSHEnv(upstream.GetSshDir())}); err != nil {
+			return nil, nil, fmt.Errorf("native repository broker: %w", err)
+		}
+	}
 	ledgerRoot, err := broker.NativeLedgerRoot(config.GetBrokerWorktreeRoot())
 	if err != nil {
 		return nil, nil, err
