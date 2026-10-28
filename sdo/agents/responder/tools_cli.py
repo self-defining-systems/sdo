@@ -141,7 +141,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Output: session schema; correct feedback once. "
-        "prior_stages: automatic repairs; prior_response_progress: bounded failed-episode progress with omissions. "
+        "prior_stages: per-repair receipts; prior_response_progress: bounded failed-episode progress with omissions. "
         "Keep repairs; admission_blocked names a rollout prerequisite.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
