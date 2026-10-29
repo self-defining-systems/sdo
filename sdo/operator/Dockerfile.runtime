@@ -215,6 +215,8 @@ RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > 
 RUN /usr/local/bin/sdo-operator memory help | grep -q 'memory check'
 CMD ["python3", "-m", "sdo.agents.responder.worker"]
 
+COPY scripts/check_claude_worker.py /usr/local/lib/sdo/check_claude_worker.py
+
 FROM worker-runtime AS responder
 
 # Scripted lanes share Python dependencies, without ever adding model CLIs.

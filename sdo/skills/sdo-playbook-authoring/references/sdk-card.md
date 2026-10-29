@@ -37,6 +37,7 @@ or reads. The full [program SDK](program-sdk.md) is rarely needed.
 - `type SourceDiff struct{SourceAbsent bool; Changed bool; Text string}`: is the read-only comparison with the accepted source for one resource.
 - `func (d SourceDiff) PresentButNotInSource() bool`: is true while the object exists live but not in accepted source.
 - `type SetField struct{Ref sdk.ObjectRef; Path string; Value Value; Reason string; DocumentFormat string; DocumentPath []string}`: writes one schema-checked field (or one ConfigMap JSON/YAML entry) from a Value: accepted source, an observation or a declared parameter.
+- `func ValidateSetField(f SetField) error`: checks a dotted vocabulary path or a JSON pointer on a named nonsecret object.
 - `type ReconcileFromSource struct{ Ref sdk.ObjectRef }`: restores a whole source-owned object to accepted source, removing additions SourceDiff reports; prefer SetField for one field.
 - `type CreateFromSource struct{Ref sdk.ObjectRef; Reason string}`: restores a missing named object from accepted source.
 - `type DeleteObject struct{Ref sdk.ObjectRef; Reason string}`: irreversibly deletes a named object in the incident namespace.
@@ -77,7 +78,7 @@ or reads. The full [program SDK](program-sdk.md) is rarely needed.
 - `type CredentialRef struct{Env string; ConfigMap *ConfigMapCredentialRef}`: selects exactly one reference kind.
 - `type ConfigMapCredentialRef struct{Name string; Key string; Assignment string}`: selects a key in the target Pod namespace.
 - `type DatabaseRole struct{Database string; Name string}`: is one directly granted role in a named database.
-- `type EnsureDatabaseUser struct{Target DatabaseTarget; User string; Roles []DatabaseRole; Password CredentialRef; Reason string}`: creates a missing user or restores its exact direct roles.
+- `type EnsureDatabaseUser struct{Target DatabaseTarget; User string; Roles []DatabaseRole; Password CredentialRef; Reason string}`: creates a missing user or replaces all of an existing user's direct roles with Roles.
 
 ## Any other hand repair: commands, HTTP, Jobs, raw API objects
 

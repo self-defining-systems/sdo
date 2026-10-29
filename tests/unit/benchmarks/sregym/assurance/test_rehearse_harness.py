@@ -430,3 +430,31 @@ def test_up_names_the_freeze_images_and_preflight_names_missing_ones(tmp_path: P
     assert up[up.index("--validator-image") + 1] == "sdo-detector-validator:le-h96"
     problems = gate.preflight(REPO_ROOT, load=1.0, free_gib=500, absent_images=["sdo-controller:le-h96"])
     assert any("missing images" in item and "SDO_SCRIPTED_WORKER=1" in item for item in problems)
+
+
+def test_requested_claude_probe_failure_blocks_rehearsal(tmp_path: Path) -> None:
+    commands = []
+
+    def execute(argv: Any, **kwargs: Any) -> tuple[int, str]:
+        commands.append(list(argv))
+        return (
+            (1, "sandbox required but unavailable")
+            if "benchmarks.sregym.fastloop.claude_worker_probe" in argv
+            else (0, "")
+        )
+
+    scenario = gate.Scenario(name="fake", covers=("RH3",), stream="baseline.json")
+    runner = gate.Gate(
+        tmp_path,
+        "7",
+        tmp_path / "run",
+        execute=execute,
+        scenarios=(scenario,),
+        claude_worker_image="worker:production",
+    )
+    summary = runner.run()
+    assert not summary["passed"]
+    assert "sandbox required" in summary["claude_worker"]["detail"]
+    probes = [argv for argv in commands if "benchmarks.sregym.fastloop.claude_worker_probe" in argv]
+    assert len(probes) == 1
+    assert probes[0][probes[0].index("--image") + 1] == "worker:production"

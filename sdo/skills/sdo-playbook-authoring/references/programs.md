@@ -60,7 +60,8 @@ unlinked bytes are refused as `script_unprovenanced`.
 bound Pod (`Shell` mongo or mongosh). `CredentialRef` is exactly one of `Env` or `ConfigMap{Name, Key,
 Assignment}` in the Pod's namespace; only the executor resolves it, through exec stdin.
 `EnsureDatabaseUser` creates a missing user or restores its exact direct roles, keeps existing passwords and
-other users, and is irreversible.
+other users, and is irreversible. Supply the complete desired role set: omitted direct roles are removed,
+so translating an additive grant must preserve the other accepted roles.
 <!-- replay:on -->
 Build replay from recorded open `DatabaseUsers` replies.
 <!-- /replay:on -->

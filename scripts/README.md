@@ -69,3 +69,17 @@ and the policy to `/opt/sdo/model-cli-versions.json`. The inherited
 verified pins without starting a container. Scripted images omit the model CLIs
 and this gate. Focused tests: `uv run --extra test pytest -q -p no:tach
 tests/unit/scripts/test_model_cli_versions.py`.
+
+`check_claude_worker.py` qualifies a model worker through one real Opus turn
+with the same `danger-full-access` mode used by health authoring. It reads a
+small synthetic source fixture and writes a health diagnostic marker through
+Bash, then checks the structured result and records provider usage. It proves
+CLI/provider startup and shell execution, not detector quality or learning.
+Release builds run it inside the built image with `SDO_CLAUDE_SMOKE=1`,
+`SDO_CLAUDE_CREDENTIALS_FILE` naming the existing Claude credential file, and
+`SDO_OPUS_POOL_DIR` naming the existing host pool (plus its usual capacity/mode
+settings). The opt-in is explicit because it spends provider quota; ordinary CI
+builds do not read account credentials. The scripted rehearsal adds the same
+live lane gate with `--claude-worker-image <production-worker-ref>` and
+`--claude-credentials-secret <existing-secret-with-.credentials.json>`. Its Job
+inherits a real health worker's pod confinement and records `claude-worker.json`.

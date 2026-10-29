@@ -12,6 +12,11 @@ is an environment reference. Plain `Headers` carry nonsecret values only.
 
 Object edits in a plan write atomically per object; use strategic patches for keyed lists (JSON merge replacement is refused).
 
+`SetField` accepts a narrow dotted-path vocabulary or a slash-prefixed JSON pointer
+for other fields on a named nonsecret object. Call `program.ValidateSetField` on
+authored actions to check their shape without applying them. Use `PatchObject`
+for removals or structural edits; an unsupported dotted spelling is not an SDK gap.
+
 - `PatchObject{Ref, Type, Patch}` supports `json`, `merge`, and `strategic` patches.
   JSON patch covers add/remove/replace/move/copy/test, including array insertion.
   Strategic merge uses the registered built-in schema; use JSON/merge for CRDs.

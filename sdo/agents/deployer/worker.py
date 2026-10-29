@@ -117,7 +117,7 @@ def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDe
         prompt,
         output_schema=SourceProposalDraft.model_json_schema(),
         cwd=checkout,
-        access="workspace-write",
+        access="danger-full-access",
         model=agent.model,
         reasoning_effort=agent.effort,
         timeout_seconds=1800,

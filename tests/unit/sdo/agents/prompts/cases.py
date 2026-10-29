@@ -33,6 +33,7 @@ from sdo.agents.responder.session_turn import branch_correction, branch_instruct
 from sdo.contracts import (
     DetectorEvaluation,
     Finding,
+    HealthJudgeRequest,
     IncidentClosure,
     IncidentRequest,
     IncidentResult,
@@ -322,6 +323,9 @@ def recorded_scale_reflection() -> SimpleNamespace:
     return live
 
 
+SEED_HEALTH_SIZES = (("hotel", 866, 793), ("social", 101, 788), ("astronomy", 972, 793))
+
+
 def rendered_cases(*, scale: int = 1) -> dict[str, str]:
     """Golden prompts; ``scale`` multiplies findings and lengthens them to live sizes."""
 
@@ -604,6 +608,33 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
 
         patch.setattr(backend, "_execute", execute)
         backend.run_deployer(repository=Path("/application"), application="toy", correction_feedback=None)
+        # SEEDBUDGET1: measured fresh seed goals are 866/101/972 characters;
+        # worker rejection diagnostics are 793/788. Astronomy did not dispatch,
+        # so use the observed maximum there. Construct synthetic text only.
+        if scale > 1:
+            from sdo.agents.health_judge.worker import _judge_feedback
+
+            for app, goal_chars, feedback_chars in SEED_HEALTH_SIZES:
+                goal = "Synthetic required health objective. ".ljust(goal_chars, "g")
+                message = "Synthetic worker rejection diagnostic. ".ljust(feedback_chars, "f")
+                feedback = _judge_feedback(
+                    HealthJudgeRequest(
+                        previous_diagnostics=[MemoryDiagnostic(rule="worker.job_failed", message=message)]
+                    )
+                )
+                backend.run_health_judge(
+                    repository=Path("/application"),
+                    application=app,
+                    health_objective=goal,
+                    deployer=assessment,
+                    round_index=1,
+                    previous=None,
+                    correction_feedback=feedback,
+                )
+                prompt = prompts.pop("lifecycle_HealthJudgeDraft")
+                assert goal in prompt
+                assert message in prompt
+                prompts[f"lifecycle_seed_{app}"] = prompt
         backend.run_health_judge(
             repository=Path("/application"),
             application="toy",

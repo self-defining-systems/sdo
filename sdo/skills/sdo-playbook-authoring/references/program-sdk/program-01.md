@@ -127,9 +127,13 @@ func ValidateResolvedSetField(f SetField, value any) error
     provenance.
 
 func ValidateSetField(f SetField) error
-    ValidateSetField checks the explicit path allowlist and Kubernetes schema
-    kind. An absent API version retains legacy program validation; executors
-    require it.
+    ValidateSetField checks a dotted vocabulary path or a JSON pointer on
+    a named nonsecret object. Dotted paths have an explicit allowlist and
+    Kubernetes schema check; use a slash-prefixed JSON pointer for fields
+    outside that vocabulary, or PatchObject for removals and structural edits.
+    Call this on authored SetField actions to check their shape without
+    executing a plan. An absent API version retains legacy program validation;
+    executors require it.
 
 func ValidateValueBinding(spec ParamSpec, value any) error
     ValidateValueBinding checks types without coercing strings to numbers or
@@ -233,6 +237,4 @@ type Command struct {
     Command runs inside a named container. Output is discarded; observations are
     exit codes. Stdin permits scripts and byte streams (including tar for cp).
     Credentials must be resolved inside the container through environment refs.
-
-func (c Command) Validate() error
 ```
