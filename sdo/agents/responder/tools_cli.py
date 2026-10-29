@@ -164,7 +164,8 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Output: session schema; correct feedback once. "
         "prior_stages: per-repair receipts; checked_stage_receipts: exact application IDs and scoped verification "
-        "in brief; findings: residual work. Full receipts remain in details_file. "
+        "in brief; stage_actions: results and recorded rollout blockers; stage_playbooks: program IDs to READMEs. "
+        "findings: residual work. Full receipts/events remain in details_file. "
         "prior_response_progress: bounded failed-episode progress with omissions. "
         "Keep repairs; admission_blocked names a rollout prerequisite.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
@@ -311,9 +312,9 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts. "
-            "Report one cause per independently fixable fault and record a separate act for each, declaring "
-            "only that cause's resources, so each receipt is attributed to its cause; "
-            "combine only faults that can't be fixed separately. "
+            "Report one cause per independently fixable fault; combine edits to one object, "
+            "keeping each cause's evidence separate. Declare all changed resources so the receipt "
+            "covers the combined edit. Start independent repairs together. "
             "When an admission control blocks recovery and its backend is gone, restore the backend if you can. "
             "Otherwise a scoped fail-open or removal that restores availability is acceptable; report it. "
             "SDO options go before --; the command after it runs verbatim, except that a kubectl command "
