@@ -218,7 +218,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			var conflict ToolResponse
 			if refErr != nil && l.heldPendingWrites() > 0 {
 				err, reason = refErr, "write_set_unknown"
-			} else if l.pendingConflictExcept(refs, &conflict, attempt) {
+			} else if l.pendingConflictExcept(ctx, refs, &conflict, attempt) {
 				err, reason = errors.New(conflict.Error), "pending_write_conflict"
 			}
 		} else {
