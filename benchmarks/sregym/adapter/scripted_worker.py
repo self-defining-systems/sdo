@@ -107,15 +107,20 @@ def _source_was_deleted(request: IncidentRequest, ref: dict[str, str]) -> bool:
     )
 
 
-def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
+def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> str:
     kind, name = ref["kind"], ref["name"]
     source = _tool("source", f"{kind}/{request.namespace}/{name}")["source"]
-    if _source_was_deleted(request, ref):
+    absent = _source_was_deleted(request, ref)
+    if not absent and kind in {"Service", *SOURCE_RESTORED_FIELDS}:
+        absent = not _command(
+            ["kubectl", "-n", request.namespace, "get", kind.lower(), name, "--ignore-not-found=true", "-o", "name"]
+        ).strip()
+    if absent:
         with tempfile.TemporaryDirectory(prefix="sdo-scripted-source-") as directory:
             manifest = Path(directory) / "object.json"
             manifest.write_text(json.dumps(source))
             _command(["kubectl", "-n", request.namespace, "apply", "-f", str(manifest)])
-        return
+        return "kubectl-apply"
     if kind == "Service":
         patch = {"spec": {"ports": source["spec"]["ports"]}}
     elif kind == "Deployment":
@@ -169,6 +174,8 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
             ["kubectl", "-n", request.namespace, "rollout", "status", f"deployment/{name}", "--timeout=600s"],
             timeout=610,
         )
+
+    return "kubectl-patch"
 
 
 def _remove_added(request: IncidentRequest, ref: dict[str, str]) -> None:
@@ -406,16 +413,13 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         action_start = _now()
         if ref["kind"] == "NetworkPolicy":
             _command(["kubectl", "-n", request.namespace, "delete", "networkpolicy", ref["name"]])
+            repair_kind = "kubectl-delete"
         else:
-            _patch_from_source(request, ref)
+            repair_kind = _patch_from_source(request, ref)
         repairs.append(
             {
                 "action_id": f"source-{len(repairs) + 1}",
-                "kind": "kubectl-delete"
-                if ref["kind"] == "NetworkPolicy"
-                else "kubectl-apply"
-                if _source_was_deleted(request, ref)
-                else "kubectl-patch",
+                "kind": repair_kind,
                 "target": f"{event.ref.kind}/{event.ref.name}",
                 "resources": [ref],
                 "summary": f"Removed source-absent NetworkPolicy/{event.ref.name}"
@@ -455,7 +459,7 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             for finding in request.findings
         )
         # Restore absent dependencies before a workload rollout can wait on them.
-        candidates.sort(key=lambda ref: not _source_was_deleted(request, ref))
+        candidates.sort(key=lambda ref: (ref["kind"] == "Deployment", not _source_was_deleted(request, ref)))
         for ref in candidates:
             removed = ref["kind"] in REMOVED_KINDS
             if ref["kind"] not in {"Service", "Deployment", *SOURCE_RESTORED_FIELDS} and not removed:
@@ -468,16 +472,13 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             action_start = _now()
             if removed:
                 _remove_added(request, ref)
+                repair_kind = "kubectl-delete"
             else:
-                _patch_from_source(request, ref)
+                repair_kind = _patch_from_source(request, ref)
             repairs.append(
                 {
                     "action_id": f"source-{len(repairs) + 1}",
-                    "kind": "kubectl-delete"
-                    if removed
-                    else "kubectl-apply"
-                    if _source_was_deleted(request, ref)
-                    else "kubectl-patch",
+                    "kind": repair_kind,
                     "target": f"{ref['kind']}/{ref['name']}",
                     "resources": [ref],
                     "summary": f"Removed source-absent {ref['kind']}/{ref['name']}"

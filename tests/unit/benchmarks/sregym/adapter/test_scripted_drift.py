@@ -143,7 +143,9 @@ def test_scripted_responder_does_not_repair_prior_incident_drift(monkeypatch) ->
         ],
     )
     patches = []
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, ref: patches.append(ref))
+    monkeypatch.setattr(
+        scripted_worker, "_patch_from_source", lambda _request, ref: patches.append(ref) or "kubectl-patch"
+    )
     monkeypatch.setattr(scripted_worker, "_tool", lambda *_args: {"healthy": True})
 
     result = scripted_worker.scripted_responder(request)
@@ -314,7 +316,8 @@ def test_scripted_source_restore_allows_slow_init_clone(monkeypatch: pytest.Monk
     ("kind", "field"),
     [("Service", "spec"), ("ConfigMap", "data"), ("Ingress", "spec"), ("HorizontalPodAutoscaler", "spec")],
 )
-def test_deleted_source_objects_are_recreated_instead_of_patched(monkeypatch, kind, field):
+@pytest.mark.parametrize("with_history", [True, False])
+def test_deleted_source_objects_are_recreated_instead_of_patched(monkeypatch, kind, field, with_history):
     import json
 
     source = {"apiVersion": "v1", "kind": kind, "metadata": {"name": "api", "namespace": "app"}, field: {}}
@@ -323,10 +326,14 @@ def test_deleted_source_objects_are_recreated_instead_of_patched(monkeypatch, ki
         namespace="app",
         state_changes={"changes": [{"kind": kind, "name": "api", "change": "removed"}]},
     )
+    if not with_history:
+        request.ClearField("state_changes")
     monkeypatch.setattr(scripted_worker, "_tool", lambda *_: {"source": source})
     applied = []
 
     def command(argv, **kwargs):
+        if "get" in argv:
+            return ""
         assert "patch" not in argv
         assert "apply" in argv
         applied.append(json.loads(Path(argv[argv.index("-f") + 1]).read_text()))
@@ -355,7 +362,12 @@ def test_real_state_tracker_removals_reach_source_repair_before_workload_waits(m
     repaired = []
     monkeypatch.setattr(scripted_worker.time, "sleep", lambda _: None)
     monkeypatch.setattr(scripted_worker, "_tool", lambda *_: {"healthy": len(repaired) == 3})
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda request, ref: repaired.append(ref["kind"]))
+    monkeypatch.setattr(
+        scripted_worker,
+        "_patch_from_source",
+        lambda request, ref: repaired.append(ref["kind"])
+        or ("kubectl-apply" if ref["kind"] in {"Service", "ConfigMap"} else "kubectl-patch"),
+    )
     result = scripted_worker.scripted_responder(request)
     assert result.status == "completed"
     assert set(repaired[:2]) == {"Service", "ConfigMap"}
