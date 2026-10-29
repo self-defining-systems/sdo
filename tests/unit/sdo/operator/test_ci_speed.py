@@ -253,7 +253,11 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
     for module in ("sdo/operator", "sdo/operator/runtime"):
         commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
         if mode == "race":
-            assert commands == [["test", "-race", "-list", ".", "-json", "./..."]]
+            assert not commands
+            assert any(
+                shlex.split(args) == ["run", str(ROOT / "scripts/go_test_inventory.go"), str(ROOT / module)]
+                for _, args in invocations
+            )
         else:
             assert commands[0] == ["build", "./..."]
             assert not any(args[0] == "test" for args in commands)
