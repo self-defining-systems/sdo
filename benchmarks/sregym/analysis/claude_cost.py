@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +26,7 @@ _EVENT_FILES = ("trial2-turns.jsonl", "agent-resolved.jsonl", "claude-turns.json
 
 
 def _unknown() -> dict[str, Any]:
-    return {"tokens": None, "usd": None, "usd_complete": False, "tokens_complete": False}
+    return {"tokens": None, "usd": None, "usd_complete": False, "tokens_complete": False, "cost_state": "missing"}
 
 
 def _summary(bill: ClaudeBill) -> dict[str, Any]:
@@ -35,7 +37,8 @@ def _summary(bill: ClaudeBill) -> dict[str, Any]:
     return {
         "tokens": tokens,
         "raw_total_tokens": bill.tokens.input_tokens + bill.tokens.output_tokens,
-        "usd": bill.usd,
+        "usd": bill.usd if bill.usd_complete else None,
+        "cost_state": "measured" if bill.usd_complete else "missing",
         "usd_complete": bill.usd_complete,
         "tokens_complete": bill.usd_complete,
         "cache_write_ttl_complete": bill.ttl_complete,
@@ -53,7 +56,105 @@ def _zero() -> dict[str, Any]:
         "usd_complete": True,
         "tokens_complete": True,
         "no_model_dispatched": True,
+        "cost_state": "model-free",
     }
+
+
+@dataclass(frozen=True)
+class _DispatchEvidence:
+    dispatched: bool | None = None
+    source: str = "not recorded"
+
+
+def _positive_usage(usage: dict[str, Any]) -> bool | None:
+    try:
+        values = [
+            float(usage.get(key) or 0)
+            for key in ("model_requests", "llm_calls", "input_tokens", "output_tokens", "total_cost_usd")
+        ]
+    except (TypeError, ValueError):
+        return None
+    if any(not math.isfinite(value) or value < 0 for value in values):
+        return None
+    if any(value > 0 for value in values):
+        return True
+    return None if usage.get("partial") else False
+
+
+def _receipt_roles(receipt: dict[str, Any]) -> dict[str, _DispatchEvidence]:
+    """A verified deterministic closure proves no responder, not no reflection.
+
+    Missing Job evidence alone says nothing: standby responders have no Job.
+    Session, usage and dispatch evidence always overrule a no-model claim.
+    """
+    ledger = receipt.get("native_ledger") or {}
+    closure = ledger.get("closure") or {}
+    result = closure.get("result") or {}
+    outcome = ledger.get("outcome_document") or {}
+    decision = ledger.get("reflection_decision") or {}
+    incident = receipt.get("incident_id")
+    correlated = bool(
+        incident
+        and all(
+            value == incident
+            for value in (
+                ledger.get("incident_id"),
+                (closure.get("request") or {}).get("incident_id"),
+                result.get("incident_id"),
+                outcome.get("incident_id"),
+            )
+        )
+    )
+    if not correlated:
+        return {role: _DispatchEvidence() for role in _ROLES}
+    responder = _DispatchEvidence()
+    reflection = _DispatchEvidence()
+    responder_usage = [_positive_usage(result.get("usage") or {}), _positive_usage(outcome.get("usage") or {})]
+    if result.get("responder_session_id") or receipt.get("responder_job_evidence") or True in responder_usage:
+        responder = _DispatchEvidence(True, "correlated native responder session, Job or usage")
+    elif (
+        result.get("resolution_path") == "deterministic"
+        and closure.get("verified_at")
+        and receipt.get("responder_job_evidence") == []
+        and all(signal is False for signal in responder_usage)
+    ):
+        responder = _DispatchEvidence(False, "verified deterministic closure without responder session, Job or usage")
+    decisions = [decision, *(ledger.get("reflection_results") or [])]
+    reflection_usage = [_positive_usage(item.get("usage") or {}) for item in decisions]
+    if any(item.get("session_id") for item in decisions) or True in reflection_usage:
+        reflection = _DispatchEvidence(True, "correlated native reflection session or usage")
+    elif all(item.get("no_change_reason") == "native_memory_check_no_change" for item in decisions) and all(
+        signal is False for signal in reflection_usage
+    ):
+        # The registered worker's successful native check returns before creating
+        # any provider process. Worker dispatch is not model dispatch. Every
+        # attempt must have this proof; an unmeasured previous attempt stays missing.
+        reflection = _DispatchEvidence(False, "all reflection attempts completed by native check without provider")
+    elif (
+        ledger.get("reflection_skipped_reason")
+        and not ledger.get("reflection_dispatch_at")
+        and all(signal is False for signal in reflection_usage)
+    ):
+        reflection = _DispatchEvidence(False, "correlated native reflection skip without dispatch, session or usage")
+    return {"responder": responder, "reflection": reflection}
+
+
+def _receipts(root: Path) -> dict[str, list[dict[str, Any]]]:
+    found: dict[str, list[dict[str, Any]]] = {}
+    for name in ("sdo_production_receipt_strict.json", "sdo_rejected_production_receipt.json"):
+        for path in root.rglob(name):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+                value = value.get("receipt") or (
+                    json.loads(value["receipt_json"]) if value.get("receipt_json") else value
+                )
+                incident = value.get("incident_id")
+                if incident:
+                    fragment = hashlib.sha256(incident.encode()).hexdigest()[:32]
+                    found.setdefault(fragment, []).append(value)
+            except (OSError, ValueError, AttributeError):
+                continue  # Unreadable evidence cannot establish zero or measured billing.
+    return found
 
 
 def _guard_fallback(
@@ -206,9 +307,7 @@ def _episode(directories: list[Path], model: str, pricing: PricingTable) -> dict
         result[role + "_usage"] = (
             _combine(parts) if parts else (_guard_fallback(events, role, model, pricing) or _unknown())
         )
-    # A phase with no dispatch is zero only when closed billing belongs entirely
-    # to its peer, with no earlier responder history or unfinished reflection.
-    roles = {event["role"] for event in events if event["event"] == "start"}
+    roles = {event["role"] for event in events if event["event"] in {"start", "complete", "error"}}
     result["roles"] = roles
     return result
 
@@ -231,6 +330,10 @@ def _combine(parts: list[dict[str, Any]]) -> dict[str, Any]:
         "raw_total_tokens": sum(part.get("raw_total_tokens") or 0 for part in parts),
         "usd": sum(part.get("usd") or 0 for part in parts) if complete else None,
         "usd_complete": complete,
+        "cost_state": ("model-free" if all(part.get("no_model_dispatched") for part in parts) else "measured")
+        if complete
+        else "missing",
+        "no_model_dispatched": all(part.get("no_model_dispatched") for part in parts),
         "tokens_complete": complete,
         "cache_write_ttl_complete": all(part.get("cache_write_ttl_complete", True) for part in parts),
         "reconciliation_evidence": [item for part in parts for item in part.get("reconciliation_evidence", [])],
@@ -240,13 +343,25 @@ def _combine(parts: list[dict[str, Any]]) -> dict[str, Any]:
 
 def reconcile_claude_row(row: dict[str, Any], pricing: PricingTable | None = None) -> None:
     """Update one analysis row in place; Codex rows are unchanged."""
-    if row.get("provider") != "claude" or not row.get("incident_id"):
+    if row.get("provider") != "claude":
+        return
+    if not row.get("incident_id"):
+        for role in _ROLES:
+            previous = row.get(role + "_usage") or {}
+            row[role + "_usage"] = {**_unknown(), "transport_usage": previous.get("transport_usage", previous)}
+            row[role + "_model_dispatched"] = None
+        row["model_dispatched"] = None
+        row["cost_complete"] = False
+        row["cost_episodes"] = []
         return
     pricing = pricing or default_pricing()
     root = Path(row["results"])
     primary = hashlib.sha256(row["incident_id"].encode()).hexdigest()[:32]
     cutoff = epoch(row.get("injection_started_at"))
-    fragments: dict[str, list[Path]] = {}
+    # The original incident is mandatory even when its entire export is lost.
+    # Complete followup billing cannot silently stand in for that missing cost.
+    fragments: dict[str, list[Path]] = {primary: []}
+    receipts = _receipts(root)
     for directory in root.rglob("sdo_runtime/sessions/*"):
         if not directory.is_dir():
             continue
@@ -256,25 +371,44 @@ def reconcile_claude_row(row: dict[str, Any], pricing: PricingTable | None = Non
         )
         if directory.name == primary or current:
             fragments.setdefault(directory.name, []).append(directory)
+    # Model-free incidents have no session directory. Include their positive
+    # closure evidence, and current-row followups even if their exports are lost.
+    for fragment, values in receipts.items():
+        detected = []
+        for value in values:
+            try:
+                detected.append(epoch((value.get("native_ledger") or {}).get("closure", {}).get("detected_at")))
+            except (TypeError, AttributeError):
+                detected.append(None)
+        if fragment == primary or cutoff is not None and any(t is not None and t >= cutoff for t in detected):
+            fragments.setdefault(fragment, [])
     episodes = []
     for fragment, directories in fragments.items():
         episode = _episode(directories, row.get("model") or "", pricing)
         roles = episode.pop("roles")
-        for role, other in (("responder", "reflection"), ("reflection", "responder")):
-            known = episode[other + "_usage"]
-            proof = known.get("reconciliation_evidence") or []
-            if (
-                role not in roles
-                and known.get("usd_complete")
-                and proof
-                and (
-                    role == "reflection"
-                    and row.get("status") == "settled"
-                    or role == "responder"
-                    and all(item.get("billing_start_usd") == 0 for item in proof)
-                )
-            ):
+        native = []
+        for value in receipts.get(fragment, []):
+            try:
+                native.append(_receipt_roles(value))
+            except (TypeError, ValueError, AttributeError):
+                native.append({role: _DispatchEvidence(source="malformed native evidence") for role in _ROLES})
+        for role in _ROLES:
+            evidence = [value[role] for value in native]
+            dispatched = (
+                True
+                if role in roles or any(item.dispatched is True for item in evidence)
+                else False
+                if evidence and all(item.dispatched is False for item in evidence)
+                else None
+            )
+            summary = episode[role + "_usage"]
+            # Billing is also positive model evidence, even with a lost start journal.
+            if summary.get("usd_complete"):
+                dispatched = True
+            elif dispatched is False:
                 episode[role + "_usage"] = _zero()
+            episode[role + "_model_dispatched"] = dispatched
+            episode[role + "_dispatch_evidence"] = [item.source for item in evidence]
         episode["session_fragment"] = fragment
         episodes.append(episode)
     entry = price_for("claude", row.get("model"), pricing)
@@ -288,7 +422,18 @@ def reconcile_claude_row(row: dict[str, Any], pricing: PricingTable | None = Non
             summary["usd"] * 1e6 / entry.input_usd if summary.get("usd_complete") and entry else None
         )
         row[role + "_usage"] = summary
+        dispatches = [episode[role + "_model_dispatched"] for episode in episodes]
+        row[role + "_model_dispatched"] = (
+            True if True in dispatches else False if dispatches and all(d is False for d in dispatches) else None
+        )
     row["cost_episodes"] = episodes
+    row["model_dispatched"] = (
+        True
+        if any(row[role + "_model_dispatched"] is True for role in _ROLES)
+        else False
+        if all(row[role + "_model_dispatched"] is False for role in _ROLES)
+        else None
+    )
     row["cost_complete"] = all(row[role + "_usage"]["usd_complete"] for role in _ROLES)
     row["cost_pricing_version"] = pricing.version
 

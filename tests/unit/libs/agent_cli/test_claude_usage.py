@@ -141,8 +141,31 @@ def test_real_stream_capture_publishes_cancelled_usage_and_deduplicates(tmp_path
         "status": "settled",
     }
     reconcile_claude_row(row)
+    assert row["responder_usage"]["usd_complete"]
+    assert row["responder_usage"]["usd"] == 0.00082
+    assert row["reflection_usage"]["cost_state"] == "missing"
+    assert row["reflection_usage"]["usd"] is None
+    assert not row["cost_complete"]
+    # A complete captured responder proves nothing about reflection. The whole
+    # incident is complete only after correlated native no-reflection evidence.
+    receipt = {
+        "incident_id": "incident",
+        "native_ledger": {
+            "incident_id": "incident",
+            "closure": {
+                "request": {"incident_id": "incident"},
+                "result": {"incident_id": "incident", "responder_session_id": "synthetic"},
+            },
+            "outcome_document": {"incident_id": "incident"},
+            "reflection_skipped_reason": "synthetic_explicit_skip",
+        },
+    }
+    (tmp_path / "sdo_production_receipt_strict.json").write_text(json.dumps(receipt))
+    reconcile_claude_row(row)
     assert row["cost_complete"]
     assert row["responder_usage"]["usd"] == 0.00082
+    assert row["reflection_usage"]["cost_state"] == "model-free"
+    assert row["reflection_usage"]["usd"] == 0
 
 
 def test_resumed_live_turn_ignores_cumulative_result_and_retains_counter_lag(tmp_path, monkeypatch) -> None:
