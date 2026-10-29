@@ -85,4 +85,7 @@ usable default or derive it from observations; never depend on undeclared values
 ## Acceptance
 
 The broker repeats the memory check. Compilation, imports, changed-source formatting, ownership and
-receipt provenance are required; replay outcomes, missing captures and detector coverage are information.
+receipt provenance are required.
+<!-- replay:on -->
+Replay outcomes, missing captures and detector coverage are information.
+<!-- /replay:on -->

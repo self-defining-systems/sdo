@@ -55,3 +55,21 @@ def test_reflection_instructions_select_only_enabled_replay_guidance(monkeypatch
         if mode == "off":
             assert "corpus" not in instructions.lower()
             assert "replay" not in instructions.lower()
+
+
+@pytest.mark.parametrize(
+    ("relative", "instruction"),
+    [
+        ("references/rules.md", "Build replay fixtures"),
+        ("references/rules.md", "Preserve every accepted case"),
+        ("references/general-actions.md", "constructing a new replay case"),
+        ("references/general-actions.md", "Do not replay a write"),
+    ],
+)
+def test_optional_references_only_request_replay_when_enabled(
+    relative: str, instruction: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for mode in ("on", "off"):
+        monkeypatch.setenv("SDO_REPLAY", mode)
+        text = (selected_skills_root(SKILLS_ROOT) / "sdo-playbook-authoring" / relative).read_text()
+        assert (instruction in text) == (mode == "on")
