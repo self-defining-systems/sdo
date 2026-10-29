@@ -23,6 +23,7 @@ Observed component-1 has no ready endpoints.
 Detector history before dispatch:
 - detector-0: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
 - detector-1: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
+
 Surfaced playbooks: repair-0
 Post-response health detector states: none recorded
 Post-response incident detector states: none recorded

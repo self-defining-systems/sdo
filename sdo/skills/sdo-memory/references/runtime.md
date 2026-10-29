@@ -244,7 +244,8 @@ JSON outside the authored tree. Return the same decision and logical IDs.
 It first gofmt-formats Go files changed under .sdo/. The reply's next
 field says what to do: return on a pass, else fix the diagnostics.
 Legacy decision_path files are also supported. One call waits for final
-diagnostics. Compile/import/format/provenance checks remain required;
+diagnostics. Responder incident detectors use the same validation; health
+detectors remain judge-owned. Compile/import/format/provenance checks remain required;
 Replay policy comes from SDO_REPLAY (on by default). Off skips corpus and replay;
 RunScript still requires its successful accepted receipt. Replay verdicts
 are information. The broker owns validation and may reuse its isolated

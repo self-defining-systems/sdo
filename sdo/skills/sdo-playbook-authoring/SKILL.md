@@ -7,8 +7,8 @@ description: Start here for reflection. Turn recorded hand repairs into validate
 
 Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
-1. **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
-   If it passes, return that decision immediately. Its diagnostics identify required work: uncovered hand
+1. **Consider detection coverage.** If generic detection lagged a visible cause, use [detector authoring](../sdo-detector-authoring/SKILL.md) to add or refine a cause-specific incident detector on the resource it reads; aim for seconds on recurrence. Health detectors remain judge-owned. **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
+   If it passes and no detection gap remains, return that decision immediately. Its diagnostics identify required work: uncovered hand
    repairs (`reflection.program-required`), applied playbooks that failed, left findings unresolved or needed a later hand repair
    (`reflection.stale-playbook`: update or retire with a reason), and the decision to return when Go
    already settled evidence in this checkout. Do not investigate or polish a passing covered incident.

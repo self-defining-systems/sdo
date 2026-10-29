@@ -576,7 +576,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		// Resumed sessions still enter the worker's no-model probe, which owns
 		// writer termination and permanent session handoff. Only a session-free
 		// closure can safely omit that worker entirely.
-		if effect.Attempt == 1 && !n.ForceReflection && effect.Closure.GetResult().GetResponderSessionId() == "" && stageOnlyClosure(incidentClosureState(effect.Closure)) && coveredRepeatCandidate(effect.Outcome) {
+		if effect.Attempt == 1 && !n.ForceReflection && effect.Closure.GetResult().GetResponderSessionId() == "" && stageOnlyClosure(incidentClosureState(effect.Closure)) && !genericHealthDetectedFirst(effect.Closure) && coveredRepeatCandidate(effect.Outcome) {
 			decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted_programs_no_new_evidence"}
 			checkCtx := ctx
 			if n.SessionRoot != "" {
