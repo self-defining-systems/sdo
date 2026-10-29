@@ -71,6 +71,7 @@ def test_native_request_budget_parity(native_budget_binary: Path) -> None:
     assert replay.MAX_RESULT_BYTES == replay.MAX_BROKER_BYTES == 1 << 20
 
 
+@pytest.mark.go_integration
 def test_large_reflection_record_ingest_load_and_replay(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     checkout = tmp_path / "accepted"
     checkout.mkdir()

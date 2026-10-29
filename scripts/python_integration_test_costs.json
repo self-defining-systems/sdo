@@ -11,7 +11,7 @@
       "head": "54d285b33ce03583526fab17865f4e4a63e88050"
     }
   ],
-  "description": "Bootstrap from hosted pytest duration reports. Unlisted phases conservatively use the smallest listed duration (the top-N report cutoff). Structured future reports include every phase. Entries the CIROOT2 change made cheaper (validator link cache, lean validation links) were re-measured on 2026-10-28 on a matched 2-core local run (taskset, GOMAXPROCS=2, race, GOPROXY=off, cold per-test link cache) and recorded as 1.5x the measured seconds until a hosted run refreshes them with update_go_test_costs.py. Deferred tests were then re-measured together in one process with a shared link cache (matched 2-core local, race, -parallel=2; the way a CI bucket runs) and recorded as 1.25x the measured seconds. CICACHE3: newly classified memory-validator and link-wrapper fixture consumers measured locally on 2026-10-29 at 1e6c3b449 (2 pytest workers, GOMAXPROCS=4, shared prepared operator/compiler cache); new entries reserve 1.5x complete setup/call/teardown time pending hosted refresh. Existing hosted bounds are retained.",
+  "description": "Bootstrap from hosted pytest duration reports. Unlisted phases conservatively use the smallest listed duration (the top-N report cutoff). Structured future reports include every phase. Entries the CIROOT2 change made cheaper (validator link cache, lean validation links) were re-measured on 2026-10-28 on a matched 2-core local run (taskset, GOMAXPROCS=2, race, GOPROXY=off, cold per-test link cache) and recorded as 1.5x the measured seconds until a hosted run refreshes them with update_go_test_costs.py. Deferred tests were then re-measured together in one process with a shared link cache (matched 2-core local, race, -parallel=2; the way a CI bucket runs) and recorded as 1.25x the measured seconds. CICACHE3: newly classified memory-validator and link-wrapper fixture consumers measured locally on 2026-10-29 at 1e6c3b449 (2 pytest workers, GOMAXPROCS=4, shared prepared operator/compiler cache); new entries reserve 1.5x complete setup/call/teardown time pending hosted refresh. Existing hosted bounds are retained. The six RBAC/replay Go consumers caught by the fixture-wide guard were likewise measured serially (6 passed in 6.27s) and seeded at 1.5x their complete phases.",
   "costs": {
     "tests/unit/benchmarks/sregym/adapter/test_reflection_drain.py::test_real_native_broker_terminal_reflection_reaches_both_drain_consumers[failed]": 10.7,
     "tests/unit/benchmarks/sregym/adapter/test_reflection_drain.py::test_real_native_broker_terminal_reflection_reaches_both_drain_consumers[no_change]": 1.8,
@@ -27,9 +27,11 @@
     "tests/unit/benchmarks/sregym/fastloop/test_accepted_source.py::test_file_generated_configmap_restore_uses_production_source_renderer": 2.26,
     "tests/unit/benchmarks/sregym/fastloop/test_accepted_source.py::test_hotel_bootstrap_source_matches_harness_and_remains_restorable": 4.2,
     "tests/unit/benchmarks/sregym/fastloop/test_eval_guards.py::test_fresh_guard_accepts_actual_broker_health_bootstrap": 33.1,
+    "tests/unit/benchmarks/sregym/fastloop/test_eval_guards.py::test_rbac_equality_uses_real_installer_and_rejects_extra_grants": 4.896,
     "tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py::test_fake_application_recovers_after_interrupted_responder": 2.25,
     "tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py::test_fake_controller_finishes_each_reflection_once": 2.25,
     "tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py::test_scripted_fastloop_reuses_reflected_target_port_program": 7.5,
+    "tests/unit/benchmarks/sregym/fastloop/test_rbac_configuration.py::test_default_configuration_remains_exact": 0.612,
     "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_covered_reflection_finishes_in_one_request[covered-repeat]": 29.405,
     "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_covered_reflection_finishes_in_one_request[late-line-repeat]": 24.835,
     "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_program_replay_accepts_session_fixture_without_captures[failed]": 40.5,
@@ -39,6 +41,10 @@
     "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_reflection_frontmatter_reaches_real_broker": 26.2,
     "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_reflection_over_the_old_model_io_limit_replays_to_acceptance": 24.3,
     "tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py::test_recorded_reflection_withholds_persistently_rejected_result": 3.8,
+    "tests/unit/benchmarks/sregym/fastloop/test_replay.py::test_checkpoint_retains_oversized_reflection_result_for_broker_replay": 0.615,
+    "tests/unit/benchmarks/sregym/fastloop/test_replay.py::test_replay_cli_selects_one_stage_without_loading_environment": 0.474,
+    "tests/unit/benchmarks/sregym/fastloop/test_replay.py::test_scripted_reflection_replay_runs_worker_again": 0.59,
+    "tests/unit/benchmarks/sregym/fastloop/test_request_envelope.py::test_large_reflection_record_ingest_load_and_replay": 0.777,
     "tests/unit/benchmarks/sregym/fastloop/test_request_envelope.py::test_native_broker_entrypoint_rejects_oversized_request": 8.4,
     "tests/unit/benchmarks/sregym/fastloop/test_request_envelope.py::test_native_request_budget_parity": 3.5,
     "tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py::test_scripted_binding_args_extract_object_bindings[False]": 2.25,

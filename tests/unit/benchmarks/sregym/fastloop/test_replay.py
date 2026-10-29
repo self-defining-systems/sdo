@@ -91,6 +91,7 @@ def test_checkpoint_rejects_tampered_capture(tmp_path: Path) -> None:
         store.load(0, "responder")
 
 
+@pytest.mark.go_integration
 def test_checkpoint_retains_oversized_reflection_result_for_broker_replay(tmp_path: Path) -> None:
     request, result = _task_and_result()
     envelope = parse_json(result, AgentResult())
@@ -348,6 +349,7 @@ def test_checkpoint_rejects_malformed_unrecorded_capture_reasons(tmp_path: Path,
         store.load(0, "responder")
 
 
+@pytest.mark.go_integration
 def test_replay_cli_selects_one_stage_without_loading_environment(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -486,6 +488,7 @@ def test_scripted_responder_replay_uses_captured_kubernetes_objects(
     assert output["identical"] is True, "\n".join(output["difference"])
 
 
+@pytest.mark.go_integration
 def test_scripted_reflection_replay_runs_worker_again(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from google.protobuf.any_pb2 import Any as ProtoAny
 
