@@ -64,12 +64,6 @@ Compare the health workload's scenarios (and their `DependsOn`) with the `links.
 
 Read the health workload's `slo.maxLatency` per scenario and the traffic findings' latency evidence: a path slowed many times over can stay under the 1.5 s default bound, and `memory check` lists every health-probe scenario on that default as `traffic.default-latency`. For a single-record fault, check whether the scenario picks one record at random per sample: the failing fraction then stays under the error budget. Classify as health-objective coverage (owner: health judge).
 
-Traffic SLO defaults use p50 (median), not p90; explicit workload/scenario percentiles remain authoritative.
-`minTimeouts` defaults to two: below that count, timeouts stay in raw counts/rates and recent failure evidence but
-do not contribute to either rate violation. Inspect the effective scenario SLO before treating a lone timeout
-as an active fault. Repeated timeouts still need to breach the configured rate. Strict objectives may set
-`minTimeouts: 1`, including one-sample windows.
-
 ## Workload-health finding
 
 **Signature:** a finding from detector `workload-health` with a `workload-pod-*`, `workload-container-*`, `workload-init-container-stuck` or `workload-deployment-*` rule. Runs whose seed predates the detector have no such records.

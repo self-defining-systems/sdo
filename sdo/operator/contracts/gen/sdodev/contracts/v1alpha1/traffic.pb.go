@@ -62,6 +62,7 @@ type TrafficSLO struct {
 	// Go-duration string; positivity is host-checked.
 	MaxLatency *string `protobuf:"bytes,7,opt,name=max_latency,json=maxLatency,proto3,oneof" json:"max_latency,omitempty"`
 	// Minimum timeouts contributing to rate violations; unset defaults to two.
+	// Host evaluation caps this at the effective window size.
 	MinTimeouts   *int32 `protobuf:"varint,8,opt,name=min_timeouts,json=minTimeouts,proto3,oneof" json:"min_timeouts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

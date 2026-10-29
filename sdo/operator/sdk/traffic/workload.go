@@ -87,7 +87,8 @@ type SLO struct {
 	MaxTimeoutRate float64  `json:"maxTimeoutRate,omitempty"`
 	// MinTimeouts is the minimum timeout count before timeouts contribute to
 	// either rate violation. Defaults to two so one scheduling pause is noise.
-	// Set one explicitly for strict timeout objectives or one-sample windows.
+	// The effective floor is capped at Window so a total timeout outage fires.
+	// Set one explicitly for strict timeout objectives.
 	MinTimeouts       int      `json:"minTimeouts,omitempty"`
 	LatencyPercentile int      `json:"latencyPercentile,omitempty"`
 	MaxLatency        Duration `json:"maxLatency,omitempty"`

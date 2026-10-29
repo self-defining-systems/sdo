@@ -44,6 +44,7 @@ message TrafficSLO {
   // Go-duration string; positivity is host-checked.
   optional string max_latency = 7;
   // Minimum timeouts contributing to rate violations; unset defaults to two.
+  // Host evaluation caps this at the effective window size.
   optional int32 min_timeouts = 8 [(buf.validate.field).int32 = {gte: 1, lte: 100}];
 }
 

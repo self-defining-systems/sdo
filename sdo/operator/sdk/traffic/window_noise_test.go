@@ -162,3 +162,24 @@ func TestTimeoutNoiseDoesNotAmplifyAnErrorOrSurviveWindowExpiry(t *testing.T) {
 		t.Fatalf("recovery must clear timeout evidence: %+v", v)
 	}
 }
+
+func TestTimeoutFloorCannotHideACompletelyTimedOutWindow(t *testing.T) {
+	for size := 1; size <= 10; size++ {
+		for _, floor := range []int{traffic.DefaultMinTimeouts, 100} {
+			t.Run(fmt.Sprintf("window-%d-floor-%d", size, floor), func(t *testing.T) {
+				w := healthWorkload(t)
+				w.SLO.Window, w.SLO.MinSamples, w.SLO.MinTimeouts = size, size, floor
+				if err := w.Validate(); err != nil {
+					t.Fatal(err)
+				}
+				values := make([]traffic.Sample, size)
+				for i := range values {
+					values[i] = timedOut(time.Duration(size-i) * time.Second)
+				}
+				if v := traffic.Evaluate("search", w.ScenarioSLO("search"), values, observedAt); v.Healthy {
+					t.Fatalf("an unreachable timeout floor must not hide a total outage: %+v", v)
+				}
+			})
+		}
+	}
+}

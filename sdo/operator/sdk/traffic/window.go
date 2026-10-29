@@ -140,7 +140,9 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 	// not establish a rate violation. Apply the same floor to the combined
 	// error rate so a tighter error budget cannot bypass the noise rule.
 	countedTimeouts := verdict.Timeouts
-	if countedTimeouts < slo.MinTimeouts {
+	// A full window of timeouts must always remain detectable, including
+	// an explicitly selected one-sample window.
+	if countedTimeouts < min(slo.MinTimeouts, slo.Window) {
 		countedTimeouts = 0
 	}
 	if float64(verdict.Errors+countedTimeouts)/total >= slo.MaxErrorRate {

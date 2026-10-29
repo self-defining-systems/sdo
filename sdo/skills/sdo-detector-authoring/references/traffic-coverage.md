@@ -43,8 +43,9 @@ slows its path many times over before any request fails: a CPU-throttled service
 
 The default `minTimeouts: 2` requires repeated timeouts within the sample window before they contribute to either
 the timeout or combined error-rate violation. Raw timeout counts and rates remain visible. Application errors
-still use `maxErrorRate`. Override `minTimeouts` per scenario or workload for stricter objectives; use `1` for a
-one-sample window. Rate limits still apply after the count floor.
+still use `maxErrorRate`. Override `minTimeouts` per scenario or workload for stricter objectives. The effective
+floor is capped at the window size so a complete timeout outage always fires; one-sample windows stay strict.
+Rate limits still apply after the count floor.
 
 ## Every record, every sample
 

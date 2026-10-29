@@ -15,7 +15,8 @@
 // with NewDetector, which judge each scenario against a sliding-window SLO.
 // The default SLO bounds median (p50) latency. Timeouts contribute to rate
 // violations only when at least two occur in the window; raw evidence stays
-// visible. Workload and per-scenario SLOs may override latencyPercentile,
+// visible. The count floor is capped at the window size, so one-sample
+// windows stay strict. Workload and per-scenario SLOs may override latencyPercentile,
 // maxLatency and minTimeouts (one opts into strict timeout sensitivity).
 // Nothing here knows about a particular application, and nothing calls an LLM.
 package traffic
