@@ -36,6 +36,10 @@ or reads. The full [program SDK](program-sdk.md) is rarely needed.
 - `DetectionContext.DiffAgainstSource(ref ObjectRef) (SourceDiff, error)`: compares a captured resource with accepted source, including source absence.
 - `type SourceDiff struct{SourceAbsent bool; Changed bool; Text string}`: is the read-only comparison with the accepted source for one resource.
 - `func (d SourceDiff) PresentButNotInSource() bool`: is true while the object exists live but not in accepted source.
+- `func (d SourceDiff) ContainerChanges() ([]ContainerChange, error)`: compares the pod template of a workload (or a Pod) with accepted source, container by container: an added init container is {Kind: InitContainer, Added: true}, never an image change of an app container.
+- `type ContainerChange struct{Kind ContainerKind; Name string; Added bool; Removed bool; Fields []string}`: is one pod-template container that differs from accepted source, matched by kind and name.
+- `func (d SourceDiff) Field(path string) (FieldValues, error)`: compares one dotted field path, such as "spec.replicas" or "spec.template.spec.nodeSelector", on both sides.
+- `func (f FieldValues) Differs() bool`: is true only for a field accepted source declares whose live value differs or is gone.
 - `type SetField struct{Ref sdk.ObjectRef; Path string; Value Value; Reason string; DocumentFormat string; DocumentPath []string}`: writes one schema-checked field (or one ConfigMap JSON/YAML entry) from a Value: accepted source, an observation or a declared parameter.
 - `func ValidateSetField(f SetField) error`: checks a dotted vocabulary path or a JSON pointer on a named nonsecret object.
 - `type ReconcileFromSource struct{ Ref sdk.ObjectRef }`: restores a whole source-owned object to accepted source, removing additions SourceDiff reports; prefer SetField for one field.

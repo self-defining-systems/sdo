@@ -119,14 +119,20 @@ class CheckMemoryReply:
             disagreements = (
                 _replay_disagreements(result.stdout, set(ids) if decision else None) if replay_mode() == "on" else []
             )
+            text_matches = _diff_text_matches(result.stdout)
             if disagreements:
                 step = (
                     f"passed; replay disagrees for {'; '.join(disagreements)}. Each program should Match its fault "
                     "capture and NoMatch healthy: decide from what the capture holds (snapshot objects, pod_admission, "
                     f"reads listed by recordings_index) and check again; after two refinements return {returned}."
                 )
+            elif text_matches:
+                step = (
+                    f"passed; {', '.join(text_matches)} decide on diff.Text, which matches any container. Compare "
+                    f"typed fields (diff.ContainerChanges, diff.Field) and check again; after one rewrite return {returned}."
+                )
             else:
-                step = f"passed: return {returned} now. coverage_gaps are information, not work."
+                step = f"passed: return {returned} now. Other coverage_gaps are information, not work."
         elif result.timed_out:
             step = "timed out: check again once."
         else:
@@ -134,6 +140,19 @@ class CheckMemoryReply:
             if replay_mode() == "on":
                 step += " Replay is judged once the check passes."
         return cls(step, result.exit_code, result.timed_out, result.stdout, result.stderr)
+
+
+def _diff_text_matches(stdout: str) -> list[str]:
+    """Program lines memory check notes for deciding on a diff's whole-document Text."""
+    try:
+        gaps = json.loads(stdout).get("coverage_gaps") or []
+    except (ValueError, AttributeError):
+        return []
+    return [
+        f"{gap.get('path')}:{gap.get('line')}"
+        for gap in gaps
+        if isinstance(gap, dict) and gap.get("rule") == "program.diff-text-match"
+    ]
 
 
 def _replay_disagreements(stdout: str, own: set[str] | None) -> list[str]:

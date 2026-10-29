@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -350,5 +351,35 @@ func TestSourceComparisonCapturedLegacyRevisionRecord(t *testing.T) {
 	live.SetAnnotations(annotations)
 	if diff := noiseDiff(t, source, live, nil); diff.Changed {
 		t.Fatalf("legacy capture revision noise: %+v", diff)
+	}
+}
+
+// Producer to consumer: the runtime's source comparison parses into typed
+// container changes, so an added init container (p024) is never app image drift,
+// while a real app image change is named by kind, container and field.
+func TestSourceComparisonParsesIntoTypedContainerChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*unstructured.Unstructured)
+		want   []sdk.ContainerChange
+	}{
+		{"added init container", func(o *unstructured.Unstructured) {
+			_ = unstructured.SetNestedSlice(o.Object, []any{map[string]any{"name": "block", "image": "busybox", "command": []any{"sleep", "infinity"}}}, "spec", "template", "spec", "initContainers")
+		}, []sdk.ContainerChange{{Kind: sdk.InitContainer, Name: "block", Added: true}}},
+		{"app image", func(o *unstructured.Unstructured) { noiseContainer(o)["image"] = "search:broken" }, []sdk.ContainerChange{{Kind: sdk.AppContainer, Name: noiseContainer(noiseSource())["name"].(string), Fields: []string{"image"}}}},
+		{"server default", func(o *unstructured.Unstructured) { noiseContainer(o)["imagePullPolicy"] = "IfNotPresent" }, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := noiseSource()
+			live := source.DeepCopy()
+			if err := RecordAcceptance(live, source); err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(live)
+			changes, err := noiseDiff(t, source, live, nil).ContainerChanges()
+			if err != nil || !reflect.DeepEqual(changes, tc.want) {
+				t.Fatalf("changes = %+v %v, want %+v", changes, err, tc.want)
+			}
+		})
 	}
 }

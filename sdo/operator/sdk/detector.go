@@ -236,8 +236,11 @@ type SourceDiff struct {
 	// that existed at acceptance. When declared fields agree but the object
 	// has no acceptance record for this source, the diff is an error, not
 	// unchanged. ReconcileFromSource removes the additions it reports.
-	Changed bool   `json:"changed"`
-	Text    string `json:"text,omitempty"`
+	Changed bool `json:"changed"`
+	// Text is human-readable evidence for a verdict or finding. Never match
+	// on it: a substring of a whole document cannot tell which field or
+	// container changed. Compare fields with Field and ContainerChanges.
+	Text string `json:"text,omitempty"`
 }
 
 // PresentButNotInSource is true while the object exists live but not in accepted source.
