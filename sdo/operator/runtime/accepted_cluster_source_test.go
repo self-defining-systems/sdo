@@ -163,7 +163,11 @@ func assertClusterSourceStatusVerify(t *testing.T, ref sdk.ObjectRef, view LiveR
 	finding := unexplainedFinding()
 	finding.PrimaryResource = ref
 	finding.Metadata = map[string]any{"drift_event": sdk.DriftEvent{Ref: ref, Classification: sdk.DriftUnexplained, Fields: []sdk.DriftField{{Path: "rules"}}}}
-	loop := NewResponderLoop(IncidentRequest{IncidentID: "cluster-source-parity", Namespace: "app", SourceCommit: view.SourceCommit, Findings: []sdk.Finding{finding}}, nil, staticProvider{snapshot: view.DetectionContext}, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, PlanExecutor{Source: view.Source}, 1)
+	request := goldenRequest(t)
+	request.IncidentID, request.Namespace, request.SourceCommit = "cluster-source-parity", "app", view.SourceCommit
+	request.Findings = []sdk.Finding{finding}
+	request.ResponseDeadline = time.Now().UTC().Add(time.Minute)
+	loop := NewResponderLoop(request, nil, staticProvider{snapshot: view.DetectionContext}, []sdk.Detector{inventoryHealth()}, PlanExecutor{Source: view.Source}, 1)
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 		copy := view
 		copy.DetectionContext = snapshot
@@ -171,13 +175,16 @@ func assertClusterSourceStatusVerify(t *testing.T, ref sdk.ObjectRef, view LiveR
 	}
 	ctx := context.Background()
 	now := time.Now().UTC()
-	controller, err := NewController(testControllerConfig(), loop.Detectors, loop.Provider, &verificationRetryDispatcher{}, now)
+	controller, err := NewController(testControllerConfig(), loop.Detectors, loop.Provider, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	controller.ConfigureDrift(DriftControllerConfig{View: loop.ReadView})
+	bindRecoveryFixture(controller, loop, now)
 	controller.currentIncidentRequest = &loop.Request
 	controller.incidentOpen = true
+	completed := completedResult(request.IncidentID)
+	controller.currentIncidentResult = &completed
 	controller.responderDone = true
 	controller.responderCompletedAt = now
 	loop.VerifyClosure = func(ctx context.Context) ToolResponse {
