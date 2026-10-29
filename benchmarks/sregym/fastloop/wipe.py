@@ -276,11 +276,14 @@ def wipe_environment(
 ) -> Tier1Receipt:
     """Tier 1 for one fastloop lane: its SDO control namespace, harness leftovers, seed and controller registry."""
     from benchmarks.sregym.adapter import allowed_namespaces, control_namespace_for
+    from benchmarks.sregym.fastloop.evidence_queue import settle_lane_exports
     from benchmarks.sregym.fastloop.parallel_memory import memory_head
     from benchmarks.sregym.fastloop.reset_provenance import publish_reset_generation
 
     if provenance_path is not None and provenance_path.exists():
         raise WipeError("eval: reset generation already published; refusing to reset an existing attempt")
+    # Deleting the control namespace deletes the PVC holding sealed evidence archives.
+    settle_lane_exports(environment)
     before = memory_head(environment.workspace) if provenance_path is not None else None
     control = control_namespace_for(environment.namespace)
     receipt = run_tier1(

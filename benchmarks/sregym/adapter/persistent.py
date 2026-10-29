@@ -359,6 +359,16 @@ class ClusterOps(Protocol):
     def export_controller_logs(self, control_namespace: str, artifacts_dir: Path) -> None: ...
 
 
+class IncidentEvidenceExport(Protocol):
+    """Takes durable ownership of a drained incident's runtime evidence at its closure boundary.
+
+    ``export`` returns the receipt's ``runtime_artifacts`` record. It must capture only
+    what exists at the boundary; delivery of that capture may complete later.
+    """
+
+    def export(self, config: RuntimeConfig, incident_id: str, receipt_dir: Path) -> dict[str, Any]: ...
+
+
 class KubectlClusterOps:
     """Production implementation over kubectl and the SDO controller installer."""
 
@@ -1521,8 +1531,12 @@ def drain_pending_incident(
     repository: Path,
     drained_by: str,
     clock: Clock | None = None,
+    evidence: IncidentEvidenceExport | None = None,
 ) -> ReceiptDrainResult:
     """Wait for a verified incident's reflection and rollout, then write its strict receipt.
+
+    Without ``evidence`` the runtime artifacts are exported synchronously; with it, the
+    incident's evidence is sealed at this boundary and its delivery is owned by ``evidence``.
 
     ``repository`` receives the controller's operational repository, which is
     the source of truth across problems. Every drain of an incident waits only until the
@@ -1562,11 +1576,18 @@ def drain_pending_incident(
     del drained_state
     # The stage-end export ran before reflection; re-export so the reflection rollout,
     # usage and checkpoints are complete. The Go export overwrites files in place.
-    runtime_artifacts = ops.export_runtime_artifacts(config, pending.receipt_dir)
+    runtime_artifacts = (
+        evidence.export(config, pending.incident_id, pending.receipt_dir)
+        if evidence is not None
+        else ops.export_runtime_artifacts(config, pending.receipt_dir)
+    )
+    phases["runtime_artifacts"] = clock.monotonic() - started - phases["wait_for_ack"]
     receipt: dict[str, Any] = {}
     try:
         receipt = _collect_settled_receipt(ops, config, pending.incident_id, pending.receipt_dir, clock)
-        phases["collect_settled_receipt"] = clock.monotonic() - started - phases["wait_for_ack"]
+        phases["collect_settled_receipt"] = (
+            clock.monotonic() - started - phases["wait_for_ack"] - phases["runtime_artifacts"]
+        )
         phase_timestamps["receipt_collected"] = clock.now().isoformat()
         # The reflection-drain cost includes the wait for close-out to settle; neither
         # is resolution time (both are excluded below).

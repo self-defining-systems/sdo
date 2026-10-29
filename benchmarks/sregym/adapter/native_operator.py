@@ -530,6 +530,99 @@ def export_runtime_artifacts(config: NativeInstallConfig, output_dir: Path) -> P
     return expected
 
 
+@dataclass(frozen=True)
+class RuntimeEvidenceTarget:
+    """Where one lane's sealed runtime evidence lives; contains no credential."""
+
+    control_namespace: str
+    repository_pvc: str
+    controller_image: str
+    kubeconfig: Path | None = None
+
+    def __post_init__(self) -> None:
+        if not self.control_namespace or not self.repository_pvc or not self.controller_image:
+            raise ValueError("runtime evidence target requires namespace, PVC and controller image")
+        if self.kubeconfig is not None and not self.kubeconfig.is_absolute():
+            raise ValueError("runtime evidence kubeconfig must be absolute")
+
+    @classmethod
+    def of(cls, config: NativeInstallConfig) -> RuntimeEvidenceTarget:
+        return cls(config.control_namespace, config.repository_pvc, config.controller_image, config.kubeconfig)
+
+    def args(self) -> list[str]:
+        args = [
+            "--control-namespace",
+            self.control_namespace,
+            "--repository-pvc",
+            self.repository_pvc,
+            "--controller-image",
+            self.controller_image,
+        ]
+        if self.kubeconfig is not None:
+            args.extend(("--kubeconfig", str(self.kubeconfig)))
+        return args
+
+
+@dataclass(frozen=True)
+class RuntimeSnapshot:
+    """One immutable archive of the whitelisted runtime evidence sealed at an incident boundary."""
+
+    snapshot_id: str
+    sha256: str
+    bytes: int
+    created: bool
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", self.snapshot_id):
+            raise ValueError("runtime snapshot ID is not a lowercase DNS label")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.sha256):
+            raise ValueError("runtime snapshot digest must be SHA-256 hex")
+        if self.bytes < 0:
+            raise ValueError("runtime snapshot size must be non-negative")
+
+
+def snapshot_runtime_artifacts(target: RuntimeEvidenceTarget, snapshot_id: str) -> RuntimeSnapshot:
+    """Seal the current evidence; a repeated ID returns the sealed archive, never a recapture."""
+
+    args = [*target.args(), "--mode", "snapshot", "--snapshot-id", snapshot_id]
+    value = _run("runtime-artifacts", args, timeout=int(wait_for(WaitKind.OPERATION)))
+    try:
+        snapshot = RuntimeSnapshot(
+            snapshot_id=str(value["snapshot_id"]),
+            sha256=str(value["sha256"]),
+            bytes=int(value.get("bytes", 0)),
+            created=bool(value.get("created", False)),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise NativeOperatorError(f"Go runtime snapshot returned an invalid report: {exc}") from exc
+    if snapshot.snapshot_id != snapshot_id:
+        raise NativeOperatorError("Go runtime snapshot returned a different snapshot")
+    return snapshot
+
+
+def deliver_runtime_snapshot(target: RuntimeEvidenceTarget, snapshot: RuntimeSnapshot, output_dir: Path) -> Path:
+    """Copy exactly one sealed archive into ``output_dir/sdo_runtime`` after verifying its digest."""
+
+    if not output_dir.is_absolute():
+        raise ValueError("runtime artifact output directory must be absolute")
+    args = [
+        *target.args(),
+        "--mode",
+        "deliver",
+        "--snapshot-id",
+        snapshot.snapshot_id,
+        "--sha256",
+        snapshot.sha256,
+        "--output-dir",
+        str(output_dir),
+    ]
+    value = _run("runtime-artifacts", args, timeout=int(wait_for(WaitKind.OPERATION)))
+    expected = output_dir / "sdo_runtime"
+    if value.get("directory") != str(expected) or value.get("sha256") != snapshot.sha256:
+        raise NativeOperatorError("Go runtime snapshot delivery returned an unexpected result")
+    return expected
+
+
 def _record_launch(config: NativeInstallConfig) -> None:
     from benchmarks.sregym.adapter.persistent import record_cleanup_target
 

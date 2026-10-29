@@ -39,6 +39,13 @@ from benchmarks.sregym.adapter import (
     run_persistent_stage,
     wait_for,
 )
+from benchmarks.sregym.fastloop.evidence_queue import (
+    EvidenceExportQueue,
+    ExportJob,
+    QueuedEvidenceExport,
+    snapshot_id_for,
+    stash_checkpoint_inputs,
+)
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout, ResolutionGradePoint
 from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, RecoveryTrigger, TokenCounts
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
@@ -262,8 +269,11 @@ class SdoPersistentAgent:
         run_lifecycle: Callable[[DeployedLifecycleContext], bool],
         clock: Clock | None = None,
         keep_running: bool = False,
+        evidence_queue: EvidenceExportQueue | None = None,
     ) -> None:
         self._keep_running = keep_running
+        # With a lane queue, the drain seals evidence and delivery leaves the critical path.
+        self._evidence_queue = evidence_queue
         self._on_verified: Callable[[ResolutionGradePoint], None] | None = None
         self._settings = settings
         self._ops = ops
@@ -421,6 +431,7 @@ class SdoPersistentAgent:
         started = self._clock.monotonic()
         reflection_observed_at = self._clock.now()
         error: str | None = None
+        receipt_dir = Path(str(outcome.artifacts_dir))
         try:
             drained = drain_pending_incident(
                 record,
@@ -428,12 +439,16 @@ class SdoPersistentAgent:
                 repository=settings.repository,
                 drained_by=f"fastloop-learn-{outcome.incident_id}",
                 clock=self._clock,
+                evidence=self._queued_evidence(receipt_dir),
             )
             if drained.HasField("failure"):
                 error = f"strict receipt rejected: {drained.failure.message}"
         finally:
-            if settings.kubeconfig:
-                receipt_dir = Path(str(outcome.artifacts_dir))
+            queued = self._evidence_queue is not None and (
+                self._evidence_queue.job(snapshot_id_for(outcome.incident_id)) is not None
+            )
+            # A queued export owns the post-reflection evidence and its checkpoint.
+            if settings.kubeconfig and not queued:
                 index = int(receipt_dir.name.split("_", 1)[0])
                 try:
                     if not self._has_post_reflection_export(receipt_dir, outcome.incident_id):
@@ -508,6 +523,24 @@ class SdoPersistentAgent:
             **program_metrics,
             error=error,
         )
+
+    def _queued_evidence(self, receipt_dir: Path) -> QueuedEvidenceExport | None:
+        queue = self._evidence_queue
+        if queue is None:
+            return None
+        index = int(receipt_dir.name.split("_", 1)[0])
+        from benchmarks.sregym.adapter import snapshot_runtime_artifacts
+
+        def before_submit(job: ExportJob) -> ExportJob:
+            if not self._settings.checkpoint_enabled or not self._settings.kubeconfig:
+                return job
+            try:
+                return stash_checkpoint_inputs(queue.directory, job, index, self._worker_configmaps())
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                self._unrecorded_checkpoint(index, exc)
+                return job
+
+        return QueuedEvidenceExport(queue, snapshot_runtime_artifacts, before_submit=before_submit)
 
     def _has_post_reflection_export(self, receipt_dir: Path, incident_id: str) -> bool:
         """The native drain owns the completed post-reflection export.
@@ -611,26 +644,29 @@ class SdoPersistentAgent:
     def _checkpoint(self, index: int, incident_id: str, receipt_dir: Path) -> None:
         if not self._settings.checkpoint_enabled or not self._settings.kubeconfig:
             return
-        from benchmarks.sregym.adapter import kubectl
-
-        control = self._settings.runtime_config.controller_namespace
         store = CheckpointStore(self._settings.results_dir)
         try:
-            response = kubectl(
-                ["get", "configmaps", "-o", "json"],
-                namespace=control,
-                kubeconfig=Path(self._settings.kubeconfig),
-            )
-            document = json.loads(response.stdout)
-            if not isinstance(document, dict):
-                raise ValueError("worker ConfigMap listing must be a JSON object")
-            items = document.get("items")
-            if not isinstance(items, list):
-                raise RuntimeError("worker ConfigMap listing omitted items")
-            capture_checkpoints(store, index, incident_id, receipt_dir, items)
+            capture_checkpoints(store, index, incident_id, receipt_dir, self._worker_configmaps())
             store.clear_unrecorded(index)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
             self._unrecorded_checkpoint(index, exc)
+
+    def _worker_configmaps(self) -> list[dict[str, Any]]:
+        from benchmarks.sregym.adapter import kubectl
+
+        assert self._settings.kubeconfig is not None
+        response = kubectl(
+            ["get", "configmaps", "-o", "json"],
+            namespace=self._settings.runtime_config.controller_namespace,
+            kubeconfig=Path(self._settings.kubeconfig),
+        )
+        document = json.loads(response.stdout)
+        if not isinstance(document, dict):
+            raise ValueError("worker ConfigMap listing must be a JSON object")
+        items = document.get("items")
+        if not isinstance(items, list):
+            raise RuntimeError("worker ConfigMap listing omitted items")
+        return items
 
     def _unrecorded_checkpoint(self, index: int, error: Exception) -> None:
         reason = f"{type(error).__name__}: {error}"

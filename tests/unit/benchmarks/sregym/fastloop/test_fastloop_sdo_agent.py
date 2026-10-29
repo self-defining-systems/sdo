@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1017,3 +1018,51 @@ def test_learning_reuses_complete_post_reflection_export_from_real_drain(tmp_pat
     assert ops.exports - before == (1 if export_status == "complete" else 2)
     assert learned.incident_id == resolved.incident_id
     assert (Path(str(learned.artifacts_dir)) / "sdo_runtime/synthetic-evidence.json").is_file()
+
+
+def test_learning_with_a_lane_queue_seals_evidence_and_delivers_off_the_critical_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import benchmarks.sregym.adapter as adapter
+    from benchmarks.sregym.adapter import RuntimeSnapshot
+    from benchmarks.sregym.fastloop.evidence_queue import EvidenceExportQueue, ExportState, snapshot_id_for
+
+    class SealingOps(FakeOps):
+        def export_runtime_artifacts(self, config: Any, artifacts_dir: Path) -> dict[str, str | None]:
+            self.exports = getattr(self, "exports", 0) + 1
+            return super().export_runtime_artifacts(config, artifacts_dir)
+
+    sealed: list[str] = []
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "kubeconfig"))
+    monkeypatch.setattr(
+        adapter,
+        "snapshot_runtime_artifacts",
+        lambda _target, snapshot_id: sealed.append(snapshot_id) or RuntimeSnapshot(snapshot_id, "a" * 64, 1, True),
+    )
+    release = threading.Event()
+    delivered: list[str] = []
+
+    def deliver(job: Any) -> None:
+        release.wait(10)
+        delivered.append(job.snapshot_id)
+
+    queue = EvidenceExportQueue(tmp_path / "lane-queue", deliver, retry_seconds=0)
+    ops = SealingOps()
+    agent = _agent(tmp_path, ops, [])
+    agent._evidence_queue = queue
+    agent._settings = replace(agent._settings, kubeconfig="synthetic-kubeconfig", checkpoint_enabled=False)
+    resolved = agent.resolve(0, "p", _inject)
+    stage_end_exports = ops.exports
+    learned = agent.learn(resolved)
+    # Learning returned while delivery was still held: export is off the critical path.
+    assert delivered == [] and ops.exports == stage_end_exports
+    snapshot_id = snapshot_id_for(resolved.incident_id)
+    assert sealed == [snapshot_id]
+    job = queue.job(snapshot_id)
+    assert job is not None and job.state is ExportState.QUEUED
+    receipt = agent._receipt(Path(str(learned.artifacts_dir)))
+    assert receipt["reflection_drain"]["runtime_artifacts"]["delivery"] == "queued"
+    assert PersistentState.load(agent._settings.state_path).controllers[agent._settings.namespace].pending is None
+    release.set()
+    assert queue.drain(10) == [] and delivered == [snapshot_id]
+    queue.close(drain=False)

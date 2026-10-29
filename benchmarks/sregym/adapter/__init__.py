@@ -55,12 +55,16 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.native_operator import (
         MEMORY_MIRROR_MARKER,
         NativeInstallConfig,
+        RuntimeEvidenceTarget,
+        RuntimeSnapshot,
         assert_shared_repository,
+        deliver_runtime_snapshot,
         execute_operator,
         inspect_existing,
         install_existing,
         refresh_memory_mirror,
         reset_control_state,
+        snapshot_runtime_artifacts,
         stop_runtime,
         sync_existing,
     )
@@ -77,6 +81,7 @@ if TYPE_CHECKING:
         DetectionMissError,
         FollowupClosureTimeout,
         FollowupClosureWait,
+        IncidentEvidenceExport,
         KubectlClusterOps,
         PersistentControllerError,
         PersistentState,
@@ -112,6 +117,11 @@ _EXPORTS: dict[str, str] = {
     "assert_image_entrypoints": "image_entrypoints",
     "image_entrypoint_script": "image_entrypoints",
     "NativeInstallConfig": "native_operator",
+    "RuntimeEvidenceTarget": "native_operator",
+    "RuntimeSnapshot": "native_operator",
+    "deliver_runtime_snapshot": "native_operator",
+    "snapshot_runtime_artifacts": "native_operator",
+    "IncidentEvidenceExport": "persistent",
     "ImageRetentionError": "image_retention",
     "retain_lane_images": "image_retention",
     "Deadline": "budgets",
@@ -195,6 +205,11 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "IncidentEvidenceExport",
+    "RuntimeEvidenceTarget",
+    "RuntimeSnapshot",
+    "deliver_runtime_snapshot",
+    "snapshot_runtime_artifacts",
     "run_context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS",
     "assert_image_entrypoints",

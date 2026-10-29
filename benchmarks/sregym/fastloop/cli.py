@@ -64,6 +64,7 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.adapter import ClusterOps, RuntimeConfig
     from benchmarks.sregym.fastloop.composite import CompositeSettings
+    from benchmarks.sregym.fastloop.evidence_queue import EvidenceExportQueue
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
     from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent
     from benchmarks.sregym.fastloop.wipe import Tier1Receipt, Tier2Reason
@@ -606,6 +607,7 @@ def _sdo_agent(
     composite: bool = False,
     stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
     worker: SregymWorker | None = None,
+    evidence_queue: EvidenceExportQueue | None = None,
 ) -> IncidentAgent:
     from benchmarks.sregym.adapter import (
         control_namespace_for,
@@ -696,7 +698,7 @@ def _sdo_agent(
             composite=_composite_settings(args),
             stream_faults=stream_faults,
         )
-    return SdoPersistentAgent(settings, **agent_arguments)
+    return SdoPersistentAgent(settings, **agent_arguments, evidence_queue=evidence_queue)
 
 
 def _wipes_at_row_start(args: argparse.Namespace, environment: FastloopEnvironment) -> bool:
@@ -852,17 +854,27 @@ def deploy_with_setup_proof(
 def _run(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.warm_lane import own_lane
 
-    if args.sweep_service and (args.stream is None or args.agent != "sdo"):
+    if getattr(args, "sweep_service", None) and (args.stream is None or args.agent != "sdo"):
         raise SystemExit("--sweep-service requires an SDO --stream run")
     # A full-reset caller must obey the same ownership as a warm caller; otherwise
     # it could wipe the controller while the warm transaction proves continuity.
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     limits = HostLimits.from_env(environment.worker_env)
     with own_lane(limits.directory, environment.cluster):
-        return _run_owned(args)
+        if not getattr(args, "warm_lane", False):
+            return _run_owned(args)
+        from benchmarks.sregym.fastloop.evidence_queue import lane_queue
+
+        # The warm lane keeps its PVC across rows, so evidence delivery may outlive
+        # the row: the earlier row's archive resumes here, beside this row's setup.
+        queue = lane_queue(environment)
+        try:
+            return _run_owned(args, evidence_queue=queue)
+        finally:
+            queue.close(drain=False, timeout=wait_for(WaitKind.OPERATION))
 
 
-def _run_owned(args: argparse.Namespace) -> int:
+def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue | None = None) -> int:
     run_started = time.monotonic()
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     if environment.shared_accepted_id:
@@ -939,6 +951,8 @@ def _run_owned(args: argparse.Namespace) -> int:
 
         def full_reset() -> None:
             nonlocal tier1
+            if evidence_queue is not None:
+                evidence_queue.drain()
             tier1 = _wipe_sdo_and_harness(_warm_reset_args(args, environment), environment)
 
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)
@@ -1113,6 +1127,7 @@ def _run_owned(args: argparse.Namespace) -> int:
                     composite=registered_composites,
                     stream_faults=faults_by_incident,
                     worker=worker,
+                    evidence_queue=evidence_queue,
                 ),
                 driver,
                 config,
@@ -1338,10 +1353,13 @@ def _summary(args: argparse.Namespace) -> int:
 
 def _down(args: argparse.Namespace) -> int:
     from benchmarks.sregym.adapter import KubectlClusterOps, teardown
+    from benchmarks.sregym.fastloop.evidence_queue import settle_lane_exports
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
+    failed_exports = settle_lane_exports(environment)
     errors = teardown(environment.state_path, ops=KubectlClusterOps()) if environment.state_path.exists() else []
+    errors.extend(f"evidence export for {job.incident_id} failed: {job.error}" for job in failed_exports)
     for error in errors:
         logger.error("persistent controller teardown: %s", error)
     if args.delete_cluster:
