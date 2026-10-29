@@ -211,6 +211,10 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	c.mu.Lock()
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID {
 		c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
+		// Receipts, their diagnoses and finding coverage form one snapshot.
+		// Publishing only the report loses the proof required by reflection.
+		c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
+		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
 	}
 	c.mu.Unlock()
 	loop.noteStages(notes)

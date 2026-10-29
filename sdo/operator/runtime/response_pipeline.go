@@ -140,6 +140,10 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == request.IncidentID {
 		// The result below is built from these reports, so a playbook a later
 		// pass applied reaches AppliedPlaybooks and the root causes.
+		if stagePassProgressed(deterministicStageReport(state.PriorStages), deterministicStageReport(c.currentIncidentRequest.PriorStages)) {
+			state.Coverage = cloneCoverage(c.currentIncidentRequest.PlaybookCoverage)
+			state.Request.InitialProgramRuns = append([]ProgramRun(nil), c.currentIncidentRequest.InitialProgramRuns...)
+		}
 		state.PriorStages = mergeLaterStagePasses(state.PriorStages, c.currentIncidentRequest.PriorStages)
 		c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
 		// Findings that joined the incident mid-way are the ones those passes
