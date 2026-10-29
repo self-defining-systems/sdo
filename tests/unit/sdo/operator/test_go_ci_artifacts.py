@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[4]
 
 
-@pytest.mark.parametrize("mode", ["normal", "race"])
+@pytest.mark.parametrize("mode", ["normal", "python"])
 def test_prepared_artifact_round_trip_without_base_cache(tmp_path: Path, mode: str) -> None:
     source = tmp_path / "repo"
     (source / "scripts").mkdir(parents=True)
@@ -34,8 +34,11 @@ def test_prepared_artifact_round_trip_without_base_cache(tmp_path: Path, mode: s
     shutil.rmtree(modules)
     shutil.rmtree(tools)
     subprocess.run([*command, "unpack", mode, str(artifact)], env=env, check=True)
-    assert (cache / "compiled-a").read_text() == "compiler archive"
     if mode == "normal":
+        assert (cache / "compiled-a").read_text() == "compiler archive"
+    else:
+        assert not cache.exists()
+    if mode in {"normal", "python"}:
         assert (modules / "module.zip").read_text() == "module archive"
         assert executable.read_text() == "executable"
         assert executable.stat().st_mode & 0o777 == 0o755
