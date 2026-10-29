@@ -850,14 +850,14 @@ def deploy_with_setup_proof(
 
 
 def _run(args: argparse.Namespace) -> int:
-    if getattr(args, "warm_lane", False):
-        from benchmarks.sregym.fastloop.warm_lane import own_lane
+    from benchmarks.sregym.fastloop.warm_lane import own_lane
 
-        environment = FastloopEnvironment.load(args.run_dir.resolve())
-        limits = HostLimits.from_env(environment.worker_env)
-        with own_lane(limits.directory, environment.cluster):
-            return _run_owned(args)
-    return _run_owned(args)
+    # A full-reset caller must obey the same ownership as a warm caller; otherwise
+    # it could wipe the controller while the warm transaction proves continuity.
+    environment = FastloopEnvironment.load(args.run_dir.resolve())
+    limits = HostLimits.from_env(environment.worker_env)
+    with own_lane(limits.directory, environment.cluster):
+        return _run_owned(args)
 
 
 def _run_owned(args: argparse.Namespace) -> int:

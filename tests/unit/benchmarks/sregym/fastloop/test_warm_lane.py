@@ -275,3 +275,29 @@ def test_warm_fallback_keeps_current_accepted_memory_unless_revision_is_explicit
     options = cli._warm_reset_args(Namespace(planned_commit=seed), env)
     reseed_workspace(env.workspace, options.planned_commit)
     assert not memory.exists()
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_every_run_obeys_the_same_lane_owner(tmp_path: Path, monkeypatch, warm: bool) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import cli
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.warm_lane import WarmLaneBusy, own_lane
+
+    locks = tmp_path / "locks"
+    env = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="synthetic-lane",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="app",
+        application="synthetic",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+        worker_env={"FASTLOOP_HOST_LOCK_DIR": str(locks)},
+    )
+    env.save()
+    monkeypatch.setattr(cli, "_run_owned", lambda _args: pytest.fail("competing caller mutated an owned lane"))
+    with own_lane(locks, env.cluster), pytest.raises(WarmLaneBusy):
+        cli._run(SimpleNamespace(run_dir=tmp_path, warm_lane=warm))
