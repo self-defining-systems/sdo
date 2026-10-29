@@ -59,6 +59,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.adapter"
 depends_on = [
+    "benchmarks.sregym.repository_git",
     "libs.agent_cli",
     "sdo.agents.health_judge",
     "benchmarks.sregym.protocol",
@@ -69,6 +70,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.fastloop"
 depends_on = [
+    "benchmarks.sregym.repository_git",
     "libs.agent_cli",
     "benchmarks.sregym.faults",
     "benchmarks.sregym.adapter",
@@ -80,6 +82,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.skilleval"
 depends_on = [
+    "benchmarks.sregym.repository_git",
     "libs.agent_cli",
     "sdo.agents.responder",
 ]
@@ -87,6 +90,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.assurance"
 depends_on = [
+    "benchmarks.sregym.repository_git",
     "benchmarks.sregym.adapter",
     "benchmarks.sregym.fastloop",
     "benchmarks.sregym.protocol",
@@ -112,3 +116,7 @@ path = "benchmarks.sregym.run"
 depends_on = [
     "benchmarks.sregym.runner",
 ]
+
+[[modules]]
+path = "benchmarks.sregym.repository_git"
+depends_on = []

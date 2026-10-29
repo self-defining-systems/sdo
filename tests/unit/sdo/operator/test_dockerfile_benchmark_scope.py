@@ -52,6 +52,7 @@ SCRIPTED_REPLAY_FILES = {
 SCRIPTED_PACKAGE_FILES = {
     "benchmarks/__init__.py",
     "benchmarks/sregym/__init__.py",
+    "benchmarks/sregym/repository_git.py",
     "benchmarks/sregym/adapter/__init__.py",
 }
 SCRIPTED_PROGRAM_FILES = {

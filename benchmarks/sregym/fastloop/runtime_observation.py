@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Literal, TypeVar
 from urllib.parse import quote
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -243,12 +244,12 @@ class KubectlObservationTransport:
         harness = root / "third_party/sregym"
         apps = harness / "SREGym-applications"
         for directory in (harness, apps):
-            actual = self._read(["git", "-C", str(directory), "rev-parse", "--show-toplevel"])
+            actual = self._read(host_git_command(directory, "rev-parse", "--show-toplevel"))
             if Path(actual.strip()).resolve() != directory.resolve():
                 raise ObservationUnavailable("pinned application source is not initialized")
 
         def gitlink(directory: Path, revision: str, path: str) -> str:
-            raw = self._read(["git", "-C", str(directory), "ls-tree", revision, "--", path])
+            raw = self._read(host_git_command(directory, "ls-tree", revision, "--", path))
             fields = raw.strip().split()
             if (
                 len(fields) != 4
@@ -262,7 +263,7 @@ class KubectlObservationTransport:
         harness_pin = gitlink(root, "HEAD", "third_party/sregym")
         app_pin = gitlink(harness, harness_pin, "SREGym-applications")
         service = {"mongodb-geo": "geo", "mongodb-rate": "rate"}[component]
-        return self._read(["git", "-C", str(apps), "show", f"{app_pin}:hotelReservation/cmd/{service}/db.go"])
+        return self._read(host_git_command(apps, "show", f"{app_pin}:hotelReservation/cmd/{service}/db.go"))
 
     def __call__(self, request: ReadOnlyObservation) -> str:
         stdin = None

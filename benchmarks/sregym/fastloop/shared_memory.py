@@ -16,11 +16,14 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
+
+from pydantic import BaseModel
 
 from benchmarks.sregym.adapter import WaitKind, control_namespace_for, kubectl, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.parallel_memory import memory_ancestry, memory_head
+from benchmarks.sregym.repository_git import host_clone_command, host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -157,7 +160,7 @@ def lane_match(environment: FastloopEnvironment, volume_path: str, accepted: Pat
     """
     history = [
         line.split()
-        for line in _command("git", "-C", str(accepted), "log", "--first-parent", "--format=%H %T", head).splitlines()
+        for line in _command(*host_git_command(accepted, "log", "--first-parent", "--format=%H %T", head)).splitlines()
     ]
     observed = _command(*lane_git_command(environment, volume_path, accepted, "rev-parse", "HEAD^{tree}"))
     for commit, tree in history:
@@ -166,7 +169,7 @@ def lane_match(environment: FastloopEnvironment, volume_path: str, accepted: Pat
     lane = _tree_entries(_command(*lane_git_command(environment, volume_path, accepted, "ls-tree", "-r", "HEAD")))
     closest: list[str] | None = None
     for commit, _tree in history:
-        entries = _tree_entries(_command("git", "-C", str(accepted), "ls-tree", "-r", commit))
+        entries = _tree_entries(_command(*host_git_command(accepted, "ls-tree", "-r", commit)))
         paths = sorted(path for path in lane.keys() | entries.keys() if lane.get(path) != entries.get(path))
         if closest is None or len(paths) < len(closest):
             closest = paths
@@ -284,6 +287,59 @@ class Attachment:
     matched: list[str] = field(default_factory=list)
 
 
+class AttachmentLaneRecord(BaseModel):
+    run_dir: Path
+    cluster: str
+    node: str
+    volume_path: str
+    application: str
+    matched_commit: str | None = None
+    original_job: dict[str, Any]
+
+
+class AttachmentJournal(BaseModel):
+    phase: Literal["preflight", "all-paused", "all-stopped", "all-bound", "attached"]
+    cohort: Literal["initial", "late"]
+    accepted_commit: str
+    accepted_repository: Path | None = None
+    shared_id: str = ""
+    lanes: list[AttachmentLaneRecord]
+
+
+def _ensure_shared_controller(item: Attachment) -> bool:
+    """Replay Job creation after a crash without replacing an already restarted writer."""
+    environment = item.environment
+    control = control_namespace_for(environment.namespace)
+    observed = kubectl(
+        ["get", "job", JOB_NAME, "--ignore-not-found=true", "-o", "json"],
+        namespace=control,
+        kubeconfig=environment.kubeconfig,
+    ).stdout.strip()
+    desired = shared_controller_job(item.job, item.application)
+    if observed:
+        current = json.loads(observed)
+
+        def contains(actual: Any, expected: Any) -> bool:
+            # Kubernetes defaults add fields; every saved field must still match.
+            if isinstance(expected, dict):
+                return isinstance(actual, dict) and all(
+                    key in actual and contains(actual[key], value) for key, value in expected.items()
+                )
+            if isinstance(expected, list):
+                return (
+                    isinstance(actual, list)
+                    and len(actual) == len(expected)
+                    and all(contains(left, right) for left, right in zip(actual, expected, strict=True))
+                )
+            return actual == expected
+
+        if not contains(current["spec"]["template"]["spec"], desired["spec"]["template"]["spec"]):
+            raise ValueError("eval: existing controller Job differs from the saved attachment")
+        return False
+    kubectl(["create", "-f", "-"], namespace=control, kubeconfig=environment.kubeconfig, input_text=json.dumps(desired))
+    return True
+
+
 def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
     """Pause the joining lanes, stop their writers, bind, then recreate their existing Jobs.
 
@@ -309,109 +365,174 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
     joining = {name: e for name, e in environments.items() if not e.shared_accepted_id}
     if any(e.shared_accepted_id and e.shared_accepted_id != live for e in environments.values()):
         raise ValueError("eval: partially attached lanes require explicit recovery from the attachment report")
-    if not joining:
+    saved = AttachmentJournal.model_validate_json(report.read_text()) if report.exists() else None
+    phases = ("preflight", "all-paused", "all-stopped", "all-bound", "attached")
+    recovering = saved is not None and (saved.phase != "attached" or not joining)
+    if not joining and not recovering:
         assert_lane_isolation(list(environments.values()))
         for environment in environments.values():
             assert_shared_lane(environment)
         return
-    # Running writers of a live memory may be mid-commit; only the first cohort needs a clean tree.
-    if not live and _command("git", "-C", str(accepted), "status", "--porcelain"):
-        raise ValueError("eval: accepted memory must be clean before attachment")
-    head = memory_head(accepted)
-    if len({e.cluster for e in environments.values()}) != len(environments):
-        raise ValueError("eval: each lane requires its own kind cluster")
-    attachments = []
-    for name, environment in joining.items():
-        if environment.parallel_root is None or environment.parallel_root.resolve() != root:
-            raise ValueError("eval: every lane must mount the same --parallel-root")
-        nodes = lane_nodes(environment)
-        path = repository_volume_path(environment)
-        control = control_namespace_for(environment.namespace)
-        pods = _json(environment, "get", "pods", "--selector", f"job-name={JOB_NAME}", "-o", "json", namespace=control)[
-            "items"
-        ]
-        owners = [pod["spec"]["nodeName"] for pod in pods if pod.get("status", {}).get("phase") == "Running"]
-        if len(owners) != 1 or owners[0] not in nodes:
-            raise ValueError("eval: repository requires one running controller on a kind node")
-        application = f"{environment.application}-{name}"[:30].rstrip("-") + "-" + uuid.uuid4().hex
-        job = _json(environment, "get", "job", JOB_NAME, "-o", "json", namespace=control)
-        shared_controller_job(job, application)
-        attachments.append(Attachment(environment, job, owners[0], path, application))
+    phase = "preflight"
+    cohort: Literal["late", "initial"] = "late" if live else "initial"
+    shared_id = live or uuid.uuid4().hex
+    if recovering:
+        assert saved is not None
+        phase = saved.phase
+        if phase not in phases:
+            raise ValueError(f"eval: unknown attachment phase {phase!r}")
+        if saved.accepted_repository is not None and saved.accepted_repository.resolve() != accepted:
+            raise ValueError("eval: attachment report belongs to another accepted repository")
+        cohort = saved.cohort
+        shared_id = saved.shared_id or live or shared_id
+        if live and live != shared_id:
+            raise ValueError("eval: attachment report belongs to another shared identity")
+        head = saved.accepted_commit
+        memory_ancestry(accepted, head, memory_head(accepted))
+        by_directory = {str(e.run_dir.resolve()): e for e in environments.values()}
+        attachments = []
+        for row in saved.lanes:
+            environment = by_directory.get(str(row.run_dir.resolve()))
+            if environment is None or environment.cluster != row.cluster:
+                raise ValueError("eval: attachment report lanes differ from the selected plan")
+            if row.node not in lane_nodes(environment) or repository_volume_path(environment) != row.volume_path:
+                raise ValueError("eval: attachment report mount differs from the selected lane")
+            attachments.append(
+                Attachment(
+                    environment,
+                    row.original_job,
+                    row.node,
+                    row.volume_path,
+                    row.application,
+                    [row.matched_commit] if row.matched_commit else [],
+                )
+            )
+        if not attachments or {e.cluster for e in joining.values()} - {a.environment.cluster for a in attachments}:
+            raise ValueError("eval: recover the saved attachment cohort before joining new lanes")
+    else:
+        # Running writers of a live memory may be mid-commit; only the first cohort needs a clean tree.
+        if not live and _command(*host_git_command(accepted, "status", "--porcelain")):
+            raise ValueError("eval: accepted memory must be clean before attachment")
+        head = memory_head(accepted)
+        if len({e.cluster for e in environments.values()}) != len(environments):
+            raise ValueError("eval: each lane requires its own kind cluster")
+        attachments = []
+        for name, environment in joining.items():
+            if environment.parallel_root is None or environment.parallel_root.resolve() != root:
+                raise ValueError("eval: every lane must mount the same --parallel-root")
+            nodes = lane_nodes(environment)
+            path = repository_volume_path(environment)
+            control = control_namespace_for(environment.namespace)
+            pods = _json(
+                environment, "get", "pods", "--selector", f"job-name={JOB_NAME}", "-o", "json", namespace=control
+            )["items"]
+            owners = [pod["spec"]["nodeName"] for pod in pods if pod.get("status", {}).get("phase") == "Running"]
+            if len(owners) != 1 or owners[0] not in nodes:
+                raise ValueError("eval: repository requires one running controller on a kind node")
+            application = f"{environment.application}-{name}"[:30].rstrip("-") + "-" + uuid.uuid4().hex
+            job = _json(environment, "get", "job", JOB_NAME, "-o", "json", namespace=control)
+            shared_controller_job(job, application)
+            attachments.append(Attachment(environment, job, owners[0], path, application))
     report.parent.mkdir(parents=True, exist_ok=True)
 
-    def save(phase: str) -> None:
-        report.write_text(
-            json.dumps(
-                {
-                    "phase": phase,
-                    "cohort": "late" if live else "initial",
-                    "accepted_commit": head,
-                    "lanes": [
-                        {
-                            "run_dir": str(a.environment.run_dir),
-                            "cluster": a.environment.cluster,
-                            "node": a.node,
-                            "volume_path": a.volume_path,
-                            "application": a.application,
-                            "matched_commit": a.matched[0] if a.matched else None,
-                            "original_job": a.job,
-                        }
-                        for a in attachments
+    def save(phase: Literal["preflight", "all-paused", "all-stopped", "all-bound", "attached"]) -> None:
+        journal = AttachmentJournal(
+            phase=phase,
+            cohort=cohort,
+            accepted_commit=head,
+            accepted_repository=accepted,
+            shared_id=shared_id,
+            lanes=[
+                AttachmentLaneRecord(
+                    run_dir=a.environment.run_dir,
+                    cluster=a.environment.cluster,
+                    node=a.node,
+                    volume_path=a.volume_path,
+                    application=a.application,
+                    matched_commit=a.matched[0] if a.matched else None,
+                    original_job=a.job,
+                )
+                for a in attachments
+            ],
+        )
+        temporary = report.with_name(report.name + ".tmp")
+        temporary.write_text(journal.model_dump_json(indent=2) + "\n")
+        os.replace(temporary, report)
+
+    if not recovering:
+        save("preflight")
+    if phases.index(phase) < phases.index("all-paused"):
+        # Acknowledged pause is idempotent, including a crash midway through the cohort.
+        for item in attachments:
+            with lane_environment(item.environment):
+                adapter.pause_for_recovery(
+                    adapter.KubectlClusterOps(), control_namespace_for(item.environment.namespace)
+                )
+
+        def compare(item: Attachment) -> None:
+            item.matched[:] = [lane_match(item.environment, item.volume_path, accepted, head)]
+
+        concurrently({item.environment.cluster: lambda item=item: compare(item) for item in attachments})
+        save("all-paused")
+    if phases.index(phase) < phases.index("all-stopped"):
+        concurrently(
+            {
+                item.environment.cluster: lambda item=item: kubectl(
+                    [
+                        "delete",
+                        "job",
+                        JOB_NAME,
+                        "--ignore-not-found=true",
+                        "--cascade=foreground",
+                        "--wait=true",
+                        "--timeout=120s",
                     ],
-                },
-                indent=2,
-            )
-            + "\n"
+                    namespace=control_namespace_for(item.environment.namespace),
+                    kubeconfig=item.environment.kubeconfig,
+                )
+                for item in attachments
+            }
         )
-
-    save("preflight")
-    # Pause every joining controller before stopping any; the existing fence rejects pending
-    # closure/reflection. Pausing uses this process's KUBECONFIG, so it stays one lane at a time.
-    for item in attachments:
-        with lane_environment(item.environment):
-            adapter.pause_for_recovery(adapter.KubectlClusterOps(), control_namespace_for(item.environment.namespace))
-
-    def compare(item: Attachment) -> None:
-        item.matched.append(lane_match(item.environment, item.volume_path, accepted, head))
-
-    concurrently({item.environment.cluster: lambda item=item: compare(item) for item in attachments})
-    save("all-paused")
-    concurrently(
-        {
-            item.environment.cluster: lambda item=item: kubectl(
-                ["delete", "job", JOB_NAME, "--cascade=foreground", "--wait=true", "--timeout=120s"],
-                namespace=control_namespace_for(item.environment.namespace),
-                kubeconfig=item.environment.kubeconfig,
+        save("all-stopped")
+    if phases.index(phase) < phases.index("all-bound"):
+        if not identity.exists():
+            temporary_identity = identity.with_name(identity.name + ".tmp")
+            temporary_identity.write_text(shared_id + "\n")
+            os.replace(temporary_identity, identity)
+        if identity.read_text().strip() != shared_id:
+            raise ValueError("eval: accepted shared identity changed during attachment")
+        if cohort == "initial":
+            for command in accepted_ownership_commands(NODE_ROOT + "/accepted", host_gid=os.getgid()):
+                _command("docker", "exec", attachments[0].node, *command)
+        for item in attachments:
+            # Bind mounts survive process death. Do not stack another bind on retry.
+            source_inode = _command("docker", "exec", item.node, "stat", "-c", "%d:%i", NODE_ROOT + "/accepted")
+            target_inode = _command(
+                "docker", "exec", item.node, "stat", "-c", "%d:%i", item.volume_path + "/application"
             )
-            for item in attachments
-        }
-    )
-    save("all-stopped")
-    if not live:
-        identity.write_text(uuid.uuid4().hex + "\n")
-        for command in accepted_ownership_commands(NODE_ROOT + "/accepted", host_gid=os.getgid()):
-            _command("docker", "exec", attachments[0].node, *command)
-    for item in attachments:
-        _command(
-            "docker",
-            "exec",
-            "--privileged",
-            item.node,
-            "mount",
-            "--bind",
-            NODE_ROOT + "/accepted",
-            item.volume_path + "/application",
-        )
-    save("all-bound")
-    names = {e.cluster: name for name, e in joining.items()}
+            if source_inode and source_inode == target_inode:
+                continue
+            _command(
+                "docker",
+                "exec",
+                "--privileged",
+                item.node,
+                "mount",
+                "--bind",
+                NODE_ROOT + "/accepted",
+                item.volume_path + "/application",
+            )
+        save("all-bound")
+    names = {e.cluster: name for name, e in environments.items()}
     for item in attachments:
         environment = item.environment
-        kubectl(
-            ["create", "-f", "-"],
-            namespace=control_namespace_for(environment.namespace),
-            kubeconfig=environment.kubeconfig,
-            input_text=json.dumps(shared_controller_job(item.job, item.application)),
-        )
+        created = _ensure_shared_controller(item)
+        changed = (
+            environment.workspace.resolve(),
+            environment.parallel_lane,
+            environment.shared_accepted_id,
+            environment.application,
+        ) != (accepted, names[environment.cluster], shared_id, item.application)
         environment.workspace = accepted
         environment.parallel_lane, environment.shared_accepted_id = (
             names[environment.cluster],
@@ -419,15 +540,18 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
         )
         environment.application = item.application
         # Restart retains Go controller state on its private PVC; refresh the host adapter registry.
-        environment.state_path.unlink(missing_ok=True)
-        environment.save()
+        if created or changed:
+            environment.state_path.unlink(missing_ok=True)
+            environment.save()
     for item in attachments:
         kubectl(
             ["wait", "--for=condition=Ready", "pod", "--selector", f"job-name={JOB_NAME}", "--timeout=120s"],
             namespace=control_namespace_for(item.environment.namespace),
             kubeconfig=item.environment.kubeconfig,
         )
-        assert_shared_lane(item.environment)
+    assert_lane_isolation(list(environments.values()))
+    for environment in environments.values():
+        assert_shared_lane(environment)
     # Peers may have published meanwhile; attachment itself never rewinds the one accepted history.
     memory_ancestry(accepted, head, memory_head(accepted))
     save("attached")
@@ -633,7 +757,7 @@ def prepare_lane_process(plan: ParallelPlan, name: str) -> None:
 
 def _clone_accepted(source: Path, accepted: Path) -> None:
     subprocess.run(
-        ["git", "clone", "--no-local", str(source), str(accepted)],
+        host_clone_command(source, accepted, "--no-local"),
         check=True,
         timeout=wait_for(WaitKind.SLOW_COMMAND),
     )
@@ -652,6 +776,9 @@ def prepare_shared_lanes(
     with a later cohort. If a lane fails, the prepared lanes still attach and the error names
     the failed lanes; rerunning prepares and attaches only those.
     """
+    # Resume the durable transaction before any preparation can inspect/reinstall a missing Job.
+    if report.exists() and AttachmentJournal.model_validate_json(report.read_text()).phase != "attached":
+        attach(plan, report)
     environments = {name: FastloopEnvironment.load(path.resolve()) for name, path in plan.lanes.items()}
     for environment in environments.values():
         if (

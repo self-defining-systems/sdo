@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
 from benchmarks.sregym.fastloop.accepted_source import manifest_paths_for_environment
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -139,14 +140,14 @@ def collect_fingerprint(
 
     root = Path(__file__).resolve().parents[3]
     revision = execute(
-        ["git", "-C", str(root), "describe", "--always", "--abbrev=40", "--dirty", "--match=__eval_no_tag__"]
+        host_git_command(root, "describe", "--always", "--abbrev=40", "--dirty", "--match=__eval_no_tag__")
     )
     if revision.endswith("-dirty"):
         raise ValueError("eval: setup reuse requires committed code")
-    if execute(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=normal"]):
+    if execute(host_git_command(root, "status", "--porcelain", "--untracked-files=normal")):
         raise ValueError("eval: setup reuse requires committed code")
-    accepted = execute(["git", "-C", str(environment.workspace), "rev-parse", "HEAD"])
-    if execute(["git", "-C", str(environment.workspace), "status", "--porcelain", "--untracked-files=all"]):
+    accepted = execute(host_git_command(environment.workspace, "rev-parse", "HEAD"))
+    if execute(host_git_command(environment.workspace, "status", "--porcelain", "--untracked-files=all")):
         raise ValueError("eval: accepted workspace has uncommitted changes")
     base = ["kubectl", "--kubeconfig", str(environment.kubeconfig), "--request-timeout=4s", "get"]
     objects = []
@@ -241,26 +242,22 @@ def collect_fingerprint(
     )
     if environment.dev_mount:
         mounted_revision = execute(
-            [
-                "git",
-                "-C",
-                str(environment.dev_mount),
+            host_git_command(
+                environment.dev_mount,
                 "describe",
                 "--always",
                 "--abbrev=40",
                 "--dirty",
                 "--match=__eval_no_tag__",
-            ]
+            )
         )
         if mounted_revision.endswith("-dirty") or execute(
-            [
-                "git",
-                "-C",
-                str(environment.dev_mount),
+            host_git_command(
+                environment.dev_mount,
                 "status",
                 "--porcelain",
                 "--untracked-files=normal",
-            ]
+            )
         ):
             raise ValueError("eval: mounted code must be committed before setup reuse")
         tools["mounted-code-revision"] = mounted_revision

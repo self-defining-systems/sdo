@@ -27,6 +27,7 @@ from google.protobuf import json_format
 
 from benchmarks.sregym.analysis.incident_cost import RECEIPT_NAME
 from benchmarks.sregym.memory_cli import read_outcomes
+from benchmarks.sregym.repository_git import host_clone_command, host_git_command
 from libs.agent_cli.structured import run_structured_turn, turn_usage
 from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 from sdo.agents.responder import (
@@ -62,7 +63,7 @@ class _ScopedBackend(CodexSessionBackend):
 
 
 def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout
+    return subprocess.run(host_git_command(cwd, *args), check=True, capture_output=True, text=True).stdout
 
 
 def find_ledger(stage: Path, suffix: str) -> dict[str, Any]:
@@ -103,7 +104,9 @@ def replay(workspace: Path, suffix: str, guidance: str, out: Path, *, model: str
     clone = out / f"clone-{guidance}"
     if clone.exists():
         raise SystemExit(f"{clone} already exists")
-    _git(out, "clone", "--quiet", "--no-hardlinks", str(workspace), str(clone))
+    subprocess.run(
+        host_clone_command(workspace, clone, "--quiet", "--no-hardlinks"), check=True, capture_output=True, text=True
+    )
     _git(clone, "checkout", "--quiet", "--detach", ledger["outcome_commit"])
     records = read_outcomes(clone)
     outcome = next(r for r in reversed(records) if r.incident_id == ledger["incident_id"])

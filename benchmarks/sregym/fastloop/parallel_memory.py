@@ -6,6 +6,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
 
 def _git(repository: Path, *args: str) -> str:
     return subprocess.check_output(
-        ["git", "-C", str(repository), *args],
+        host_git_command(repository, *args),
         text=True,
         timeout=wait_for(WaitKind.PROBE),
         stderr=subprocess.PIPE,
@@ -29,7 +30,7 @@ def memory_head(repository: Path) -> str:
 
 def memory_ancestry(repository: Path, before: str, after: str) -> list[str]:
     result = subprocess.run(
-        ["git", "-C", str(repository), "merge-base", "--is-ancestor", before, after],
+        host_git_command(repository, "merge-base", "--is-ancestor", before, after),
         timeout=wait_for(WaitKind.PROBE),
         capture_output=True,
         check=False,

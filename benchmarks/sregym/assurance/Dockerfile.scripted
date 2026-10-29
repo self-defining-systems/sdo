@@ -13,7 +13,7 @@ RUN npm uninstall --global @openai/codex @anthropic-ai/claude-code >/dev/null 2>
     && ! command -v claude
 # Test-only replay modules: ordinary benchmark/model images exclude this catalog.
 COPY benchmarks/__init__.py /opt/sdo/benchmarks/
-COPY benchmarks/sregym/__init__.py /opt/sdo/benchmarks/sregym/
+COPY benchmarks/sregym/__init__.py benchmarks/sregym/repository_git.py /opt/sdo/benchmarks/sregym/
 COPY benchmarks/sregym/adapter/__init__.py benchmarks/sregym/adapter/scripted_worker.py benchmarks/sregym/adapter/scripted_replay.py benchmarks/sregym/adapter/scripted_replay_catalog.py /opt/sdo/benchmarks/sregym/adapter/
 COPY benchmarks/sregym/assurance/scripted_codex /opt/sdo-scripted/scripted_codex
 COPY benchmarks/sregym/fastloop/scripted_program /opt/sdo-scripted/targetport

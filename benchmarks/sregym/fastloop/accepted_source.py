@@ -18,6 +18,7 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, execute_operator, wait_for
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -73,7 +74,7 @@ class AcceptedSource:
 
     def _git(self, *args: str) -> str:
         result = subprocess.run(
-            ["git", "-C", str(self.workspace), *args],
+            host_git_command(self.workspace, *args),
             check=True,
             capture_output=True,
             text=True,

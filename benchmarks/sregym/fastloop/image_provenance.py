@@ -14,11 +14,23 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import runpy
 import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+# The build runs this file directly, with no installed benchmark package.
+# Load its stdlib-only Git policy by location without changing import search paths.
+host_git_command = cast(
+    "Callable[..., list[str]]",
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "repository_git.py"))["host_git_command"],
+)
 
 BAKE_FILE = "scripts/sdo-images.hcl"
 SOURCE_TREE_LABEL = "dev.sdo.source-tree"
@@ -56,7 +68,7 @@ class ImageSource:
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=20)
+    return subprocess.run(host_git_command(repo, *args), capture_output=True, text=True, timeout=20)
 
 
 def _show(repo: Path, commit: str, path: str) -> str:

@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 from google.protobuf import json_format
 
+from benchmarks.sregym.repository_git import host_git_command
 from sdo.agents.health_judge import run_judge_task
 from sdo.agents.responder import (
     KubernetesResultPublisher,
@@ -658,7 +659,7 @@ def _check_reflection(worktree: Path, playbook_ids: list[str]) -> None:
 def _checkout_reflection(worktree: Path, summary: str, reason: str) -> ReflectionTurn:
     """Report the actual publication diff, including Go-prepared corpus edits."""
     base = os.environ.get("SDO_BASE_COMMIT", "HEAD")
-    git = ["git", "-C", str(worktree)]
+    git = host_git_command(worktree)
     paths: set[str] = set()
     for args in (
         [
