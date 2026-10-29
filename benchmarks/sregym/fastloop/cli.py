@@ -26,7 +26,7 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -510,6 +510,14 @@ def _up(args: argparse.Namespace) -> int:
     return 0
 
 
+def _repair_repository_bind(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.shared_memory import ensure_repository_bind
+
+    environment = FastloopEnvironment.load(args.run_dir.resolve())
+    print(json.dumps(asdict(ensure_repository_bind(environment)), sort_keys=True))
+    return 0
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -835,10 +843,25 @@ def deploy_with_setup_proof(
 
 
 def _run(args: argparse.Namespace) -> int:
+    if getattr(args, "warm_lane", False):
+        from benchmarks.sregym.fastloop.warm_lane import own_lane
+
+        environment = FastloopEnvironment.load(args.run_dir.resolve())
+        limits = HostLimits.from_env(environment.worker_env)
+        with own_lane(limits.directory, environment.cluster):
+            return _run_owned(args)
+    return _run_owned(args)
+
+
+def _run_owned(args: argparse.Namespace) -> int:
     run_started = time.monotonic()
     if args.sweep_service and (args.stream is None or args.agent != "sdo"):
         raise SystemExit("--sweep-service requires an SDO --stream run")
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if environment.shared_accepted_id:
+        from benchmarks.sregym.fastloop.shared_memory import prepare_shared_lane
+
+        prepare_shared_lane(environment)
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
     args.run_id = run_id
     results_dir = environment.run_dir / "results" / run_id
@@ -1616,6 +1639,12 @@ def build_parser() -> argparse.ArgumentParser:
     dry_run.add_argument("--timeout", type=budget, default=300)
     dry_run.add_argument("--setup-timeout", type=setup_budget, default=900)
     dry_run.set_defaults(handler=lambda args: execute(args.run_dir, args.timeout, args.setup_timeout))
+
+    rebind = commands.add_parser(
+        "repair-repository-bind", help="verify or repair the attached repository bind on its owning node"
+    )
+    rebind.add_argument("--run-dir", type=Path, required=True)
+    rebind.set_defaults(handler=_repair_repository_bind)
 
     reset = commands.add_parser("reset", help="restore a warm cluster to its application and controller baseline")
     reset.add_argument("--run-dir", type=Path, required=True)

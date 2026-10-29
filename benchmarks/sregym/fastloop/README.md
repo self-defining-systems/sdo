@@ -113,3 +113,18 @@ prior incident stops preparation without deleting its owner. Each attempt writes
 reason. `reused: false` describes reset selection, not successful admission. The
 warm option currently leaves evidence export synchronous and does not claim the
 30-second target; use measured row prelude and gate timings to assess it.
+
+Private warm reuse also requires a sealed passing no-fault setup receipt. The
+cluster configuration (including existing RBAC, webhooks, API registrations,
+storage classes and namespaces) must match that receipt. Application and accepted
+memory changes are reconciled separately. Missing evidence takes full reset;
+preparation never seals a post-fault cluster as a new clean baseline.
+
+Shared-lane preflight verifies the accepted-repository bind on the PV's owning
+node before native identity inspection or revision adoption. A node restart can
+lose this in-node mount. `repair-repository-bind --run-dir <lane-run-dir>` invokes
+the same idempotent bind implementation as initial attachment and verifies its
+device/inode readback. It binds only the owning node, never stacks an unexpected
+mount, and never resets the accepted checkout. If an already-running controller
+does not see the repaired mount, native shared-identity inspection still refuses
+admission; controller recovery remains separate.

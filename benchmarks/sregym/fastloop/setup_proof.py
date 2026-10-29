@@ -39,7 +39,8 @@ RESOURCES = (
     "roles,rolebindings,networkpolicies,persistentvolumeclaims,serviceaccounts,jobs,cronjobs"
 )
 CLUSTER_RESOURCES = (
-    "nodes,clusterroles,clusterrolebindings,validatingwebhookconfigurations,mutatingwebhookconfigurations"
+    "nodes,namespaces,clusterroles,clusterrolebindings,validatingwebhookconfigurations,mutatingwebhookconfigurations,"
+    "apiservices,ingressclasses,customresourcedefinitions,priorityclasses,storageclasses"
 )
 VOLATILE_CONFIGMAPS = {"sdo-controller-state", "sdo-controller-maintenance"}
 

@@ -6,15 +6,18 @@ observations to the accepted revision. No benchmark grade grants admission.
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 
@@ -24,6 +27,24 @@ class WarmLaneError(RuntimeError):
 
 class WarmLaneBusy(WarmLaneError):
     """An earlier incident still owns this lane; even fallback must not destroy it."""
+
+
+@contextmanager
+def own_lane(directory: Path, lane: str) -> Iterator[None]:
+    """One warm caller per host/lane; keep the lock inode after releasing it."""
+    if not lane or not directory.is_absolute():
+        raise ValueError("warm ownership needs an absolute shared lock directory and lane identity")
+    directory.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(lane.encode()).hexdigest()
+    with (directory / f"warm-lane-{key}.lock").open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise WarmLaneBusy("another warm run owns this lane") from None
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 @dataclass(frozen=True)
@@ -109,9 +130,9 @@ def prepare_lane(
         reason = f"{phase}:{type(exc).__name__}"
         try:
             run("full_reset", lane.full_reset)
-        except Exception as reset_error:
+        except Exception:
             _publish(evidence, WarmReceipt(False, None, None, timings, reason + ";full_reset_failed"))
-            raise WarmLaneError(f"eval: warm preparation failed ({reason}); full reset failed") from reset_error
+            raise WarmLaneError(f"eval: warm preparation failed ({reason}); full reset failed") from None
         receipt = WarmReceipt(False, None, None, timings, reason)
     else:
         receipt = WarmReceipt(True, identity, boundary.isoformat(), timings)

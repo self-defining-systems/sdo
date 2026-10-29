@@ -146,3 +146,35 @@ def test_warm_option_is_explicit(tmp_path: Path) -> None:
     assert not args.warm_lane
     args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--warm-lane"])
     assert args.warm_lane
+
+
+@pytest.mark.parametrize("field", ["accepted_revision", "standby_uid"])
+@pytest.mark.parametrize("step", ["pause", "reset", "adopt", "prove"])
+def test_every_identity_component_is_bound_throughout_transaction(tmp_path: Path, field: str, step: str) -> None:
+    from dataclasses import replace
+
+    class ChangingLane(Lane):
+        def step(self, name: str) -> None:
+            super().step(name)
+            if name == step:
+                replacement = "b" * 40 if field == "accepted_revision" else "standby-2"
+                self.identity = replace(self.identity, **{field: replacement})
+
+    lane = ChangingLane()
+    assert not prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW).reused
+    assert lane.fallbacks == 1
+
+
+def test_same_lane_cannot_have_two_warm_owners(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.warm_lane import WarmLaneBusy, own_lane
+
+    with own_lane(tmp_path, "toy-lane"):
+        with pytest.raises(WarmLaneBusy):
+            with own_lane(tmp_path, "toy-lane"):
+                pytest.fail("second owner entered the lane")
+        # A distinct lane never shares a lock.
+        with own_lane(tmp_path, "peer-lane"):
+            pass
+    # Kernel ownership is released on exit; the lock inode must remain.
+    with own_lane(tmp_path, "toy-lane"):
+        pass

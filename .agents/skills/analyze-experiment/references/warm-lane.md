@@ -15,3 +15,13 @@ errors. `reused: false` with a fallback reason means full reset was selected;
 on legacy rows say nothing about whether a controller was retained. Export remains
 synchronous in this initial implementation; do not infer asynchronous export or
 sub-30-second overhead from reuse alone.
+
+Private reuse additionally compares cluster configuration hashes against the
+sealed no-fault setup receipt, not a names-only inventory. Legacy setup receipts
+missing the expanded cluster kinds cannot establish this proof.
+
+`repair-repository-bind` prints `{node, volume_path, identity, repaired}`. `identity`
+is node-local device/inode evidence, not a Git revision. Repaired bind evidence
+alone grants no controller or incident admission: native shared-repository
+identity and the ordinary fresh baseline checks remain required. Attachment
+recovery rechecks the mount even when its journal already says `all-bound`.

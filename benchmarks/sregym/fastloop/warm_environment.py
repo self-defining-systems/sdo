@@ -87,25 +87,30 @@ class WarmEnvironment:
             kubeconfig=self.environment.kubeconfig,
         ).stdout.strip()
 
+    def _assert_idle(self) -> None:
+        try:
+            require_terminal_reflection(self.environment)
+            state = self.ops.runtime_state(self.control)
+            if incident_work_open(state) or (not state and self.ops.controller_pod(self.control) is not None):
+                raise WarmLaneBusy("warm lane has unclosed or unknown controller work")
+        except WarmLaneBusy:
+            raise
+        except Exception:
+            raise WarmLaneBusy("prior native incident ownership could not be checked") from None
+
     def inspect(self) -> LaneIdentity:
         env = self.environment
+        self._assert_idle()
         if env.shared_accepted_id:
             raise ValueError("warm transaction currently requires a private accepted repository")
         if self.incoming_data_faults or LaneInjectionState(env.kubeconfig, env.namespace).reason() is not None:
             raise ValueError("warm transaction cannot prove data-plane isolation")
         if AttemptMarker(env.run_dir).pending() is not None:
             raise ValueError("previous attempt did not finish cleanly")
-        try:
-            require_terminal_reflection(env)
-        except RuntimeError as exc:
-            raise WarmLaneBusy("prior native reflection still owns the lane") from exc
         record = PersistentState.load(env.state_path).controllers.get(env.namespace)
         pod = self.ops.controller_pod(self.control)
         if record is None or pod is None or record.controller_pod_uid != pod.uid:
             raise ValueError("warm lane has no recorded live controller")
-        state = self.ops.runtime_state(self.control)
-        if not state or incident_work_open(state):
-            raise WarmLaneBusy("warm lane has unclosed controller work")
         if not self.ops.install(self.config):
             raise ValueError("warm controller settings cannot be reused")
         standby = json.loads(
@@ -141,10 +146,15 @@ class WarmEnvironment:
         assert_clean_baseline(env.kubeconfig, namespace=env.namespace)
 
     def pause(self) -> None:
+        self._assert_idle()
         self.ops.set_maintenance(self.control, paused=True, generation=self.generation)
         # Sync back the accepted checkout, never seed or change it. Restoration
         # must use the accepted render, not the prior row's stale host mirror.
         sync_existing(native_install_config(self.config))
+        from benchmarks.sregym.fastloop.setup_proof import RECEIPTS, collect_fingerprint
+        from benchmarks.sregym.fastloop.warm_scope import check_cluster_scope
+
+        check_cluster_scope(self.environment.run_dir / RECEIPTS, collect_fingerprint(self.environment))
         if self.planned_commit and AcceptedSource.of(self.environment).revision != self.planned_commit:
             raise ValueError("requested revision differs from current accepted memory")
 
@@ -178,4 +188,5 @@ class WarmEnvironment:
         return proof
 
     def full_reset(self) -> None:
+        self._assert_idle()
         self._full_reset()
