@@ -100,7 +100,7 @@ func ServeWorkingProgram(registry program.ProgramRegistry) {
 			err = readErr
 		}
 		if err == nil {
-			plan, err = detachExecutablePlan(plan)
+			plan, err = detachExecutablePlan(plan, view)
 		}
 		reply(PlanApplicationResult{Plan: plan}, err)
 	default:

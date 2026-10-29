@@ -26,6 +26,17 @@ var ErrReplicaSetScaleRefused = errors.New("replicaset_scale_refused")
 
 FUNCTIONS
 
+func AdmissionFailedCreate(set appsv1.ReplicaSet) []string
+    AdmissionFailedCreate returns current admission failure messages only
+    while a nonterminating ReplicaSet still lacks desired Pods. Historical
+    events alone cannot authorize a retry of a healthy, scaled-down or replaced
+    workload.
+
+func AdmissionRejection(message string) bool
+    AdmissionRejection identifies admission failures, excluding quota,
+    scheduling and image failures. Both rollout handoff and admission retry use
+    this rule.
+
 func ApplyRemoveServicePort(object map[string]any, a RemoveServicePort) error
     ApplyRemoveServicePort projects a removal without changing any unrelated
     field. Missing or ambiguous matches and a protected final port leave object
@@ -224,19 +235,4 @@ type Command struct {
     Credentials must be resolved inside the container through environment refs.
 
 func (c Command) Validate() error
-
-type ConfigMapCredentialRef struct {
-	Name       string `json:"name"`
-	Key        string `json:"key"`
-	Assignment string `json:"assignment,omitempty"`
-}
-    ConfigMapCredentialRef selects a key in the target Pod namespace. Assignment
-    optionally selects exactly one literal NAME=value line (shell or dotenv).
-    Expansion, command substitution and duplicate assignments are refused.
-
-type CreateFromSource struct {
-	Ref    sdk.ObjectRef
-	Reason string
-}
-    CreateFromSource restores a missing named object from accepted source.
 ```

@@ -81,6 +81,7 @@ from agentshim import ModelPricing, PricingTable, TokenWeights, cost_usd, defaul
 from agentshim import TokenUsage as NormalizedUsage
 from agentshim.providers.claude import ClaudeStreamParser
 
+from benchmarks.sregym.analysis.claude_cost import reconcile_claude_row
 from benchmarks.sregym.detector_manifests import workspace_detector_manifests
 from benchmarks.sregym.protocol.provider_capacity import ProviderWaitEvidence, read_provider_waits, wait_seconds_between
 
@@ -473,6 +474,8 @@ class SdoStage:
     source: str = ""
     reflection_no_repair_count: int | None = None
     no_repair_declined: bool | None = None
+    cost_complete: bool | None = None
+    claude_accounting: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -1231,6 +1234,15 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
             verdict = with_mitigation_applied(
                 read_verdict(results) or Verdict(None, None, None), results, own_responder_rollouts
             )
+            accounting: dict[str, Any] | None = None
+            if provider == "claude" and scoped_incident:
+                accounting = {
+                    "provider": provider,
+                    "model": model,
+                    "incident_id": scoped_incident,
+                    "results": str(results),
+                }
+                reconcile_claude_row(accounting)
             stages.append(
                 SdoStage(
                     index=index,
@@ -1238,12 +1250,20 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
                     problem_id=problem_id,
                     verdict=verdict,
                     incident_resolution_seconds=_float(receipt.get("incident_resolution_seconds")),
-                    responder=_responder_usage(receipt, own_responder_rollouts),
-                    reflection=_reflection_usage(
-                        receipt,
-                        own_responder_rollouts,
-                        reflection_rollouts,
-                        logged_reflection_cost(results, scoped_incident) if scoped_incident else None,
+                    responder=(
+                        TokenUsage.from_mapping(accounting["responder_usage"]["tokens"])
+                        if accounting is not None
+                        else _responder_usage(receipt, own_responder_rollouts)
+                    ),
+                    reflection=(
+                        TokenUsage.from_mapping(accounting["reflection_usage"]["tokens"])
+                        if accounting is not None
+                        else _reflection_usage(
+                            receipt,
+                            own_responder_rollouts,
+                            reflection_rollouts,
+                            logged_reflection_cost(results, scoped_incident) if scoped_incident else None,
+                        )
                     ),
                     reflection_attempts=receipt.get("reflection_attempts"),
                     reflection_skipped_reason=receipt.get("reflection_skipped_reason"),
@@ -1259,6 +1279,8 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
                     provider=provider,
                     model=model,
                     source=str(results),
+                    cost_complete=accounting["cost_complete"] if accounting is not None else None,
+                    claude_accounting=accounting,
                 )
             )
     return stages
@@ -1441,6 +1463,18 @@ def _running(total: float | None, value: float | None) -> float | None:
     return total + value if total is not None and value is not None else None
 
 
+def _stage_summary(stage: SdoStage, role: str, pricing: ArmPricing) -> UsageSummary:
+    summary = UsageSummary.of(stage.responder if role == "responder" else stage.reflection, pricing)
+    if stage.claude_accounting is None:
+        return summary
+    captured = stage.claude_accounting[role + "_usage"]
+    dollars = captured.get("usd") if captured.get("usd_complete") else None
+    weighted = summary.weighted_tokens
+    if captured.get("cache_write_ttl_complete") is False:
+        weighted = dollars * 1e6 / pricing.entry.input_usd if dollars is not None and pricing.entry else None
+    return replace(summary, usd=dollars, weighted_tokens=weighted)
+
+
 def build_report(
     stages: list[SdoStage],
     codex_runs: list[CodexRun],
@@ -1464,8 +1498,8 @@ def build_report(
         priced.append(
             replace(
                 stage,
-                responder_summary=UsageSummary.of(stage.responder, arm),
-                reflection_summary=UsageSummary.of(stage.reflection, arm),
+                responder_summary=_stage_summary(stage, "responder", arm),
+                reflection_summary=_stage_summary(stage, "reflection", arm),
             )
         )
     stages = priced

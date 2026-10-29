@@ -79,3 +79,27 @@ func TestSelectProgramCandidatesKeepsExplicitHintWithoutBindableKind(t *testing.
 		t.Fatalf("explicit hint: %+v", runs)
 	}
 }
+
+// TRIAL1's source-absent and webhook programs have optional object roles.
+// A valid empty Bindings value does not connect them to a Service/traffic
+// finding. Sweep every role position and hint source, not one learned ID.
+func TestProgramCandidatesRequireAnObjectRoleOrExplicitHint(t *testing.T) {
+	for _, kind := range []program.Kind{"Deployment", "Service", "NetworkPolicy", "ValidatingWebhookConfiguration"} {
+		for _, hinted := range []bool{false, true} {
+			for _, related := range []bool{false, true} {
+				id := "optional-repair"
+				spec := program.ProgramSpec{ID: id, Params: []program.ParamSpec{{Name: "target", Kind: kind}, {Name: "port", ValueKind: program.IntValue, Default: 8080}}}
+				registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: spec, run: func(context.Context, program.Bindings) program.Verdict { return program.Verdict{Result: program.NoMatch} }}}, nil)
+				if err != nil { t.Fatal(err) }
+				finding := sdk.Finding{Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Namespace", Name: "app"}}
+				if hinted { finding.Playbooks = []string{id} }
+				if related { finding.RelatedResources = []sdk.ObjectRef{{Kind: string(kind), Namespace: "app", Name: "target"}} }
+				runs := SelectProgramCandidates(context.Background(), registry, &sdktest.ReplayReadView{}, []sdk.Finding{finding}, time.Second)
+				want := hinted || related
+				if (len(runs) == 1) != want || programLinksFinding(spec, finding) != want {
+					t.Fatalf("kind=%s hinted=%t related=%t: unrelated empty binding ran: %+v", kind, hinted, related, runs)
+				}
+			}
+		}
+	}
+}

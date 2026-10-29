@@ -36,8 +36,8 @@ func (e PlanExecutor) awaitObserved(ctx context.Context, patches []PlanPatch) er
 	}
 	writes := make([]ObservedWrite, 0, len(patches))
 	for _, patch := range patches {
-		// These kinds have no cached verifier input: HPA/PDB snapshots list the
-		// API currently; scoped webhook reads are direct. Keep watched barriers.
+		// A directly confirmed effect needs a cache barrier only when that
+		// cache actually supplies verifier input for the kind.
 		if mode, ok := e.Observer.(interface{ DirectPlanReadSuffices(sdk.ObjectRef) bool }); ok && patch.DirectReadConfirmed && mode.DirectPlanReadSuffices(patch.Ref) {
 			continue
 		}
@@ -129,17 +129,13 @@ func resourceVersionAtLeast(have, want string) bool {
 	return h >= w
 }
 
-// DirectPlanReadSuffices only exempts known uncached kinds after the executor
-// has independently proved the current effect. Unknown and watched kinds wait.
+// DirectPlanReadSuffices exempts kinds with no cached verifier input, after
+// the executor has independently proved the effect. A list of special kinds
+// would make each new general API operation wait for an informer that does not
+// exist. Watched kinds still require their UID/version or deletion barrier.
 func (c *KubernetesCache) DirectPlanReadSuffices(ref sdk.ObjectRef) bool {
 	c.informerMu.RLock()
 	defer c.informerMu.RUnlock()
-	if _, watched := c.informers[ref.APIVersion+"/"+ref.Kind]; watched {
-		return false
-	}
-	switch ref.APIVersion + "/" + ref.Kind {
-	case "autoscaling/v2/HorizontalPodAutoscaler", "policy/v1/PodDisruptionBudget", "admissionregistration.k8s.io/v1/MutatingWebhookConfiguration", "admissionregistration.k8s.io/v1/ValidatingWebhookConfiguration":
-		return true
-	}
-	return false
+	_, watched := c.informers[ref.APIVersion+"/"+ref.Kind]
+	return !watched
 }

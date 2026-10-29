@@ -60,6 +60,8 @@ func (w AdmissionWebhook) CATarget(secret WebhookSecretKey) WebhookCA {
 	return WebhookCA{Ref: w.Configuration, Webhook: w.Webhook, SecretNamespace: secret.Namespace, SecretName: secret.Name, SecretKey: secret.Key}
 }
 
+// Webhook repairs automatically requeue affected admission-blocked ReplicaSets.
+// RetryAdmission also exposes this recovery after a raw repair.
 // SyncWebhookCA copies one Secret key into the named webhook's caBundle inside
 // the runtime. Receipts contain references and a SHA256 digest, never CA bytes.
 // This operation is irreversible; no Secret-bearing preimage is retained.
