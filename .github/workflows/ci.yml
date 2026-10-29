@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "vic-lsh/dev/sdo-improve"]
   pull_request:
   # GitHub merge queue: CI must report on the queue's temporary
   # gh-readonly-queue/... branch or the queue waits until it times out. Every
@@ -163,11 +163,21 @@ jobs:
         if: matrix.name == 'static analysis' || matrix.name == 'architecture'
         with:
           go-version: "1.26.8"
-          cache-dependency-path: sdo/operator/go.sum
       # The unit tests build the Go operator (adapter tests run it on fake
       # controller state). Pin the toolchain so GOTOOLCHAIN=auto does not
       # download go1.26 inside that build's timeout. The Go caches are
       # restored by the dedicated cache step below.
+          cache: false
+      - name: Restore Go dependencies and compiler entries
+        if: matrix.name == 'static analysis' || matrix.name == 'architecture'
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.26.8-${{ hashFiles('sdo/operator/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.26.8-${{ hashFiles('sdo/operator/go.sum') }}-
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         if: matrix.name == 'unit tests'
         with:
@@ -190,7 +200,7 @@ jobs:
       # rebuild every run. Only the leg that runs pytest needs it.
       - name: Cache the detector-sandbox Go build and module caches
         if: matrix.name == 'unit tests'
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cache/go-build
@@ -202,6 +212,24 @@ jobs:
         if: matrix.name == 'unit tests'
         run: uv run python scripts/operator_test_binary.py
       - run: ${{ matrix.run }}
+
+      - name: Save Go cache only on a durable base branch
+        if: (matrix.name == 'unit tests') && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-sandbox-${{ runner.os }}-${{ hashFiles('sdo/operator/**/go.sum') }}
+
+      - name: Save Go cache only on a durable base branch
+        if: (matrix.name == 'static analysis' || matrix.name == 'architecture') && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.26.8-${{ hashFiles('sdo/operator/go.sum') }}-${{ github.sha }}
 
   controller:
     name: controller (${{ matrix.module }})
@@ -247,7 +275,7 @@ jobs:
           go-version: "${{ matrix.go-version }}"
           cache: false
       - name: Cache Go builds and subprocess builds
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cache/go-build
@@ -294,6 +322,15 @@ jobs:
         run: timeout 120s go test -run '^$' -fuzz '^FuzzControllerObservationBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
         working-directory: ${{ matrix.directory }}
 
+      - name: Save Go cache only on a durable base branch
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.module }}-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+
   # Proto contracts are the single source of truth for the cross-seam types.
   # This job lints the .proto source and asserts the committed Go/Python
   # codegen matches `buf generate` — so schema drift is a build failure here.
@@ -310,6 +347,16 @@ jobs:
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.24.5"
+          cache: false
+      - name: Restore Go dependencies and compiler entries
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.24.5-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.24.5-${{ hashFiles('**/go.sum') }}-
       - name: Install the proto toolchain
         run: |
           go install github.com/bufbuild/buf/cmd/buf@v1.73.0
@@ -321,6 +368,15 @@ jobs:
       - name: Build the generated Go contracts module
         run: go build ./...
         working-directory: sdo/operator/contracts
+
+      - name: Save Go cache only on a durable base branch
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.24.5-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   # The deterministic record-and-replay suite drives the durable artifacts of
   # real recorded incidents (the detector-firing telemetry stream, the
@@ -343,10 +399,28 @@ jobs:
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.26.8"
-          cache-dependency-path: sdo/operator/runtime/go.sum
+          cache: false
+      - name: Restore Go dependencies and compiler entries
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.26.8-${{ hashFiles('sdo/operator/runtime/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.26.8-${{ hashFiles('sdo/operator/runtime/go.sum') }}-
       - name: Run the deterministic replay suite
         run: go test -race -run '^TestReplay' -timeout 5m ./...
         working-directory: sdo/operator/runtime
+
+      - name: Save Go cache only on a durable base branch
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.26.8-${{ hashFiles('sdo/operator/runtime/go.sum') }}-${{ github.sha }}
 
   # The seeded, deterministic chaos/fault-injection suite attacks the
   # timing/ordering bug class in the controller runtime. It is its own job with
@@ -366,10 +440,28 @@ jobs:
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.26.8"
-          cache-dependency-path: sdo/operator/runtime/go.sum
+          cache: false
+      - name: Restore Go dependencies and compiler entries
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.26.8-${{ hashFiles('sdo/operator/runtime/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.26.8-${{ hashFiles('sdo/operator/runtime/go.sum') }}-
       - name: Run bounded chaos and implementation state explorers
         run: go test -race -run '^TestChaos|^TestExhaustive|^TestExplorer' -timeout 5m ./...
         working-directory: sdo/operator/runtime
+
+      - name: Save Go cache only on a durable base branch
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-1.26.8-${{ hashFiles('sdo/operator/runtime/go.sum') }}-${{ github.sha }}
 
   # Builds the images SDO runs in and checks each one imports its entry points
   # (SDO, agentshim, the benchmark submission client) at the pinned Codex CLI
@@ -393,7 +485,7 @@ jobs:
           go-version: "1.26.8"
           cache: false
       - name: Cache image schema-identity build
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cache/go-build
@@ -469,6 +561,15 @@ jobs:
             echo "${leaked}" >&2
             exit 1
           fi
+
+      - name: Save Go cache only on a durable base branch
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   # One stable, always-present result for branch protection: the single required
   # status check on main. It needs every other job and runs even when some were
