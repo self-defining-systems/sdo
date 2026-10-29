@@ -358,7 +358,9 @@ def reconcile_claude_row(row: dict[str, Any], pricing: PricingTable | None = Non
     root = Path(row["results"])
     primary = hashlib.sha256(row["incident_id"].encode()).hexdigest()[:32]
     cutoff = epoch(row.get("injection_started_at"))
-    fragments: dict[str, list[Path]] = {}
+    # The original incident is mandatory even when its entire export is lost.
+    # Complete followup billing cannot silently stand in for that missing cost.
+    fragments: dict[str, list[Path]] = {primary: []}
     receipts = _receipts(root)
     for directory in root.rglob("sdo_runtime/sessions/*"):
         if not directory.is_dir():

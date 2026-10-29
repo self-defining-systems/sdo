@@ -323,3 +323,21 @@ def test_unidentified_claude_row_cannot_keep_default_zero_counters(tmp_path: Pat
     assert row["responder_usage"]["transport_usage"]["usd"] == 0
     assert row["responder_model_dispatched"] is None
     assert not row["cost_complete"]
+
+
+def test_followup_billing_cannot_hide_missing_original_incident(tmp_path: Path) -> None:
+    evidence(tmp_path, "followup")
+    row = {
+        "provider": "claude",
+        "model": MODEL,
+        "incident_id": "missing-original",
+        "results": str(tmp_path),
+        "injection_started_at": "2026-10-28T00:00:00Z",
+    }
+    reconcile_claude_row(row)
+    assert not row["cost_complete"]
+    assert row["responder_usage"]["cost_state"] == "missing"
+    assert row["responder_usage"]["usd"] is None
+    assert row["reflection_usage"]["usd"] is None
+    assert row["responder_model_dispatched"] is True  # The followup really ran.
+    assert len(row["cost_episodes"]) == 2
