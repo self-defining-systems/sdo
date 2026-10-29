@@ -12,10 +12,11 @@ import (
 type pipelineScenarioDispatcher struct {
 	loop       *ResponderLoop
 	agentCalls int
+	observationCeiling time.Duration
 }
 
 func (d *pipelineScenarioDispatcher) DeterministicResponseStage() ResponseStage {
-	return &DeterministicResponseStage{NewLoop: func(request IncidentRequest) *ResponderLoop { d.loop.Request = request; return d.loop }}
+	return &DeterministicResponseStage{NewLoop: func(request IncidentRequest) *ResponderLoop { d.loop.Request = request; return d.loop }, ObservationCeiling: d.observationCeiling}
 }
 func (d *pipelineScenarioDispatcher) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
 	d.agentCalls++
@@ -114,7 +115,9 @@ func (d *recordingScenarioDispatcher) Dispatch(ctx context.Context, request Inci
 // remaining finding.
 func TestHermeticResponsePipelineHandsAgentStageReportAndRemainingFindings(t *testing.T) {
 	loop, state := pipelineTestLoop(t, true)
-	dispatcher := &recordingScenarioDispatcher{pipelineScenarioDispatcher: pipelineScenarioDispatcher{loop: loop}, requests: make(chan IncidentRequest, 4)}
+	// Bound the real stage observation below the dispatch watchdog. The
+	// uncovered health finding stays active and must still reach the agent.
+	dispatcher := &recordingScenarioDispatcher{pipelineScenarioDispatcher: pipelineScenarioDispatcher{loop: loop, observationCeiling: 10 * time.Millisecond}, requests: make(chan IncidentRequest, 4)}
 	config := testControllerConfig()
 	config.Application = state.Request.Application
 	config.Namespace = "app"
@@ -151,7 +154,7 @@ func TestHermeticResponsePipelineHandsAgentStageReportAndRemainingFindings(t *te
 	if len(request.PriorStages) != 1 || len(request.PriorStages[0].Mitigations) != 1 || request.PriorStages[0].Mitigations[0].Result != "applied_cleared" {
 		t.Fatalf("agent was not told the stage result: %+v", request.PriorStages)
 	}
-	if len(request.Findings) != 1 {
+	if len(request.Findings) != 1 || request.Findings[0].RuleID != "image-pull" || len(request.PriorStages[0].RemainingFindingFingerprints) != 1 || request.PriorStages[0].RemainingFindingFingerprints[0] != FindingFingerprint(request.Findings[0]) {
 		t.Fatalf("agent should receive only the uncovered finding, got %v", request.Findings)
 	}
 }
