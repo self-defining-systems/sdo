@@ -1,4 +1,4 @@
-# General operations and replay evidence
+# General operations
 
 Choose a general primitive before declaring an SDK gap. The operation inventory
 and executable floor live in `docs/sdk-action-inventory.{md,json}`. The typed plan
@@ -75,6 +75,7 @@ waits for measured completion. Its manifest supplies the image, script, resource
 service account, and credential references. A started script may have irreversible
 external effects even if completion cannot be observed.
 
+<!-- replay:on -->
 ## Exact recorded transitions
 
 The controller records `ExternalEffect` with exact observe/ensure operation
@@ -92,6 +93,8 @@ Replay reports disclose `simulated:recorded-external-transition` and
 `simulated:recorded-job-completion`. These model recorded transitions, and supply
 no live health or credential-validation credit. Independently verified health
 remains authoritative. Do not replay a write while refreshing read recordings.
+
+<!-- /replay:on -->
 
 The raw menu uses protobuf action names; its `EnsureHttp` entry corresponds to
 Go's `program.EnsureHTTP`. JSON byte parameters such as `patch_json`, `object_json`

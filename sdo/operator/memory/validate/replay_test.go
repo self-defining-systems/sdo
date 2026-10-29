@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/memory/layout"
 )
 
 func TestReplayOffIgnoresCorpusButRetainsSourceChecks(t *testing.T) {
@@ -71,5 +73,25 @@ func TestReplayOffCorpusNeverEntersPublicationOrWorkerSnapshot(t *testing.T) {
 	})
 	if err != nil || len(ds) != 0 || !called {
 		t.Fatalf("inert corpus blocked publication: %v %v %v", ds, err, called)
+	}
+}
+
+func TestReplayOffImportStillRequiresScriptReceiptProvenance(t *testing.T) {
+	root := goodTree(t)
+	commit(t, root, "accepted memory")
+	copyTree(t, "../../../../sdo/skills/sdo-playbook-authoring/assets/examples/playbooks/crashloop-script-repair", filepath.Join(root, ".sdo/playbooks/crashloop-script-repair"))
+	if _, err := layout.WritePlaybookIndex(root); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := Check(context.Background(), Request{Root: root, Base: "HEAD", Actor: Human, Phase: ImportPhase, Replay: "off"}, func(context.Context, Request) ([]Diagnostic, error) { return nil, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, d := range ds {
+		found = found || d.Rule == RuleProgramMitigationRepair
+	}
+	if !found {
+		t.Fatalf("import bypassed script receipt proof: %v", ds)
 	}
 }

@@ -307,6 +307,12 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 	if err != nil {
 		return nil, err
 	}
+	if structurallyValid && r.Replay == "off" && !(r.Actor == Responder && r.Phase == ReflectionPhase) {
+		if err := programvalidation.ValidateScriptOriginsWithoutCorpus(ctx, r.Root, r.Base, nil, paths); err != nil {
+			ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: err.Error()})
+		}
+	}
+
 	ds = append(ds, clusterLocalDiagnostics(r.Root, paths)...)
 	ds = append(ds, secretDataDiagnostics(r.Root, paths)...)
 	// A scratch index includes new files and agent-local commits while leaving

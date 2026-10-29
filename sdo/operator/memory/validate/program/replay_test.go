@@ -63,7 +63,7 @@ func TestReplayOffScriptOriginsRemainBoundToAcceptedReceipts(t *testing.T) {
 }
 
 func TestReplayOffPreservesScriptOriginsAcrossPlaybookRevisions(t *testing.T) {
-	for _, mode := range []string{"unchanged prior", "new linked", "new unlinked", "wrong receipt"} {
+	for _, mode := range []string{"unchanged prior", "import prior", "new linked", "new unlinked", "wrong receipt"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			testutil.InitGit(t, root)
@@ -89,7 +89,7 @@ func TestReplayOffPreservesScriptOriginsAcrossPlaybookRevisions(t *testing.T) {
 			base := git("rev-parse", "HEAD")
 			current := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success", RepairActions: []*contracts.RepairActionReceipt{receipt("new-receipt", "echo new")}}
 			script := "echo new"
-			if mode == "unchanged prior" {
+			if mode == "unchanged prior" || mode == "import prior" {
 				script = "echo old"
 			}
 			body := "---\noriginating_incident: older\n"
@@ -110,8 +110,12 @@ func TestReplayOffPreservesScriptOriginsAcrossPlaybookRevisions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if mode == "import prior" {
+				base = "HEAD"
+				current = nil
+			}
 			err := ValidateScriptOriginsWithoutCorpus(context.Background(), root, base, current, []string{".sdo/playbooks/fix/mitigate.go"})
-			want := mode == "unchanged prior" || mode == "new linked"
+			want := mode == "unchanged prior" || mode == "import prior" || mode == "new linked"
 			if (err == nil) != want {
 				t.Fatalf("%s: %v", mode, err)
 			}
