@@ -31,7 +31,7 @@ class WarmLaneBusy(WarmLaneError):
 
 @contextmanager
 def own_lane(directory: Path, lane: str) -> Iterator[None]:
-    """One warm caller per host/lane; keep the lock inode after releasing it."""
+    """One row caller per host/lane; keep the lock inode after releasing it."""
     if not lane or not directory.is_absolute():
         raise ValueError("warm ownership needs an absolute shared lock directory and lane identity")
     directory.mkdir(parents=True, exist_ok=True)
@@ -40,7 +40,7 @@ def own_lane(directory: Path, lane: str) -> Iterator[None]:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise WarmLaneBusy("another warm run owns this lane") from None
+            raise WarmLaneBusy("another run owns this lane") from None
         try:
             yield
         finally:

@@ -105,7 +105,9 @@ standby, known injection history without data effects, terminal prior reflection
 and the installed cluster inventory. It pauses intake, synchronizes the accepted
 repository back to the host, reconciles changed application resources, and proves
 fresh baseline health against that exact revision. The usual injection admission
-still runs. Default runs retain the existing full-reset policy.
+still runs. Default runs retain the existing full-reset policy. Both run modes
+take the same host/lane lock, so a concurrent full-reset caller cannot invalidate
+a warm transaction. A competing caller stops before any lane mutation.
 
 An uncertain warm transaction falls back to the ordinary row-start reset; an open
 prior incident stops preparation without deleting its owner. Each attempt writes

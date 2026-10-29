@@ -279,7 +279,7 @@ def test_warm_fallback_keeps_current_accepted_memory_unless_revision_is_explicit
 
 @pytest.mark.parametrize("warm", [False, True])
 def test_every_run_obeys_the_same_lane_owner(tmp_path: Path, monkeypatch, warm: bool) -> None:
-    from types import SimpleNamespace
+    from argparse import Namespace
 
     from benchmarks.sregym.fastloop import cli
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
@@ -300,4 +300,4 @@ def test_every_run_obeys_the_same_lane_owner(tmp_path: Path, monkeypatch, warm: 
     env.save()
     monkeypatch.setattr(cli, "_run_owned", lambda _args: pytest.fail("competing caller mutated an owned lane"))
     with own_lane(locks, env.cluster), pytest.raises(WarmLaneBusy):
-        cli._run(SimpleNamespace(run_dir=tmp_path, warm_lane=warm))
+        cli._run(Namespace(run_dir=tmp_path, warm_lane=warm))
