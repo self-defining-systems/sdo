@@ -18,3 +18,16 @@ successfully without rollback, error or pending rollout. It is not whole-inciden
 to `prior_stages[].mitigations[].apply_receipt` in the full facts file when more evidence is needed;
 `findings` in the brief is the residual work. Do not reapply settled work or probe known report shapes.
 A fully repaired incident may finish deterministically without starting a responder.
+
+For staged multi-fault work, clear blockers that prevent other repairs (admission, quota, scheduling,
+security policy) first, then re-run or re-trigger stalled saved repairs instead of re-deriving them.
+Start independent repairs together; combine repairs editing one object into one edit. Re-check with
+saved diagnoses before closing. The brief is enough to start; no mandatory skill reread.
+
+`stage_actions` retains controller result labels and adds `blockers` from the saved rollout conditions
+and warning events, beside the affected program. `applied_cleared` is shown as `cleared`;
+`rollout_pending_at_handoff` means applied but rollout pending; failed and skipped results remain explicit.
+Blocker messages are observations at handoff, so confirm whether they still apply. Absence of a blocker
+message is not proof that a rollout can progress. Full unabridged facts stay in `details_file`.
+`stage_playbooks` maps involved program IDs to accepted README files (null if unavailable), including
+finding-linked playbooks without a current match, settled programs and matches whose findings have since cleared. Other playbooks remain optional context.
