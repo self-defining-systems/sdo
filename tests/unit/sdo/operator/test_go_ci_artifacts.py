@@ -18,8 +18,7 @@ def test_prepared_artifact_round_trip_without_base_cache(tmp_path: Path, mode: s
     cache = tmp_path / "producer-cache"
     cache.mkdir()
     (cache / "compiled-a").write_text("compiler archive")
-    home = tmp_path / "home"
-    modules = home / "go/pkg/mod"
+    modules = tmp_path / "modules"
     modules.mkdir(parents=True)
     (modules / "module.zip").write_text("module archive")
     tools = source / ".fastloop/test-bin"
@@ -28,7 +27,7 @@ def test_prepared_artifact_round_trip_without_base_cache(tmp_path: Path, mode: s
     executable.write_text("executable")
     executable.chmod(0o755)
     artifact = tmp_path / "artifact"
-    env = {**os.environ, "HOME": str(home), "GOCACHE": str(cache)}
+    env = {**os.environ, "GOMODCACHE": str(modules), "GOCACHE": str(cache)}
     command = ["bash", str(source / "scripts/go_ci_artifacts.sh")]
     subprocess.run([*command, "pack", mode, str(artifact)], env=env, check=True)
     shutil.rmtree(cache)

@@ -11,7 +11,7 @@ paths=("${GOCACHE:?GOCACHE must select the compiler cache for this mode}")
 case "$mode" in
   normal)
     names+=(modules tools)
-    paths+=("$HOME/go/pkg/mod" "$root/.fastloop/test-bin")
+    paths+=("${GOMODCACHE:-$HOME/go/pkg/mod}" "$root/.fastloop/test-bin")
     ;;
   race) ;;
   *) echo "unknown artifact mode: $mode" >&2; exit 1 ;;
