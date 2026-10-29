@@ -265,8 +265,11 @@ def test_recreation_reflection_passes_real_memory_check(tmp_path, monkeypatch, o
     _assert_recreation_memory_check(tmp_path, monkeypatch, operator_binary, kind, section, "on")
 
 
-def _assert_recreation_memory_check(tmp_path, monkeypatch, operator_binary, kind, section, replay):
+def _assert_recreation_memory_check(tmp_path, monkeypatch, operator_binary, kind, section, replay, *, unrelated=False):
     app = _accepted_app(tmp_path, verified=True)
+    if unrelated:
+        for relative in ("playbooks/service-targetport-mismatch", "corpus/targetport-mismatch"):
+            shutil.copytree(APP_FIXTURE / ".sdo" / relative, app / ".sdo" / relative)
     resource = {"api_version": "v1", "kind": kind, "namespace": "demo", "name": "restored"}
     outcome_path = next((app / ".sdo/outcomes").glob("*.json"))
     outcome = json.loads(outcome_path.read_text())
@@ -347,3 +350,9 @@ def _assert_recreation_memory_check(tmp_path, monkeypatch, operator_binary, kind
     program = app / ".sdo/playbooks" / turn.playbook_ids[0]
     assert "CreateFromSource" in (program / "mitigate.go").read_text()
     assert bool(list((app / ".sdo/corpus").glob("*/labels.json"))) == (replay == "on")
+
+
+def test_existing_unrelated_program_cannot_suppress_recreation(tmp_path, monkeypatch, operator_binary):
+    _assert_recreation_memory_check(
+        tmp_path, monkeypatch, operator_binary, "ConfigMap", "configMaps", "on", unrelated=True
+    )

@@ -855,10 +855,6 @@ class ScriptedReflector:
         program_id = NETWORKPOLICY_PROGRAM_ID if policy_pair else PROGRAM_ID
         program_source = NETWORKPOLICY_PROGRAM_SOURCE if policy_pair else PROGRAM_SOURCE
         parameter = "policy=NetworkPolicy" if policy_pair else "service=Service"
-        if (worktree / ".sdo" / "playbooks" / program_id / "diagnose.go").is_file():
-            return _checkout_reflection(
-                worktree, f"{program_id} program is already accepted", "Accepted program covers this class"
-            )
         pair = policy_pair or _captured_pair(capture, open_at)
         if pair is None:
             closure = kwargs.get("closure")
@@ -901,6 +897,10 @@ class ScriptedReflector:
                 "No captured target port repair",
                 "Captured incident has no target port transition and healthy peer",
                 closure=kwargs.get("closure"),
+            )
+        if (worktree / ".sdo" / "playbooks" / program_id / "diagnose.go").is_file():
+            return _checkout_reflection(
+                worktree, f"{program_id} program is already accepted", "Accepted program covers this class"
             )
         target = worktree / ".sdo/playbooks" / program_id
         target.parent.mkdir(parents=True, exist_ok=True)
