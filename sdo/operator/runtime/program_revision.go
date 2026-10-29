@@ -43,7 +43,7 @@ func fillProgramRevisions(ctx context.Context, runs []ProgramRun, repository, co
 
 // Hash accepted Git objects, never mutable checkout files. Only libraries in
 // this program's import closure participate, including dependencies of helpers.
-func programDependencyRevision(ctx context.Context, repository, commit, id string) (string, error) {
+func programDependencyRevision(ctx context.Context, repository, commit, id string, visitors ...func(revisionSource)) (string, error) {
 	git := func(args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, "git", append([]string{"-C", repository}, args...)...).Output()
 	}
@@ -78,7 +78,7 @@ func programDependencyRevision(ctx context.Context, repository, commit, id strin
 			files = append(files, item)
 		}
 		return files, nil
-	})
+	}, visitors...)
 }
 
 type revisionSource struct {
@@ -120,7 +120,7 @@ func workingProgramRevision(root, module, id string) (string, error) {
 	})
 }
 
-func dependencyRevision(module, id string, list func(string) ([]revisionSource, error)) (string, error) {
+func dependencyRevision(module, id string, list func(string) ([]revisionSource, error), visitors ...func(revisionSource)) (string, error) {
 	pending := []string{".sdo/playbooks/" + id}
 	visited := map[string]bool{}
 	sources := map[string]string{}
@@ -139,6 +139,9 @@ func dependencyRevision(module, id string, list func(string) ([]revisionSource, 
 			return "", fmt.Errorf("missing program dependency %s", directory)
 		}
 		for _, item := range files {
+			for _, visit := range visitors {
+				visit(item)
+			}
 			file := item.name
 			if ext := strings.ToLower(path.Ext(file)); ext == ".md" || ext == ".markdown" || strings.HasSuffix(file, "_test.go") {
 				continue

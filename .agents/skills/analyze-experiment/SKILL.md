@@ -59,6 +59,7 @@ For acceptance, ownership and restart analysis, read [native broker and memory](
 For incident deadlines and restart recovery, read [native incident recovery](references/native-incident-recovery.md).
 For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md); for cleared lifecycle effects and repair-encoding counts, read [reflection settlement](references/reflection-settlement.md).
 For setup costs and interrupted responder accounting, read [phase-bound usage evidence](references/setup-usage.md).
+Before pricing Claude responder/reflection phases, read [Claude cost completeness](references/claude-cost.md).
 Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).
 Before attributing throttled rows to SDO, read [provider capacity evidence](references/provider-capacity.md).
 For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md) and [restartable lane/conversion receipts](references/fastloop-sequences.md).
@@ -68,6 +69,7 @@ Before judging mixed-app slot validity or recovery, read [slot cleanup evidence]
 For fresh-memory installs and legacy onboarding references, read [fresh memory control state](references/fresh-memory.md).
 Before reconstructing a timeline, read [telemetry and trajectories](references/telemetry.md).
 For missing recordings and offline replay, read [checkpoint recording evidence](references/checkpoint-recording.md).
+For replay-on/off measurements, read [replay run policy](references/replay-policy.md).
 For oversized responder outputs, default stdout budgets and offline size audits, read [tool output audits](references/tool-output-audit.md).
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
 also read [drift and toy failures](references/drift-failures.md).

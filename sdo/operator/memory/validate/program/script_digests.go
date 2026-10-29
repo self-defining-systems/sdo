@@ -19,9 +19,37 @@ import (
 // Script bytes have provenance independent of whether a diagnosis matches a
 // replay fixture. Application inputs belong in Env, keeping the script fixed.
 func validateScriptDigests(base, corpusRoot string, item Spec) error {
-	files, err := filepath.Glob(filepath.Join(base, "*.go"))
+	scripts, err := scriptTexts(base)
 	if err != nil {
 		return err
+	}
+	for _, script := range scripts {
+		digest := sdkprogram.ScriptDigest(script)
+		linked := false
+		for _, id := range item.Cases {
+			corpus, err := sdktest.LoadCorpusMetadata(filepath.Join(corpusRoot, id))
+			if err != nil {
+				return err
+			}
+			if corpus.ScriptOrigins[digest] == "" {
+				continue
+			}
+			if _, err := sdktest.ScriptOrigin(sdkprogram.RunScript{Script: script}, corpus); err != nil {
+				return err
+			}
+			linked = true
+		}
+		if !linked {
+			return fmt.Errorf("RunScript digest %s requires linkage to its original successful receipt", digest)
+		}
+	}
+	return nil
+}
+
+func scriptTexts(base string) ([]string, error) {
+	files, err := filepath.Glob(filepath.Join(base, "*.go"))
+	if err != nil {
+		return nil, err
 	}
 	fset := token.NewFileSet()
 	var parsed []*ast.File
@@ -33,7 +61,7 @@ func validateScriptDigests(base, corpusRoot string, item Spec) error {
 		}
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		parsed = append(parsed, file)
 		ast.Inspect(file, func(node ast.Node) bool {
@@ -151,28 +179,9 @@ func validateScriptDigests(base, corpusRoot string, item Spec) error {
 			return true
 		})
 		if invalid != nil {
-			return invalid
+			return nil, invalid
 		}
 	}
-	for _, script := range scripts {
-		digest := sdkprogram.ScriptDigest(script)
-		linked := false
-		for _, id := range item.Cases {
-			corpus, err := sdktest.LoadCorpusMetadata(filepath.Join(corpusRoot, id))
-			if err != nil {
-				return err
-			}
-			if corpus.ScriptOrigins[digest] == "" {
-				continue
-			}
-			if _, err := sdktest.ScriptOrigin(sdkprogram.RunScript{Script: script}, corpus); err != nil {
-				return err
-			}
-			linked = true
-		}
-		if !linked {
-			return fmt.Errorf("RunScript digest %s requires linkage to its original successful receipt", digest)
-		}
-	}
-	return nil
+
+	return scripts, nil
 }

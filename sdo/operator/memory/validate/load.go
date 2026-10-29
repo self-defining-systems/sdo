@@ -279,6 +279,9 @@ func (s *run) visit(rel, abs string) error {
 	if err != nil {
 		return err
 	}
+	if kind == layout.KindCorpus && s.req.Replay == "off" {
+		return nil
+	}
 	if info.Size() > layout.MaxArtifactBytes && (kind != layout.KindCorpus || info.Size() > 8<<20) {
 		s.add(Structural, Diagnostic{Rule: RuleTooLarge, Path: rel, Message: fmt.Sprintf("file is %d bytes; the limit is %d KiB", info.Size(), layout.MaxArtifactBytes/1024), Hint: "split or shorten the file"})
 		s.markUnread(kind, id, rel)

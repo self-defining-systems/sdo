@@ -281,7 +281,15 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			response.ApplicationID = applicationID
 			report.ApplicationId = applicationID
 			if result.RolloutPending != nil {
-				l.reservePending(applicationID, plan, attempt, entry.programID, bindings, targetFingerprints)
+				l.reservePending(applicationID, result.Plan, attempt, entry.programID, bindings, targetFingerprints)
+			}
+		}
+		// Automatic dependency recovery is part of the actual executed plan.
+		description.Plan.Actions = nil
+		for _, action := range result.Plan.Actions {
+			converted, convertErr := planActionProto(action)
+			if convertErr == nil {
+				description.Plan.Actions = append(description.Plan.Actions, converted)
 			}
 		}
 		description.ActionResults = result.ActionReports

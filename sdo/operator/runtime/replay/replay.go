@@ -202,8 +202,8 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	r.Actions = application.ActionReports
 	for _, a := range application.ActionReports {
 		if a.Status == "applied" {
-			r.Effects = append(r.Effects, fmt.Sprintf("real:%T:action:%d", plan.Actions[a.ActionIndex], a.ActionIndex))
-			switch plan.Actions[a.ActionIndex].(type) {
+			r.Effects = append(r.Effects, fmt.Sprintf("real:%T:action:%d", application.Plan.Actions[a.ActionIndex], a.ActionIndex))
+			switch application.Plan.Actions[a.ActionIndex].(type) {
 			case program.EnsureExec, *program.EnsureExec, program.EnsureHTTP, *program.EnsureHTTP:
 				r.Effects = append(r.Effects, "simulated:recorded-external-transition")
 			case program.RunJob, *program.RunJob:

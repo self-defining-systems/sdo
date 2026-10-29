@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"os"
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"strings"
 	"testing"
 	"time"
@@ -155,7 +157,7 @@ func acceptedScriptMemoryWithExecutedScript(t *testing.T, id, script, executed s
 		t.Fatal(err)
 	}
 	at := time.Unix(100, 0)
-	outcome := &contracts.OutcomeRecord{IncidentId: incident, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "original", Success: true, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}}
+	outcome := &contracts.OutcomeRecord{IncidentId: incident, RepairActions: []*contracts.RepairActionReceipt{{ActionId: "original", Kind: "run-script", Target: "Pod/app/synthetic", Summary: "synthetic repair", Details: "synthetic original receipt", Success: true, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}}
 	if executed != "" {
 		executor := PlanExecutor{Client: &scriptPlanFake{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 		result, err := executor.Apply(context.Background(), IncidentRequest{IncidentID: incident, Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.RunScript{Script: executed}}}, false)
@@ -167,6 +169,11 @@ func acceptedScriptMemoryWithExecutedScript(t *testing.T, id, script, executed s
 			t.Fatal("execution did not produce digest receipt")
 		}
 		outcome.RepairActions[0].ScriptDigest = receipts[0].ScriptDigest
+	}
+	outcome.SchemaVersion = 1
+	outcome.Classification = "success"
+	if _, err := memory.NewJSONStore(root).Put(context.Background(), outcome); err != nil {
+		t.Fatal(err)
 	}
 	if err := memory.CaptureRepairReceipts(capture, incident, outcome); err != nil {
 		t.Fatal(err)
@@ -202,7 +209,7 @@ func acceptedScriptMemoryWithExecutedScript(t *testing.T, id, script, executed s
 }
 
 func TestScriptProvenanceUsesOnlyThisProgramsAcceptedReceipts(t *testing.T) {
-	for _, mode := range []string{"no-corpus", "other-program", "failed", "untimed", "different-incident", "unlinked", "dirty-checkout", "newer-commit"} {
+	for _, mode := range []string{"no-corpus", "other-program", "failed", "untimed", "different-incident", "unlinked", "dirty-checkout", "newer-commit", "forged-corpus"} {
 		t.Run(mode, func(t *testing.T) {
 			loop, _ := pipelineTestLoop(t, true)
 			id := (pipelinePortProgram{}).Spec().ID
@@ -227,9 +234,34 @@ func TestScriptProvenanceUsesOnlyThisProgramsAcceptedReceipts(t *testing.T) {
 				labels["script_origins"] = map[string]string{}
 			case "different-incident":
 				labels["provenance"] = map[string]string{"incident_id": "another-incident"}
-			case "dirty-checkout", "newer-commit":
+			case "dirty-checkout", "newer-commit", "forged-corpus":
 				script = "echo unrecorded-script"
 				labels["script_origins"] = map[string]string{program.ScriptDigest(script): "original"}
+				if mode == "forged-corpus" {
+					raw, err := os.ReadFile(recordingPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var calls []sdktest.PrimitiveCall
+					if err := json.Unmarshal(raw, &calls); err != nil {
+						t.Fatal(err)
+					}
+					for i := range calls {
+						if calls[i].Method == "RepairReceipt" {
+							var r program.ScriptOriginReceipt
+							if err := json.Unmarshal(calls[i].Result, &r); err != nil {
+								t.Fatal(err)
+							}
+							r.ScriptDigest = program.ScriptDigest(script)
+							calls[i].Result, _ = json.Marshal(r)
+						}
+					}
+					raw, _ = json.Marshal(calls)
+					if err := os.WriteFile(recordingPath, raw, 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+
 			case "failed", "untimed":
 				var calls []sdktest.PrimitiveCall
 				raw, err := os.ReadFile(recordingPath)
@@ -320,6 +352,95 @@ func TestScriptProvenanceLinksReceiptIdentityAndRecordedBytes(t *testing.T) {
 			}
 			if executed != "" && client.request.Script != "" {
 				t.Fatalf("script differing from the recorded executed bytes authorized: %q; report=%v", client.request.Script, report)
+			}
+		})
+	}
+}
+
+// Real execution receipts must remain consumable by live learned programs when
+// there is no corpus at all. Changing checkout files cannot authorize bytes.
+func TestReplayOffAcceptedReceiptsReachLiveProgramsWithoutCorpus(t *testing.T) {
+	for _, variant := range []string{"accepted", "legacy helper", "unimported helper", "wrong bytes", "dirty receipt"} {
+		t.Run(variant, func(t *testing.T) {
+			loop, _ := pipelineTestLoop(t, true)
+			id := (pipelinePortProgram{}).Spec().ID
+			root := nativeRepository(t)
+			const incident = "receipt-only"
+			at := time.Unix(100, 0)
+			executor := PlanExecutor{Client: &scriptPlanFake{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+			result, err := executor.Apply(context.Background(), IncidentRequest{IncidentID: incident, Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.RunScript{Script: "echo recorded"}}}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipts := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "original", Result: result, StartedAt: at, CompletedAt: at.Add(time.Second)}}, nil)
+			projected, err := incidentResultContract(IncidentResult{RepairActions: receipts})
+			if err != nil {
+				t.Fatal(err)
+			}
+			outcome := &contracts.OutcomeRecord{SchemaVersion: 1, Classification: "success", IncidentId: incident, RepairActions: projected.GetRepairActions()}
+			data, err := protojson.Marshal(outcome)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for file, body := range map[string][]byte{
+				layout.OutcomePath(incident):            data,
+				".sdo/playbooks/" + id + "/README.md":   []byte("---\noriginating_incident: " + incident + "\n---\n# Synthetic\n"),
+				".sdo/playbooks/" + id + "/diagnose.go": []byte("package synthetic\n"),
+			} {
+				path := filepath.Join(root, file)
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, body, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if strings.Contains(variant, "helper") {
+				outcome.RepairActions[0].ScriptDigest = ""
+				raw, _ := protojson.Marshal(outcome)
+				if err := os.WriteFile(filepath.Join(root, layout.OutcomePath(incident)), raw, 0644); err != nil {
+					t.Fatal(err)
+				}
+				files := map[string]string{
+					".sdo/diagnostics/go.mod":       "module synthetic\n\ngo 1.26.0\n",
+					".sdo/lib/script/metadata.yaml": "originating_incident: " + incident + "\nscript_origins:\n  " + program.ScriptDigest("echo recorded") + ": " + outcome.RepairActions[0].ActionId + "\n",
+					".sdo/lib/script/repair.go":     "package script\n",
+				}
+				if variant == "legacy helper" {
+					files[".sdo/playbooks/"+id+"/diagnose.go"] = `package synthetic
+import _ "synthetic/lib/script"
+`
+				}
+				for file, body := range files {
+					name := filepath.Join(root, file)
+					if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(name, []byte(body), 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			nativeGit(t, root, "add", ".")
+			nativeGit(t, root, "commit", "-qm", "accepted receipt-only memory")
+			loop.Request.RepositoryWorktree = root
+			loop.Request.SourceCommit = nativeGit(t, root, "rev-parse", "HEAD")
+			script := "echo recorded"
+			if variant == "wrong bytes" {
+				script = "echo unrecorded"
+			}
+			if variant == "dirty receipt" {
+				script = "echo forged"
+				outcome.RepairActions[0].ScriptDigest = program.ScriptDigest(script)
+				data, _ := protojson.Marshal(outcome)
+				if err := os.WriteFile(filepath.Join(root, layout.OutcomePath(incident)), data, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = loop.scriptProvenance(id).check(context.Background(), id, script)
+			if (err == nil) != (variant == "accepted" || variant == "legacy helper") {
+				t.Fatalf("%s: %v", variant, err)
 			}
 		})
 	}

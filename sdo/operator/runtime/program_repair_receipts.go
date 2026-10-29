@@ -76,6 +76,9 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			}
 		}
 		irreversible := false
+		for _, action := range actions {
+			irreversible = irreversible || isAdmissionRetry(action)
+		}
 		for _, effect := range application.Result.ObjectEffects {
 			irreversible = irreversible || effect.Irreversible
 			if effect.Confirmed && effect.State == "applied" && !seen[effect.Ref] {

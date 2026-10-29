@@ -96,6 +96,7 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "program.WebhookCA",
             "program.ReadView.WebhookCAMatchesSecret",
             "program.SyncWebhookCA",
+            "program.RetryAdmission",
         ),
     ),
     (

@@ -10,6 +10,7 @@ from pathlib import Path
 from sdo.agents.code_paths import AGENT_SKILLS as AGENT_SKILLS
 from sdo.agents.code_paths import SKILLS_ROOT as SKILLS_ROOT
 from sdo.agents.code_paths import skills_for_role as skills_for_role
+from sdo.agents.replay import selected_skills_root
 
 #: The skills each agent worker installs into its CLI home. The registration
 #: manifests (``sdo/agents/registrations``) are protobuf ``AgentRegistration``
@@ -23,6 +24,7 @@ def install_skills(destination: Path, skills: tuple[str, ...], *, skills_root: P
     ``$CLAUDE_CONFIG_DIR/skills``. A missing skill is an image-build error and
     fails the worker instead of silently running without its instructions.
     """
+    skills_root = selected_skills_root(skills_root)
     for name in skills:
         source = skills_root / name
         if not (source / "SKILL.md").is_file():

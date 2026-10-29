@@ -68,6 +68,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 		}
 	}
 
+	str("--replay", config.GetReplay())
 	str("--code-path", config.GetCodePath().GetName())
 	args = append(args, codePathOverrideArgs(config.GetCodePath())...)
 	str("--namespace", config.GetNamespace())

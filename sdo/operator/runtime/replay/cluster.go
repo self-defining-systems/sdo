@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -407,4 +408,18 @@ func (w *reaction) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
 		*w.effects = append(*w.effects, "simulated:rollout-status:"+ref.Kind+"/"+ref.Name)
 	}
 	return nil
+}
+
+// AdmissionReplicaSets reads the current replay inventory through the same
+// snapshot projection used by diagnoses, rather than a typed client-go List
+// over the fixture's generic objects.
+func (c *cluster) AdmissionReplicaSets(ctx context.Context, namespace string) ([]appsv1.ReplicaSet, error) {
+	if namespace == "" || namespace != c.original.NamespaceName {
+		return nil, fmt.Errorf("admission retry namespace differs from replay")
+	}
+	snapshot, err := c.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.ReplicaSets(), nil
 }

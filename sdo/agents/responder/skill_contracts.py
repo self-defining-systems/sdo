@@ -70,7 +70,7 @@ async def render_contract() -> str:
         "and evidence (fixed/new/unchanged), and prints the file path and generated schema. A failed action "
         "line names the failure reason, exit code and first error line.\n\n"
         f"```json\n{json.dumps(command_report_schema(), indent=2)}\n```\n\n" + verification_help(),
-        "## Supported open phase selections\n\n"
+        "<!-- replay:on -->\n## Supported open phase selections\n\n"
         + "\n".join(
             f"- When captured, filename: open@{phase}.json; provenance open_at: {phase}."
             for phase in get_args(OpenPhase)
@@ -78,7 +78,7 @@ async def render_contract() -> str:
         + "\n- Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.\n"
         "Select only files actually supplied by the controller. "
         "Supported phase values do not promise capture availability. "
-        "Captures store each object once, in objects; capture_fields serves the typed sections.",
+        "Captures store each object once, in objects; capture_fields serves the typed sections.\n<!-- /replay:on -->",
         "## Tool reply budget\n\n"
         f"A reflection tool reply over {MAX_TOOL_REPLY_BYTES} bytes is saved whole to a file; the reply names "
         "its size and path with a short partial head. Search or extract from that file; the head is not "
@@ -87,7 +87,12 @@ async def render_contract() -> str:
     with tempfile.TemporaryDirectory() as directory:
         server = validation_server(Path(directory))
         tools = await server.list_tools()
-    sections.extend(f"## {tool.name}\n\n{inspect.cleandoc(server.help_texts[tool.name]).rstrip()}" for tool in tools)
+    for tool in tools:
+        text = f"## {tool.name}\n\n{inspect.cleandoc(server.help_texts[tool.name]).rstrip()}"
+        if tool.name in {"create_corpus", "evidence_inventory", "capture_fields", "recordings_index"}:
+            text = "<!-- replay:on -->\n" + text + "\n<!-- /replay:on -->"
+        sections.append(text)
+
     return "\n\n".join(sections) + "\n"
 
 

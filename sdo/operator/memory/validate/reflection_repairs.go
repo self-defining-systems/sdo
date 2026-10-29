@@ -16,7 +16,7 @@ import (
 // ReflectionRepairDiagnostics binds the fast no-change path to controller
 // receipts, not the model's explanation. Reported changed IDs are checked
 // against the real diff by ReflectionDiagnostics. Recorded hand repairs require executable steps; replay remains informational.
-func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision, paths []string) []Diagnostic {
+func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision, paths []string, replay ...string) []Diagnostic {
 	if decision == nil || (outcome.GetReflectionSkipReason() == "no_session" && decision.GetLearningDecision() == "no_change" && decision.GetNoChangeReason() == "no_session") {
 		return nil
 	}
@@ -146,7 +146,12 @@ func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, 
 			stale[match.GetPlaybookId()] = "its findings remain unresolved in the final controller observation"
 		}
 	}
-	ds := recordedRepairProgramDiagnostics(root, outcome, hand, changed)
+	var ds []Diagnostic
+	if len(replay) > 0 && replay[0] == "off" {
+		ds = recordedRepairExecutableDiagnostics(root, hand, changed)
+	} else {
+		ds = recordedRepairProgramDiagnostics(root, outcome, hand, changed)
+	}
 	if len(hand) > 0 {
 		ds = append(ds, recordedRepairSDKGapDiagnostics(outcome, decision.GetSdkGaps())...)
 	}

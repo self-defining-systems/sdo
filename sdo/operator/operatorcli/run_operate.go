@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -76,7 +77,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		return lifecycle.Result{}, policyErr
 	}
 
-	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, selectMemoryValidator(config.Install.CodePath, broker.JobValidator(validation)), broker.ObservationPolicy{CodePath: memoryCodePath(config.Install.CodePath), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
+	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, selectMemoryValidator(config.Install.CodePath, broker.JobValidator(validation)), broker.ObservationPolicy{Replay: config.Install.Replay, CodePath: memoryCodePath(config.Install.CodePath), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
@@ -100,6 +101,11 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil {
 		return lifecycle.Result{}, err
 	}
+	replay, err := settings.Replay(config.Install.Replay)
+	if err != nil {
+		return lifecycle.Result{}, err
+	}
+	agentEnvironment[settings.ReplayEnvironment] = replay
 	agentEnvironment["CODEX_HOME"], agentEnvironment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
 	workers := worker_registry.KubernetesExecutor{
 		ToolchainImage: config.Install.ControllerImage,
@@ -116,7 +122,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},
 		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true,
 	}
-	var healthProbe deployment.HealthProbe
+	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay}
 	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
 		healthProbe = deployment.ShellDetectorProbe{Config: runner}
 	}

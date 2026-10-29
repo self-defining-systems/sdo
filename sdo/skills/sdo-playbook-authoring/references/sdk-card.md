@@ -51,7 +51,8 @@ or reads. The full [program SDK](program-sdk.md) is rarely needed.
 - `type AdmissionWebhook struct{Configuration sdk.ObjectRef; Webhook string; FailurePolicy string; Service *sdk.ObjectRef; Port int32; ReadyEndpoints int; ServingSecrets []WebhookSecretKey; CABundle string}`: is one webhook entry that admits Pod creation in the asked namespace, with its backend: the Service, its ready endpoint count and the Secrets its Pods mount.
 - `type WebhookCA struct{Ref sdk.ObjectRef; Webhook string; SecretNamespace string; SecretName string; SecretKey string}`: identifies one webhook and a Secret key.
 - `ReadView.WebhookCAMatchesSecret(WebhookCA) (bool, error)`: reports whether one webhook's caBundle equals a Secret key without exposing either value.
-- `type SyncWebhookCA struct{Target WebhookCA; Reason string}`: copies one Secret key into the named webhook's caBundle inside the runtime.
+- `type SyncWebhookCA struct{Target WebhookCA; Reason string}`: Webhook repairs automatically requeue affected admission-blocked ReplicaSets.
+- `type RetryAdmission struct{ Ref sdk.ObjectRef }`: requeues one ReplicaSet that still needs Pods after admission FailedCreate.
 
 ## Rollout stuck, Pods unready or crashing
 

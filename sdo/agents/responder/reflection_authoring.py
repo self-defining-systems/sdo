@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from sdo.agents.replay import replay_mode, selected_skills_root
 from sdo.agents.responder import tool_output
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.tool_output import MAX_TOOL_REPLY_BYTES
@@ -83,17 +84,18 @@ def authoring_reference(topic: ReferenceTopic = "programs", section: str = "") -
 
 
 def _reference_text(topic: ReferenceTopic) -> str:
+    skills_root = selected_skills_root(SKILLS_ROOT)
     if topic == "sdk":
         paths = [
             # The card answers most signature questions in one grouped page.
-            SKILLS_ROOT / "sdo-playbook-authoring/references/sdk-card.md",
-            SKILLS_ROOT / "sdo-playbook-authoring/references/program-sdk.md",
-            SKILLS_ROOT / "sdo-playbook-authoring/references/kubernetes-client.md",
-            SKILLS_ROOT / "sdo-detector-authoring/references/sdk.md",
+            skills_root / "sdo-playbook-authoring/references/sdk-card.md",
+            skills_root / "sdo-playbook-authoring/references/program-sdk.md",
+            skills_root / "sdo-playbook-authoring/references/kubernetes-client.md",
+            skills_root / "sdo-detector-authoring/references/sdk.md",
         ]
     elif topic == "rules":
         paths = [
-            SKILLS_ROOT / name / "references/rules.md"
+            skills_root / name / "references/rules.md"
             for name in (
                 "sdo-memory",
                 "sdo-detector-authoring",
@@ -105,7 +107,7 @@ def _reference_text(topic: ReferenceTopic) -> str:
             os.environ.get("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR")
             or str(SKILLS_ROOT.parents[1] / "examples/playbook-programs")
         )
-        paths = [SKILLS_ROOT / "sdo-playbook-authoring/references/programs.md"]
+        paths = [skills_root / "sdo-playbook-authoring/references/programs.md"]
         paths.extend(
             examples / "playbooks/service-targetport-mismatch" / name
             for name in (
@@ -306,6 +308,8 @@ def prepare_session_corpus(
 
 def install_authoring_tools(server: FastMCP, root: Path) -> None:
     server.add_tool(authoring_reference)
+    if replay_mode() == "off":
+        return
 
     @server.tool()
     def create_corpus(

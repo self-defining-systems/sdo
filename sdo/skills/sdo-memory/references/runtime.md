@@ -162,12 +162,14 @@ Key JSON fields: healthy, unresolved, findings[], detector_states[],
 verification_blockers[{detector_id,reason}], drift[], drift_events[]
 
 
+<!-- replay:on -->
 ## Supported open phase selections
 
 - When captured, filename: open@detect.json; provenance open_at: detect.
 - When captured, filename: open@pre-apply.json; provenance open_at: pre-apply.
 - Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.
 Select only files actually supplied by the controller. Supported phase values do not promise capture availability. Captures store each object once, in objects; capture_fields serves the typed sections.
+<!-- /replay:on -->
 
 ## Tool reply budget
 
@@ -181,6 +183,7 @@ The full topic text is saved once to the file named in the reply; search
 that file instead of re-reading the reference. The sdk topic starts with
 the SDK card: exact signatures grouped by fault, one line each.
 
+<!-- replay:on -->
 ## create_corpus
 
 Create a positive replay fixture from recorded session observations or optional captures.
@@ -192,7 +195,9 @@ copy the selected available capture and peer context. repair_receipt_ids
 names the outcome's hand repairs these programs encode; their exact
 RepairReceipt entries replace unrelated receipt links in either mode.
 Replay snapshots and verdicts are informational.
+<!-- /replay:on -->
 
+<!-- replay:on -->
 ## evidence_inventory
 
 List capture digests, counts and a few resource names, bound to the accepted outcome.
@@ -201,7 +206,9 @@ Recorded method counts cover the whole file. Use recordings_index to locate
 primitive calls without reading result payloads. Full immutable evidence
 remains available through capture_fields and to
 independent validation. Read relevant fields rather than entire captures.
+<!-- /replay:on -->
 
+<!-- replay:on -->
 ## capture_fields
 
 Read captured resource fields or primitive recordings on demand.
@@ -211,7 +218,9 @@ Null collections are empty. Sections of a capture that stores each object
 once, in objects, are rebuilt from those objects. Results are paginated; the shared reply cap
 saves large complete pages to a session file. Extract relevant fields
 from that file. Missing fields are null, never evidence that a primitive succeeded.
+<!-- /replay:on -->
 
+<!-- replay:on -->
 ## recordings_index
 
 Index primitive calls by original position, phase, method, bound object and error.
@@ -222,6 +231,7 @@ Empty recorded phases mean open. phase_index locates the call within that
 phase's capture_fields page. Error excerpts report omitted characters.
 open_phase selects the protected recording file, including its fixed observations.
 Result payloads remain available through capture_fields.
+<!-- /replay:on -->
 
 ## check_memory
 
@@ -233,4 +243,6 @@ It first gofmt-formats Go files changed under .sdo/. The reply's next
 field says what to do: return on a pass, else fix the diagnostics.
 Legacy decision_path files are also supported. One call waits for final
 diagnostics. Compile/import/format/provenance checks remain required;
-replay verdicts are information and never block saving. The broker repeats the check.
+Replay policy comes from SDO_REPLAY (on by default). Off skips corpus and replay;
+RunScript still requires its successful accepted receipt. Replay verdicts
+are information. The broker repeats the check.

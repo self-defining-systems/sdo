@@ -291,3 +291,40 @@ def test_native_reflection_learning_decisions_are_reported_from_the_contract() -
 
     for decision in ("updated", "no_change"):
         assert decision_kind({"response": {"learning_decision": decision}}) == decision
+
+
+def test_replay_policy_is_explicit_in_the_offline_worker(tmp_path: Path) -> None:
+    command = docker_command(
+        scenario=_scenario(),
+        run_dir=tmp_path / "run",
+        skills=tmp_path / "skills",
+        toolchain=tmp_path / "tools",
+        auth=tmp_path / "auth",
+        model="test",
+        name="test",
+        replay="off",
+    )
+    assert _environment(command)["SDO_REPLAY"] == "off"
+
+
+def test_source_overlay_uses_native_opus_pool_admission(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SDO_OPUS_POOL_DIR", str(tmp_path / "pool"))
+    monkeypatch.setenv("SDO_OPUS_POOL_MODE", "per_host")
+    monkeypatch.setenv("SDO_OPUS_POOL_HOST_ID", "synthetic-host")
+    monkeypatch.setenv("SDO_OPUS_MAX_SESSIONS", "4")
+    command = docker_command(
+        scenario=_scenario(),
+        run_dir=tmp_path / "run",
+        skills=tmp_path / "skills",
+        toolchain=tmp_path / "tools",
+        auth=tmp_path / "auth",
+        model="test",
+        name="test",
+        replay="off",
+        code_root=tmp_path / "code",
+        operator_binary=tmp_path / "operator",
+    )
+    environment = _environment(command)
+    assert environment["SDO_OPUS_POOL_DIR"] == "/sdo/opus-pool"
+    assert environment["SDO_OPUS_POOL_HOST_ID"] == "synthetic-host"
+    assert _mounts(command)["/sdo/opus-pool"] == str(tmp_path / "pool")

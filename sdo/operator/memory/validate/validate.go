@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/contracts/settings"
 	"sort"
 	"strings"
 
@@ -67,6 +68,8 @@ const (
 
 // Request describes one validation run.
 type Request struct {
+	// Replay is trusted run configuration: empty/on enables corpus and replay.
+	Replay string
 	// CodePath is trusted caller configuration, never read from candidate artifacts.
 	CodePath string
 
@@ -178,6 +181,9 @@ func (r Request) effectiveLayers() Layer {
 }
 
 func (r Request) check() error {
+	if _, err := settings.Replay(r.Replay); err != nil {
+		return err
+	}
 	if r.Root == "" {
 		return errors.New("validate: root is required")
 	}

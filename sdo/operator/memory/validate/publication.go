@@ -171,11 +171,17 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 					return nil, err
 				}
 				if structurallyValid {
-					ds = append(ds, ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths)...)
+					ds = append(ds, ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths, r.Replay)...)
 				}
-				r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
+				if r.Replay != "off" {
+					r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
+				}
 				if structurallyValid {
-					if err := programvalidation.ValidateScriptOrigins(r.Root, outcome, paths); err != nil {
+					checkOrigins := programvalidation.ValidateScriptOrigins
+					if r.Replay == "off" {
+						checkOrigins = programvalidation.ValidateScriptOriginsWithoutCorpus
+					}
+					if err := checkOrigins(r.Root, outcome, paths); err != nil {
 						ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: err.Error()})
 					}
 				}

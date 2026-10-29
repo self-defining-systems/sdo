@@ -86,6 +86,7 @@ func (f ReflectionWorkerFunc) Reflect(ctx context.Context, closure IncidentClosu
 // safe to select when a full OutcomeDeriver and ReflectionWorker are configured;
 // no partial closure can be acknowledged.
 type NativeIncidentBroker struct {
+	Replay      string
 	CodePath    CodePathConfig
 	ShellReader shellpath.Reader
 
@@ -584,12 +585,12 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		positive, negative := settledProgramCases(eligibility)
 		origins := settledCaptureOrigins(eligibility)
 		capture := ""
-		if n.SessionRoot != "" {
+		if n.Replay != "off" && n.SessionRoot != "" {
 			capture, _ = memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
 		}
 		prepared := false
 		negativePrepared := false
-		if len(positive) > 0 {
+		if n.Replay != "off" && len(positive) > 0 {
 			if capture != "" {
 				paths, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins)
 				prepared = err == nil && len(paths) > 0

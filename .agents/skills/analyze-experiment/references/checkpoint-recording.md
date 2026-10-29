@@ -36,3 +36,5 @@ live cost reproduction.
 `wall_seconds` also includes host admission and independent post-check/replay; the
 table uses reflection minutes when available. Per-run `run-config.json` pins the
 actual provider/model/effort, including a model override.
+
+For replay-on/off comparisons, use [replay policy](replay-policy.md); missing corpus or replay observations in an off row are expected.

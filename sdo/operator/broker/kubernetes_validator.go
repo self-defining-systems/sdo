@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sdo.dev/operator/contracts/settings"
 	"strings"
 	"sync"
 	"time"
@@ -135,7 +136,16 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 	if request.HealthyBaseline != "" {
 		useBaseline = true
 	}
+	mode, err := settings.Replay(request.Replay)
+	if err != nil {
+		return ValidationJobReceipt{}, err
+	}
+	if mode == "off" {
+		useBaseline = false
+		request.HealthyBaseline = ""
+	}
 	job := k.validationJob(name, subPath, request.CandidateTree, useBaseline)
+	job.Spec.Template.Spec.Containers[0].Env = append(job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{Name: settings.ReplayEnvironment, Value: mode})
 	if request.HealthyBaseline != "" {
 		baseline, err := filepath.Abs(request.HealthyBaseline)
 		if err != nil {
