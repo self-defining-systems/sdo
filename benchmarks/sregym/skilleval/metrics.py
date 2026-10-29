@@ -281,7 +281,7 @@ class RunMetrics:
 
 def decision_kind(result: dict[str, Any]) -> str:
     response = result.get("response") or {}
-    for key in ("decision", "kind", "outcome"):
+    for key in ("learning_decision", "decision", "kind", "outcome"):
         if isinstance(response.get(key), str):
             return response[key]
     return "none" if not response else "edited"

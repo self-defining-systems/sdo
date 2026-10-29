@@ -284,3 +284,10 @@ def test_claude_usage_counts_new_unique_requests_and_not_cumulative_billing(tmp_
     assert abs(usage.usd - 0.00126) < 1e-12
     assert usage.cache_write_1h_input_tokens == 40
     assert usage.accounting_source == "new unique Claude assistant message IDs"
+
+
+def test_native_reflection_learning_decisions_are_reported_from_the_contract() -> None:
+    from benchmarks.sregym.skilleval.metrics import decision_kind
+
+    for decision in ("updated", "no_change"):
+        assert decision_kind({"response": {"learning_decision": decision}}) == decision
