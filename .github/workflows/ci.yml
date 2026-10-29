@@ -84,13 +84,11 @@ jobs:
             ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
-        if: matrix.mode == 'normal'
         with:
           version: "0.9.24"
           python-version: "3.12"
           enable-cache: true
       - name: Enforce standing PR execution limits
-        if: matrix.mode == 'normal'
         run: |
           uv sync --locked --all-extras
           uv run python scripts/check_ci_budget.py
@@ -99,6 +97,12 @@ jobs:
         # Normal preparation builds dependency archives, not discarded test
         # executables. GNU timeout also stops every child compiler on failure.
         run: timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
+
+      - name: Check Go static contracts
+        if: matrix.mode == 'race'
+        run: bash scripts/check_errors.sh --go-only
+        env:
+          GOFLAGS: "-p=2 -trimpath -race"
 
       - name: Plan capacity from compiled inventory and hosted costs
         if: matrix.mode == 'race'
@@ -231,12 +235,14 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: false
+      - name: Enforce compiler-free Python jobs
+        run: |
+          echo "SDO_UNIT_REAL_GO=$(command -v go)" >> "$GITHUB_ENV"
+          echo "$PWD/scripts/unit-tools" >> "$GITHUB_PATH"
       - name: Check out the SREGym harness
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
           python3 scripts/init_test_prereqs.py
-      - name: Share linked binaries between tests
-        run: bash scripts/link_cache.sh >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
           version: "0.9.24"
@@ -258,7 +264,7 @@ jobs:
         run: bash scripts/format_code.sh --check
       - name: Check static contracts
         if: matrix.name == 'static analysis'
-        run: bash scripts/check_errors.sh
+        run: bash scripts/check_errors.sh --python-only
       - name: Run Python shard
         run: ${{ matrix.run }} --durations=20
         env:

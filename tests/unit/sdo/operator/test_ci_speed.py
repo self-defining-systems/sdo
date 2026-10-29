@@ -461,3 +461,17 @@ def test_preparation_uses_available_compiler_cpu_without_changing_build_identity
     assert preparation["env"]["GOMAXPROCS"] == "4"
     assert "GOFLAGS" not in preparation["env"]
     assert configuration["env"]["GOFLAGS"] == "-p=2 -trimpath"
+
+
+def test_static_python_job_cannot_compile_go_and_go_checks_run_on_prepared_race_graph() -> None:
+    jobs = workflow()["jobs"]
+    static = next(step for step in jobs["python"]["steps"] if step.get("name") == "Check static contracts")
+    assert "--python-only" in static["run"]
+    guard = next(step for step in jobs["python"]["steps"] if step.get("name") == "Enforce compiler-free Python jobs")
+    assert "scripts/unit-tools" in guard["run"]
+    assert "SDO_UNIT_REAL_GO" in guard["run"]
+    assert not any("scripts/link_cache.sh" in step.get("run", "") for step in jobs["python"]["steps"])
+    go_checks = next(step for step in jobs["prepare-go"]["steps"] if step.get("name") == "Check Go static contracts")
+    assert go_checks["if"] == "matrix.mode == 'race'"
+    assert "--go-only" in go_checks["run"]
+    assert "-race" in go_checks["env"]["GOFLAGS"]

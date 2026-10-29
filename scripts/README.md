@@ -29,6 +29,10 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   to main or vic-lsh/dev/sdo-improve save shared Go caches; throwaway PR/queue refs
   restore the base and transfer artifacts without competing for its cache quota.
   Consumer jobs work even when the base entry is missing or evicted.
+- `check_errors.sh --go-only` owns Go static contracts (schema/deadline/fixture
+  ratchets, generated Go references, parity and purity) and runs on the prepared
+  race graph. `--python-only` owns Python checks and runs behind the compiler
+  guard in Python CI. The default local command retains both sets.
 - `unit-tools/go` rejects compiler commands in unmarked Python tests, including
   Go invoked by child CLIs. The shared reflection-memory fixture routes all its
   transitive consumers to `go_integration` before marker selection; new compiler
