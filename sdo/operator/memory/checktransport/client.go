@@ -3,6 +3,7 @@
 package checktransport
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -28,13 +29,19 @@ func Check(ctx context.Context, directory string, decision *contracts.Reflection
 	if err != nil {
 		return nil, err
 	}
-	request, err := json.Marshal(struct {
+	// This is a file/JSON transport, never HTML. Avoid HTML escaping, which
+	// can expand an otherwise valid worker decision sixfold before framing.
+	var body bytes.Buffer
+	encoder := json.NewEncoder(&body)
+	encoder.SetEscapeHTML(false)
+	err = encoder.Encode(struct {
 		Command    string            `json:"command"`
 		Parameters map[string]string `json:"parameters"`
 	}{"memory-check", map[string]string{"decision": string(encoded)}})
 	if err != nil {
 		return nil, err
 	}
+	request := body.Bytes()
 	name := "check-" + rand.Text() + ".json"
 	root, err := os.OpenRoot(directory)
 	if err != nil {

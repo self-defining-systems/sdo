@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/memory/layout"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/broker"
@@ -59,8 +61,14 @@ func TestReflectionNoveltyRequiresCompleteRecordedCoverage(t *testing.T) {
 }
 
 func TestCoveredRepeatBrokerSkipsReflectionWorker(t *testing.T) {
-	for _, manual := range []bool{false, true} {
-		t.Run(fmt.Sprint("hand-repair=", manual), func(t *testing.T) {
+	for _, test := range []struct {
+		name                   string
+		manual, session, stage bool
+	}{
+		{"covered deterministic stage", false, false, true}, {"hand repair", true, false, true}, {"resumed writer handoff", false, true, false}, {"unknown writer without session ID", false, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manual := test.manual
 			ctx := context.Background()
 			root := nativeRepository(t)
 			nativeMemoryFixture(t, root)
@@ -71,7 +79,7 @@ func TestCoveredRepeatBrokerSkipsReflectionWorker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			modelCalls := 0
+			workerCalls := 0
 			native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), Replay: "off", ResponderBackend: "test", ResponderModel: "test",
 				Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
 					o := coveredRepeatOutcome(t)
@@ -85,7 +93,10 @@ func TestCoveredRepeatBrokerSkipsReflectionWorker(t *testing.T) {
 					return DerivedOutcome{Record: o, RequiresReflection: true}, nil
 				}),
 				Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
-					modelCalls++
+					workerCalls++
+					if test.session {
+						return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "native_memory_check_no_change"}, nil
+					}
 					return ReflectionDecision{LearningDecision: "failed", Error: "synthetic learning worker observed new evidence"}, nil
 				}),
 			}
@@ -95,6 +106,13 @@ func TestCoveredRepeatBrokerSkipsReflectionWorker(t *testing.T) {
 			}
 			c := nativeClosure(p)
 			c.Request.RepairPolicy = "recorded-actions"
+			if test.stage {
+				c.Result.ResolutionPath = "deterministic"
+				c.Request.PriorStages = []*contracts.StageReport{{Stage: "deterministic"}}
+			}
+			if test.session {
+				c.Result.ResponderSessionID = "synthetic-session"
+			}
 			if _, err := native.ProcessClosure(ctx, c); err != nil {
 				t.Fatal(err)
 			}
@@ -103,14 +121,14 @@ func TestCoveredRepeatBrokerSkipsReflectionWorker(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := 0
-			if manual {
+			if manual || test.session || !test.stage {
 				want = 1
 			}
-			if modelCalls != want {
-				t.Fatalf("model calls=%d want=%d", modelCalls, want)
+			if workerCalls != want {
+				t.Fatalf("worker calls=%d want=%d", workerCalls, want)
 			}
-			if !manual && ledger.GetReflectionDecision().GetNoChangeReason() != "accepted_programs_no_new_evidence" {
-				t.Fatalf("model calls=%d decision=%v", modelCalls, ledger.GetReflectionDecision())
+			if !manual && !test.session && test.stage && ledger.GetReflectionDecision().GetNoChangeReason() != "accepted_programs_no_new_evidence" {
+				t.Fatalf("worker calls=%d decision=%v", workerCalls, ledger.GetReflectionDecision())
 			}
 		})
 	}
@@ -186,5 +204,58 @@ func TestReflectionPeerPublicationDoesNotRepeatCleanExploration(t *testing.T) {
 				t.Fatalf("lost author or peer intent: %s %v", accepted, err)
 			}
 		})
+	}
+}
+
+// The real deterministic stage publishes the application/NoMatch receipts;
+// the real outcome deriver and broker consume them without a model worker.
+func TestCoveredRepeatStageProducerReachesBroker(t *testing.T) {
+	ctx := context.Background()
+	loop, state := pipelineTestLoop(t, false)
+	root := nativeRepository(t)
+	nativeMemoryFixture(t, root)
+	for _, match := range state.Request.PlaybookCoverage.Matches {
+		id := match.GetPlaybookId()
+		t1Write(t, root, ".sdo/playbooks/"+id+"/README.md", []byte("---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: initial\n---\nSynthetic accepted repair <RESOURCE_NAME>\n"))
+	}
+	if _, err := layout.WritePlaybookIndex(root); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, root, "add", ".")
+	nativeGit(t, root, "commit", "-qm", "synthetic accepted stage memory")
+	b, err := broker.New(root, t.TempDir(), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers := 0
+	native := NativeIncidentBroker{Repository: b, LedgerRoot: t.TempDir(), Replay: "off", Deriver: ProtoOutcomeDeriver{}, Programs: loop.Programs, ResponderBackend: "test", ResponderModel: "test", Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+		workers++
+		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "worker fallback"}, nil
+	})}
+	workspace, err := native.PrepareIncident(ctx, state.Request.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Request.RepositoryBaseCommit = workspace.BaseCommit
+	state.Request.RepositoryWorktree = workspace.Worktree
+	loop.Request = state.Request
+	if err := RunResponseStages(ctx, state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	closure := IncidentClosure{Request: state.Request, Result: &result, VerifiedAt: time.Now(), FinalDetectorStates: []DetectorEvaluation{{DetectorID: loop.Detectors[0].Spec().ID, Status: DetectorEvaluationClear, EvaluatedAt: time.Now()}}, Frozen: true}
+	closure.Request.PriorStages = cloneStageReports(state.PriorStages)
+	if _, err := native.ProcessClosure(ctx, closure); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := native.readLedger(state.Request.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workers != 0 || ledger.GetReflectionDecision().GetNoChangeReason() != "accepted_programs_no_new_evidence" {
+		t.Fatalf("workers=%d decision=%v", workers, ledger.GetReflectionDecision())
 	}
 }

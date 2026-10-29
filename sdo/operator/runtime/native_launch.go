@@ -157,7 +157,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 			executor.Environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
 		}
 
-		if native.Repository.ValidationToolchain == "" {
+		if native.Repository == nil || native.Repository.ValidationToolchain == "" {
 			return executor, nil
 		}
 

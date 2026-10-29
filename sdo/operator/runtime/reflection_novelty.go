@@ -33,7 +33,10 @@ func coveredRepeatCandidate(outcome *contracts.OutcomeRecord) bool {
 		}
 	}
 	for _, finding := range outcome.GetFindings() {
-		if finding.GetFingerprint() == "" || !covered[finding.GetFingerprint()] {
+		// SDK findings may omit an explicit fingerprint. Coverage uses the shared
+		// canonical identity in that case; use the same owner on this edge too.
+		fingerprint := FindingFingerprint(findingState(finding))
+		if fingerprint == "" || !covered[fingerprint] {
 			return false
 		}
 	}

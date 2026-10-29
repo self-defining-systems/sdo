@@ -55,7 +55,7 @@ func TestReflectionTrustedCheckTransportToPublication(t *testing.T) {
 		}
 		// Decisions can be larger than the responder tool transport's default
 		// 64 KiB. They must reach validation, rather than fail transport truncation.
-		large := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: strings.Repeat("synthetic ", 16*1024)}
+		large := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: strings.Repeat("<", 512*1024)}
 		rejected, err := checktransport.Check(ctx, directory, large)
 		if err != nil {
 			return nil, err
