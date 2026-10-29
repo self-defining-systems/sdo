@@ -68,6 +68,14 @@ repair needs successful TCP probes at the candidate port and refused probes at t
 selected ready Pods; anything ambiguous stays Unknown. `RemoveServicePort` removes exactly one port by
 name or by port and protocol; missing or ambiguous entries refuse, and the last port needs `AllowEmpty`.
 
+## Webhook trust
+
+Derive serving Secret references from `AdmissionWebhooksFor` on the failing Namespace or workload.
+Plan binding can complete missing `SyncWebhookCA` reference fields from one exact observed webhook and
+serving-key relation. Explicit fields stay fixed; missing or ambiguous relations require declared inputs.
+A whole-Secret mount does not identify its certificate key. Declare any needed scalar in `Spec` with a
+usable default or derive it from observations; never depend on undeclared values appearing in bindings.
+
 ## Acceptance
 
 The broker repeats the memory check. Compilation, imports, changed-source formatting, ownership and

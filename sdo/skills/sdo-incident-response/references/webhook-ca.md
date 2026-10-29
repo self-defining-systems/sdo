@@ -5,3 +5,6 @@
 Ordinary actions after synchronization also publish digest projections of CA bundles in receipts and captures, including copies in last-applied annotations.
 
 Find the webhook, its backend Service and the Secret its Pods mount from the failing namespace; read names, never Secret data. Learned programs bind that Namespace or workload and read `AdmissionWebhooksFor`.
+
+Learned CA plans can complete missing reference fields from one exact observed serving relation.
+Explicit references stay fixed. Ambiguous relations or an unknown certificate key need explicit inputs.
