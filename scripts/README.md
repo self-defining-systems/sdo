@@ -32,7 +32,8 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   Python jobs fetch only module sources and tools, excluding the compiler archive.
   `go_ci_race_artifact.py` derives the same fixed plan on the race producer,
   then asks Go for each bucket's selected test dependency exports and publishes
-  a separate artifact per bucket. It omits stale archives and compiled static
+  a separate artifact per bucket. Contract jobs fetch their normal and selected
+  race inputs concurrently to avoid adding independent network stalls. It omits stale archives and compiled static
   tools. The consumer verifies that the accompanying plan matches its own.
   Only matching Go action records accompany the exports; consumer Go commands
   retain their own validity checks. A 320 MiB compressed size gate rejects growth
