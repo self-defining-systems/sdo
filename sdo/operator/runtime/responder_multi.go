@@ -111,7 +111,7 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 			}
 			owners[key] = owner
 		}
-		if l.pendingConflict(refs, response) {
+		if l.pendingConflict(ctx, refs, response) {
 			return
 		}
 		// Preserve reservation ownership diagnostics even when an earlier
@@ -207,6 +207,9 @@ type pendingMitigation struct {
 	// Superseded ones saw a later write and earn no late credit.
 	Released   bool
 	Superseded bool
+	// Reason is the typed reason a reservation was released before its rollout
+	// settled; empty means the stall bound released it.
+	Reason string
 }
 
 func (l *ResponderLoop) reservePending(application string, plan program.Plan, attempt, programID string, bindings program.Bindings, fingerprints []string) {
@@ -267,7 +270,11 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 			result.VerificationCompleted = true
 			result.VerificationPassed = false
 			l.applications[application] = result
-			l.updatePendingReport(application, pending.AttemptID, false, "rollout_stalled")
+			reason := "rollout_stalled"
+			if pending.Reason != "" {
+				reason = pending.Reason
+			}
+			l.updatePendingReport(application, pending.AttemptID, false, reason)
 			continue
 		}
 		result.RolloutPending = nil
@@ -360,6 +367,85 @@ func (l *ResponderLoop) releaseStalledPending(ctx context.Context, application s
 	}
 }
 
+func (l *ResponderLoop) pendingOverlaps(ref sdk.ObjectRef, pending pendingMitigation) bool {
+	for _, target := range pending.Refs {
+		if ref.Kind == "*" || target.Kind == "*" || writeObjectKey(ref) == writeObjectKey(target) {
+			return true
+		}
+	}
+	return false
+}
+
+// failIneffectivePending ends a held program application whose writes landed
+// but whose own diagnosis still matches while a finding it targeted is still
+// active: its plan did not address the fault, so waiting for its rollout
+// cannot help. It fails with diagnosis_persists and releases its writes so an
+// independent repair can run; the repair then supersedes it (no late credit).
+// Without a diagnoser or a fresh diagnosis there is no such evidence and the
+// reservation keeps holding.
+func (l *ResponderLoop) failIneffectivePending(ctx context.Context, application string, pending pendingMitigation) bool {
+	if pending.ProgramID == "" || l.Programs == nil {
+		return false
+	}
+	if !l.targetedFindingActive(pending.FindingFingerprints) {
+		return false
+	}
+	diagnoser, ok := pending.diagnoser, pending.diagnoser != nil
+	if !ok && (pending.ProgramRevision == "" || pending.ProgramRevision == l.programRevision(pending.ProgramID)) {
+		diagnoser, ok = l.Programs.Diagnoser(pending.ProgramID)
+	}
+	if !ok {
+		return false
+	}
+	view, err := l.snapshotView(ctx)
+	if err != nil {
+		return false
+	}
+	verdict := program.RunDiagnose(ctx, diagnoser, view, pending.Bindings, l.deadline())
+	l.runs = append(l.runs, ProgramRun{ProgramRevision: pending.ProgramRevision, ProgramID: pending.ProgramID, Bindings: cloneProgramBindings(pending.Bindings), Verdict: verdict})
+	if verdict.Result != program.Match {
+		return false
+	}
+	const reason = "diagnosis_persists"
+	pending.Released = true
+	pending.Reason = reason
+	l.pendingWrites[application] = pending
+	if result, ok := l.applications[application]; ok {
+		result.RolloutPending = nil
+		result.VerificationCompleted = true
+		result.VerificationPassed = false
+		l.applications[application] = result
+		for i := range l.applicationsLog {
+			if l.applicationsLog[i].ID == application {
+				l.applicationsLog[i].Result = result
+				l.applicationsLog[i].Pending = planApplicationPending(result)
+				l.applicationsLog[i].Error = reason + ": " + pending.ProgramID + " still matches after its writes; writes remain applied"
+				l.applicationsLog[i].CompletedAt = time.Now().UTC()
+			}
+		}
+	}
+	l.updatePendingReport(application, pending.AttemptID, false, reason)
+	return true
+}
+
+// targetedFindingActive is true when no targets were named or one is still active.
+func (l *ResponderLoop) targetedFindingActive(fingerprints []string) bool {
+	if len(fingerprints) == 0 {
+		return true
+	}
+	for _, finding := range l.Request.Findings {
+		if finding.Status != sdk.FindingActive {
+			continue
+		}
+		for _, fingerprint := range fingerprints {
+			if FindingFingerprint(finding) == fingerprint {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // heldPendingWrites counts reservations that still hold their writes.
 func (l *ResponderLoop) heldPendingWrites() int {
 	held := 0
@@ -371,18 +457,22 @@ func (l *ResponderLoop) heldPendingWrites() int {
 	return held
 }
 
-func (l *ResponderLoop) pendingConflict(refs []sdk.ObjectRef, response *ToolResponse) bool {
-	return l.pendingConflictExcept(refs, response, "")
+func (l *ResponderLoop) pendingConflict(ctx context.Context, refs []sdk.ObjectRef, response *ToolResponse) bool {
+	return l.pendingConflictExcept(ctx, refs, response, "")
 }
 
-// A held reservation refuses overlapping writes. A released one is superseded
+// A held reservation refuses overlapping writes unless it is shown not to have
+// addressed its fault (failIneffectivePending). A released one is superseded
 // by any later write that is not refused: the write may be what let its
 // rollout finish (an owned ReplicaSet or Pod, a claim, a node), so the stalled
 // application earns no late credit. Reservations of attempt itself are skipped.
-func (l *ResponderLoop) pendingConflictExcept(refs []sdk.ObjectRef, response *ToolResponse, attempt string) bool {
+func (l *ResponderLoop) pendingConflictExcept(ctx context.Context, refs []sdk.ObjectRef, response *ToolResponse, attempt string) bool {
 	for _, ref := range refs {
 		for application, pending := range l.pendingWrites {
 			if pending.Released || (attempt != "" && pending.AttemptID == attempt) {
+				continue
+			}
+			if l.pendingOverlaps(ref, pending) && l.failIneffectivePending(ctx, application, pending) {
 				continue
 			}
 			if len(pending.Refs) == 0 {

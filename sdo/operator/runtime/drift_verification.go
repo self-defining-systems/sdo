@@ -1,12 +1,10 @@
 package runtime
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"strings"
 )
 
 // retainedDrift rechecks unexplained drift against accepted source and returns
@@ -28,15 +26,8 @@ func retainedDrift(retained []sdk.Finding, view program.ReadView) []sdk.Finding 
 }
 
 func driftDiffValues(diff program.Diff) (map[string]any, map[string]any, bool) {
-	if !strings.HasPrefix(diff.Text, "accepted: ") {
-		return nil, nil, false
-	}
-	parts := strings.SplitN(strings.TrimPrefix(diff.Text, "accepted: "), "\nobserved: ", 2)
-	if len(parts) != 2 {
-		return nil, nil, false
-	}
-	var accepted, observed map[string]any
-	if json.Unmarshal([]byte(parts[0]), &accepted) != nil || json.Unmarshal([]byte(parts[1]), &observed) != nil || accepted == nil || observed == nil {
+	accepted, observed, err := diff.Sides()
+	if err != nil || accepted == nil || observed == nil {
 		return nil, nil, false
 	}
 	return driftComparisonValues(accepted), driftComparisonValues(observed), true

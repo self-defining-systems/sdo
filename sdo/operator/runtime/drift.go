@@ -175,12 +175,8 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 		return nil, nil
 	}
 	sourceValues := map[string]any{}
-	if strings.HasPrefix(diff.Text, "accepted: ") {
-		line := strings.SplitN(strings.TrimPrefix(diff.Text, "accepted: "), "\nobserved: ", 2)[0]
-		var sourceObject map[string]any
-		if json.Unmarshal([]byte(line), &sourceObject) == nil {
-			sourceValues = flattenDriftObject(&unstructured.Unstructured{Object: sourceObject})
-		}
+	if sourceObject, _, err := diff.Sides(); err == nil && sourceObject != nil {
+		sourceValues = flattenDriftObject(&unstructured.Unstructured{Object: sourceObject})
 	}
 	manager, operation, managerAt := changedDriftManager(change, paths, "sdo-deployer")
 	event := &sdk.DriftEvent{Ref: ref, Fields: make([]sdk.DriftField, 0, min(len(paths), maxDriftFields)), Source: "differs from accepted manifest", Manager: manager, Operation: operation, ManagerAt: managerAt, ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained}
