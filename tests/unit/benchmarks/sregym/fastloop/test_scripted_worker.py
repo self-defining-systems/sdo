@@ -164,6 +164,9 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     monkeypatch.setattr(scripted_worker, "KubernetesResultPublisher", lambda **kwargs: api)
 
     def command(argv: list[str], **_kwargs: Any) -> str:
+        if argv[:4] == ["kubectl", "-n", "hotel", "get"]:
+            kind = "Service" if argv[4] == "service" else "Deployment"
+            return f"{argv[4]}/{argv[5]}" if (kind, argv[5]) in api.objects else ""
         if argv[:4] == ["kubectl", "-n", "hotel", "patch"]:
             kind = "Service" if argv[4] == "service" else "Deployment"
             api.objects[kind, argv[5]] = json.loads(argv[-1])
@@ -445,7 +448,11 @@ def test_scripted_responder_removes_added_objects_and_restores_config_from_sourc
         return {"healthy": verifies >= 2, "summary": "clear"}
 
     monkeypatch.setattr(scripted_worker, "_tool", tool)
-    monkeypatch.setattr(scripted_worker, "_command", lambda argv, **_kwargs: calls.append(argv) or "")
+    monkeypatch.setattr(
+        scripted_worker,
+        "_command",
+        lambda argv, **_kwargs: calls.append(argv) or (f"{argv[4]}/{argv[5]}" if "get" in argv else ""),
+    )
     result = scripted_worker.scripted_responder(request)
     assert ["kubectl", "-n", "hotel", "delete", "resourcequota", "tight", "--ignore-not-found"] in calls
     assert ["kubectl", "delete", "validatingwebhookconfiguration", "deny", "--ignore-not-found"] in calls

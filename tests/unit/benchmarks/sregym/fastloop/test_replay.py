@@ -632,3 +632,17 @@ def test_checkpoint_rejects_unowned_nested_capture_paths(tmp_path: Path, name: s
     request, result = _task_and_result()
     with pytest.raises(CheckpointError, match="capture name"):
         CheckpointStore(tmp_path).save(0, "responder", request=request, result=result, captures={name: b"{}"})
+
+
+def test_captured_presence_reports_absence_and_never_exposes_uncaptured_kinds():
+    from benchmarks.sregym.fastloop.replay_worker import CapturedKubernetesAPI
+
+    captured = json.dumps({"services": [{"metadata": {"name": "synthetic"}}]}).encode()
+    api = CapturedKubernetesAPI({"open@detect.json": captured, "fixed.json": captured})
+    command = ["kubectl", "-n", "app", "get", "service", "synthetic", "--ignore-not-found=true", "-o", "name"]
+    assert api.command(command) == "service/synthetic\n"
+    command[5] = "absent"
+    assert api.command(command) == ""
+    command[4] = "secret"
+    with pytest.raises(CheckpointError, match="uncaptured Kubernetes kind"):
+        api.command(command)

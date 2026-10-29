@@ -70,6 +70,21 @@ class CapturedKubernetesAPI:
         self.runs: list[dict[str, Any]] = []
 
     def command(self, argv: list[str], **_kwargs: Any) -> str:
+        if (
+            len(argv) == 9
+            and argv[:1] == ["kubectl"]
+            and argv[3] == "get"
+            and argv[6:] == ["--ignore-not-found=true", "-o", "name"]
+        ):
+            kinds = {
+                "service": "Service",
+                "configmap": "ConfigMap",
+                "ingress": "Ingress",
+                "horizontalpodautoscaler": "HorizontalPodAutoscaler",
+            }
+            if argv[4] not in kinds:
+                raise CheckpointError(f"uncaptured Kubernetes kind {argv[4]!r}")
+            return f"{argv[4]}/{argv[5]}\n" if (kinds[argv[4]], argv[5]) in self.objects else ""
         if len(argv) >= 9 and argv[0] == "kubectl" and argv[3] == "patch":
             kind = "Service" if argv[4].lower() == "service" else "Deployment"
             key = (kind, argv[5])
