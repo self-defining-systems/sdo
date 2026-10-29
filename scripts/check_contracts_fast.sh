@@ -12,6 +12,9 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+mode="${1:-all}"
+case "$mode" in all|--go-only|--python-only) ;; *) echo "unknown parity mode: $mode" >&2; exit 2 ;; esac
+if [[ "$mode" != --python-only ]]; then
 for module in sdo/operator/contracts \
     benchmarks/sregym/protocol/native_receipt_go \
     benchmarks/sregym/protocol/submission_go; do
@@ -26,6 +29,10 @@ echo "==> contract parity: runtime proto mirrors"
         -run '^Test([A-Za-z0-9]*(MatchProto|MapsToProto|ClosedEnums)|(Traffic)?Proto[A-Z][A-Za-z0-9]*|[A-Za-z0-9]*MatchesGenerated[A-Za-z0-9]*|GoContractFixtures)$'
 )
 
+fi
+if [[ "$mode" != --go-only ]]; then
 echo "==> contract parity: Python contracts"
 cd "$root"
 uv run --extra test python -m pytest -q -p no:tach -p no:cacheprovider tests/unit/sdo/contracts
+
+fi
