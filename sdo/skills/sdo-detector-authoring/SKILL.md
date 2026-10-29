@@ -23,7 +23,7 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
    Replay and test verdicts are information, never a save gate; keep unavailable observations explicit.
    The [restart-loop source](assets/restart-loop/detector.go) and
    [tests](assets/restart-loop/detector_test.go) show the current detector interface.
-5. Validate final proposal files through the memory check. The broker repeats this check independently.
+5. Use shell tools to inspect and edit the proposal; run the complete memory check before returning. The broker repeats it independently.
 
 Before returning memory edits, run the complete memory check and resolve every diagnostic until it passes.
 

@@ -130,3 +130,23 @@ if selected_image benchmark; then
       python3 -c "from benchmarks.sregym.adapter.scripted_worker import scripted_responder, ScriptedReflector" >/dev/null
   fi
 fi
+
+# Live image qualification is an explicit opt-in because it spends provider
+# quota. Release builds enable it; ordinary CI never reads account credentials.
+if [[ "${SDO_CLAUDE_SMOKE:-0}" == "1" ]]; then
+  smoke_image="sdo-responder:${tag}"
+  if selected_image benchmark && [[ "${SDO_SCRIPTED_WORKER:-0}" != "1" ]]; then
+    smoke_image="sdo-sregym-responder:${tag}"
+  elif ! selected_image responder; then
+    echo "Claude smoke requires a model-backed responder target" >&2
+    exit 1
+  fi
+  test -f "${SDO_CLAUDE_CREDENTIALS_FILE:?set the Claude credentials file for the explicit live smoke}"
+  docker run --rm --read-only --tmpfs /tmp:rw,mode=1777 --user "$(id -u):$(id -g)" \
+    --security-opt no-new-privileges --cap-drop ALL \
+    --mount "type=bind,src=${SDO_CLAUDE_CREDENTIALS_FILE},dst=/sdo/credentials/.credentials.json,readonly" \
+    --mount "type=bind,src=${SDO_OPUS_POOL_DIR:?set the existing host provider pool},dst=/sdo/opus-pool" \
+    --env CLAUDE_CONFIG_DIR=/tmp/.claude --env SDO_OPUS_POOL_DIR=/sdo/opus-pool \
+    --env SDO_OPUS_MAX_SESSIONS --env SDO_OPUS_POOL_MODE --env SDO_OPUS_POOL_HOST_ID \
+    "${smoke_image}" python3 /usr/local/lib/sdo/check_claude_worker.py
+fi

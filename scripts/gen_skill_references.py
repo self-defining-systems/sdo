@@ -79,6 +79,7 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sdk.SourceDiff",
             "sdk.SourceDiff.PresentButNotInSource",
             "program.SetField",
+            "program.ValidateSetField",
             "program.ReconcileFromSource",
             "program.CreateFromSource",
             "program.DeleteObject",
