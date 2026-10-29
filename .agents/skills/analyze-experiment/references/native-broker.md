@@ -104,3 +104,13 @@ activation latency separate from script execution and responder runtime.
 
 For ordered stage reports and rollout handoffs, read
 [ordered response stages](response-stages.md).
+
+### Rollout receipt revisions
+
+A successful `rollout_receipts` entry binds the exact incident/reflection
+expectation. Its `controller_revision` may be a later accepted descendant after a
+health refresh: trusted startup verifies HEAD, ancestry and build/tree identity.
+Then `observed_detector_fingerprint` names the later tree and may differ from
+`after_detector_fingerprint`. Exact reflection revisions must match. Strict
+receipts require exactly one success, nonempty build/revision/tree evidence and
+a valid verification timestamp.
