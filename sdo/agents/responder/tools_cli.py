@@ -337,7 +337,8 @@ def _parser() -> argparse.ArgumentParser:
     verify = commands.add_parser(
         "verify",
         help="read cached controller verification; optionally await a stable verdict",
-        description="Reads the controller's cached health verdict immediately; drift[] lists objects that still "
+        description="Reads the controller's shared recovery proof: fresh health after the last repair, "
+        "observed write effects, and the unchanged 15-second stability window. drift[] lists objects that still "
         "differ from accepted source and never decides healthy. "
         "After a healthy return, SDO may resume once for source differences when progress remains; "
         "terminal inventory and no-progress stops do not resume. "
@@ -350,7 +351,8 @@ def _parser() -> argparse.ArgumentParser:
         "including after recorded actions; inspect their evidence before repeating workload writes. "
         "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
         "informational warning on every response; reads and reports remain available, while mutations are rejected. "
-        "After verified closure, report grace and outcome/reflection work continue during maintenance pauses.",
+        "Verified recovery fences writes and publishes the outcome without waiting for final narration; "
+        "worker quiescence and outcome/reflection work continue during maintenance pauses.",
     )
     verify.add_argument(
         "--wait",

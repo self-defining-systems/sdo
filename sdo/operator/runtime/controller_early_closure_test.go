@@ -160,7 +160,7 @@ func TestControllerClosureIgnoresLatentLeftoverAfterTheAgentReturns(t *testing.T
 	}
 }
 
-func TestControllerEarlyClosureReportGraceAndRestart(t *testing.T) {
+func TestControllerEarlyClosureQuiescenceAndRestart(t *testing.T) {
 	c, _, step := earlyWaitController(t, stateFinding("health"), stateFinding("health"), sdk.Finding{})
 	c.broker = &recordingIncidentBroker{}
 	events := &memoryLifecycleSink{}
@@ -169,7 +169,7 @@ func TestControllerEarlyClosureReportGraceAndRestart(t *testing.T) {
 		step(i)
 	}
 	if _, ok := c.PendingClosureEffect(); ok {
-		t.Fatal("reflection started during the responder's report grace")
+		t.Fatal("broker handoff started before responder quiescence")
 	}
 	closed := events.byPhase(PhaseClosed)
 	if len(closed) != 1 || !closed[0].VerifiedWhileResponderRunning || closed[0].ClosureStabilityWindowSeconds != 15 {
@@ -185,19 +185,13 @@ func TestControllerEarlyClosureReportGraceAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := restored.PendingClosureEffect(); ok {
-		t.Fatal("restart bypassed report grace")
+		t.Fatal("restart bypassed responder quiescence")
 	}
-	if err := restored.Step(context.Background(), time.Unix(46, 0), nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := restored.PendingClosureEffect(); ok {
-		t.Fatal("grace ended early")
-	}
-	if err := restored.Step(context.Background(), time.Unix(47, 0), nil); err != nil {
+	if err := restored.Step(context.Background(), time.Unix(18, 0), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := restored.PendingClosureEffect(); !ok {
-		t.Fatal("report grace never released the frozen closure")
+		t.Fatal("quiescent responder still held the frozen closure for narration")
 	}
 	closure, ok := restored.PendingIncidentClosure()
 	if !ok || !closure.VerifiedAt.Equal(time.Unix(17, 0)) {

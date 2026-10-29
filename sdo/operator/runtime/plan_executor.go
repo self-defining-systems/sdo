@@ -49,14 +49,16 @@ type PlanPatch struct {
 	ActionCount int
 	// DirectReadConfirmed is process-local proof, never restored from a receipt.
 	DirectReadConfirmed bool `json:"-"`
-	Operation           string
-	Irreversible        bool
-	Structured          bool
-	SourceCommit        string
-	Ref                 sdk.ObjectRef
-	Patch               json.RawMessage
-	Before              *unstructured.Unstructured
-	After               *unstructured.Unstructured
+	// ObservedUID is identity-only readback evidence, retained by the tool journal.
+	ObservedUID  string `json:"observed_uid,omitempty"`
+	Operation    string
+	Irreversible bool
+	Structured   bool
+	SourceCommit string
+	Ref          sdk.ObjectRef
+	Patch        json.RawMessage
+	Before       *unstructured.Unstructured
+	After        *unstructured.Unstructured
 }
 
 // PlanPreImage is an object's state before a plan. Absent marks an object
@@ -361,8 +363,11 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		result.Applied = true
 		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index:index+count]...)
 		result.PendingAction = nil
-		if observed, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil {
+		if observed, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil && observed != nil {
 			patch.After.SetResourceVersion(observed.GetResourceVersion())
+			if observed.GetUID() == patch.Before.GetUID() {
+				patch.ObservedUID = string(observed.GetUID())
+			}
 		}
 		if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{*patch}}); err != nil {
 			return result, err
@@ -717,6 +722,24 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		}
 		removeAddedFields(next, current, source)
 		preserveSourceControllerFields(next, current)
+		// A source repair owns the revision it applies. Carry the original
+		// UID-bound acceptance baseline across that repair; never accept an
+		// unknown incarnation or absorb another writer's added/changed fields.
+		if previous, ok := readAcceptanceRecord(current); ok && previous.UID != "" && previous.UID == string(current.GetUID()) {
+			record, fits, err := buildAcceptanceRecord(source, next, current, nil, false)
+			if err != nil {
+				return nil, err
+			}
+			if !fits {
+				return nil, fmt.Errorf("repaired acceptance record exceeds %d bytes", maxAcceptanceRecordBytes)
+			}
+			annotations := next.GetAnnotations()
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+			annotations[acceptedPathsAnnotation] = record
+			next.SetAnnotations(annotations)
+		}
 		return next, nil
 	case program.Rollback:
 		if e.Source == nil || a.ToRevision == "" {

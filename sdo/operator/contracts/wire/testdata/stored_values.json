@@ -185,7 +185,8 @@
   ],
   "sdodev.contracts.v1alpha1.PlanObjectEffect.operation": [
     "create",
-    "delete"
+    "delete",
+    "patch"
   ],
   "sdodev.contracts.v1alpha1.PlanObjectEffect.state": [
     "applied",
