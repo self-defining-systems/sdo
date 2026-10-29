@@ -39,3 +39,20 @@ See [deployment configuration](../../../../docs/provider-capacity.md) for the
 shared or static per-host Opus pools. Missing pool configuration blocks Opus;
 per-host mode also refuses unprovisioned token files. Older images and non-SDO
 CLI sessions are outside this admission path.
+
+
+In `per_account` mode, `opus_pool.capacity` is the concurrency of each account,
+not a host-wide share. Rows add `account_events` from the dedicated session
+telemetry: account alias, selected/failover/exhausted state, typed reason, phase,
+incident/turn IDs and timestamp. Reasons include primary/fallback, auth failure,
+unavailable credential, registration disablement, measured quota exhaustion and
+rate limiting. Responder and reflection switches are both retained; only responder
+wait intervals reduce TTM. No tokens, emails or CLI streams are account evidence.
+
+`account_exhausted` is infrastructure and makes the final row `NOT-GRADED`,
+including reflection exhaustion. Preserve independently verified closure/grade
+checkpoints from before reflection as evidence; use the final row's infrastructure
+exclusion for denominators. The host's shared `account-state.jsonl` carries one
+stable transition ID per account health change, with crash deduplication. Known
+five-hour/seven-day quota exhaustion starts in cooldown; setup-token usageAPI403
+is unknown eligibility and never an auth failure. Consult actual CLI results.

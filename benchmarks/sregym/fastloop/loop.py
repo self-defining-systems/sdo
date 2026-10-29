@@ -38,7 +38,7 @@ from benchmarks.sregym.fastloop.records import (
 )
 from benchmarks.sregym.faults.description import SuiteCapabilities
 from benchmarks.sregym.protocol.injection import InvalidInjectionError, ensure_incident_follows_injection
-from benchmarks.sregym.protocol.provider_capacity import ProviderWaitInterval, RateLimitedRun
+from benchmarks.sregym.protocol.provider_capacity import AccountEvent, ProviderWaitInterval, RateLimitedRun
 from libs.agent_cli.errors import rate_limit_failure
 from libs.agent_cli.provider_capacity import OpusPoolAllocation
 
@@ -81,6 +81,7 @@ class AgentOutcome:
 
     injection: InjectionWindow
     provider_waits: tuple[ProviderWaitInterval, ...] = ()
+    account_events: tuple[AccountEvent, ...] = ()
     detected_at: datetime | None = None
     mitigation_applied_at: datetime | None = None
     resolved_at: datetime | None = None
@@ -493,6 +494,7 @@ def _run_one(
     oracle: OracleVerdict | None = None
     infra_error: str | None = None
     limited_waits: list[ProviderWaitInterval] = []
+    account_events: list[AccountEvent] = []
     recovery_oracle: OracleVerdict | None = None
     recovery_oracle_samples: list[RecoveryOracleSample] = []
     oracle_finished_at: datetime | None = None
@@ -610,10 +612,11 @@ def _run_one(
         raise
     except Exception as exc:
         logger.exception("incident %d failed", index)
-        if rate_limit_failure(exc) is not None:
-            infra_error = "rate_limited"
+        if limited := rate_limit_failure(exc):
+            infra_error = limited.failure_reason
             if isinstance(exc, RateLimitedRun):
                 limited_waits = list(exc.evidence.intervals)
+                account_events = list(exc.evidence.account_events)
         else:
             errors.append(_describe(exc))
         from benchmarks.sregym.fastloop.runtime_observation import ObservationUnavailable
@@ -624,7 +627,7 @@ def _run_one(
     recovered = bool(windows)
     if (
         windows
-        and infra_error != "rate_limited"
+        and infra_error not in ("rate_limited", "account_exhausted")
         and grader is not None
         and outcome is not None
         and outcome.diagnosis.strip()
@@ -635,10 +638,11 @@ def _run_one(
             diagnosis_grade = DiagnosisGrade(error=_describe(exc))
     elif windows and grader is not None:
         diagnosis_grade = DiagnosisGrade(
-            skipped=True, skip_reason="rate_limited" if infra_error == "rate_limited" else "no diagnosis text"
+            skipped=True,
+            skip_reason=infra_error if infra_error in ("rate_limited", "account_exhausted") else "no diagnosis text",
         )
 
-    if windows and oracle_finished_at is None and infra_error != "rate_limited":
+    if windows and oracle_finished_at is None and infra_error not in ("rate_limited", "account_exhausted"):
         measure_resolution(ResolutionGradePoint(outcome.incident_id, outcome.resolved_at) if outcome else None)
 
     learning_complete = outcome is None or not outcome.terminal_error
@@ -647,7 +651,13 @@ def _run_one(
             outcome = agent.learn(outcome)
         except Exception as exc:
             logger.exception("learning failed for incident %d", index)
-            errors.append(f"learning failed: {_describe(exc)}")
+            limited = rate_limit_failure(exc)
+            if limited is not None:
+                infra_error = limited.failure_reason
+                if isinstance(exc, RateLimitedRun):
+                    outcome = replace(outcome, account_events=exc.evidence.account_events)
+            else:
+                errors.append(f"learning failed: {_describe(exc)}")
             learning_complete = False
 
     if windows and not config.row_start_tier2:
@@ -684,7 +694,9 @@ def _run_one(
         if state:
             delivery, reason = state["path"], state["reason"]
     outcome_fields: dict[str, Any] = (
-        _outcome_fields(outcome) if outcome is not None else {"provider_waits": limited_waits}
+        _outcome_fields(outcome)
+        if outcome is not None
+        else {"provider_waits": limited_waits, "account_events": account_events}
     )
     record = IncidentRecord(
         opus_pool=config.opus_pool,
@@ -735,8 +747,13 @@ def _run_one(
         error="; ".join(errors) or None,
         **outcome_fields,
     )
-    if infra_error == "rate_limited":
-        persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", record)
+    if infra_error in ("rate_limited", "account_exhausted"):
+        try:
+            persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", record)
+        except FileExistsError:
+            # Preserve the independent pre-reflection grade as evidence. The
+            # final row carries the later infrastructure exclusion.
+            pass
     return record, recovered and learning_complete
 
 
@@ -750,6 +767,7 @@ def _injection_state(windows: list[InjectionWindow], *, attempted: bool) -> Inje
 def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
     return {
         "provider_waits": list(outcome.provider_waits),
+        "account_events": list(outcome.account_events),
         "detected_at": outcome.detected_at,
         "mitigation_applied_at": outcome.mitigation_applied_at,
         "resolved_at": outcome.resolved_at,

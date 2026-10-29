@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -114,6 +115,13 @@ func TestLearnedMatchThatActivatesMidIncidentIsAppliedWithoutWaitingForTheAgent(
 	if len(stages) != 1 || len(stages[0].Mitigations) != 1 || stages[0].Mitigations[0].PlaybookId != "service-targetport-mismatch" || stages[0].Mitigations[0].Result != "applied_cleared" || findings != 2 {
 		t.Fatalf("incident did not record the late pass: stages=%v findings=%d", stages, findings)
 	}
+	controller.mu.Lock()
+	coverage := cloneCoverage(controller.currentIncidentRequest.PlaybookCoverage)
+	runs := append([]ProgramRun(nil), controller.currentIncidentRequest.InitialProgramRuns...)
+	controller.mu.Unlock()
+	if len(coverage.GetMatches()) == 0 || len(coverage.GetMatches()[0].GetExplainedFindingFingerprints()) == 0 || !slices.ContainsFunc(runs, func(run ProgramRun) bool { return run.Verdict.Result == program.Match }) {
+		t.Fatalf("late stage receipts lost their coverage/diagnosis evidence: coverage=%v runs=%v", coverage, runs)
+	}
 	// The responder's next reply says so, once.
 	reply := loop.Handle(context.Background(), ToolRequest{Command: "status"})
 	if len(reply.PriorStages) != 1 || reply.PriorStages[0].PlaybookID != "service-targetport-mismatch" || reply.PriorStages[0].Result != "applied_cleared" {
@@ -144,6 +152,12 @@ func TestLearnedMatchThatActivatesMidIncidentIsAppliedWithoutWaitingForTheAgent(
 	controller.mu.Lock()
 	kept := cloneStageReports(controller.currentIncidentRequest.PriorStages)
 	controller.mu.Unlock()
+	controller.mu.Lock()
+	finalCoverage := cloneCoverage(controller.currentIncidentRequest.PlaybookCoverage)
+	controller.mu.Unlock()
+	if len(finalCoverage.GetMatches()) == 0 || len(finalCoverage.GetMatches()[0].GetExplainedFindingFingerprints()) == 0 {
+		t.Fatalf("pipeline completion erased late coverage: %v", finalCoverage)
+	}
 	if len(kept) < 1 || len(kept[0].Mitigations) != 1 || kept[0].Mitigations[0].Result != "applied_cleared" {
 		t.Fatalf("agent completion erased the late pass: %v", kept)
 	}
