@@ -348,3 +348,23 @@ async def test_check_memory_pass_names_programs_whose_replay_disagrees(
     assert "healthy Unknown" in step
     assert "good" not in step.split("passed")[1].split("Each program")[0]
     assert "health-objective" not in step, "only the agent's own programs are named"
+
+
+async def test_check_memory_pass_names_programs_that_match_on_diff_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A program deciding on diff.Text still passes, but the reply asks for a typed rewrite."""
+    gaps = [
+        {"rule": "program.diff-text-match", "path": ".sdo/playbooks/image-drift/diagnose.go", "line": 17},
+        {"rule": "reflection.cause-without-program", "path": ".sdo/playbooks", "message": "m"},
+    ]
+    body = json.dumps({"diagnostics": [], "coverage_gaps": gaps})
+    _validator(tmp_path, f"print({body!r})\n", monkeypatch)
+    server = validation_server(tmp_path)
+    (block,) = await server.call_tool(
+        "check_memory", {"learning_decision": "updated", "summary": "s", "proposed_artifact_ids": ["image-drift"]}
+    )
+    step = json.loads(block.text)["next"]
+    assert ".sdo/playbooks/image-drift/diagnose.go:17" in step
+    assert "diff.ContainerChanges" in step
+    assert "cause-without-program" not in step

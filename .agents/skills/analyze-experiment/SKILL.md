@@ -51,13 +51,14 @@ When multiple runs are in scope and subagents are available, assign one run or o
 
 At evidence discovery, read [evidence hierarchy and provenance](references/trajectory-schema.md).
 Before judging mitigation or learning, read [outcomes and program evidence](references/outcome-records.md).
+For synthetic latency, timeout counts and effective scenario SLOs, read [traffic health evidence](references/traffic-health.md).
 When Pods are Ready but creation or admission fails, read [admission health evidence](references/admission-health.md).
 For offline fake-cluster checks, simulated effects and false positives, read [offline closed-loop reports](references/offline-closed-loop.md).
 For menu selections, round reports and recovery receipts, read [mitigation menu receipts](references/mitigation-menu.md).
 For first-mutation capture and evidence-gap semantics, read [capture boundaries](references/capture-boundaries.md).
 For acceptance, ownership and restart analysis, read [native broker and memory](references/native-broker.md).
 For incident deadlines and restart recovery, read [native incident recovery](references/native-incident-recovery.md).
-For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md).
+For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md); for cleared lifecycle effects and repair-encoding counts, read [reflection settlement](references/reflection-settlement.md).
 For setup costs and interrupted responder accounting, read [phase-bound usage evidence](references/setup-usage.md).
 Before pricing Claude responder/reflection phases, read [Claude cost completeness](references/claude-cost.md).
 Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).

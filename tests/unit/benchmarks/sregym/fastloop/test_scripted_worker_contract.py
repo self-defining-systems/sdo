@@ -208,7 +208,12 @@ def test_scripted_responder_consumes_real_go_tool_responses(tmp_path: Path, monk
     assert set(programs) == {"service-targetport-mismatch", "image-pull-failure"}
     assert len(plans) == 2
     assert scripted_worker._tool("apply", *plans)["healthy"] is True
-    assert scripted_worker._tool("verify")["healthy"] is True
+    pending = json.loads((tmp_path / "verify-pending.json").read_text())
+    assert pending["healthy"] is False
+    assert not pending.get("incident_verified")
+    verified = scripted_worker._tool("verify")
+    assert verified["healthy"] is True
+    assert verified["incident_verified"]
 
 
 @pytest.mark.parametrize("verified", [False, True])

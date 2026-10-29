@@ -243,7 +243,7 @@ func TestDetectorFiresOnTimeoutsAndLatency(t *testing.T) {
 		t.Fatalf("expected timeout and latency findings, got %v", findings)
 	}
 	joined := findings[0].Summary + findings[1].Summary
-	if !strings.Contains(joined, "timeout rate") || !strings.Contains(joined, "p90 latency") {
+	if !strings.Contains(joined, "timeout rate") || !strings.Contains(joined, "p50 latency") {
 		t.Fatalf("findings must name the violated SLO dimension, got %q", joined)
 	}
 }

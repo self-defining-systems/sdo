@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 # worker-pinned ownership and offline toolchain settings explicitly.
 VALIDATION_ENVIRONMENT = (
     "SDO_REPLAY",
+    "SDO_MEMORY_CHECK_DIR",
     "SDO_ACTOR",
     "SDO_SESSION_SCRATCH",
     "SDO_SESSION_DIR",
@@ -119,14 +120,21 @@ class CheckMemoryReply:
             disagreements = (
                 _replay_disagreements(result.stdout, set(ids) if decision else None) if replay_mode() == "on" else []
             )
+            text_matches = _diff_text_matches(result.stdout)
             if disagreements:
                 step = (
                     f"passed; replay disagrees for {'; '.join(disagreements)}. Each program should Match its fault "
                     "capture and NoMatch healthy: decide from what the capture holds (snapshot objects, pod_admission, "
                     f"reads listed by recordings_index) and check again; after two refinements return {returned}."
                 )
+            elif text_matches:
+                step = (
+                    f"passed; {', '.join(text_matches)} decide on diff.Text, which matches any container. "
+                    "Compare typed fields (diff.ContainerChanges, diff.Field) and check again; "
+                    f"after one rewrite return {returned}."
+                )
             else:
-                step = f"passed: return {returned} now. coverage_gaps are information, not work."
+                step = f"passed: return {returned} now. Other coverage_gaps are information, not work."
         elif result.timed_out:
             step = "timed out: check again once."
         else:
@@ -134,6 +142,19 @@ class CheckMemoryReply:
             if replay_mode() == "on":
                 step += " Replay is judged once the check passes."
         return cls(step, result.exit_code, result.timed_out, result.stdout, result.stderr)
+
+
+def _diff_text_matches(stdout: str) -> list[str]:
+    """Program lines memory check notes for deciding on a diff's whole-document Text."""
+    try:
+        gaps = json.loads(stdout).get("coverage_gaps") or []
+    except (ValueError, AttributeError):
+        return []
+    return [
+        f"{gap.get('path')}:{gap.get('line')}"
+        for gap in gaps
+        if isinstance(gap, dict) and gap.get("rule") == "program.diff-text-match"
+    ]
 
 
 def _replay_disagreements(stdout: str, own: set[str] | None) -> list[str]:
@@ -206,10 +227,12 @@ def validation_server(
         It first gofmt-formats Go files changed under .sdo/. The reply's next
         field says what to do: return on a pass, else fix the diagnostics.
         Legacy decision_path files are also supported. One call waits for final
-        diagnostics. Compile/import/format/provenance checks remain required;
+        diagnostics. Responder incident detectors use the same validation; health
+        detectors remain judge-owned. Compile/import/format/provenance checks remain required;
         Replay policy comes from SDO_REPLAY (on by default). Off skips corpus and replay;
         RunScript still requires its successful accepted receipt. Replay verdicts
-        are information. The broker repeats the check.
+        are information. The broker owns validation and may reuse its isolated
+        check only for identical bytes, accepted base, policy and toolchain.
         """
         if learning_decision is not None:
             if decision_path is not None:

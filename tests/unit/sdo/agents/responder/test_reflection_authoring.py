@@ -187,3 +187,40 @@ def test_corpus_tool_names_the_known_receipts_when_one_is_missing(tmp_path: Path
             repair_receipt_ids=["failed"],
         )
     assert not (tmp_path / ".sdo/corpus/webhook").exists(), "a refused call leaves no partial case"
+
+
+@pytest.mark.parametrize("phase", ["detect", "pre-apply"])
+async def test_capture_corpus_links_only_requested_repairs(tmp_path: Path, monkeypatch, phase: str) -> None:
+    """The public tool must honor receipt selection in both observation modes."""
+    from sdo.agents.responder.reflection_validation import validation_server
+
+    _committed_outcome(tmp_path, "incident")
+    captures = tmp_path / "captures"
+    captures.mkdir()
+    opened, fixed = '{"pods":null}\n', '{"pods":[]}\n'
+    reading = {"method": "PodAdmission", "arguments": [], "result": []}
+    unrelated = {"method": "RepairReceipt", "arguments": [], "result": {"id": "peer"}}
+    (captures / f"open@{phase}.json").write_text(opened)
+    (captures / "fixed.json").write_text(fixed)
+    (captures / f"open@{phase}-recordings.json").write_text(json.dumps([reading, unrelated]))
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(captures))
+    monkeypatch.setenv("SDO_INCIDENT_ID", "incident")
+    server = validation_server(tmp_path)
+    (block,) = await server.call_tool(
+        "create_corpus",
+        {
+            "case_id": "selected",
+            "program_ids": ["webhook"],
+            "bindings": {},
+            "open_phase": phase,
+            "repair_receipt_ids": ["hand-1"],
+        },
+    )
+    assert "selected" in block.text
+    case = tmp_path / ".sdo/corpus/selected"
+    assert (case / "open.json").read_text() == opened
+    assert (case / "fixed.json").read_text() == fixed
+    observation, receipt = json.loads((case / "recordings.json").read_text())
+    assert observation == reading
+    assert receipt["result"]["id"] == "hand-1"
+    assert receipt["result"]["script_digest"] == "abc"

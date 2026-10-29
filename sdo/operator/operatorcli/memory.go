@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/checktransport"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
@@ -53,7 +54,10 @@ commands:
         proposed_artifact_ids, sdk_gaps; the returned result JSON can be written
         as is) to .git/sdo-reflection-decision.json
         or --decision FILE. The returned result must use the same decision and
-        logical IDs. A broker memory.conflict carries the newer accepted commit,
+        logical IDs. A provisioned reflection endpoint runs the broker-owned
+        isolated check; publication reuses it only for identical candidate bytes,
+        accepted base, policy and immutable toolchain. Otherwise it checks again.
+        A broker memory.conflict carries the newer accepted commit,
         conflicting paths, peer incidents and validator errors. The correction
         checkout keeps your edits on the newer commit with conflict markers only
         where they collided; merge both incidents' intent there and preserve
@@ -234,6 +238,28 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 			}
 			return exitDiagnostics, nil
 		}
+	}
+
+	// Reflection workers use the broker's complete isolated check when a trusted
+	// endpoint is provisioned. Missing endpoints never silently claim a pass.
+	if directory := getenv("SDO_MEMORY_CHECK_DIR"); directory != "" && phase == string(validate.ReflectionPhase) {
+		report, err := checktransport.Check(ctx, directory, decision)
+		if err != nil {
+			return exitInfra, err
+		}
+		if *asJSON {
+			if err := writeJSON(stdout, report); err != nil {
+				return exitInfra, err
+			}
+		} else {
+			for _, d := range report.GetDiagnostics() {
+				fmt.Fprintln(stdout, d.GetRule()+": "+d.GetMessage())
+			}
+		}
+		if len(report.GetDiagnostics()) != 0 {
+			return exitDiagnostics, nil
+		}
+		return exitClean, nil
 	}
 
 	// Mirror the broker: authored memory whitespace is normalized in place.

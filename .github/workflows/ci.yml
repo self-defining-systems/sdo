@@ -4,11 +4,17 @@ on:
   # Hosted caches saved on refs/pull/N are private to that PR. A PR can also
   # restore its base branch's caches, so pushes to every branch PRs target are
   # the only runs that save the large prepared Go builds (about 1.6 GB each);
-  # PR runs restore the newest one and save only a small delta of what they
-  # compiled on top of it. Saving a full build per PR passed the 10 GB
+  # Other runs restore the newest one and transfer the complete build as
+  # run artifacts. Saving a build per throwaway ref passed the 10 GB
   # repository cap with a few concurrent PRs and evicted entries mid-run.
   push:
     branches: [main, "vic-lsh/dev/**"]
+  workflow_dispatch:
+    inputs:
+      cold:
+        description: Ignore prepared caches to verify the cold path
+        type: boolean
+        default: false
   pull_request:
   # GitHub merge queue: CI must report on the queue's temporary
   # gh-readonly-queue/... branch or the queue waits until it times out. Every
@@ -33,8 +39,11 @@ env:
 jobs:
   prepare-go:
     name: prepare shared Go builds (${{ matrix.mode }})
+    env:
+      # Use the public runner's compiler CPU while retaining consumer build flags.
+      GOMAXPROCS: "4"
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -47,18 +56,14 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
-      - name: Pin the module hash consumers will compute
-        # Later steps check out more go.sum files, and the delta key must match
-        # the one consumers compute right after their checkout.
-        id: gosum
-        run: echo "value=${{ hashFiles('**/go.sum') }}" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.26.8"
           cache: false
-      - name: Publish the normal compiler and module caches
-        if: matrix.mode == 'normal' && github.event_name == 'push'
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - name: Restore the normal compiler and module caches
+        if: matrix.mode == 'normal' && inputs.cold != true
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: base-normal
         with:
           path: |
             ${{ runner.temp }}/sdo-go-build-normal
@@ -68,86 +73,36 @@ jobs:
           restore-keys: |
             ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-
-      - name: Publish the race compiler cache
-        if: matrix.mode == 'race' && github.event_name == 'push'
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - name: Restore the race compiler cache
+        if: matrix.mode == 'race' && inputs.cold != true
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: base-race
         with:
           path: ${{ runner.temp }}/sdo-go-build-race
           key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
             ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
-      - name: Restore the base branch's normal compiler and module caches
-        if: matrix.mode == 'normal' && github.event_name != 'push'
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ${{ runner.temp }}/sdo-go-build-normal
-            ~/go/pkg/mod
-            .fastloop/test-bin
-          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-
-      - name: Remember what the base normal build holds
-        if: matrix.mode == 'normal' && github.event_name != 'push'
-        id: snapshot-normal
-        run: python3 scripts/go_ci_cache_delta.py snapshot --manifest "${{ runner.temp }}/base-normal.manifest" gocache=${{ runner.temp }}/sdo-go-build-normal mod=$HOME/go/pkg/mod test-bin=.fastloop/test-bin@content
-      - name: Resume from this PR's earlier normal delta
-        if: matrix.mode == 'normal' && github.event_name != 'push'
-        id: resume-normal
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: ${{ runner.temp }}/sdo-go-delta-normal
-          key: ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-${{ github.sha }}
-          restore-keys: |
-            ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-
-      - name: Apply this PR's earlier normal delta
-        if: matrix.mode == 'normal' && github.event_name != 'push' && steps.resume-normal.outputs.cache-matched-key != ''
-        run: python3 scripts/go_ci_cache_delta.py apply --delta "${{ runner.temp }}/sdo-go-delta-normal" gocache=${{ runner.temp }}/sdo-go-build-normal mod=$HOME/go/pkg/mod test-bin=.fastloop/test-bin@content
-      - name: Restore the base branch's race compiler cache
-        if: matrix.mode == 'race' && github.event_name != 'push'
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: ${{ runner.temp }}/sdo-go-build-race
-          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
-      - name: Remember what the base race build holds
-        if: matrix.mode == 'race' && github.event_name != 'push'
-        id: snapshot-race
-        run: python3 scripts/go_ci_cache_delta.py snapshot --manifest "${{ runner.temp }}/base-race.manifest" gocache=${{ runner.temp }}/sdo-go-build-race
-      - name: Resume from this PR's earlier race delta
-        if: matrix.mode == 'race' && github.event_name != 'push'
-        id: resume-race
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: ${{ runner.temp }}/sdo-go-delta-race
-          key: ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-${{ github.sha }}
-          restore-keys: |
-            ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-
-      - name: Apply this PR's earlier race delta
-        if: matrix.mode == 'race' && github.event_name != 'push' && steps.resume-race.outputs.cache-matched-key != ''
-        run: python3 scripts/go_ci_cache_delta.py apply --delta "${{ runner.temp }}/sdo-go-delta-race" gocache=${{ runner.temp }}/sdo-go-build-race
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
-        if: matrix.mode == 'normal'
         with:
           version: "0.9.24"
           python-version: "3.12"
           enable-cache: true
       - name: Enforce standing PR execution limits
-        if: matrix.mode == 'normal'
         run: |
           uv sync --locked --all-extras
           uv run python scripts/check_ci_budget.py
       - name: Compile dependency graphs outside operation timeouts
         id: compile
-        # A cold compile (160-265 s on this runner) stops here, not at the job
-        # deadline, so the delta it reached is saved below and a rerun resumes
-        # from it. GNU timeout signals its whole process group: a step timeout
-        # leaves compilers writing the cache while it is archived.
-        run: timeout --kill-after=5s 170s bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
+        # Normal preparation builds dependency archives, not discarded test
+        # executables. GNU timeout also stops every child compiler on failure.
+        run: timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
+
+      - name: Check Go static contracts
+        if: matrix.mode == 'race'
+        run: bash scripts/check_errors.sh --go-only
+        env:
+          GOFLAGS: "-p=2 -trimpath -race"
 
       - name: Plan capacity from compiled inventory and hosted costs
         if: matrix.mode == 'race'
@@ -175,8 +130,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Collect all Go-backed Python contracts once
-        if: matrix.mode == 'normal'
+      - name: Collect all Go-backed Python contracts for the exact plan
         id: python-plan
         run: |
           uv run python scripts/init_test_prereqs.py
@@ -204,32 +158,77 @@ jobs:
           identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
           echo "value=${identity}" >> "$GITHUB_OUTPUT"
 
-      - name: Export what this PR added to the base normal build
-        if: always() && matrix.mode == 'normal' && github.event_name != 'push' && steps.snapshot-normal.outcome == 'success'
-        id: export-normal
-        run: python3 scripts/go_ci_cache_delta.py export --manifest "${{ runner.temp }}/base-normal.manifest" --out "${{ runner.temp }}/sdo-go-delta-normal" --max-bytes 524288000 gocache=${{ runner.temp }}/sdo-go-build-normal mod=$HOME/go/pkg/mod test-bin=.fastloop/test-bin@content
-      - name: Save the normal delta (a failed run saves its progress for the rerun)
-        if: always() && matrix.mode == 'normal' && github.event_name != 'push' && steps.export-normal.outputs.saved == 'true'
+      - name: Pack the complete normal build
+        if: matrix.mode == 'normal'
+        run: bash scripts/go_ci_artifacts.sh pack normal "${{ runner.temp }}/prepared-normal"
+      - name: Transfer the normal build to this run's consumers
+        if: matrix.mode == 'normal'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-normal
+          path: ${{ runner.temp }}/prepared-normal/*.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Transfer only sources and tools to compiler-free Python jobs
+        if: matrix.mode == 'normal'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-python
+          path: |
+            ${{ runner.temp }}/prepared-normal/modules.tar.zst
+            ${{ runner.temp }}/prepared-normal/tools.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Save the durable normal build
+        if: matrix.mode == 'normal' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          path: ${{ runner.temp }}/sdo-go-delta-normal
-          key: ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-${{ job.status == 'success' && github.sha || format('partial-{0}-{1}', github.run_id, github.run_attempt) }}
-      - name: Export what this PR added to the base race build
-        if: always() && matrix.mode == 'race' && github.event_name != 'push' && steps.snapshot-race.outcome == 'success'
-        id: export-race
-        run: python3 scripts/go_ci_cache_delta.py export --manifest "${{ runner.temp }}/base-race.manifest" --out "${{ runner.temp }}/sdo-go-delta-race" --max-bytes 524288000 gocache=${{ runner.temp }}/sdo-go-build-race
-      - name: Save the race delta (a failed run saves its progress for the rerun)
-        if: always() && matrix.mode == 'race' && github.event_name != 'push' && steps.export-race.outputs.saved == 'true'
+          path: |
+            ${{ runner.temp }}/sdo-go-build-normal
+            ~/go/pkg/mod
+            .fastloop/test-bin
+          key: ${{ steps.base-normal.outputs.cache-primary-key }}
+
+      - name: Select the exact race graph for each fixed bucket
+        if: matrix.mode == 'race'
+        run: python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json
+
+      - name: Pack the bounded current race test graph
+        if: matrix.mode == 'race'
+        run: bash scripts/go_ci_artifacts.sh pack race "${{ runner.temp }}/prepared-race"
+      - name: Transfer the race build to this run's consumers
+        if: matrix.mode == 'race'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-race-0
+          path: ${{ runner.temp }}/prepared-race/0/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Transfer the second bucket's race graph
+        if: matrix.mode == 'race'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-race-1
+          path: ${{ runner.temp }}/prepared-race/1/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Save the durable race build
+        if: matrix.mode == 'race' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          path: ${{ runner.temp }}/sdo-go-delta-race
-          key: ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ steps.gosum.outputs.value }}-${{ job.status == 'success' && github.sha || format('partial-{0}-{1}', github.run_id, github.run_attempt) }}
+          path: |
+            ${{ runner.temp }}/sdo-go-build-race
+          key: ${{ steps.base-race.outputs.cache-primary-key }}
 
   python:
     name: ${{ matrix.name }}
     needs: prepare-go
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 4
     strategy:
       fail-fast: false
       matrix:
@@ -247,46 +246,26 @@ jobs:
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
           ref: ${{ github.sha }}
-      - name: Restore the prepared normal build graph
-        id: prepared-normal
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - name: Download this run's normal build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          path: |
-            ${{ runner.temp }}/sdo-go-build-normal
-            ~/go/pkg/mod
-            .fastloop/test-bin
-          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-
-      - name: Require the normal build graph (this commit's on push, a base branch's on a PR)
-        env:
-          EVENT: ${{ github.event_name }}
-          EXACT: ${{ steps.prepared-normal.outputs.cache-hit }}
-          MATCHED: ${{ steps.prepared-normal.outputs.cache-matched-key }}
-        run: |
-          if [ "$EVENT" = push ]; then test "$EXACT" = true; else test -n "$MATCHED"; fi
-      - name: Restore this PR's normal delta over the base build
-        if: github.event_name != 'push'
-        id: delta-normal
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: ${{ runner.temp }}/sdo-go-delta-normal
-          key: ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-      - name: Lay the normal delta over the base build
-        if: github.event_name != 'push' && steps.delta-normal.outputs.cache-hit == 'true'
-        run: python3 scripts/go_ci_cache_delta.py apply --delta "${{ runner.temp }}/sdo-go-delta-normal" gocache=${{ runner.temp }}/sdo-go-build-normal mod=$HOME/go/pkg/mod test-bin=.fastloop/test-bin@content
+          name: prepared-python
+          path: ${{ runner.temp }}/prepared-normal
+      - name: Unpack this run's normal build
+        run: bash scripts/go_ci_artifacts.sh unpack python "${{ runner.temp }}/prepared-normal"
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         if: matrix.name == 'static analysis' || matrix.name == 'architecture' || matrix.name == 'unit tests'
         with:
           go-version: "1.26.8"
           cache: false
+      - name: Enforce compiler-free Python jobs
+        run: |
+          echo "SDO_UNIT_REAL_GO=$(command -v go)" >> "$GITHUB_ENV"
+          echo "$PWD/scripts/unit-tools" >> "$GITHUB_PATH"
       - name: Check out the SREGym harness
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
           python3 scripts/init_test_prereqs.py
-      - name: Share linked binaries between tests
-        run: bash scripts/link_cache.sh >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
           version: "0.9.24"
@@ -308,7 +287,7 @@ jobs:
         run: bash scripts/format_code.sh --check
       - name: Check static contracts
         if: matrix.name == 'static analysis'
-        run: bash scripts/check_errors.sh
+        run: bash scripts/check_errors.sh --python-only
       - name: Run Python shard
         run: ${{ matrix.run }} --durations=20
         env:
@@ -331,7 +310,7 @@ jobs:
     name: native contracts (${{ matrix.bin }})
     needs: prepare-go
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 4
     strategy:
       fail-fast: false
       matrix:
@@ -343,61 +322,17 @@ jobs:
         with:
           # A mutable PR merge ref can change after a retarget; test this event.
           ref: ${{ github.sha }}
-      - name: Restore the prepared normal build graph
-        id: prepared-normal
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      # The action fetches matching artifacts concurrently. Serial transfers add
+      # independent network stalls and can consume the whole setup allocation.
+      - name: Download this run's required builds concurrently
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          path: |
-            ${{ runner.temp }}/sdo-go-build-normal
-            ~/go/pkg/mod
-            .fastloop/test-bin
-          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-
-      - name: Require the normal build graph (this commit's on push, a base branch's on a PR)
-        env:
-          EVENT: ${{ github.event_name }}
-          EXACT: ${{ steps.prepared-normal.outputs.cache-hit }}
-          MATCHED: ${{ steps.prepared-normal.outputs.cache-matched-key }}
-        run: |
-          if [ "$EVENT" = push ]; then test "$EXACT" = true; else test -n "$MATCHED"; fi
-      - name: Restore this PR's normal delta over the base build
-        if: github.event_name != 'push'
-        id: delta-normal
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: ${{ runner.temp }}/sdo-go-delta-normal
-          key: ci-delta-v1-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-      - name: Lay the normal delta over the base build
-        if: github.event_name != 'push' && steps.delta-normal.outputs.cache-hit == 'true'
-        run: python3 scripts/go_ci_cache_delta.py apply --delta "${{ runner.temp }}/sdo-go-delta-normal" gocache=${{ runner.temp }}/sdo-go-build-normal mod=$HOME/go/pkg/mod test-bin=.fastloop/test-bin@content
-      - name: Restore the prepared race build graph
-        id: prepared-race
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: ${{ runner.temp }}/sdo-go-build-race
-          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
-      - name: Require the race build graph (this commit's on push, a base branch's on a PR)
-        env:
-          EVENT: ${{ github.event_name }}
-          EXACT: ${{ steps.prepared-race.outputs.cache-hit }}
-          MATCHED: ${{ steps.prepared-race.outputs.cache-matched-key }}
-        run: |
-          if [ "$EVENT" = push ]; then test "$EXACT" = true; else test -n "$MATCHED"; fi
-      - name: Restore this PR's race delta over the base build
-        if: github.event_name != 'push'
-        id: delta-race
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: ${{ runner.temp }}/sdo-go-delta-race
-          key: ci-delta-v1-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-      - name: Lay the race delta over the base build
-        if: github.event_name != 'push' && steps.delta-race.outputs.cache-hit == 'true'
-        run: python3 scripts/go_ci_cache_delta.py apply --delta "${{ runner.temp }}/sdo-go-delta-race" gocache=${{ runner.temp }}/sdo-go-build-race
+          pattern: prepared-{normal,race-${{ matrix.bin }}}
+          path: ${{ runner.temp }}
+      - name: Unpack this run's normal build
+        run: bash scripts/go_ci_artifacts.sh unpack normal "${{ runner.temp }}/prepared-normal"
+      - name: Unpack this run's race build
+        run: GOCACHE="${{ runner.temp }}/sdo-go-build-race" bash scripts/go_ci_artifacts.sh unpack race "${{ runner.temp }}/prepared-race-${{ matrix.bin }}"
       - name: Combine prepared compiler entries without replacing existing files
         run: bash scripts/merge_go_ci_caches.sh '${{ runner.temp }}/sdo-go-build-normal' '${{ runner.temp }}/sdo-go-build-race'
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
@@ -424,6 +359,7 @@ jobs:
         run: |
           uv run python scripts/check_ci_budget.py
           python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
+          cmp "$RUNNER_TEMP/prepared-race-${{ matrix.bin }}/plan.json" .fastloop/test-bin/pr-test-plan.json
       - name: Run the fixed regression set
         run: uv run --extra test python scripts/run_ci_contracts.py --plan .fastloop/test-bin/pr-test-plan.json --bin '${{ matrix.bin }}'
         env:

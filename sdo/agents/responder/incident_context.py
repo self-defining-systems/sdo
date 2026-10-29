@@ -122,6 +122,13 @@ def _ref(ref: ObjectRef) -> str:
     return "/".join(part for part in (ref.kind, ref.namespace, ref.name) if part)
 
 
+def _observation(text: str, limit: int = 240) -> str:
+    """Retain resource identity and the trailing cluster explanation, without classifying it."""
+    text = " ".join(text.split())
+    head = limit // 3
+    return text if len(text) <= limit else text[:head] + "…" + text[-(limit - head - 1) :]
+
+
 def finding_fingerprint(finding: Finding) -> str:
     """The controller's finding identity (Go ``FindingFingerprint``)."""
     if finding.fingerprint:
@@ -165,11 +172,22 @@ def stage_action_lines(reports: Iterable[StageReport]) -> list[str]:
                 receipt.rolled_back and attempt.result != "reverted_ineffective",
                 error,
             )
-            action = actions.setdefault(key, {"targets": [], "writes": 0, "cleared": set()})
+            action = actions.setdefault(key, {"targets": [], "writes": 0, "cleared": set(), "blockers": []})
             touched = attempt.touched_objects or [binding.object for binding in attempt.bindings]
             action["targets"] += [_ref(ref) for ref in touched]
             action["writes"] += attempt.plan_action_count
             action["cleared"] |= set(attempt.cleared_finding_fingerprints)
+            if receipt.HasField("rollout_pending"):
+                pending = receipt.rollout_pending
+                for blocker in pending.blockers:
+                    events = list(blocker.warning_events)
+                    facts = [blocker.reason, *events[:1], *(events[-1:] if len(events) > 1 else [])]
+                    text = "; ".join(_observation(fact) for fact in facts if fact)
+                    if len(events) > 2:
+                        text += f" (+{len(events) - 2} events in details_file)"
+                    action["blockers"].append(f"{_ref(blocker.ref)}: {text}")
+                if not pending.blockers and pending.reason:
+                    action["blockers"].append(_observation(pending.reason))
         for (playbook, _, result, skip_reason, rolled_back, error), action in actions.items():
             targets = list(dict.fromkeys(action["targets"]))
             line = f"{report.stage}: {playbook}"
@@ -185,11 +203,40 @@ def stage_action_lines(reports: Iterable[StageReport]) -> list[str]:
             if action["cleared"]:
                 line += f"; cleared {len(action['cleared'])}"
             if error:
-                line += f"; error: {_clip(error)}"
+                line += f"; error: {_observation(error, 160)}"
+            blockers = list(dict.fromkeys(action["blockers"]))
+            if blockers:
+                line += "; blockers: " + " | ".join(blockers[:2])
+                if len(blockers) > 2:
+                    line += f" (+{len(blockers) - 2} in details_file)"
             lines.append(line)
         if report.error:
             lines.append(f"{report.stage}: error: {_clip(report.error)}")
     return lines
+
+
+def checked_stage_receipts(reports: Iterable[StageReport]) -> list[dict[str, Any]]:
+    """Exact immutable application identities; scoped verification never grants closure."""
+    receipts: dict[str, dict[str, Any]] = {}
+    for report in reports:
+        for attempt in report.mitigations:
+            receipt = attempt.apply_receipt
+            if not receipt.application_id:
+                continue
+            verified = (
+                receipt.applied
+                and receipt.verification_completed
+                and receipt.verification_passed
+                and not receipt.dry_run
+                and not receipt.rolled_back
+                and not receipt.HasField("rollout_pending")
+                and not (receipt.error or receipt.rollback_error or attempt.error)
+            )
+            row = receipts.setdefault(
+                receipt.application_id, {"application_id": receipt.application_id, "verified": True}
+            )
+            row["verified"] = row["verified"] and verified
+    return list(receipts.values())
 
 
 def program_run_lines(runs: Iterable[ProgramRun]) -> list[str]:
@@ -258,10 +305,11 @@ def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[s
     }
     if len(findings) > MAX_INLINE_FINDINGS:
         brief["findings_omitted"] = len(findings) - MAX_INLINE_FINDINGS
-    if runs := program_run_lines(request.initial_program_runs):
+    if not request.prior_stages and (runs := program_run_lines(request.initial_program_runs)):
         brief["program_runs"] = runs
     if request.prior_stages:
         brief["stage_actions"] = stage_action_lines(request.prior_stages)
+        brief["checked_stage_receipts"] = checked_stage_receipts(request.prior_stages)
         brief["stage_cleared_findings"] = len(
             {fingerprint for report in request.prior_stages for fingerprint in report.cleared_finding_fingerprints}
         )
@@ -272,6 +320,18 @@ def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[s
     if "playbook_documents" in full:
         brief["playbook_documents"] = dict(full["playbook_documents"])
         brief["playbook_index"] = {item["id"]: _clip(item["description"], 120) for item in full["playbook_index"]}
+    if request.prior_stages:
+        involved = {attempt.playbook_id for stage in request.prior_stages for attempt in stage.mitigations}
+        involved.update(match.playbook_id for match in request.playbook_coverage.matches)
+        involved.update(program for finding in request.findings for program in finding.playbook_ids)
+        involved.update(
+            run.program_id for run in request.initial_program_runs if run.verdict.result == Verdict.RESULT_MATCH
+        )
+        brief["stage_playbooks"] = {
+            program: brief.get("playbook_documents", {}).pop(program, None) for program in sorted(involved)
+        }
+        for program in involved:
+            brief.get("playbook_index", {}).pop(program, None)
     surface = full["incident_tools"]
     brief["incident_tools"] = {
         "commands": command_purposes(),

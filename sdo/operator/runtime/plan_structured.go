@@ -55,6 +55,7 @@ func (e PlanExecutor) verifyStructuredWrites(ctx context.Context, result PlanApp
 		if live == nil || !samePlanRef(live, patch.Ref) || live.GetUID() == "" || live.GetUID() != patch.Before.GetUID() {
 			return fmt.Errorf("structured write observation unknown: UID changed or absent")
 		}
+		patch.ObservedUID = string(live.GetUID())
 		for _, field := range planPatchFields(*patch) {
 			b, bok := planConfigurationField(patch.Before, field)
 			a, aok := planConfigurationField(patch.After, field)

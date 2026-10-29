@@ -184,10 +184,12 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 	if err := k.waitJob(validationCtx, name); err != nil {
 		return ValidationJobReceipt{}, fmt.Errorf("validator build and source checks: %w", err)
 	}
+ logs := k.jobLogs(name)
 	return ValidationJobReceipt{
 		CandidateTree: request.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true,
 		ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true,
-		CoverageGaps: validate.ParseReportGaps(k.jobLogs(name)),
+		CoverageGaps: validate.ParseReportGaps(logs),
+ MitigationReplayNotes: validate.ParseReportReplayNotes(logs),
 	}, nil
 }
 

@@ -14,6 +14,11 @@ const ObservationObserved = "observed"
 
 VARIABLES
 
+var ErrNoFieldComparison = errors.New("diff holds no accepted/observed field comparison")
+    ErrNoFieldComparison means a diff holds no accepted/observed field
+    comparison, such as a baseline diff or a diff read from an unavailable
+    source.
+
 var ErrObjectNotCaptured = errors.New("object not captured")
 
 FUNCTIONS
@@ -89,6 +94,11 @@ func ServiceExpectsEndpoints(service corev1.Service) bool
     for missing ready endpoints or pods.
 
 func SortObjects(objects []unstructured.Unstructured)
+func SourceComparisonText(accepted, observed []byte) string
+    SourceComparisonText renders the accepted and observed comparable fields of
+    one object as SourceDiff.Text. Each side is one JSON document, or null when
+    that side is absent. Sides, Field and ContainerChanges parse this form.
+
 func TypedObjectFields(target any) []reflect.Value
     TypedObjectFields returns target's typed Kubernetes list fields, the ones
     DecodeTypedObjects fills. They are a projection of the generic objects.
@@ -138,6 +148,32 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
     same ConfigMap is referenced as both optional and required, the required
     reference wins.
 
+type ContainerChange struct {
+	Kind ContainerKind
+	Name string
+	// Added is a live container accepted source does not have; Removed the reverse.
+	Added   bool
+	Removed bool
+	// Fields are the container fields accepted source declares whose live
+	// values differ, such as "image" or "command". Undeclared live fields
+	// (server defaults) never appear.
+	Fields []string
+}
+    ContainerChange is one pod-template container that differs from accepted
+    source, matched by kind and name.
+
+func (c ContainerChange) Changed(field string) bool
+    Changed reports whether field is one of the container's differing declared
+    fields.
+
+type ContainerKind string
+    ContainerKind is the pod-spec list a container belongs to.
+
+const (
+	AppContainer       ContainerKind = "app"
+	InitContainer      ContainerKind = "init"
+	EphemeralContainer ContainerKind = "ephemeral"
+)
 type DetectionContext interface {
 	// DiffAgainstSource compares a captured resource with accepted source, including
 	// source absence. Runtime reads are frozen per snapshot and recorded for replay.
@@ -221,33 +257,4 @@ type DriftEvidence struct {
 	Kind        string `json:"kind"`
 	Observation string `json:"observation"`
 }
-
-type DriftField struct {
-	Path   string `json:"path"`
-	Old    string `json:"old,omitempty"`
-	New    string `json:"new,omitempty"`
-	Source string `json:"source,omitempty"`
-}
-
-type Finding struct {
-	DetectorID       string          `json:"detector_id,omitempty"`
-	RuleID           string          `json:"rule_id"`
-	Status           FindingStatus   `json:"status"`
-	Severity         FindingSeverity `json:"severity"`
-	Summary          string          `json:"summary"`
-	Evidence         string          `json:"evidence"`
-	PrimaryResource  ObjectRef       `json:"primary_resource"`
-	RelatedResources []ObjectRef     `json:"related_resources,omitempty"`
-	// Playbooks are logical playbook IDs.
-	Playbooks         []string             `json:"playbooks,omitempty"`
-	ParameterBindings map[string]ObjectRef `json:"parameter_bindings,omitempty"`
-	Fingerprint       string               `json:"fingerprint,omitempty"`
-	Metadata          map[string]any       `json:"metadata,omitempty"`
-}
-
-func DetectObserved(ctx context.Context, detector Detector, view DetectionContext) ([]Finding, error)
-    DetectObserved prevents an unreadable declared dependency from clearing a
-    finding, even if the detector ignores an accessor error.
-
-type FindingSeverity string
 ```

@@ -193,15 +193,7 @@ therefore does not mean early closure: `verified_while_responder_running=true`
 alone marks it. Early verified closure emits `incident_closed` at the
 controller's independent verification time. A new or reactivated finding,
 observed mutation, pending receipt or unknown write outcome prevents that stable
-pass. The response Job has a separate report grace (default 30 seconds); its
-actual completion may follow `verified_at`. Outcome mitigation and completion
-use the verification timestamp for these closures. Reflection waits for the
-report or grace and retains the controller's receipts and resumable session.
-The responder worker stops a turn still running 5 seconds after the
-verification marker and resumes the same provider session with one short user
-message starting `SDO verified recovery.`; that turn's `incident_result` is the
-report. Count tool calls after this message separately: it is the wrap-up, not
-exploration. The stopped turn's usage checkpoint is published as complete.
+pass. The response Job is fenced and retired immediately once recovery holds; final narration no longer contributes a separate 30-second report grace. Worker quiescence remains independently checked before broker handoff. Detector clearing and the unchanged 15-second stability requirement share one continuous post-write health streak; a final responder report does not reset it. Compare effective action intervals, raw clear-streak timestamps and per-detector tracker clearance separately; an aggregate final-clear timestamp is not the timestamp every finding cleared.
 The responder's first message carries `Incident request:` with a bounded
 brief: open findings as `fingerprint: summary` lines (at most 10, the rest
 counted in `findings_omitted`), coverage matches for open findings,
@@ -214,7 +206,7 @@ The original task-bound clock is persisted before publication at `startup/attemp
 
 Per-Job native timings are exported at `sessions/<session>/startup/attempts/<job>/startup-controller.json`; worker clocks are at `sessions/<session>/startup-workers/<job>/startup-worker.json`. Initial incident files remain unchanged. A cold continuation keeps `mode=cold` and its own task-bound boundary; missing per-attempt boundaries stay unavailable rather than inheriting an earlier prompt's timestamps. Use the actual `responder_job_name` from native incident evidence for strict Kubernetes receipts, including warm Jobs. `--responder-standby=false` on install-existing/controller forces cold execution.
 
-Incident execution discovery uses immutable control ConfigMaps named `sdo-exec-<task-digest-prefix>`, with a versioned `execution.json` binding incident ID, task ID, canonical request SHA-256 and actual Job name (plus the known warm Job UID). The index is published before worker release, independently of request ConfigMap/PVC transport, and survives request cleanup and Job TTL. Restart liveness and report-grace shutdown share the same index-backed inventory, with historical journal/session ownership recovery; API uncertainty retains incident ownership and its fence.
+Incident execution discovery uses immutable control ConfigMaps named `sdo-exec-<task-digest-prefix>`, with a versioned `execution.json` binding incident ID, task ID, canonical request SHA-256 and actual Job name (plus the known warm Job UID). The index is published before worker release, independently of request ConfigMap/PVC transport, and survives request cleanup and Job TTL. Restart liveness and verified-responder shutdown share the same index-backed inventory, with historical journal/session ownership recovery; API uncertainty retains incident ownership and its fence.
 
 Native worker request checkpoints use the dispatch envelope: at most
 512 KiB of exact UTF-8 ProtoJSON (one ConfigMap; there is no second request
@@ -237,3 +229,5 @@ and `reflection_dispatch_at`; the first task's cutoff can miss later
 continuations, including turns with empty usage. Do not substitute `llm_calls`
 or `response_loops_used` for interaction counts. Empty usage remains unknown
 usage rather than evidence that no interaction occurred.
+
+`verify.verification_status=awaiting_responder_completion` is controller-owned finish guidance when fresh health is clear but publication awaits the responder result. `healthy` remains false; this status is neither a recovery receipt nor mitigation/closure credit. The responder returns its evidence and source-difference dispositions; the controller retains independent stability, quiescence and publication checks.

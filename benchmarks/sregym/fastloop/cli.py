@@ -56,6 +56,7 @@ from benchmarks.sregym.fastloop.wipe import (
     unrecovered_rows,
 )
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
+from benchmarks.sregym.repository_git import host_clone_command, host_git_command
 from sdo.agents.provider import AGENT_EFFORTS, DEFAULT_AGENT_EFFORT
 
 if TYPE_CHECKING:
@@ -310,7 +311,7 @@ def _up(args: argparse.Namespace) -> int:
     if not workspace.exists():
         if args.seed is None:
             raise SystemExit("--seed is required the first time (a git repository with the application source)")
-        subprocess.run(["git", "clone", "--quiet", str(args.seed.resolve()), str(workspace)], check=True)
+        subprocess.run(host_clone_command(args.seed, workspace, "--quiet"), check=True)
     private_tmp = None if args.no_sandbox else run_dir / "tmp"
     if private_tmp is not None:
         private_tmp.mkdir(exist_ok=True)
@@ -325,7 +326,7 @@ def _up(args: argparse.Namespace) -> int:
     seed_commit = prior.seed_commit if prior is not None else None
     if seed_commit is None and (workspace / ".git").exists():
         seed_commit = subprocess.run(
-            ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+            host_git_command(workspace, "rev-parse", "HEAD"),
             capture_output=True,
             text=True,
             check=True,
@@ -1339,8 +1340,8 @@ def _reset(args: argparse.Namespace) -> int:
 def _restore_seed(environment: FastloopEnvironment) -> None:
     if environment.seed_commit is None:
         raise ValueError("reset requires a seed commit captured by fastloop up")
-    subprocess.run(["git", "-C", str(environment.workspace), "reset", "--hard", environment.seed_commit], check=True)
-    subprocess.run(["git", "-C", str(environment.workspace), "clean", "-fd"], check=True)
+    subprocess.run(host_git_command(environment.workspace, "reset", "--hard", environment.seed_commit), check=True)
+    subprocess.run(host_git_command(environment.workspace, "clean", "-fd"), check=True)
 
 
 def _retire_app(args: argparse.Namespace) -> int:

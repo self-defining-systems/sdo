@@ -40,6 +40,15 @@ func (s *run) programRules(ctx context.Context) error {
 	if _, err := inspect(filepath.Join(s.req.Root, layout.Dir), module); err != nil {
 		s.add(Semantic, Diagnostic{Rule: "program.invalid", Path: layout.PlaybooksDir, Message: err.Error()})
 	}
+	uses, err := programvalidation.DiffTextUses(filepath.Join(s.req.Root, layout.Dir))
+	if err != nil {
+		return err
+	}
+	for _, use := range uses {
+		s.req.noteGaps(Diagnostic{Rule: RuleProgramDiffText, Path: layout.Dir + "/" + use.Path, Line: use.Line,
+			Message: "program decides on a diff's Text; a substring of the whole document cannot tell which field or container changed",
+			Hint:    "compare typed fields with diff.Field or diff.ContainerChanges and keep Text for Evidence only"})
+	}
 
 	// Preserve branch gofmt enforcement for newly edited sources without rejecting legacy files.
 	return filepath.WalkDir(filepath.Join(s.req.Root, layout.Dir), func(abs string, entry os.DirEntry, err error) error {

@@ -46,7 +46,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		}
 		application.Verification = &contracts.Verdict{Result: verdict}
 	}
-	for _, effect := range r.ObjectEffects {
+	for _, effect := range r.observedObjectEffects() {
 		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible}
 		if effect.DeletedPreImage != nil {
 			object := effect.DeletedPreImage.DeepCopy().Object
@@ -327,4 +327,26 @@ func planValueState(v *contracts.PlanValue) program.Value {
 		return program.FromParam(origin.Parameter)
 	}
 	return program.Value{}
+}
+
+// observedObjectEffects carries UID-bound direct write evidence across the
+// receipt boundary without serializing mutable patch preimages. Successful
+// verification already required the executor's identity/value readback.
+func (r PlanApplicationResult) observedObjectEffects() []PlanObjectEffect {
+	effects := append([]PlanObjectEffect(nil), r.ObjectEffects...)
+	if !r.Applied || r.DryRun || r.RolledBack || r.RollbackError != "" || !r.VerificationCompleted || !r.VerificationPassed || r.RolloutPending != nil {
+		return effects
+	}
+	seen := map[sdk.ObjectRef]bool{}
+	for _, effect := range effects {
+		seen[effect.Ref] = true
+	}
+	for _, patch := range r.Patches {
+		if seen[patch.Ref] || patch.Operation != "" || patch.Before == nil || patch.Before.GetUID() == "" || patch.ObservedUID != string(patch.Before.GetUID()) {
+			continue
+		}
+		effects = append(effects, PlanObjectEffect{Operation: "patch", Ref: patch.Ref, UID: string(patch.Before.GetUID()), State: "applied", Confirmed: true})
+		seen[patch.Ref] = true
+	}
+	return effects
 }

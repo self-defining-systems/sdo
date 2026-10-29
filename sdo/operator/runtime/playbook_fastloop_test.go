@@ -348,11 +348,13 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			deployment, _ := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
 			deployment.Name = "peer"
 			deployment.Spec.Template.Spec.Containers[0].Image = "missing:v1"
+			deployment.Status = appsv1.DeploymentStatus{}
 			_, _ = client.AppsV1().Deployments("app").Create(ctx, deployment, metav1.CreateOptions{})
 			pod, _ := client.CoreV1().Pods("app").Get(ctx, "api-pod", metav1.GetOptions{})
 			pod.Name = "peer-pod"
 			pod.Labels = map[string]string{"app": "peer"}
-			pod.Status.ContainerStatuses[0].State.Waiting.Reason = "ImagePullBackOff"
+			pod.Spec.Containers[0].Image = "missing:v1"
+			pod.Status = corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}
 			_, _ = client.CoreV1().Pods("app").Create(ctx, pod, metav1.CreateOptions{})
 			port.Name, image.Name = "peer", "peer"
 		}
@@ -377,6 +379,17 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			}
 		}
 		loop := NewResponderLoop(IncidentRequest{IncidentID: id, Namespace: "app", RepairPolicy: "recorded-actions", Findings: findings}, registry, provider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
+		now := time.Now().UTC()
+		controller, err := NewController(testControllerConfig(), []sdk.Detector{fastloopDetector{}}, provider, &verificationRetryDispatcher{}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		controller.currentIncidentRequest = &loop.Request
+		controller.incidentOpen = true
+		bindRecoveryFixture(controller, loop, now)
+		if err := controller.Step(ctx, now, nil); err != nil {
+			t.Fatal(err)
+		}
 		loop.CorpusSessionRoot = root
 		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 			return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
@@ -448,6 +461,43 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 				t.Fatalf("reload plan outcome: %+v %v", reloaded.IncidentResult, err)
 			}
 		}
+		pending := fastloopTool(t, tools, "verify")
+		if pending.Healthy || pending.IncidentVerified != nil {
+			t.Fatalf("clear health bypassed the controller proof: %+v", pending)
+		}
+		if destination := os.Getenv("SDO_SCRIPTED_TOOL_RESPONSES"); destination != "" {
+			encoded, err := json.Marshal(pending)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(destination, "verify-pending.json"), encoded, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Model the independent workload controller's observed completion in
+		// the fake Kubernetes API; repairing a template alone is not recovery.
+		deployment, err := client.AppsV1().Deployments("app").Get(ctx, image.Name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		one := int32(1)
+		deployment.Spec.Replicas = &one
+		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": image.Name}}
+		deployment.Spec.Template.Labels = map[string]string{"app": image.Name}
+		deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: deployment.Generation, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}
+		if _, err := client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		pod, err := client.CoreV1().Pods("app").Get(ctx, image.Name+"-pod", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pod.Spec = *deployment.Spec.Template.Spec.DeepCopy()
+		pod.Status = corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}
+		if _, err := client.CoreV1().Pods("app").Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		assertRecoveryFixtureWindow(t, controller, ctx, time.Now().UTC().Add(time.Second))
 		verified := fastloopTool(t, tools, "verify")
 		if !verified.Healthy || len(verified.Findings) != 0 {
 			t.Fatalf("incident %d did not verify: %+v", incident, verified)

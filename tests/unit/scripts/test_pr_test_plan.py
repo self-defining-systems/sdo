@@ -99,3 +99,30 @@ def test_committed_profiles_keep_every_protected_guard_that_fits_in_the_pr():
     # outgrew the PR: cut their cost (shared fixtures, fewer cases), do not hide them.
     if total <= 0.9 * capacity:
         assert deferred == [], deferred
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "TestNativeReflectionSharesIncidentSessionWithResponder",
+        "TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker",
+        "TestCoveredRepeatBrokerSkipsReflectionWorker",
+        "TestRecoveryProofSharesClearingWindowAndToolVerdict",
+        "TestClosureRolloutWaitsBeforePublishingSuccess",
+        "TestSourceInventoryMissingAuthorityPreservesMonitoringAndIsInformation",
+        "TestLatentAllHealthClearClosureCarriesInventoryDriftAsInformation",
+        "TestContinuationStillBrokenExcludesFindingAwaitingClearing",
+        "TestControllerWaitsForFreshClearSamplesInsteadOfRedispatch",
+    ],
+)
+def test_reflection_launch_guards_displace_cheap_filler(guard: str):
+    """Optional launch adapters must not escape the memory/publication guard set."""
+    import json
+
+    policy = json.loads((planner.ROOT / "scripts/ci_policy.json").read_text())
+    names = {guard: 50} | {f"TestFiller{i}": 9 for i in range(80)}
+    source = {"runtime": {"packages": {name: ["sdo.dev/operator/runtime"] for name in names}, "costs": names}}
+    plan = planner.build(source, {"costs": {}}, policy)
+    selected = {name for bucket in plan["bins"] for name in bucket}
+    assert f"go:runtime:{guard}" in selected
+    assert len(plan["bins"]) == policy["contract_jobs"]

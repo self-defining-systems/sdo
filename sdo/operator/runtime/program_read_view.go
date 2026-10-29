@@ -200,7 +200,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		if encodeErr != nil {
 			return program.Diff{}, encodeErr
 		}
-		return program.Diff{Changed: true, SourceAbsent: true, Text: fmt.Sprintf("accepted: null\nobserved: %s", encoded)}, nil
+		return program.Diff{Changed: true, SourceAbsent: true, Text: sdk.SourceComparisonText([]byte("null"), encoded)}, nil
 	}
 	if err != nil {
 		return program.Diff{}, fmt.Errorf("accepted manifest for %s/%s: %w", ref.Kind, ref.Name, err)
@@ -225,7 +225,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		after, _ := json.Marshal(actual)
 		// Objects outside the application namespace are never accepted by
 		// adoption, so they carry no record and only declared fields compare.
-		return program.Diff{Changed: string(before) != string(after), Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
+		return program.Diff{Changed: string(before) != string(after), Text: sdk.SourceComparisonText(before, after)}, nil
 	}
 	if observed == nil {
 		if v.Client != nil {
@@ -237,7 +237,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		if err != nil {
 			return program.Diff{}, err
 		}
-		return program.Diff{Changed: true, Text: fmt.Sprintf("accepted: %s\nobserved: null", before)}, nil
+		return program.Diff{Changed: true, Text: sdk.SourceComparisonText(before, []byte("null"))}, nil
 	}
 	accepted := v.sourceComparableFields(source.Object, ref)
 	actual := v.sourceComparableFields(observed.Object, ref)
@@ -272,7 +272,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	if err != nil {
 		return program.Diff{}, err
 	}
-	text := fmt.Sprintf("accepted: %s\nobserved: %s", before, after)
+	text := sdk.SourceComparisonText(before, after)
 	if string(normalizedBefore) != string(normalizedAfter) {
 		return program.Diff{Changed: true, Text: text}, nil
 	}

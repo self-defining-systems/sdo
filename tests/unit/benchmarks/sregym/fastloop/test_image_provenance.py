@@ -164,3 +164,23 @@ def test_unsupported_build_shapes_fail_closed():
         stage_sources("FROM x AS a\nRUN --mount=type=bind,target=/src make\n", "a")
     graph = 'FROM x AS a\nCOPY a.txt ./\nFROM a AS b\nCOPY --from=a /a /a\nADD ["b", "/b"]\n'
     assert stage_sources(graph, "b") == ("a.txt", "b")
+
+
+def test_standalone_provenance_uses_shared_git_policy_without_site_packages(image_build_source):
+    """The build entrypoint needs neither PYTHONPATH nor installed SDO packages."""
+    import os
+    import sys
+
+    environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    environment["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1"
+    script = image_build_source / "benchmarks/sregym/fastloop/image_provenance.py"
+    result = REAL_RUN(
+        [sys.executable, "-I", "-S", str(script), "identity", "controller", "HEAD"],
+        cwd=image_build_source,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert re.fullmatch(r"tree-v2:[0-9a-f]{64}\n", result.stdout)

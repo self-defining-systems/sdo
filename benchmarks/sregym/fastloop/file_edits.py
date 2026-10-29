@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from benchmarks.sregym.repository_git import host_git_command
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -67,7 +69,7 @@ def decode_file_edits(data: bytes) -> tuple[FileEdit, ...]:
 
 def record_file_edits(root: Path, base: str) -> tuple[FileEdit, ...]:
     def git(*args: str) -> list[str]:
-        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=30, check=True)
+        result = subprocess.run(host_git_command(root, *args), capture_output=True, timeout=30, check=True)
         return [name.decode() for name in result.stdout.split(b"\0") if name]
 
     paths = set(git("diff", "--name-only", "-z", base, "--"))

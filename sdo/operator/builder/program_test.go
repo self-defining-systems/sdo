@@ -135,6 +135,7 @@ func TestProgramValidationRejectsUnsafeMemory(t *testing.T) {
 		{"syscall import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"syscall\"", "may not import"},
 		{"plugin import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"plugin\"", "may not import"},
 		{"missing diagnoser", ".sdo/playbooks/service-targetport-mismatch/diagnose.go", "func (Program) Diagnose", "func (Program) Inspect", "exactly one Diagnoser"},
+		{"unknown action parameter", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "sdo mitigate SyncWebhookCA --param namespace=app\nCheck the", "unknown parameter \"namespace\""},
 		{"shell guidance", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "kubectl get services\nCheck the", "shell command"},
 		{"shell fence", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "```bash\n```\nCheck the", "shell command"},
 		{"spaced shell fence", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "``` bash\n```\nCheck the", "shell command"},

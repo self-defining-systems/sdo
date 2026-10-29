@@ -150,6 +150,14 @@ func rollDeadlocked(view program.ReadView) bool {
 
 func rollLoop(t *testing.T, p rollProgram) (*ResponderLoop, *rollCluster, string) {
 	t.Helper()
+	return rollLoopFor(t, p)
+}
+
+func rollLoopFor(t *testing.T, p interface {
+	program.Diagnoser
+	program.Mitigator
+}) (*ResponderLoop, *rollCluster, string) {
+	t.Helper()
 	deployment := planObject(rollWeb, map[string]any{"replicas": int64(2)})
 	deployment.SetUID("web-uid")
 	deployment.SetAnnotations(map[string]string{rollRevision: "1"})
@@ -172,7 +180,7 @@ func rollLoop(t *testing.T, p rollProgram) (*ResponderLoop, *rollCluster, string
 	loop.ProgramFollowUpSettle = time.Millisecond
 	menu := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
 	for _, option := range menu.Menu.GetOptions() {
-		if option.GetProgramId() == "rollout-cleanup" {
+		if option.GetProgramId() == p.Spec().ID {
 			return loop, cluster, option.GetOptionId()
 		}
 	}
@@ -341,5 +349,63 @@ func TestProgramFollowUpRespectsOtherHeldReservations(t *testing.T) {
 	}
 	if !strings.Contains(fmt.Sprint(response.Report, response.MenuExecution), "pending_write_conflict") {
 		t.Fatalf("follow-up conflict lacks its typed reason: %+v %+v", response.Report, response.MenuExecution)
+	}
+}
+
+// wrongPlanProgram is a p024-shaped learned program: its diagnosis matches a
+// fault its plan does not touch, so after its write the rollout stays blocked
+// and its own diagnosis still matches.
+type wrongPlanProgram struct{ rollProgram }
+
+func (wrongPlanProgram) Spec() program.ProgramSpec {
+	spec := rollProgram{}.Spec()
+	spec.ID = "wrong-plan"
+	return spec
+}
+func (wrongPlanProgram) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
+	return program.Verdict{Result: program.Match}, nil
+}
+
+// A pending application shown ineffective (its own diagnosis still matches
+// after its writes, its targeted finding still active) fails explicitly and
+// releases the object, so an independent repair runs without a stall timeout.
+func TestIneffectivePendingApplicationReleasesObjectToIndependentRepair(t *testing.T) {
+	loop, cluster, option := rollLoopFor(t, wrongPlanProgram{})
+	loop.PendingStallTimeout = time.Hour
+	first := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
+	if first.RolloutPending == nil {
+		t.Fatalf("setup: expected a blocked rollout: %+v %s", first.Report, first.Error)
+	}
+	scale := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: "ScaleWorkload", RoundLimit: 1}, Parameters: map[string]string{"ref": "Deployment/app/web", "replicas": "2"}})
+	if scale.Report.GetReasonCode() == "pending_write_conflict" || scale.Error != "" {
+		t.Fatalf("an ineffective pending plan blocked the independent repair: %s %+v", scale.Error, scale.Report)
+	}
+	report := loop.Handle(context.Background(), ToolRequest{Command: "report", ReportQuery: &contracts.MitigationReportQuery{AttemptId: first.Report.GetAttemptId()}})
+	if report.Report.GetReasonCode() != "diagnosis_persists" || report.Report.GetStatus() == contracts.MitigationReport_STATUS_SUCCESS {
+		t.Fatalf("ineffective application lacks its explicit failure: %+v", report.Report)
+	}
+	rollRetireOld(cluster)
+	late := loop.Handle(context.Background(), ToolRequest{Command: "report", ReportQuery: &contracts.MitigationReportQuery{AttemptId: first.Report.GetAttemptId()}})
+	if late.Report.GetStatus() == contracts.MitigationReport_STATUS_SUCCESS || late.Report.GetReasonCode() != "diagnosis_persists" {
+		t.Fatalf("failed application earned late credit or lost its reason: %+v", late.Report)
+	}
+}
+
+// An application whose diagnosis no longer matches is still converging: it keeps
+// its object until its rollout settles or stalls.
+func TestEffectivePendingApplicationKeepsItsObject(t *testing.T) {
+	loop, _, option := rollLoop(t, rollProgram{})
+	loop.PendingStallTimeout = time.Hour
+	first := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
+	if first.RolloutPending == nil {
+		t.Fatalf("setup: expected a blocked rollout: %+v %s", first.Report, first.Error)
+	}
+	loop.pendingWrites[first.ApplicationID] = func(p pendingMitigation) pendingMitigation {
+		p.FindingFingerprints = []string{"cleared"}
+		return p
+	}(loop.pendingWrites[first.ApplicationID])
+	scale := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: "ScaleWorkload", RoundLimit: 1}, Parameters: map[string]string{"ref": "Deployment/app/web", "replicas": "2"}})
+	if scale.Report.GetReasonCode() != "pending_write_conflict" {
+		t.Fatalf("a pending application whose targeted findings cleared lost its object: %+v", scale.Report)
 	}
 }

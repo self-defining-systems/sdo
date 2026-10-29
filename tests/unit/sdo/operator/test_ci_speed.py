@@ -121,12 +121,15 @@ def test_ci_bounds_nested_go_builds_and_routes_compiling_contracts() -> None:
 def test_go_shards_restore_the_completed_preparation_cache() -> None:
     jobs = workflow()["jobs"]
     warm = jobs["prepare-go"]
-    assert warm["timeout-minutes"] == 4
+    assert warm["timeout-minutes"] == 5
     assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
     for name in ("python", "contracts"):
         assert "prepare-go" in jobs[name]["needs"]
-        caches = [step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
-        assert any("ci-prepared" in step["with"]["key"] for step in caches), name
+        assert any(
+            step.get("with", {}).get("name") == "prepared-python"
+            or step.get("with", {}).get("pattern") == "prepared-{normal,race-${{ matrix.bin }}}"
+            for step in jobs[name]["steps"]
+        )
 
 
 def test_pull_requests_restore_a_prepared_cache_from_their_base_branch() -> None:
@@ -140,95 +143,59 @@ def test_pull_requests_restore_a_prepared_cache_from_their_base_branch() -> None
     assert configuration["concurrency"]["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
 
 
-def _runs_on_pull_requests(step: dict) -> bool:
-    return "github.event_name == 'push'" not in step.get("if", "")
-
-
 def _saves_cache(step: dict) -> bool:
     uses = step.get("uses", "")
     return uses.startswith(("actions/cache@", "actions/cache/save@"))
 
 
-LARGE_PREPARED_PATHS = ("sdo-go-build-", "~/go/pkg/mod", ".fastloop/test-bin")
-
-
-def test_pull_request_runs_never_save_the_large_prepared_builds() -> None:
-    """Class: per-ref cache saves. ~1.6 GB per PR passed the 10 GB repo cap and evicted live entries."""
-    saves = []
-    for name, job in workflow()["jobs"].items():
+def test_only_durable_base_pushes_save_go_caches() -> None:
+    configuration = workflow()
+    for job in configuration["jobs"].values():
         for step in job["steps"]:
-            if _saves_cache(step) and _runs_on_pull_requests(step):
-                saves.append((name, step))
-                assert not any(large in step["with"]["path"] for large in LARGE_PREPARED_PATHS), (name, step)
-    # Only the small deltas are saved by PR runs, one per compiler mode.
-    assert sorted(step["with"]["key"].split("-")[3] for _, step in saves) == ["normal", "race"]
-    assert all(step["with"]["key"].startswith("ci-delta-v1-") for _, step in saves)
-    # The archives that are saved belong to base-branch pushes alone.
-    publishers = [
-        step
-        for step in workflow()["jobs"]["prepare-go"]["steps"]
-        if _saves_cache(step) and step["with"]["key"].startswith("ci-prepared-v4-")
-    ]
+            if _saves_cache(step):
+                condition = step.get("if", "")
+                assert "github.event_name == 'push'" in condition
+                assert "github.ref == 'refs/heads/main'" in condition
+                assert "github.ref == 'refs/heads/vic-lsh/dev/sdo-improve'" in condition
+    prepare = configuration["jobs"]["prepare-go"]["steps"]
+    publishers = [step for step in prepare if _saves_cache(step)]
     assert len(publishers) == 2
-    assert all(step["if"].endswith("github.event_name == 'push'") for step in publishers)
+    for publisher in publishers:
+        mode = "race" if "race" in publisher["name"] else "normal"
+        restore = next(step for step in prepare if step.get("id") == f"base-{mode}")
+        assert publisher["with"]["key"] == f"${{{{ steps.base-{mode}.outputs.cache-primary-key }}}}"
+        assert publisher["with"]["path"].strip() == restore["with"]["path"].strip()
+        assert restore["with"]["key"].startswith(restore["with"]["restore-keys"].split()[0])
 
 
-def test_pull_request_consumers_restore_the_base_build_and_never_require_a_sha_entry() -> None:
-    for name in ("python", "contracts"):
-        restores = [
-            step
-            for step in workflow()["jobs"][name]["steps"]
-            if step.get("uses", "").startswith("actions/cache/restore@") and "ci-prepared-v4-" in step["with"]["key"]
-        ]
-        assert restores, name
-        for step in restores:
-            # The exact entry exists only after a push; a PR falls back to the newest base entry.
-            assert "fail-on-cache-miss" not in step["with"], name
-            exact, *fallbacks = step["with"]["restore-keys"].split()
-            assert step["with"]["key"].startswith(exact), name
-            assert fallbacks, name
-            assert "github.sha" not in exact
-
-
-def test_a_cold_preparation_keeps_its_progress_within_the_job_deadline() -> None:
-    preparation = workflow()["jobs"]["prepare-go"]
-    steps = preparation["steps"]
-    compile_step = next(step for step in steps if "scripts/prepare_go_ci.sh" in step.get("run", ""))
-    # The compile stops early enough to save its delta before the job is cancelled, and
-    # stops every compiler: a step timeout leaves children writing the cache during the export.
-    command = shlex.split(compile_step["run"])
-    assert command[:2] == ["timeout", "--kill-after=5s"]
-    assert "--foreground" not in command
-    deadline = int(command[2].removesuffix("s"))
-    assert 0 < deadline + 5 + 60 <= preparation["timeout-minutes"] * 60
-    assert "timeout-minutes" not in compile_step
-    for mode in ("normal", "race"):
-        export = next(step for step in steps if step.get("id") == f"export-{mode}")
-        save = next(
-            step
-            for step in steps
-            if step.get("uses", "").startswith("actions/cache/save@") and f"matrix.mode == '{mode}'" in step["if"]
-        )
-        resume = next(step for step in steps if step.get("id") == f"resume-{mode}")
-        # The export and save run after a failed compile, and the progress is keyed apart from a completed run.
-        assert export["if"].startswith("always()")
-        assert save["if"].startswith("always()")
-        assert "job.status == 'success' && github.sha" in save["with"]["key"]
-        assert "partial-" in save["with"]["key"]
-        # Consumers hash go.sum right after checkout; later steps add go.sum files, so the key
-        # must use the hash pinned before them or the delta is saved where no consumer looks.
-        assert "hashFiles" not in save["with"]["key"]
-        assert "steps.gosum.outputs.value" in save["with"]["key"]
-        gosum = steps.index(next(step for step in steps if step.get("id") == "gosum"))
-        assert gosum < steps.index(
-            next(step for step in steps if "scripts/init_test_prereqs.py" in step.get("run", ""))
-        )
-        # A rerun, or the PR's next push, resumes from the newest delta of the PR; consumers only
-        # ever look for the exact completed key.
-        assert resume["with"]["restore-keys"].strip() == save["with"]["key"].split("${{ job.status")[0].strip()
-        assert resume["with"]["path"] == save["with"]["path"]
-        # A cold PR (no base build to diff against) must not save a near-full archive.
-        assert int(shlex.split(export["run"])[shlex.split(export["run"]).index("--max-bytes") + 1]) <= 600 * 10**6
+@pytest.mark.parametrize(
+    ("job", "mode", "published", "downloaded"),
+    [
+        ("python", "python", "prepared-python", "prepared-python"),
+        ("contracts", "normal", "prepared-normal", "prepared-{normal,race-${{ matrix.bin }}}"),
+        ("contracts", "race", "prepared-race-0", "prepared-{normal,race-${{ matrix.bin }}}"),
+    ],
+)
+def test_consumers_require_complete_run_artifacts_even_on_a_cold_base(
+    job: str,
+    mode: str,
+    published: str,
+    downloaded: str,
+) -> None:
+    jobs = workflow()["jobs"]
+    upload = next(step for step in jobs["prepare-go"]["steps"] if step.get("with", {}).get("name") == published)
+    assert upload["uses"].startswith("actions/upload-artifact@")
+    assert upload["with"]["if-no-files-found"] == "error"
+    steps = jobs[job]["steps"]
+    assert any(
+        (step.get("with", {}).get("pattern") or step.get("with", {}).get("name")) == downloaded for step in steps
+    )
+    assert not any(step.get("uses", "").startswith("actions/cache") for step in steps)
+    assert any(f"go_ci_artifacts.sh unpack {mode}" in step.get("run", "") for step in steps)
+    if mode == "python":
+        assert "compiler" not in upload["with"]["path"]
+        assert "modules.tar.zst" in upload["with"]["path"]
+        assert "tools.tar.zst" in upload["with"]["path"]
 
 
 def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
@@ -304,12 +271,15 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
     invocations = [line.split(":", 1) for line in calls.read_text().splitlines()]
     for module in ("sdo/operator", "sdo/operator/runtime"):
         commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
-        assert not any(args[:1] == ["build"] and args[-1:] == ["./..."] for args in commands)
         if mode == "race":
-            assert commands == [["test", "-race", "-list", ".", "-json", "./..."]]
+            assert not commands
+            assert any(
+                shlex.split(args) == ["run", str(ROOT / "scripts/go_test_inventory.go"), str(ROOT / module)]
+                for _, args in invocations
+            )
         else:
-            assert commands[0][:3] == ["test", "-c", "-o"]
-            assert commands[0][-1] == "./..."
+            assert commands[0] == ["build", "./..."]
+            assert not any(args[0] == "test" for args in commands)
             if module.endswith("/runtime"):
                 assert ["build", "./prober"] in commands
                 assert any(args[0] == "vet" for args in commands)
@@ -319,16 +289,10 @@ def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
     jobs = workflow()["jobs"]
     preparation = jobs["prepare-go"]
     assert preparation["strategy"]["matrix"]["mode"] == ["normal", "race"]
-    caches = [step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache@")]
-    assert {step["if"] for step in caches} == {
-        "matrix.mode == 'normal' && github.event_name == 'push'",
-        "matrix.mode == 'race' && github.event_name == 'push'",
-    }
+    caches = [step for step in preparation["steps"] if step.get("uses", "").startswith("actions/cache/save@")]
+    assert len(caches) == 2
+    assert all("github.event_name == 'push'" in step["if"] for step in caches)
     assert sum("~/go/pkg/mod" in step["with"]["path"] for step in caches) == 1
-    for name in ("contracts",):
-        keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
-        assert any("ci-prepared-v4-normal-" in key for key in keys)
-        assert any("ci-prepared-v4-race-" in key for key in keys)
 
 
 def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> None:
@@ -350,20 +314,6 @@ def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> Non
     assert "unexpected-docker" not in result.stderr
 
 
-def test_downstream_cache_archives_never_unpack_into_the_same_path() -> None:
-    for name in ("python", "contracts"):
-        steps = workflow()["jobs"][name]["steps"]
-        restored = [
-            line.strip()
-            for step in steps
-            if step.get("uses", "").startswith("actions/cache") and "ci-prepared-v4-" in step["with"]["key"]
-            for line in step["with"]["path"].splitlines()
-            if line.strip()
-        ]
-        assert len(restored) == len(set(restored)), (name, restored)
-        assert restored.count("~/go/pkg/mod") == 1
-
-
 def test_compiler_cache_union_preserves_existing_and_adds_race_entries(tmp_path: Path) -> None:
     normal, race = tmp_path / "normal", tmp_path / "race"
     for directory in (normal, race):
@@ -376,23 +326,6 @@ def test_compiler_cache_union_preserves_existing_and_adds_race_entries(tmp_path:
     assert (normal / "hash/shared-a").stat().st_ino == existing_inode
     assert (normal / "hash/race-only-a").read_bytes() == b"race archive"
     assert (normal / "hash/race-only-a").stat().st_ino == (race / "hash/race-only-a").stat().st_ino
-
-
-def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
-    jobs = workflow()["jobs"]
-    published = {
-        mode: next(
-            step["with"]["path"]
-            for step in jobs["prepare-go"]["steps"]
-            if step.get("if") == f"matrix.mode == '{mode}' && github.event_name == 'push'"
-        )
-        for mode in ("normal", "race")
-    }
-    for name in ("python", "contracts"):
-        for step in jobs[name]["steps"]:
-            if step.get("uses", "").startswith("actions/cache") and "ci-prepared-v4-" in step["with"]["key"]:
-                mode = "race" if "v4-race-" in step["with"]["key"] else "normal"
-                assert step["with"]["path"].strip() == published[mode].strip(), name
 
 
 def test_hosted_image_builds_use_native_store_without_transport_compression() -> None:
@@ -430,7 +363,7 @@ def test_prepared_builds_include_the_portable_prober_and_source_stable_inputs() 
     assert "CGO_ENABLED=0" in prepare
     assert "TestAssuranceSeedsPassHealthJudgeCheck" not in prepare
     assert "operator_test_binary.py" in prepare
-    for name in ("prepare-go", "python", "contracts"):
+    for name in ("prepare-go",):
         normal = [
             step
             for step in jobs["jobs"][name]["steps"]
@@ -538,4 +471,49 @@ def test_all_integration_contracts_use_fixed_shared_capacity() -> None:
     assert integration["strategy"]["matrix"]["bin"] == [0, 1]
     assert any(step.get("with", {}).get("name") == "compiled-python-test-plan" for step in integration["steps"])
     assert set(jobs) == {"prepare-go", "python", "contracts", "required-pr-ci"}
-    assert integration["timeout-minutes"] == 5
+    assert integration["timeout-minutes"] == 4
+
+
+def test_preparation_uses_available_compiler_cpu_without_changing_build_identity() -> None:
+    configuration = workflow()
+    preparation = configuration["jobs"]["prepare-go"]
+    assert preparation["env"]["GOMAXPROCS"] == "4"
+    assert "GOFLAGS" not in preparation["env"]
+    assert configuration["env"]["GOFLAGS"] == "-p=2 -trimpath"
+
+
+def test_static_python_job_cannot_compile_go_and_go_checks_run_on_prepared_race_graph() -> None:
+    jobs = workflow()["jobs"]
+    static = next(step for step in jobs["python"]["steps"] if step.get("name") == "Check static contracts")
+    assert "--python-only" in static["run"]
+    guard = next(step for step in jobs["python"]["steps"] if step.get("name") == "Enforce compiler-free Python jobs")
+    assert "scripts/unit-tools" in guard["run"]
+    assert "SDO_UNIT_REAL_GO" in guard["run"]
+    assert not any("scripts/link_cache.sh" in step.get("run", "") for step in jobs["python"]["steps"])
+    go_checks = next(step for step in jobs["prepare-go"]["steps"] if step.get("name") == "Check Go static contracts")
+    assert go_checks["if"] == "matrix.mode == 'race'"
+    assert "--go-only" in go_checks["run"]
+    assert "-race" in go_checks["env"]["GOFLAGS"]
+
+
+def test_race_transfer_uses_the_graph_size_gate() -> None:
+    script = (ROOT / "scripts/go_ci_artifacts.sh").read_text()
+    assert 'exec python3 "$root/scripts/go_ci_race_artifact.py"' in script
+    jobs = workflow()["jobs"]
+    assert any(step.get("name") == "Pack the bounded current race test graph" for step in jobs["prepare-go"]["steps"])
+
+    published = {step.get("with", {}).get("name") for step in jobs["prepare-go"]["steps"]}
+    for bucket in jobs["contracts"]["strategy"]["matrix"]["bin"]:
+        assert f"prepared-race-{bucket}" in published
+    collector = next(step for step in jobs["prepare-go"]["steps"] if step.get("id") == "python-plan")
+    assert "if" not in collector  # Both producers derive the same exact bucket plan.
+
+
+def test_contract_inputs_are_fetched_concurrently() -> None:
+    downloads = [
+        step
+        for step in workflow()["jobs"]["contracts"]["steps"]
+        if step.get("uses", "").startswith("actions/download-artifact@") and "prepared-" in str(step.get("with", {}))
+    ]
+    assert len(downloads) == 1, "serial network stalls must not add across compiler graphs"
+    assert downloads[0]["with"]["pattern"] == "prepared-{normal,race-${{ matrix.bin }}}"

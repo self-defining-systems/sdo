@@ -187,6 +187,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 					}
 				}
 			}
+			if progress.Complete && !state.Refresh {
+				stage.awaitRepairedHealth(ctx, loop, state, report, remaining())
+			}
 		}()
 		if progress.Complete && !state.Refresh {
 			return report, save(true)
@@ -598,41 +601,55 @@ func clearVerifiedStageTargets(state *IncidentState, attempt *contracts.StageMit
 	state.refreshUnexplained()
 }
 
-// Only new health observations after complete repairs may consume this wait.
-// Original unresolved findings, skipped/failed repairs and incident findings
-// require responder investigation immediately. The wait follows each remaining
-// detector's clearing horizon (rolling window and cadence), bounded by the
+// Health observations after complete repairs may consume this wait, including
+// opening traffic symptoms whose rolling windows still contain pre-repair errors.
+// Failed repairs, pending writes and incident findings require investigation.
+// Non-writing advisory skips cannot invalidate completed repairs. The wait
+// follows each remaining detector's clearing horizon, bounded by the
 // declared ceiling. Waiting never grants closure.
 func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, left time.Duration) {
 	if len(state.Findings) == 0 || len(report.Mitigations) == 0 || left <= 0 {
 		return
 	}
+	repaired := false
 	for _, attempt := range report.Mitigations {
-		if attempt.GetResult() != "applied_cleared" {
+		if attempt.GetResult() == "applied_cleared" {
+			repaired = true
+			continue
+		}
+		// A skipped advisory that wrote nothing is not unfinished execution.
+		// Pending, reverted, failed or interrupted writes must reach the agent.
+		if attempt.GetResult() != "skipped" || attempt.GetApplyReceipt() != nil || attempt.GetError() != "" {
 			return
 		}
 	}
-	opening := map[string]bool{}
-	for _, finding := range state.Request.Findings {
-		opening[FindingFingerprint(finding)] = true
+	if !repaired {
+		return
 	}
 	health := map[string]bool{}
 	for _, detector := range loop.Detectors {
 		health[detector.Spec().ID] = detector.Spec().Class == sdk.DetectorClassHealth
 	}
+	view, err := loop.snapshotView(ctx)
+	if err != nil {
+		return
+	}
+	state.Findings = retireDisappearedRecoveryEffects(view, state.Findings)
+	effects := repairedLifecycleEffects(view, loop.applicationsLog, state.Findings)
+	state.Findings = effects.observe(view, state.Findings)
+	state.refreshUnexplained()
 	eligible := func() bool {
 		for _, finding := range state.Findings {
-			if opening[FindingFingerprint(finding)] || !health[finding.DetectorID] {
+			if !health[finding.DetectorID] {
+				if _, owned := effects[FindingFingerprint(finding)]; owned {
+					continue
+				}
 				return false
 			}
 		}
 		return len(state.Findings) > 0
 	}
 	if !eligible() {
-		return
-	}
-	view, err := loop.snapshotView(ctx)
-	if err != nil {
 		return
 	}
 	horizons := map[string]time.Duration{}
@@ -654,6 +671,9 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 		var horizon time.Duration
 		for _, finding := range state.Findings {
 			horizon = max(horizon, horizons[finding.DetectorID])
+			if _, owned := effects[FindingFingerprint(finding)]; owned {
+				horizon = ceiling
+			}
 		}
 		if time.Since(started) >= horizon {
 			return
@@ -668,6 +688,12 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 		response := ToolResponse{}
 		loop.verify(observe, nil, &response, true)
 		updateStageFindings(state, response)
+		if fresh, err := loop.snapshotView(observe); err == nil {
+			state.Findings = effects.observe(fresh, state.Findings)
+			state.refreshUnexplained()
+		} else {
+			return
+		}
 		if response.Error != "" {
 			return
 		}

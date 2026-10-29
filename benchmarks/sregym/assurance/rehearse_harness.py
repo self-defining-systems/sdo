@@ -475,6 +475,10 @@ class Gate:
     #: One cluster per scenario, all at once (the gate's real-time budget); otherwise scenarios share one cluster.
     parallel: bool = False
 
+    #: Explicit opt-in: also spend one real Claude turn in a cloned health worker Job.
+    claude_worker_image: str | None = None
+    claude_credentials_secret: str = "sdo-sandbox-probe-credentials"
+
     def lanes(self) -> list[tuple[int, Path, tuple[Scenario, ...]]]:
         """(worker id, run dir, scenarios) per cluster: one cluster per scenario when parallel, else one shared."""
 
@@ -493,6 +497,23 @@ class Gate:
         with ThreadPoolExecutor(max_workers=max(1, len(lanes))) as pool:
             ran = list(pool.map(self._lane, lanes))
         results = [result for lane_results, _ in ran for result in lane_results]
+        claude_worker = None
+        if self.claude_worker_image:
+            code, output = self._step(
+                [
+                    sys.executable,
+                    "-m",
+                    "benchmarks.sregym.fastloop.claude_worker_probe",
+                    "--run-dir",
+                    str(lanes[0][1]),
+                    "--image",
+                    self.claude_worker_image,
+                    "--credentials-secret",
+                    self.claude_credentials_secret,
+                ],
+                WAIT_BACKSTOP_SECONDS,
+            )
+            claude_worker = {"passed": code == 0, "detail": output[-4000:]}
         seconds = self.clock() - t0
         summary = {
             "code_root": str(self.code_root),
@@ -502,7 +523,10 @@ class Gate:
             "started_at": started.isoformat(),
             "seconds": round(seconds, 1),
             "up_seconds": round(max((up for _, up in ran), default=0.0), 1),
-            "passed": bool(results) and all(r.passed for r in results),
+            "passed": bool(results)
+            and all(r.passed for r in results)
+            and (claude_worker is None or claude_worker["passed"]),
+            "claude_worker": claude_worker,
             "scenarios": [{**asdict(r), "passed": r.passed} for r in results],
         }
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -602,6 +626,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--run-dir", type=Path, default=None, help="default: /mnt/data/shli/sdo-exp/mixed10/LE/REH/lane<lane>"
     )
+    parser.add_argument(
+        "--claude-worker-image", help="production worker image; opt in to one real Claude health-worker turn"
+    )
+    parser.add_argument(
+        "--claude-credentials-secret",
+        default="sdo-sandbox-probe-credentials",
+        help="existing lane Secret with .credentials.json for the explicit live probe",
+    )
     parser.add_argument("--image-tag", default="fastloop", help="tag of the freeze's scripted-worker images")
     parser.add_argument(
         "--dry-run", action="store_true", help="print the commands without touching Docker or a cluster"
@@ -635,7 +667,15 @@ def main(argv: list[str] | None = None) -> int:
         print("rehearse-harness refused to start:\n  " + "\n  ".join(problems), file=sys.stderr)
         return 2
     run_dir.mkdir(parents=True, exist_ok=True)
-    gate = Gate(code_root, args.lane, run_dir, image_tag=args.image_tag, parallel=True)
+    gate = Gate(
+        code_root,
+        args.lane,
+        run_dir,
+        image_tag=args.image_tag,
+        parallel=True,
+        claude_worker_image=args.claude_worker_image,
+        claude_credentials_secret=args.claude_credentials_secret,
+    )
     summary = gate.run()
     print(format_summary(summary))
     print(f"summary: {run_dir / SUMMARY_FILENAME}")

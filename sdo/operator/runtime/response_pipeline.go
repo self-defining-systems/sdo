@@ -62,11 +62,27 @@ func (c *Controller) automaticResponsePending(request *contracts.IncidentRequest
 	return false
 }
 
+// agentLifecycleDispatcher records worker dispatch at its invocation boundary.
+// Entering the response pipeline alone does not invoke an agent.
+type agentLifecycleDispatcher struct{ controller *Controller }
+
+func (d agentLifecycleDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
+	c := d.controller
+	c.mu.Lock()
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseDispatched, RecordedAt: contractTimestamp(c.clock()), IncidentId: request.IncidentID,
+		Worktree: request.RepositoryWorktree, BaseCommit: request.RepositoryBaseCommit,
+	})
+	c.mu.Unlock()
+	return c.dispatcher.Dispatch(ctx, request)
+}
+
 func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRequest) (IncidentResult, []*contracts.StageReport, error) {
+	dispatcher := agentLifecycleDispatcher{controller: c}
 	// This is the exact original dispatch path for baseline experiments, including
 	// its frozen task, result and error semantics.
 	if len(c.codePath.Selection.ResponseStages) == 1 && c.codePath.Selection.ResponseStages[0] == "agent" {
-		result, err := c.dispatcher.Dispatch(ctx, request)
+		result, err := dispatcher.Dispatch(ctx, request)
 		return result, nil, err
 	}
 	// A durable agent handoff transfers ownership for the rest of this incident.
@@ -76,7 +92,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		c.mu.Lock()
 		c.responseStagesRunning = false
 		c.mu.Unlock()
-		result, err := c.dispatcher.Dispatch(ctx, request)
+		result, err := dispatcher.Dispatch(ctx, request)
 		state := &IncidentState{Request: request, PriorStages: cloneStageReports(request.PriorStages), Result: &result}
 		merged, encodeErr := responsePipelineResult(state, result.Timing.StartedAt, result.Timing.CompletedAt)
 		if err == nil {
@@ -98,7 +114,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 			}
 		case "agent":
 			agentConfigured = true
-			stages = append(stages, AgentResponseStage{Dispatcher: c.dispatcher, Prepare: func(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
+			stages = append(stages, AgentResponseStage{Dispatcher: dispatcher, Prepare: func(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
 				c.mu.Lock()
 				if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == state.Request.IncidentID {
 					c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
@@ -115,7 +131,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		c.mu.Lock()
 		c.responseStagesRunning = false
 		c.mu.Unlock()
-		result, err := c.dispatcher.Dispatch(ctx, request)
+		result, err := dispatcher.Dispatch(ctx, request)
 		return result, nil, err
 	}
 	started := time.Now().UTC()
@@ -124,6 +140,10 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == request.IncidentID {
 		// The result below is built from these reports, so a playbook a later
 		// pass applied reaches AppliedPlaybooks and the root causes.
+		if stagePassProgressed(deterministicStageReport(state.PriorStages), deterministicStageReport(c.currentIncidentRequest.PriorStages)) {
+			state.Coverage = cloneCoverage(c.currentIncidentRequest.PlaybookCoverage)
+			state.Request.InitialProgramRuns = append([]ProgramRun(nil), c.currentIncidentRequest.InitialProgramRuns...)
+		}
 		state.PriorStages = mergeLaterStagePasses(state.PriorStages, c.currentIncidentRequest.PriorStages)
 		c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
 		// Findings that joined the incident mid-way are the ones those passes

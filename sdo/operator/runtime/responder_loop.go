@@ -67,7 +67,14 @@ type VerificationBlocker struct {
 	Reason     string `json:"reason"`
 }
 
+type VerificationStatus string
+
+const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
+
 type ToolResponse struct {
+	VerificationStatus VerificationStatus `json:"verification_status,omitempty"`
+	MemoryCheckReport  json.RawMessage    `json:"memory_check_report,omitempty"`
+
 	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
 	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
 	SelectionSchema            *MenuSchema                    `json:"selection_schema,omitempty"`
@@ -579,7 +586,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.TargetedHealthy = result.VerificationPassed
 		}
 	case "pre-apply":
-		if l.pendingConflict(request.Refs, &response) {
+		if l.pendingConflict(ctx, request.Refs, &response) {
 			break
 		}
 		if l.CachedFindings != nil {
@@ -982,7 +989,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		l.refuseSelection(response, "write_set_unknown", refErr.Error())
 		return
 	}
-	if l.pendingConflict(refs, response) {
+	if l.pendingConflict(ctx, refs, response) {
 		return
 	}
 	// A missing capture is an evidence gap; it must not block the repair.
@@ -1239,7 +1246,7 @@ func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolReq
 		response.Error = fmt.Sprintf("unknown application %q", request.ApplicationID)
 		return
 	}
-	if l.pendingConflict(planCaptureRefs(application.Plan), response) {
+	if l.pendingConflict(ctx, planCaptureRefs(application.Plan), response) {
 		return
 	}
 	executor := l.Executor

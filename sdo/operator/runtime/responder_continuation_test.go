@@ -321,7 +321,7 @@ func TestControllerWaitsForFreshClearSamplesInsteadOfRedispatch(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	snapshot := sdktest.Snapshot{NamespaceName: "demo"}
 	d := &verificationRetryDispatcher{requests: make(chan IncidentRequest, 1)}
-	c, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: snapshot}, d, now)
+	c, err := NewController(testControllerConfig(), []sdk.Detector{controllerDetector("health-objective", time.Second, sdk.Finding{})}, staticProvider{snapshot: snapshot}, d, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,13 +339,11 @@ func TestControllerWaitsForFreshClearSamplesInsteadOfRedispatch(t *testing.T) {
 	if d.resumed != 0 || !c.responderDone || !c.responderCompletedAt.Equal(now) {
 		t.Fatal("clear but not-yet-fresh health samples caused another worker and reset verification freshness")
 	}
-	c.history = append(c.history, DetectorEvaluation{DetectorID: "health-objective", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear})
-	c.maybeCloseIncident(context.Background(), now.Add(time.Second), snapshot)
-	settled := now.Add(time.Second + c.config.ClosureStabilityWindow)
-	c.history = append(c.history, DetectorEvaluation{DetectorID: "health-objective", EvaluatedAt: settled, Status: DetectorEvaluationClear})
-	c.maybeCloseIncident(context.Background(), settled, snapshot)
-	if c.IncidentOpen() {
-		t.Fatal("fresh clear sample did not allow verified closure")
+	// A fresh sample is not itself a stability proof. Drive the real detector
+	// owner across the complete window rather than inventing clear history.
+	assertRecoveryFixtureWindow(t, c, context.Background(), now.Add(time.Second))
+	if d.resumed != 0 || c.IncidentOpen() {
+		t.Fatal("fresh stable health redispatched or failed to close")
 	}
 }
 

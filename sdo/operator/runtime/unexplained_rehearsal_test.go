@@ -52,12 +52,6 @@ func (s cleanupInventory) SourceDriftObjects() []*unstructured.Unstructured {
 	return result
 }
 
-type cleanupVerifier struct{ controller *Controller }
-
-func (v cleanupVerifier) Verify(ctx context.Context) (bool, error) {
-	return v.controller.responderVerification(ctx, v.controller.currentIncidentRequest.IncidentID).Healthy, nil
-}
-
 // Handwritten fixture, real generic Kubernetes transport, CLI/session transport,
 // registered dispatcher, same-session continuation, and independent closure.
 func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
@@ -132,7 +126,7 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 			controller.sourceInventory = index
 			controller.drift = &DriftControllerConfig{Inventory: true, Events: store}
 			controller.history = []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationClear, EvaluatedAt: time.Now()}}
-			loop := NewResponderLoop(request, nil, provider, nil, PlanExecutor{Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: kube}, Objects: &core.GenericCapture{Namespace: "app", Client: checkedLive, Discovery: discovery}}, Rollouts: KubernetesPlanRollouts{Client: kube}, Verifier: cleanupVerifier{controller}}, 10)
+			loop := NewResponderLoop(request, nil, provider, nil, PlanExecutor{Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: kube}, Objects: &core.GenericCapture{Namespace: "app", Client: checkedLive, Discovery: discovery}}, Rollouts: KubernetesPlanRollouts{Client: kube}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{inventoryHealth()}, Provider: provider}}, 10)
 			loop.MenuConfig = productionResponderMenu()
 			loop.MenuConfig.Unexplained = func(context.Context) (UnexplainedRemovalAssessment, error) {
 				return controller.unexplainedRemovalAssessment(request.IncidentID, "demo")
@@ -203,17 +197,9 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 			controller.currentIncidentResult = &final
 			controller.responderDone = true
 			controller.responderCompletedAt = time.Now().Add(-time.Second)
-			controller.history = []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationClear, EvaluatedAt: time.Now()}}
 			var closed *IncidentClosure
 			controller.OnIncidentClosed = func(closure IncidentClosure) { closed = &closure }
-			now := time.Now()
-			controller.maybeCloseIncident(ctx, now, nil)
-			if closed == nil {
-				// A verified success commits once health holds for the window.
-				later := now.Add(controller.config.ClosureStabilityWindow)
-				controller.history = append(controller.history, DetectorEvaluation{DetectorID: "health", Status: DetectorEvaluationClear, EvaluatedAt: later})
-				controller.maybeCloseIncident(ctx, later, nil)
-			}
+			assertRecoveryFixtureWindow(t, controller, ctx, time.Now())
 			if closed == nil {
 				t.Fatal("closure waited despite terminal independently checked inventory")
 			}

@@ -573,6 +573,27 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			return logicalReflectionDecision(decision), nil
 		}
 
+		// Resumed sessions still enter the worker's no-model probe, which owns
+		// writer termination and permanent session handoff. Only a session-free
+		// closure can safely omit that worker entirely.
+		if effect.Attempt == 1 && !n.ForceReflection && effect.Closure.GetResult().GetResponderSessionId() == "" && stageOnlyClosure(incidentClosureState(effect.Closure)) && !genericHealthDetectedFirst(effect.Closure) && coveredRepeatCandidate(effect.Outcome) {
+			decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted_programs_no_new_evidence"}
+			checkCtx := ctx
+			if n.SessionRoot != "" {
+				capture, err := memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
+				if err != nil {
+					return nil, err
+				}
+				checkCtx = validate.WithCaptureSource(checkCtx, capture, effect.IncidentID)
+			}
+			report, err := n.Repository.CheckReflection(checkCtx, effect.IncidentID, decision)
+			if err == nil && len(report.GetDiagnostics()) == 0 {
+				return decision, nil
+			}
+			// A failed probe preserves the ordinary learning/correction path. It
+			// cannot turn unavailable evidence or a hand repair into a no-op.
+		}
+
 		if effect.Outcome.GetClassification() != outcomeclass.Success {
 			effect.Outcome = partialReflectionOutcome(effect.Outcome)
 			trimPartialReflectionClosure(effect.Closure, effect.Outcome)

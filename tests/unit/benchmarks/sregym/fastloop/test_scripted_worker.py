@@ -483,13 +483,23 @@ def test_existing_scripted_program_reports_actual_checkout_diff(
             git("add", ".")
         if change == "committed":
             git("commit", "-qm", "synthetic prepared corpus")
-    checked: list[list[str]] = []
-    monkeypatch.setattr(scripted_worker, "_check_reflection", lambda _root, ids: checked.append(ids))
+    checked: list[dict[str, object]] = []
+    original_command = scripted_worker._command
+
+    def command(argv: list[str], **kwargs: Any) -> str:
+        if argv[:3] == ["sdo-operator", "memory", "check"]:
+            checked.append(json.loads(Path(argv[argv.index("--decision") + 1]).read_text()))
+            return ""
+        return original_command(argv, **kwargs)
+
+    monkeypatch.setattr(scripted_worker, "_command", command)
     turn = scripted_worker.ScriptedReflector().resume(worktree=tmp_path, incident_id="synthetic-repeat")
     assert turn.learning_decision == ("no_change" if change == "empty" else "updated")
     expected_ids = [scripted_worker.PROGRAM_ID] if change == "playbook" else []
     assert turn.playbook_ids == expected_ids
-    assert checked == ([] if change == "empty" else [expected_ids])
+    assert len(checked) == (0 if change == "empty" else 1)
+    if checked:
+        assert json_format.ParseDict(checked[0], ReflectionResult()) == turn.to_result()
 
 
 @pytest.mark.parametrize("health", ["drift-only", "same-object", "selecting-service", "other-service"])
@@ -574,7 +584,7 @@ def test_scripted_notes_require_eligible_learning_on_failed_closure(
     monkeypatch.setenv("SDO_BASE_COMMIT", "HEAD")
     monkeypatch.setenv("SDO_SCRIPTED_MEMORY_CHANGE", "1")
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "no-capture"))
-    monkeypatch.setattr(scripted_worker, "_check_reflection", lambda *_args: None)
+    monkeypatch.setattr(scripted_worker, "_check_reflection", lambda _root, turn: turn)
     turn = scripted_worker.ScriptedReflector().resume(
         worktree=tmp_path,
         incident_id="synthetic-outcome",
@@ -600,3 +610,34 @@ def test_tool_reads_the_complete_response_behind_a_capped_reply(
     assert json.loads(envelope)["summarized"] is True
     monkeypatch.setattr(scripted_worker, "_command", lambda *_args, **_kwargs: envelope + "\n")
     assert scripted_worker._tool("source", "Service/app/api") == full
+
+
+@pytest.mark.parametrize("status", ["awaiting_responder_completion", "", "waiting_for_observation"])
+def test_scripted_responder_finishes_only_on_controller_completion_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    request = IncidentRequest(
+        incident_id="synthetic-pending-proof", namespace="demo", repository_worktree=str(tmp_path)
+    )
+    monkeypatch.delenv("SDO_SCRIPTED_SOURCE_REPAIR", raising=False)
+    calls: list[tuple[str, ...]] = []
+
+    def tool(*args: str) -> dict[str, Any]:
+        calls.append(args)
+        if args[0] == "diagnose":
+            return {"program_runs": []}
+        return {
+            "healthy": False,
+            "verification_status": status,
+            "findings": [],
+            "detector_states": [{"status": "clear"}],
+            "summary": "controller recovery proof pending",
+        }
+
+    monkeypatch.setattr(scripted_worker, "_tool", tool)
+    monkeypatch.setattr(scripted_worker.time, "sleep", lambda _seconds: None)
+    result = scripted_worker.scripted_responder(request)
+    assert result.status == ("completed" if status == "awaiting_responder_completion" else "failed")
+    assert result.verification_evidence[0].passed is False
+    if status == "awaiting_responder_completion":
+        assert sum(call[0] == "verify" for call in calls) == 2

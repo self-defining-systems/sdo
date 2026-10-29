@@ -14,13 +14,15 @@ from tests.unit.sdo.agents.prompts.cases import rendered_cases
 REAL_SCALE = 20
 
 
-def test_no_registered_section_degrades_on_real_scale_fixtures(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("guidance", ["go", "shell"])
+def test_no_registered_section_degrades_on_real_scale_fixtures(monkeypatch, tmp_path, guidance) -> None:
     """Sections that overflow spill to a file and keep a real summary inline.
 
     h9.18 shipped a responder first message whose findings were a field skeleton
     (17 of 485 findings visible); any section rendered that way fails here.
     """
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    monkeypatch.setenv("SDO_AGENT_GUIDANCE", guidance)
     capped = prompt_templates.cap_section
     degraded: dict[str, str] = {}
 

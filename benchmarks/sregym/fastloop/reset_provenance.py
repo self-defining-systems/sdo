@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 from uuid import UUID, uuid4
 
 from benchmarks.sregym.fastloop.parallel_memory import memory_head
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,7 +31,7 @@ def publish_reset_generation(path: Path, workspace: Path, planned: str, before: 
     """Publish only after a successful reset; a requested SHA is not an observation."""
     actual = memory_head(workspace)
     expected = subprocess.check_output(
-        ["git", "-C", str(workspace), "rev-parse", "--verify", f"{planned}^{{commit}}"], text=True
+        host_git_command(workspace, "rev-parse", "--verify", f"{planned}^{{commit}}"), text=True
     ).strip()
     if actual != expected:
         raise ValueError("eval: reset accepted head differs from planned commit")

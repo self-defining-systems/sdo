@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 from google.protobuf import json_format
 
+from benchmarks.sregym.repository_git import host_git_command
 from sdo.agents.health_judge import run_judge_task
 from sdo.agents.responder import (
     KubernetesResultPublisher,
@@ -469,11 +470,12 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
     verification = first
     for _ in range(0 if unsure else 24):
         verification = _tool("verify")
-        if verification.get("healthy"):
+        if verification.get("healthy") or verification.get("verification_status") == "awaiting_responder_completion":
             break
         time.sleep(5)
     healthy = bool(verification.get("healthy"))
-    if healthy and os.environ.get("SDO_SCRIPTED_SOURCE_REPAIR") == "1":
+    work_completed = healthy or verification.get("verification_status") == "awaiting_responder_completion"
+    if work_completed and os.environ.get("SDO_SCRIPTED_SOURCE_REPAIR") == "1":
         # Refine an existing source object: source publication must not invent
         # topology that the independent toy judge correctly refuses.
         marker = "sdo.dev/scripted-verification"
@@ -569,7 +571,7 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         {
             "schema_version": "sdo.dev/v1alpha1",
             "incident_id": request.incident_id,
-            "status": "completed" if healthy else "failed",
+            "status": "completed" if work_completed else "failed",
             "confirmed_root_causes": causes if repairs or plan_ids else [],
             "drift_events": [json_format.MessageToDict(label, preserving_proto_field_name=True) for label in labels],
             "applied_playbooks": [{"playbook_id": program_id} for program_id in programs],
@@ -646,19 +648,21 @@ def _captured_policy_pair(capture: Path, open_at: str) -> tuple[str, str] | None
     return None
 
 
-def _check_reflection(worktree: Path, playbook_ids: list[str]) -> None:
+def _check_reflection(worktree: Path, turn: ReflectionTurn) -> ReflectionTurn:
+    """Check the exact result returned to the broker, including decision metadata."""
+    from sdo.contracts import to_canonical_json
+
     with tempfile.TemporaryDirectory(prefix="sdo-scripted-decision-") as directory:
         decision = Path(directory) / "decision.json"
-        decision.write_text(
-            json.dumps({"learning_decision": "updated", "proposed_artifact_ids": playbook_ids}), encoding="utf-8"
-        )
+        decision.write_text(to_canonical_json(turn.to_result()), encoding="utf-8")
         _command(["sdo-operator", "memory", "check", "--root", str(worktree), "--decision", str(decision)], timeout=180)
+    return turn
 
 
 def _checkout_reflection(worktree: Path, summary: str, reason: str) -> ReflectionTurn:
     """Report the actual publication diff, including Go-prepared corpus edits."""
     base = os.environ.get("SDO_BASE_COMMIT", "HEAD")
-    git = ["git", "-C", str(worktree)]
+    git = host_git_command(worktree)
     paths: set[str] = set()
     for args in (
         [
@@ -681,11 +685,13 @@ def _checkout_reflection(worktree: Path, summary: str, reason: str) -> Reflectio
         {parts[2] for path in paths if len(parts := Path(path).parts) >= 4 and parts[:2] == (".sdo", "playbooks")}
     )
     if paths:
-        _check_reflection(worktree, ids)
-        return ReflectionTurn(
-            summary="Publish existing checkout edits: " + summary,
-            learning_decision="updated",
-            playbook_ids=ids,
+        return _check_reflection(
+            worktree,
+            ReflectionTurn(
+                summary="Publish existing checkout edits: " + summary,
+                learning_decision="updated",
+                playbook_ids=ids,
+            ),
         )
     return ReflectionTurn(summary=summary, learning_decision="no_change", no_change_reason=reason, playbook_ids=[])
 
@@ -736,11 +742,13 @@ class ScriptedReflector:
                 link = f"- [{notes_id}]({notes_id}/README.md)"
                 if link not in body:
                     index.write_text(body.rstrip() + "\n\n" + link + "\n", encoding="utf-8")
-                _check_reflection(worktree, [notes_id])
-                return ReflectionTurn(
-                    summary="Recorded an independently verified repair without a program fixture",
-                    learning_decision="updated",
-                    playbook_ids=[notes_id],
+                return _check_reflection(
+                    worktree,
+                    ReflectionTurn(
+                        summary="Recorded an independently verified repair without a program fixture",
+                        learning_decision="updated",
+                        playbook_ids=[notes_id],
+                    ),
                 )
             return _checkout_reflection(
                 worktree,
@@ -830,11 +838,13 @@ class ScriptedReflector:
             for name in ("detector.go", "manifest.yaml"):
                 template = (program_source / f"{name}.tmpl").read_text()
                 (detector / name).write_text(template.replace("MODULE", module).replace("INCIDENT", incident))
-        _check_reflection(worktree, [program_id])
-        return ReflectionTurn(
-            summary=f"Compiled {program_id} program from captured repair",
-            learning_decision="updated",
-            playbook_ids=[program_id],
+        return _check_reflection(
+            worktree,
+            ReflectionTurn(
+                summary=f"Compiled {program_id} program from captured repair",
+                learning_decision="updated",
+                playbook_ids=[program_id],
+            ),
         )
 
 

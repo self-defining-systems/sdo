@@ -31,7 +31,8 @@ and `docs/design/drift-and-invariants.md` (foreign NetworkPolicy admission).
 
 Reflection edits `.sdo/` as the responder already edits application source.
 Its result carries decisions and logical IDs, never artifact contents. The
-broker derives the diff, independently repeats the check, and commits exactly
+broker derives the diff, accepts only an exact-input broker-owned validation result
+(or independently repeats the check), and commits exactly
 the checked tree. Outcomes remain controller-authored through the Go broker.
 
 | Requirement | Enforcement |

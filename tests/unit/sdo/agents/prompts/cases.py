@@ -33,6 +33,7 @@ from sdo.agents.responder.session_turn import branch_correction, branch_instruct
 from sdo.contracts import (
     DetectorEvaluation,
     Finding,
+    HealthJudgeRequest,
     IncidentClosure,
     IncidentRequest,
     IncidentResult,
@@ -322,6 +323,9 @@ def recorded_scale_reflection() -> SimpleNamespace:
     return live
 
 
+SEED_HEALTH_SIZES = (("hotel", 866, 793), ("social", 101, 788), ("astronomy", 972, 793))
+
+
 def rendered_cases(*, scale: int = 1) -> dict[str, str]:
     """Golden prompts; ``scale`` multiplies findings and lengthens them to live sizes."""
 
@@ -420,6 +424,26 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
             finding.fingerprint for finding in matched.findings[1:]
         )
         prompts["responder_matched_programs"] = responder_prompt(matched)
+        partial = scaled(warm=True)
+        stage = partial.prior_stages.add(stage="deterministic", cleared_finding_fingerprints=["settled-route"])
+        attempt = stage.mitigations.add(playbook_id="restore-route", result="applied_cleared", plan_action_count=1)
+        attempt.apply_receipt.application_id = "synthetic-application"
+        attempt.apply_receipt.applied = True
+        attempt.apply_receipt.verification_completed = True
+        attempt.apply_receipt.verification_passed = True
+        partial.memory_snapshot.playbooks.add(id="restore-route", markdown="# Restore route\nSaved route repair.")
+        partial.memory_snapshot.playbooks.add(
+            id="restore-workload", markdown="# Restore workload\nSaved workload repair."
+        )
+        stalled = stage.mitigations.add(
+            playbook_id="restore-workload", result="rollout_pending_at_handoff", plan_action_count=1
+        )
+        stalled.apply_receipt.application_id = "synthetic-pending-application"
+        stalled.apply_receipt.applied = True
+        blocker = stalled.apply_receipt.rollout_pending.blockers.add(reason="replacement creation refused")
+        blocker.ref.kind, blocker.ref.namespace, blocker.ref.name = "Deployment", "toy", "api"
+        blocker.warning_events.append("ReplicaSet/api-new FailedCreate: exceeded quota: pod-count")
+        prompts["responder_partial_reuse"] = responder_prompt(partial)
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
         patch.setenv("SDO_LATE_FINDINGS", "pull")
         prompts["responder_optional"] = responder_prompt(scaled())
@@ -604,6 +628,33 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
 
         patch.setattr(backend, "_execute", execute)
         backend.run_deployer(repository=Path("/application"), application="toy", correction_feedback=None)
+        # SEEDBUDGET1: measured fresh seed goals are 866/101/972 characters;
+        # worker rejection diagnostics are 793/788. Astronomy did not dispatch,
+        # so use the observed maximum there. Construct synthetic text only.
+        if scale > 1:
+            from sdo.agents.health_judge.worker import _judge_feedback
+
+            for app, goal_chars, feedback_chars in SEED_HEALTH_SIZES:
+                goal = "Synthetic required health objective. ".ljust(goal_chars, "g")
+                message = "Synthetic worker rejection diagnostic. ".ljust(feedback_chars, "f")
+                feedback = _judge_feedback(
+                    HealthJudgeRequest(
+                        previous_diagnostics=[MemoryDiagnostic(rule="worker.job_failed", message=message)]
+                    )
+                )
+                backend.run_health_judge(
+                    repository=Path("/application"),
+                    application=app,
+                    health_objective=goal,
+                    deployer=assessment,
+                    round_index=1,
+                    previous=None,
+                    correction_feedback=feedback,
+                )
+                prompt = prompts.pop("lifecycle_HealthJudgeDraft")
+                assert goal in prompt
+                assert message in prompt
+                prompts[f"lifecycle_seed_{app}"] = prompt
         backend.run_health_judge(
             repository=Path("/application"),
             application="toy",

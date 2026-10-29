@@ -1001,6 +1001,7 @@ def run_persistent_stage(
     except PersistentControllerError:
         export_closure_failure_evidence(ops, control, inputs.receipt_dir)
         raise
+    assert verified is not None  # Only follow-up collection may finish at an acknowledged idle boundary.
     verified_ready = clock.monotonic()
     if on_verified is not None:
         on_verified(
@@ -1302,7 +1303,9 @@ def collect_followup_incident(
 
     For compositions: the first incident's stage leaves the controller active, the caller drains
     it, and this collects the next incident for the faults the first did not cover. Returns
-    ``None`` when no new incident is verified within ``timeout_seconds``.
+    ``None`` at a known durable ACK with no native work remaining, or when
+    no new incident is verified within ``timeout_seconds``. Benchmark probes
+    report fault progress but do not extend the native lifecycle.
     """
 
     clock = clock or Clock()
@@ -1316,12 +1319,16 @@ def collect_followup_incident(
         )
     control = record.control_namespace
     try:
-        verified = _wait_for_verified_incident(ops, control, known, timeout_seconds, clock)
+        verified = _wait_for_verified_incident(
+            ops, control, known, timeout_seconds, clock, stop_when_acknowledged_idle=True
+        )
     except ClosureFailedError:
         export_closure_failure_evidence(ops, control, inputs.receipt_dir)
         raise
     except PersistentControllerError:
         export_closure_failure_evidence(ops, control, inputs.receipt_dir)
+        return None
+    if verified is None:
         return None
     config = replace(inputs.runtime_config, persistent=True, wait_for_completion=False)
     evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, clock)
@@ -1914,7 +1921,9 @@ def _wait_for_verified_incident(
     timeout: float,
     clock: Clock,
     detection_timeout: float | None = None,
-) -> VerifiedIncident:
+    *,
+    stop_when_acknowledged_idle: bool = False,
+) -> VerifiedIncident | None:
     """Return the first new incident the controller verified healthy, before reflection finishes.
 
     With *detection_timeout*, a stage in which no new incident has opened by
@@ -1956,6 +1965,18 @@ def _wait_for_verified_incident(
                 busy_until=busy_until(state),
             )
         _raise_observation_failure(observed, state)
+        # Follow-up collection starts only after a durable receipt drain. Native
+        # ACK plus idle is terminal even if a benchmark fault probe stays red.
+        # Unknown reads, queued reflection/rollout and any new incident cannot
+        # establish that boundary. First-incident detection never uses it.
+        if (
+            stop_when_acknowledged_idle
+            and state.get("last_acknowledged_incident_id") in known
+            and not observed.new_incident_opened
+            and not incident_work_open(state)
+            and _closeout_settled(state, incident_id=state["last_acknowledged_incident_id"])
+        ):
+            return None
         if progress.stalled(state, clock.monotonic()):
             raise ControllerStalledError(
                 f"controller stalled in {control!r}: its step loop made no pass for {progress.stall_seconds:.0f}s "

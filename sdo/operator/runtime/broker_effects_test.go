@@ -240,6 +240,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 		t.Fatalf("acknowledgment left stale findings eligible for duplicate dispatch: %#v", pending)
 	}
 	acknowledged := exportState(t, restored)
+	checkGoContractFixture(t, "acknowledged_idle_state.json", acknowledged)
 	if acknowledged.LastAcknowledgedIncidentId != request.IncidentID {
 		t.Fatalf("acknowledged incident was not durable: %#v", acknowledged)
 	}

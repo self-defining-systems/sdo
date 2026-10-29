@@ -136,21 +136,23 @@ Mutating commands always store complete per-action results, evidence, program ru
 
 usage: sdo verify [-h] [--wait SECONDS]
 
-Reads the controller's cached health verdict immediately; drift[] lists
-objects that still differ from accepted source and never decides healthy.
-After a healthy return, SDO may resume once for source differences when
-progress remains; terminal inventory and no-progress stops do not resume.
-restore them or explain the intended difference. Pending observation windows,
-including unproven synthetic scenarios, are not healthy. verification_blockers
-names incomplete detectors and reasons. SDO resumes once for these blockers,
-then stops any running blocker turn and records an unconfirmed outcome at the
+Reads the controller's shared recovery proof: fresh health after the last
+repair, observed write effects, and the unchanged 15-second stability window.
+drift[] lists objects that still differ from accepted source and never decides
+healthy. verification_status=awaiting_responder_completion: finish with
+evidence; proof follows your result. Explain remaining source differences; SDO
+may resume once when progress remains. Pending observation windows, including
+unproven synthetic scenarios, are not healthy. verification_blockers names
+incomplete detectors and reasons. SDO resumes once for these blockers, then
+stops any running blocker turn and records an unconfirmed outcome at the
 verification bound if they persist. Fresh deployment-rollout-pending findings
 name owned ReplicaSet/Pod blockers and old-template Pods, including after
 recorded actions; inspect their evidence before repeating workload writes.
 Wait on SDO's verification instead of sleeping. After closure,
 incident_verified is an informational warning on every response; reads and
-reports remain available, while mutations are rejected. After verified
-closure, report grace and outcome/reflection work continue during maintenance
+reports remain available, while mutations are rejected. Verified recovery
+fences writes and publishes the outcome without waiting for final narration;
+worker quiescence and outcome/reflection work continue during maintenance
 pauses.
 
 options:
@@ -158,7 +160,7 @@ options:
   --wait SECONDS  wait for stable verification, a new/reactivated finding, or
                   this timeout (0: cached and instant)
 
-Key JSON fields: healthy, unresolved, findings[], detector_states[],
+Key JSON fields: healthy, verification_status, findings[], detector_states[],
 verification_blockers[{detector_id,reason}], drift[], drift_events[]
 
 
@@ -193,7 +195,8 @@ the responder session; include accepted_json for source-reading plans.
 Missing controller captures do not block this mode. Without observations,
 copy the selected available capture and peer context. repair_receipt_ids
 names the outcome's hand repairs these programs encode; their exact
-RepairReceipt entries are added for you. Replay snapshots and verdicts are informational.
+RepairReceipt entries replace unrelated receipt links in either mode.
+Replay snapshots and verdicts are informational.
 <!-- /replay:on -->
 
 <!-- replay:on -->
@@ -241,7 +244,9 @@ JSON outside the authored tree. Return the same decision and logical IDs.
 It first gofmt-formats Go files changed under .sdo/. The reply's next
 field says what to do: return on a pass, else fix the diagnostics.
 Legacy decision_path files are also supported. One call waits for final
-diagnostics. Compile/import/format/provenance checks remain required;
+diagnostics. Responder incident detectors use the same validation; health
+detectors remain judge-owned. Compile/import/format/provenance checks remain required;
 Replay policy comes from SDO_REPLAY (on by default). Off skips corpus and replay;
 RunScript still requires its successful accepted receipt. Replay verdicts
-are information. The broker repeats the check.
+are information. The broker owns validation and may reuse its isolated
+check only for identical bytes, accepted base, policy and toolchain.

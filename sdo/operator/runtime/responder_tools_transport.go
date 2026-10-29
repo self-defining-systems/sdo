@@ -24,6 +24,8 @@ type SessionToolServer struct {
 	Directory    string
 	Handle       func(context.Context, ToolRequest) ToolResponse
 	PollInterval time.Duration
+	// MaxRequestBytes defaults to 64 KiB. Reflection decisions use their own bounded envelope.
+	MaxRequestBytes int64
 
 	requests  *os.Root
 	responses *os.Root
@@ -178,14 +180,18 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		data, err := io.ReadAll(io.LimitReader(requestFile, 64*1024+1))
+		limit := s.MaxRequestBytes
+		if limit <= 0 {
+			limit = 64 * 1024
+		}
+		data, err := io.ReadAll(io.LimitReader(requestFile, limit+1))
 		_ = requestFile.Close()
 		if err != nil {
 			return err
 		}
 		response := ToolResponse{}
-		if len(data) > 64*1024 {
-			response.Error = "tool request exceeds 64 KiB"
+		if int64(len(data)) > limit {
+			response.Error = fmt.Sprintf("tool request exceeds %d KiB", limit/1024)
 		} else {
 			var request ToolRequest
 			if err := json.Unmarshal(data, &request); err != nil {

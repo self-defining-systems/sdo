@@ -4,6 +4,7 @@ Use existing gates when extending a contract. New agent implementations and comm
 
 | Owner / tool | Contract and extension point |
 | --- | --- |
+| `benchmarks/sregym/repository_git.py` | Command-local, exact-path Git trust for shared checkout reads and clones (including upload-pack). Real Git ownership regression tests and the AST host-command ratchet live in `tests/unit/benchmarks/sregym/fastloop/test_shared_git_ownership.py`; static negative controls run in `check_errors.sh`. |
 | `sdo/agents/prompt_templates.py` | The sole prompt renderer/provider dispatch boundary. `prompt_sections.json` enumerates every template placeholder and names its cap in `prompt_budgets.toml`. A missing cap or overflowing required section fails at runtime. Required parts survive composition unchanged; optional parts explicitly opt into ranked trimming with counts. |
 | `tests/unit/sdo/agents/prompts/test_context_registry.py` | Enumerates capability registrations, all production Python source, every prompt template and registered MCP/CLI tool. Add production render fixtures for new registered capabilities. AST negative controls guard bypasses. |
 | `tests/unit/sdo/agents/prompts/test_production_caps.py` | Real-scale generated inputs through production prompt/CLI/MCP producers. Every registered tool needs an executable fixture; unknown registrations fail. |
@@ -23,3 +24,13 @@ Use existing gates when extending a contract. New agent implementations and comm
 Run `scripts/format_code.sh` and `scripts/check_errors.sh` after code edits. Focused validation commands and cost boundaries live in [the testing guide](testing-guide.md).
 
 `scripts/check_pytest_imports.py` maps test files to pytest prepend-mode package names and rejects collisions before collection. `scripts/check_errors.sh` runs it before any Python test; its subprocess tests cover flat modules, distinct packages and matching package names in separate roots. Rename conflicting tests or make their package identity distinct.
+
+The fast repository ratchets in `scripts/check_errors.sh` execute the image-provenance entrypoint with `python -I -S`, no `PYTHONPATH`, and Git different-owner checking. This guards standalone startup and the shared Git policy before image builds, alongside the image-bound dependency check.
+
+`benchmarks/sregym/analysis/stream_accounting.py` owns stream cost states and
+role-separated median/ratio denominators. Its synthetic contracts cover missing,
+partial and model-free rows, zero denominators and build boundaries. The Claude
+reconciler requires positive native no-dispatch evidence; peer billing cannot
+prove another role's cost is zero.
+
+Controller recovery integration fixtures use `sdo/operator/runtime/recovery_fixture_test.go`: bind the native cached-proof consumer and drive real detector observations before, just before and at the stability boundary. The PR planner protects Controller, Recovery, Closure, SourceInventory, Latent and Continuation families; synthetic planner displacement controls in `tests/unit/scripts/test_pr_test_plan.py` prevent cheaper filler from hiding them. Standalone detector/report units do not assert controller closure.

@@ -17,6 +17,7 @@ from google.protobuf import json_format
 
 from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 from sdo.agents.responder import recorded_actions
+from sdo.agents.responder.detection_learning import detection_learning
 from sdo.contracts import Verdict, timestamp_datetime, to_canonical_json
 
 if TYPE_CHECKING:
@@ -155,7 +156,7 @@ def _states(label: str, evaluations: Sequence[DetectorEvaluation]) -> list[str]:
     ]
 
 
-def _findings_section(closure: IncidentClosure) -> str:
+def _findings_section(closure: IncidentClosure, *, include_detection: bool = True) -> str:
     request = closure.request
     lines: list[str] = [
         render_prompt("responder", "findings_section_01", part="reflection_brief.instructions"),
@@ -215,6 +216,8 @@ def _findings_section(closure: IncidentClosure) -> str:
     )
     lines.append(render_prompt("responder", "findings_section_07", part="reflection_brief.instructions"))
     lines.extend(_history(request.detector_history))
+    if include_detection:
+        lines.append(detection_learning(closure))
     if request.surfaced_playbooks:
         lines.append(
             render_prompt("responder", "findings_section_08", part="reflection_brief.instructions")
@@ -564,6 +567,7 @@ def incident_brief(
     detector_detail: bool = False,
     event_dependence: bool = False,
     include_memory: bool = True,
+    include_detection: bool = True,
 ) -> RenderedPrompt:
     """Render the bounded incident brief for a fresh first reflection attempt.
 
@@ -580,7 +584,9 @@ def incident_brief(
     result = closure.result if closure.HasField("result") else None
     session_id = None if result is None else result.responder_session_id
     sections = [
-        named_prompt("reflection_brief.findings", _findings_section(closure), required=False),
+        named_prompt(
+            "reflection_brief.findings", _findings_section(closure, include_detection=include_detection), required=False
+        ),
         named_prompt("reflection_brief.result", _result_section(result, closure.dispatch_error), required=False),
         named_prompt(
             "reflection_brief.commands",

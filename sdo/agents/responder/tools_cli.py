@@ -38,6 +38,7 @@ PLAN_ACTIONS = (
 WORKING_PROGRAM_HELP = (
     "Program commands use the current checkout, including shared libraries and new playbook IDs. "
     "Edits compile on demand; fix compile errors in place and retry. "
+    "Live authoring has ordinary shell access; broker ownership and memory validation govern publication. "
     "Revision receipts use working-tree:<source digest> for unpublished code. "
     "Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay."
 )
@@ -73,7 +74,7 @@ RESPONSE_FIELDS = {
     "menu": "menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, "
     "selection_schema, selection_set_schema, unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
-    "verify": "healthy, unresolved, findings[], detector_states[], "
+    "verify": "healthy, verification_status, findings[], detector_states[], "
     "verification_blockers[{detector_id,reason}], drift[], drift_events[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
@@ -161,10 +162,13 @@ def _parser() -> argparse.ArgumentParser:
     parser = _CappedParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Output: session schema; correct feedback once. "
-        "prior_stages: per-repair receipts; prior_response_progress: bounded failed-episode progress with omissions. "
-        "Keep repairs; admission_blocked names a rollout prerequisite.\n\n"
-        "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
+        epilog="Output: session schema. "
+        "prior_stages: receipts; checked_stage_receipts: application IDs and scoped checks; "
+        "stage_actions: results/rollout blockers; stage_playbooks: program IDs to READMEs. "
+        "findings: residual work. Full receipts/events: details_file. "
+        "prior_response_progress: failed-episode progress (bounded). "
+        "Keep repairs; admission_blocked: rollout prerequisite.\n\n"
+        "Examples (incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
     parser.add_argument(
@@ -227,7 +231,9 @@ def _parser() -> argparse.ArgumentParser:
             "Each option has a receipt; writes before your next verify share one of five loops. "
             "--NAME VALUE also sets parameters. "
             "Pending rollout retains its application ID and allows reads; "
-            "rollout_stalled releases writes once stuck or at its bound. "
+            "rollout_stalled releases writes once stuck or at its bound; "
+            "a program whose diagnosis still matches after its writes fails as diagnosis_persists "
+            "and releases them to your repair. "
             "Source reconciliation waits for old objects to drain; observed differences return source_residual, "
             "unavailable readback stays pending and unverified. "
             "Script fixes are learnable; unlinked bytes are refused as script_unprovenanced."
@@ -306,9 +312,9 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts. "
-            "Report one cause per independently fixable fault and record a separate act for each, declaring "
-            "only that cause's resources, so each receipt is attributed to its cause; "
-            "combine only faults that can't be fixed separately. "
+            "Report one cause per independently fixable fault; combine edits to one object, "
+            "keeping each cause's evidence separate. Declare all changed resources so the receipt "
+            "covers the combined edit. Start independent repairs together. "
             "When an admission control blocks recovery and its backend is gone, restore the backend if you can. "
             "Otherwise a scoped fail-open or removal that restores availability is acceptable; report it. "
             "SDO options go before --; the command after it runs verbatim, except that a kubectl command "
@@ -331,11 +337,11 @@ def _parser() -> argparse.ArgumentParser:
     verify = commands.add_parser(
         "verify",
         help="read cached controller verification; optionally await a stable verdict",
-        description="Reads the controller's cached health verdict immediately; drift[] lists objects that still "
+        description="Reads the controller's shared recovery proof: fresh health after the last repair, "
+        "observed write effects, and the unchanged 15-second stability window. drift[] lists objects that still "
         "differ from accepted source and never decides healthy. "
-        "After a healthy return, SDO may resume once for source differences when progress remains; "
-        "terminal inventory and no-progress stops do not resume. "
-        "restore them or explain the intended difference. "
+        "verification_status=awaiting_responder_completion: finish with evidence; proof follows your result. "
+        "Explain remaining source differences; SDO may resume once when progress remains. "
         "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
         "verification_blockers names incomplete detectors and reasons. SDO resumes once for these blockers, "
         "then stops any running blocker turn and records an unconfirmed outcome "
@@ -344,7 +350,8 @@ def _parser() -> argparse.ArgumentParser:
         "including after recorded actions; inspect their evidence before repeating workload writes. "
         "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
         "informational warning on every response; reads and reports remain available, while mutations are rejected. "
-        "After verified closure, report grace and outcome/reflection work continue during maintenance pauses.",
+        "Verified recovery fences writes and publishes the outcome without waiting for final narration; "
+        "worker quiescence and outcome/reflection work continue during maintenance pauses.",
     )
     verify.add_argument(
         "--wait",
@@ -411,7 +418,13 @@ def command_surface() -> CommandSurface:
     return {
         "commands": descriptions,
         "reference": "sdo-incident-response/references/commands.md",
-        "output": "Full JSON: read details_file; --json uses the same caps and complete evidence stays in files.",
+        "output": (
+            "Full JSON: read details_file; --json uses the same caps. "
+            "Menu: menu.options[].{option_id,parameters[].{name,schema}}. "
+            "Mutations: summary,details_file,error?,failure_reason?; "
+            "report arrays: actions,findings,fixed,new,unchanged,option_reports. "
+            "Use published parameter names and nested schemas; namespaces belong in object references."
+        ),
     }
 
 
