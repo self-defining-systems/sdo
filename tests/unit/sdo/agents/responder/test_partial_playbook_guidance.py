@@ -15,16 +15,45 @@ ROOT = Path(__file__).resolve().parents[5]
         "sdo/skills/sdo-playbook-authoring/references/rules.md",
     ],
 )
-def test_partial_learning_is_explicit(relative: str) -> None:
-    text = (ROOT / relative).read_text().lower()
+@pytest.mark.parametrize("replay", ["on", "off"])
+def test_partial_learning_is_explicit(relative: str, replay: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sdo.agents.replay import selected_skills_root
+    from sdo.agents.responder.credentials import SKILLS_ROOT
+
+    monkeypatch.setenv("SDO_REPLAY", replay)
+    if relative.endswith("prompts/reflection.md"):
+        from sdo.agents.responder.reflection import render_reflection_prompt
+        from tests.unit.sdo.agents.prompts.cases import live_shaped_reflection
+
+        data = live_shaped_reflection()
+        prompt = render_reflection_prompt(
+            outcome=data.outcome,
+            history=[],
+            outcome_commit="a" * 40,
+            closure=data.closure,
+            guidance="baseline",
+            cause_work=data.cause_work,
+            unassigned_work=data.unassigned_work,
+        )
+        text = "".join(part.text for part in prompt.parts if part.name == "reflection.instructions").lower()
+    else:
+        text = (selected_skills_root(SKILLS_ROOT) / relative.removeprefix("sdo/skills/")).read_text().lower()
     assert "partial" in text
     assert "readme" in text
     assert "judgement" in text
-    assert "replay" in text
-    assert "information" in text
+    if replay == "on":
+        assert "replay" in text
+        assert "information" in text
+    else:
+        assert "create_corpus" not in text
+        assert "root_cause_program_ids" not in text
     if relative != "sdo/agents/responder/prompts/reflection.md":
         assert "runscript" in text
-        assert "digest-to-receipt" in text
+        if relative.endswith("SKILL.md"):
+            reference = selected_skills_root(SKILLS_ROOT) / "sdo-playbook-authoring/references/script-receipts.md"
+            assert "script_receipts" in reference.read_text()
+        else:
+            assert "receipt" in text
         assert "relation-derived env" in text
     if relative.endswith(("SKILL.md", "reflection.md")):
         assert "no_change" in text
