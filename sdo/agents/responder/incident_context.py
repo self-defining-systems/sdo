@@ -192,6 +192,30 @@ def stage_action_lines(reports: Iterable[StageReport]) -> list[str]:
     return lines
 
 
+def checked_stage_receipts(reports: Iterable[StageReport]) -> list[dict[str, Any]]:
+    """Exact immutable application identities; scoped verification never grants closure."""
+    receipts: dict[str, dict[str, Any]] = {}
+    for report in reports:
+        for attempt in report.mitigations:
+            receipt = attempt.apply_receipt
+            if not receipt.application_id:
+                continue
+            verified = (
+                receipt.applied
+                and receipt.verification_completed
+                and receipt.verification_passed
+                and not receipt.dry_run
+                and not receipt.rolled_back
+                and not receipt.HasField("rollout_pending")
+                and not (receipt.error or receipt.rollback_error or attempt.error)
+            )
+            row = receipts.setdefault(
+                receipt.application_id, {"application_id": receipt.application_id, "verified": True}
+            )
+            row["verified"] = row["verified"] and verified
+    return list(receipts.values())
+
+
 def program_run_lines(runs: Iterable[ProgramRun]) -> list[str]:
     """Diagnoses at incident open that matched or could not decide, one line each."""
     lines = []
@@ -258,10 +282,11 @@ def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[s
     }
     if len(findings) > MAX_INLINE_FINDINGS:
         brief["findings_omitted"] = len(findings) - MAX_INLINE_FINDINGS
-    if runs := program_run_lines(request.initial_program_runs):
+    if not request.prior_stages and (runs := program_run_lines(request.initial_program_runs)):
         brief["program_runs"] = runs
     if request.prior_stages:
         brief["stage_actions"] = stage_action_lines(request.prior_stages)
+        brief["checked_stage_receipts"] = checked_stage_receipts(request.prior_stages)
         brief["stage_cleared_findings"] = len(
             {fingerprint for report in request.prior_stages for fingerprint in report.cleared_finding_fingerprints}
         )

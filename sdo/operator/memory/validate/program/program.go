@@ -348,6 +348,9 @@ func allowedProgramImport(path, module string) bool {
 }
 
 func checkProgramReadme(body string) error {
+	if err := checkAuthoredActionParameters(body); err != nil {
+		return err
+	}
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if shellFence.MatchString(trimmed) || shellLine.MatchString(line) {
