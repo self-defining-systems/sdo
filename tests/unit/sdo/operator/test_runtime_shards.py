@@ -12,7 +12,7 @@ def test_fixed_jobs_and_single_required_result():
     assert set(jobs) == {"prepare-go", "python", "contracts", "required-pr-ci"}
     assert jobs["contracts"]["strategy"]["matrix"] == {"bin": [0, 1]}
     assert len(jobs["python"]["strategy"]["matrix"]["include"]) == 2
-    assert jobs["prepare-go"]["timeout-minutes"] == 4
+    assert jobs["prepare-go"]["timeout-minutes"] == 5
     assert jobs["required-pr-ci"]["timeout-minutes"] == 1
     assert jobs["required-pr-ci"]["name"] == "Required PR CI"
     assert "contracts" in jobs["required-pr-ci"]["needs"]
