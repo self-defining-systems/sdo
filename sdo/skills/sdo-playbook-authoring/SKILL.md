@@ -37,7 +37,7 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    then check again. Its `next` field says what to do: return or fix diagnostics.
 7. When `next` says return, return the same decision and IDs; do not polish passing memory.
 
-Keep verified partial steps and revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. For source repairs, separate independent causes as described in
+Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified partial steps. For source repairs, separate independent causes as described in
 [program notes](references/programs.md#source-restoration).
 
 ## Program rules
