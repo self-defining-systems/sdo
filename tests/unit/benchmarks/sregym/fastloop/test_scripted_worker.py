@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -614,6 +615,14 @@ def test_recreation_capture_requirement_follows_replay_policy(tmp_path, monkeypa
     """Optional captures do not remove the source-backed executable step."""
     from sdo.contracts import IncidentClosure
 
+    # Production responders have no Go toolchain. A toolchain available on
+    # the test host must not hide a worker-side formatting dependency.
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    formatter = tools / "gofmt"
+    formatter.write_text("#!/bin/sh\nexit 97\n")
+    formatter.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools) + ":" + os.environ["PATH"])
     monkeypatch.setenv("SDO_REPLAY", replay)
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "absent"))
     monkeypatch.setattr(scripted_worker, "PROGRAM_SOURCE", ROOT / "benchmarks/sregym/fastloop/scripted_program")

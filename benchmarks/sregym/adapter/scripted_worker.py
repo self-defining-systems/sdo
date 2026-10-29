@@ -706,7 +706,6 @@ def _write_recreation_programs(worktree: Path, closure: IncidentClosure) -> None
                 .replace("COLLECTION", collection)
             )
             (target / name).write_text(source)
-        _command(["gofmt", "-w", str(target / "diagnose.go"), str(target / "mitigate.go")])
         readme = target / "README.md"
         if not readme.exists():
             readme.write_text(
