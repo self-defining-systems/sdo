@@ -198,8 +198,15 @@ func validate(r *c.NativeProductionReceipt) error {
 				verified = append(verified, attempt)
 			}
 		}
-		if len(verified) != 1 || !proto.Equal(verified[0].GetExpectation(), expected) || verified[0].GetObservedDetectorFingerprint() != expected.GetAfterDetectorFingerprint() {
+		if len(verified) != 1 || !proto.Equal(verified[0].GetExpectation(), expected) {
 			return errors.New("native rollout lacks one matching verified receipt")
+		}
+		// Trusted startup verifies accepted HEAD, build/tree identity and reflection
+		// ancestry before the broker records success. A later accepted health
+		// refresh carries its own tree; exact reflection builds must match theirs.
+		observed := verified[0].GetObservedDetectorFingerprint()
+		if observed == "" || (verified[0].GetControllerRevision() == expected.GetReflectionCommit() && observed != expected.GetAfterDetectorFingerprint()) {
+			return errors.New("native rollout has no matching restarted detector fingerprint")
 		}
 		for _, field := range []struct{ value, name string }{{verified[0].GetBuildArtifact(), "rollout build_artifact"}, {verified[0].GetControllerRevision(), "rollout controller_revision"}} {
 			if err := nonempty(field.value, field.name); err != nil {
