@@ -108,6 +108,7 @@ def test_public_admission_uses_selected_arm(tmp_path, monkeypatch, code_path, ru
 
     def state(_control):
         return {
+            "healthy_replay_ready": True,
             "history": [
                 {
                     "detector_id": key,
@@ -115,7 +116,7 @@ def test_public_admission_uses_selected_arm(tmp_path, monkeypatch, code_path, ru
                     "evaluated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 for key in keys
-            ]
+            ],
         }
 
     gate = admission.LaneAdmission(
