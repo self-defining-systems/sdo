@@ -162,13 +162,13 @@ def _parser() -> argparse.ArgumentParser:
     parser = _CappedParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Output: session schema; correct feedback once. "
-        "prior_stages: per-repair receipts; checked_stage_receipts: exact application IDs and scoped verification "
-        "in brief; stage_actions: results and recorded rollout blockers; stage_playbooks: program IDs to READMEs. "
-        "findings: residual work. Full receipts/events remain in details_file. "
-        "prior_response_progress: bounded failed-episode progress with omissions. "
-        "Keep repairs; admission_blocked names a rollout prerequisite.\n\n"
-        "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
+        epilog="Output: session schema. "
+        "prior_stages: receipts; checked_stage_receipts: application IDs and scoped checks; "
+        "stage_actions: results/rollout blockers; stage_playbooks: program IDs to READMEs. "
+        "findings: residual work. Full receipts/events: details_file. "
+        "prior_response_progress: failed-episode progress (bounded). "
+        "Keep repairs; admission_blocked: rollout prerequisite.\n\n"
+        "Examples (incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
     parser.add_argument(
