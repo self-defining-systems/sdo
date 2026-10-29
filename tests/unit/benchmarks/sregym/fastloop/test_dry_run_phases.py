@@ -283,3 +283,27 @@ def test_dry_run_fails_on_unonboarded_seed_before_any_lane_mutation(monkeypatch,
     assert report["passed"] is False
     assert "setup-proof.json" in report["invariants"]["failure"]["reason"]
     assert report["seconds"] < 60
+
+
+def test_shared_rehearsal_restores_application_without_resetting_accepted_memory(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import cli, reset, shared_memory
+
+    lane = SimpleNamespace(shared_accepted_id="branch", namespace="app", kubeconfig=tmp_path / "kc")
+    operations = []
+    worker = object()
+    monkeypatch.setattr(cli, "_reset", lambda *_: pytest.fail("shared memory must never be reset"))
+    monkeypatch.setattr(cli, "_worker", lambda env: nullcontext(worker))
+    monkeypatch.setattr(shared_memory, "lane_environment", lambda env: nullcontext())
+    monkeypatch.setattr(adapter, "pause_for_recovery", lambda ops, control: operations.append(("pause", control)))
+    monkeypatch.setattr(
+        reset, "RestoreChecks", lambda env: SimpleNamespace(validate=lambda: operations.append("validate"))
+    )
+    monkeypatch.setattr(
+        reset, "restore_application", lambda env, cluster, client, **kw: operations.append(("restore", client))
+    )
+    dry_run.restore_rehearsal_application(lane)
+    assert operations == ["validate", ("pause", "app-sdo"), ("restore", worker)]

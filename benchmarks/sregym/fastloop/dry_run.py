@@ -301,6 +301,27 @@ def refresh_reused_proof(
     report.passed = True
 
 
+def restore_rehearsal_application(environment: FastloopEnvironment) -> None:
+    """A shared branch retains controller and memory; rehearse the same app-only restore."""
+    from benchmarks.sregym.adapter import KubectlClusterOps, control_namespace_for, pause_for_recovery
+    from benchmarks.sregym.fastloop import cli
+    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, RestoreChecks, restore_application
+    from benchmarks.sregym.fastloop.shared_memory import lane_environment
+
+    if not environment.shared_accepted_id:
+        cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None))
+        return
+    checks = RestoreChecks(environment)
+    checks.validate()
+    control = control_namespace_for(environment.namespace)
+    with lane_environment(environment):
+        pause_for_recovery(KubectlClusterOps(), control)
+        with cli._worker(environment) as worker:
+            restore_application(
+                environment, KubectlResetCluster(environment.kubeconfig, control), worker, checks=checks
+            )
+
+
 def run_lane(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(WaitKind.LONG_OPERATION))) -> int:
     from benchmarks.sregym.adapter import assert_lane_resources, control_namespace_for, incident_work_open, kubectl
     from benchmarks.sregym.fastloop import cli
@@ -349,7 +370,7 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(Wait
         report.save(report_path)
         resources = assert_lane_resources(environment.kubeconfig, app_namespaces={environment.namespace})
         passed("lane_resources", **resources)
-        cli._reset(argparse.Namespace(run_dir=environment.run_dir, dev_mount=None))
+        restore_rehearsal_application(environment)
         passed("restore", source="accepted installed manifests; independent traffic and stable workloads")
         args = cli.build_parser().parse_args(
             [
