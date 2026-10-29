@@ -180,6 +180,22 @@ def test_missing_primary_credential_uses_healthy_peer(tmp_path: Path) -> None:
     assert len(agent.requests) == 1
 
 
+@pytest.mark.parametrize("missing", ["primary_registration", "primary_pool"])
+def test_one_missing_account_resource_cannot_hide_a_healthy_peer(tmp_path: Path, missing: str) -> None:
+    env = bundle(tmp_path)
+    if missing == "primary_registration":
+        inventory = tmp_path / "secret/accounts.json"
+        data = json.loads(inventory.read_text())
+        data["accounts"] = data["accounts"][1:]
+        inventory.write_text(json.dumps(data))
+    else:
+        (tmp_path / "pool/a01/capacity").unlink()
+    router = AccountRouter.from_environment(env)
+    account = router.acquire()
+    assert account.alias == "a02"
+    account.close()
+
+
 def test_torn_health_write_preserves_disabled_registration(tmp_path: Path) -> None:
     env = bundle(tmp_path)
     router = AccountRouter.from_environment(env)

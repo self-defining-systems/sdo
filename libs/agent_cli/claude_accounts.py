@@ -237,8 +237,9 @@ class AccountRouter:
         if self.primary:
             index = next((i for i, entry in enumerate(accounts) if entry.alias == self.primary), None)
             if index is None:
-                raise AccountExhausted("primary account is absent from inventory", retryable=False)
-            accounts = accounts[index:] + accounts[:index]
+                self.record("account", "failover", account_alias=self.primary, reason="credential_unavailable")
+            else:
+                accounts = accounts[index:] + accounts[:index]
         healthy = False
         for account in accounts:
             try:
@@ -247,11 +248,13 @@ class AccountRouter:
             except AccountExhausted:
                 # One unavailable/corrupt account must not hide healthy peers.
                 continue
-            healthy = True
             try:
                 handle = OpusPool(self.pool_directory / account.alias, self.capacity, create=False).try_acquire()
             except (OSError, ValueError):
-                raise AccountExhausted("account concurrency pool unavailable", retryable=False) from None
+                self._state(account, failure="credential_unavailable")
+                self.record("account", "failover", account_alias=account.alias, reason="credential_unavailable")
+                continue
+            healthy = True
             if handle is not None:
                 try:
                     if self._state(account):
