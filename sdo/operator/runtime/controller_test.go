@@ -889,6 +889,9 @@ func TestReplayOffStillRepairsWithoutCapturingCorpus(t *testing.T) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("replay off captured corpus: %s (%v)", dir, err)
 	}
+	if controller.IncidentOpen() {
+		t.Fatal("replay off prevented independent closure")
+	}
 	if controller.config.CorpusSessionRoot != "" {
 		t.Fatal("capture root enabled")
 	}

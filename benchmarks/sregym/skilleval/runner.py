@@ -204,6 +204,12 @@ def docker_command(
         "GOMAXPROCS": CONTAINER_GOMAXPROCS,
         "SKILLEVAL_POST_ONLY": "1" if post_only else "0",
     }
+    if code_root is not None and os.environ.get("SDO_OPUS_POOL_DIR"):
+        mounts[os.environ["SDO_OPUS_POOL_DIR"]] = "/sdo/opus-pool"
+        environment["SDO_OPUS_POOL_DIR"] = "/sdo/opus-pool"
+        for key in ("SDO_OPUS_POOL_MODE", "SDO_OPUS_POOL_HOST_ID", "SDO_OPUS_MAX_SESSIONS"):
+            if value := os.environ.get(key):
+                environment[key] = value
     if (run_dir / "session" / "api-history").is_dir():
         environment["SDO_API_HISTORY_DIR"] = f"{session}/api-history"
     if (run_dir / "session" / "tools").is_dir():
@@ -327,7 +333,7 @@ def run_one(
     )
     admission = (
         capacity.opus_session(model or scenario.model)
-        if scenario.provider == "claude" and os.environ.get("SDO_OPUS_POOL_DIR")
+        if code_root is None and scenario.provider == "claude" and os.environ.get("SDO_OPUS_POOL_DIR")
         else nullcontext()
     )
     try:

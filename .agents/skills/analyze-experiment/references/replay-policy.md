@@ -16,7 +16,8 @@ The hand-repair executable gate remains, while receipt-to-case binding is disabl
 RunScript digests bind directly to the originating accepted outcome; a legacy receipt
 without captured bytes uses README `script_origins` plus `originating_incident`
 (shared helpers: metadata.yaml). Existing accepted corpus origins remain valid for
-live execution. Outcome storage and trust credit formats are unchanged.
+live execution when corroborated by the accepted original outcome. Corpus bytes alone
+never prove a successful receipt, including when replay off skipped their validation. Outcome storage and trust credit formats are unchanged.
 
 For a paired offline comparison use identical frozen SKILLEVAL2 scenarios, skills,
 source overlay, binary, provider/model/effort and two runs per arm. Report model calls,

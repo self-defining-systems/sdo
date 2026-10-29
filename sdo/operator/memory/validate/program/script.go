@@ -132,7 +132,7 @@ func ValidateScriptOriginsWithoutCorpus(root string, outcome *contracts.OutcomeR
 func ScriptReceiptMatches(script string, origins map[string]string, incident string, outcome *contracts.OutcomeRecord) bool {
 	digest := sdkprogram.ScriptDigest(script)
 	for _, receipt := range outcome.GetRepairActions() {
-		if !receipt.GetSuccess() || receipt.GetStartedAt() == nil || receipt.GetCompletedAt() == nil || !receipt.GetCompletedAt().AsTime().After(receipt.GetStartedAt().AsTime()) {
+		if !receipt.GetSuccess() || receipt.GetStartedAt() == nil || receipt.GetCompletedAt() == nil || receipt.GetCompletedAt().AsTime().Before(receipt.GetStartedAt().AsTime()) {
 			continue
 		}
 		if receipt.GetScriptDigest() != "" {
