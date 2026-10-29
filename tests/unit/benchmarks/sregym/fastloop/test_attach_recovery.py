@@ -130,6 +130,8 @@ class AttachmentCluster:
             real_replace(source, target, *args, **kwargs)
             if Path(target) == self.report:
                 self.stop("phase:" + json.loads(self.report.read_text())["phase"])
+            elif Path(target).name == shared_memory.SHARED_ID:
+                self.stop("identity")
 
         monkeypatch.setattr(shared_memory, "_command", command)
         monkeypatch.setattr(shared_memory, "_json", json_)
@@ -263,3 +265,14 @@ def test_recovery_requires_the_journal_shared_identity(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="another shared identity"):
         shared_memory.attach_shared_memory(cluster.plan, cluster.report)
     assert not cluster.creates
+
+
+@pytest.mark.parametrize("cut", ["identity", "ownership"])
+def test_initial_attach_resumes_midway_through_ownership_setup(monkeypatch, tmp_path, cut):
+    cluster = AttachmentCluster(monkeypatch, tmp_path, cut=cut)
+    with pytest.raises(Interrupted):
+        shared_memory.attach_shared_memory(cluster.plan, cluster.report)
+    assert json.loads(cluster.report.read_text())["phase"] == "all-stopped"
+    shared_memory.attach_shared_memory(cluster.plan, cluster.report)
+    assert json.loads(cluster.report.read_text())["phase"] == "attached"
+    assert sorted(cluster.creates) == ["app-a-sdo", "app-b-sdo"]

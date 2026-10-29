@@ -228,7 +228,7 @@ def replay_scripted_reflection(
 
         def command(argv: list[str], *, timeout: int = int(wait_for(WaitKind.ROLLOUT))) -> str:
             git = host_git_command(checkout)
-            if argv[:len(git)] == git and _read_only_git(argv[len(git):]):
+            if argv[: len(git)] == git and _read_only_git(argv[len(git) :]):
                 # The reflector decides from its own checkout's diff; inspection never writes.
                 inspected = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
                 if inspected.returncode:
