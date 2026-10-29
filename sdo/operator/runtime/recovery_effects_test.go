@@ -142,6 +142,17 @@ func TestRecoveryEffectsStageWaitConsumesLiveDisappearance(t *testing.T) {
 
 // Real plan receipts feed the controller's closure consumer. A draining old
 // child holds observation only; its disappearance reuses the health window.
+// A replay snapshot's uncaptured error cannot prove live absence. These tests
+// read identity/absence through the real typed fake-API boundary instead.
+type recoveryAPISnapshot struct {
+	sdk.DetectionContext
+	client TypedPlanClient
+}
+
+func (s recoveryAPISnapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	return s.client.Get(context.Background(), ref)
+}
+
 type recoveryAcceptedSource struct{ PlanSource }
 
 func (s recoveryAcceptedSource) AcceptedManifest(ctx context.Context, revision string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
@@ -158,6 +169,11 @@ func TestRecoveryEffectsControllerClosureConsumesSameObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	client := loop.Executor.Client.(TypedPlanClient).Client
+	oldPod := snapshot.PodList[len(snapshot.PodList)-1]
+	if _, err := client.CoreV1().Pods(oldPod.Namespace).Create(context.Background(), &oldPod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	provider := &recoveryEffectProvider{snapshot: snapshot, samples: -1000}
 	cfg := testControllerConfig()
 	cfg.Namespace = "app"
@@ -166,7 +182,7 @@ func TestRecoveryEffectsControllerClosureConsumesSameObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: s, Source: recoveryAcceptedSource{loop.Executor.Source}, SourceCommit: state.Request.SourceCommit}
+		return LiveReadView{DetectionContext: recoveryAPISnapshot{s, loop.Executor.Client.(TypedPlanClient)}, Source: recoveryAcceptedSource{loop.Executor.Source}, SourceCommit: state.Request.SourceCommit}
 	}})
 	request := *cloneIncidentRequest(&state.Request)
 	request.Findings = append(request.Findings, f)
@@ -188,6 +204,9 @@ func TestRecoveryEffectsControllerClosureConsumesSameObservation(t *testing.T) {
 		if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_COMPLETED {
 			t.Fatal("own lifecycle effect dispatched a model")
 		}
+	}
+	if err := client.CoreV1().Pods(oldPod.Namespace).Delete(context.Background(), oldPod.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
 	}
 	provider.snapshot.PodList = provider.snapshot.PodList[:len(provider.snapshot.PodList)-1]
 	if err := c.Step(context.Background(), now.Add(17*time.Second), nil); err != nil {
@@ -224,10 +243,18 @@ func TestRecoveryEffectsEmptyHistoricalReplicaSetIsEquivalent(t *testing.T) {
 
 func TestRecoveryEffectsAlreadyDisappearedBeforeStageWait(t *testing.T) {
 	loop, state, snapshot, f := recoveryEffectFixture(t)
+	client := loop.Executor.Client.(TypedPlanClient).Client
+	oldPod := snapshot.PodList[len(snapshot.PodList)-1]
+	if _, err := client.CoreV1().Pods(oldPod.Namespace).Create(context.Background(), &oldPod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CoreV1().Pods(oldPod.Namespace).Delete(context.Background(), oldPod.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	snapshot.PodList = snapshot.PodList[:len(snapshot.PodList)-1]
 	loop.Provider = staticProvider{snapshot: snapshot}
 	loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: s, Source: recoveryAcceptedSource{loop.Executor.Source}, SourceCommit: state.Request.SourceCommit}
+		return LiveReadView{DetectionContext: recoveryAPISnapshot{s, loop.Executor.Client.(TypedPlanClient)}, Source: recoveryAcceptedSource{loop.Executor.Source}, SourceCommit: state.Request.SourceCommit}
 	}
 	state.Findings = []sdk.Finding{f}
 	(&DeterministicResponseStage{ObservationCeiling: time.Millisecond}).awaitRepairedHealth(context.Background(), loop, state, state.PriorStages[0], time.Second)
