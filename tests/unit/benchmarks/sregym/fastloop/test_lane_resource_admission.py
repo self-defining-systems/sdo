@@ -30,10 +30,11 @@ def lane(tmp_path, monkeypatch):
 
     def state(_control):
         return {
+            "healthy_replay_ready": True,
             "history": [
                 {"detector_id": key, "status": "clear", "evaluated_at": datetime.now(timezone.utc).isoformat()}
                 for key in ("workload-health", "service-endpoints", "service-reachability", "traffic-health")
-            ]
+            ],
         }
 
     gate = admission.LaneAdmission(environment, SimpleNamespace(runtime_state=state), tmp_path / "admission")

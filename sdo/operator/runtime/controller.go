@@ -105,6 +105,7 @@ type Controller struct {
 	acceptedSourceDrift         []sdk.DriftEvent
 	acceptedSourceDriftRevision string
 	// Healthy capture state shares the observation loop's serialization.
+	healthyReplayReady      bool // protected by mu; process-local, never restored
 	healthyMemoryCaptured   bool
 	healthyMemoryBaselineAt time.Time
 	healthyMemoryReference  string
@@ -458,6 +459,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		return fmt.Errorf("create detection snapshot: %w", err)
 	}
 	c.processDrift(ctx, now, snapshot, objectChanges)
+	c.reconcileIdleSourceDrift(ctx, now, snapshot)
 
 	// Startup's full batch may precede confirmation. Once the observation
 	// windows are ready, evaluate every detector together on this snapshot;
@@ -611,6 +613,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.OnEvaluation(sampleFindings)
 		}
 		healthy := !errored && c.pendingOnboarding == nil && (onboardingCandidate == nil || c.namespaceOnboarding != nil) && c.quiet() && c.completeHealthyEvaluation()
+		c.mu.Lock()
+		c.healthyReplayReady = false
+		c.mu.Unlock()
 		if c.Baseline != nil {
 			c.Baseline.Observe(now, healthy)
 		}
@@ -1854,7 +1859,8 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
-		BusyUntil: optionalBusyUntil(c.busyUntilLocked(c.clock())),
+		BusyUntil:          optionalBusyUntil(c.busyUntilLocked(c.clock())),
+		HealthyReplayReady: c.config.CorpusSessionRoot == "" || c.healthyReplayReady,
 	}
 	if c.currentIncidentRequest != nil {
 		message.IncidentRequest, err = incidentRequestContract(*c.currentIncidentRequest)
@@ -1894,6 +1900,12 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	if err := c.scheduler.RestoreDeadlines(timestampsState(state.GetSchedulerDeadlines())); err != nil {
 		return err
 	}
+	// A process-local healthy capture cannot be restored from detector history.
+	// Requalify every detector now instead of waiting an arbitrarily long
+	// restored interval before the new baseline can become ready.
+	if c.config.CorpusSessionRoot != "" {
+		c.scheduler.ExpediteAll(c.startedAt)
+	}
 	// Retired proactive playbooks are not scheduled detectors. Keep genuine
 	// registered detector IDs and accepted-source drift, but retire their old
 	// synthetic tracker and batch entries instead of re-running Diagnose.
@@ -1917,6 +1929,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.history = append([]DetectorEvaluation(nil), evaluationsState(state.GetHistory())...)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.healthyReplayReady = false
 	c.incidentOpen = state.IncidentOpen
 	// A subprocess cannot survive a controller restart. Preserve the incident
 	// lock, but treat the old process as finished so detector clears can close it.
@@ -2126,6 +2139,11 @@ func (c *Controller) driftOnlyIncidentLocked() bool {
 func (c *Controller) hasRetainedDrift() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for _, state := range c.tracker.Snapshot() {
+		if state.DetectorID == "drift.unexplained" && (state.Active || state.FiringCount > 0) {
+			return true
+		}
+	}
 	if c.currentIncidentRequest != nil {
 		for _, f := range c.currentIncidentRequest.Findings {
 			if strings.HasPrefix(f.DetectorID, "drift.") {
