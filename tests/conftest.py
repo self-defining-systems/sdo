@@ -61,6 +61,7 @@ def image_build_source(tmp_path: Path) -> Path:
         "sdo/operator/Dockerfile.runtime",
         ".dockerignore",
         "benchmarks/sregym/fastloop/image_provenance.py",
+        "benchmarks/sregym/repository_git.py",
     ):
         (source / path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(repository / path, source / path)

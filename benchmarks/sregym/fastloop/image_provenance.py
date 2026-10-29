@@ -14,13 +14,23 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import runpy
 import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
-from benchmarks.sregym.repository_git import host_git_command
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+# The build runs this file directly, with no installed benchmark package.
+# Load its stdlib-only Git policy by location without changing import search paths.
+host_git_command = cast(
+    "Callable[..., list[str]]",
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "repository_git.py"))["host_git_command"],
+)
 
 BAKE_FILE = "scripts/sdo-images.hcl"
 SOURCE_TREE_LABEL = "dev.sdo.source-tree"

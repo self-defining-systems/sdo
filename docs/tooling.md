@@ -23,3 +23,5 @@ Use existing gates when extending a contract. New agent implementations and comm
 Run `scripts/format_code.sh` and `scripts/check_errors.sh` after code edits. Focused validation commands and cost boundaries live in [the testing guide](testing-guide.md).
 
 `scripts/check_pytest_imports.py` maps test files to pytest prepend-mode package names and rejects collisions before collection. `scripts/check_errors.sh` runs it before any Python test; its subprocess tests cover flat modules, distinct packages and matching package names in separate roots. Rename conflicting tests or make their package identity distinct.
+
+The fast repository ratchets in `scripts/check_errors.sh` execute the image-provenance entrypoint with `python -I -S`, no `PYTHONPATH`, and Git different-owner checking. This guards standalone startup and the shared Git policy before image builds, alongside the image-bound dependency check.
