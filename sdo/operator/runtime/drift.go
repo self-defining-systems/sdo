@@ -532,3 +532,48 @@ func scopedRefDeclared(view any, ref sdk.ObjectRef) bool {
 	}
 	return false
 }
+
+// Reconcile event-driven bindings after closure as well as during it. A closed
+// incident retains historical evidence, but its old tracker entries must not
+// strand the next healthy baseline after the source is restored.
+func (c *Controller) reconcileIdleSourceDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) {
+	c.mu.Lock()
+	busy := c.incidentOpen || c.closureBlocksNextLocked()
+	c.mu.Unlock()
+	if busy || c.drift == nil || c.drift.View == nil {
+		return
+	}
+	view := c.drift.View(snapshot)
+	if view == nil {
+		return
+	}
+	changed := false
+	for _, state := range c.tracker.Snapshot() {
+		finding := state.Finding
+		if finding.DetectorID != "drift.unexplained" || inventoryFinding(finding) || (!state.Active && state.FiringCount == 0) {
+			continue
+		}
+		events := driftEventsForFindings(nil, []sdk.Finding{finding})
+		if len(events) != 1 || len(events[0].Fields) == 0 {
+			continue
+		}
+		diff, err := declaredSourceDiff(view, finding.PrimaryResource)
+		if err != nil || !sourceDriftRestored(diff, events) {
+			continue
+		}
+		c.tracker.SetPolicy(finding.DetectorID, 1, 1, 0)
+		changes := c.tracker.ObserveBinding(now, finding, false)
+		c.batcher.RemoveKeys(changes.Cleared)
+		c.recordFiring(sdk.DetectorSpec{ID: finding.DetectorID, Class: sdk.DetectorClassIncident}, now, nil, changes)
+		changed = true
+	}
+	if changed {
+		var remaining []sdk.Finding
+		for _, state := range c.tracker.Snapshot() {
+			if state.DetectorID == "drift.unexplained" && (state.Active || state.FiringCount > 0) {
+				remaining = append(remaining, state.Finding)
+			}
+		}
+		c.recordEvaluation("drift.unexplained", now, remaining)
+	}
+}

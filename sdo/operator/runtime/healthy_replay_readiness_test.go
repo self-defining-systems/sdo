@@ -98,3 +98,40 @@ func TestHealthyReplayReadinessRequiresCurrentProcessCapture(t *testing.T) {
 		})
 	}
 }
+
+func TestHealthyReplayReconcilesDriftAfterItsIncidentClosed(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		t.Run(map[bool]string{false: "same-process", true: "restart"}[restart], func(t *testing.T) {
+			f := newClosureDriftFixture(t, true, true, "app")
+			f.settle(t, 1)
+			if len(f.closed) != 1 {
+				t.Fatal("fixture did not close its healthy incident")
+			}
+			if err := f.c.SetIncidentBroker(&recordingIncidentBroker{receipt: ClosureReceipt{OutcomeCommit: "outcome", AckToken: "ack"}}); err != nil {
+				t.Fatal(err)
+			}
+			acknowledgeScenario(t, f.c)
+			f.c.config.CorpusSessionRoot = t.TempDir()
+			if restart {
+				state, err := f.c.ExportState()
+				if err != nil {
+					t.Fatal(err)
+				}
+				after, err := NewController(f.c.config, []sdk.Detector{closureImageHealth{}}, fastloopObjects{f.client}, f.c.dispatcher, f.start.Add(20*time.Second))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := after.RestoreState(state); err != nil {
+					t.Fatal(err)
+				}
+				after.ConfigureDrift(*f.c.drift)
+				f.c = after
+			}
+			f.restoreSource(t)
+			f.step(t, 30)
+			if !replayReady(t, f.c) {
+				t.Fatalf("restored drift stranded baseline: open=%v blocked=%v quiet=%v complete=%v ref=%q history=%+v states=%+v", f.c.incidentOpen, f.c.closureBlocksNextLocked(), f.c.quiet(), f.c.completeHealthyEvaluation(), f.c.healthyMemoryReference, f.c.history, f.c.tracker.Snapshot())
+			}
+		})
+	}
+}

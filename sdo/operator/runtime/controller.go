@@ -451,6 +451,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		return fmt.Errorf("create detection snapshot: %w", err)
 	}
 	c.processDrift(ctx, now, snapshot, objectChanges)
+	c.reconcileIdleSourceDrift(ctx, now, snapshot)
 
 	// Startup's full batch may precede confirmation. Once the observation
 	// windows are ready, evaluate every detector together on this snapshot;
@@ -2130,6 +2131,11 @@ func (c *Controller) driftOnlyIncidentLocked() bool {
 func (c *Controller) hasRetainedDrift() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for _, state := range c.tracker.Snapshot() {
+		if state.DetectorID == "drift.unexplained" && (state.Active || state.FiringCount > 0) {
+			return true
+		}
+	}
 	if c.currentIncidentRequest != nil {
 		for _, f := range c.currentIncidentRequest.Findings {
 			if strings.HasPrefix(f.DetectorID, "drift.") {

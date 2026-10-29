@@ -63,6 +63,13 @@ func sourceDriftRestored(diff program.Diff, events []sdk.DriftEvent) bool {
 	if diff.SourceAbsent {
 		return !diff.Changed
 	}
+	if len(events) == 1 && events[0].Operation == "delete" {
+		// Recreation establishes a new object, with its own server-assigned
+		// fields. Prove every declared source field rather than restoring the
+		// deleted object's allocations or admission defaults.
+		accepted, observed, complete := driftDiffValues(diff)
+		return !diff.Changed && complete && reflect.DeepEqual(projectSourceFields(observed, accepted), accepted)
+	}
 	return driftFieldsRestored(diff, events) || (!diff.Changed && diff.Text == "")
 }
 
