@@ -6,8 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
@@ -109,4 +112,40 @@ func TestNativeRolloutHandoffAcceptsLaterAcceptedRevision(t *testing.T) {
 	if handoffs, err := native.PendingControllerRollouts(); err != nil || len(handoffs) != 0 {
 		t.Fatalf("verified rollout remains pending: %+v, %v", handoffs, err)
 	}
+	assertRolloutStrictReceipt(t, ctx, native, receipt.IncidentID)
+}
+
+// Feed the real startup/broker ledger into the benchmark consumer so their
+// accepted-revision semantics cannot drift independently.
+func assertRolloutStrictReceipt(t *testing.T, ctx context.Context, native NativeIncidentBroker, id string) {
+	t.Helper()
+	ledger, err := native.readLedger(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := timestamppb.New(time.Now().UTC())
+	outcome := strings.Repeat("b", 40)
+	ledger.Acknowledged = true
+	ledger.OutcomeCommit = outcome
+	ledger.Receipt.OutcomeCommit = outcome
+	closure := nativeClosure(IncidentWorkspace{IncidentID: id, Worktree: "synthetic", BaseCommit: ledger.ReflectionCommit})
+	closure.Request.Namespace = "synthetic"
+	closure.Request.RepairPolicy = "recorded-actions"
+	ledger.Closure, err = incidentClosureContract(closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger.Closure.Result.RepairActions = []*contractsv1alpha1.RepairActionReceipt{{ActionId: "synthetic", Kind: "synthetic", Target: "synthetic", Summary: "synthetic repair", Details: "synthetic details", StartedAt: stamp, CompletedAt: stamp, Success: true}}
+
+	ledger.OutcomeDocument = &contractsv1alpha1.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: "success"}
+	receipt := &contractsv1alpha1.NativeProductionReceipt{
+		SchemaVersion: "sdo.production-receipt/v2", BrokerMode: "native", WorkerMountMode: "proposal-only", IncidentId: id, Namespace: "synthetic", ControlNamespace: "synthetic-sdo",
+		ControllerImage: "synthetic:controller", ResponderImage: "synthetic:responder", ValidatorImage: "synthetic:validator", ControllerPodUid: "synthetic-pod", NativeLedger: ledger,
+		ResponderJobEvidence: []*contractsv1alpha1.ResponderJobEvidence{{IncidentId: id, JobName: "synthetic-job", JobUid: "synthetic-uid", Succeeded: true}},
+	}
+	raw, err := protojson.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartClassStrictReceipt(t, ctx, raw)
 }
