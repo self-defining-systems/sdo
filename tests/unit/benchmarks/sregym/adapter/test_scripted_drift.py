@@ -308,3 +308,30 @@ def test_scripted_source_restore_allows_slow_init_clone(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(scripted_worker, "_command", command)
     scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "api"})
+
+
+@pytest.mark.parametrize(
+    ("kind", "field"),
+    [("Service", "spec"), ("ConfigMap", "data"), ("Ingress", "spec"), ("HorizontalPodAutoscaler", "spec")],
+)
+def test_deleted_source_objects_are_recreated_instead_of_patched(monkeypatch, kind, field):
+    import json
+
+    source = {"apiVersion": "v1", "kind": kind, "metadata": {"name": "api", "namespace": "app"}, field: {}}
+    request = IncidentRequest(
+        incident_id="repair",
+        namespace="app",
+        state_changes={"changes": [{"kind": kind, "name": "api", "change": "deleted"}]},
+    )
+    monkeypatch.setattr(scripted_worker, "_tool", lambda *_: {"source": source})
+    applied = []
+
+    def command(argv, **kwargs):
+        assert "patch" not in argv
+        assert "apply" in argv
+        applied.append(json.loads(Path(argv[argv.index("-f") + 1]).read_text()))
+        return "created"
+
+    monkeypatch.setattr(scripted_worker, "_command", command)
+    scripted_worker._patch_from_source(request, {"kind": kind, "name": "api"})
+    assert applied == [source]

@@ -100,9 +100,22 @@ def _manifest(root: Path, kind: str, name: str) -> dict[str, Any]:
     raise RuntimeError(f"accepted source has no {kind}/{name} manifest")
 
 
+def _source_was_deleted(request: IncidentRequest, ref: dict[str, str]) -> bool:
+    return ref["kind"] in {"Service", *SOURCE_RESTORED_FIELDS} and any(
+        change.kind == ref["kind"] and change.name == ref["name"] and change.change == "deleted"
+        for change in (request.state_changes.changes if request.state_changes else [])
+    )
+
+
 def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
     kind, name = ref["kind"], ref["name"]
     source = _tool("source", f"{kind}/{request.namespace}/{name}")["source"]
+    if _source_was_deleted(request, ref):
+        with tempfile.TemporaryDirectory(prefix="sdo-scripted-source-") as directory:
+            manifest = Path(directory) / "object.json"
+            manifest.write_text(json.dumps(source))
+            _command(["kubectl", "-n", request.namespace, "apply", "-f", str(manifest)])
+        return
     if kind == "Service":
         patch = {"spec": {"ports": source["spec"]["ports"]}}
     elif kind == "Deployment":
@@ -398,7 +411,11 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         repairs.append(
             {
                 "action_id": f"source-{len(repairs) + 1}",
-                "kind": "kubectl-delete" if ref["kind"] == "NetworkPolicy" else "kubectl-patch",
+                "kind": "kubectl-delete"
+                if ref["kind"] == "NetworkPolicy"
+                else "kubectl-apply"
+                if _source_was_deleted(request, ref)
+                else "kubectl-patch",
                 "target": f"{event.ref.kind}/{event.ref.name}",
                 "resources": [ref],
                 "summary": f"Removed source-absent NetworkPolicy/{event.ref.name}"
@@ -427,7 +444,10 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
                 "name": change.name,
             }
             for change in changed
-            if (change.kind in {"Service", "Deployment", *SOURCE_RESTORED_FIELDS} and change.change == "modified")
+            if (
+                change.kind in {"Service", "Deployment", *SOURCE_RESTORED_FIELDS}
+                and change.change in {"modified", "deleted"}
+            )
             or (change.kind in REMOVED_KINDS and change.change == "added")
         ]
         candidates.extend(
@@ -451,7 +471,11 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             repairs.append(
                 {
                     "action_id": f"source-{len(repairs) + 1}",
-                    "kind": "kubectl-delete" if removed else "kubectl-patch",
+                    "kind": "kubectl-delete"
+                    if removed
+                    else "kubectl-apply"
+                    if _source_was_deleted(request, ref)
+                    else "kubectl-patch",
                     "target": f"{ref['kind']}/{ref['name']}",
                     "resources": [ref],
                     "summary": f"Removed source-absent {ref['kind']}/{ref['name']}"
