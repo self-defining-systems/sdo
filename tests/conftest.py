@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from scripts.operator_test_binary import build_operator
+from scripts.operator_test_binary import build_operator, source_identity, verify_operator
 from tests.reflection_memory import (
     memory_binary as memory_binary,
 )
@@ -20,6 +20,31 @@ pytest_plugins = ("tests.sregym_prerequisites",)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    # This shared fixture invokes the real memory validator, which compiles
+    # authored programs. Route its transitive consumers before -m selection.
+    for item in items:
+        if "memory_binary" in getattr(item, "fixturenames", ()):
+            item.add_marker(pytest.mark.go_integration)
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_protocol(item: pytest.Item) -> Iterator[None]:
+    # Surround fixture setup too: a module/session fixture can compile before
+    # function-scoped autouse fixtures have started.
+    with pytest.MonkeyPatch.context() as patch:
+        if item.get_closest_marker("go_integration") is None:
+            guard = Path(__file__).resolve().parents[1] / "scripts/unit-tools"
+            go = shutil.which("go")
+            if go == str(guard / "go"):
+                go = os.environ.get("SDO_UNIT_REAL_GO")
+            if go:
+                patch.setenv("SDO_UNIT_REAL_GO", go)
+                patch.setenv("PATH", f"{guard}{os.pathsep}{os.environ['PATH']}")
+        yield
 
 
 @pytest.fixture
@@ -70,6 +95,11 @@ def _isolated_opus_pool(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytes
 @pytest.fixture(scope="session")
 def operator_binary() -> Path:
     repository = Path(__file__).resolve().parents[1]
+    prepared = os.environ.get("SDO_OPERATOR_BIN")
+    if prepared:
+        binary = Path(prepared)
+        verify_operator(binary, source_identity(repository / "sdo/operator"))
+        return binary
     return build_operator(repository / "sdo/operator", repository / ".fastloop/test-bin")
 
 

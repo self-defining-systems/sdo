@@ -35,6 +35,7 @@ def listing(plan):
     return rows
 
 
+@pytest.mark.go_integration
 def test_default_configuration_remains_exact(tmp_path):
     requested = config(tmp_path, False)
     plan = installer_rbac("app", requested)
