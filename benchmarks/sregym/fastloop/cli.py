@@ -852,6 +852,8 @@ def deploy_with_setup_proof(
 def _run(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.warm_lane import own_lane
 
+    if args.sweep_service and (args.stream is None or args.agent != "sdo"):
+        raise SystemExit("--sweep-service requires an SDO --stream run")
     # A full-reset caller must obey the same ownership as a warm caller; otherwise
     # it could wipe the controller while the warm transaction proves continuity.
     environment = FastloopEnvironment.load(args.run_dir.resolve())
@@ -862,8 +864,6 @@ def _run(args: argparse.Namespace) -> int:
 
 def _run_owned(args: argparse.Namespace) -> int:
     run_started = time.monotonic()
-    if args.sweep_service and (args.stream is None or args.agent != "sdo"):
-        raise SystemExit("--sweep-service requires an SDO --stream run")
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     if environment.shared_accepted_id:
         from benchmarks.sregym.fastloop.shared_memory import prepare_shared_lane
