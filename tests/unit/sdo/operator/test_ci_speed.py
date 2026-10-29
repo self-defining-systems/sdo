@@ -291,7 +291,6 @@ def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> Non
     assert "unexpected-docker" not in result.stderr
 
 
-
 def test_compiler_cache_union_preserves_existing_and_adds_race_entries(tmp_path: Path) -> None:
     normal, race = tmp_path / "normal", tmp_path / "race"
     for directory in (normal, race):

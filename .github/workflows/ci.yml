@@ -4,7 +4,7 @@ on:
   # Hosted caches saved on refs/pull/N are private to that PR. A PR can also
   # restore its base branch's caches, so pushes to every branch PRs target are
   # the only runs that save the large prepared Go builds (about 1.6 GB each);
-  # Other runs restore the newest one and transfer newly compiled entries as
+  # Other runs restore the newest one and transfer the complete build as
   # run artifacts. Saving a build per throwaway ref passed the 10 GB
   # repository cap with a few concurrent PRs and evicted entries mid-run.
   push:
