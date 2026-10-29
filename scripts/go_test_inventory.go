@@ -40,6 +40,14 @@ func inventory(directory string, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("compile test archives in %s: %w", directory, err)
 	}
+	// go test -list also vets the selected test packages. Reuse the exported
+	// archives while preserving that rejection boundary, without any links.
+	vet := exec.Command("go", "vet", "-race", "./...")
+	vet.Dir = directory
+	vet.Stdout, vet.Stderr = os.Stderr, os.Stderr
+	if err := vet.Run(); err != nil {
+		return fmt.Errorf("vet compiled test archives in %s: %w", directory, err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	encoder := json.NewEncoder(output)
 	mains := 0

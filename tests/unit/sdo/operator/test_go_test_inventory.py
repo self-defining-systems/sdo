@@ -56,3 +56,15 @@ func Example_withoutOutput() {}
     assert names(actual) == names(expected)
     assert ("fixture.test/inventory", "TestRaceOnly") in names(actual)
     assert ("fixture.test/inventory", "TestPlainOnly") not in names(actual)
+
+    # The previous go test listing also ran vet; retain its rejection boundary.
+    (tmp_path / "invalid_test.go").write_text(
+        'package inventory\nimport "testing"\nfunc Testlowercase(t *testing.T) {}\n'
+    )
+    invalid = subprocess.run(
+        ["go", "run", str(ROOT / "scripts/go_test_inventory.go"), str(tmp_path)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert invalid.returncode != 0

@@ -2,8 +2,8 @@
 
 PR CI has **four fixed test jobs**: two exhaustive non-Go Python parts and two
 native contract jobs. The two compile/cache preparation jobs finish before tests;
-only `Required PR CI` is required. Preparation is capped at four minutes, test jobs
-at their unchanged five minutes, and the aggregate gate at one minute. The maximum
+only `Required PR CI` is required. Preparation is capped at five minutes, test jobs
+at four minutes, and the aggregate gate at one minute. The maximum
 executed critical path is ten minutes; runner queue time is outside that bound.
 
 - `check_ci_budget.py` structurally checks the workflow: no computed PR matrices,
@@ -11,16 +11,24 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   work plus setup margin within the job cap. It runs before test fanout and in
   `check_errors.sh`. Its negative controls add a fifth job or extend the path.
 - `ci_policy.json` owns the two contract buckets' fixed capacity (180 seconds of
-  measured work each, 90 seconds reserved for setup). Inventory growth never adds
+  measured work each, 60 seconds reserved for setup). Inventory growth never adds
   a PR job. `pr_test_plan.py` keeps the broadest cheap regression set within that
   capacity; every other test is assigned to nightly. Both sets are exhaustive
   and disjoint, and a generated Markdown artifact lists every deferred test.
-- `prepare_go_ci.sh` compiles each normal/race test graph once. It no longer first
-  builds/discards every production executable too. The portable graph warms only
+- `prepare_go_ci.sh` compiles normal production archives and race test archives.
+  `go_test_inventory.go` reads Go's generated test tables after `go list -test
+  -export -race` and retains vet checks, avoiding discarded test-executable links.
+  A real Go fixture checks parity with `go test -race -list`, including build tags,
+  external tests, examples and fuzz targets. The portable graph warms only
   `runtime/prober`, the generated traffic binary's dependency, rather than the
   whole Kubernetes runtime. The CLI and bootstrap fixture are cached once.
   `download_go_modules.sh` warms each full module graph through temporary module
   metadata; cache preparation never rewrites the source-bound go.mod/go.sum.
+- `go_ci_artifacts.sh` packs complete prepared compiler/module/tool roots into
+  same-run artifacts and restores executable permissions on consumers. Only pushes
+  to main or vic-lsh/dev/sdo-improve save shared Go caches; throwaway PR/queue refs
+  restore the base and transfer artifacts without competing for its cache quota.
+  Consumer jobs work even when the base entry is missing or evicted.
 - `python_go_tools.sh` prepares the real operator, receipt checker and submission
   guard once. Both Python jobs download its tar artifact from their own workflow
   run, verify the operator source stamp, and select the adapters' existing binary
