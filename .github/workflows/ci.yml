@@ -170,6 +170,17 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 1
+      - name: Transfer only sources and tools to compiler-free Python jobs
+        if: matrix.mode == 'normal'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-python
+          path: |
+            ${{ runner.temp }}/prepared-normal/modules.tar.zst
+            ${{ runner.temp }}/prepared-normal/tools.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
       - name: Save the durable normal build
         if: matrix.mode == 'normal' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
@@ -238,10 +249,10 @@ jobs:
       - name: Download this run's normal build
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: prepared-normal
+          name: prepared-python
           path: ${{ runner.temp }}/prepared-normal
       - name: Unpack this run's normal build
-        run: bash scripts/go_ci_artifacts.sh unpack normal "${{ runner.temp }}/prepared-normal"
+        run: bash scripts/go_ci_artifacts.sh unpack python "${{ runner.temp }}/prepared-normal"
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         if: matrix.name == 'static analysis' || matrix.name == 'architecture' || matrix.name == 'unit tests'
         with:

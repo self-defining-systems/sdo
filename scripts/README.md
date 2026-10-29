@@ -28,7 +28,8 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   same-run artifacts and restores executable permissions on consumers. Only pushes
   to main or vic-lsh/dev/sdo-improve save shared Go caches; throwaway PR/queue refs
   restore the base and transfer artifacts without competing for its cache quota.
-  Consumer jobs work even when the base entry is missing or evicted.
+  Consumer jobs work even when the base entry is missing or evicted. Compiler-free
+  Python jobs fetch only module sources and tools, excluding the compiler archive.
   `go_ci_race_artifact.py` derives the same fixed plan on the race producer,
   then asks Go for each bucket's selected test dependency exports and publishes
   a separate artifact per bucket. It omits stale archives and compiled static

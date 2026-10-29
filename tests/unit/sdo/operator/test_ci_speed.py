@@ -125,7 +125,10 @@ def test_go_shards_restore_the_completed_preparation_cache() -> None:
     assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
     for name in ("python", "contracts"):
         assert "prepare-go" in jobs[name]["needs"]
-        assert any(step.get("with", {}).get("name") == "prepared-normal" for step in jobs[name]["steps"])
+        assert any(
+            step.get("with", {}).get("name") == ("prepared-python" if name == "python" else "prepared-normal")
+            for step in jobs[name]["steps"]
+        )
 
 
 def test_pull_requests_restore_a_prepared_cache_from_their_base_branch() -> None:
@@ -164,25 +167,32 @@ def test_only_durable_base_pushes_save_go_caches() -> None:
         assert restore["with"]["key"].startswith(restore["with"]["restore-keys"].split()[0])
 
 
-def test_consumers_require_complete_run_artifacts_even_on_a_cold_base() -> None:
+@pytest.mark.parametrize(
+    ("job", "mode", "published", "downloaded"),
+    [
+        ("python", "python", "prepared-python", "prepared-python"),
+        ("contracts", "normal", "prepared-normal", "prepared-normal"),
+        ("contracts", "race", "prepared-race-0", "prepared-race-${{ matrix.bin }}"),
+    ],
+)
+def test_consumers_require_complete_run_artifacts_even_on_a_cold_base(
+    job: str,
+    mode: str,
+    published: str,
+    downloaded: str,
+) -> None:
     jobs = workflow()["jobs"]
-    for mode in ("normal", "race"):
-        upload = next(
-            step
-            for step in jobs["prepare-go"]["steps"]
-            if step.get("with", {}).get("name") == ("prepared-normal" if mode == "normal" else "prepared-race-0")
-        )
-        assert upload["uses"].startswith("actions/upload-artifact@")
-        assert upload["with"]["if-no-files-found"] == "error"
-        for name in ("python", "contracts") if mode == "normal" else ("contracts",):
-            steps = jobs[name]["steps"]
-            assert any(
-                step.get("with", {}).get("name")
-                == ("prepared-normal" if mode == "normal" else "prepared-race-${{ matrix.bin }}")
-                for step in steps
-            )
-            assert not any(step.get("uses", "").startswith("actions/cache") for step in steps)
-            assert any(f"go_ci_artifacts.sh unpack {mode}" in step.get("run", "") for step in steps)
+    upload = next(step for step in jobs["prepare-go"]["steps"] if step.get("with", {}).get("name") == published)
+    assert upload["uses"].startswith("actions/upload-artifact@")
+    assert upload["with"]["if-no-files-found"] == "error"
+    steps = jobs[job]["steps"]
+    assert any(step.get("with", {}).get("name") == downloaded for step in steps)
+    assert not any(step.get("uses", "").startswith("actions/cache") for step in steps)
+    assert any(f"go_ci_artifacts.sh unpack {mode}" in step.get("run", "") for step in steps)
+    if mode == "python":
+        assert "compiler" not in upload["with"]["path"]
+        assert "modules.tar.zst" in upload["with"]["path"]
+        assert "tools.tar.zst" in upload["with"]["path"]
 
 
 def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
