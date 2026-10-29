@@ -276,3 +276,16 @@ def test_lane_destruction_settles_queued_exports_first(tmp_path: Path, monkeypat
             timeout_seconds=1,
         )
     assert order == ["settle", "delete control namespace"]
+
+
+def test_unreadable_job_does_not_stop_the_worker(tmp_path: Path) -> None:
+    lane = Lane(tmp_path)
+    directory = tmp_path / "queue"
+    directory.mkdir()
+    (directory / "i-corrupt.json").write_text("{not json")
+    queue = EvidenceExportQueue(directory, lane.deliver, retry_seconds=0)
+    row = _row(tmp_path, 1)
+    QueuedEvidenceExport(queue, lane.snapshot).export(_config(tmp_path), "incident-1", row)
+    queue.drain(10)
+    assert _status(row)["state"] == "delivered"
+    queue.close(drain=False)

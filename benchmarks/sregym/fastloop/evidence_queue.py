@@ -180,10 +180,15 @@ class EvidenceExportQueue:
         return ExportJob.model_validate_json(path.read_text(encoding="utf-8"))
 
     def jobs(self) -> list[ExportJob]:
-        return [
-            ExportJob.model_validate_json(path.read_text(encoding="utf-8"))
-            for path in sorted(self._directory.glob("*.json"))
-        ]
+        """Every readable job; an unreadable file is logged and left for inspection."""
+
+        jobs: list[ExportJob] = []
+        for path in sorted(self._directory.glob("*.json")):
+            try:
+                jobs.append(ExportJob.model_validate_json(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                logger.exception("unreadable evidence export job %s", path)
+        return jobs
 
     def _record(self, job: ExportJob) -> None:
         document = job.model_dump(mode="json", by_alias=True)
@@ -228,9 +233,14 @@ class EvidenceExportQueue:
                 if not self._pending:
                     return
                 snapshot_id = self._pending[0]
-            job = self.job(snapshot_id)
-            if job is not None:
-                self._deliver_with_retries(job)
+            try:
+                job = self.job(snapshot_id)
+                if job is not None:
+                    self._deliver_with_retries(job)
+            except Exception:
+                # An unreadable job must not stop the worker or hang drain();
+                # its file stays for inspection and the next process retries it.
+                logger.exception("evidence export job %s could not be processed", snapshot_id)
             with self._condition:
                 self._pending.popleft()
                 self._outstanding.discard(snapshot_id)
