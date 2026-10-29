@@ -67,7 +67,7 @@ func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, 
 			switch {
 			case m.GetResult() == "reverted_ineffective":
 				stale[m.GetPlaybookId()] = "stage reverted it as ineffective"
-			case !stageApplicationSettled(m, outcome.GetPlanApplications()) && (m.GetResult() != "applied_cleared" || len(m.GetRemainingFindingFingerprints()) > 0 || m.GetError() != ""):
+			case !stageApplicationSettled(m, outcome.GetPlanApplications()) && !stageObservationSettled(m, outcome) && (m.GetResult() != "applied_cleared" || len(m.GetRemainingFindingFingerprints()) > 0 || m.GetError() != ""):
 				stale[m.GetPlaybookId()] = "stage result " + m.GetResult()
 			}
 		}

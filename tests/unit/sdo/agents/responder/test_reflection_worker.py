@@ -269,6 +269,123 @@ def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(
         run_reflection_task(path, "result-map", Publisher())
 
 
+@pytest.mark.parametrize("needs_work", [False, True])
+def test_builtin_reflection_uses_real_native_no_change_check_before_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prepare_reflection_memory,
+    needs_work: bool,
+) -> None:
+    """Native acceptance can finish covered work; a real unencoded repair still reaches the model."""
+    from sdo.agents.responder import reflection_worker
+    from sdo.contracts import OutcomeRecord
+
+    checkout = tmp_path / "checkout"
+    outcome = OutcomeRecord(schema_version=1, incident_id="covered", classification="success")
+    if needs_work:
+        action = outcome.repair_actions.add(
+            action_id="manual",
+            kind="kubectl-delete",
+            success=True,
+            target="Pod/app/api",
+            summary="replace unhealthy Pod",
+        )
+        action.resources.add(api_version="v1", kind="Pod", namespace="app", name="api")
+        action.started_at.FromJsonString("2026-10-28T00:00:00Z")
+        action.completed_at.FromJsonString("2026-10-28T00:00:01Z")
+    base = prepare_reflection_memory(
+        checkout, "covered", outcome_record=json_format.MessageToDict(outcome, preserving_proto_field_name=True)
+    )
+    closure = _closure()
+    closure.request.incident_id = "covered"
+    request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit=base, session_mode="fresh")
+    request.memory_snapshot.accepted_commit = base
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="covered-reflection",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        workspace={"proposal_id": "covered-reflection", "checkout_path": str(checkout), "base_commit": base},
+    )
+    task.request.Pack(request)
+    path = tmp_path / "request.json"
+    path.write_text(to_canonical_json(task))
+    selected = Reflector()
+    calls = []
+
+    def select(guidance):
+        calls.append(guidance)
+        return selected
+
+    monkeypatch.setattr(reflection_worker, "_default_reflector", select)
+    publisher = Publisher()
+    result = run_reflection_task(path, "result-map", publisher)
+    assert result.status == "completed"
+    assert bool(calls) == needs_work, "only native-accepted no_change may avoid the provider"
+    assert (selected.kwargs is not None) == needs_work
+    response = ReflectionResult()
+    assert result.response.Unpack(response)
+    assert response.learning_decision == "no_change"
+    if not needs_work:
+        assert response.no_change_reason == "native_memory_check_no_change"
+
+
+@pytest.mark.parametrize("released_record", [True, False])
+def test_native_no_change_preserves_resumed_session_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prepare_reflection_memory,
+    released_record: bool,
+) -> None:
+    from libs.agent_cli.session_ownership import SessionOwnership
+    from sdo.agents.responder import reflection_worker
+    from sdo.contracts import OutcomeRecord
+
+    checkout, session = tmp_path / "checkout", tmp_path / "session"
+    monkeypatch.setenv("SDO_SESSION_DIR", str(session))
+    monkeypatch.setenv("SDO_AGENT_PROVIDER", "codex")
+    directory = session / "thread-ownership"
+    if released_record:
+        owner = SessionOwnership(directory, "codex", timeout_seconds=1)
+        owner.claim("prior-session", resume=False)
+        owner.close(writer_closed=True)
+    base = prepare_reflection_memory(checkout, "covered")
+    closure = _closure()
+    closure.request.incident_id = "covered"
+    closure.result.responder_session_id = "prior-session"
+    request = ReflectionRequest(
+        closure=closure,
+        outcome=OutcomeRecord(schema_version=1, incident_id="covered", classification="success"),
+        outcome_commit=base,
+        session_mode="resume",
+    )
+    request.memory_snapshot.accepted_commit = base
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="covered-reflection",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        workspace={"proposal_id": "covered-reflection", "checkout_path": str(checkout), "base_commit": base},
+    )
+    task.request.Pack(request)
+    path = tmp_path / "request.json"
+    path.write_text(to_canonical_json(task))
+
+    def forbidden(_guidance):
+        pytest.fail("native acceptance must not dispatch a provider")
+
+    monkeypatch.setattr(reflection_worker, "_default_reflector", forbidden)
+    result = run_reflection_task(path, "result-map", Publisher())
+    if not released_record:
+        assert result.status == "failed"
+        assert result.failure_reason == "session_handoff_invalid"
+        return
+    assert result.status == "completed"
+    stale = SessionOwnership(directory, "codex", timeout_seconds=1, role="responder")
+    with pytest.raises(SessionHandoffError, match="transferred to reflection"):
+        stale.claim("prior-session", resume=True)
+
+
 def test_reflection_worker_requires_commit_bound_logical_memory(tmp_path: Path) -> None:
     closure = _closure()
     request = ReflectionRequest(

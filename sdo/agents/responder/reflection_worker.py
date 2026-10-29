@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
 from libs.agent_cli.errors import rate_limit_failure
-from libs.agent_cli.session_ownership import SessionHandoffError, SessionHandoffTimeout
+from libs.agent_cli.session_ownership import SessionHandoffError, SessionHandoffTimeout, SessionOwnership
 from libs.agent_cli.structured import StructuredTurnTimeout
 from sdo.agents.provider import resolve_agent
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.job import KubernetesResultPublisher
+from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, check_reflection_result
 from sdo.agents.responder.reflection import (
     REFLECTION_DEADLINE_ENV,
     REFLECTION_GUIDANCE_MODES,
@@ -26,8 +27,10 @@ from sdo.agents.responder.reflection import (
     ReflectionTurn,
     ResponderSessionUnavailable,
     SessionReflector,
+    reflection_budget_seconds,
 )
 from sdo.agents.responder.termination import record_worker_failure, records_worker_failure
+from sdo.agents.responder.writer_termination import KubernetesWriterObserver, worker_identity
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -161,27 +164,62 @@ def run_reflection_task(
     if task.HasField("deadline"):
         environment[REFLECTION_DEADLINE_ENV] = repr(task.deadline.ToNanoseconds() / 1e9)
     previous = {key: os.environ.get(key) for key in environment}
-    selected = reflector or _default_reflector(cast("ReflectionGuidance", guidance))
     try:
         os.environ.update(environment)
         if invalid_session:
             raise ResponderSessionUnavailable("reflection responder session ID is missing or invalid")
         if reflector is None and session_mode == "resume" and not os.environ.get("SDO_SESSION_DIR"):
             raise SessionHandoffError("reflection resume requires the durable incident session directory")
-        turn: ReflectionTurn | None = selected.resume(
-            session_id=prior_session or "",
-            incident_id=outcome.incident_id,
-            worktree=Path(task.workspace.checkout_path),
-            outcome=outcome,
-            history=history,
-            outcome_commit=request.outcome_commit,
-            session_mode=cast("ReflectionSessionMode", session_mode),
-            closure=closure,
-            validation_attempt=request.validation_attempt or 1,
-            diagnostics=list(request.previous_diagnostics),
-            cause_work=list(request.cause_work),
-            unassigned_work=list(request.unassigned_work),
-        )
+        turn: ReflectionTurn | None = None
+        if reflector is None:
+            # Ask the existing Go authority before spending a model turn on a
+            # decision it already accepts. A failed or timed-out probe does not
+            # reject learning: the normal session handles the incident below.
+            covered = ReflectionTurn(
+                summary="Accepted memory requires no change under the native check.",
+                learning_decision="no_change",
+                no_change_reason="native_memory_check_no_change",
+            )
+            check = check_reflection_result(
+                Path(task.workspace.checkout_path),
+                covered.to_result(),
+                min(VALIDATION_TIMEOUT_SECONDS, reflection_budget_seconds() / 3),
+            )
+            if check.exit_code == 0 and not check.timed_out:
+                if session_mode == "resume":
+                    # Even without a provider process, reflection permanently
+                    # takes the same released writer ownership as a model turn.
+                    resolved = resolve_agent("reflection", "reflection")
+                    owner = SessionOwnership(
+                        Path(os.environ["SDO_SESSION_DIR"]) / "thread-ownership",
+                        resolved.provider,
+                        timeout_seconds=reflection_budget_seconds(),
+                        role="reflection",
+                        worker=worker_identity(),
+                        termination_observer=KubernetesWriterObserver(),
+                    )
+                    try:
+                        owner.claim(prior_session, resume=True)
+                    finally:
+                        owner.close(writer_closed=True)  # This path starts no provider writer.
+                turn = covered
+                print("reflection-native-no-change: accepted by memory check", flush=True)
+        if turn is None:
+            selected = reflector or _default_reflector(cast("ReflectionGuidance", guidance))
+            turn = selected.resume(
+                session_id=prior_session or "",
+                incident_id=outcome.incident_id,
+                worktree=Path(task.workspace.checkout_path),
+                outcome=outcome,
+                history=history,
+                outcome_commit=request.outcome_commit,
+                session_mode=cast("ReflectionSessionMode", session_mode),
+                closure=closure,
+                validation_attempt=request.validation_attempt or 1,
+                diagnostics=list(request.previous_diagnostics),
+                cause_work=list(request.cause_work),
+                unassigned_work=list(request.unassigned_work),
+            )
         failure: tuple[str, str] | None = None
     except (OSError, ValueError, RuntimeError) as exc:
         # A failed turn is a typed outcome for the controller, not a failed Job.

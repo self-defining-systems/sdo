@@ -81,7 +81,7 @@ The responder's shell commands are not available for this session.
 End of incident brief.
 
 Reflection request:
-Memory exists so later incidents are fixed faster and cheaper. Follow the authoring guide before deciding what to save. First compare applied playbooks, matching detectors and unchanged source with this incident. If existing playbooks match well and nothing is new, return no_change with a short reason and finish. Every recorded hand repair needs an executable typed SDK plan or RunScript step; README holds only judgement and ordering, and sdk_gaps name actually unavailable observations or effects, never work not encoded yet. Update or retire applied playbooks that failed, left findings unresolved or needed later hand repair.
+Memory exists so later incidents are fixed faster and cheaper. First compare applied playbooks, matching detectors and unchanged source with this incident. If existing playbooks match well and nothing is new, return no_change with a short reason and finish. Every recorded hand repair needs an executable typed SDK plan or RunScript step; README holds only judgement and ordering, and sdk_gaps name actually unavailable observations or effects, never work not encoded yet. Update or retire applied playbooks that failed, left findings unresolved or needed later hand repair.
 
 Read across all accepted memory as needed; incident-linked entries come first and full files remain readable in the checkout. Make the smallest useful addition. Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified partial steps. Authoring guide: /opt/sdo/skills/sdo-playbook-authoring/SKILL.md.
 

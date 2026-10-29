@@ -57,7 +57,7 @@ For menu selections, round reports and recovery receipts, read [mitigation menu 
 For first-mutation capture and evidence-gap semantics, read [capture boundaries](references/capture-boundaries.md).
 For acceptance, ownership and restart analysis, read [native broker and memory](references/native-broker.md).
 For incident deadlines and restart recovery, read [native incident recovery](references/native-incident-recovery.md).
-For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md).
+For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md); for cleared lifecycle effects and repair-encoding counts, read [reflection settlement](references/reflection-settlement.md).
 For setup costs and interrupted responder accounting, read [phase-bound usage evidence](references/setup-usage.md).
 Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).
 Before attributing throttled rows to SDO, read [provider capacity evidence](references/provider-capacity.md).

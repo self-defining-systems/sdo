@@ -114,10 +114,11 @@ type EnsureDatabaseUser struct {
 	Password CredentialRef
 	Reason   string
 }
-    EnsureDatabaseUser creates a missing user or restores its exact direct
-    roles. Password is an executor-resolved reference, used only to create
-    a missing user. Existing passwords and unrelated users are preserved.
-    This effect is irreversible.
+    EnsureDatabaseUser creates a missing user or replaces all of an
+    existing user's direct roles with Roles. Include every role to retain;
+    supplying one application grant removes other direct roles. Password is an
+    executor-resolved reference, used only to create a missing user. Existing
+    passwords and unrelated users are preserved. This effect is irreversible.
 
 func (a EnsureDatabaseUser) Validate() error
 

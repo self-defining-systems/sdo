@@ -7,15 +7,12 @@ description: Start here for reflection. Turn recorded hand repairs into validate
 
 Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
-1. **Take the shortest valid path.** Use supplied diagnostics or an explicit failed application as the
-   work list immediately. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line
-   `no_change_reason`; on a pass, return that decision and finish.
-   The check identifies required work: each uncovered hand repair (`reflection.program-required`),
-   each applied playbook that failed, left findings unresolved or needed a later hand repair
-   (`reflection.stale-playbook`: update it, or retire it with `status: retired` and `retired_reason`), and
-   the decision to return when Go already settled evidence in this checkout. When the only new fact
-   is a controller observation/verification failure after an applied effect, record that limitation in the
-   existing playbook README, check once and finish; do not browse the SDK or invent another repair.
+1. **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise
+   call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
+   If it passes, return that decision immediately. Its diagnostics identify required work: uncovered hand
+   repairs (`reflection.program-required`), applied playbooks that failed or needed a later hand repair
+   (`reflection.stale-playbook`: update or retire with a reason), and the decision to return when Go
+   already settled evidence in this checkout. Do not investigate or polish a passing covered incident.
 2. **Map each hand repair to a step.** Make a ledger from **all successful hand repairs** in the current outcome
    (`repair_actions`, `plan_applications`), not only receipts named by diagnostics. Include generic menu
    repairs and dependent Pod replacements; distinguish them from accepted playbook applications. Map each
