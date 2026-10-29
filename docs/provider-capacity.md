@@ -94,3 +94,84 @@ These controls apply to SDO's structured-turn path. Other CLI users sharing the
 subscription must use the same pool or reserve capacity separately. Existing
 running images do not acquire tokens until rebuilt/restarted with this code and
 the chosen pool configuration.
+
+
+## Per-lane registered accounts
+
+`SDO_OPUS_POOL_MODE=per_account` selects host-local cswap accounts instead of the
+legacy default login. This mode applies to every Claude role and model. Every
+lane receives a primary alias; healthy accounts are assigned round-robin, giving
+each lane a distinct primary when enough accounts exist. A configured lane never
+falls back to an unmanaged default login. Legacy modes keep their existing login
+and capacity behavior. Initial rollout is restricted to chelan4 astronomy lanes;
+chelan5 keeps its current default login until separately authorized. Do not export
+or copy account credentials between hosts.
+
+Run `scripts/prepare_claude_accounts.py` on the account's own host. It captures
+`cswap list --json`, reads Linux cswap's base64 credential store privately, and
+writes a private bundle outside source checkouts. Only aliases, health, lane
+assignments and capacity reach stdout. Measured exhausted five-hour/seven-day
+windows exclude accounts until their reset. An unavailable usage API, including
+setup-token HTTP403, leaves eligibility to actual model-call results. No current
+unmanaged login is imported. Missing/corrupt individual credentials are disabled
+without hiding healthy peers.
+
+```bash
+# On the authorized account host only. All paths are host-local references.
+(
+  umask 000  # Only values-free pool/state files need shared worker write access.
+  uv run python scripts/prepare_claude_accounts.py \
+    --directory /private/claude-accounts --pool /host/account-pool \
+    --alias /existing/astronomy-parallel-root/account-pool \
+    --lane 50 --lane 53 --lane 54 --capacity 2
+)
+export SDO_OPUS_POOL_MODE=per_account
+export SDO_OPUS_POOL_HOST_ID=chelan4
+export SDO_OPUS_POOL_HOST_PATH=/opt/sdo-parallel/account-pool
+export SDO_OPUS_POOL_DIR=/host/account-pool
+export SDO_CLAUDE_ACCOUNTS_SECRET=sdo-claude-accounts
+export SDO_CLAUDE_ACCOUNT_PRIMARY=a02  # Use this lane's emitted mapping.
+export SDO_CLAUDE_ACCOUNT_MAX_SESSIONS=2
+export SDO_CLAUDE_ACCOUNT_BACKOFF_SECONDS=5
+export SDO_CLAUDE_ACCOUNT_COOLDOWN_SECONDS=300
+unset SDO_OPUS_POOL_NFS_SERVER SDO_OPUS_POOL_NFS_PATH
+```
+
+Create/update the separate Secret in each lane's control namespace using
+`kubectl create secret generic sdo-claude-accounts --from-file=/private/claude-accounts
+--dry-run=client -o json | kubectl apply -f -`, with the correct context/namespace
+on both commands. Never use literal credentials or print the manifest. The Go
+installer projects the whole Secret read-only at `/sdo/claude-accounts`, without
+`subPath`, into controller, operate and cold/warm worker Pods. Each attempt reopens
+the inventory and credential reference, so updating the Secret refreshes workers
+without restarting a lane. Keep the Claude config/session home unchanged across
+accounts; only the child process OAuth environment changes. Competing API keys,
+custom headers and alternate Claude backends are cleared; OAuth uses Anthropic's
+canonical API endpoint.
+
+`SDO_CLAUDE_ACCOUNT_MAX_SESSIONS` sets concurrency **per account**, default two;
+`SDO_OPUS_MAX_SESSIONS` does not control this mode. Provision account lock/state
+inodes once, with hard-link aliases for every existing app extraMount. Workers
+never create a private account pool. Drain all consumers before resizing account
+capacity. The credential bundle remains private (directory0700/files0600); the
+pool contains no credentials. Host workers additionally set
+`SDO_CLAUDE_ACCOUNTS_DIR=/private/claude-accounts`.
+
+Authentication failures, including real CLI401/403, expired/revoked tokens and
+invalid-key/login diagnostics, disable that registration until human
+re-registration. A rate/overload retries once after the short backoff, then cools
+down that account and tries the next healthy one. Busy healthy accounts wait
+within the existing bounded admission budget. Tool output mentioning auth/limits
+is not a provider failure. Named sessions, ownership, tool audits and accounting
+survive the switch. Health is journaled by registration so stale Secret versions
+and torn writes cannot revive a disabled token. cswap add/add-token re-registration, including the same value, creates a new
+opaque registration ID. Ordinary OAuth refresh preserves the quarantine.
+
+Every selection/skip/failover is recorded by alias and typed reason in session
+`provider-waits.jsonl`; rows retain `account_events` for responder and reflection.
+Shared `account-state.jsonl` is the orchestrator's values-free state-change outbox,
+one stable, crash-deduplicated post per transition. Read it on the account host;
+never copy the private bundle for monitoring. No healthy account yields typed
+`account_exhausted`, final `NOT-GRADED`, and exclusion from SDO success/failure
+counts. A pre-reflection closure grade stays immutable evidence if exhaustion
+occurs during reflection; the final row carries the infrastructure exclusion.

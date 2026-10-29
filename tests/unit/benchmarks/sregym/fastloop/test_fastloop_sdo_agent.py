@@ -433,6 +433,33 @@ def test_learning_drains_reflection_and_reads_tokens_and_warm_path_from_the_stri
     assert state.controllers["hotel-reservation"].pending is None
 
 
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_reflection_account_producer_reaches_learning_evidence_and_infrastructure(
+    tmp_path: Path, exhausted: bool
+) -> None:
+    from benchmarks.sregym.protocol.provider_capacity import RateLimitedRun
+    from libs.agent_cli.provider_capacity import ProviderCapacity
+
+    agent = _agent(tmp_path, FakeOps(), [])
+    resolved = agent.resolve(0, "p", _inject)
+    producer = ProviderCapacity(
+        environment={
+            "SDO_PROVIDER_WAIT_LOG": str(Path(str(resolved.artifacts_dir)) / "provider-waits.jsonl"),
+            "SDO_INCIDENT_ID": str(resolved.incident_id),
+            "SDO_PHASE": "reflection",
+        }
+    )
+    producer.record("account", "selected", account_alias="a03", reason="fallback")
+    if exhausted:
+        producer.record("account", "exhausted", reason="account_exhausted")
+        with pytest.raises(RateLimitedRun, match="account_exhausted"):
+            agent.learn(resolved)
+    else:
+        learned = agent.learn(resolved)
+        assert learned.account_events[-1].phase == "reflection"
+        assert learned.account_events[-1].account_alias == "a03"
+
+
 def test_resolved_incident_keeps_responder_cost_and_mitigation_time_when_learning_fails(tmp_path: Path) -> None:
     ops, calls = FakeOps(), []
     agent = _agent(tmp_path, ops, calls)

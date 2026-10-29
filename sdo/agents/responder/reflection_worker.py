@@ -258,8 +258,8 @@ def run_reflection_task(
 
 
 def _failure_reason(exc: BaseException) -> str:
-    if rate_limit_failure(exc) is not None:
-        return "rate_limited"
+    if limited := rate_limit_failure(exc):
+        return limited.failure_reason
     cause: BaseException | None = exc
     while cause is not None:
         if isinstance(cause, SessionHandoffTimeout):

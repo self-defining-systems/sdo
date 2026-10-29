@@ -666,7 +666,7 @@ def classify_problem_run(
     terminal_infra = infrastructure_error(row) if row is not None else None
     capacity = read_provider_waits(results)
     if capacity_prevented_completion(capacity, str((row or {}).get("agent_error") or (row or {}).get("error") or "")):
-        terminal_infra = "rate_limited"
+        terminal_infra = capacity.exhausted_reason
     if terminal_infra is not None:
         checks.append(Check("infrastructure", "fail", f"infra_error={terminal_infra}"))
         if terminal_infra == "injection_invalid" and not has_injection_evidence(row or {}):

@@ -70,8 +70,16 @@ class ClosureGrader:
             if previous.get("incident_id") != incident_id:
                 raise ValueError("grading directory already belongs to another incident") from None
             return
-        if "rate_limited:" in str(closure["result"].get("error", "")):
-            record.update(status="NOT-GRADED", reason="rate_limited")
+        capacity_reason = next(
+            (
+                reason
+                for reason in ("account_exhausted", "rate_limited")
+                if f"{reason}:" in str(closure["result"].get("error", ""))
+            ),
+            None,
+        )
+        if capacity_reason is not None:
+            record.update(status="NOT-GRADED", reason=capacity_reason)
             temporary = self.path.with_suffix(".json.tmp")
             temporary.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             temporary.replace(self.path)
