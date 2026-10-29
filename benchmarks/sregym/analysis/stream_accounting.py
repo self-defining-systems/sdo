@@ -121,6 +121,7 @@ def summarize_pairs(pairs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "n": len(ratios),
                         "missing": sum(a is None or b is None for a, b in both),
                         "zero_denominator": sum(a == 0 and b is not None for a, b in both),
+                        "unpaired": len(selected) - len(both),
                     },
                 }
             for role in ("responder", "reflection"):

@@ -49,7 +49,7 @@ def test_missing_costs_excluded_per_role_and_zero_denominators_counted() -> None
     responder = group["metrics"]["responder_usd"]
     assert responder["first"] == {"median": 0.2, "n": 3, "missing": 0}
     assert responder["repeat"] == {"median": 0.1, "n": 2, "missing": 1}
-    assert responder["ratio"] == {"median": 0.5, "n": 1, "missing": 1, "zero_denominator": 1}
+    assert responder["ratio"] == {"median": 0.5, "n": 1, "missing": 1, "zero_denominator": 1, "unpaired": 0}
     reflection = group["metrics"]["reflection_usd"]
     assert reflection["ratio"]["median"] == 0.5
     assert reflection["ratio"]["missing"] == 1
@@ -63,6 +63,7 @@ def test_cross_build_pairs_never_count_as_within_build_ratios() -> None:
     for group in groups:
         if group["build"] != "all":
             assert group["metrics"]["responder_usd"]["ratio"]["n"] == 0
+            assert group["metrics"]["responder_usd"]["ratio"]["unpaired"] == 1
 
 
 def test_non_injected_placeholders_do_not_enter_learning_statistics() -> None:

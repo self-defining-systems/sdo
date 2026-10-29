@@ -57,3 +57,6 @@ reason, no attempt reports usage/session evidence, and no model journal contradi
 it. A generic `no_change` result is insufficient. Partial zero counters and
 malformed usage cannot prove no model. Stream medians exclude non-injected held
 placeholders even when their journal is settled.
+Ratio `unpaired` counts missing/excluded encounter rows separately from pairs
+whose existing row has missing billing. This includes cross-build pairs excluded
+from a within-build comparison.
