@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"os/exec"
 	"path"
+	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory/layout"
+	programvalidation "sdo.dev/operator/memory/validate/program"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -63,6 +67,23 @@ func (l *ResponderLoop) scriptProvenance(id string) ScriptProvenance {
 		// checkout, another program's case, or newer memory cannot grant authority.
 		git := func(args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, "git", append([]string{"-C", request.RepositoryWorktree}, args...)...).Output()
+		}
+		// Corpus-free programs bind to the accepted outcome named by their
+		// immutable README. The same receipt predicate runs during publication.
+		if data, err := git("show", request.SourceCommit+":"+layout.PlaybookDir(programID)+"/README.md"); err == nil {
+			var origins struct {
+				Incident string            `yaml:"originating_incident"`
+				Scripts  map[string]string `yaml:"script_origins"`
+			}
+			parts := strings.SplitN(string(data), "---\n", 3)
+			if len(parts) == 3 && yaml.Unmarshal([]byte(parts[1]), &origins) == nil && origins.Incident != "" {
+				if raw, err := git("show", request.SourceCommit+":"+layout.OutcomePath(origins.Incident)); err == nil {
+					outcome := new(contracts.OutcomeRecord)
+					if wire.UnmarshalLenientMigrating(raw, outcome) == nil && outcome.GetIncidentId() == origins.Incident && programvalidation.ScriptReceiptMatches(script, origins.Scripts, origins.Incident, outcome) {
+						return nil
+					}
+				}
+			}
 		}
 		files, err := git("ls-tree", "-r", "--name-only", request.SourceCommit, "--", ".sdo/corpus/")
 		if err != nil {

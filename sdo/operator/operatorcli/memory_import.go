@@ -12,10 +12,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory/observation"
 )
 
 type memoryImportConfig struct {
+	Replay               string
 	Action               string
 	Root                 string
 	Workspaces           string
@@ -39,6 +41,7 @@ func parseMemoryImport(args []string, getenv func(string) string) (memoryImportC
 	}
 	c.Action = args[0]
 	f := flag.NewFlagSet("memory import", flag.ContinueOnError)
+	f.StringVar(&c.Replay, "replay", getenv(settings.ReplayEnvironment), "replay policy: on (default) or off")
 	f.StringVar(&c.Root, "root", ".", "accepted application Git root")
 	f.StringVar(&c.Workspaces, "worktree-root", "", "broker workspaces, outside accepted repository")
 	f.StringVar(&c.ID, "id", "", "unique operator import ID")
@@ -100,7 +103,7 @@ func memoryImport(ctx context.Context, args []string, getenv func(string) string
 		}
 		runner = broker.JobValidator(broker.KubernetesValidationJobClient{Client: client, Namespace: c.Namespace, Image: c.Image, RepositoryPVC: c.PVC, RepositoryMountPath: c.Mount, RepositoryPVCSubPath: c.SubPath, SchemaIdentity: schema, HealthyBaseline: c.HealthyBaseline})
 	}
-	repository, err := broker.New(c.Root, c.Workspaces, runner, broker.ObservationPolicy{Ceiling: ceiling, ApplicationNamespace: c.ApplicationNamespace})
+	repository, err := broker.New(c.Root, c.Workspaces, runner, broker.ObservationPolicy{Replay: c.Replay, Ceiling: ceiling, ApplicationNamespace: c.ApplicationNamespace})
 	if err != nil {
 		return err
 	}

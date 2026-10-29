@@ -850,3 +850,47 @@ func TestControllerEvaluateAllRunsEveryDetectorRegardlessOfSchedule(t *testing.T
 		t.Fatalf("resume evaluation must run every detector once: slow=%d fast=%d evaluations=%d", slow.calls, fast.calls, evaluations)
 	}
 }
+
+func TestReplayOffStillRepairsWithoutCapturingCorpus(t *testing.T) {
+	root := t.TempDir()
+	config := testControllerConfig()
+	config.Namespace = "demo"
+	config.Replay = "off"
+	config.CorpusSessionRoot = root
+	provider := &changingProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "broken", Namespace: "demo"}}}}}
+	detector := controllerDetector("health", time.Second, stateFinding("health"), stateFinding("health"), sdk.Finding{}, sdk.Finding{})
+	detector.spec.Class, detector.spec.Owner = sdk.DetectorClassHealth, sdk.DetectorOwnerHealthJudge
+	detector.spec.Persistence = sdk.PersistencePolicy{Firing: 2, Clearing: 2}
+	detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+	detector.spec.OriginatingCommit = "health-objective"
+	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+	controller, err := NewController(config, []sdk.Detector{detector}, provider, dispatcher, time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(i), 0), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	executePendingEffect(t, controller)
+	request := awaitRequest(t, dispatcher.requests)
+	dir, err := memory.IncidentCorpusDir(root, request.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.snapshot = sdktest.Snapshot{NamespaceName: "demo", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "fixed", Namespace: "demo"}}}}
+	awaitDispatchCompletionQueued(t, controller)
+	for i := 2; i < 19; i++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(i), 0), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("replay off captured corpus: %s (%v)", dir, err)
+	}
+	if controller.config.CorpusSessionRoot != "" {
+		t.Fatal("capture root enabled")
+	}
+
+}

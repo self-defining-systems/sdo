@@ -243,6 +243,7 @@ class RunMetrics:
     hand_repairs: list[str]
     decision: str
     run_id: str = ""
+    replay_mode: str = "on"
     reflection_seconds: float | None = None
     replay_cases: list[str] = field(default_factory=list)
     replay_exit_code: int | None = None

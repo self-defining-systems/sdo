@@ -20,6 +20,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import TextContent
 
 from sdo.agents.context_output import budget_for, save_context
+from sdo.agents.replay import replay_mode
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, validation_output
 from sdo.agents.responder.reflection_authoring import SdkGap, install_authoring_tools
 from sdo.agents.responder.reflection_evidence import install_evidence_tools
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 # Codex forwards only a small default environment to MCP servers. Carry the
 # worker-pinned ownership and offline toolchain settings explicitly.
 VALIDATION_ENVIRONMENT = (
+    "SDO_REPLAY",
     "SDO_ACTOR",
     "SDO_SESSION_SCRATCH",
     "SDO_SESSION_DIR",
@@ -114,7 +116,9 @@ class CheckMemoryReply:
                 if decision
                 else "the same decision"
             )
-            disagreements = _replay_disagreements(result.stdout, set(ids) if decision else None)
+            disagreements = (
+                _replay_disagreements(result.stdout, set(ids) if decision else None) if replay_mode() == "on" else []
+            )
             if disagreements:
                 step = (
                     f"passed; replay disagrees for {'; '.join(disagreements)}. Each program should Match its fault "
@@ -126,7 +130,9 @@ class CheckMemoryReply:
         elif result.timed_out:
             step = "timed out: check again once."
         else:
-            step = "fix each diagnostic as its hint says, then check again; replay is judged once the check passes."
+            step = "fix each diagnostic as its hint says, then check again."
+            if replay_mode() == "on":
+                step += " Replay is judged once the check passes."
         return cls(step, result.exit_code, result.timed_out, result.stdout, result.stderr)
 
 
@@ -201,7 +207,9 @@ def validation_server(
         field says what to do: return on a pass, else fix the diagnostics.
         Legacy decision_path files are also supported. One call waits for final
         diagnostics. Compile/import/format/provenance checks remain required;
-        replay verdicts are information and never block saving. The broker repeats the check.
+        Replay policy comes from SDO_REPLAY (on by default). Off skips corpus and replay;
+        RunScript still requires its successful accepted receipt. Replay verdicts
+        are information. The broker repeats the check.
         """
         if learning_decision is not None:
             if decision_path is not None:

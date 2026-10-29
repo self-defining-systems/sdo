@@ -4,6 +4,34 @@ The deterministic SDK supplies shared snapshot candidate detectors in `sdk/obser
 
 This document describes the production boundaries implemented in this repository and the separate SREGym benchmark boundary. It does not treat historical deployment experiments as production features.
 
+## Replay run policy
+
+The single trusted `replay` setting (`on` by default, or `off`) follows the run through
+installation (`--replay`), typed `ControllerConfig.replay`, the Go broker and isolated
+validator, and worker `SDO_REPLAY`. `sdo-operator memory check --replay` also accepts the
+setting explicitly. Candidate memory never changes the broker's policy.
+
+With replay off, the controller captures no corpus snapshots or primitive recordings,
+and reflection does not settle positive/negative cases. Capture recording and size
+limits therefore cannot block a repair or save. Static and compiled checks skip all
+corpus labels, presence and provenance requirements, healthy replay and generated
+program replay tests. Compilation, imports, changed-source formatting, ownership,
+independent outcomes and successful RunScript receipt provenance remain required.
+Hand repairs still need executable mitigation code; receipt-to-case coverage is not
+required. Skill projection and tool registration omit replay-specific authoring work.
+
+RunScript uses the exact script digest in the accepted incident outcome. A legacy
+receipt without recorded script bytes needs `script_origins: {<sha256>: <receipt-id>}`
+and `originating_incident` in playbook README front matter (shared helpers use
+`metadata.yaml`). Live planning reads immutable accepted Git blobs and the same receipt
+predicate; existing corpus-backed origins remain usable. Program trust, fresh live
+diagnosis, response stages and independent health verification are unchanged.
+
+Corpus remains in the playbook artifact class in the ownership matrix; replay off
+changes no repository scope or production/benchmark boundary. Fastloop incident rows
+record `replay`; older and baseline rows use null. Offline reflection rows record
+`replay_mode`, with disabled replay reported as skipped, never successful.
+
 ## End-to-end lifecycle
 
 ```text

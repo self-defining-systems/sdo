@@ -143,9 +143,16 @@ def docker_command(
     name: str,
     extra_skills: tuple[str, ...] = (),
     post_only: bool = False,
+    replay: str = "on",
+    code_root: Path | None = None,
+    operator_binary: Path | None = None,
 ) -> list[str]:
     """The reflection Job's container, as one ``docker run``: same image, paths, user-visible env."""
 
+    if replay not in {"on", "off"}:
+        raise ValueError("replay must be on or off")
+    if (code_root is None) != (operator_binary is None):
+        raise ValueError("source overlay requires code_root and operator_binary together")
     session = "/sdo/session"
     mounts = {
         f"{run_dir / 'session'}": session,
@@ -162,6 +169,10 @@ def docker_command(
         f"{toolchain / 'bin'}": "/skilleval/bin:ro",
         f"{ENTRY}": "/skilleval/entry.py:ro",
     }
+    if code_root is not None and operator_binary is not None:
+        for part in ("sdo", "libs", "benchmarks"):
+            mounts[str(code_root / part)] = f"/opt/sdo/{part}:ro"
+        mounts[str(operator_binary)] = "/usr/local/bin/sdo-operator:ro"
     if (run_dir / "session" / "api-history").is_dir():
         mounts[f"{run_dir / 'session' / 'api-history'}"] = f"{session}/api-history:ro"
     model = model or scenario.model
@@ -188,6 +199,7 @@ def docker_command(
         "SDO_CODE_PATH": "go",
         "SDO_AGENT_GUIDANCE": "go",
         "SDO_MEMORY_VALIDATION": "go",
+        "SDO_REPLAY": replay,
         "SKILLEVAL_EXTRA_SKILLS": ",".join(extra_skills),
         "GOMAXPROCS": CONTAINER_GOMAXPROCS,
         "SKILLEVAL_POST_ONLY": "1" if post_only else "0",
@@ -257,6 +269,9 @@ def run_one(
     model: str,
     budget_seconds: int,
     extra_skills: tuple[str, ...] = (),
+    replay: str = "on",
+    code_root: Path | None = None,
+    operator_binary: Path | None = None,
 ) -> RunMetrics:
     scenario = Scenario.load(scenario_dir)
     toolchain = prepare_toolchain(scenario.image, toolchain_cache, scenario.controller_image)
@@ -280,6 +295,9 @@ def run_one(
         model=model,
         name=name,
         extra_skills=extra_skills,
+        replay=replay,
+        code_root=code_root,
+        operator_binary=operator_binary,
     )
     (run_dir / "docker-command.json").write_text(json.dumps(command, indent=1), encoding="utf-8")
     (run_dir / "run-config.json").write_text(
@@ -288,6 +306,9 @@ def run_one(
                 "provider": scenario.provider,
                 "model": model or scenario.model,
                 "effort": scenario.effort,
+                "replay": replay,
+                "code_root": str(code_root) if code_root else None,
+                "operator_binary": str(operator_binary) if operator_binary else None,
                 "image": scenario.image,
             },
             indent=2,
@@ -330,6 +351,9 @@ def run_one(
 
 
 def remeasure(scenario_dir: Path, run_dir: Path, *, skills: Path, toolchain_cache: Path, auth: Path) -> RunMetrics:
+    configuration = (
+        json.loads((run_dir / "run-config.json").read_text()) if (run_dir / "run-config.json").is_file() else {}
+    )
     """Rerun the memory check and replay of a finished run, without a model turn."""
 
     scenario = Scenario.load(scenario_dir)
@@ -346,6 +370,9 @@ def remeasure(scenario_dir: Path, run_dir: Path, *, skills: Path, toolchain_cach
         model=DEFAULT_MODEL,
         name=f"skilleval-post-{scenario.scenario_id}-{run_dir.name}-{os.getpid()}",
         post_only=True,
+        replay=configuration.get("replay", "on"),
+        code_root=Path(configuration["code_root"]) if configuration.get("code_root") else None,
+        operator_binary=Path(configuration["operator_binary"]) if configuration.get("operator_binary") else None,
     )
     with (run_dir / "container-post.log").open("w", encoding="utf-8") as log:
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=1800, check=False)
@@ -372,7 +399,8 @@ def collect(scenario_dir: Path, run_dir: Path, *, label: str, wall_seconds: floa
     changed = changed_paths(run_dir / "checkout", scenario.outcome_commit)
     replay = summary.get("replay") or {}
     configuration = run_dir / "run-config.json"
-    model = json.loads(configuration.read_text())["model"] if configuration.is_file() else scenario.model
+    configured = json.loads(configuration.read_text()) if configuration.is_file() else {}
+    model = configured.get("model", scenario.model)
     return RunMetrics(
         scenario=scenario.scenario_id,
         label=label,
@@ -397,6 +425,7 @@ def collect(scenario_dir: Path, run_dir: Path, *, label: str, wall_seconds: floa
         decision=decision_kind(result),
         run_id=run_dir.name,
         reflection_seconds=summary.get("reflection_seconds"),
+        replay_mode=configured.get("replay", "on"),
         replay_cases=list(summary.get("replay_cases") or []),
         replay_exit_code=replay.get("exit_code"),
         replay_rows=replay_verdicts(str(replay.get("stdout") or "")),
@@ -449,6 +478,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skills", type=Path, required=True, help="skills root mounted over /opt/sdo/sdo/skills")
     parser.add_argument("--extra-skill", action="append", default=[], help="install this extra skill too")
     parser.add_argument("--label", required=True)
+    parser.add_argument("--replay", choices=("on", "off"), default="on")
+    parser.add_argument("--code-root", type=Path, help="frozen source overlay (sdo, libs, benchmarks)")
+    parser.add_argument("--operator-binary", type=Path, help="operator built from --code-root")
     parser.add_argument(
         "--remeasure", action="store_true", help="rerun only the check and replay of finished runs under --out"
     )
@@ -463,6 +495,15 @@ def main(argv: list[str] | None = None) -> int:
         "--toolchain-cache", type=Path, default=Path("/mnt/data/shli/cache/skilleval-toolchain"), help="extracted Go"
     )
     args = parser.parse_args(argv)
+    if (args.code_root is None) != (args.operator_binary is None):
+        parser.error("--code-root and --operator-binary must be supplied together")
+    if args.code_root is not None:
+        args.code_root = args.code_root.resolve()
+        args.operator_binary = args.operator_binary.resolve()
+        if not args.operator_binary.is_file() or not all(
+            (args.code_root / part).is_dir() for part in ("sdo", "libs", "benchmarks")
+        ):
+            parser.error("source overlay or operator binary is missing")
     if not 1 <= args.parallel <= MAX_PARALLEL:
         parser.error(f"--parallel must be between 1 and {MAX_PARALLEL} on this shared host")
     if not (args.skills / "sdo-memory" / "SKILL.md").is_file():
@@ -525,6 +566,9 @@ def main(argv: list[str] | None = None) -> int:
                 model=args.model,
                 budget_seconds=args.budget_seconds,
                 extra_skills=tuple(args.extra_skill),
+                replay=args.replay,
+                code_root=args.code_root,
+                operator_binary=args.operator_binary,
             )
         except (OSError, ValueError, subprocess.CalledProcessError) as exc:
             print(f"{path.name} r{index}: {exc}", file=sys.stderr)

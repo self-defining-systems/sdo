@@ -139,6 +139,13 @@ def main() -> int:
             timeout=600,
             env=environment,
         )
+    summary["replay_mode"] = os.environ.get("SDO_REPLAY", "on")
+    if summary["replay_mode"] == "off":
+        summary["replay"] = {"skipped": "replay disabled"}
+        summary["replay_cases"] = []
+        summary["incident_cases"] = []
+        (OUT / "entry-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        return 0
     fixtures = OUT / "replay-fixtures"
     shutil.rmtree(fixtures, ignore_errors=True)
     fixtures.mkdir()

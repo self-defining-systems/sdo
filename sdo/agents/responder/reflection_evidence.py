@@ -377,6 +377,11 @@ def reflection_memory_view(
 
 
 def install_evidence_tools(server: FastMCP) -> None:
+    from sdo.agents.replay import replay_mode
+
+    if replay_mode() == "off":
+        return
+
     def directory() -> Path:
         return Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"))
 

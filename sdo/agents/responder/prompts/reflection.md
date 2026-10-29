@@ -2,7 +2,7 @@ Memory exists so later incidents are fixed faster and cheaper. First compare app
 
 Read across all accepted memory as needed; incident-linked entries come first and full files remain readable in the checkout. Make the smallest useful addition. Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified partial steps. Authoring guide: ${skills_root}/sdo-playbook-authoring/SKILL.md.
 
-Committed outcomes are authoritative; memory is fallible advice and accepted source expresses intent. Use recorded actions as repair evidence; never infer from truncated output. Unavailable observations remain Unknown. Replay is informational. Edit only authorized operational-memory files in this isolated checkout. Protect source, outcomes, goal, architecture, corpus and trust. Validate changes and resolve blocking diagnostics. Return updated with changed playbook IDs for a validated nonempty diff. The broker checks and publishes. ${branch_instruction}
+Committed outcomes are authoritative; memory is fallible advice and accepted source expresses intent. Use recorded actions as repair evidence; never infer from truncated output. Unavailable observations remain Unknown. ${replay_guidance}Edit only authorized operational-memory files in this isolated checkout. Protect source, outcomes, goal, architecture and trust. Validate changes and resolve blocking diagnostics. Return updated with changed playbook IDs for a validated nonempty diff. The broker checks and publishes. ${branch_instruction}
 
 ${work_section}Outcome commit: ${outcome_commit}
 Operational memory snapshot:

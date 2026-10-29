@@ -284,6 +284,10 @@ class SdoPersistentAgent:
     def reasoning_effort(self) -> str:
         return self._settings.runtime_config.agent_effort
 
+    @property
+    def replay(self) -> str:
+        return self._settings.runtime_config.replay
+
     def stage_inputs(self, stage_label: str, receipt_dir: Path, fingerprint: str) -> StageInputs:
         settings = self._settings
         return StageInputs(

@@ -1,6 +1,6 @@
 ---
 name: sdo-playbook-authoring
-description: Start here for reflection. Turn recorded hand repairs into validated playbook programs (diagnose.go, mitigate.go, a labelled corpus case), or return no_change.
+description: Start here for reflection. Turn recorded hand repairs into validated playbook programs (diagnose.go, mitigate.go), or return no_change.
 ---
 
 # From hand repairs to validated programs
@@ -17,22 +17,23 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    (`repair_actions`, `plan_applications`). Each needs an executable step: the typed action matching what
    ran, or `RunScript` with the recorded bytes. README text and `sdk_gaps` never replace
    a step; work not encoded yet is not an SDK gap. One playbook per failure mechanism; partial coverage is fine.
-3. **Copy the closest worked example** from `assets/examples/` (`playbooks/<id>/` and
-   its `corpus/<id>/`, each passing the memory check): `deployment-source-drift`, `webhook-ca-sync`,
+3. **Copy the closest worked example** from `assets/examples/` (`playbooks/<id>/`, each passing the memory check): `deployment-source-drift`, `webhook-ca-sync`,
    `database-user-recovery`, `crashloop-script-repair` (RunScript). Exact signatures are on the
    [SDK card](references/sdk-card.md), grouped by fault.
 4. **Write `.sdo/playbooks/<id>/`**: `diagnose.go` (`Spec`, `Diagnose`), `mitigate.go` (`Mitigate`, same
    package and spec) and `README.md` with front matter `schema_version: 1`, `owner: responder`,
    `originating_incident: <incident id>`, `description: <one line>`. The README holds only judgement and
    ordering: when to use it, what first, what to check after. SDO adds `fault_class` and the index entry.
+<!-- replay:on -->
 5. **Label one corpus case** per new program (rules below): `create_corpus` copies the controller's captures
    (pass `observations` only when none exist, with `repair_receipt_ids`) and writes it in one call. Each program should Match its fault
    capture and NoMatch healthy: decide from what the capture holds (snapshot objects, `pod_admission`, reads
    `recordings_index` lists); a read the capture lacks replays as Unknown, so keep uncaptured live-only reads
    in Mitigate, as `webhook-ca-sync` does.
+<!-- /replay:on -->
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
    playbook IDs, and a summary. It formats changed Go first. Fix each blocking diagnostic as its hint says,
-   then check again. Its `next` field says what to do: return, refine replay, or fix diagnostics.
+   then check again. Its `next` field says what to do: return or fix diagnostics.
 7. When `next` says return, return the same decision and IDs; do not polish passing memory.
 
 Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. For source repairs, separate independent causes as described in
@@ -49,7 +50,11 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   narrow `SetField`; `ReconcileFromSource` restores a whole object. After a workload write, append
   `program.StalledRolloutRelease(v, ref)`.
 - `RunScript`: inline bash byte-identical to the recorded command, application inputs only through
-  relation-derived Env, and digest-to-receipt linkage in `script_origins`.
+  relation-derived Env, and a successful accepted receipt for those bytes.
+<!-- replay:on -->
+  Link the script digest to its receipt ID in the case's `script_origins`.
+<!-- /replay:on -->
+
 - Credentials stay references (env or ConfigMap key); never read Secret data.
 - Learn into incident playbooks. The health judge owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
@@ -57,6 +62,7 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/incidents/<id>/`,
   keep its manifest and `Spec` in step, and bind the role in `ParameterBindings`.
 
+<!-- replay:on -->
 ## Corpus labels
 
 A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accepted case.
@@ -77,6 +83,7 @@ A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accept
   reads, including source comparisons, webhooks, database catalogs and pod admission; an unrecorded read
   is Unknown and names the call. Use its open capture (repair reads are in pre-apply); never invent replies.
 
+<!-- /replay:on -->
 ## More detail, only when needed
 
 - A diagnostic names a rule: [validator rules](references/rules.md).

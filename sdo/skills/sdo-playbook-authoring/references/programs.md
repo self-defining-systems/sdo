@@ -4,10 +4,12 @@ Facts behind the authoring steps. Signatures are on the [SDK card](sdk-card.md).
 
 ## Per-cause work
 
-Go settles covered repairs and their corpus cases before reflection; answer only the open questions in the
-per-cause work. A verified cause with no recorded repair on its own resources is recorded, and the other
-causes are still learned. A program that still matches the verified fixed capture needs refinement: Go keeps
+Go settles covered repairs before reflection; answer only the open questions in the per-cause work. A verified cause with no recorded repair on its own resources is recorded, and the other
+causes are still learned.
+<!-- replay:on -->
+A program that still matches the verified fixed capture needs refinement: Go keeps
 that capture as a NoMatch regression case (`CapturedFixedNoMatchPhase`), never a positive case.
+<!-- /replay:on -->
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
 fault class and originating incident. Preserve accepted provenance; SDO lists it in the generated playbook index.
@@ -58,7 +60,11 @@ unlinked bytes are refused as `script_unprovenanced`.
 bound Pod (`Shell` mongo or mongosh). `CredentialRef` is exactly one of `Env` or `ConfigMap{Name, Key,
 Assignment}` in the Pod's namespace; only the executor resolves it, through exec stdin.
 `EnsureDatabaseUser` creates a missing user or restores its exact direct roles, keeps existing passwords and
-other users, and is irreversible. Build replay from recorded open `DatabaseUsers` replies. Add
+other users, and is irreversible.
+<!-- replay:on -->
+Build replay from recorded open `DatabaseUsers` replies.
+<!-- /replay:on -->
+Add
 `RestartRollout` for a dependent Deployment when recovery needs a reconnect.
 
 ## Routing and Service ports
