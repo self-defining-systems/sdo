@@ -27,9 +27,9 @@ Mutation files contain these generated top-level arrays:
 ## General help
 
 ```text
-Output: session schema; correct feedback once. prior_stages: per-repair receipts; checked_stage_receipts: exact application IDs and scoped verification in brief; findings: residual work. Full receipts remain in details_file. prior_response_progress: bounded failed-episode progress with omissions. Keep repairs; admission_blocked names a rollout prerequisite.
+Output: session schema. prior_stages: receipts; checked_stage_receipts: application IDs and scoped checks; stage_actions: results/rollout blockers; stage_playbooks: program IDs to READMEs. findings: residual work. Full receipts/events: details_file. prior_response_progress: failed-episode progress (bounded). Keep repairs; admission_blocked: rollout prerequisite.
 
-Examples (replace names with incident resources):
+Examples (incident resources):
   sdo source Deployment/app/api
   sdo diagnose targetport --bind service=Service/app/api
   sdo plan targetport --bind service=Service/app/api
