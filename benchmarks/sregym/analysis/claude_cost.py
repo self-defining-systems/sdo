@@ -133,6 +133,7 @@ def _receipt_roles(receipt: dict[str, Any]) -> dict[str, _DispatchEvidence]:
     elif (
         ledger.get("reflection_skipped_reason")
         and not ledger.get("reflection_dispatch_at")
+        and not ledger.get("reflection_results")
         and all(signal is False for signal in reflection_usage)
     ):
         reflection = _DispatchEvidence(False, "correlated native reflection skip without dispatch, session or usage")

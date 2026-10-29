@@ -62,3 +62,5 @@ whose existing row has missing billing. This includes cross-build pairs excluded
 from a within-build comparison.
 The original incident is always a required cost episode. Complete follow-up
 billing cannot make a row complete when the original incident's export is lost.
+An explicit final reflection skip does not erase an unmeasured earlier attempt:
+without per-attempt no-model proof, the whole role remains missing.

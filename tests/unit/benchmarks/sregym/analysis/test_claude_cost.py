@@ -341,3 +341,16 @@ def test_followup_billing_cannot_hide_missing_original_incident(tmp_path: Path) 
     assert row["reflection_usage"]["usd"] is None
     assert row["responder_model_dispatched"] is True  # The followup really ran.
     assert len(row["cost_episodes"]) == 2
+
+
+def test_final_reflection_skip_cannot_erase_an_unmeasured_prior_attempt(tmp_path: Path) -> None:
+    receipt_evidence(tmp_path, deterministic=True, skipped=True)
+    path = tmp_path / "000_synthetic" / "sdo_production_receipt_strict.json"
+    value = json.loads(path.read_text())
+    value["native_ledger"]["reflection_results"] = [{"learning_decision": "failed"}]
+    path.write_text(json.dumps(value))
+    row = {"provider": "claude", "model": MODEL, "incident_id": "current", "results": str(tmp_path)}
+    reconcile_claude_row(row)
+    assert row["reflection_usage"]["cost_state"] == "missing"
+    assert row["reflection_usage"]["usd"] is None
+    assert row["reflection_model_dispatched"] is None
