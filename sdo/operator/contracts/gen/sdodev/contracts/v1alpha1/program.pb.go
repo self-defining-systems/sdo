@@ -1850,8 +1850,6 @@ func (x *ScaleWorkload) GetReplicas() *PlanValue {
 	return nil
 }
 
-// Scales one old-revision ReplicaSet of its controlling Deployment to zero.
-// Refused for a current revision or a ReplicaSet without an observed owner.
 // Requeue one admission-blocked ReplicaSet within the incident namespace.
 type RetryAdmission struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1897,6 +1895,8 @@ func (x *RetryAdmission) GetRef() *ObjectRef {
 	return nil
 }
 
+// Scales one old-revision ReplicaSet of its controlling Deployment to zero.
+// Refused for a current revision or a ReplicaSet without an observed owner.
 type RetireOldRevision struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`

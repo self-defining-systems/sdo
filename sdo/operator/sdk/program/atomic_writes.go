@@ -21,8 +21,6 @@ func DocumentWriteRef(action Action) (sdk.ObjectRef, bool) {
 		return a.Ref, true
 	case ScaleWorkload:
 		return a.Ref, true
-	case RetryAdmission:
-		return a.Ref, true
 	case RetireOldRevision:
 		return a.Ref, true
 	case ReconcileFromSource:
@@ -42,10 +40,6 @@ func DocumentWriteRef(action Action) (sdk.ObjectRef, bool) {
 			return DocumentWriteRef(*a)
 		}
 	case *ScaleWorkload:
-		if a != nil {
-			return DocumentWriteRef(*a)
-		}
-	case *RetryAdmission:
 		if a != nil {
 			return DocumentWriteRef(*a)
 		}

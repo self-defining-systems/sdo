@@ -12,7 +12,7 @@ import (
 
 func TestAdmissionFailedCreateClass(t *testing.T) {
 	replicas := int32(1)
-	for _, message := range []string{`admission webhook "policy.example" denied the request`, `failed calling webhook "policy.example": service not found`, `failed to call webhook: TLS x509 unknown authority`, `denied by policy`, `admission policy denied`, `exceeded quota`, `FailedScheduling`, `ImagePullBackOff`, `webhook backend healthy`} {
+	for index, message := range []string{`admission webhook "policy.example" denied the request`, `failed calling webhook "policy.example": service not found`, `failed to call webhook: TLS x509 unknown authority`, `denied by policy`, `admission policy denied`, `exceeded quota`, `FailedScheduling`, `ImagePullBackOff`, `webhook backend healthy`} {
 		for _, state := range []string{"blocked", "healthy", "scaled-down", "terminating", "cleared", "wrong-condition", "wrong-reason"} {
 			t.Run(message+"/"+state, func(t *testing.T) {
 				set := appsv1.ReplicaSet{Spec: appsv1.ReplicaSetSpec{Replicas: &replicas}, Status: appsv1.ReplicaSetStatus{Conditions: []appsv1.ReplicaSetCondition{{Type: appsv1.ReplicaSetReplicaFailure, Status: corev1.ConditionTrue, Reason: "FailedCreate", Message: message}}}}
@@ -32,7 +32,7 @@ func TestAdmissionFailedCreateClass(t *testing.T) {
 				case "wrong-reason":
 					set.Status.Conditions[0].Reason = "FailedDelete"
 				}
-				want := state == "blocked" && program.AdmissionRejection(message)
+				want := state == "blocked" && index < 5
 				if got := len(program.AdmissionFailedCreate(set)) > 0; got != want {
 					t.Fatalf("got %v want %v", got, want)
 				}

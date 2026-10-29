@@ -138,12 +138,13 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	started := time.Now()
 	defer func() { result.Duration = time.Since(started) }()
 	var admissionRetries []program.Action
+	var admissionRecoveryErr error
 	if !e.deferConvergence {
 		expanded, expandErr := e.withAdmissionRetries(ctx, incident, plan)
-		if expandErr != nil {
-			return result, expandErr
+		admissionRecoveryErr = expandErr
+		if expandErr == nil {
+			admissionRetries = expanded.Actions[len(plan.Actions):]
 		}
-		admissionRetries = expanded.Actions[len(plan.Actions):]
 		if dryRun {
 			plan = expanded
 			admissionRetries = nil
@@ -195,6 +196,9 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	if err == nil && !dryRun && !e.deferConvergence {
 		// Recovery follows the completed repair, outside its compensation
 		// scope. A retry failure must never put the admission blocker back.
+		if admissionRecoveryErr != nil {
+			return result, admissionRecoveryErr
+		}
 		if err = e.applyAdmissionRetries(ctx, incident, admissionRetries, &result); err != nil {
 			return result, err
 		}
@@ -208,6 +212,11 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 				refs = append(refs, patch.Ref)
 			}
 		}
+		owners, ownerErr := e.admissionRetryRolloutRefs(ctx, result)
+		if ownerErr != nil {
+			return result, ownerErr
+		}
+		refs = append(refs, owners...)
 		if err = e.awaitObserved(ctx, objectWrites); err != nil {
 			return result, err
 		}
@@ -795,6 +804,9 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		}
 		return e.prepareAction(ctx, incident, *a, current)
 	case program.RetryAdmission:
+		if current.GetUID() == "" || current.GetResourceVersion() == "" {
+			return nil, errors.New("RetryAdmission requires live UID and resourceVersion")
+		}
 		if incident.Namespace == "" || a.Ref.Namespace != incident.Namespace {
 			return nil, errors.New("RetryAdmission requires the incident namespace")
 		}

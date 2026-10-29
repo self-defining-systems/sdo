@@ -204,13 +204,13 @@ message ScaleWorkload {
   PlanValue replicas = 2 [(buf.validate.field).required = true];
 }
 
-// Scales one old-revision ReplicaSet of its controlling Deployment to zero.
-// Refused for a current revision or a ReplicaSet without an observed owner.
 // Requeue one admission-blocked ReplicaSet within the incident namespace.
 message RetryAdmission {
   ObjectRef ref = 1 [(buf.validate.field).required = true];
 }
 
+// Scales one old-revision ReplicaSet of its controlling Deployment to zero.
+// Refused for a current revision or a ReplicaSet without an observed owner.
 message RetireOldRevision {
   ObjectRef ref = 1 [(buf.validate.field).required = true];
 }

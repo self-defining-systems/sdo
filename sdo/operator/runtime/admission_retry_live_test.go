@@ -11,8 +11,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"sdo.dev/operator/core"
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -24,6 +27,12 @@ func TestAdmissionRetryLive(t *testing.T) {
 	if kubeconfig == "" {
 		t.Skip("set SDO_ADMISSION_RETRY_KUBECONFIG to a disposable cluster")
 	}
+	for _, mode := range []string{"delete", "fail-open"} {
+		t.Run(mode, func(t *testing.T) { testAdmissionRetryLive(t, kubeconfig, mode) })
+	}
+}
+
+func testAdmissionRetryLive(t *testing.T, kubeconfig, mode string) {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		t.Fatal(err)
@@ -61,8 +70,8 @@ func TestAdmissionRetryLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	replicas := int32(1)
-	set := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "blocked", Namespace: namespace.Name}, Spec: appsv1.ReplicaSetSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "retry"}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "retry"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "pause", Image: "registry.k8s.io/pause:3.10.1"}}}}}}
-	if _, err = client.AppsV1().ReplicaSets(namespace.Name).Create(ctx, set, metav1.CreateOptions{}); err != nil {
+	set := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "blocked", Namespace: namespace.Name}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "retry"}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "retry"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "pause", Image: "registry.k8s.io/pause:3.10.1"}}}}}}
+	if _, err = client.AppsV1().Deployments(namespace.Name).Create(ctx, set, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	var failures int32
@@ -72,7 +81,7 @@ func TestAdmissionRetryLive(t *testing.T) {
 			return false, err
 		}
 		for _, event := range events.Items {
-			if event.Reason == "FailedCreate" && event.InvolvedObject.Name == set.Name {
+			if event.Reason == "FailedCreate" && event.InvolvedObject.Kind == "ReplicaSet" {
 				failures = event.Count
 			}
 		}
@@ -82,8 +91,20 @@ func TestAdmissionRetryLive(t *testing.T) {
 		t.Fatalf("waiting for backoff: failures=%d: %v", failures, err)
 	}
 	started := time.Now()
-	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{false}}
-	result, err := executor.Apply(ctx, IncidentRequest{Namespace: namespace.Name, RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: webhook.Name}, Reason: "remove missing admission backend"}}}, false)
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Use the production generic object transport, including its real
+	// discovery and prepared document-patch path.
+	objects := &core.GenericCapture{Namespace: namespace.Name, Client: dynamicClient, Discovery: client.Discovery()}
+	executor := PlanExecutor{Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: client}, Objects: objects}, Rollouts: KubernetesPlanRollouts{Client: client}, Verifier: admissionLiveVerifier{client: client, namespace: namespace.Name, name: set.Name}}
+	var repair program.Action = program.DeleteObject{Ref: sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: webhook.Name}, Reason: "remove missing admission backend"}
+	if mode == "fail-open" {
+		repair = program.PatchObject{Ref: sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: webhook.Name}, Type: "strategic", Patch: []byte(`{"webhooks":[{"name":"retry.example.invalid","failurePolicy":"Ignore"}]}`), Reason: "fail open missing admission backend"}
+	}
+
+	result, err := executor.Apply(ctx, IncidentRequest{Namespace: namespace.Name, RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{repair}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,8 +118,21 @@ func TestAdmissionRetryLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("requeue did not bypass ReplicaSet backoff after %v: %v", time.Since(started), err)
 	}
-	t.Logf("after %d admission FailedCreate attempts, webhook delete + recorded requeue created Pod in %v", failures, time.Since(started))
-	if result.VerificationPassed {
-		t.Fatal("requeue was mistaken for independent application recovery")
+	t.Logf("after %d admission FailedCreate attempts, webhook %s + recorded requeue created Pod and verified Deployment in %v", failures, mode, time.Since(started))
+	if !result.VerificationCompleted || !result.VerificationPassed {
+		t.Fatal("live Deployment recovery was not independently verified")
 	}
+}
+
+type admissionLiveVerifier struct {
+	client          kubernetes.Interface
+	namespace, name string
+}
+
+func (v admissionLiveVerifier) Verify(ctx context.Context) (bool, error) {
+	object, err := v.client.AppsV1().Deployments(v.namespace).Get(ctx, v.name, metav1.GetOptions{})
+	if err != nil {
+		return false, err
+	}
+	return deployment.DeploymentRolloutComplete(object), nil
 }

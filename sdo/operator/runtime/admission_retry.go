@@ -6,9 +6,9 @@ import (
 	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -36,29 +36,6 @@ func (c TypedPlanClient) AdmissionReplicaSets(ctx context.Context, namespace str
 	return sets.Items, nil
 }
 
-func (c KubernetesPlanClient) AdmissionReplicaSets(ctx context.Context, namespace string) ([]appsv1.ReplicaSet, error) {
-	if namespace == "" {
-		return nil, fmt.Errorf("admission retries require an incident namespace")
-	}
-	resource, err := c.resource(sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: namespace})
-	if err != nil {
-		return nil, err
-	}
-	objects, err := resource.List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	var sets []appsv1.ReplicaSet
-	for _, object := range objects.Items {
-		var set appsv1.ReplicaSet
-		if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, &set); err != nil {
-			return nil, err
-		}
-		sets = append(sets, set)
-	}
-	return sets, nil
-}
-
 // Resolve affected identities before any writes, then execute the recovery in
 // the same batch. This covers stage, learned programs and raw responder actions,
 // including deletion, fail-open patches, source restores and private CA sync.
@@ -67,14 +44,15 @@ func (e PlanExecutor) withAdmissionRetries(ctx context.Context, incident Inciden
 		return plan, nil
 	}
 	names := map[string]bool{}
-	explicit := map[sdk.ObjectRef]bool{}
-	for _, action := range plan.Actions {
+	explicit := map[sdk.ObjectRef]int{}
+	lastRepair := -1
+	for index, action := range plan.Actions {
 		switch a := action.(type) {
 		case program.RetryAdmission:
-			explicit[a.Ref] = true
+			explicit[a.Ref] = index
 		case *program.RetryAdmission:
 			if a != nil {
-				explicit[a.Ref] = true
+				explicit[a.Ref] = index
 			}
 		}
 		ref, err := planActionRef(action)
@@ -90,14 +68,22 @@ func (e PlanExecutor) withAdmissionRetries(ctx context.Context, incident Inciden
 			}
 		case program.SyncWebhookCA:
 			names[a.Target.Webhook] = true
+			lastRepair = index
 			continue
 		}
+		lastRepair = index
 		if e.Client == nil {
 			return plan, fmt.Errorf("admission recovery requires an object client")
 		}
 		object, err := e.Client.Get(ctx, ref)
+		if apierrors.IsNotFound(err) {
+			continue
+		}
 		if err != nil {
 			return plan, fmt.Errorf("read admission recovery configuration: %w", err)
+		}
+		if object == nil || !samePlanRef(object, ref) {
+			return plan, fmt.Errorf("admission recovery configuration identity unavailable")
 		}
 		entries, _, err := unstructured.NestedSlice(object.Object, "webhooks")
 		if err != nil {
@@ -136,7 +122,8 @@ func (e PlanExecutor) withAdmissionRetries(ctx context.Context, incident Inciden
 			}
 		}
 		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: set.Namespace, Name: set.Name}
-		if affected && !explicit[ref] {
+		explicitIndex, hasExplicit := explicit[ref]
+		if affected && (!hasExplicit || explicitIndex < lastRepair) {
 			actions = append(actions, program.RetryAdmission{Ref: ref})
 		}
 	}
@@ -175,4 +162,39 @@ func isAdmissionRetry(action program.Action) bool {
 		return true
 	}
 	return false
+}
+
+// The retry writes a ReplicaSet, but its controlling Deployment owns rollout
+// completion. Preserve that relationship for the ordinary live rollout wait.
+func (e PlanExecutor) admissionRetryRolloutRefs(ctx context.Context, result PlanApplicationResult) ([]sdk.ObjectRef, error) {
+	var refs []sdk.ObjectRef
+	seen := map[sdk.ObjectRef]bool{}
+	for index, action := range result.ActionsApplied {
+		if !isAdmissionRetry(action) || index >= len(result.Patches) {
+			continue
+		}
+		patch := result.Patches[index]
+		if patch.After == nil {
+			continue
+		}
+		for _, owner := range patch.After.GetOwnerReferences() {
+			if owner.Controller == nil || !*owner.Controller || owner.APIVersion != "apps/v1" || owner.Kind != "Deployment" {
+				continue
+			}
+			ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: patch.Ref.Namespace, Name: owner.Name}
+			if seen[ref] {
+				continue
+			}
+			live, err := e.Client.Get(ctx, ref)
+			if err != nil {
+				return nil, fmt.Errorf("admission recovery owner observation: %w", err)
+			}
+			if live == nil || !samePlanRef(live, ref) || owner.UID == "" || live.GetUID() != owner.UID {
+				return nil, fmt.Errorf("admission recovery owner identity changed")
+			}
+			seen[ref] = true
+			refs = append(refs, ref)
+		}
+	}
+	return refs, nil
 }
