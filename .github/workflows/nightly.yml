@@ -1,0 +1,163 @@
+name: Nightly expensive acceptance
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-expensive
+  cancel-in-progress: false
+
+env:
+  GOMAXPROCS: "2"
+  GOFLAGS: "-p=4"
+
+# Moved checks and reasons:
+# - Go race-suite cache warming/publication: PRs consume content-addressed builds
+#   without a large cache upload in their enforced critical path. All cases run on PRs.
+# - Six 30s active boundary fuzz campaigns: mutation is valuable beyond the full
+#   seed corpus and 1s PR smoke, but adds at least three minutes to every PR.
+# - Three normal-build latency acceptance repeats, including the 3MiB response:
+#   distribution sampling needs repetition and a quiet runner. PRs keep a single
+#   repeat of all three tests (including the unresolved large-response failure)
+#   and every deterministic forwarding/redaction contract.
+# - Publishing the full shared image-layer cache: uploading compiler/toolchain
+#   layers cost 175s on a measured PR; PRs restore this cache and still build/probe.
+# - All four images even without image-input changes: catch base/tool service
+#   regressions daily. PRs still build/smoke/probe every affected image.
+jobs:
+  acceptance:
+    name: Repeated latency and boundary fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache-dependency-path: '**/go.sum'
+      - name: Three normal-build proxy latency acceptance repeats
+        run: go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli
+        working-directory: sdo/operator
+      - name: Bounded 30-second fuzz campaigns
+        if: "!cancelled()"
+        run: bash scripts/test_ci_fuzz.sh 30s
+
+  images:
+    name: controller images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: Select affected images and compute schema identity
+        id: image-inputs
+        env:
+          CONTROLLER: "true"
+          VALIDATOR: "true"
+          RESPONDER: "true"
+          BENCHMARK: "true"
+        run: |
+          images=()
+          for image in controller validator responder benchmark; do
+            variable="${image^^}"
+            if [ "${!variable}" = "true" ]; then
+              images+=("${image}")
+            fi
+          done
+          echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
+          echo "cache-target=${images[-1]}" >> "${GITHUB_OUTPUT}"
+          (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
+          # The Go static gate and native image smoke both verify this pin.
+          # Avoid a redundant full CLI build just to obtain its schema string.
+          identity="$(python3 scripts/ci_schema_identity.py)"
+          echo "SDO_VALIDATOR_SCHEMA_IDENTITY=${identity}" >> "${GITHUB_ENV}"
+      - name: Build affected images with persistent layers
+        uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
+        with:
+          source: .
+          files: scripts/sdo-images.hcl
+          targets: ${{ steps.image-inputs.outputs.targets }}
+          load: true
+          set: |
+            *.cache-from=type=gha,scope=sdo-images
+            *.cache-from+=type=gha,scope=sdo-controller
+            *.cache-from+=type=gha,scope=sdo-validator
+            *.cache-from+=type=gha,scope=sdo-responder
+            *.cache-from+=type=gha,scope=sdo-benchmark
+            ${{ steps.image-inputs.outputs.cache-target }}.cache-to=type=gha,scope=sdo-images,mode=max
+      - name: Smoke and probe every affected image
+        env:
+          SDO_IMAGES: ${{ steps.image-inputs.outputs.images }}
+          SDO_SKIP_IMAGE_BUILD: "1"
+          SDO_IMAGE_PREFLIGHT: "1"
+        run: ./scripts/build_sdo_images.sh
+      - name: Confirm the responder image carries no SREGym answer key
+        # Belt-and-braces over tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py,
+        # which checks the Dockerfile COPY lines statically: this lists the files an
+        # actually built image carries, so a leak would fail here even if some other
+        # build step (a base image, a stray COPY --from) reintroduced one.
+        run: |
+          files="$(docker run --rm --entrypoint find sdo-sregym-responder:v0.1.0 /opt/sdo/benchmarks -type f)"
+          echo "${files}"
+          # The benchmark worker carries these recording utilities, which contain
+          # no fault catalog or oracle data. All other fastloop paths stay forbidden.
+          recording_modules='(__init__|model_recording|file_edits|recording_worker)'
+          recording_paths="^/opt/sdo/benchmarks/sregym/fastloop/(${recording_modules}\.py|__pycache__/${recording_modules}\.cpython-[0-9]+(\.opt-[0-9]+)?\.pyc)$"
+          leaked="$(echo "${files}" | grep -E '/(experiments|assurance|fastloop|analysis|runner|agents)/|/docs/|/tests/' | grep -Ev "${recording_paths}" || true)"
+          if [ -n "${leaked}" ]; then
+            echo "answer-key paths present in sdo-sregym-responder:v0.1.0:" >&2
+            echo "${leaked}" >&2
+            exit 1
+          fi
+
+
+
+  go-cache:
+    name: Warm and publish shared Go compiler caches
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-nightly-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-shared-1.26.8-
+      - name: Compile every race suite without executing its cases
+        run: |
+          for module in sdo/operator/sdk sdo/operator/core sdo/operator/contracts benchmarks/sregym/protocol/native_receipt_go benchmarks/sregym/protocol/submission_go sdo/operator sdo/operator/runtime; do
+            toolchain=go1.26.8
+            if [[ "$module" = sdo/operator/sdk || "$module" = sdo/operator/core ]]; then
+              toolchain=go1.24.5
+            fi
+            (cd "$module" && GOTOOLCHAIN="$toolchain" go test -race -run '^$' -timeout=1m ./...)
+          done
+          go install github.com/bufbuild/buf/cmd/buf@v1.73.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          # Warm normal-build dependencies too. This output is never a test CLI.
+          (cd sdo/operator && go build -o "$RUNNER_TEMP/native-cache-warm" ./cmd/sdo-operator)
