@@ -17,7 +17,9 @@ case "$mode" in
   race) build_flags=(-race) ;;
   *) echo "unknown Go preparation mode: $mode" >&2; exit 1 ;;
 esac
+echo "Preparation mode=$mode CPUs=$(getconf _NPROCESSORS_ONLN) GOMAXPROCS=$GOMAXPROCS"
 for module in sdo/operator sdo/operator/runtime; do
+  echo "Preparing $module ($mode) at $(date -u +%FT%TZ)"
   # The inventory must use the consumer's race build tags. Discover once while
   # compiling that graph; normal Python contracts still need their own archives.
   if [[ "$mode" == race ]]; then
@@ -31,6 +33,7 @@ for module in sdo/operator sdo/operator/runtime; do
     # them doubles the cold preparation work.
     (cd "$root/$module" && go build ./...)
   fi
+  echo "Prepared $module ($mode) at $(date -u +%FT%TZ)"
 done
 if [[ "$mode" == normal ]]; then
   # Python static analysis vets benchmark mains against the same source graph.

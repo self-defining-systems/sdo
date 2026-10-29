@@ -39,6 +39,9 @@ env:
 jobs:
   prepare-go:
     name: prepare shared Go builds (${{ matrix.mode }})
+    env:
+      # Use the public runner's compiler CPU while retaining consumer build flags.
+      GOMAXPROCS: "4"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:

@@ -449,3 +449,11 @@ def test_all_integration_contracts_use_fixed_shared_capacity() -> None:
     assert any(step.get("with", {}).get("name") == "compiled-python-test-plan" for step in integration["steps"])
     assert set(jobs) == {"prepare-go", "python", "contracts", "required-pr-ci"}
     assert integration["timeout-minutes"] == 4
+
+
+def test_preparation_uses_available_compiler_cpu_without_changing_build_identity() -> None:
+    configuration = workflow()
+    preparation = configuration["jobs"]["prepare-go"]
+    assert preparation["env"]["GOMAXPROCS"] == "4"
+    assert "GOFLAGS" not in preparation["env"]
+    assert configuration["env"]["GOFLAGS"] == "-p=2 -trimpath"
