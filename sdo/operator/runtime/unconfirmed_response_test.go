@@ -73,11 +73,8 @@ func testUnconfirmedResponseContinuation(t *testing.T, mode string) {
 	controller.incidentDetectedAt, controller.incidentDispatchedAt = now, now
 	controller.healthDetectorIDs = []string{"health"}
 	loop := NewResponderLoop(request, nil, staticProvider{snapshot: snapshot}, nil, PlanExecutor{}, 2)
-	loop.VerifyResult = func(context.Context, IncidentResult) ToolResponse {
-		controller.mu.Lock()
-		defer controller.mu.Unlock()
-		_, healthy := controller.finalVerificationStates()
-		return controller.continuationVerificationLocked(healthy, closureSourceReport{})
+	loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
+		return controller.responderResultVerification(ctx, request.IncidentID, &result)
 	}
 	d := KubernetesJobDispatcher{Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), RepositoryPVC: "repo", RepositoryMountPath: filepath.Dir(request.RepositoryWorktree), ServiceAccount: "responder", PollInterval: time.Millisecond, LoopFactory: func(IncidentRequest) *ResponderLoop { return loop }}
 	controller.dispatcher = d

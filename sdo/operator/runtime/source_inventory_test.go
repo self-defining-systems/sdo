@@ -187,8 +187,8 @@ func TestLatentAllHealthClearClosureCarriesInventoryDriftAsInformation(t *testin
 				t.Fatalf("health clear hid latent work: request=%+v closed=%+v", request, closed)
 			}
 			check := c.responderVerification(context.Background(), request.IncidentID)
-			if !check.Healthy || len(check.Findings) != 0 || len(check.Drift) != 5 {
-				t.Fatalf("continuation hid latent drift or let it decide health: %+v", check)
+			if check.Healthy || len(check.Findings) != 0 || len(check.Drift) != 5 {
+				t.Fatalf("pre-proof verification bypassed stability or hid latent drift: %+v", check)
 			}
 			if mode == "removed" {
 				store.objects = live
@@ -206,6 +206,9 @@ func TestLatentAllHealthClearClosureCarriesInventoryDriftAsInformation(t *testin
 			step(3 + int(c.config.ClosureStabilityWindow/time.Second))
 			if len(closed) != 1 || len(closed[0].FinalDetectorStates) != 1 {
 				t.Fatalf("resolved latent work did not verify: %+v", closed)
+			}
+			if check := c.cachedResponderVerification(context.Background(), request.IncidentID, 0); !check.Healthy || len(check.Findings) != 0 {
+				t.Fatalf("published recovery proof did not reach verify: %+v", check)
 			}
 			if source.calls != 1 {
 				t.Fatalf("closure reread accepted source: calls=%d", source.calls)
@@ -346,8 +349,24 @@ func TestSourceInventoryMissingAuthorityPreservesMonitoringAndIsInformation(t *t
 	c.incidentOpen = true
 	c.responderDone = true
 	c.responderCompletedAt = start
-	if check := c.responderVerification(context.Background(), "unverified"); !check.Healthy || len(check.Findings) != 0 || len(check.Drift) != 1 || !strings.Contains(check.Drift[0].Evidence, "unavailable") {
-		t.Fatalf("missing source authority decided health or was hidden: %+v", check)
+	if check := c.responderVerification(context.Background(), "unverified"); check.Healthy || len(check.Findings) != 0 || len(check.Drift) != 1 || !strings.Contains(check.Drift[0].Evidence, "unavailable") {
+		t.Fatalf("pre-proof verification bypassed stability or hid missing authority: %+v", check)
+	}
+	// Exercise the actual controller producer at both sides of the unchanged
+	// stability boundary. Informational inventory failures cannot decide health.
+	for _, elapsed := range []time.Duration{0, c.config.ClosureStabilityWindow - time.Second, c.config.ClosureStabilityWindow} {
+		if err := c.Step(context.Background(), start.Add(elapsed), nil); err != nil {
+			t.Fatal(err)
+		}
+		check := c.cachedResponderVerification(context.Background(), "unverified", 0)
+		wantHealthy := elapsed == c.config.ClosureStabilityWindow
+		if check.Healthy != wantHealthy || len(check.Findings) != 0 || len(check.Drift) != 1 || !strings.Contains(check.Drift[0].Evidence, "unavailable") {
+			t.Fatalf("at %s missing source authority decided health or was hidden: %+v", elapsed, check)
+		}
+		_, closed := c.PendingIncidentClosure()
+		if closed != wantHealthy {
+			t.Fatalf("tool and controller closure disagree at %s", elapsed)
+		}
 	}
 }
 func TestSourceInventoryAcceptanceBindsObjectIncarnationAndOwnership(t *testing.T) {

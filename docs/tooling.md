@@ -31,3 +31,5 @@ role-separated median/ratio denominators. Its synthetic contracts cover missing,
 partial and model-free rows, zero denominators and build boundaries. The Claude
 reconciler requires positive native no-dispatch evidence; peer billing cannot
 prove another role's cost is zero.
+
+Controller recovery integration fixtures use `sdo/operator/runtime/recovery_fixture_test.go`: bind the native cached-proof consumer and drive real detector observations before, just before and at the stability boundary. The PR planner protects Controller, Recovery, Closure, SourceInventory, Latent and Continuation families; synthetic planner displacement controls in `tests/unit/scripts/test_pr_test_plan.py` prevent cheaper filler from hiding them. Standalone detector/report units do not assert controller closure.

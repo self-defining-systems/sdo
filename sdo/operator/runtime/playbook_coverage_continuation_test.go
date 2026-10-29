@@ -73,9 +73,7 @@ func TestHermeticCoverageContinuationLeavesOnlyUnexplainedFinding(t *testing.T) 
 		Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{detector}, Provider: provider},
 	}, 3)
 	loop.MenuConfig = productionResponderMenu()
-	loop.VerifyClosure = func(ctx context.Context) ToolResponse {
-		return controller.responderVerification(ctx, request.IncidentID)
-	}
+	bindRecoveryFixture(controller, loop, time.Now().UTC())
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
 	}
@@ -173,7 +171,10 @@ func TestHermeticCoverageContinuationLeavesOnlyUnexplainedFinding(t *testing.T) 
 	if repaired.Error != "" || repaired.ApplicationID == "" {
 		t.Fatalf("scripted repair: %+v", repaired)
 	}
-	observe()
+	if check := fastloopTool(t, tools, "verify"); check.Healthy {
+		t.Fatal("a clear health sample bypassed recovery stability")
+	}
+	assertRecoveryFixtureWindow(t, controller, ctx, time.Now().UTC().Add(time.Second))
 	if final := fastloopTool(t, tools, "verify"); !final.Healthy || len(final.Findings) != 0 {
 		t.Fatalf("final verification: %+v", final)
 	}

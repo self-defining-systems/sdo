@@ -112,6 +112,7 @@ func (b *Broker) checkAttestedCandidate(ctx context.Context, root, base string, 
 	}
 	id := publication.IncidentID
 	if attestation, ok := b.attestations[id]; identity != "" && ok && attestation.identity == identity {
+		slog.Info("reflection_attestation_reused", "incident_id", id, "identity", identity)
 		if gaps != nil {
 			*gaps = append(*gaps, attestation.gaps...)
 		}
@@ -143,6 +144,7 @@ func (b *Broker) checkAttestedCandidate(ctx context.Context, root, base string, 
 				b.attestations = map[string]validationAttestation{}
 			}
 			b.attestations[id] = validationAttestation{identity: identity, gaps: append([]validate.Diagnostic(nil), notes...), replayNotes: replayNotes}
+			slog.Info("reflection_attestation_checked", "incident_id", id, "identity", identity)
 		}
 	}
 	return ds, err
