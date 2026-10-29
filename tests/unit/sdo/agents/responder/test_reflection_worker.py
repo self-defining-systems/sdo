@@ -270,16 +270,19 @@ def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(
 
 
 @pytest.mark.parametrize("needs_work", [False, True])
+@pytest.mark.parametrize("replay", ["on", "off"])
 def test_builtin_reflection_uses_real_native_no_change_check_before_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     prepare_reflection_memory,
     needs_work: bool,
+    replay: str,
 ) -> None:
     """Native acceptance can finish covered work; a real unencoded repair still reaches the model."""
     from sdo.agents.responder import reflection_worker
     from sdo.contracts import OutcomeRecord
 
+    monkeypatch.setenv("SDO_REPLAY", replay)
     checkout = tmp_path / "checkout"
     outcome = OutcomeRecord(schema_version=1, incident_id="covered", classification="success")
     if needs_work:
