@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.go_integration
+
 ROOT = Path(__file__).resolve().parents[3]
 FAKE_LINK = """#!/usr/bin/env bash
 # Stand-in linker: records each real run and writes a deterministic output.

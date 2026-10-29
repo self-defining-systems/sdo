@@ -61,3 +61,43 @@ def test_memory_fixture_consumers_are_discovered_as_compiler_contracts(tmp_path:
     assert any(
         name.endswith("::test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout") for name in names
     )
+
+
+def test_guard_covers_module_fixture_setup(tmp_path: Path) -> None:
+    import sys
+
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    go = commands / "go"
+    go.write_text("#!/bin/sh\nexit 0\n")
+    go.chmod(0o755)
+    suite = tmp_path / "test_compiler.py"
+    suite.write_text("""import subprocess
+import pytest
+@pytest.fixture(scope="module")
+def compiled():
+    subprocess.run(["go", "build", "./..."], check=True)
+def test_compiler(compiled):
+    pass
+""")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:tach",
+            "-p",
+            "tests.conftest",
+            "--confcutdir",
+            str(tmp_path),
+            str(suite),
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PATH": f"{commands}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Go compilation requires pytest.mark.go_integration" in result.stdout + result.stderr

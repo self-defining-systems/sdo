@@ -31,15 +31,20 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.go_integration)
 
 
-@pytest.fixture(autouse=True)
-def _unit_go_guard(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    if request.node.get_closest_marker("go_integration") is not None:
-        return
-    go = shutil.which("go")
-    if go:
-        guard = Path(__file__).resolve().parents[1] / "scripts/unit-tools"
-        monkeypatch.setenv("SDO_UNIT_REAL_GO", go)
-        monkeypatch.setenv("PATH", f"{guard}{os.pathsep}{os.environ['PATH']}")
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_protocol(item: pytest.Item) -> Iterator[None]:
+    # Surround fixture setup too: a module/session fixture can compile before
+    # function-scoped autouse fixtures have started.
+    with pytest.MonkeyPatch.context() as patch:
+        if item.get_closest_marker("go_integration") is None:
+            guard = Path(__file__).resolve().parents[1] / "scripts/unit-tools"
+            go = shutil.which("go")
+            if go == str(guard / "go"):
+                go = os.environ.get("SDO_UNIT_REAL_GO")
+            if go:
+                patch.setenv("SDO_UNIT_REAL_GO", go)
+                patch.setenv("PATH", f"{guard}{os.pathsep}{os.environ['PATH']}")
+        yield
 
 
 @pytest.fixture
