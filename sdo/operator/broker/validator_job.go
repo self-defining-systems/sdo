@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"sdo.dev/operator/memory/layout"
+ contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
 )
 
@@ -38,6 +39,7 @@ type ValidationJobReceipt struct {
 	EgressIsolationCanaryPassed     bool
 	// CoverageGaps are the validator's non-blocking notes for this tree.
 	CoverageGaps []validate.Diagnostic
+ MitigationReplayNotes []*contracts.MitigationReplayNote
 }
 
 type ValidationJobClient interface {
@@ -83,6 +85,7 @@ func JobValidator(client ValidationJobClient) Validator {
 		if collected, ok := ctx.Value(coverageGapsKey{}).(*[]validate.Diagnostic); ok {
 			*collected = append(*collected, receipt.CoverageGaps...)
 		}
+		if collected,ok := ctx.Value(replayNotesKey{}).(*[]*contracts.MitigationReplayNote); ok { *collected = append(*collected,receipt.MitigationReplayNotes...) }
 		return nil
 	}
 }
@@ -94,3 +97,5 @@ func compileBaseline(ctx context.Context) string {
 	baseline, _ := ctx.Value(compileBaselineKey{}).(string)
 	return baseline
 }
+
+type replayNotesKey struct{}

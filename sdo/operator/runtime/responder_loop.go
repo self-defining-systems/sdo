@@ -68,6 +68,8 @@ type VerificationBlocker struct {
 }
 
 type ToolResponse struct {
+ MemoryCheckReport json.RawMessage `json:"memory_check_report,omitempty"`
+
 	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
 	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
 	SelectionSchema            *MenuSchema                    `json:"selection_schema,omitempty"`

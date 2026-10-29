@@ -3,11 +3,14 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/devmount"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -82,6 +85,11 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}
+	// Reuse only immutable validation inputs. Mutable dev mounts or image tags
+	// retain today's full validation rather than trusting a stale attestation.
+	if memoryCodePath != "shell" && !devmount.Enabled() && immutableValidationImage(config.GetValidatorImage()) && immutableValidationImage(config.GetToolchainImage()) {
+		repository.ValidationToolchain = config.GetSchemaIdentity() + ":" + config.GetValidatorImage() + ":" + config.GetToolchainImage()
+	}
 	if upstream := config.GetMemoryUpstream(); upstream != nil {
 		if err := repository.SetUpstream(broker.Upstream{URL: upstream.GetUrl(), Branch: upstream.GetBranch(), Env: broker.SSHEnv(upstream.GetSshDir())}); err != nil {
 			return nil, nil, fmt.Errorf("native repository broker: %w", err)
@@ -148,7 +156,24 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 			executor.Environment["CODEX_HOME"] = "/sdo/session/codex"
 			executor.Environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
 		}
-		return executor, nil
+
+		if native.Repository.ValidationToolchain == "" {
+			return executor, nil
+		}
+
+		base := config.GetRepositoryPvcSubpath()
+		if base == "" {
+			base = "."
+		}
+		relative, err := filepath.Rel(base, subPath)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, errors.New("reflection session is outside repository mount")
+		}
+		directory := filepath.Join(config.GetRepositoryMountPath(), relative, "tools")
+		executor.Environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
+		executor.Environment["SDO_MEMORY_CHECK_DIR"] = "/sdo/session/tools"
+		return reflectionCheckExecutor{Executor: executor, Directory: directory, Handle: reflectionCheckHandler(native.Repository, config.GetRepositoryMountPath(), incidentID)}, nil
+
 	}
 	catalog := memory.OpenCatalogReader(config.GetAppRoot())
 	selected, err := codePathFromContract(config.GetCodePath())
@@ -228,4 +253,13 @@ func mergeEnvironment(layers ...map[string]string) map[string]string {
 		}
 	}
 	return merged
+}
+
+func immutableValidationImage(image string) bool {
+	_, digest, ok := strings.Cut(image, "@sha256:")
+	if !ok || len(digest) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(digest)
+	return err == nil
 }

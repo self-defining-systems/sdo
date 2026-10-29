@@ -83,6 +83,11 @@ type SourceEvidence struct {
 }
 
 type Broker struct {
+ // ValidationToolchain must identify immutable validator/compiler images and policy code.
+ // Empty disables reuse. Attestations remain private to this broker instance.
+ ValidationToolchain string
+ attestations map[string]validationAttestation
+
 	codePath string
 	replay   string
 
@@ -439,7 +444,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			return err
 		}
 		var gaps []validate.Diagnostic
-		diagnostics, err := b.checkCandidate(ctx, stage, current, actor, phase, paths, b.validator, publication, decision, &gaps)
+		diagnostics, err := b.checkAttestedCandidate(ctx, stage, current, actor, phase, paths, publication, decision, &gaps)
 		if err != nil {
 			return fmt.Errorf("proposal validation: %w", err)
 		}
@@ -534,6 +539,7 @@ func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
 	}
 	return b.locked(func() error {
 		return b.lockedAt(b.proposalRoot(incidentID, phase)+".lock", func() error {
+   if phase == ReflectionPhase { delete(b.attestations,incidentID) }
 			return os.RemoveAll(b.proposalRoot(incidentID, phase))
 		})
 	})
