@@ -228,6 +228,7 @@ class IncidentRecord(_PersistedModel):
     provider: str | None = None
     model: str
     reasoning_effort: str | None = None
+    replay: Literal["on", "off"] | None = None
     injection: InjectionState
     #: First detector firing (SDO only; the raw baseline has no detector).
     detected_at: AwareDatetime | None = None

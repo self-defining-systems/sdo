@@ -60,6 +60,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	model := flags.String("model", "", "agent model")
 	provider := flags.String("agent-provider", "codex", "agent provider")
+	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
 	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
 	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
@@ -133,7 +134,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
-		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider, AgentEffort: *effort,
+		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
 		MaxResponseLoops: *maxResponseLoops,
 		ResponderMenu:    menu != "0",
 		LateFindings:     *lateFindings,
@@ -211,7 +212,7 @@ func prepareInstallExistingRepository(ctx context.Context, launch InstallExistin
 	if err != nil {
 		return "", err
 	}
-	w, err := builder.BuildWorkspace(ctx, builder.Config{ApplicationRoot: launch.Repository, DiagnosticsRoot: diagnostics, OperatorRoot: launch.OperatorRoot, CompileOnly: true})
+	w, err := builder.BuildWorkspace(ctx, builder.Config{Replay: launch.Install.Replay, ApplicationRoot: launch.Repository, DiagnosticsRoot: diagnostics, OperatorRoot: launch.OperatorRoot, CompileOnly: true})
 	if err != nil {
 		return "", err
 	}

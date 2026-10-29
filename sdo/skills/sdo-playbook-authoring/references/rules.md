@@ -45,15 +45,21 @@ diagnostic; look it up here.
 - The responder writes playbooks and scripts during reflection. The health judge writes only the
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
-Replay results are information only; compilation, imports, changed-source formatting, ownership and
-provenance are required.
+Compilation, imports, changed-source formatting, ownership and receipt provenance are required.
+<!-- replay:on -->
+Replay results are information only.
+<!-- /replay:on -->
 
-## Corpus evidence
+## Executable repair evidence
 
 Every recorded hand repair needs an executable typed SDK or RunScript step (partial coverage is fine), with
 relation-derived Env and digest-to-receipt linkage; README text holds only judgement and ordering.
+
+<!-- replay:on -->
+## Corpus evidence
 
 - Build replay fixtures from recorded session observations when available. Missing or inconclusive replay
   is recorded with its reason and never rejects publication; retain RunScript receipt linkage. Enforced by: `program.mitigation-not-repaired`.
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,
   provenance, bindings and labels. Do not delete or relabel it; submit new evidence with a new case ID. Enforced by: `program.corpus-immutable`.
+<!-- /replay:on -->

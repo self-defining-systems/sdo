@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"os/exec"
 	"path"
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
+	programvalidation "sdo.dev/operator/memory/validate/program"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -64,6 +68,42 @@ func (l *ResponderLoop) scriptProvenance(id string) ScriptProvenance {
 		git := func(args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, "git", append([]string{"-C", request.RepositoryWorktree}, args...)...).Output()
 		}
+		// Corpus-free programs bind to the accepted outcome named by their
+		// immutable README. The same receipt predicate runs during publication.
+		if data, err := git("show", request.SourceCommit+":"+layout.PlaybookDir(programID)+"/README.md"); err == nil {
+			var origins programvalidation.ScriptOriginMetadata
+			parts := strings.SplitN(string(data), "---\n", 3)
+			if len(parts) == 3 && yaml.Unmarshal([]byte(parts[1]), &origins) == nil {
+				origin := origins.ForScript(script)
+				outcome, err := memory.NewJSONStore(request.RepositoryWorktree).GetAt(ctx, request.SourceCommit, origin.IncidentID)
+				if err == nil && programvalidation.ScriptReceiptMatches(script, origin.LegacyOrigins, origin.IncidentID, outcome.Record, origin.ReceiptID) {
+					return nil
+				}
+
+			}
+		}
+		// Shared helpers carry the same receipt metadata. Only the actual
+		// accepted import closure may supply it; an unrelated helper cannot.
+		helperProven := false
+		_, graphErr := programDependencyRevision(ctx, request.RepositoryWorktree, request.SourceCommit, programID, func(source revisionSource) {
+			if helperProven || !strings.HasPrefix(source.name, ".sdo/lib/") || path.Base(source.name) != "metadata.yaml" {
+				return
+			}
+			raw, err := git("show", request.SourceCommit+":"+source.name)
+			if err != nil {
+				return
+			}
+			var metadata programvalidation.ScriptOriginMetadata
+			if yaml.Unmarshal(raw, &metadata) != nil {
+				return
+			}
+			origin := metadata.ForScript(script)
+			outcome, err := memory.NewJSONStore(request.RepositoryWorktree).GetAt(ctx, request.SourceCommit, origin.IncidentID)
+			helperProven = err == nil && programvalidation.ScriptReceiptMatches(script, origin.LegacyOrigins, origin.IncidentID, outcome.Record, origin.ReceiptID)
+		})
+		if helperProven && graphErr == nil {
+			return nil
+		}
 		files, err := git("ls-tree", "-r", "--name-only", request.SourceCommit, "--", ".sdo/corpus/")
 		if err != nil {
 			return err
@@ -100,7 +140,10 @@ func (l *ResponderLoop) scriptProvenance(id string) ScriptProvenance {
 				return err
 			}
 			if _, err := sdktest.ScriptOrigin(program.RunScript{Script: script}, c); err == nil {
-				return nil
+				outcome, err := memory.NewJSONStore(request.RepositoryWorktree).GetAt(ctx, request.SourceCommit, c.Provenance.IncidentID)
+				if err == nil && programvalidation.ScriptReceiptMatches(script, c.ScriptOrigins, c.Provenance.IncidentID, outcome.Record) {
+					return nil
+				}
 			}
 		}
 		return fmt.Errorf("no original successful timed receipt for these bytes in accepted program memory")

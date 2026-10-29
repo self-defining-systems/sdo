@@ -36,7 +36,7 @@ func (s *run) compile(ctx context.Context) error {
 		return err
 	}
 	workspace, err := builder.BuildWorkspace(ctx, builder.Config{
-		ApplicationRoot: s.req.Root, DiagnosticsRoot: diagnostics, OperatorRoot: s.req.OperatorRoot, HealthyBaseline: s.req.HealthyBaseline,
+		Replay: s.req.Replay, ApplicationRoot: s.req.Root, DiagnosticsRoot: diagnostics, OperatorRoot: s.req.OperatorRoot, HealthyBaseline: s.req.HealthyBaseline,
 	})
 	if err != nil {
 		if ctx.Err() != nil {

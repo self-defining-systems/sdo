@@ -34,6 +34,10 @@ func BaselineGateRequired(candidate string, changedPaths []string) (bool, error)
 }
 
 func selectCompileBaseline(ctx context.Context, request Request) (Request, error) {
+	if request.Replay == "off" {
+		request.HealthyBaseline = ""
+		return request, nil
+	}
 	paths, err := ChangedPaths(ctx, request.Root, request.Base)
 	if err != nil {
 		return Request{}, err

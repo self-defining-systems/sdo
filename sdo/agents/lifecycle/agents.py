@@ -23,6 +23,7 @@ from sdo.agents.code_paths import SKILLS_ROOT, agent_guidance
 from sdo.agents.prompt_templates import named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import DEFAULT_AGENT_EFFORT
+from sdo.agents.replay import selected_skills_root
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -268,7 +269,7 @@ class CodexLifecycleBackend:
             "health_judge",
             "health_judge_shell" if agent_guidance() == "shell" else "health_judge",
             part="health_judge.instructions",
-            skills_root=SKILLS_ROOT,
+            skills_root=selected_skills_root(SKILLS_ROOT),
             source_commit=deployer.source_commit,
             application=repr(application),
             round_index=round_index,

@@ -22,6 +22,7 @@ from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import DEFAULT_AGENT_EFFORT
+from sdo.agents.replay import replay_mode, selected_skills_root
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
@@ -343,7 +344,7 @@ def _logical_learning_request(
             "responder",
             "reflection_shell",
             part="reflection.instructions",
-            skills_root=SKILLS_ROOT,
+            skills_root=selected_skills_root(SKILLS_ROOT),
             branch_instruction=branch_instruction("reflection"),
             memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2), required=False),
             outcome_commit=outcome_commit,
@@ -355,11 +356,16 @@ def _logical_learning_request(
         "responder",
         "reflection",
         part="reflection.instructions",
-        skills_root=SKILLS_ROOT,
+        skills_root=selected_skills_root(SKILLS_ROOT),
         branch_instruction=branch_instruction("reflection"),
         work_section=work_section,
         outcome_commit=outcome_commit,
         memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2), required=False),
+        replay_guidance=(
+            render_prompt("responder", "reflection_replay", part="reflection.instructions")
+            if replay_mode() == "on"
+            else ""
+        ),
         current_outcome_view_json=outcome_prompt,
         history_section=named_prompt("reflection.history", _history_section(outcome, history)),
     )

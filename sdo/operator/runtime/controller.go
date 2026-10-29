@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sort"
@@ -32,6 +33,7 @@ type Dispatcher interface {
 }
 
 type ControllerConfig struct {
+	Replay           string
 	CodePath         CodePathConfig
 	CodePathRegistry *CodePathRegistry
 
@@ -233,6 +235,12 @@ func NewController(
 	dispatcher Dispatcher,
 	start time.Time,
 ) (*Controller, error) {
+	if _, err := settings.Replay(config.Replay); err != nil {
+		return nil, err
+	}
+	if config.Replay == "off" {
+		config.CorpusSessionRoot = ""
+	}
 	registry := config.CodePathRegistry
 	if registry == nil {
 		registry = NewCodePathRegistry()

@@ -13,6 +13,9 @@ import (
 // accepted case fails closed, even if its new labels claim to be synthetic or
 // identify the current incident. New evidence must use a new case ID.
 func (s *run) corpusRules(baseline string) error {
+	if s.req.Replay == "off" {
+		return nil
+	}
 	cases := map[string]bool{}
 	if s.req.Base == "" {
 		entries, err := os.ReadDir(filepath.Join(s.req.Root, layout.CorpusDir))
