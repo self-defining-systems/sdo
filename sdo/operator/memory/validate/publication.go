@@ -177,12 +177,14 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 					r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
 				}
 				if structurallyValid {
-					checkOrigins := programvalidation.ValidateScriptOrigins
+					var originErr error
 					if r.Replay == "off" {
-						checkOrigins = programvalidation.ValidateScriptOriginsWithoutCorpus
+						originErr = programvalidation.ValidateScriptOriginsWithoutCorpus(ctx, r.Root, r.Base, outcome, paths)
+					} else {
+						originErr = programvalidation.ValidateScriptOrigins(r.Root, outcome, paths)
 					}
-					if err := checkOrigins(r.Root, outcome, paths); err != nil {
-						ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: err.Error()})
+					if originErr != nil {
+						ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: originErr.Error()})
 					}
 				}
 			}

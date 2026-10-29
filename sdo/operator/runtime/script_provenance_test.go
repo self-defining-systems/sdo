@@ -360,7 +360,7 @@ func TestScriptProvenanceLinksReceiptIdentityAndRecordedBytes(t *testing.T) {
 // Real execution receipts must remain consumable by live learned programs when
 // there is no corpus at all. Changing checkout files cannot authorize bytes.
 func TestReplayOffAcceptedReceiptsReachLiveProgramsWithoutCorpus(t *testing.T) {
-	for _, variant := range []string{"accepted", "legacy helper", "unimported helper", "wrong bytes", "dirty receipt"} {
+	for _, variant := range []string{"accepted", "new origin", "legacy helper", "unimported helper", "wrong bytes", "dirty receipt"} {
 		t.Run(variant, func(t *testing.T) {
 			loop, _ := pipelineTestLoop(t, true)
 			id := (pipelinePortProgram{}).Spec().ID
@@ -395,6 +395,13 @@ func TestReplayOffAcceptedReceiptsReachLiveProgramsWithoutCorpus(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if variant == "new origin" {
+				body := "---\noriginating_incident: older-birth\nscript_receipts:\n  " + program.ScriptDigest("echo recorded") + ":\n    incident_id: " + incident + "\n    receipt_id: " + outcome.RepairActions[0].ActionId + "\n---\n# Synthetic\n"
+				if err := os.WriteFile(filepath.Join(root, ".sdo/playbooks/"+id+"/README.md"), []byte(body), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
 			if strings.Contains(variant, "helper") {
 				outcome.RepairActions[0].ScriptDigest = ""
 				raw, _ := protojson.Marshal(outcome)
@@ -439,7 +446,7 @@ import _ "synthetic/lib/script"
 				}
 			}
 			err = loop.scriptProvenance(id).check(context.Background(), id, script)
-			if (err == nil) != (variant == "accepted" || variant == "legacy helper") {
+			if (err == nil) != (variant == "accepted" || variant == "legacy helper" || variant == "new origin") {
 				t.Fatalf("%s: %v", variant, err)
 			}
 		})

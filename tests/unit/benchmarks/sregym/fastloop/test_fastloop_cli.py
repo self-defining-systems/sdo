@@ -146,6 +146,8 @@ def test_parser_defaults_match_the_benchmark_configuration() -> None:
     args = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
 
     assert (args.model, args.provider, args.reflection_session, args.incidents) == ("gpt-6-luna", "codex", "resume", 1)
+    assert args.replay == "on"
+    assert build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--replay", "off"]).replay == "off"
     up = build_parser().parse_args(["up", "--run-dir", "x"])
     assert up.cpu_limit == "3"
     assert up.cluster_prefix == "fastloop-w"

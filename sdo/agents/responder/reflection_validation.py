@@ -304,7 +304,11 @@ async def _format_changed_memory_go(checkout: Path) -> None:
         if status.returncode != 0:
             return
         paths = [entry[3:] for entry in listing.decode().split("\0") if entry[3:].endswith(".go") and entry[:2] != " D"]
-        existing = [path for path in paths if (checkout / path).is_file()]
+        existing = [
+            path
+            for path in paths
+            if (checkout / path).is_file() and (replay_mode() != "off" or not path.startswith(".sdo/corpus/"))
+        ]
         if existing:
             gofmt = await asyncio.create_subprocess_exec(
                 "gofmt",

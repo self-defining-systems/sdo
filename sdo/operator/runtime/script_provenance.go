@@ -71,14 +71,12 @@ func (l *ResponderLoop) scriptProvenance(id string) ScriptProvenance {
 		// Corpus-free programs bind to the accepted outcome named by their
 		// immutable README. The same receipt predicate runs during publication.
 		if data, err := git("show", request.SourceCommit+":"+layout.PlaybookDir(programID)+"/README.md"); err == nil {
-			var origins struct {
-				Incident string            `yaml:"originating_incident"`
-				Scripts  map[string]string `yaml:"script_origins"`
-			}
+			var origins programvalidation.ScriptOriginMetadata
 			parts := strings.SplitN(string(data), "---\n", 3)
-			if len(parts) == 3 && yaml.Unmarshal([]byte(parts[1]), &origins) == nil && origins.Incident != "" {
-				outcome, err := memory.NewJSONStore(request.RepositoryWorktree).GetAt(ctx, request.SourceCommit, origins.Incident)
-				if err == nil && programvalidation.ScriptReceiptMatches(script, origins.Scripts, origins.Incident, outcome.Record) {
+			if len(parts) == 3 && yaml.Unmarshal([]byte(parts[1]), &origins) == nil {
+				origin := origins.ForScript(script)
+				outcome, err := memory.NewJSONStore(request.RepositoryWorktree).GetAt(ctx, request.SourceCommit, origin.IncidentID)
+				if err == nil && programvalidation.ScriptReceiptMatches(script, origin.LegacyOrigins, origin.IncidentID, outcome.Record, origin.ReceiptID) {
 					return nil
 				}
 
@@ -95,15 +93,13 @@ func (l *ResponderLoop) scriptProvenance(id string) ScriptProvenance {
 			if err != nil {
 				return
 			}
-			var origin struct {
-				Incident string            `yaml:"originating_incident"`
-				Scripts  map[string]string `yaml:"script_origins"`
-			}
-			if yaml.Unmarshal(raw, &origin) != nil || origin.Incident == "" {
+			var metadata programvalidation.ScriptOriginMetadata
+			if yaml.Unmarshal(raw, &metadata) != nil {
 				return
 			}
-			outcome, err := memory.NewJSONStore(request.RepositoryWorktree).GetAt(ctx, request.SourceCommit, origin.Incident)
-			helperProven = err == nil && programvalidation.ScriptReceiptMatches(script, origin.Scripts, origin.Incident, outcome.Record)
+			origin := metadata.ForScript(script)
+			outcome, err := memory.NewJSONStore(request.RepositoryWorktree).GetAt(ctx, request.SourceCommit, origin.IncidentID)
+			helperProven = err == nil && programvalidation.ScriptReceiptMatches(script, origin.LegacyOrigins, origin.IncidentID, outcome.Record, origin.ReceiptID)
 		})
 		if helperProven && graphErr == nil {
 			return nil

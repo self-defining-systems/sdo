@@ -21,10 +21,13 @@ Hand repairs still need executable mitigation code; receipt-to-case coverage is 
 required. Skill projection and tool registration omit replay-specific authoring work.
 
 RunScript uses the exact script digest in the accepted incident outcome. A legacy
-receipt without recorded script bytes needs `script_origins: {<sha256>: <receipt-id>}`
-and `originating_incident` in playbook README front matter (shared helpers use
-`metadata.yaml`). Live planning reads immutable accepted Git blobs and the same receipt
-predicate; existing corpus-backed origins remain usable. Program trust, fresh live
+receipt without recorded script bytes needs an explicit receipt link in playbook README
+front matter (shared helpers use `metadata.yaml`). `script_receipts` maps each digest to
+`{incident_id, receipt_id}`, preserving several script revisions without rewriting the
+playbook's birth. Legacy `script_origins` with `originating_incident` remains readable. Live planning reads immutable accepted Git blobs and the same receipt
+predicate; existing corpus-backed origins also need corroboration by their accepted original
+outcome, so unchecked corpus bytes cannot grant execution authority. The logical catalog
+excludes corpus contents; optional inert bytes never prevent worker snapshots. Program trust, fresh live
 diagnosis, response stages and independent health verification are unchanged.
 
 Corpus remains in the playbook artifact class in the ownership matrix; replay off

@@ -261,7 +261,7 @@ func (s *run) walk(ctx context.Context) error {
 var invalidIDPath = regexp.MustCompile(`^\.sdo/(?:playbooks/([^/]+)/.+|diagnostics/detectors/(?:health|incidents)/([^/]+)/.+)$`)
 
 func (s *run) visit(rel, abs string) error {
-	kind, id, ok := layout.Classify(rel)
+	kind, id, ok := s.req.classify(rel)
 	if !ok {
 		d := Diagnostic{Rule: RuleUnknownPath, Path: rel, Message: "path is not part of the operational-memory layout", Hint: "see docs/architecture.md for the .sdo/ layout, or run `sdo-operator memory ls`"}
 		if m := invalidIDPath.FindStringSubmatch(rel); m != nil {

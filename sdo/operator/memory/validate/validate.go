@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/memory/layout"
 	"sort"
 	"strings"
 
@@ -238,4 +239,13 @@ func Validate(ctx context.Context, request Request) ([]Diagnostic, error) {
 		return a.Rule < b.Rule
 	})
 	return s.diags, nil
+}
+
+// Corpus bytes are inert when replay is disabled; the containing artifact still
+// has the same owner. Source, detector and playbook classification is unchanged.
+func (r Request) classify(path string) (layout.Kind, string, bool) {
+	if r.Replay == "off" && strings.HasPrefix(path, layout.CorpusDir+"/") {
+		return layout.KindCorpus, strings.TrimPrefix(path, layout.CorpusDir+"/"), true
+	}
+	return layout.Classify(path)
 }

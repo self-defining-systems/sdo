@@ -71,7 +71,7 @@ def test_persistent_receipt_reads_native_go_evidence(
 def test_replay_run_setting_reaches_native_install_arguments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from dataclasses import replace
 
-    import pytest as pytest_runtime
+    import pytest
 
     monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "kubeconfig"))
     for mode in ("on", "off"):
@@ -79,5 +79,5 @@ def test_replay_run_setting_reaches_native_install_arguments(tmp_path: Path, mon
         native = runtime.native_install_config(configured)
         args = native.common_args()
         assert args[args.index("--replay") + 1] == mode
-    with pytest_runtime.raises(ValueError, match="replay"):
+    with pytest.raises(ValueError, match="replay"):
         replace(_config(tmp_path), replay="false")
