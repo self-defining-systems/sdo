@@ -956,3 +956,48 @@ def test_warm_transaction_consumes_real_admission_and_exact_revision(lane, monke
     ops.runtime_state = lambda _control: {"incident_open": True, "busy_until": datetime.now(timezone.utc).isoformat()}
     with pytest.raises(WarmLaneBusy):
         warm.full_reset()
+
+
+def test_warm_pause_waits_for_real_ack_before_syncing_memory(lane, monkeypatch):
+    from benchmarks.sregym.adapter import PersistentControllerError, RuntimeConfig, persistent
+    from benchmarks.sregym.fastloop import warm_environment
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import _clock
+
+    gate, _ = lane
+    gate.environment.state_path = gate.environment.workspace / "controller.json"
+    monkeypatch.setenv("KUBECONFIG", str(gate.environment.kubeconfig))
+    monkeypatch.delenv("SREGYM_BASE_KUBECONFIG", raising=False)
+    config = RuntimeConfig(
+        repository=gate.environment.workspace,
+        namespace=gate.environment.namespace,
+        application="synthetic",
+        controller_image="controller:synthetic",
+        responder_image="responder:synthetic",
+        repository_pvc="synthetic",
+        credentials_secret="reference-only",
+        model="scripted",
+        timeout_seconds=300,
+        controller_namespace="hotel-reservation-sdo",
+    )
+    gate.ops.controller_logs = lambda _control: json.dumps(
+        {
+            "controller_maintenance": "paused",
+            "maintenance_generation": "older-pause",
+        }
+    )
+    gate.ops.set_maintenance = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(persistent, "Clock", lambda: _clock(gate.ops))
+    monkeypatch.setattr(
+        warm_environment, "sync_existing", lambda *_: pytest.fail("accepted memory sync before pause ack")
+    )
+    warm = warm_environment.WarmEnvironment(
+        gate.environment,
+        gate.ops,
+        SimpleNamespace(),
+        config,
+        gate.directory,
+        incoming_data_faults=(),
+        full_reset=lambda: pytest.fail("unexpected reset"),
+    )
+    with pytest.raises(PersistentControllerError, match="acknowledge maintenance"):
+        warm.pause()

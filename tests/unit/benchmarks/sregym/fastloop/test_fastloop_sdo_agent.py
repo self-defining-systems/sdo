@@ -992,3 +992,28 @@ def test_closure_grade_rejects_an_incident_that_predates_injection(tmp_path: Pat
             lambda: InjectionWindow(started_at=injected, finished_at=injected),
             lambda _point: pytest.fail("an unrelated incident must never receive a grade"),
         )
+
+
+@pytest.mark.parametrize("export_status", ["complete", "failed", "foreign"])
+def test_learning_reuses_complete_post_reflection_export_from_real_drain(tmp_path: Path, export_status: str) -> None:
+    class ExportingOps(FakeOps):
+        def export_runtime_artifacts(self, config: Any, artifacts_dir: Path) -> dict[str, str | None]:
+            self.exports = getattr(self, "exports", 0) + 1
+            if self.exports == 2 and export_status == "failed":
+                return {"directory": None, "error": "synthetic failure"}
+            directory = artifacts_dir / "sdo_runtime"
+            if self.exports == 2 and export_status == "foreign":
+                directory = tmp_path / "another-incident/sdo_runtime"
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "synthetic-evidence.json").write_text('{"fixture": true}\n')
+            return {"directory": str(directory), "error": None}
+
+    ops = ExportingOps()
+    agent = _agent(tmp_path, ops, [])
+    agent._settings = replace(agent._settings, kubeconfig="synthetic-kubeconfig", checkpoint_enabled=False)
+    resolved = agent.resolve(0, "p", _inject)
+    before = ops.exports
+    learned = agent.learn(resolved)
+    assert ops.exports - before == (1 if export_status == "complete" else 2)
+    assert learned.incident_id == resolved.incident_id
+    assert (Path(str(learned.artifacts_dir)) / "sdo_runtime/synthetic-evidence.json").is_file()

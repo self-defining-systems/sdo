@@ -126,6 +126,18 @@ class RepositoryBind:
 
 
 def bind_repository_on_node(environment: FastloopEnvironment, node: str, volume_path: str) -> RepositoryBind:
+    from benchmarks.sregym.fastloop.host_limits import HostLimits
+    from benchmarks.sregym.fastloop.warm_lane import own_lane
+
+    # The read/compare/mount/readback transaction has one owner even when an
+    # attach retry and a row-start preflight race on the same host.
+    root = environment.parallel_root.resolve() if environment.parallel_root else None
+    key = f"repository-bind:{root}:{environment.cluster}"
+    with own_lane(HostLimits.from_env(environment.worker_env).directory, key):
+        return _bind_repository_on_node(environment, node, volume_path)
+
+
+def _bind_repository_on_node(environment: FastloopEnvironment, node: str, volume_path: str) -> RepositoryBind:
     """The one node-bind implementation, shared by initial attach and restart repair.
 
     Only the selected lane PV may be rebound. Readback proves device + inode,
@@ -164,6 +176,8 @@ def ensure_repository_bind(environment: FastloopEnvironment) -> RepositoryBind:
     controller whose volume did not observe the repaired mount still fails the
     subsequent native shared-identity check and cannot inject.
     """
+    if environment.memory_repo or environment.memory_branch:
+        raise ValueError("eval: remote memory uses a private PVC and has no host repository bind")
     if not environment.shared_accepted_id or not environment.parallel_lane or environment.parallel_root is None:
         raise ValueError("eval: repository bind repair requires an attached shared lane")
     accepted = (environment.parallel_root / "accepted").resolve()
@@ -193,7 +207,12 @@ def ensure_repository_bind(environment: FastloopEnvironment) -> RepositoryBind:
     return bind_repository_on_node(environment, node, volume_path)
 
 
-def prepare_shared_lane(environment: FastloopEnvironment) -> RepositoryBind:
+def prepare_shared_lane(environment: FastloopEnvironment) -> RepositoryBind | None:
+    if environment.memory_repo or environment.memory_branch:
+        if not environment.memory_repo or not environment.memory_branch:
+            raise ValueError("eval: remote memory requires both repository and branch")
+        _assert_native_shared_identity(environment)
+        return None
     binding = ensure_repository_bind(environment)
     assert_shared_lane(environment)
     return binding
@@ -300,8 +319,6 @@ def assert_lane_isolation(environments: list[FastloopEnvironment]) -> None:
 
 
 def assert_shared_lane(environment: FastloopEnvironment) -> None:
-    from benchmarks.sregym.adapter import RuntimeConfig, assert_shared_repository, native_install_config
-
     if not environment.shared_accepted_id or not environment.parallel_lane or environment.parallel_root is None:
         raise ValueError("eval: attach shared memory before running parallel lanes")
     if environment.workspace.resolve() != (environment.parallel_root / "accepted").resolve():
@@ -322,6 +339,12 @@ def assert_shared_lane(environment: FastloopEnvironment) -> None:
     ]
     if len(matching) != 1:
         raise ValueError("eval: repository PVC does not resolve to the host accepted Git directory")
+    _assert_native_shared_identity(environment)
+
+
+def _assert_native_shared_identity(environment: FastloopEnvironment) -> None:
+    from benchmarks.sregym.adapter import RuntimeConfig, assert_shared_repository, native_install_config
+
     config = RuntimeConfig(
         repository=environment.workspace,
         namespace=environment.namespace,

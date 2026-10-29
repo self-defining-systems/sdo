@@ -13,6 +13,7 @@ from benchmarks.sregym.adapter import (
     incident_work_open,
     kubectl,
     native_install_config,
+    pause_for_recovery,
     sync_existing,
 )
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
@@ -147,7 +148,7 @@ class WarmEnvironment:
 
     def pause(self) -> None:
         self._assert_idle()
-        self.ops.set_maintenance(self.control, paused=True, generation=self.generation)
+        pause_for_recovery(self.ops, self.control)
         # Sync back the accepted checkout, never seed or change it. Restoration
         # must use the accepted render, not the prior row's stale host mirror.
         sync_existing(native_install_config(self.config))
@@ -189,4 +190,6 @@ class WarmEnvironment:
 
     def full_reset(self) -> None:
         self._assert_idle()
+        if self.ops.controller_pod(self.control) is not None:
+            pause_for_recovery(self.ops, self.control)
         self._full_reset()

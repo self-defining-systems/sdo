@@ -436,11 +436,12 @@ class SdoPersistentAgent:
                 receipt_dir = Path(str(outcome.artifacts_dir))
                 index = int(receipt_dir.name.split("_", 1)[0])
                 try:
-                    exported = self._ops.export_runtime_artifacts(
-                        replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
-                    )
-                    if exported.get("error"):
-                        raise RuntimeError(f"incomplete replay recording: {exported['error']}")
+                    if not self._has_post_reflection_export(receipt_dir, outcome.incident_id):
+                        exported = self._ops.export_runtime_artifacts(
+                            replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
+                        )
+                        if exported.get("error"):
+                            raise RuntimeError(f"incomplete replay recording: {exported['error']}")
                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                     self._unrecorded_checkpoint(index, exc)
                 else:
@@ -507,6 +508,30 @@ class SdoPersistentAgent:
             **program_metrics,
             error=error,
         )
+
+    def _has_post_reflection_export(self, receipt_dir: Path, incident_id: str) -> bool:
+        """The native drain owns the completed post-reflection export.
+
+        A stage-end directory alone is insufficient: only drain metadata for
+        this exact incident and directory can remove the duplicate export.
+        Failed or unavailable evidence retains the last-chance export path.
+        """
+        try:
+            receipt = self._receipt(receipt_dir)
+            if receipt.get("incident_id") != incident_id:
+                return False
+            drain = receipt.get("reflection_drain")
+            export = drain.get("runtime_artifacts") if isinstance(drain, dict) else None
+            if not isinstance(export, dict) or export.get("error"):
+                return False
+            directory = export.get("directory")
+            return (
+                isinstance(directory, str)
+                and Path(directory).resolve() == (receipt_dir / "sdo_runtime").resolve()
+                and Path(directory).is_dir()
+            )
+        except (OSError, ValueError, TypeError):
+            return False
 
     @staticmethod
     def _receipt(receipt_dir: Path) -> dict[str, Any]:

@@ -115,3 +115,68 @@ def test_unproven_bind_never_reaches_revision_adoption(monkeypatch, tmp_path, fa
     with pytest.raises(ValueError, match="eval:"):
         sm.ensure_repository_bind(nodes.env)
     assert len(nodes.writes) == (1 if failure == "readback" else 0)
+
+
+def test_direct_shared_run_repairs_before_lifecycle_or_revision_reads(monkeypatch, tmp_path):
+    from benchmarks.sregym.fastloop import cli, fault_tracker
+
+    nodes = Nodes(monkeypatch, tmp_path)
+    nodes.env.save()
+
+    class PreflightReached(Exception):
+        pass
+
+    def preflight(environment):
+        assert environment.shared_accepted_id == TOKEN
+        raise PreflightReached
+
+    monkeypatch.setattr(sm, "prepare_shared_lane", preflight)
+    monkeypatch.setattr(cli, "_worker", lambda *_: pytest.fail("worker started before shared bind preflight"))
+    monkeypatch.setattr(
+        fault_tracker,
+        "describe_sregym_problems",
+        lambda *_a, **_k: pytest.fail("problem read before shared bind preflight"),
+    )
+    args = cli.build_parser().parse_args(["run", "--run-dir", str(nodes.env.run_dir), "--agent", "sdo"])
+    with pytest.raises(PreflightReached):
+        cli._run(args)
+
+
+def test_repair_command_calls_the_shared_bind_owner(monkeypatch, tmp_path, capsys):
+    from benchmarks.sregym.fastloop import cli
+
+    nodes = Nodes(monkeypatch, tmp_path)
+    nodes.env.save()
+    assert cli.main(["repair-repository-bind", "--run-dir", str(nodes.env.run_dir)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["node"] == nodes.node
+    assert result["repaired"] is True
+    assert len(nodes.writes) == 1
+
+
+def test_bind_transaction_has_one_owner_even_across_callers(monkeypatch, tmp_path):
+    from benchmarks.sregym.fastloop.warm_lane import WarmLaneBusy, own_lane
+
+    nodes = Nodes(monkeypatch, tmp_path)
+    lock_dir = tmp_path / "locks"
+    nodes.env.worker_env["FASTLOOP_HOST_LOCK_DIR"] = str(lock_dir)
+    key = f"repository-bind:{nodes.env.parallel_root}:{nodes.env.cluster}"
+    with own_lane(lock_dir, key):
+        with pytest.raises(WarmLaneBusy):
+            sm.ensure_repository_bind(nodes.env)
+    assert not nodes.writes
+    assert sm.ensure_repository_bind(nodes.env).repaired is True
+
+
+def test_remote_memory_verifies_native_identity_without_a_host_bind(monkeypatch, tmp_path):
+    nodes = Nodes(monkeypatch, tmp_path)
+    nodes.env.memory_repo = "synthetic/repository"
+    nodes.env.memory_branch = "synthetic-run"
+    nodes.env.parallel_root = None
+    calls = []
+    monkeypatch.setattr(sm, "_assert_native_shared_identity", lambda env: calls.append(env.shared_accepted_id))
+    assert sm.prepare_shared_lane(nodes.env) is None
+    assert calls == [TOKEN]
+    assert not nodes.writes
+    with pytest.raises(ValueError, match="remote"):
+        sm.ensure_repository_bind(nodes.env)

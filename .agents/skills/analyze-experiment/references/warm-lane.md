@@ -25,3 +25,8 @@ is node-local device/inode evidence, not a Git revision. Repaired bind evidence
 alone grants no controller or incident admission: native shared-repository
 identity and the ordinary fresh baseline checks remain required. Attachment
 recovery rechecks the mount even when its journal already says `all-bound`.
+
+The learner reuses a completed post-reflection export from the native drain only
+when its receipt names this incident and its existing `sdo_runtime` directory.
+Failed, missing or foreign export evidence retains the last-chance export. This
+removes a duplicate synchronous export; it is not asynchronous delivery.
