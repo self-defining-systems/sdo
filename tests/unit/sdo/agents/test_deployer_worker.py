@@ -152,3 +152,59 @@ def test_architecture_worker_cites_accepted_source_commit(tmp_path: Path) -> Non
     typed = ArchitectureResult()
     assert result.response.Unpack(typed)
     assert typed.source_commit == "accepted-source"
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+@pytest.mark.parametrize("role", ["source", "architecture", "health"])
+def test_live_lifecycle_callers_use_the_pod_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, role: str
+) -> None:
+    from sdo.agents import prompt_templates
+    from sdo.agents.lifecycle import ClaudeLifecycleBackend, CodexLifecycleBackend, DeployerAssessment
+
+    class Observed(BaseException):
+        pass
+
+    def boundary(actual_provider: str, _prompt: str, **options: object) -> None:
+        assert actual_provider == provider
+        assert options["access"] == "danger-full-access"
+        raise Observed
+
+    monkeypatch.setattr(prompt_templates, "_run_structured_turn", boundary)
+    monkeypatch.setenv("SDO_AGENT_PROVIDER", provider)
+    backend = (ClaudeLifecycleBackend if provider == "claude" else CodexLifecycleBackend)()
+    assessment = DeployerAssessment(
+        source_commit="synthetic",
+        topology_fingerprint="0" * 64,
+        architecture_summary_markdown="Synthetic application for provider-boundary checks",
+        session_id="synthetic",
+        resources=[],
+    )
+
+    def invoke() -> None:
+        if role == "source":
+            propose_source(
+                SourceDeploymentRequest(
+                    application="demo",
+                    namespace="demo",
+                    health_objective="healthy",
+                    attempt=1,
+                    registry_host="registry.synthetic:5000",
+                ),
+                tmp_path,
+            )
+        elif role == "architecture":
+            backend.run_deployer(repository=tmp_path, application="demo", correction_feedback=None)
+        else:
+            backend.run_health_judge(
+                repository=tmp_path,
+                application="demo",
+                health_objective="healthy",
+                deployer=assessment,
+                round_index=1,
+                previous=None,
+                correction_feedback=None,
+            )
+
+    with pytest.raises(Observed):
+        invoke()

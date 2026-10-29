@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, ClassVar, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from libs.agent_cli.structured import (
-    AccessMode,
     AgentProvider,
     StructuredTurnError,
     StructuredTurnTimeout,
@@ -206,7 +205,7 @@ class ClaudeTaskOutputs:
 
 
 class CodexLifecycleBackend:
-    """Run each lifecycle handoff as a new confined Codex CLI session."""
+    """Run each lifecycle handoff in a fresh session inside its worker pod."""
 
     provider: ClassVar[AgentProvider] = "codex"
 
@@ -285,7 +284,7 @@ class CodexLifecycleBackend:
             traffic_authoring=TRAFFIC_AUTHORING,
             metrics_authoring=METRICS_AUTHORING,
         )
-        draft, session_id = self._execute(repository, prompt, HealthJudgeDraft, sandbox="danger-full-access")
+        draft, session_id = self._execute(repository, prompt, HealthJudgeDraft)
         return HealthJudgeArtifact(**draft.model_dump(), session_id=session_id)
 
     def _execute(
@@ -293,8 +292,6 @@ class CodexLifecycleBackend:
         repository: Path,
         prompt: str,
         output_type: type[DeployerDraft] | type[HealthJudgeDraft],
-        *,
-        sandbox: AccessMode = "read-only",
     ) -> tuple[DeployerDraft | HealthJudgeDraft, str]:
         role = f"{self.provider.capitalize()} lifecycle session"
         try:
@@ -303,7 +300,7 @@ class CodexLifecycleBackend:
                 prompt,
                 output_schema=output_type.model_json_schema(),
                 cwd=repository,
-                access=sandbox,
+                access="danger-full-access",
                 model=self.model,
                 reasoning_effort=self.reasoning_effort,
                 timeout_seconds=self.timeout_seconds,
