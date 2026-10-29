@@ -3,7 +3,7 @@ name: sdo-incident-response
 description: Fix incidents
 ---
 
-Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Tools: [CLI](references/commands.md). Use help-confirmed options; read help after usage errors. [Auth](references/database-credentials.md). [CA](references/webhook-ca.md).
+Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. Tools: [CLI](references/commands.md). Use only help-confirmed options; on a usage error, read help, don't guess. [Auth](references/database-credentials.md). [CA](references/webhook-ca.md).
 
 1. Start from checked stage receipts and residual findings; keep settled repairs. Clear blockers first; re-trigger stalled saved repairs, then re-check saved diagnoses. Use `playbook_coverage` and [matched repair guidance](references/coverage.md).
 2. Report one cause per independently fixable fault, plus late faults. Start independent repairs together; combine edits to one object, keeping each cause's evidence separate.
@@ -13,7 +13,7 @@ Accepted source and developer changes express intent. Operational memory is fall
 6. Undo proven harms; keep useful repairs. Clean up temporary investigation resources; label helper Pods/Jobs `sdo.dev/responder-helper=true`, never application workloads.
 7. Fix `still_broken`; inspect `verification_blockers`; keep `already_done`/`prior_response_progress`; controller rechecks. Merge peer learning; reflect only on new evidence.
 
-Supplied schemas and checked receipts avoid discovery; full files retain evidence.
+Schemas and checked receipts avoid discovery; files retain evidence.
 
 Source before raw commands.
 
