@@ -125,7 +125,11 @@ def test_go_shards_restore_the_completed_preparation_cache() -> None:
     assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
     for name in ("python", "contracts"):
         assert "prepare-go" in jobs[name]["needs"]
-        assert any(step.get("with", {}).get("name") == "prepared-normal" for step in jobs[name]["steps"])
+        assert any(
+            step.get("with", {}).get("name") == "prepared-python"
+            or step.get("with", {}).get("pattern") == "prepared-{normal,race-${{ matrix.bin }}}"
+            for step in jobs[name]["steps"]
+        )
 
 
 def test_pull_requests_restore_a_prepared_cache_from_their_base_branch() -> None:
@@ -164,19 +168,34 @@ def test_only_durable_base_pushes_save_go_caches() -> None:
         assert restore["with"]["key"].startswith(restore["with"]["restore-keys"].split()[0])
 
 
-def test_consumers_require_complete_run_artifacts_even_on_a_cold_base() -> None:
+@pytest.mark.parametrize(
+    ("job", "mode", "published", "downloaded"),
+    [
+        ("python", "python", "prepared-python", "prepared-python"),
+        ("contracts", "normal", "prepared-normal", "prepared-{normal,race-${{ matrix.bin }}}"),
+        ("contracts", "race", "prepared-race-0", "prepared-{normal,race-${{ matrix.bin }}}"),
+    ],
+)
+def test_consumers_require_complete_run_artifacts_even_on_a_cold_base(
+    job: str,
+    mode: str,
+    published: str,
+    downloaded: str,
+) -> None:
     jobs = workflow()["jobs"]
-    for mode in ("normal", "race"):
-        upload = next(
-            step for step in jobs["prepare-go"]["steps"] if step.get("with", {}).get("name") == f"prepared-{mode}"
-        )
-        assert upload["uses"].startswith("actions/upload-artifact@")
-        assert upload["with"]["if-no-files-found"] == "error"
-        for name in ("python", "contracts") if mode == "normal" else ("contracts",):
-            steps = jobs[name]["steps"]
-            assert any(step.get("with", {}).get("name") == f"prepared-{mode}" for step in steps)
-            assert not any(step.get("uses", "").startswith("actions/cache") for step in steps)
-            assert any(f"go_ci_artifacts.sh unpack {mode}" in step.get("run", "") for step in steps)
+    upload = next(step for step in jobs["prepare-go"]["steps"] if step.get("with", {}).get("name") == published)
+    assert upload["uses"].startswith("actions/upload-artifact@")
+    assert upload["with"]["if-no-files-found"] == "error"
+    steps = jobs[job]["steps"]
+    assert any(
+        (step.get("with", {}).get("pattern") or step.get("with", {}).get("name")) == downloaded for step in steps
+    )
+    assert not any(step.get("uses", "").startswith("actions/cache") for step in steps)
+    assert any(f"go_ci_artifacts.sh unpack {mode}" in step.get("run", "") for step in steps)
+    if mode == "python":
+        assert "compiler" not in upload["with"]["path"]
+        assert "modules.tar.zst" in upload["with"]["path"]
+        assert "tools.tar.zst" in upload["with"]["path"]
 
 
 def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
@@ -475,3 +494,26 @@ def test_static_python_job_cannot_compile_go_and_go_checks_run_on_prepared_race_
     assert go_checks["if"] == "matrix.mode == 'race'"
     assert "--go-only" in go_checks["run"]
     assert "-race" in go_checks["env"]["GOFLAGS"]
+
+
+def test_race_transfer_uses_the_graph_size_gate() -> None:
+    script = (ROOT / "scripts/go_ci_artifacts.sh").read_text()
+    assert 'exec python3 "$root/scripts/go_ci_race_artifact.py"' in script
+    jobs = workflow()["jobs"]
+    assert any(step.get("name") == "Pack the bounded current race test graph" for step in jobs["prepare-go"]["steps"])
+
+    published = {step.get("with", {}).get("name") for step in jobs["prepare-go"]["steps"]}
+    for bucket in jobs["contracts"]["strategy"]["matrix"]["bin"]:
+        assert f"prepared-race-{bucket}" in published
+    collector = next(step for step in jobs["prepare-go"]["steps"] if step.get("id") == "python-plan")
+    assert "if" not in collector  # Both producers derive the same exact bucket plan.
+
+
+def test_contract_inputs_are_fetched_concurrently() -> None:
+    downloads = [
+        step
+        for step in workflow()["jobs"]["contracts"]["steps"]
+        if step.get("uses", "").startswith("actions/download-artifact@") and "prepared-" in str(step.get("with", {}))
+    ]
+    assert len(downloads) == 1, "serial network stalls must not add across compiler graphs"
+    assert downloads[0]["with"]["pattern"] == "prepared-{normal,race-${{ matrix.bin }}}"
