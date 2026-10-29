@@ -85,3 +85,7 @@ For a balanced rehearsal, `max_pairs_per_lane: 2` lets a ready lane start
 immediately and limits it to two completed problem pairs while a slower peer
 prepares. Completed lanes keep their cores booked. Leave the setting unset for
 normal streams with unlimited lane reuse.
+
+A retry containing only the repeat stays on the lane that completed its first
+encounter. If that lane is busy, held, over its load limit or on another build,
+the repeat waits; a less-loaded peer cannot change the pair's lane identity.

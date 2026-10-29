@@ -117,3 +117,17 @@ def test_completed_lane_quota_keeps_its_cores_booked():
         place([Pair("p", "p", "hotel")], [lane], [HostRoom("c5", 4, 1)], build="h1", unavailable=frozenset({lane.id}))
         == []
     )
+
+
+def test_repeat_retry_stays_on_its_original_lane_even_when_peer_is_less_loaded():
+    retry = Pair("p0", "problem", "hotel", ("repeat",), lane="a")
+    lanes = [ready("a", "c5", "hotel"), ready("b", "c4", "hotel")]
+    assert place([retry], lanes, [room("c5", load1=20), room("c4", load1=1)], build="h1") == [Run(retry, "a")]
+    for changed in (
+        [],
+        [lanes[0].model_copy(update={"state": "busy", "work": "prior"}), lanes[1]],
+        [lanes[0].model_copy(update={"build": "old"}), lanes[1]],
+    ):
+        assert place([retry], changed, [room("c5"), room("c4")], build="h1") == []
+    assert place([retry], lanes, [room("c5", load1=40), room("c4")], build="h1") == []
+    assert place([retry], lanes, [room("c5"), room("c4")], build="h1", unavailable=frozenset({"a"})) == []

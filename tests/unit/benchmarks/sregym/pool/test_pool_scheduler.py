@@ -280,3 +280,37 @@ def test_lane_pair_quota_balances_the_proof_without_waiting_for_slow_preparation
     first_start = next(i for i, post in enumerate(posts) if post.startswith("START "))
     slow_ready = next(i for i, post in enumerate(posts) if post.startswith("READY c4-l0"))
     assert first_start < slow_ready
+
+
+def test_scheduler_keeps_repeat_on_original_lane_after_load_order_changes(tmp_path: Path) -> None:
+    from benchmarks.sregym.pool.registry import Lane
+
+    pool, hosts, _ = scheduler(tmp_path, [("p0", "hotel_reservation")], {"p0": [[{}, NEVER_INJECTED], [{}]]})
+    hosts["chelan4"].load = 20
+    for host in hosts.values():
+        pool.registry.add(
+            Lane(
+                id=host.name,
+                host=host.name,
+                run_dir=tmp_path / host.name,
+                kubeconfig=tmp_path / "kc",
+                state="ready",
+                app="hotel_reservation",
+                build="h1",
+                source_digest="sha256:a",
+            )
+        )
+    active = hosts["chelan5"].active
+
+    def complete(unit: str) -> bool:
+        result = active(unit)
+        if hosts["chelan5"].attempts:
+            hosts["chelan5"].load = 30
+            hosts["chelan4"].load = 1
+        return result
+
+    hosts["chelan5"].active = complete
+    assert run(pool)["done"] == 1
+    specs = [json.loads(hosts["chelan5"].files[a[a.index("--spec") + 1]]) for _, a in hosts["chelan5"].spawned]
+    assert [spec["encounters"] for spec in specs] == [["first", "repeat"], ["repeat"]]
+    assert not hosts["chelan4"].spawned

@@ -23,6 +23,7 @@ class Pair:
     problem: str
     app: str
     encounters: tuple[str, ...] = ("first", "repeat")
+    lane: str | None = None
 
 
 @dataclass(frozen=True)
@@ -89,8 +90,17 @@ def place(
     decisions: list[Run | Deploy] = []
     waiting: list[Pair] = []
     for pair in pairs:
-        match = next((lane for lane in idle if lane.app == pair.app and lane.build == build), None)
+        match = next(
+            (
+                lane
+                for lane in idle
+                if lane.app == pair.app and lane.build == build and (pair.lane is None or pair.lane == lane.id)
+            ),
+            None,
+        )
         if match is None:
+            if pair.lane is not None:
+                continue
             waiting.append(pair)
             continue
         idle.remove(match)

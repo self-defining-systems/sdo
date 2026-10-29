@@ -338,7 +338,13 @@ class Scheduler:
             for name, host in self.hosts.items()
         ]
         pending = [
-            Pair(pair.id, pair.problem, pair.app, tuple(pair.encounters))
+            Pair(
+                pair.id,
+                pair.problem,
+                pair.app,
+                tuple(pair.encounters),
+                lane=pair.lane if pair.encounters == ["repeat"] else None,
+            )
             for pair in self.journal.pairs
             if pair.status == "pending"
         ]
