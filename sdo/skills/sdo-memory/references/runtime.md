@@ -190,7 +190,8 @@ the responder session; include accepted_json for source-reading plans.
 Missing controller captures do not block this mode. Without observations,
 copy the selected available capture and peer context. repair_receipt_ids
 names the outcome's hand repairs these programs encode; their exact
-RepairReceipt entries are added for you. Replay snapshots and verdicts are informational.
+RepairReceipt entries replace unrelated receipt links in either mode.
+Replay snapshots and verdicts are informational.
 
 ## evidence_inventory
 

@@ -7,16 +7,23 @@ description: Start here for reflection. Turn recorded hand repairs into validate
 
 Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
-1. **Ask the check what is left.** Call `check_memory` with `learning_decision: no_change` and a one-line
-   `no_change_reason`. If it passes, memory already covers this incident: return that decision and finish.
-   Otherwise its diagnostics are the work list: each uncovered hand repair (`reflection.program-required`),
+1. **Take the shortest valid path.** Use supplied diagnostics or an explicit failed application as the
+   work list immediately. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line
+   `no_change_reason`; on a pass, return that decision and finish.
+   The check identifies required work: each uncovered hand repair (`reflection.program-required`),
    each applied playbook that failed, left findings unresolved or needed a later hand repair
    (`reflection.stale-playbook`: update it, or retire it with `status: retired` and `retired_reason`), and
-   the decision to return when Go already settled evidence in this checkout.
-2. **Map each hand repair to a step.** Look up what each listed receipt ran in the current outcome
-   (`repair_actions`, `plan_applications`). Each needs an executable step: the typed action matching what
+   the decision to return when Go already settled evidence in this checkout. When the only new fact
+   is a controller observation/verification failure after an applied effect, record that limitation in the
+   existing playbook README, check once and finish; do not browse the SDK or invent another repair.
+2. **Map each hand repair to a step.** Make a ledger from **all successful hand repairs** in the current outcome
+   (`repair_actions`, `plan_applications`), not only receipts named by diagnostics. Include generic menu
+   repairs and dependent Pod replacements; distinguish them from accepted playbook applications. Map each
+   receipt and repaired target to a program/action. Keep the exact API version, Kind and action
+   semantics from receipts when adapting an example. Each needs an executable step: the typed action matching what
    ran, or `RunScript` with the recorded bytes. README text and `sdk_gaps` never replace
-   a step; work not encoded yet is not an SDK gap. One playbook per failure mechanism; partial coverage is fine.
+   a step; work not encoded yet is not an SDK gap. Group by failure mechanism; one program may cover
+   several targets, but leave no performed repair unencoded.
 3. **Copy the closest worked example** from `assets/examples/` (`playbooks/<id>/` and
    its `corpus/<id>/`, each passing the memory check): `deployment-source-drift`, `webhook-ca-sync`,
    `database-user-recovery`, `crashloop-script-repair` (RunScript). Exact signatures are on the

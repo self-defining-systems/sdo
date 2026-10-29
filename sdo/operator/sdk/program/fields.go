@@ -33,7 +33,11 @@ func ExpandedSetField(f SetField) bool {
 	return f.Value.Origin() == SourceValue || f.DocumentFormat != "" || strings.HasPrefix(f.Path, "data[") || strings.Contains(f.Path, "[name=") || f.Path == "spec" || strings.HasSuffix(f.Path, ".command") || strings.HasSuffix(f.Path, ".args") || strings.HasSuffix(f.Path, ".volumeMounts") || strings.HasSuffix(f.Path, ".nodeSelector") || strings.HasSuffix(f.Path, ".tolerations") || strings.HasSuffix(f.Path, ".affinity") || strings.HasSuffix(f.Path, ".serviceAccountName") || f.Ref.Kind == "HorizontalPodAutoscaler" || f.Ref.Kind == "PodDisruptionBudget"
 }
 
-// ValidateSetField checks the explicit path allowlist and Kubernetes schema kind.
+// ValidateSetField checks a dotted vocabulary path or a JSON pointer on a named nonsecret object.
+// Dotted paths have an explicit allowlist and Kubernetes schema check; use a
+// slash-prefixed JSON pointer for fields outside that vocabulary, or PatchObject
+// for removals and structural edits. Call this on authored SetField actions to
+// check their shape without executing a plan.
 // An absent API version retains legacy program validation; executors require it.
 func ValidateSetField(f SetField) error {
 	if strings.HasPrefix(f.Path, "/") {

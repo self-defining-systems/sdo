@@ -168,6 +168,7 @@ def prepare_corpus(
     program_ids: list[str],
     bindings: dict[str, ResourceBinding],
     peer_bindings: dict[str, ResourceBinding],
+    repair_receipt_ids: list[str] | None = None,
 ) -> dict[str, str]:
     """Copy optional controller evidence and retain its capture attribution."""
     if not re.fullmatch(r"[a-z][a-z0-9_-]*", case_id) or not incident_id:
@@ -181,6 +182,12 @@ def prepare_corpus(
     opened = (captures / f"open@{open_phase}.json").read_bytes()
     fixed = (captures / "fixed.json").read_bytes()
     recordings = (captures / f"open@{open_phase}-recordings.json").read_bytes()
+    if repair_receipt_ids is not None:
+        # Selection has the same meaning in captured and session-observation
+        # modes. Preserve primitive evidence, and link only the named repairs.
+        receipts = repair_receipt_recordings(root, incident_id, repair_receipt_ids)
+        calls = [call for call in json.loads(recordings) if call.get("method") != "RepairReceipt"]
+        recordings = json.dumps(calls + receipts).encode()
     labels = {
         "root_cause_program_ids": program_ids,
         "bindings": {key: value.model_dump() for key, value in bindings.items()},
@@ -317,7 +324,8 @@ def install_authoring_tools(server: FastMCP, root: Path) -> None:
         Missing controller captures do not block this mode. Without observations,
         copy the selected available capture and peer context. repair_receipt_ids
         names the outcome's hand repairs these programs encode; their exact
-        RepairReceipt entries are added for you. Replay snapshots and verdicts are informational.
+        RepairReceipt entries replace unrelated receipt links in either mode.
+        Replay snapshots and verdicts are informational.
         """
         if observations is not None:
             return prepare_session_corpus(
@@ -329,7 +337,6 @@ def install_authoring_tools(server: FastMCP, root: Path) -> None:
                 observations,
                 repair_receipt_ids,
             )
-        # Captured recordings already carry every receipt (memory.CaptureRepairReceipts).
         return prepare_corpus(
             root,
             Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus")),
@@ -339,4 +346,5 @@ def install_authoring_tools(server: FastMCP, root: Path) -> None:
             program_ids,
             bindings,
             peer_bindings or {},
+            repair_receipt_ids,
         )
