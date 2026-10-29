@@ -187,6 +187,7 @@ def test_restore_uses_one_accepted_spec_instead_of_stale_capture(tmp_path):
     assert stale["spec"]["template"]["spec"]["containers"][0]["image"] == "old"
 
 
+@pytest.mark.go_integration
 def test_rbac_equality_uses_real_installer_and_rejects_extra_grants():
     from benchmarks.sregym.fastloop.rbac import installer_rbac, require_rbac_equality
 
