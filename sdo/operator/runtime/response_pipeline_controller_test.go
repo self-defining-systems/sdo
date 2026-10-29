@@ -10,8 +10,8 @@ import (
 )
 
 type pipelineScenarioDispatcher struct {
-	loop       *ResponderLoop
-	agentCalls int
+	loop               *ResponderLoop
+	agentCalls         int
 	observationCeiling time.Duration
 }
 
