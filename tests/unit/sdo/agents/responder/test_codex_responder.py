@@ -344,7 +344,9 @@ def test_every_path_requires_detector_self_check_then_independent_closure(tmp_pa
     workflow = _workflow()
     assert "SDO's independent verification is the source of truth" in workflow
     assert "wait on it instead of sleeping" in workflow
-    assert "continue until it verifies" in workflow
+    assert "verification_status=awaiting_responder_completion" in workflow
+    assert "finish with evidence" in workflow
+    assert "otherwise wait until verified" in workflow
     assert "sdo detect" not in workflow
     assert "sdo verify" not in workflow
     assert "never claim done without this self-check" in workflow

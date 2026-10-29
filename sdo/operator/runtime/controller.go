@@ -1446,6 +1446,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	c.cacheVerificationLocked(verification)
 	if waitForResponder {
 		verification.Summary = "awaiting responder investigation and controller recovery proof"
+		if verified && safe && (guard == nil || !guard.Pending) && verification.Error == "" && len(verification.Findings) == 0 && len(verification.VerificationBlockers) == 0 {
+			verification.VerificationStatus = VerificationAwaitingResponderCompletion
+			verification.Summary = "Fresh health is clear; return the structured incident result now with your repair evidence and disposition of remaining source differences. Recovery proof awaits responder completion; the controller independently checks stability and publishes recovery after you finish."
+		}
 		c.cacheVerificationLocked(verification)
 		// Refresh verify reports without ending the responder's whole turn.
 		c.mu.Unlock()

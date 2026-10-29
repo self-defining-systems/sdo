@@ -441,7 +441,7 @@ func (c *Controller) cachedResponderVerification(ctx context.Context, id string,
 		}
 		response := cloneVerification(*c.cachedVerification)
 		changed := c.verificationChanged
-		ready := response.IncidentVerified != nil || c.findingGeneration != generation
+		ready := response.VerificationStatus == VerificationAwaitingResponderCompletion || response.IncidentVerified != nil || c.findingGeneration != generation
 		// A normally completed incident is already stably closed by its old path.
 		if c.pendingClosureVerifiedLocked(id) {
 			response.IncidentVerified = apihistory.VerificationWarning(c.pendingClosure.VerifiedAt)

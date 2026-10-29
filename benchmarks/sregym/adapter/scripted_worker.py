@@ -470,11 +470,12 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
     verification = first
     for _ in range(0 if unsure else 24):
         verification = _tool("verify")
-        if verification.get("healthy"):
+        if verification.get("healthy") or verification.get("verification_status") == "awaiting_responder_completion":
             break
         time.sleep(5)
     healthy = bool(verification.get("healthy"))
-    if healthy and os.environ.get("SDO_SCRIPTED_SOURCE_REPAIR") == "1":
+    work_completed = healthy or verification.get("verification_status") == "awaiting_responder_completion"
+    if work_completed and os.environ.get("SDO_SCRIPTED_SOURCE_REPAIR") == "1":
         # Refine an existing source object: source publication must not invent
         # topology that the independent toy judge correctly refuses.
         marker = "sdo.dev/scripted-verification"
@@ -570,7 +571,7 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
         {
             "schema_version": "sdo.dev/v1alpha1",
             "incident_id": request.incident_id,
-            "status": "completed" if healthy else "failed",
+            "status": "completed" if work_completed else "failed",
             "confirmed_root_causes": causes if repairs or plan_ids else [],
             "drift_events": [json_format.MessageToDict(label, preserving_proto_field_name=True) for label in labels],
             "applied_playbooks": [{"playbook_id": program_id} for program_id in programs],
