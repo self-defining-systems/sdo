@@ -68,10 +68,6 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 	if c.incidentDispatchedAt.IsZero() {
 		c.incidentDispatchedAt = c.incidentDetectedAt
 	}
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseDispatched, RecordedAt: contractTimestamp(c.incidentDispatchedAt), IncidentId: effect.Request.IncidentID,
-		Worktree: effect.Request.RepositoryWorktree, BaseCommit: effect.Request.RepositoryBaseCommit,
-	})
 	c.mu.Unlock()
 	c.goBackground(func() {
 		defer cancel()
