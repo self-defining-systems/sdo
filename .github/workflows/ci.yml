@@ -205,8 +205,9 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-sandbox-${{ runner.os }}-${{ hashFiles('sdo/operator/**/go.sum') }}
+          key: go-sandbox-${{ runner.os }}-${{ hashFiles('sdo/operator/**/go.sum') }}-${{ github.sha }}
           restore-keys: |
+            go-sandbox-${{ runner.os }}-${{ hashFiles('sdo/operator/**/go.sum') }}-
             go-sandbox-${{ runner.os }}-
       - name: Build and verify the source-bound test CLI
         if: matrix.name == 'unit tests'
@@ -220,7 +221,7 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-sandbox-${{ runner.os }}-${{ hashFiles('sdo/operator/**/go.sum') }}
+          key: go-sandbox-${{ runner.os }}-${{ hashFiles('sdo/operator/**/go.sum') }}-${{ github.sha }}
 
       - name: Save Go cache only on a durable base branch
         if: (matrix.name == 'static analysis' || matrix.name == 'architecture') && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
