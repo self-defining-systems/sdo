@@ -43,6 +43,8 @@ message TrafficSLO {
   optional int32 latency_percentile = 6 [(buf.validate.field).int32 = {gte: 1, lte: 100}];
   // Go-duration string; positivity is host-checked.
   optional string max_latency = 7;
+  // Minimum timeouts contributing to rate violations; unset defaults to two.
+  optional int32 min_timeouts = 8 [(buf.validate.field).int32 = {gte: 1, lte: 100}];
 }
 
 // TrafficWorkloadScenario selects one catalog scenario with a weight and an

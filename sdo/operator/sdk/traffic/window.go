@@ -136,11 +136,18 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 	verdict.ErrorRate = float64(verdict.Errors+verdict.Timeouts) / total
 	verdict.TimeoutRate = float64(verdict.Timeouts) / total
 	verdict.Latency = percentile(latencies, slo.LatencyPercentile)
-	if verdict.ErrorRate >= slo.MaxErrorRate {
+	// Keep raw rates and failures as evidence, but an isolated timeout does
+	// not establish a rate violation. Apply the same floor to the combined
+	// error rate so a tighter error budget cannot bypass the noise rule.
+	countedTimeouts := verdict.Timeouts
+	if countedTimeouts < slo.MinTimeouts {
+		countedTimeouts = 0
+	}
+	if float64(verdict.Errors+countedTimeouts)/total >= slo.MaxErrorRate {
 		verdict.Violations = append(verdict.Violations, fmt.Sprintf(
 			"error rate %d/%d ≥ %s", verdict.Errors+verdict.Timeouts, len(recent), percent(slo.MaxErrorRate)))
 	}
-	if verdict.TimeoutRate >= slo.MaxTimeoutRate {
+	if countedTimeouts > 0 && verdict.TimeoutRate >= slo.MaxTimeoutRate {
 		verdict.Violations = append(verdict.Violations, fmt.Sprintf(
 			"timeout rate %d/%d ≥ %s", verdict.Timeouts, len(recent), percent(slo.MaxTimeoutRate)))
 	}

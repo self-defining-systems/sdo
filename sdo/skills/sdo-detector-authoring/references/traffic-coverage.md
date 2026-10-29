@@ -27,7 +27,7 @@ slows its path many times over before any request fails: a CPU-throttled service
 
 - Give each health-probe scenario its own latency bound (`slo.maxLatency`, per scenario or on the workload). The
   bound covers the whole scenario, every step together; keep it below the request `timeout`.
-- Bound the median: set `latencyPercentile: 50`. Over the default five-sample window p90 is the slowest sample, so a
+- Bound the median (the default `latencyPercentile: 50`); a scenario may explicitly override it. Over the default five-sample window p90 is the slowest sample, so a
   single pause fires a tight p90 bound, and a write journey's healthy tail can cross even the default (an order took
   40 ms to 1.8 s while healthy, median 170 ms). Saturation moves the median; one pause does not.
 - Base the bound on what the path does: a read that crosses one or two in-cluster services has a median of tens of
@@ -40,6 +40,11 @@ slows its path many times over before any request fails: a CPU-throttled service
   the limit of the services on each critical path. Without one, a health detector may compare
   `program.ReadFrom(ctx).PodUsage` with a container's limits, but a failed usage read is Unknown and holds health, so
   use it only where the cluster serves resource metrics.
+
+The default `minTimeouts: 2` requires repeated timeouts within the sample window before they contribute to either
+the timeout or combined error-rate violation. Raw timeout counts and rates remain visible. Application errors
+still use `maxErrorRate`. Override `minTimeouts` per scenario or workload for stricter objectives; use `1` for a
+one-sample window. Rate limits still apply after the count floor.
 
 ## Every record, every sample
 
