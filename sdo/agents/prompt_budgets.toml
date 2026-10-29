@@ -328,8 +328,8 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.health_judge-health_judge-feedback]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+max_chars = 2000
+reason = "SEEDBUDGET1: fresh worker retries render 973/968 characters including diagnostic framing. The health worker joins this required feedback as plain text; reserve 2000 characters so the outer template preserves it with 100% headroom."
 
 [template_data.health_judge-health_judge-health_objective]
 max_chars = 256
@@ -376,8 +376,8 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.health_judge-health_judge_shell-feedback]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+max_chars = 2000
+reason = "SEEDBUDGET1: fresh worker retries render 973/968 characters including diagnostic framing. The health worker joins this required feedback as plain text; reserve 2000 characters so the outer template preserves it with 100% headroom."
 
 [template_data.health_judge-health_judge_shell-health_objective]
 max_chars = 256
