@@ -115,10 +115,10 @@ def run(run_dir: Path, image: str, credentials_secret: str) -> None:
         host_id=host_id,
     )
     (run_dir / "claude-worker-job.json").write_text(json.dumps(job, indent=2) + "\n")
+    deadline = job["spec"]["activeDeadlineSeconds"]
+    allowance = wait_for(WaitKind.COMMAND)
     subprocess.run([*kube, "create", "-f", "-"], input=json.dumps(job), text=True, capture_output=True, check=True)
     try:
-        deadline = job["spec"]["activeDeadlineSeconds"]
-        allowance = wait_for(WaitKind.COMMAND)
         waited = subprocess.run(
             [*kube, "wait", "--for=condition=complete", f"job/{JOB_NAME}", f"--timeout={deadline + allowance:g}s"],
             capture_output=True,
