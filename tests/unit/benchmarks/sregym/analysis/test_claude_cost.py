@@ -164,3 +164,162 @@ def test_shared_session_handoff_never_bills_a_request_in_both_phases(tmp_path: P
     assert row["responder_usage"]["usd"] == 0.00164
     assert abs(row["reflection_usage"]["usd"] - 0.00082) < 1e-10
     assert row["reflection_usage"]["tokens"]["model_requests"] == 1
+
+
+def receipt_evidence(
+    root: Path,
+    *,
+    deterministic: bool = False,
+    session: str | None = None,
+    usage: dict | None = None,
+    skipped: bool = False,
+) -> None:
+    incident = "current"
+    value = {
+        "incident_id": incident,
+        "responder_job_evidence": [],
+        "native_ledger": {
+            "incident_id": incident,
+            "closure": {
+                "request": {"incident_id": incident},
+                "verified_at": "2026-10-28T00:00:05Z",
+                "result": {
+                    "incident_id": incident,
+                    "responder_session_id": session,
+                    "resolution_path": "deterministic" if deterministic else "responder",
+                    "usage": usage or {},
+                },
+            },
+            "outcome_document": {"incident_id": incident},
+            "reflection_skipped_reason": "no_session" if skipped else "",
+        },
+    }
+    path = root / "000_synthetic" / "sdo_production_receipt_strict.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value))
+
+
+def test_receipt_proves_both_roles_model_free_without_session_exports(tmp_path: Path) -> None:
+    receipt_evidence(tmp_path, deterministic=True, skipped=True)
+    row = {"provider": "claude", "model": MODEL, "incident_id": "current", "results": str(tmp_path)}
+    reconcile_claude_row(row)
+    for role in ("responder", "reflection"):
+        assert row[role + "_usage"]["cost_state"] == "model-free"
+        assert row[role + "_usage"]["usd"] == 0
+        assert row[role + "_model_dispatched"] is False
+    assert row["cost_complete"]
+
+
+def test_peer_billing_never_proves_absent_responder_without_receipt(tmp_path: Path) -> None:
+    directory = tmp_path / "sdo_runtime" / "sessions" / hashlib.sha256(b"current").hexdigest()[:32]
+    write(
+        directory / "claude-turns.jsonl",
+        [
+            {"event": "start", "role": "reflection", "recorded_at_epoch": 1793145602},
+            {"event": "complete", "role": "reflection", "recorded_at_epoch": 1793145604},
+        ],
+    )
+    write(
+        directory / "claude" / "projects" / "synthetic" / "shared.jsonl",
+        [
+            assistant("a", timestamp="2026-10-28T00:00:03Z"),
+            state(1, 0.00082),
+        ],
+    )
+    row = {"provider": "claude", "model": MODEL, "incident_id": "current", "results": str(tmp_path)}
+    reconcile_claude_row(row)
+    assert row["responder_usage"]["usd"] is None
+    assert row["responder_usage"]["cost_state"] == "missing"
+    assert row["reflection_usage"]["cost_state"] == "measured"
+    assert row["reflection_model_dispatched"] is True
+    assert row["responder_model_dispatched"] is None
+    receipt_evidence(tmp_path, deterministic=True)
+    reconcile_claude_row(row)
+    assert row["responder_usage"]["cost_state"] == "model-free"
+    assert row["reflection_usage"]["cost_state"] == "measured"
+    assert row["responder_model_dispatched"] is False
+
+
+def test_native_session_or_partial_usage_overrules_deterministic_zero_claim(tmp_path: Path) -> None:
+    for session, usage in [("paid", {}), (None, {"model_requests": "9", "partial": True, "total_cost_usd": 0.20118})]:
+        receipt_evidence(tmp_path, deterministic=True, session=session, usage=usage)
+        row = {"provider": "claude", "model": MODEL, "incident_id": "current", "results": str(tmp_path)}
+        reconcile_claude_row(row)
+        assert row["responder_usage"]["usd"] is None
+        assert row["responder_usage"]["cost_state"] == "missing"
+        assert row["responder_model_dispatched"] is True
+
+
+def test_native_reflection_precheck_is_worker_dispatch_without_model_dispatch(tmp_path: Path) -> None:
+    receipt_evidence(tmp_path, deterministic=True)
+    path = tmp_path / "000_synthetic" / "sdo_production_receipt_strict.json"
+    value = json.loads(path.read_text())
+    ledger = value["native_ledger"]
+    ledger["reflection_dispatch_at"] = "2026-10-28T00:00:06Z"
+    decision = {"learning_decision": "no_change", "no_change_reason": "native_memory_check_no_change"}
+    ledger["reflection_decision"] = decision
+    ledger["reflection_results"] = [decision]
+    path.write_text(json.dumps(value))
+    row = {"provider": "claude", "model": MODEL, "incident_id": "current", "results": str(tmp_path)}
+    reconcile_claude_row(row)
+    assert row["reflection_usage"]["cost_state"] == "model-free"
+    assert row["reflection_model_dispatched"] is False
+    # A previous paid attempt makes the whole role paid, even if its final retry
+    # was completed by the deterministic native check.
+    ledger["reflection_results"].insert(0, {"usage": {"model_requests": "1"}})
+    path.write_text(json.dumps(value))
+    reconcile_claude_row(row)
+    assert row["reflection_usage"]["cost_state"] == "missing"
+    assert row["reflection_model_dispatched"] is True
+
+
+def test_partial_zero_or_invalid_native_usage_never_proves_no_model(tmp_path: Path) -> None:
+    for usage in [{"partial": True}, {"model_requests": "invalid"}, {"input_tokens": -1}]:
+        receipt_evidence(tmp_path, deterministic=True, usage=usage)
+        row = {"provider": "claude", "model": MODEL, "incident_id": "current", "results": str(tmp_path)}
+        reconcile_claude_row(row)
+        assert row["responder_usage"]["usd"] is None
+        assert row["responder_usage"]["cost_state"] == "missing"
+        assert row["responder_model_dispatched"] is None
+
+
+def test_model_journal_overrules_native_precheck_zero_and_missing_receipt_identity(tmp_path: Path) -> None:
+    from benchmarks.sregym.analysis.stream_accounting import summarize_pairs
+
+    receipt_evidence(tmp_path, deterministic=True, skipped=True)
+    directory = tmp_path / "sdo_runtime" / "sessions" / hashlib.sha256(b"current").hexdigest()[:32]
+    write(directory / "claude-turns.jsonl", [{"event": "start", "role": "responder", "recorded_at_epoch": 1}])
+    row = {
+        "provider": "claude",
+        "model": MODEL,
+        "incident_id": "current",
+        "results": str(tmp_path),
+        "status": "settled",
+        "injection_started_at": "2026-10-28T00:00:00Z",
+        "mount_sha": "synthetic",
+    }
+    reconcile_claude_row(row)
+    assert row["responder_usage"]["cost_state"] == "missing"
+    assert row["responder_model_dispatched"] is True
+    # Real reconciler output flows into the real summarizer: no hand-written
+    # cost states on the consumer side of this contract.
+    group = summarize_pairs([{"problem_id": "mf__toy__n1__seed", "first": row, "repeat": row}])[0]
+    assert group["metrics"]["responder_usd"]["ratio"]["missing"] == 1
+    assert group["metrics"]["reflection_usd"]["ratio"]["zero_denominator"] == 1
+    path = tmp_path / "000_synthetic" / "sdo_production_receipt_strict.json"
+    value = json.loads(path.read_text())
+    value["native_ledger"]["outcome_document"]["incident_id"] = "another-incident"
+    path.write_text(json.dumps(value))
+    reconcile_claude_row(row)
+    assert row["reflection_usage"]["cost_state"] == "missing"
+    assert row["reflection_model_dispatched"] is None
+
+
+def test_unidentified_claude_row_cannot_keep_default_zero_counters(tmp_path: Path) -> None:
+    row = {"provider": "claude", "results": str(tmp_path), "responder_usage": {"usd": 0, "usd_complete": True}}
+    reconcile_claude_row(row)
+    assert row["responder_usage"]["cost_state"] == "missing"
+    assert row["responder_usage"]["usd"] is None
+    assert row["responder_usage"]["transport_usage"]["usd"] == 0
+    assert row["responder_model_dispatched"] is None
+    assert not row["cost_complete"]
