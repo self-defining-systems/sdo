@@ -240,6 +240,7 @@ def _agent(
     *,
     agent_registrations: Path | None = None,
     detection_timeout_seconds: float | None = None,
+    clock: Clock | None = None,
 ) -> CompositeSdoAgent:
     repository = tmp_path / "application_workspace"
     repository.mkdir(exist_ok=True)
@@ -295,7 +296,7 @@ def _agent(
         ops=ops,
         lifecycle_inputs=lambda: DeployedLifecycle(fingerprint="fp", context=context),
         run_lifecycle=run_lifecycle,
-        clock=_clock(),
+        clock=clock or _clock(),
         reader=reader,
         report_dir=tmp_path / "reports",
         composite=FAST,
@@ -505,9 +506,17 @@ def test_composite_drains_pending_incident_with_scripted_agent_config(tmp_path: 
 
 def test_run_stops_when_no_further_incident_arrives_while_a_fault_remains(tmp_path: Path) -> None:
     ops = FakeOps(second_incident=False)
-    agent = _agent(tmp_path, ops)
+    clock = _clock()
+    sleeps: list[float] = []
+    original_sleep = clock.sleep
 
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        original_sleep(seconds)
+
+    agent = _agent(tmp_path, ops, clock=replace(clock, sleep=sleep))
     outcome = agent.resolve(0, PROBLEM, _inject)
+    assert sum(sleeps) < FAST.idle_seconds
     agent.learn(outcome)
 
     report = json.loads((tmp_path / "reports" / f"composite_000_{PROBLEM}.json").read_text(encoding="utf-8"))
