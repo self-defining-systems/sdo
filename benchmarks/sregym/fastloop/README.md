@@ -96,3 +96,20 @@ appended to `app_images.jsonl` next to `image_delivery.jsonl`, with its
 `source` (`local`, `registry` or `build`), `published`, `pull_seconds` and
 `seconds`. Node delivery is unchanged: kind nodes still receive app images
 through the host's image-delivery path above.
+
+### Opt-in persistent row preparation
+
+`run --warm-lane` tries to retain the application, controller and standby responder
+on a private non-toy SDO lane. It requires a recorded live controller, a live
+standby, known injection history without data effects, terminal prior reflection,
+and the installed cluster inventory. It pauses intake, synchronizes the accepted
+repository back to the host, reconciles changed application resources, and proves
+fresh baseline health against that exact revision. The usual injection admission
+still runs. Default runs retain the existing full-reset policy.
+
+An uncertain warm transaction falls back to the ordinary row-start reset; an open
+prior incident stops preparation without deleting its owner. Each attempt writes
+`results/<run-id>/warm-transaction.json` with phase timings and a typed fallback
+reason. `reused: false` describes reset selection, not successful admission. The
+warm option currently leaves evidence export synchronous and does not claim the
+30-second target; use measured row prelude and gate timings to assess it.
