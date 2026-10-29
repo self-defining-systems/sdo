@@ -1,0 +1,14 @@
+#!/bin/sh
+# Python unit tests may inspect Go inputs, but compilation belongs to contracts.
+case "${1:-}" in
+  env|version) exec "${SDO_UNIT_REAL_GO:?}" "$@" ;;
+  list)
+    for arg in "$@"; do
+      case "$arg" in
+        -export|-export=*) echo 'Go compilation requires pytest.mark.go_integration' >&2; exit 97 ;;
+      esac
+    done
+    exec "${SDO_UNIT_REAL_GO:?}" "$@"
+    ;;
+  *) echo 'Go compilation requires pytest.mark.go_integration' >&2; exit 97 ;;
+esac
