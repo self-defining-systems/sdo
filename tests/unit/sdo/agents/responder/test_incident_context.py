@@ -496,3 +496,34 @@ def test_stalled_stage_handoff_states_the_blocker_and_its_standard_release() -> 
         "Deployment/toy/geo cannot roll out beside its old revision: "
         "sdo mitigate RetireOldRevision --ref ReplicaSet/toy/geo-old"
     ]
+
+
+def test_partial_reuse_carries_checked_receipt_identity_without_inventing_verification() -> None:
+    request = _staged_request(1)
+    first, second = request.prior_stages[0].mitigations
+    first.apply_receipt.application_id = "application-checked"
+    first.apply_receipt.verification_completed = True
+    first.apply_receipt.verification_passed = True
+    second.apply_receipt.application_id = "application-pending"
+    second.apply_receipt.verification_completed = True
+    second.apply_receipt.verification_passed = True
+    second.apply_receipt.rollout_pending.reason = "dependency blocked"
+    with prepared_incident_data(request) as rendered:
+        brief = _brief(rendered)
+        assert brief["checked_stage_receipts"] == [
+            {"application_id": "application-checked", "verified": True},
+            {"application_id": "application-pending", "verified": False},
+        ]
+        assert len(brief["findings"]) == 1
+        full = json.loads(Path(brief["details_file"]).read_text())
+        assert full["prior_stages"][0]["mitigations"][0]["apply_receipt"]["application_id"] == "application-checked"
+
+
+def test_reuse_brief_uses_stage_evidence_instead_of_stale_opening_diagnoses() -> None:
+    request = _staged_request(1)
+    request.initial_program_runs.add(program_id="settled-opening-match", verdict={"result": "RESULT_MATCH"})
+    with prepared_incident_data(request) as rendered:
+        brief = _brief(rendered)
+        assert "program_runs" not in brief
+        full = json.loads(Path(brief["details_file"]).read_text())
+        assert full["initial_program_runs"][0]["program_id"] == "settled-opening-match"
