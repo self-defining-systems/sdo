@@ -285,7 +285,7 @@ class CodexLifecycleBackend:
             traffic_authoring=TRAFFIC_AUTHORING,
             metrics_authoring=METRICS_AUTHORING,
         )
-        draft, session_id = self._execute(repository, prompt, HealthJudgeDraft, sandbox="workspace-write")
+        draft, session_id = self._execute(repository, prompt, HealthJudgeDraft, sandbox="danger-full-access")
         return HealthJudgeArtifact(**draft.model_dump(), session_id=session_id)
 
     def _execute(

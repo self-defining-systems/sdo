@@ -87,6 +87,7 @@ def test_deployer_receives_trusted_registry_and_rejects_other_image_host(
     prompts: list[str] = []
 
     def turn(_provider: str, prompt: str, **_kwargs: object) -> SimpleNamespace:
+        assert _kwargs["access"] == "danger-full-access"
         prompts.append(prompt)
         return SimpleNamespace(
             output_json='{"proposed":true,"summary":"ready","image_builds":[{"image":"foreign.example/app:v1","context_path":".","dockerfile_path":"Dockerfile"}],"manifest_paths":["deploy/app.yaml"],"expected_workload_ids":["Deployment/demo/api"]}',

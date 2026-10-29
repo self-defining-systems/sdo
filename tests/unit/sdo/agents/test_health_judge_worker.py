@@ -156,7 +156,7 @@ def test_judge_authors_final_files_in_writable_session(
         result = judge_worker.author_health_diagnostics(request, tmp_path)
     assert result.detector_ids == ["health-objective"]
     assert not result.HasField("artifact_proposal")
-    assert any("workspace-write" in arg for arg in agent.argvs[0])
+    assert any("danger-full-access" in arg for arg in agent.argvs[0])
     prompt = agent.prompts[0]
     assert "Accepted source and developer changes express intent." in prompt
     assert "Operational memory is fallible advice." in prompt
