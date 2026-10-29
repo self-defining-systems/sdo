@@ -74,7 +74,7 @@ RESPONSE_FIELDS = {
     "menu": "menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, "
     "selection_schema, selection_set_schema, unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
-    "verify": "healthy, unresolved, findings[], detector_states[], "
+    "verify": "healthy, verification_status, findings[], detector_states[], "
     "verification_blockers[{detector_id,reason}], drift[], drift_events[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
@@ -340,9 +340,8 @@ def _parser() -> argparse.ArgumentParser:
         description="Reads the controller's shared recovery proof: fresh health after the last repair, "
         "observed write effects, and the unchanged 15-second stability window. drift[] lists objects that still "
         "differ from accepted source and never decides healthy. "
-        "After a healthy return, SDO may resume once for source differences when progress remains; "
-        "terminal inventory and no-progress stops do not resume. "
-        "restore them or explain the intended difference. "
+        "verification_status=awaiting_responder_completion: finish with evidence; proof follows your result. "
+        "Explain remaining source differences; SDO may resume once when progress remains. "
         "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
         "verification_blockers names incomplete detectors and reasons. SDO resumes once for these blockers, "
         "then stops any running blocker turn and records an unconfirmed outcome "

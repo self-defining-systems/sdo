@@ -39,6 +39,8 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     body += (installed.parent / "references/coverage.md").read_text()
     assert "SDO's independent verification is the source of truth" in body
     assert "wait on it instead of sleeping" in body
+    assert "verification_status=awaiting_responder_completion" in body
+    assert "finish with evidence" in body
     assert "one cause per independently fixable fault" in body
     assert "Start independent repairs together" in body
     assert "combine edits to one object" in body
@@ -54,7 +56,7 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert "When an admission control blocks recovery and its backend is gone, restore the backend if you can" in body
     assert "a scoped fail-open or removal that restores availability is acceptable; report it" in body
     assert "never widen a selector or policy to other namespaces" in body
-    assert "is not done while unexplained differences from accepted source remain" in body
+    assert "Restore unexplained source differences or justify them" in body
 
 
 @pytest.mark.parametrize(
