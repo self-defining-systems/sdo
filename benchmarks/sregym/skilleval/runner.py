@@ -9,8 +9,8 @@ Example::
 
 Each run copies the scenario, mounts it into the scenario's recorded responder
 image exactly where the live reflection Job had it, mounts ``--skills`` over the
-image's skills root, resumes the responder's Codex session with the recorded
-reflection request (codex, model from the scenario's recorded configuration) and
+image's skills root, resumes the responder's Codex or Claude Code session with
+the recorded reflection request and the scenario's provider/model/effort, and
 records cost, the independent memory check, the diff and replay verdicts.
 
 The host is shared with experiment lanes: at most three runs at once, each
@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -37,6 +38,7 @@ from benchmarks.sregym.skilleval.metrics import (
     RunMetrics,
     Usage,
     check_replay_notes,
+    claude_usage,
     decision_kind,
     disallowed_paths,
     hand_repairs,
@@ -45,6 +47,7 @@ from benchmarks.sregym.skilleval.metrics import (
     replay_verdicts,
 )
 from benchmarks.sregym.skilleval.scenario import Scenario
+from libs.agent_cli.provider_capacity import ProviderCapacity
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -71,7 +74,7 @@ def toolchain_image(responder_image: str) -> str:
     return f"sdo-controller:{tag}"
 
 
-def prepare_toolchain(image: str, cache: Path) -> Path:
+def prepare_toolchain(image: str, cache: Path, controller_image: str = "") -> Path:
     """Extract the Go toolchain and module cache once per build, and build ``sdo-replay`` with it."""
 
     tag = image.partition(":")[2]
@@ -91,7 +94,7 @@ def prepare_toolchain(image: str, cache: Path) -> Path:
                 "--rm",
                 "--entrypoint",
                 "tar",
-                toolchain_image(image),
+                controller_image or toolchain_image(image),
                 "-C",
                 f"/{source}",
                 "-cf",
@@ -152,7 +155,7 @@ def docker_command(
         f"{run_dir / 'tmp'}": "/tmp",
         f"{run_dir / 'codex-homes'}": "/sdo/codex-homes",
         f"{run_dir / 'out'}": "/skilleval/out",
-        f"{auth}": "/sdo/credentials/auth.json:ro",
+        f"{auth}": f"/sdo/credentials/{'.credentials.json' if scenario.provider == 'claude' else 'auth.json'}:ro",
         f"{skills}": "/opt/sdo/sdo/skills:ro",
         f"{toolchain / 'go'}": "/usr/local/go:ro",
         f"{toolchain / 'cache'}": "/go:ro",
@@ -161,6 +164,7 @@ def docker_command(
     }
     if (run_dir / "session" / "api-history").is_dir():
         mounts[f"{run_dir / 'session' / 'api-history'}"] = f"{session}/api-history:ro"
+    model = model or scenario.model
     environment = {
         "HOME": "/tmp/home",
         # A resumed reflection uses the responder's homes; a fresh one gets private homes, as live.
@@ -174,7 +178,9 @@ def docker_command(
         "SDO_BASE_COMMIT": scenario.outcome_commit,
         "SDO_HEALTHY_BASELINE": f"{session}/corpus/healthy",
         "SDO_CAPTURED_CORPUS_DIR": f"{session}/corpus",
-        "SDO_AGENT_PROVIDER": "codex",
+        "SDO_AGENT_PROVIDER": scenario.provider,
+        "SDO_REFLECTION_EFFORT": scenario.effort,
+        "SDO_RESPONDER_EFFORT": scenario.effort,
         "SDO_RESPONDER_MODEL": model,
         "SDO_REFLECTION_MODEL": model,
         "SDO_LIFECYCLE_MODEL": model,
@@ -253,7 +259,7 @@ def run_one(
     extra_skills: tuple[str, ...] = (),
 ) -> RunMetrics:
     scenario = Scenario.load(scenario_dir)
-    toolchain = prepare_toolchain(scenario.image, toolchain_cache)
+    toolchain = prepare_toolchain(scenario.image, toolchain_cache, scenario.controller_image)
     run_dir = out / scenario.scenario_id / f"{label}-r{repeat_index}"
     if run_dir.exists():
         raise FileExistsError(f"run directory exists: {run_dir}")
@@ -276,12 +282,45 @@ def run_one(
         extra_skills=extra_skills,
     )
     (run_dir / "docker-command.json").write_text(json.dumps(command, indent=1), encoding="utf-8")
+    (run_dir / "run-config.json").write_text(
+        json.dumps(
+            {
+                "provider": scenario.provider,
+                "model": model or scenario.model,
+                "effort": scenario.effort,
+                "image": scenario.image,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     started = time.monotonic()
-    with (run_dir / "container.log").open("w", encoding="utf-8") as log:
-        try:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=budget_seconds + 1200, check=False)
-        except subprocess.TimeoutExpired:
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
+    capacity = ProviderCapacity(
+        environment={
+            **os.environ,
+            "SDO_SESSION_DIR": str(run_dir / "session"),
+            "SDO_PHASE": "reflection",
+            "SDO_INCIDENT_ID": scenario.incident_id,
+        }
+    )
+    admission = (
+        capacity.opus_session(model or scenario.model)
+        if scenario.provider == "claude" and os.environ.get("SDO_OPUS_POOL_DIR")
+        else nullcontext()
+    )
+    try:
+        with admission, (run_dir / "container.log").open("w", encoding="utf-8") as log:
+            try:
+                subprocess.run(
+                    command, stdout=log, stderr=subprocess.STDOUT, timeout=budget_seconds + 1200, check=False
+                )
+            except subprocess.TimeoutExpired:
+                subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
+    finally:
+        for credential in (run_dir / "session").rglob("*"):
+            if credential.name in {"auth.json", ".credentials.json"} and credential.is_file():
+                credential.unlink()
     wall = time.monotonic() - started
     metrics = collect(scenario_dir, run_dir, label=label, wall_seconds=wall)
     (run_dir / "metrics.json").write_text(json.dumps(metrics.to_json(), indent=2) + "\n", encoding="utf-8")
@@ -302,7 +341,7 @@ def remeasure(scenario_dir: Path, run_dir: Path, *, skills: Path, toolchain_cach
         scenario=scenario,
         run_dir=run_dir,
         skills=skills.resolve(),
-        toolchain=prepare_toolchain(scenario.image, toolchain_cache),
+        toolchain=prepare_toolchain(scenario.image, toolchain_cache, scenario.controller_image),
         auth=auth,
         model=DEFAULT_MODEL,
         name=f"skilleval-post-{scenario.scenario_id}-{run_dir.name}-{os.getpid()}",
@@ -332,19 +371,32 @@ def collect(scenario_dir: Path, run_dir: Path, *, label: str, wall_seconds: floa
     summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {}
     changed = changed_paths(run_dir / "checkout", scenario.outcome_commit)
     replay = summary.get("replay") or {}
+    configuration = run_dir / "run-config.json"
+    model = json.loads(configuration.read_text())["model"] if configuration.is_file() else scenario.model
     return RunMetrics(
         scenario=scenario.scenario_id,
         label=label,
         status=str(result.get("status") or "no_result"),
         failure_reason=str(result.get("failure_reason") or ""),
         wall_seconds=round(wall_seconds, 1),
-        usage=Usage.from_lines(records),
+        usage=(
+            claude_usage(
+                scenario_dir / "session" / "claude" / "projects",
+                run_dir / "session" / "claude" / "projects",
+                model=model,
+                logged=Usage.from_lines(records),
+            )
+            if scenario.provider == "claude"
+            else Usage.from_lines(records)
+        ),
         memory_check_pass=memory_check_passed(summary.get("memory_check")),
         changed_paths=changed,
         disallowed_paths=disallowed_paths(changed),
         programs_written=programs_written(changed),
         hand_repairs=hand_repairs(task["request"]["outcome"]),
         decision=decision_kind(result),
+        run_id=run_dir.name,
+        reflection_seconds=summary.get("reflection_seconds"),
         replay_cases=list(summary.get("replay_cases") or []),
         replay_exit_code=replay.get("exit_code"),
         replay_rows=replay_verdicts(str(replay.get("stdout") or "")),
@@ -356,24 +408,38 @@ def collect(scenario_dir: Path, run_dir: Path, *, label: str, wall_seconds: floa
 
 def table(rows: list[dict[str, Any]]) -> str:
     header = (
-        "| scenario | label | status | calls | input M (cached M) | output k | min | check "
-        "| programs/hand repairs | replay cases passed | check: fault Match | only allowed files |"
+        "| scenario | run | status | calls | input M (cached M) | output k | min | check "
+        "| programs/hand repairs | replay cases passed | check: fault Match | only allowed files "
+        "| raw M | weighted M | USD |"
     )
-    lines = [header, "|" + "---|" * 12]
+    lines = [header, "|" + "---|" * 15]
     for row in rows:
         usage = row["usage"]
         replay = f"{row['replay']['passed']}/{row['replay']['cases']}" if row["replay"]["cases"] else "-"
         check = row["check_open_match"]
         check_replay = f"{check['match']}/{check['cases']}" if check["cases"] else "-"
+        weighted = format(usage["weighted_tokens"] / 1e6, ".3f") if usage.get("weighted_tokens") is not None else "-"
         lines.append(
-            f"| {row['scenario']} | {row['label']} | {row['status']} | {usage['model_calls']} | "
+            f"| {row['scenario']} | {row.get('run_id') or row['label']} | {row['status']} | {usage['model_calls']} | "
             f"{usage['input_tokens'] / 1e6:.1f} ({usage['cached_input_tokens'] / 1e6:.1f}) | "
-            f"{usage['output_tokens'] / 1e3:.1f} | {row['wall_seconds'] / 60:.1f} | "
+            f"{usage['output_tokens'] / 1e3:.1f} | {(row.get('reflection_seconds') or row['wall_seconds']) / 60:.1f} | "
             f"{'-' if row['memory_check_pass'] is None else ('pass' if row['memory_check_pass'] else 'FAIL')} | "
             f"{len(row['programs_written'])}/{len(row['hand_repairs'])} | {replay} | {check_replay} | "
-            f"{'yes' if not row['disallowed_paths'] else 'NO'} |"
+            f"{'yes' if not row['disallowed_paths'] else 'NO'} | "
+            f"{(usage['input_tokens'] + usage['output_tokens']) / 1e6:.3f} | "
+            f"{weighted} | "
+            f"{format(usage['usd'], '.4f') if usage.get('usd') is not None else '-'} |"
         )
     return "\n".join(lines)
+
+
+def credential_path(scenario: Scenario, override: Path | None) -> Path:
+    """Select exactly one provider's existing credential file."""
+    relative = ".claude/.credentials.json" if scenario.provider == "claude" else ".codex/auth.json"
+    path = override or Path.home() / relative
+    if not path.is_file():
+        raise ValueError(f"provider credential file does not exist: {path}")
+    return path.resolve()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -390,9 +456,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--table-only", action="store_true", help="only rebuild the label's table under --out")
     parser.add_argument("--parallel", type=int, default=MAX_PARALLEL, help=f"at most {MAX_PARALLEL}")
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model", default="", help="override the scenario model")
     parser.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS)
-    parser.add_argument("--auth", type=Path, default=Path.home() / ".codex" / "auth.json")
+    parser.add_argument("--auth", type=Path, help="provider credential file; defaults to its CLI home")
     parser.add_argument(
         "--toolchain-cache", type=Path, default=Path("/mnt/data/shli/cache/skilleval-toolchain"), help="extracted Go"
     )
@@ -409,8 +475,12 @@ def main(argv: list[str] | None = None) -> int:
         scenarios = [path for path in scenarios if path.name in set(args.only)]
     if not scenarios:
         parser.error("no scenarios selected")
+    if not args.table_only:
+        for path in scenarios:
+            credential_path(Scenario.load(path), args.auth)
     for image in sorted({Scenario.load(path).image for path in scenarios} if not args.table_only else ()):
-        prepare_toolchain(image, args.toolchain_cache)
+        scenario = next(Scenario.load(path) for path in scenarios if Scenario.load(path).image == image)
+        prepare_toolchain(image, args.toolchain_cache, scenario.controller_image)
     jobs = [(path, index) for index in range(1, args.repeat + 1) for path in scenarios]
     if args.table_only:
         jobs = []
@@ -439,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.out / path.name / f"{args.label}-r{index}",
                     skills=args.skills,
                     toolchain_cache=args.toolchain_cache,
-                    auth=args.auth,
+                    auth=credential_path(Scenario.load(path), args.auth),
                 )
                 row = metrics.to_json()
                 print(json.dumps({key: row[key] for key in ("scenario", "label", "status")}), flush=True)
@@ -451,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
                 label=args.label,
                 repeat_index=index,
                 toolchain_cache=args.toolchain_cache,
-                auth=args.auth,
+                auth=credential_path(Scenario.load(path), args.auth),
                 model=args.model,
                 budget_seconds=args.budget_seconds,
                 extra_skills=tuple(args.extra_skill),
