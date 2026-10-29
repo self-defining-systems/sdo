@@ -261,12 +261,14 @@ async def test_every_reflection_tool_reply_stays_within_the_shared_budget(tmp_pa
 
 
 @pytest.mark.skipif(shutil.which("gofmt") is None, reason="needs the Go toolchain")
+@pytest.mark.parametrize("replay", ["on", "off"])
 async def test_check_memory_formats_changed_memory_go_before_checking(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replay: str
 ) -> None:
     """Formatting is mechanical: the tool fixes changed sources instead of reporting go.format."""
     import subprocess
 
+    monkeypatch.setenv("SDO_REPLAY", replay)
     checkout = tmp_path / "checkout"
     (checkout / ".sdo/playbooks/fixture").mkdir(parents=True)
     accepted = checkout / ".sdo/playbooks/fixture/accepted.go"
@@ -278,6 +280,9 @@ async def test_check_memory_formats_changed_memory_go_before_checking(
     )
     changed = checkout / ".sdo/playbooks/fixture/diagnose.go"
     changed.write_text("package fixture\nfunc  Diagnose() {\n x := 1\n _ = x\n}\n")
+    corpus = checkout / ".sdo/corpus/inert/ignored.go"
+    corpus.parent.mkdir(parents=True)
+    corpus.write_text("package inert\nfunc  Ignored() {}\n")
     outside = checkout / "main.go"
     outside.write_text("package main\nfunc  main() {}\n")
     _validator(
@@ -295,6 +300,8 @@ sys.exit(0 if source == "package fixture\\n\\nfunc Diagnose() {\\n\\tx := 1\\n\\
     assert json.loads(block.text)["exit_code"] == 0
     assert accepted.read_text() == "package fixture\nfunc  Accepted() {}\n", "accepted bytes are never rewritten"
     assert outside.read_text() == "package main\nfunc  main() {}\n", "only operational memory is formatted"
+    if replay == "off":
+        assert corpus.read_text() == "package inert\nfunc  Ignored() {}\n"
 
 
 @pytest.mark.parametrize(("exit_code", "expected"), [(0, "passed"), (1, "fix each diagnostic")])

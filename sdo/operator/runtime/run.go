@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 
@@ -154,6 +155,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
 	codePathName := flags.String("code-path", "go", "programming-model plugin set")
 	codePathOverrides := flags.String("code-path-overrides", "", "optional named code-path seam overrides as JSON")
 	var codePathFlagConfig CodePathConfig
@@ -515,6 +517,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
+	replayMode, err := settings.Replay(*replay)
+	if err != nil {
+		return err
+	}
 	jobEnvironment, err := parseResponderEnvironment(responderEnvironment)
 	if err != nil {
 		return err
@@ -522,6 +528,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig); err != nil {
 		return err
 	}
+	jobEnvironment[settings.ReplayEnvironment] = replayMode
 	if codePathCustomized(selectedPathConfig) {
 		jobEnvironment["SDO_CODE_PATH"] = selectedCodePath.Selection.Name
 		jobEnvironment["SDO_AGENT_GUIDANCE"] = selectedCodePath.Selection.AgentGuidance
@@ -681,7 +688,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.DiagnosisDeadline = *diagnosisDeadline
 				if options.NativeBroker != nil {
-					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
+					if *replay != "off" {
+						loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
+					}
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
@@ -735,7 +744,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
-		CorpusSessionRoot:      corpusSessionRoot,
+		Replay: *replay, CorpusSessionRoot: corpusSessionRoot,
 		VerificationTimeout:    *verificationTimeout,
 		ClosureStabilityWindow: *closureStability,
 		ResponderReportGrace:   *reportGrace,

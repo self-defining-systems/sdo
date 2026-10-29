@@ -585,6 +585,7 @@ def _sdo_agent(
         timeout_seconds=args.timeout,
         repair_policy=args.repair_policy,
         agent_provider=args.provider,
+        replay=getattr(args, "replay", "on"),
         agent_effort=args.reasoning_effort,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -1648,6 +1649,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--repair-policy", choices=("recorded-actions", "commit"), default="recorded-actions")
     run.add_argument("--diagnosis-grading", choices=("off", "deferred", "inline"), default=None)
     run.add_argument("--judge-model-id", default=None, help="SREGym JUDGE_MODEL_ID for diagnosis grading")
+    run.add_argument("--replay", choices=("on", "off"), default="on", help="corpus capture and memory replay")
     run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
     run.add_argument("--code-path", choices=("go", "shell"), default="go")
     run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")

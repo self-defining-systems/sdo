@@ -55,6 +55,7 @@ class NativeInstallConfig:
     model: str
     kubeconfig: Path | None = None
     agent_provider: str = "codex"
+    replay: str = "on"
     agent_effort: str = DEFAULT_AGENT_EFFORT
     repair_policy: str = "recorded-actions"
     late_findings: str = "off"
@@ -102,6 +103,8 @@ class NativeInstallConfig:
                 raise ValueError(f"{field} must be non-empty")
         if self.agent_provider not in ("codex", "claude"):
             raise ValueError("agent_provider must be codex or claude")
+        if self.replay not in ("on", "off"):
+            raise ValueError("replay must be on or off")
         if self.agent_effort not in AGENT_EFFORTS:
             raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
         if self.repair_policy not in ("commit", "recorded-actions"):
@@ -150,6 +153,8 @@ class NativeInstallConfig:
             self.model,
             "--agent-provider",
             self.agent_provider,
+            "--replay",
+            self.replay,
             "--agent-effort",
             self.agent_effort,
         ]

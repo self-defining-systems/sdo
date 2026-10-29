@@ -204,7 +204,7 @@ def run_reflection_task(
             failure = (
                 "result_too_large",
                 "reflection result exceeds the worker transport budget; "
-                "use corpus references and reduce proposal source size",
+                "use logical artifact IDs and reduce proposal source size",
             )
     if failure is not None:
         result.ClearField("response")

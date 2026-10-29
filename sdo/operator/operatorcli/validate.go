@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 	"strings"
 
 	"sdo.dev/operator/builder"
@@ -20,6 +22,7 @@ func ParseValidateLaunch(args []string) (builder.Config, error) {
 	}
 	flags := flag.NewFlagSet("sdo-operator validate", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	replay := flags.String("replay", os.Getenv(settings.ReplayEnvironment), "replay policy: on or off")
 	app := flags.String("app", "", "candidate application checkout")
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "baked operator sources")
 	expected := flags.String("expect-schema", "", "accepted validator schema identity")
@@ -36,6 +39,9 @@ func ParseValidateLaunch(args []string) (builder.Config, error) {
 	if *healthyBaseline != "" && !filepath.IsAbs(*healthyBaseline) {
 		return builder.Config{}, errors.New("healthy baseline path must be absolute")
 	}
+	if _, err := settings.Replay(*replay); err != nil {
+		return builder.Config{}, err
+	}
 	actual, err := builder.SchemaIdentity(*operatorRoot)
 	if err != nil {
 		return builder.Config{}, fmt.Errorf("cannot verify validator schema identity: %w", err)
@@ -43,7 +49,7 @@ func ParseValidateLaunch(args []string) (builder.Config, error) {
 	if actual != *expected {
 		return builder.Config{}, fmt.Errorf("stale validator image: it embeds schema %q but the caller expects %q", actual, *expected)
 	}
-	return builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot, HealthyBaseline: *healthyBaseline}, nil
+	return builder.Config{Replay: *replay, ApplicationRoot: *app, OperatorRoot: *operatorRoot, HealthyBaseline: *healthyBaseline}, nil
 }
 
 // RunValidate is the validation Job's body: the shared validator's compile
@@ -60,7 +66,7 @@ func RunValidateReport(ctx context.Context, config builder.Config, out io.Writer
 	var timings []builder.StageTiming
 	diagnostics, err := validate.CompileCandidate(ctx, validate.Request{
 		MitigationReplayNotes: &notes, CoverageGaps: &gaps, StageTimings: &timings,
-		Root: config.ApplicationRoot, Layers: validate.Compile, OperatorRoot: config.OperatorRoot, HealthyBaseline: config.HealthyBaseline,
+		Replay: config.Replay, Root: config.ApplicationRoot, Layers: validate.Compile, OperatorRoot: config.OperatorRoot, HealthyBaseline: config.HealthyBaseline,
 	})
 	if err != nil {
 		return err

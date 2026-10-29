@@ -261,7 +261,7 @@ func (s *run) walk(ctx context.Context) error {
 var invalidIDPath = regexp.MustCompile(`^\.sdo/(?:playbooks/([^/]+)/.+|diagnostics/detectors/(?:health|incidents)/([^/]+)/.+)$`)
 
 func (s *run) visit(rel, abs string) error {
-	kind, id, ok := layout.Classify(rel)
+	kind, id, ok := s.req.classify(rel)
 	if !ok {
 		d := Diagnostic{Rule: RuleUnknownPath, Path: rel, Message: "path is not part of the operational-memory layout", Hint: "see docs/architecture.md for the .sdo/ layout, or run `sdo-operator memory ls`"}
 		if m := invalidIDPath.FindStringSubmatch(rel); m != nil {
@@ -278,6 +278,9 @@ func (s *run) visit(rel, abs string) error {
 	info, err := os.Lstat(abs)
 	if err != nil {
 		return err
+	}
+	if kind == layout.KindCorpus && s.req.Replay == "off" {
+		return nil
 	}
 	if info.Size() > layout.MaxArtifactBytes && (kind != layout.KindCorpus || info.Size() > 8<<20) {
 		s.add(Structural, Diagnostic{Rule: RuleTooLarge, Path: rel, Message: fmt.Sprintf("file is %d bytes; the limit is %d KiB", info.Size(), layout.MaxArtifactBytes/1024), Hint: "split or shorten the file"})

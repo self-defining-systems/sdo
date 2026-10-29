@@ -26,6 +26,7 @@ type HealthProbe interface {
 }
 
 type AcceptedDetectorProbe struct {
+	Replay          string
 	RequireComplete bool
 	Kubeconfig      string
 	MetricsURL      string
@@ -47,7 +48,7 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	if err != nil {
 		return "", fmt.Errorf("resolve accepted diagnostics: %w", err)
 	}
-	workspace, err := builder.BuildWorkspace(bounded, builder.Config{ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
+	workspace, err := builder.BuildWorkspace(bounded, builder.Config{Replay: probe.Replay, ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
 	if err != nil {
 		return "", fmt.Errorf("stage accepted diagnostics: %w", err)
 	}

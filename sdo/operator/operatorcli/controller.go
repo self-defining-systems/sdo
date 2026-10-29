@@ -55,6 +55,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	validatorImage := flags.String("validator-image", "", "isolated validator image")
 	model := flags.String("model", "", "responder model")
 	backend := flags.String("responder-backend", "codex", "responder backend")
+	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
 	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
 	schemaIdentity := flags.String("schema-identity", "", "expected SDK schema identity (defaults to installed sources)")
 	brokerMode := flags.String("broker-mode", "", "broker mode")
@@ -139,7 +140,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ExitAfterClosure: *exitAfterClosure,
 		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
-		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
+		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
 	}
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)
@@ -151,7 +152,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		return builder.RunConfig{}, false, err
 	}
 	return builder.RunConfig{
-		Build: builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
+		Build: builder.Config{Replay: *replay, ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
 		PrepareShell: func(ctx context.Context) error {
 			repository, err := openMigrationBroker(launch)
 			if err != nil {

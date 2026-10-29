@@ -171,12 +171,20 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 					return nil, err
 				}
 				if structurallyValid {
-					ds = append(ds, ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths)...)
+					ds = append(ds, ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths, r.Replay)...)
 				}
-				r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
+				if r.Replay != "off" {
+					r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
+				}
 				if structurallyValid {
-					if err := programvalidation.ValidateScriptOrigins(r.Root, outcome, paths); err != nil {
-						ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: err.Error()})
+					var originErr error
+					if r.Replay == "off" {
+						originErr = programvalidation.ValidateScriptOriginsWithoutCorpus(ctx, r.Root, r.Base, outcome, paths)
+					} else {
+						originErr = programvalidation.ValidateScriptOrigins(r.Root, outcome, paths)
+					}
+					if originErr != nil {
+						ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: originErr.Error()})
 					}
 				}
 			}
@@ -299,6 +307,12 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 	if err != nil {
 		return nil, err
 	}
+	if structurallyValid && r.Replay == "off" && !(r.Actor == Responder && r.Phase == ReflectionPhase) {
+		if err := programvalidation.ValidateScriptOriginsWithoutCorpus(ctx, r.Root, r.Base, nil, paths); err != nil {
+			ds = append(ds, Diagnostic{Rule: RuleProgramMitigationRepair, Message: err.Error()})
+		}
+	}
+
 	ds = append(ds, clusterLocalDiagnostics(r.Root, paths)...)
 	ds = append(ds, secretDataDiagnostics(r.Root, paths)...)
 	// A scratch index includes new files and agent-local commits while leaving

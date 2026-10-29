@@ -335,3 +335,40 @@ func TestReadThroughGoCacheDoesNotCopySeedAtStartup(t *testing.T) {
 		t.Fatal("startup materialized the cache before Go requested an entry")
 	}
 }
+
+func TestReplayOffCompilesProgramsWithoutReadingCorpus(t *testing.T) {
+	app := t.TempDir()
+	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app")
+	if err := copyTree(context.Background(), source, app); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, ".sdo/corpus/targetport-mismatch/labels.json"), []byte("malformed synthetic labels"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	operator, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{ApplicationRoot: app, DiagnosticsRoot: filepath.Join(app, ".sdo/diagnostics"), OperatorRoot: operator, Replay: "off", HealthyBaseline: filepath.Join(app, "missing-baseline")}
+	workspace, err := BuildWorkspace(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workspace.Close()
+	if _, err := os.Stat(filepath.Join(workspace.Directory, "corpus")); !os.IsNotExist(err) {
+		t.Fatalf("off staged corpus: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace.Directory, "generated/programs_test.go")); !os.IsNotExist(err) {
+		t.Fatalf("off generated replay: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace.Directory, "generated/program_declarations_test.go")); err != nil {
+		t.Fatal("registration safety was removed", err)
+	}
+	if err := workspace.Check(context.Background()); err != nil {
+		t.Fatal("real compile/import/vet/safety check failed", err)
+	}
+	notes, err := workspace.MitigationReplayResults()
+	if err != nil || len(notes) != 0 {
+		t.Fatalf("off ran replay: %v %v", notes, err)
+	}
+}
