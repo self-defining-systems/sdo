@@ -389,6 +389,9 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The routing receipt does not join the independent source-boundary capture.
+	// Join all snapshot readers before mutating this fixture.
+	controller.Wait()
 	snapshot.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
 	provider.snapshot = snapshot
 	awaitDispatchCompletionQueued(t, controller)
@@ -397,6 +400,7 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	controller.Wait()
 	root := nativeRepository(t)
 	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(root, ".sdo"))
 	module, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/diagnostics/go.mod")
