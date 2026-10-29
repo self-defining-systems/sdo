@@ -99,7 +99,8 @@ def test_delivery_after_the_boundary_never_reads_the_next_rows_files(tmp_path: P
     queue = EvidenceExportQueue(tmp_path / "queue", slow_deliver, retry_seconds=0)
     row = _row(tmp_path, 1)
     record = QueuedEvidenceExport(queue, lane.snapshot).export(_config(tmp_path), "incident-1", row)
-    assert record["delivery"] == "queued" and record["error"] is None
+    assert record["delivery"] == "queued"
+    assert record["error"] is None
     assert _status(row)["state"] == "queued"
     # The next row writes while the earlier row's evidence is still in flight.
     (lane.live / "sessions/first/session.jsonl").write_text("first-closed\nnext-row\n")
@@ -127,7 +128,8 @@ def test_failed_delivery_retries_the_same_archive_and_is_recorded(tmp_path: Path
     row = _row(tmp_path, 1)
     QueuedEvidenceExport(queue, lane.snapshot).export(_config(tmp_path), "incident-1", row)
     assert queue.drain(10) == []
-    assert len(set(delivered)) == 1 and len(delivered) == 3
+    assert len(set(delivered)) == 1
+    assert len(delivered) == 3
     assert lane.seals == 1
     assert _status(row) | {"finished_at": None} == _status(row) | {
         "state": "delivered",
@@ -149,13 +151,15 @@ def test_exhausted_delivery_stays_visible_and_retries_after_restart(tmp_path: Pa
     QueuedEvidenceExport(queue, lane.snapshot).export(_config(tmp_path), "incident-1", row)
     failed = queue.drain(10)
     assert [job.state for job in failed] == [ExportState.FAILED]
-    assert _status(row)["state"] == "failed" and "registry unreachable" in _status(row)["error"]
+    assert _status(row)["state"] == "failed"
+    assert "registry unreachable" in _status(row)["error"]
     queue.close(drain=False)
 
     restarted = EvidenceExportQueue(tmp_path / "queue", lane.deliver, retry_seconds=0)
     assert restarted.drain(10) == []
     assert (row / "sdo_runtime/sessions/first/session.jsonl").is_file()
-    assert _status(row)["state"] == "delivered" and _status(row)["attempts"] == 3
+    assert _status(row)["state"] == "delivered"
+    assert _status(row)["attempts"] == 3
     assert lane.seals == 1
     restarted.close(drain=False)
 
@@ -197,7 +201,8 @@ def test_drain_rerun_after_crash_adopts_its_own_durable_job(tmp_path: Path) -> N
     again = QueuedEvidenceExport(resumed, lane.snapshot).export(_config(tmp_path), "incident-1", row)
     assert again == first
     assert resumed.drain(10) == []
-    assert len(resumed.jobs()) == 1 and (row / "sdo_runtime").is_dir()
+    assert len(resumed.jobs()) == 1
+    assert (row / "sdo_runtime").is_dir()
     resumed.close(drain=False)
 
 
@@ -236,7 +241,8 @@ def test_failed_seal_leaves_no_job_so_the_synchronous_path_runs(tmp_path: Path) 
 
     queue = EvidenceExportQueue(tmp_path / "queue", lambda _job: None, retry_seconds=0)
     record = QueuedEvidenceExport(queue, unavailable).export(_config(tmp_path), "incident-1", _row(tmp_path, 1))
-    assert record["directory"] is None and "sync Pod not ready" in str(record["error"])
+    assert record["directory"] is None
+    assert "sync Pod not ready" in str(record["error"])
     assert queue.jobs() == []
     queue.close(drain=False)
 

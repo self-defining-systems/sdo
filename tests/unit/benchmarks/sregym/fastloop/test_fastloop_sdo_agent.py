@@ -1082,14 +1082,17 @@ def test_learning_with_a_lane_queue_seals_evidence_and_delivers_off_the_critical
     stage_end_exports = ops.exports
     learned = agent.learn(resolved)
     # Learning returned while delivery was still held: export is off the critical path.
-    assert delivered == [] and ops.exports == stage_end_exports
+    assert delivered == []
+    assert ops.exports == stage_end_exports
     snapshot_id = snapshot_id_for(resolved.incident_id)
     assert sealed == [snapshot_id]
     job = queue.job(snapshot_id)
-    assert job is not None and job.state is ExportState.QUEUED
+    assert job is not None
+    assert job.state is ExportState.QUEUED
     receipt = agent._receipt(Path(str(learned.artifacts_dir)))
     assert receipt["reflection_drain"]["runtime_artifacts"]["delivery"] == "queued"
     assert PersistentState.load(agent._settings.state_path).controllers[agent._settings.namespace].pending is None
     release.set()
-    assert queue.drain(10) == [] and delivered == [snapshot_id]
+    assert queue.drain(10) == []
+    assert delivered == [snapshot_id]
     queue.close(drain=False)
