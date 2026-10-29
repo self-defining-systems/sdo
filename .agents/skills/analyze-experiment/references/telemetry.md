@@ -229,3 +229,5 @@ and `reflection_dispatch_at`; the first task's cutoff can miss later
 continuations, including turns with empty usage. Do not substitute `llm_calls`
 or `response_loops_used` for interaction counts. Empty usage remains unknown
 usage rather than evidence that no interaction occurred.
+
+`verify.verification_status=awaiting_responder_completion` is controller-owned finish guidance when fresh health is clear but publication awaits the responder result. `healthy` remains false; this status is neither a recovery receipt nor mitigation/closure credit. The responder returns its evidence and source-difference dispositions; the controller retains independent stability, quiescence and publication checks.

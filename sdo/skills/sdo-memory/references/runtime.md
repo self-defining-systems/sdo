@@ -139,12 +139,12 @@ usage: sdo verify [-h] [--wait SECONDS]
 Reads the controller's shared recovery proof: fresh health after the last
 repair, observed write effects, and the unchanged 15-second stability window.
 drift[] lists objects that still differ from accepted source and never decides
-healthy. After a healthy return, SDO may resume once for source differences
-when progress remains; terminal inventory and no-progress stops do not resume.
-restore them or explain the intended difference. Pending observation windows,
-including unproven synthetic scenarios, are not healthy. verification_blockers
-names incomplete detectors and reasons. SDO resumes once for these blockers,
-then stops any running blocker turn and records an unconfirmed outcome at the
+healthy. verification_status=awaiting_responder_completion: finish with
+evidence; proof follows your result. Explain remaining source differences; SDO
+may resume once when progress remains. Pending observation windows, including
+unproven synthetic scenarios, are not healthy. verification_blockers names
+incomplete detectors and reasons. SDO resumes once for these blockers, then
+stops any running blocker turn and records an unconfirmed outcome at the
 verification bound if they persist. Fresh deployment-rollout-pending findings
 name owned ReplicaSet/Pod blockers and old-template Pods, including after
 recorded actions; inspect their evidence before repeating workload writes.
@@ -160,7 +160,7 @@ options:
   --wait SECONDS  wait for stable verification, a new/reactivated finding, or
                   this timeout (0: cached and instant)
 
-Key JSON fields: healthy, unresolved, findings[], detector_states[],
+Key JSON fields: healthy, verification_status, findings[], detector_states[],
 verification_blockers[{detector_id,reason}], drift[], drift_events[]
 
 

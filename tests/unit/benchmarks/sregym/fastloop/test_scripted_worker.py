@@ -610,3 +610,34 @@ def test_tool_reads_the_complete_response_behind_a_capped_reply(
     assert json.loads(envelope)["summarized"] is True
     monkeypatch.setattr(scripted_worker, "_command", lambda *_args, **_kwargs: envelope + "\n")
     assert scripted_worker._tool("source", "Service/app/api") == full
+
+
+@pytest.mark.parametrize("status", ["awaiting_responder_completion", "", "waiting_for_observation"])
+def test_scripted_responder_finishes_only_on_controller_completion_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    request = IncidentRequest(
+        incident_id="synthetic-pending-proof", namespace="demo", repository_worktree=str(tmp_path)
+    )
+    monkeypatch.delenv("SDO_SCRIPTED_SOURCE_REPAIR", raising=False)
+    calls: list[tuple[str, ...]] = []
+
+    def tool(*args: str) -> dict[str, Any]:
+        calls.append(args)
+        if args[0] == "diagnose":
+            return {"program_runs": []}
+        return {
+            "healthy": False,
+            "verification_status": status,
+            "findings": [],
+            "detector_states": [{"status": "clear"}],
+            "summary": "controller recovery proof pending",
+        }
+
+    monkeypatch.setattr(scripted_worker, "_tool", tool)
+    monkeypatch.setattr(scripted_worker.time, "sleep", lambda _seconds: None)
+    result = scripted_worker.scripted_responder(request)
+    assert result.status == ("completed" if status == "awaiting_responder_completion" else "failed")
+    assert result.verification_evidence[0].passed is False
+    if status == "awaiting_responder_completion":
+        assert sum(call[0] == "verify" for call in calls) == 2
