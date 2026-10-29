@@ -490,7 +490,7 @@ func (c *Controller) continuationVerificationLocked(healthVerified bool, source 
 				break
 			}
 		}
-		if latest == nil || latest.Status == DetectorEvaluationPending || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.responderCompletedAt)) {
+		if latest == nil || latest.Status == DetectorEvaluationPending || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.recoveryObservationEpochLocked())) {
 			reason := "awaiting detector evaluation"
 			if latest != nil {
 				reason = latest.Reason
@@ -577,6 +577,10 @@ func (c *Controller) responderResultVerification(ctx context.Context, incidentID
 	}
 	_, health := c.finalVerificationStates()
 	response := c.continuationVerificationLocked(health, source)
+	// A direct result check may discover contradictions, but only the running
+	// controller publishes the continuous recovery proof consumed by tools.
+	response.Healthy = response.Healthy && c.cachedVerification != nil && c.cachedIncidentID == incidentID && c.cachedVerification.Healthy
+	if !response.Healthy && len(response.Findings)==0 && response.Error=="" {response.Summary="awaiting controller recovery stability proof"}
 	return response
 }
 

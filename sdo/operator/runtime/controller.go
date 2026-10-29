@@ -147,6 +147,8 @@ type Controller struct {
 	finishedHoldWake        time.Time
 	earlyStopRetryAt        time.Time
 	pausedEffectRetryAt     time.Time
+	recoveryObserverStarted time.Time
+	recoverySafetyLost      bool
 	closureStableSince      time.Time
 	closureMutationRevision string
 	earlyLastMutationAt     time.Time
@@ -1376,9 +1378,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if safe && guard != nil && c.closureMutationRevision != guard.Revision {
 		c.closureMutationRevision = guard.Revision
 		c.closureStableSince = time.Time{}
-		if early {
-			c.earlyLastMutationAt = now
-		}
+		c.earlyLastMutationAt = now
 	}
 	finalStates, healthVerified := c.finalVerificationStates()
 	if snapshotErr != nil {
@@ -1396,6 +1396,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		finalStates, healthVerified = c.latestEvaluations(ids, c.earlyLastMutationAt, true)
 	}
 	verified := healthVerified && len(source.Rollouts) == 0
+	if !safe || guard != nil && guard.Pending {
+		c.recoverySafetyLost = true
+	}
 	// A terminal dispatch failure closes as failed: once health permits it, or
 	// at once when the responder is done, because a failed Job leaves no
 	// attempt to verify and waiting would only hold still-firing findings back
@@ -1429,47 +1432,63 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			verified = false
 		}
 	}
+	verification.Healthy = false // Only the shared recovery proof can grant health.
 	c.cacheVerificationLocked(verification)
 	if waitForResponder {
 		// Refresh verify reports without ending the responder's whole turn.
 		c.mu.Unlock()
 		return
 	}
-	if requiresStability {
-		if !safe || guard != nil && guard.Pending {
-			c.closureStableSince = time.Time{}
-			c.mu.Unlock()
-			return
-		}
-		if !verified {
-			c.closureStableSince = time.Time{}
-			if early {
-				c.mu.Unlock()
-				return
-			}
-		} else {
-			if c.closureStableSince.IsZero() {
-				c.closureStableSince = now
-			}
-			if now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow)) {
-				c.mu.Unlock()
-				return
-			}
-		}
-	} else if verified && !terminalFailure {
-		// A success outcome teaches memory, so it commits only after health has
-		// held for the window. Fast health proof still reports the early clear
-		// time; a relapse resets the window and takes the unverified path below.
+	if verified && !terminalFailure {
 		requiresStability = true
-		if c.closureStableSince.IsZero() {
-			c.closureStableSince = now
+		verified = c.recoveryProofLocked(now, finalStates, safe && (guard == nil || !guard.Pending))
+		verification.Healthy = verified
+		if !verified {
+			verification.Summary = "awaiting controller recovery stability proof"
 		}
-		if now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow)) {
+		c.cacheVerificationLocked(verification)
+		if !verified {
 			c.mu.Unlock()
 			return
 		}
 	} else {
 		c.closureStableSince = time.Time{}
+		verification.Healthy = false
+		c.cacheVerificationLocked(verification)
+		if early {
+			c.mu.Unlock()
+			return
+		}
+	}
+
+	// An automatic stage has no provider continuation to resume. Transfer its
+	// receipts and residuals through the first-worker handoff, rather than
+	// treating a missing continuation checkpoint as exhausted model work.
+	if !early && !verified && !terminalFailure && stageOnlyClosure(IncidentClosure{Request: *c.currentIncidentRequest, Result: c.currentIncidentResult}) &&
+		(len(verification.Findings) > 0 || (!now.Before(c.verificationDeadlineLocked()) && len(c.activeHealthDetectors()) > 0)) {
+		request := *cloneIncidentRequest(c.currentIncidentRequest)
+		request.Findings = append([]sdk.Finding(nil), verification.Findings...)
+		if len(request.Findings) == 0 {
+			for _, state := range c.tracker.Snapshot() {
+				if state.Active {
+					request.Findings = append(request.Findings, state.Finding)
+				}
+			}
+		}
+		c.mu.Unlock()
+		_, err := c.prepareResponseStageHandoff(ctx, request)
+		if err != nil {
+			c.reportBrokerError("handoff unrecovered automatic stage", err)
+			return
+		}
+		c.mu.Lock()
+		c.responderDone = false
+		c.responderCompletedAt = time.Time{}
+		c.verificationDeadline = time.Time{}
+		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
+		c.resetDispatchRetryLocked()
+		c.mu.Unlock()
+		return
 	}
 
 	driftPrompt := !early && verified && driftRepromptCanProgress(source.Drift, c.currentIncidentResult)
@@ -1742,7 +1761,7 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 			return nil, false
 		}
 	}
-	return c.latestEvaluations(c.healthDetectorIDs, c.responderCompletedAt, true)
+	return c.latestEvaluations(c.healthDetectorIDs, c.recoveryObservationEpochLocked(), true)
 }
 
 // incidentDetectorStates reports the latest evaluation since responder
@@ -1941,6 +1960,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
 	c.verificationDeadline = controllerTime(state.GetVerificationDeadlineAt())
 	c.detectorClearSince = cloneClearSince(timestampsState(state.GetDetectorClearSince()))
+	c.recoveryObserverStarted = c.clock()
 	c.dispatchState = state.DispatchState
 	c.incidentFindingKeys = append([]string(nil), state.IncidentFindingKeys...)
 	c.pendingClosure = nil

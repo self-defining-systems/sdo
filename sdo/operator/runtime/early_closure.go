@@ -22,6 +22,7 @@ import (
 func (c *Controller) resetEarlyStability() {
 	c.mu.Lock()
 	c.closureStableSince = time.Time{}
+	c.recoverySafetyLost = true
 	c.mu.Unlock()
 }
 
@@ -160,9 +161,9 @@ func (c *Controller) earlyReportPendingLocked() bool {
 	return !c.incidentOpen && c.currentIncidentRequest != nil && c.pendingClosure != nil && c.pendingClosure.VerifiedWhileResponderRunning && c.pendingClosure.Request.IncidentID == c.currentIncidentRequest.IncidentID
 }
 
-// Both active and paused scheduling must retire a finished responder promptly.
-// An unfinished worker retains the report grace; uncertain quiescence retries
-// retain their own deadline even when dispatch has already completed.
+// Both active and paused scheduling retire verified responders immediately.
+// Uncertain quiescence retries retain their own deadline. Narration never holds
+// the outcome; mutation fencing and independently observed quiescence do.
 func (c *Controller) earlyReportWakeLocked() time.Time {
 	if !c.earlyReportPendingLocked() {
 		return time.Time{}
@@ -173,7 +174,7 @@ func (c *Controller) earlyReportWakeLocked() time.Time {
 	if c.responderDone {
 		return c.clock()
 	}
-	return c.pendingClosure.VerifiedAt.Add(c.config.ResponderReportGrace)
+	return c.pendingClosure.VerifiedAt
 }
 
 func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
@@ -187,10 +188,6 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 		return
 	}
 	done := c.responderDone
-	if !done && now.Before(c.pendingClosure.VerifiedAt.Add(c.config.ResponderReportGrace)) {
-		c.mu.Unlock()
-		return
-	}
 	id := c.currentIncidentRequest.IncidentID
 	cancel := c.responderCancel
 	attempts := max(0, c.currentIncidentRequest.MaxResponseLoops)

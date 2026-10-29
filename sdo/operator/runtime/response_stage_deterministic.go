@@ -630,19 +630,23 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 	for _, detector := range loop.Detectors {
 		health[detector.Spec().ID] = detector.Spec().Class == sdk.DetectorClassHealth
 	}
+	view, err := loop.snapshotView(ctx)
+	if err != nil {
+		return
+	}
+	effects := repairedLifecycleEffects(view, loop.applicationsLog, state.Findings)
 	eligible := func() bool {
 		for _, finding := range state.Findings {
 			if !health[finding.DetectorID] {
+				if _, owned := effects[FindingFingerprint(finding)]; owned {
+					continue
+				}
 				return false
 			}
 		}
 		return len(state.Findings) > 0
 	}
 	if !eligible() {
-		return
-	}
-	view, err := loop.snapshotView(ctx)
-	if err != nil {
 		return
 	}
 	horizons := map[string]time.Duration{}
@@ -664,6 +668,9 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 		var horizon time.Duration
 		for _, finding := range state.Findings {
 			horizon = max(horizon, horizons[finding.DetectorID])
+			if _, owned := effects[FindingFingerprint(finding)]; owned {
+				horizon = ceiling
+			}
 		}
 		if time.Since(started) >= horizon {
 			return
@@ -678,6 +685,12 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 		response := ToolResponse{}
 		loop.verify(observe, nil, &response, true)
 		updateStageFindings(state, response)
+		if fresh, err := loop.snapshotView(observe); err == nil {
+			state.Findings = effects.observe(fresh, state.Findings)
+			state.refreshUnexplained()
+		} else {
+			return
+		}
 		if response.Error != "" {
 			return
 		}

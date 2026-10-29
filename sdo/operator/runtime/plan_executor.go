@@ -717,6 +717,24 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		}
 		removeAddedFields(next, current, source)
 		preserveSourceControllerFields(next, current)
+		// A source repair owns the revision it applies. Carry the original
+		// UID-bound acceptance baseline across that repair; never accept an
+		// unknown incarnation or absorb another writer's added/changed fields.
+		if previous, ok := readAcceptanceRecord(current); ok && previous.UID != "" && previous.UID == string(current.GetUID()) {
+			record, fits, err := buildAcceptanceRecord(source, next, current, nil, false)
+			if err != nil {
+				return nil, err
+			}
+			if !fits {
+				return nil, fmt.Errorf("repaired acceptance record exceeds %d bytes", maxAcceptanceRecordBytes)
+			}
+			annotations := next.GetAnnotations()
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+			annotations[acceptedPathsAnnotation] = record
+			next.SetAnnotations(annotations)
+		}
 		return next, nil
 	case program.Rollback:
 		if e.Source == nil || a.ToRevision == "" {
