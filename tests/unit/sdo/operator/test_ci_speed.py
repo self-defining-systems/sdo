@@ -121,12 +121,11 @@ def test_ci_bounds_nested_go_builds_and_routes_compiling_contracts() -> None:
 def test_go_shards_restore_the_completed_preparation_cache() -> None:
     jobs = workflow()["jobs"]
     warm = jobs["prepare-go"]
-    assert warm["timeout-minutes"] == 4
+    assert warm["timeout-minutes"] == 5
     assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
     for name in ("python", "contracts"):
         assert "prepare-go" in jobs[name]["needs"]
-        caches = [step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
-        assert any("ci-prepared" in step["with"]["key"] for step in caches), name
+        assert any(step.get("with", {}).get("name") == "prepared-normal" for step in jobs[name]["steps"])
 
 
 def test_pull_requests_restore_a_prepared_cache_from_their_base_branch() -> None:
@@ -157,33 +156,27 @@ def test_only_durable_base_pushes_save_go_caches() -> None:
     prepare = configuration["jobs"]["prepare-go"]["steps"]
     publishers = [step for step in prepare if _saves_cache(step)]
     assert len(publishers) == 2
-    consumers = [step for name in ("python", "contracts") for step in configuration["jobs"][name]["steps"]]
     for publisher in publishers:
-        assert any(
-            step.get("with", {}).get("key")
-            == next(
-                step["with"]["key"]
-                for step in prepare
-                if step.get("id") == ("base-race" if "race" in publisher["name"] else "base-normal")
-            )
-            for step in consumers
-        )
+        mode = "race" if "race" in publisher["name"] else "normal"
+        restore = next(step for step in prepare if step.get("id") == f"base-{mode}")
+        assert publisher["with"]["key"] == f"${{{{ steps.base-{mode}.outputs.cache-primary-key }}}}"
+        assert publisher["with"]["path"].strip() == restore["with"]["path"].strip()
+        assert restore["with"]["key"].startswith(restore["with"]["restore-keys"].split()[0])
 
 
-def test_prepared_deltas_are_required_run_artifacts_even_on_a_cold_base() -> None:
+def test_consumers_require_complete_run_artifacts_even_on_a_cold_base() -> None:
     jobs = workflow()["jobs"]
-    prepare = jobs["prepare-go"]["steps"]
     for mode in ("normal", "race"):
-        uploads = [step for step in prepare if step.get("with", {}).get("name") == f"go-delta-{mode}"]
-        assert len(uploads) == 1
-        assert uploads[0]["uses"].startswith("actions/upload-artifact@")
-        assert uploads[0]["with"]["if-no-files-found"] == "error"
+        upload = next(
+            step for step in jobs["prepare-go"]["steps"] if step.get("with", {}).get("name") == f"prepared-{mode}"
+        )
+        assert upload["uses"].startswith("actions/upload-artifact@")
+        assert upload["with"]["if-no-files-found"] == "error"
         for name in ("python", "contracts") if mode == "normal" else ("contracts",):
             steps = jobs[name]["steps"]
-            assert any(step.get("with", {}).get("name") == f"go-delta-{mode}" for step in steps)
-            assert not any("Require the" in step.get("name", "") and "build graph" in step["name"] for step in steps)
-        export = next(step for step in prepare if step.get("id") == f"export-{mode}")
-        assert "--max-bytes" not in export["run"]  # Cold runs hand off the complete graph.
+            assert any(step.get("with", {}).get("name") == f"prepared-{mode}" for step in steps)
+            assert not any(step.get("uses", "").startswith("actions/cache") for step in steps)
+            assert any(f"go_ci_artifacts.sh unpack {mode}" in step.get("run", "") for step in steps)
 
 
 def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
@@ -277,10 +270,6 @@ def test_normal_and_race_preparation_are_independent_bounded_jobs() -> None:
     assert len(caches) == 2
     assert all("github.event_name == 'push'" in step["if"] for step in caches)
     assert sum("~/go/pkg/mod" in step["with"]["path"] for step in caches) == 1
-    for name in ("contracts",):
-        keys = [step["with"]["key"] for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/cache")]
-        assert any("ci-prepared-v4-normal-" in key for key in keys)
-        assert any("ci-prepared-v4-race-" in key for key in keys)
 
 
 def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> None:
@@ -302,19 +291,6 @@ def test_image_builder_refuses_dirty_source_before_docker(tmp_path: Path) -> Non
     assert "unexpected-docker" not in result.stderr
 
 
-def test_downstream_cache_archives_never_unpack_into_the_same_path() -> None:
-    for name in ("python", "contracts"):
-        steps = workflow()["jobs"][name]["steps"]
-        restored = [
-            line.strip()
-            for step in steps
-            if step.get("uses", "").startswith("actions/cache") and "ci-prepared-v4-" in step["with"]["key"]
-            for line in step["with"]["path"].splitlines()
-            if line.strip()
-        ]
-        assert len(restored) == len(set(restored)), (name, restored)
-        assert restored.count("~/go/pkg/mod") == 1
-
 
 def test_compiler_cache_union_preserves_existing_and_adds_race_entries(tmp_path: Path) -> None:
     normal, race = tmp_path / "normal", tmp_path / "race"
@@ -328,19 +304,6 @@ def test_compiler_cache_union_preserves_existing_and_adds_race_entries(tmp_path:
     assert (normal / "hash/shared-a").stat().st_ino == existing_inode
     assert (normal / "hash/race-only-a").read_bytes() == b"race archive"
     assert (normal / "hash/race-only-a").stat().st_ino == (race / "hash/race-only-a").stat().st_ino
-
-
-def test_consumers_restore_the_paths_published_by_each_mode_owner() -> None:
-    jobs = workflow()["jobs"]
-    published = {
-        mode: next(step["with"]["path"] for step in jobs["prepare-go"]["steps"] if step.get("id") == f"base-{mode}")
-        for mode in ("normal", "race")
-    }
-    for name in ("python", "contracts"):
-        for step in jobs[name]["steps"]:
-            if step.get("uses", "").startswith("actions/cache") and "ci-prepared-v4-" in step["with"]["key"]:
-                mode = "race" if "v4-race-" in step["with"]["key"] else "normal"
-                assert step["with"]["path"].strip() == published[mode].strip(), name
 
 
 def test_hosted_image_builds_use_native_store_without_transport_compression() -> None:
@@ -378,7 +341,7 @@ def test_prepared_builds_include_the_portable_prober_and_source_stable_inputs() 
     assert "CGO_ENABLED=0" in prepare
     assert "TestAssuranceSeedsPassHealthJudgeCheck" not in prepare
     assert "operator_test_binary.py" in prepare
-    for name in ("prepare-go", "python", "contracts"):
+    for name in ("prepare-go",):
         normal = [
             step
             for step in jobs["jobs"][name]["steps"]
@@ -486,4 +449,4 @@ def test_all_integration_contracts_use_fixed_shared_capacity() -> None:
     assert integration["strategy"]["matrix"]["bin"] == [0, 1]
     assert any(step.get("with", {}).get("name") == "compiled-python-test-plan" for step in integration["steps"])
     assert set(jobs) == {"prepare-go", "python", "contracts", "required-pr-ci"}
-    assert integration["timeout-minutes"] == 5
+    assert integration["timeout-minutes"] == 4
