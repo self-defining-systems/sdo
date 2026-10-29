@@ -15,6 +15,7 @@ import yaml
 from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, load_application_baseline
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -86,13 +87,13 @@ def main() -> None:
     baselines = load_application_baseline(environment.baseline_path, environment.namespace) or ()
     baseline = next(item for item in baselines if item.namespace == environment.namespace)
     if align_tracing_alias(environment.workspace, baseline):
-        subprocess.run(["git", "-C", str(environment.workspace), "add", TRACING_SERVICE], check=True)
+        subprocess.run(host_git_command(environment.workspace, "add", TRACING_SERVICE), check=True)
         subprocess.run(
-            ["git", "-C", str(environment.workspace), "commit", "-qm", "fix: align tracing source with hotel baseline"],
+            host_git_command(environment.workspace, "commit", "-qm", "fix: align tracing source with hotel baseline"),
             check=True,
         )
     environment.seed_commit = subprocess.check_output(
-        ["git", "-C", str(environment.workspace), "rev-parse", "HEAD"], text=True
+        host_git_command(environment.workspace, "rev-parse", "HEAD"), text=True
     ).strip()
     environment.save()
     print(f"prepared hotel seed {environment.seed_commit}: structural health unchanged")

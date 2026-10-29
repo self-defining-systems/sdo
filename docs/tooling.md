@@ -4,6 +4,7 @@ Use existing gates when extending a contract. New agent implementations and comm
 
 | Owner / tool | Contract and extension point |
 | --- | --- |
+| `benchmarks/sregym/repository_git.py` | Command-local, exact-path Git trust for shared checkout reads and clones (including upload-pack). Real Git ownership regression tests and the AST host-command ratchet live in `tests/unit/benchmarks/sregym/fastloop/test_shared_git_ownership.py`; static negative controls run in `check_errors.sh`. |
 | `sdo/agents/prompt_templates.py` | The sole prompt renderer/provider dispatch boundary. `prompt_sections.json` enumerates every template placeholder and names its cap in `prompt_budgets.toml`. A missing cap or overflowing required section fails at runtime. Required parts survive composition unchanged; optional parts explicitly opt into ranked trimming with counts. |
 | `tests/unit/sdo/agents/prompts/test_context_registry.py` | Enumerates capability registrations, all production Python source, every prompt template and registered MCP/CLI tool. Add production render fixtures for new registered capabilities. AST negative controls guard bypasses. |
 | `tests/unit/sdo/agents/prompts/test_production_caps.py` | Real-scale generated inputs through production prompt/CLI/MCP producers. Every registered tool needs an executable fixture; unknown registrations fail. |

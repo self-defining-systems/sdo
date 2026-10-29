@@ -632,8 +632,9 @@ def test_mongo_source_is_bound_to_both_gitlinks_not_app_head_or_worktree(tmp_pat
 
     transport = KubectlObservationTransport(namespace="app", run=run, source_root=root)
     assert transport(ReadOnlyObservation("mongo_geo_read", "app-pod", "app")) == "__SDO_MONGO_READ_OK__"
-    assert ["git", "-C", str(harness), "ls-tree", harness_pin, "--", "SREGym-applications"] in calls
-    assert ["git", "-C", str(apps), "show", f"{app_pin}:hotelReservation/cmd/geo/db.go"] in calls
+    checkout_commands = [command[command.index("-C") + 1:] for command in calls if command[0] == "git"]
+    assert [str(harness), "ls-tree", harness_pin, "--", "SREGym-applications"] in checkout_commands
+    assert [str(apps), "show", f"{app_pin}:hotelReservation/cmd/geo/db.go"] in checkout_commands
     # Uninitialized submodules can silently resolve the parent's Git root.
     import shutil
 

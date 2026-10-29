@@ -31,6 +31,7 @@ from benchmarks.sregym.adapter import (
     wait_for_proof,
 )
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -187,7 +188,7 @@ MAX_STABILIZATION_RESTARTS = 3
 
 def _accepted_head(workspace: Path) -> str | None:
     completed = subprocess.run(
-        ["git", "-C", str(workspace), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+        host_git_command(workspace, "rev-parse", "HEAD"), capture_output=True, text=True, check=False
     )
     return completed.stdout.strip() or None if completed.returncode == 0 else None
 

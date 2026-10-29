@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
 from benchmarks.sregym.fastloop.observation_conformance import check_observations
 from benchmarks.sregym.fastloop.setup_proof import INVARIANTS
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,7 +29,7 @@ SCRIPTED_REGISTRATIONS = Path(__file__).resolve().parents[1] / "adapter/scripted
 def code_revision() -> str:
     root = Path(__file__).resolve().parents[3]
     result = subprocess.run(
-        ["git", "-C", str(root), "describe", "--always", "--abbrev=40", "--dirty", "--match=__eval_no_tag__"],
+        host_git_command(root, "describe", "--always", "--abbrev=40", "--dirty", "--match=__eval_no_tag__"),
         check=True,
         text=True,
         capture_output=True,
@@ -203,7 +204,7 @@ def assert_seed_supports_scripted_judge(workspace: Path, seed_commit: str | None
             checkout = Path(temporary)
             if seed_commit:
                 archive = subprocess.run(
-                    ["git", "-C", str(workspace), "archive", "--format=tar", seed_commit, "--", ".sdo"],
+                    host_git_command(workspace, "archive", "--format=tar", seed_commit, "--", ".sdo"),
                     capture_output=True,
                     timeout=wait_for(WaitKind.COMMAND),
                 )

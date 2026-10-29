@@ -26,6 +26,7 @@ from benchmarks.sregym.fastloop.replay import (
     materialize_captures,
     replay_broker_result,
 )
+from benchmarks.sregym.repository_git import host_clone_command, host_git_command
 from sdo.agents.responder import (
     CodexSessionBackend,
     SessionReflector,
@@ -226,7 +227,8 @@ def replay_scripted_reflection(
         binary = root / "sdo-operator"
 
         def command(argv: list[str], *, timeout: int = int(wait_for(WaitKind.ROLLOUT))) -> str:
-            if argv[:3] == ["git", "-C", str(checkout)] and _read_only_git(argv[3:]):
+            git = host_git_command(checkout)
+            if argv[:len(git)] == git and _read_only_git(argv[len(git):]):
                 # The reflector decides from its own checkout's diff; inspection never writes.
                 inspected = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
                 if inspected.returncode:
@@ -299,8 +301,8 @@ def replay_scripted_reflection(
 
 def _clone_at(source: Path, destination: Path, commit: str) -> None:
     for command in (
-        ["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", str(source), str(destination)],
-        ["git", "-C", str(destination), "reset", "--quiet", "--hard", commit],
+        host_clone_command(source, destination, "--quiet", "--no-hardlinks", "--no-checkout"),
+        host_git_command(destination, "reset", "--quiet", "--hard", commit),
     ):
         completed = subprocess.run(
             command, capture_output=True, text=True, timeout=wait_for(WaitKind.SLOW_COMMAND), check=False

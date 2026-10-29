@@ -12,6 +12,7 @@ from typing import Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for
+from benchmarks.sregym.repository_git import host_git_command
 
 
 def configure_source_deployment(app: Any) -> None:
@@ -36,7 +37,7 @@ def configure_source_deployment(app: Any) -> None:
             archive = Path(directory) / "source.tar"
             with archive.open("wb") as output:
                 subprocess.run(
-                    ["git", "-C", str(source.workspace), "archive", source.revision],
+                    host_git_command(source.workspace, "archive", source.revision),
                     stdout=output,
                     check=True,
                     timeout=wait_for(WaitKind.COMMAND),

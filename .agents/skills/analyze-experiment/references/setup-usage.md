@@ -27,3 +27,17 @@ finish accounting; totals are observed lower bounds. Missing checkpoints are
 unknown, not measured zero. Optional costs and request counts remain unknown
 when any included turn lacks them. Setup and reflection accounting are separate;
 a resumed provider transcript's whole-session totals can include both phases.
+
+## Shared attachment recovery
+
+The attachment report is an atomic phase journal (`preflight`, `all-paused`,
+`all-stopped`, `all-bound`, `attached`). It retains each joining lane's original
+controller Job, node, volume path, stable application identity and matched
+accepted commit. New reports also bind `accepted_repository` and `shared_id`;
+older reports recover against their recorded lanes and the existing identity.
+A phase records a completed cohort barrier; an interruption can leave some lanes
+partway through the next step. Retry resumes that transaction before lane
+preparation or live identity validation, recreates missing saved Jobs and
+preserves Jobs already recreated. `all-bound` alone does not prove a running
+controller. Successful recovery still requires each lane's normal live shared
+repository check and accepted-history ancestry proof.

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter.budgets import Deadline, WaitKind, wait_for
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,7 +50,7 @@ def is_health_setup(actor: str, phase: str, paths: list[str]) -> bool:
 def setup_lineage(repository: Path, seed: str, head: str = "HEAD") -> dict[str, Any]:
     def git(*args: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(repository), *args],
+            host_git_command(repository, *args),
             check=True,
             capture_output=True,
             text=True,

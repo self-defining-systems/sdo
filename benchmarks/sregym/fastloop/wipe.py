@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.host_limits import HostLimits
 from benchmarks.sregym.fastloop.records import Injected, NotInjected
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -732,7 +733,7 @@ def reseed_workspace(workspace: Path, planned_commit: str) -> None:
         ["reset", "--hard", planned_commit],
         ["clean", "-fd"],
     ):
-        completed = subprocess.run(["git", "-C", str(workspace), *argv], capture_output=True, text=True, check=False)
+        completed = subprocess.run(host_git_command(workspace, *argv), capture_output=True, text=True, check=False)
         if completed.returncode:
             raise WipeError(
                 f"eval: cannot seed {workspace} at {planned_commit}: git {argv[0]}: {completed.stderr.strip()}"
