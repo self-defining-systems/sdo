@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"os"
+	"os/exec"
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -119,7 +120,11 @@ func ValidateScriptOriginsWithoutCorpus(ctx context.Context, root, baseCommit st
 			origin := origins.ForScript(script)
 			linked := origin.IncidentID == outcome.GetIncidentId() && ScriptReceiptMatches(script, origin.LegacyOrigins, origin.IncidentID, outcome, origin.ReceiptID)
 			if !linked && baseCommit != "" && origin.IncidentID != "" {
-				accepted, err := memory.NewJSONStore(root).GetAt(ctx, baseCommit, origin.IncidentID)
+				resolved, err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--verify", baseCommit+"^{commit}").Output()
+				if err != nil {
+					return fmt.Errorf("resolve script receipt base: %w", err)
+				}
+				accepted, err := memory.NewJSONStore(root).GetAt(ctx, strings.TrimSpace(string(resolved)), origin.IncidentID)
 				linked = err == nil && ScriptReceiptMatches(script, origin.LegacyOrigins, origin.IncidentID, accepted.Record, origin.ReceiptID)
 			}
 
