@@ -156,19 +156,41 @@ func TestAcceptedClusterSourceMissingObservationIsNotAbsence(t *testing.T) {
 	}
 }
 
-// Source evidence is information: status and verify report health from the
-// detectors alone and list the object in drift[] while it differs from source.
+// Source evidence remains information. Status reports detector health directly;
+// verify additionally consumes the real controller recovery proof.
 func assertClusterSourceStatusVerify(t *testing.T, ref sdk.ObjectRef, view LiveReadView, restored bool) {
 	t.Helper()
 	finding := unexplainedFinding()
 	finding.PrimaryResource = ref
-	finding.Metadata = map[string]any{"drift_event": sdk.DriftEvent{Ref: ref, Classification: sdk.DriftUnexplained}}
+	finding.Metadata = map[string]any{"drift_event": sdk.DriftEvent{Ref: ref, Classification: sdk.DriftUnexplained, Fields: []sdk.DriftField{{Path: "rules"}}}}
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "cluster-source-parity", Namespace: "app", SourceCommit: view.SourceCommit, Findings: []sdk.Finding{finding}}, nil, staticProvider{snapshot: view.DetectionContext}, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, PlanExecutor{Source: view.Source}, 1)
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 		copy := view
 		copy.DetectionContext = snapshot
 		return copy
 	}
+	ctx := context.Background()
+	now := time.Now().UTC()
+	controller, err := NewController(testControllerConfig(), loop.Detectors, loop.Provider, &verificationRetryDispatcher{}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.ConfigureDrift(DriftControllerConfig{View: loop.ReadView})
+	controller.currentIncidentRequest = &loop.Request
+	controller.incidentOpen = true
+	controller.responderDone = true
+	controller.responderCompletedAt = now
+	loop.VerifyClosure = func(ctx context.Context) ToolResponse {
+		return controller.cachedResponderVerification(ctx, loop.Request.IncidentID, 0)
+	}
+	if err := controller.Step(ctx, now, nil); err != nil {
+		t.Fatal(err)
+	}
+	if check := loop.Handle(ctx, ToolRequest{Command: "verify"}); check.Healthy {
+		t.Fatal("detector health bypassed recovery proof")
+	}
+	// The initial observation above starts the real clear streak.
+	assertRecoveryFixtureWindow(t, controller, ctx, now)
 	for _, command := range []string{"status", "verify"} {
 		response := loop.Handle(context.Background(), ToolRequest{Command: command})
 		if !response.Healthy || (len(response.Drift) == 0) != restored {

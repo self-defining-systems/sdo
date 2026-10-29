@@ -32,6 +32,9 @@ func TestContinuationStillBrokenExcludesFindingAwaitingClearing(t *testing.T) {
 	c.incidentOpen = true
 	c.responderCompletedAt = now
 	loop := NewResponderLoop(request, nil, provider, nil, PlanExecutor{}, 3)
+	bindRecoveryFixture(c, loop, now)
+	// Fresh result verification filters findings awaiting clearing; it still
+	// requires the controller's published recovery proof before granting health.
 	loop.VerifyClosure = func(ctx context.Context) ToolResponse { return c.responderVerification(ctx, request.IncidentID) }
 	server := SessionToolServer{Directory: filepath.Join(t.TempDir(), "tools"), Handle: loop.Handle}
 	if err = server.Prepare(); err != nil {
@@ -58,7 +61,11 @@ func TestContinuationStillBrokenExcludesFindingAwaitingClearing(t *testing.T) {
 		t.Fatalf("clearing must wait without another repair: %+v", pending)
 	}
 	observe(3)
-	if final := exchangeSelfCheck(t, &server, `{"command":"verify"}`); !final.Healthy {
+	if check := exchangeSelfCheck(t, &server, `{"command":"verify"}`); check.Healthy {
+		t.Fatal("clearing samples bypassed recovery stability")
+	}
+	observe(2 + int(c.config.ClosureStabilityWindow/time.Second))
+	if final := c.cachedResponderVerification(context.Background(), request.IncidentID, 0); !final.Healthy {
 		t.Fatalf("confirmed clearing never verified: %+v", final)
 	}
 }

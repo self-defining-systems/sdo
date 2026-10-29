@@ -107,6 +107,12 @@ def test_committed_profiles_keep_every_protected_guard_that_fits_in_the_pr():
         "TestNativeReflectionSharesIncidentSessionWithResponder",
         "TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker",
         "TestCoveredRepeatBrokerSkipsReflectionWorker",
+        "TestRecoveryProofSharesClearingWindowAndToolVerdict",
+        "TestClosureRolloutWaitsBeforePublishingSuccess",
+        "TestSourceInventoryMissingAuthorityPreservesMonitoringAndIsInformation",
+        "TestLatentAllHealthClearClosureCarriesInventoryDriftAsInformation",
+        "TestContinuationStillBrokenExcludesFindingAwaitingClearing",
+        "TestControllerWaitsForFreshClearSamplesInsteadOfRedispatch",
     ],
 )
 def test_reflection_launch_guards_displace_cheap_filler(guard: str):
