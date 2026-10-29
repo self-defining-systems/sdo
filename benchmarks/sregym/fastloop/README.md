@@ -118,7 +118,8 @@ warm option currently leaves evidence export synchronous and does not claim the
 
 Private warm reuse also requires a sealed passing no-fault setup receipt. The
 cluster configuration (including existing RBAC, webhooks, API registrations,
-storage classes and namespaces) must match that receipt. Application and accepted
+storage classes, volumes and namespaces), plus retained nonsecret infrastructure
+objects in other namespaces, must match that receipt. Application and accepted
 memory changes are reconciled separately. Missing evidence takes full reset;
 preparation never seals a post-fault cluster as a new clean baseline.
 

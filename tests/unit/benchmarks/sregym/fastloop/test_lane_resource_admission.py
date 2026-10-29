@@ -953,7 +953,11 @@ def test_warm_transaction_consumes_real_admission_and_exact_revision(lane, monke
     from benchmarks.sregym.fastloop.warm_lane import WarmLaneBusy
 
     gate.environment.state_path = gate.environment.workspace / "controller.json"
-    ops.runtime_state = lambda _control: {"incident_open": True, "busy_until": datetime.now(timezone.utc).isoformat()}
+    gate.environment.shared_accepted_id = ""
+    ops.runtime_state = lambda _control: {
+        "incident_open": True,
+        "busy_until": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
+    }
     with pytest.raises(WarmLaneBusy):
         warm.full_reset()
 

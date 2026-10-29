@@ -40,7 +40,7 @@ RESOURCES = (
 )
 CLUSTER_RESOURCES = (
     "nodes,namespaces,clusterroles,clusterrolebindings,validatingwebhookconfigurations,mutatingwebhookconfigurations,"
-    "apiservices,ingressclasses,customresourcedefinitions,priorityclasses,storageclasses"
+    "apiservices,ingressclasses,customresourcedefinitions,priorityclasses,storageclasses,persistentvolumes"
 )
 VOLATILE_CONFIGMAPS = {"sdo-controller-state", "sdo-controller-maintenance"}
 
@@ -151,9 +151,10 @@ def collect_fingerprint(
     if execute(host_git_command(environment.workspace, "status", "--porcelain", "--untracked-files=all")):
         raise ValueError("eval: accepted workspace has uncommitted changes")
     base = ["kubectl", "--kubeconfig", str(environment.kubeconfig), "--request-timeout=4s", "get"]
-    objects = []
-    for namespace in (environment.namespace, environment.namespace + "-sdo"):
-        objects.extend(json.loads(execute([*base, RESOURCES, "-n", namespace, "-o", "json"]))["items"])
+    # Retained infrastructure (for example CoreDNS) must not escape warm reuse
+    # checks merely because it lives outside the application/control namespaces.
+    # The explicit resource list excludes Secrets and observation-only objects.
+    objects = json.loads(execute([*base, RESOURCES, "--all-namespaces", "-o", "json"]))["items"]
     cluster = json.loads(execute([*base, CLUSTER_RESOURCES, "-o", "json"]))["items"]
     nodes = [obj for obj in cluster if obj["kind"] == "Node"]
     states = [

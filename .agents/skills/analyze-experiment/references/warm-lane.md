@@ -16,9 +16,11 @@ on legacy rows say nothing about whether a controller was retained. Export remai
 synchronous in this initial implementation; do not infer asynchronous export or
 sub-30-second overhead from reuse alone.
 
-Private reuse additionally compares cluster configuration hashes against the
-sealed no-fault setup receipt, not a names-only inventory. Legacy setup receipts
-missing the expanded cluster kinds cannot establish this proof.
+Private reuse compares cluster and retained nonsecret infrastructure configuration
+hashes against the sealed no-fault setup receipt, including objects in namespaces
+outside the application and its controller. Application and controller lifecycle
+objects can advance. Legacy receipts missing the expanded inventory cannot
+establish this proof.
 
 `repair-repository-bind` prints `{node, volume_path, identity, repaired}`. `identity`
 is node-local device/inode evidence, not a Git revision. Repaired bind evidence

@@ -162,7 +162,9 @@ class WarmEnvironment:
         from benchmarks.sregym.fastloop.setup_proof import RECEIPTS, collect_fingerprint
         from benchmarks.sregym.fastloop.warm_scope import check_cluster_scope
 
-        check_cluster_scope(self.environment.run_dir / RECEIPTS, collect_fingerprint(self.environment))
+        check_cluster_scope(
+            self.environment.run_dir / RECEIPTS, collect_fingerprint(self.environment), self.environment.namespace
+        )
         if self.planned_commit and AcceptedSource.of(self.environment).revision != self.planned_commit:
             raise ValueError("requested revision differs from current accepted memory")
 
