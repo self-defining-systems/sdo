@@ -64,9 +64,8 @@ func (f FieldValues) Differs() bool {
 	return f.Declared && (!f.Live || !reflect.DeepEqual(f.Accepted, f.Observed))
 }
 
-// Field compares one dotted field path, such as "spec.replicas" or
-// "spec.template.spec.nodeSelector", on both sides. Containers are matched by
-// name with ContainerChanges, never by list position.
+// Field compares one dotted field path, such as "spec.replicas", on both sides.
+// Compare containers by name with ContainerChanges, never by list position.
 func (d SourceDiff) Field(path string) (FieldValues, error) {
 	accepted, observed, err := d.Sides()
 	if err != nil {
@@ -131,9 +130,8 @@ func (c ContainerChange) Changed(field string) bool {
 	return false
 }
 
-// ContainerChanges compares the pod template of a workload (or a Pod) with
-// accepted source, container by container: an added init container is
-// {Kind: InitContainer, Added: true}, never an image change of an app container.
+// ContainerChanges compares a workload's or Pod's containers with accepted
+// source by kind and name: an added init container is never an app image change.
 func (d SourceDiff) ContainerChanges() ([]ContainerChange, error) {
 	accepted, observed, err := d.Sides()
 	if err != nil {

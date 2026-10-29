@@ -50,6 +50,11 @@ Compilation, imports, changed-source formatting, ownership and receipt provenanc
 Replay results are information only.
 <!-- /replay:on -->
 
+## Diagnosis
+
+- Diagnose compares typed fields (`diff.ContainerChanges`, `diff.Field`), never a substring of `diff.Text`;
+  such programs still load but are noted for rewrite. Enforced by: `program.diff-text-match`.
+
 ## Executable repair evidence
 
 Every recorded hand repair needs an executable typed SDK or RunScript step (partial coverage is fine), with
