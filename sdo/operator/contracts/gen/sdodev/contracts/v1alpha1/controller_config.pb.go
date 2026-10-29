@@ -107,7 +107,9 @@ type ControllerConfig struct {
 	ResponderBackend string `protobuf:"bytes,49,opt,name=responder_backend,json=responderBackend,proto3" json:"responder_backend,omitempty"`
 	ResponderModel   string `protobuf:"bytes,50,opt,name=responder_model,json=responderModel,proto3" json:"responder_model,omitempty"`
 	// Reasoning effort every agent worker runs at; empty means the shared default (sdo/contracts/agent_env.json).
-	AgentEffort     string `protobuf:"bytes,101,opt,name=agent_effort,json=agentEffort,proto3" json:"agent_effort,omitempty"`
+	AgentEffort string `protobuf:"bytes,101,opt,name=agent_effort,json=agentEffort,proto3" json:"agent_effort,omitempty"`
+	// Trusted run policy; empty preserves default-on replay and corpus capture.
+	Replay          string `protobuf:"bytes,102,opt,name=replay,proto3" json:"replay,omitempty"`
 	WorkerMountMode string `protobuf:"bytes,51,opt,name=worker_mount_mode,json=workerMountMode,proto3" json:"worker_mount_mode,omitempty"`
 	// Operator policy for the outcome reflection session. A resumed session
 	// requires a valid responder session ID from the accepted closure.
@@ -507,6 +509,13 @@ func (x *ControllerConfig) GetAgentEffort() string {
 	return ""
 }
 
+func (x *ControllerConfig) GetReplay() string {
+	if x != nil {
+		return x.Replay
+	}
+	return ""
+}
+
 func (x *ControllerConfig) GetWorkerMountMode() string {
 	if x != nil {
 		return x.WorkerMountMode
@@ -837,7 +846,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xf3\x1e\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\x9d\x1f\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -892,7 +901,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x0fschema_identity\x180 \x01(\tR\x0eschemaIdentity\x12+\n" +
 	"\x11responder_backend\x181 \x01(\tR\x10responderBackend\x12'\n" +
 	"\x0fresponder_model\x182 \x01(\tR\x0eresponderModel\x12!\n" +
-	"\fagent_effort\x18e \x01(\tR\vagentEffort\x12*\n" +
+	"\fagent_effort\x18e \x01(\tR\vagentEffort\x12(\n" +
+	"\x06replay\x18f \x01(\tB\x10\xbaH\rr\vR\x00R\x02onR\x03offR\x06replay\x12*\n" +
 	"\x11worker_mount_mode\x183 \x01(\tR\x0fworkerMountMode\x12E\n" +
 	"\x12reflection_session\x184 \x01(\tB\x16\xbaH\x13r\x11R\x00R\x05freshR\x06resumeR\x11reflectionSession\x12_\n" +
 	"\x13reflection_guidance\x185 \x01(\tB.\xbaH+r)R\x00R\bbaselineR\n" +

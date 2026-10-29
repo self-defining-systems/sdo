@@ -14,6 +14,7 @@ from sdo.agents.code_paths import agent_guidance
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
+from sdo.agents.replay import selected_skills_root
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
@@ -272,7 +273,7 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
         "incident_shell" if agent_guidance() == "shell" else "incident_response_instructions",
         part="responder.instructions",
         incident_id=request.incident_id,
-        skills_root=SKILLS_ROOT,
+        skills_root=selected_skills_root(SKILLS_ROOT),
         repair_policy=request.repair_policy,
         branch_instruction=branch_instruction("incident_result"),
     )

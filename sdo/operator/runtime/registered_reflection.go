@@ -34,6 +34,7 @@ type ReflectionTaskExecutor interface {
 // implementation-neutral executor. Production supplies KubernetesExecutor,
 // which mounts only the broker-prepared proposal checkout.
 type RegisteredReflectionWorker struct {
+	Replay      string
 	TaskStore   *lifecycleio.TaskStore
 	Executor    ReflectionTaskExecutor
 	AgentID     string
@@ -68,7 +69,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			log.Printf("API history recovery marker unavailable for incident %s: %v", workspace.IncidentID, err)
 		}
 	}
-	if w.CorpusSessionRoot != "" && outcome != nil {
+	if w.Replay != "off" && w.CorpusSessionRoot != "" && outcome != nil {
 		if err := memory.CaptureRepairReceipts(w.CorpusSessionRoot, workspace.IncidentID, outcome); err != nil {
 			return ReflectionDecision{}, fmt.Errorf("capture original repair receipts: %w", err)
 		}

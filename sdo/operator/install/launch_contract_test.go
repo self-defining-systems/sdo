@@ -15,7 +15,7 @@ func optionalLaunchConfig() install.Config {
 	return install.Config{
 		Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo",
 		ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test",
-		RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "test-model", AgentProvider: "claude", AgentEffort: "medium",
+		RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "test-model", AgentProvider: "claude", AgentEffort: "medium", Replay: "off",
 		AcceptedCommit: strings.Repeat("a", 40), NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		TimeoutSeconds: 180, VerificationTimeoutSeconds: 45, RepairPolicy: "recorded-actions",
 		ReflectionSession: "fresh", ReflectionGuidance: "generalize-spec", ForceReflection: true,
@@ -121,6 +121,7 @@ func assertControllerLaunchRoundTrip(t *testing.T, cfg install.Config, launch *c
 		"model":                  {launch.GetResponderModel(), cfg.Model},
 		"provider":               {launch.GetResponderBackend(), cfg.AgentProvider},
 		"effort":                 {launch.GetAgentEffort(), cfg.AgentEffort},
+		"replay":                 {launch.GetReplay(), cfg.Replay},
 		"repair policy":          {launch.GetRepairPolicy(), cfg.RepairPolicy},
 		"reflection session":     {launch.GetReflectionSession(), cfg.ReflectionSession},
 		"reflection guidance":    {launch.GetReflectionGuidance(), cfg.ReflectionGuidance},

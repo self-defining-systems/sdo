@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -77,7 +78,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if selectedCodePath.Selection.MemoryValidation != "go" {
 		memoryCodePath = "shell"
 	}
-	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{Replay: config.GetReplay(), CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}
@@ -91,7 +92,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		return nil, nil, err
 	}
 	return &NativeIncidentBroker{
-		Repository: repository, LedgerRoot: ledgerRoot,
+		Replay: config.GetReplay(), Repository: repository, LedgerRoot: ledgerRoot,
 		CodePath: codePathConfigFromContract(config.GetCodePath()),
 		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
 		ForceReflection: config.GetForceReflection(), PhaseLog: os.Stdout,
@@ -158,9 +159,9 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		catalog = memory.OpenShellCatalogReader(config.GetAppRoot())
 	}
 	native.Reflector = RegisteredReflectionWorker{
-		TaskStore: &lifecycleio.TaskStore{Root: filepath.Join(native.LedgerRoot, "reflection-tasks")},
-		Executor:  freshExecutor,
-		AgentID:   reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
+		Replay: config.GetReplay(), TaskStore: &lifecycleio.TaskStore{Root: filepath.Join(native.LedgerRoot, "reflection-tasks")},
+		Executor: freshExecutor,
+		AgentID:  reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
 		SessionMode:       config.GetReflectionSession(),
 		Guidance:          config.GetReflectionGuidance(),
 		Catalog:           catalog,
@@ -186,6 +187,11 @@ func AgentWorkerEnvironment(config *contracts.ControllerConfig) (map[string]stri
 	if err != nil {
 		return nil, err
 	}
+	replay, err := settings.Replay(config.GetReplay())
+	if err != nil {
+		return nil, err
+	}
+	environment[settings.ReplayEnvironment] = replay
 	selected, err := codePathFromContract(config.GetCodePath())
 	if err != nil {
 		return nil, err

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -37,7 +38,7 @@ commands:
         [--repository-pvc-subpath PATH] [--kubeconfig FILE] [--context NAME]
         [--operator-root DIR] [--application-namespace NS] [--healthy-baseline]
         Publish through the broker and its isolated Kubernetes validator.
-  check [--root .] [--json] [--decision FILE]
+  check [--replay on|off] [--root .] [--json] [--decision FILE]
         Run structural, semantic, ownership, compilation and provenance checks.
         Tests and replay run as information; their verdicts never block saving.
         Like the broker, it derives playbook fault_class and regenerates the
@@ -57,6 +58,9 @@ commands:
         checkout keeps your edits on the newer commit with conflict markers only
         where they collided; merge both incidents' intent there and preserve
         accepted learning before resubmitting.
+        --replay (or SDO_REPLAY, default on) selects the run policy. Off skips
+        all corpus requirements and replay; compilation, imports, formatting
+        and successful accepted RunScript receipt provenance remain required.
         Coverage gaps (a verified cause without a program, a skipped healthy replay,
         a recorded fault no detector reaches, a links.yaml edge no health-probe
         scenario drives: traffic.undriven-edge, a health-probe scenario on the
@@ -182,6 +186,7 @@ func writeJSON(stdout io.Writer, message proto.Message) error {
 
 func memoryCheck(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
 	flags := flag.NewFlagSet("memory check", flag.ContinueOnError)
+	replayFlag := flags.String("replay", getenv(settings.ReplayEnvironment), "replay policy: on or off")
 	decisionPath := flags.String("decision", "", "ReflectionDecision JSON; defaults to .git/sdo-reflection-decision.json")
 	root := flags.String("root", ".", "repository checkout to validate")
 	asJSON := flags.Bool("json", false, "print a MemoryCheckReport as ProtoJSON")
@@ -191,6 +196,10 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	}
 	if len(positional) != 0 {
 		return exitInfra, fmt.Errorf("check takes no arguments, got %q", positional)
+	}
+	replay, err := settings.Replay(*replayFlag)
+	if err != nil {
+		return exitInfra, err
 	}
 	absolute, err := absRoot(*root)
 	if err != nil {
@@ -239,7 +248,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		if _, err := validate.NormalizeAuthoredPlaybooks(absolute, paths); err != nil {
 			return exitInfra, err
 		}
-		if _, err := validate.NormalizeCapturedCorpus(absolute, paths); err != nil {
+		if _, err := normalizeCorpusForReplay(absolute, paths, replay); err != nil {
 			return exitInfra, err
 		}
 	}
@@ -252,7 +261,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		appNamespace = publication.ApplicationNamespace
 	}
 	diagnostics, err := validate.Check(ctx, validate.Request{
-		CodePath:           memoryValidationCodePath(getenv),
+		Replay: replay, CodePath: memoryValidationCodePath(getenv),
 		ObservationCeiling: ceiling, ApplicationNamespace: appNamespace,
 		MitigationReplayNotes: &replayNotes, CoverageGaps: &coverageGaps,
 		Root: absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
@@ -422,4 +431,11 @@ func memoryValidationCodePath(getenv func(string) string) string {
 		return "shell"
 	}
 	return mode
+}
+
+func normalizeCorpusForReplay(root string, paths []string, replay string) ([]string, error) {
+	if replay == "off" {
+		return nil, nil
+	}
+	return validate.NormalizeCapturedCorpus(root, paths)
 }

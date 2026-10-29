@@ -159,6 +159,7 @@ def test_table_renders_one_row_per_run() -> None:
     row = {
         "scenario": "synthetic",
         "label": "baseline",
+        "run_id": "baseline-r2",
         "status": "completed",
         "usage": {"model_calls": 5, "input_tokens": 2_000_000, "cached_input_tokens": 1_500_000, "output_tokens": 4000},
         "wall_seconds": 90.0,
@@ -173,8 +174,9 @@ def test_table_renders_one_row_per_run() -> None:
 
     lines = table([row]).splitlines()
 
-    assert (
-        lines[-1] == "| synthetic | baseline | completed | 5 | 2.0 (1.5) | 4.0 | 1.5 | pass | 1/2 | 1/1 | 1/2 | yes |"
+    assert lines[-1] == (
+        "| synthetic | baseline-r2 | completed | 5 | 2.0 (1.5) | 4.0 | 1.5 | pass | "
+        "1/2 | 1/1 | 1/2 | yes | 2.004 | - | - |"
     )
 
 
@@ -219,3 +221,110 @@ def test_runs_start_only_below_the_load_limit() -> None:
     wait_for_host_load(40.0, load=lambda: next(loads), sleep=slept.append, poll_seconds=30.0)
 
     assert slept == [30.0, 30.0]
+
+
+def test_claude_job_uses_the_recorded_provider_model_effort_and_credentials(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    scenario = replace(
+        _scenario(),
+        provider="claude",
+        model="claude-opus-5-5",
+        effort="medium",
+        controller_image="sdo-controller:le-test",
+    )
+    command = docker_command(
+        scenario=scenario,
+        run_dir=tmp_path,
+        skills=tmp_path,
+        toolchain=tmp_path,
+        auth=tmp_path / ".credentials.json",
+        model="",
+        name="synthetic",
+    )
+    env = _environment(command)
+    assert env["SDO_AGENT_PROVIDER"] == "claude"
+    assert env["SDO_REFLECTION_MODEL"] == "claude-opus-5-5"
+    assert env["SDO_REFLECTION_EFFORT"] == "medium"
+    assert _mounts(command)["/sdo/credentials/.credentials.json"] == str(tmp_path / ".credentials.json")
+    assert env["CLAUDE_CONFIG_DIR"] == "/sdo/session/claude"
+
+
+def test_claude_usage_counts_new_unique_requests_and_not_cumulative_billing(tmp_path: Path) -> None:
+    from benchmarks.sregym.skilleval.metrics import claude_usage
+
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    old = {"type": "assistant", "message": {"id": "old", "usage": {"input_tokens": 500, "output_tokens": 100}}}
+    new = {
+        "type": "assistant",
+        "message": {
+            "id": "new",
+            "usage": {
+                "input_tokens": 10,
+                "cache_read_input_tokens": 1000,
+                "cache_creation_input_tokens": 100,
+                "cache_creation": {"ephemeral_1h_input_tokens": 40},
+                "output_tokens": 20,
+            },
+        },
+    }
+    for root, records in [(before, [old]), (after, [old, new, new])]:
+        root.mkdir()
+        (root / "session.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+    usage = claude_usage(before, after, model="claude-opus-5-5", logged=Usage(model_calls=2, seconds=3.0))
+    assert usage.model_calls == 2
+    assert usage.unique_requests == 1
+    assert usage.seconds == 3.0
+    assert usage.input_tokens == 1110
+    assert usage.output_tokens == 20
+    assert usage.raw_tokens == 1130
+    assert usage.weighted_tokens == 315.0  # 10 + 50 + 75 + 80 + 100
+    assert usage.usd is not None
+    assert abs(usage.usd - 0.00126) < 1e-12
+    assert usage.cache_write_1h_input_tokens == 40
+    assert usage.accounting_source == "new unique Claude assistant message IDs"
+
+
+def test_native_reflection_learning_decisions_are_reported_from_the_contract() -> None:
+    from benchmarks.sregym.skilleval.metrics import decision_kind
+
+    for decision in ("updated", "no_change"):
+        assert decision_kind({"response": {"learning_decision": decision}}) == decision
+
+
+def test_replay_policy_is_explicit_in_the_offline_worker(tmp_path: Path) -> None:
+    command = docker_command(
+        scenario=_scenario(),
+        run_dir=tmp_path / "run",
+        skills=tmp_path / "skills",
+        toolchain=tmp_path / "tools",
+        auth=tmp_path / "auth",
+        model="test",
+        name="test",
+        replay="off",
+    )
+    assert _environment(command)["SDO_REPLAY"] == "off"
+
+
+def test_source_overlay_uses_native_opus_pool_admission(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SDO_OPUS_POOL_DIR", str(tmp_path / "pool"))
+    monkeypatch.setenv("SDO_OPUS_POOL_MODE", "per_host")
+    monkeypatch.setenv("SDO_OPUS_POOL_HOST_ID", "synthetic-host")
+    monkeypatch.setenv("SDO_OPUS_MAX_SESSIONS", "4")
+    command = docker_command(
+        scenario=_scenario(),
+        run_dir=tmp_path / "run",
+        skills=tmp_path / "skills",
+        toolchain=tmp_path / "tools",
+        auth=tmp_path / "auth",
+        model="test",
+        name="test",
+        replay="off",
+        code_root=tmp_path / "code",
+        operator_binary=tmp_path / "operator",
+    )
+    environment = _environment(command)
+    assert environment["SDO_OPUS_POOL_DIR"] == "/sdo/opus-pool"
+    assert environment["SDO_OPUS_POOL_HOST_ID"] == "synthetic-host"
+    assert _mounts(command)["/sdo/opus-pool"] == str(tmp_path / "pool")

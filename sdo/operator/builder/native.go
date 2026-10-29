@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/contracts/settings"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 // Config identifies the application to build and the installed operator's Go
 // modules. The returned workspace is independent of the application checkout.
 type Config struct {
+	// Replay is trusted run configuration: empty/on enables corpus and replay.
+	Replay          string
 	ApplicationRoot string
 	DiagnosticsRoot string
 	OperatorRoot    string
@@ -221,6 +224,12 @@ var modulePattern = regexp.MustCompile(`(?m)^module\s+(\S+)\s*$`)
 // BuildWorkspace stages an opaque diagnostics projection and generates the
 // controller and, when configured, its traffic prober in an isolated workspace.
 func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error) {
+	if _, err := settings.Replay(config.Replay); err != nil {
+		return nil, err
+	}
+	if config.Replay == "off" {
+		config.HealthyBaseline = ""
+	}
 	if config.ApplicationRoot == "" || config.DiagnosticsRoot == "" || config.OperatorRoot == "" {
 		return nil, errors.New("application, diagnostics projection, and operator roots are required")
 	}

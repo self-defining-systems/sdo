@@ -100,6 +100,8 @@ message ControllerConfig {
   string responder_model = 50;
   // Reasoning effort every agent worker runs at; empty means the shared default (sdo/contracts/agent_env.json).
   string agent_effort = 101;
+  // Trusted run policy; empty preserves default-on replay and corpus capture.
+  string replay = 102 [(buf.validate.field).string = {in: ["", "on", "off"]}];
   string worker_mount_mode = 51;
 
   // Operator policy for the outcome reflection session. A resumed session

@@ -99,8 +99,8 @@ func TestAgentWorkerEnvironmentRejectsUnknownProvider(t *testing.T) {
 	if _, err := AgentWorkerEnvironment(&contracts.ControllerConfig{ResponderBackend: "gemini", ResponderModel: "m"}); err == nil {
 		t.Fatal("unknown provider accepted")
 	}
-	if environment, err := AgentWorkerEnvironment(&contracts.ControllerConfig{}); err != nil || len(environment) != 0 {
-		t.Fatalf("unconfigured provider must add nothing: %v %v", environment, err)
+	if environment, err := AgentWorkerEnvironment(&contracts.ControllerConfig{}); err != nil || len(environment) != 1 || environment["SDO_REPLAY"] != "on" {
+		t.Fatalf("unconfigured provider retains default-on replay: %v %v", environment, err)
 	}
 }
 
@@ -122,7 +122,7 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", ProberImage: "traffic-only:test", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
+	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", ProberImage: "traffic-only:test", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", Replay: "off", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
 	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
 	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 		environments = append(environments, executor.(worker_registry.KubernetesExecutor).Environment)
 	}
 	for i, environment := range environments {
-		if environment["SDO_AGENT_PROVIDER"] != "claude" || environment["SDO_REFLECTION_MODEL"] != "claude-haiku-5-5" {
+		if environment["SDO_AGENT_PROVIDER"] != "claude" || environment["SDO_REFLECTION_MODEL"] != "claude-haiku-5-5" || environment["SDO_REPLAY"] != "off" {
 			t.Errorf("reflection executor %d lost provider/model: %v", i, environment)
 		}
 	}

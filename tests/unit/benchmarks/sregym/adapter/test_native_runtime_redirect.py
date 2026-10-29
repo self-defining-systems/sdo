@@ -66,3 +66,18 @@ def test_persistent_receipt_reads_native_go_evidence(
     receipt = runtime.collect_production_receipt(_config(tmp_path), "incident-1", tmp_path)
     assert receipt["schema_version"] == "sdo.production-receipt/v2"
     assert calls == ["incident-1:True"]
+
+
+def test_replay_run_setting_reaches_native_install_arguments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+
+    import pytest
+
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "kubeconfig"))
+    for mode in ("on", "off"):
+        configured = replace(_config(tmp_path), replay=mode)
+        native = runtime.native_install_config(configured)
+        args = native.common_args()
+        assert args[args.index("--replay") + 1] == mode
+    with pytest.raises(ValueError, match="replay"):
+        replace(_config(tmp_path), replay="false")

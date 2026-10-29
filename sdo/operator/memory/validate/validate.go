@@ -12,6 +12,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/memory/layout"
 	"sort"
 	"strings"
 
@@ -67,6 +69,8 @@ const (
 
 // Request describes one validation run.
 type Request struct {
+	// Replay is trusted run configuration: empty/on enables corpus and replay.
+	Replay string
 	// CodePath is trusted caller configuration, never read from candidate artifacts.
 	CodePath string
 
@@ -178,6 +182,9 @@ func (r Request) effectiveLayers() Layer {
 }
 
 func (r Request) check() error {
+	if _, err := settings.Replay(r.Replay); err != nil {
+		return err
+	}
 	if r.Root == "" {
 		return errors.New("validate: root is required")
 	}
@@ -232,4 +239,13 @@ func Validate(ctx context.Context, request Request) ([]Diagnostic, error) {
 		return a.Rule < b.Rule
 	})
 	return s.diags, nil
+}
+
+// Corpus bytes are inert when replay is disabled; the containing artifact still
+// has the same owner. Source, detector and playbook classification is unchanged.
+func (r Request) classify(path string) (layout.Kind, string, bool) {
+	if r.Replay == "off" && strings.HasPrefix(path, layout.CorpusDir+"/") {
+		return layout.KindCorpus, strings.TrimPrefix(path, layout.CorpusDir+"/"), true
+	}
+	return layout.Classify(path)
 }

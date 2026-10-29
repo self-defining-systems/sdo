@@ -53,6 +53,9 @@ echo "==> Go Execute deadline policy"
     go test ./internal/testutil -run '^Test(ExecuteDeadlinePolicyNegativeControls|NoFixedShortDeadlineAroundExecuteInTests|CountedPollingPolicyNegativeControls|CountedPollingAllowances|NoShortCountedPollingInTests)$' -count=1 -timeout=20s
 )
 
+echo "==> pytest import names"
+uv run python scripts/check_pytest_imports.py
+
 # Source-scanning invariants must run even when focused tests omit their package.
 # Keep this selection free of integration tests and long property-test sweeps.
 echo "==> Python fast repository ratchets"

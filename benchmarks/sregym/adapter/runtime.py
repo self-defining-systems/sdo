@@ -49,6 +49,7 @@ class RuntimeConfig:
     wait_for_completion: bool = False
     repair_policy: str = "recorded-actions"
     agent_provider: str = "codex"
+    replay: str = "on"
     agent_effort: str = DEFAULT_AGENT_EFFORT
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
@@ -100,6 +101,8 @@ class RuntimeConfig:
             raise ValueError("repair_policy must be commit or recorded-actions")
         if self.agent_provider not in ("codex", "claude"):
             raise ValueError("agent_provider must be codex or claude")
+        if self.replay not in ("on", "off"):
+            raise ValueError("replay must be on or off")
         if self.agent_effort not in AGENT_EFFORTS:
             raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
         if self.reflection_session not in ("fresh", "resume"):
@@ -150,6 +153,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         model=config.model,
         kubeconfig=Path(kubeconfig),
         agent_provider=config.agent_provider,
+        replay=config.replay,
         agent_effort=config.agent_effort,
         repair_policy=config.repair_policy,
         late_findings=config.late_findings,

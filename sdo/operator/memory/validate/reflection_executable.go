@@ -150,3 +150,30 @@ func caseHasRepairReceipt(c sdktest.CorpusCase, incident string, receipt *contra
 	}
 	return false
 }
+
+// With replay disabled, executable presence is independent of corpus metadata.
+// A single program may encode several repairs; README-only and Diagnose-only
+// edits cannot claim to encode a hand repair.
+func recordedRepairExecutableDiagnostics(root string, repairs []*contracts.RepairActionReceipt, changed map[string]bool) []Diagnostic {
+	if len(repairs) == 0 {
+		return nil
+	}
+	moduleData, _ := os.ReadFile(filepath.Join(root, layout.DiagnosticsGoModFile))
+	module := ""
+	for _, line := range strings.Split(string(moduleData), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "module" {
+			module = fields[1]
+			break
+		}
+	}
+	specs, err := programvalidation.InspectMemoryForAdoption(filepath.Join(root, layout.Dir), module)
+	if err == nil {
+		for _, spec := range specs {
+			if changed[spec.ID] && spec.Mitigator != "" {
+				return nil
+			}
+		}
+	}
+	return []Diagnostic{{Rule: RuleReflectionProgramRequired, Message: "recorded hand repairs require an executable typed SDK or RunScript step in a changed playbook", Hint: "encode each recorded hand repair in mitigate.go; README text and SDK gaps do not encode a repair"}}
+}
