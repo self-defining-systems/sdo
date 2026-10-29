@@ -269,13 +269,14 @@ def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(
         run_reflection_task(path, "result-map", Publisher())
 
 
-@pytest.mark.parametrize("needs_work", [False, True])
+@pytest.mark.parametrize(("needs_work", "late_detection"), [(False, False), (True, False), (False, True)])
 @pytest.mark.parametrize("replay", ["on", "off"])
 def test_builtin_reflection_uses_real_native_no_change_check_before_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     prepare_reflection_memory,
     needs_work: bool,
+    late_detection: bool,
     replay: str,
 ) -> None:
     """Native acceptance can finish covered work; a real unencoded repair still reaches the model."""
@@ -301,6 +302,29 @@ def test_builtin_reflection_uses_real_native_no_change_check_before_model(
     )
     closure = _closure()
     closure.request.incident_id = "covered"
+    if late_detection:
+        from datetime import timedelta
+
+        from sdo.contracts import datetime_timestamp, timestamp_datetime
+
+        ref = closure.result.confirmed_root_causes[0].resources[0]
+        del closure.detector_timeline[:]
+        closure.detector_timeline.add(
+            detector_id="workload-health",
+            detector_class="health",
+            owner="health_judge",
+            rule_id="pending",
+            fingerprint="init",
+            first_activated_at=closure.detected_at,
+            last_seen_at=closure.detected_at,
+            relation="before_dispatch",
+            activations=1,
+        )
+        closure.request.drift_events.add(
+            ref=ref,
+            observed_at=datetime_timestamp(timestamp_datetime(closure.detected_at) - timedelta(seconds=62)),
+            classification="unexplained",
+        )
     request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit=base, session_mode="fresh")
     request.memory_snapshot.accepted_commit = base
     task = AgentTask(
@@ -324,12 +348,12 @@ def test_builtin_reflection_uses_real_native_no_change_check_before_model(
     publisher = Publisher()
     result = run_reflection_task(path, "result-map", publisher)
     assert result.status == "completed"
-    assert bool(calls) == needs_work, "only native-accepted no_change may avoid the provider"
-    assert (selected.kwargs is not None) == needs_work
+    assert bool(calls) == (needs_work or late_detection), "only native-accepted no_change may avoid the provider"
+    assert (selected.kwargs is not None) == (needs_work or late_detection)
     response = ReflectionResult()
     assert result.response.Unpack(response)
     assert response.learning_decision == "no_change"
-    if not needs_work:
+    if not needs_work and not late_detection:
         assert response.no_change_reason == "native_memory_check_no_change"
 
 

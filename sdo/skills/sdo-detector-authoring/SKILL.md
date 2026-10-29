@@ -9,7 +9,8 @@ A detector reads the runtime snapshot and returns findings. Keep it deterministi
 clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(ctx)`, never `time.Now()`. Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse and generalization; that skill also explains ownership and logical IDs.
 
 1. Compare the confirmed mechanism with accepted detectors using the memory principles. The installed `service-endpoints` and
-   `workload-health` detectors already cover endpoint readiness and generic pod/Deployment health.
+   `workload-health` detectors cover generic symptoms; their grace periods do not replace prompt cause-specific coverage.
+   When generic detection lagged a visible cause, watch the resource read by the predicate and fire within seconds; refine an existing matching incident detector first. Health detectors stay judge-owned.
    `pod-admission` checks a frozen server-side dry-run Pod create via `ctx.PodAdmission()`; API rejections fire,
    while missing observations and transport failures are errors. Test with `sdktest.Snapshot.Admission`.
 2. Before implementing, read the [generated SDK](references/sdk.md). Keep the detector's manifest and Spec

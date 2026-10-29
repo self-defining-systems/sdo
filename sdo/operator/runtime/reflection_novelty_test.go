@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
@@ -62,10 +63,10 @@ func TestReflectionNoveltyRequiresCompleteRecordedCoverage(t *testing.T) {
 
 func TestCoveredRepeatBrokerSkipsReflectionWorker(t *testing.T) {
 	for _, test := range []struct {
-		name                   string
-		manual, session, stage bool
+		name                            string
+		manual, session, stage, generic bool
 	}{
-		{"covered deterministic stage", false, false, true}, {"hand repair", true, false, true}, {"resumed writer handoff", false, true, false}, {"unknown writer without session ID", false, false, false},
+		{"covered deterministic stage", false, false, true, false}, {"hand repair", true, false, true, false}, {"resumed writer handoff", false, true, false, false}, {"unknown writer without session ID", false, false, false, false}, {"generic detection needs worker assessment", false, false, true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			manual := test.manual
@@ -110,6 +111,9 @@ func TestCoveredRepeatBrokerSkipsReflectionWorker(t *testing.T) {
 				c.Result.ResolutionPath = "deterministic"
 				c.Request.PriorStages = []*contracts.StageReport{{Stage: "deterministic"}}
 			}
+			if test.generic {
+				c.DetectorTimeline = []DetectorTimelineEntry{{DetectorID: "workload-health", DetectorClass: "health", Owner: "health_judge", RuleID: "pending", Fingerprint: "init", FirstActivatedAt: c.DetectedAt, LastSeenAt: c.DetectedAt, Relation: RelationBeforeDispatch, Activations: 1}}
+			}
 			if test.session {
 				c.Result.ResponderSessionID = "synthetic-session"
 			}
@@ -121,13 +125,13 @@ func TestCoveredRepeatBrokerSkipsReflectionWorker(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := 0
-			if manual || test.session || !test.stage {
+			if manual || test.session || !test.stage || test.generic {
 				want = 1
 			}
 			if workerCalls != want {
 				t.Fatalf("worker calls=%d want=%d", workerCalls, want)
 			}
-			if !manual && !test.session && test.stage && ledger.GetReflectionDecision().GetNoChangeReason() != "accepted_programs_no_new_evidence" {
+			if !manual && !test.session && test.stage && !test.generic && ledger.GetReflectionDecision().GetNoChangeReason() != "accepted_programs_no_new_evidence" {
 				t.Fatalf("worker calls=%d decision=%v", workerCalls, ledger.GetReflectionDecision())
 			}
 		})
@@ -257,5 +261,26 @@ func TestCoveredRepeatStageProducerReachesBroker(t *testing.T) {
 	}
 	if workers != 0 || ledger.GetReflectionDecision().GetNoChangeReason() != "accepted_programs_no_new_evidence" {
 		t.Fatalf("workers=%d decision=%v", workers, ledger.GetReflectionDecision())
+	}
+}
+
+func TestGenericFirstDetectionAdmission(t *testing.T) {
+	at := time.Unix(100, 0)
+	health := &contracts.DetectorTimelineEntry{DetectorClass: "health", FirstActivatedAt: timestamppb.New(at)}
+	drift := &contracts.DetectorTimelineEntry{DetectorClass: "incident", FirstActivatedAt: timestamppb.New(at.Add(time.Second))}
+	for _, test := range []struct {
+		name    string
+		entries []*contracts.DetectorTimelineEntry
+		want    bool
+	}{
+		{"unknown", nil, false}, {"generic first", []*contracts.DetectorTimelineEntry{health, drift}, true},
+		{"incident only", []*contracts.DetectorTimelineEntry{drift}, false},
+		{"tied", []*contracts.DetectorTimelineEntry{health, {DetectorClass: "incident", FirstActivatedAt: health.FirstActivatedAt}}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := genericHealthDetectedFirst(&contracts.IncidentClosure{DetectorTimeline: test.entries}); got != test.want {
+				t.Fatalf("generic first=%v want %v", got, test.want)
+			}
+		})
 	}
 }

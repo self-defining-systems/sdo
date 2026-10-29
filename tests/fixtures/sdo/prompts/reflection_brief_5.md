@@ -43,6 +43,7 @@ Detector history before dispatch:
 - detector-2: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
 - detector-3: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
 - detector-4: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
+
 Surfaced playbooks: repair-0
 Post-response health detector states: none recorded
 Post-response incident detector states: none recorded

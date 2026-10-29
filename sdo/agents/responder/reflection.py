@@ -24,6 +24,7 @@ from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 from sdo.agents.replay import replay_mode, selected_skills_root
 from sdo.agents.responder.credentials import SKILLS_ROOT
+from sdo.agents.responder.detection_learning import detection_learning
 from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
 from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
@@ -380,6 +381,7 @@ def _logical_learning_request(
                 required=False,
             ),
         )
+    prompt += detection_learning(closure)
     return prompt
 
 
@@ -495,6 +497,7 @@ class SessionReflector:
             brief = incident_brief(
                 closure,
                 include_memory=False,
+                include_detection=False,
                 worktree=worktree,
                 detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
                 event_dependence=self.guidance == "generalize-spec",
