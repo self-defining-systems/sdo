@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from pathlib import Path
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from libs.agent_cli.errors import ProviderRateLimited
 
@@ -27,11 +27,37 @@ class ProviderWaitInterval(BaseModel):
         return self
 
 
+class AccountEvent(BaseModel):
+    """Values-free account selection/failover evidence attached to each row."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+    schema_version: Literal["sdo.provider-wait/v1"]
+    kind: Literal["account"]
+    state: Literal["selected", "failover", "exhausted"]
+    turn_id: str
+    incident_id: str = ""
+    phase: str = "responder"
+    recorded_at: AwareDatetime
+    account_alias: str = Field(default="", pattern=r"^(a[0-9]{2,6})?$")
+    reason: Literal[
+        "primary",
+        "fallback",
+        "auth_failed",
+        "credential_unavailable",
+        "registration_disabled",
+        "quota_exhausted",
+        "rate_limited",
+        "account_exhausted",
+    ]
+
+
 @dataclass(frozen=True)
 class ProviderWaitEvidence:
     intervals: tuple[ProviderWaitInterval, ...] = ()
     exhausted: bool = False
     active: bool = False
+    account_events: tuple[AccountEvent, ...] = ()
+    exhausted_reason: str = "rate_limited"
 
 
 class RateLimitedRun(ProviderRateLimited):
@@ -39,6 +65,7 @@ class RateLimitedRun(ProviderRateLimited):
 
     def __init__(self, evidence: ProviderWaitEvidence) -> None:
         self.evidence = evidence
+        self.failure_reason = evidence.exhausted_reason
         super().__init__("provider capacity prevented grading", retryable=False)
 
 
@@ -95,9 +122,24 @@ def read_provider_waits(
     A captured cumulative export is filtered by incident and responder phase.
     """
     events: dict[tuple[str, str], _WaitEvent] = {}
+    account_events: dict[str, AccountEvent] = {}
     exhausted = False
+    exhausted_reason = "rate_limited"
     for path in sorted(directory.rglob("provider-waits.jsonl")):
         for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                account = AccountEvent.model_validate_json(line)
+            except ValidationError:
+                pass
+            else:
+                if (incident_id is None or account.incident_id == incident_id) and (
+                    after is None or account.recorded_at >= after
+                ):
+                    account_events[account.model_dump_json()] = account
+                    if account.state == "exhausted":
+                        exhausted = True
+                        exhausted_reason = "account_exhausted"
+                continue
             try:
                 event = _WaitEvent.model_validate_json(line)
             except ValidationError:
@@ -125,7 +167,13 @@ def read_provider_waits(
         for item in events.values()
         if item.started_at is not None
     )
-    return ProviderWaitEvidence(intervals, exhausted=exhausted, active=active)
+    return ProviderWaitEvidence(
+        intervals,
+        exhausted=exhausted,
+        active=active,
+        account_events=tuple(account_events.values()),
+        exhausted_reason=exhausted_reason,
+    )
 
 
 class _WaitEvent(BaseModel):

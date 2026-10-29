@@ -27,7 +27,28 @@ class ProviderRateLimited(StructuredTurnError):
         self.usage = usage or {}
         self.retryable = retryable
         self.session_id = session_id
-        super().__init__(f"rate_limited: {reason}")
+        super().__init__(f"{self.failure_reason}: {reason}")
+
+    failure_reason = "rate_limited"
+
+
+class AccountExhausted(ProviderRateLimited):
+    """No registered healthy Claude account remains; infrastructure, not agent quality."""
+
+    failure_reason = "account_exhausted"
+
+
+class AccountAuthenticationFailed(ProviderRateLimited):
+    """A CLI authentication failure, carrying no provider output or credential."""
+
+    failure_reason = "auth_failed"
+    account_failure_reason = "auth_failed"
+
+
+class AccountCredentialUnavailable(AccountAuthenticationFailed):
+    """One account's mounted credential cannot be read; continue with peers."""
+
+    account_failure_reason = "credential_unavailable"
 
 
 def rate_limit_failure(exc: BaseException) -> ProviderRateLimited | None:

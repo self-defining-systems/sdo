@@ -27,8 +27,8 @@ _SECRET_SHAPES = re.compile(
 
 def failure_line(exc: BaseException) -> str:
     """Return `ClassName: first line of the message`, redacted and bounded."""
-    if rate_limit_failure(exc) is not None:
-        return "ProviderRateLimited: rate_limited: provider capacity exhausted"
+    if limited := rate_limit_failure(exc):
+        return f"ProviderRateLimited: {limited.failure_reason}: provider capacity exhausted"
     lines = str(exc).strip().splitlines()
     message = _SECRET_SHAPES.sub("[redacted]", lines[0] if lines else "")
     if len(message) > MAX_MESSAGE_CHARS:

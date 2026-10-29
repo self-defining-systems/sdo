@@ -18,6 +18,34 @@ from libs.agent_cli.provider_capacity import ProviderCapacity, RateLimitPolicy
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
+def test_account_exhaustion_producer_preserves_aliases_and_is_not_graded(tmp_path: Path) -> None:
+    from benchmarks.sregym.protocol.provider_capacity import RateLimitedRun
+
+    capacity = ProviderCapacity(environment={"SDO_PROVIDER_WAIT_LOG": str(tmp_path / "provider-waits.jsonl")})
+    capacity.record("account", "selected", account_alias="a02", reason="primary")
+    capacity.record("account", "failover", account_alias="a02", reason="auth_failed")
+    capacity.record("account", "exhausted", reason="account_exhausted")
+    evidence = read_provider_waits(tmp_path)
+    assert evidence.exhausted
+    assert evidence.exhausted_reason == "account_exhausted"
+    assert evidence.account_events[1].account_alias == "a02"
+    assert RateLimitedRun(evidence).failure_reason == "account_exhausted"
+    record = IncidentRecord(
+        run_id="r",
+        index=0,
+        agent="sdo",
+        model="opus",
+        problem_id="p",
+        injection={"state": "injected", "started_at": T0, "finished_at": T0},
+        infra_error="account_exhausted",
+        account_events=evidence.account_events,
+    )
+    assert record.grade_status == "NOT-GRADED"
+    assert record.not_graded_reason == "account_exhausted"
+    assert summarize([record])[0].incidents == summarize([record])[0].errors == 0
+    assert IncidentRecord.model_validate_json(record.model_dump_json()) == record
+
+
 def test_recorded_capacity_waits_are_clipped_and_excluded_from_ttm(tmp_path: Path) -> None:
     seconds = [0.0]
 

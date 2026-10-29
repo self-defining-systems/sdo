@@ -214,6 +214,7 @@
   ],
   "sdodev.contracts.v1alpha1.ReflectionDecision.failure_reason": [
     "",
+    "account_exhausted",
     "agent_failed",
     "agent_timeout",
     "rate_limited",
