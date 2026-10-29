@@ -1,12 +1,14 @@
 package program
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	sdkprogram "sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -79,7 +81,7 @@ func ValidateScriptOrigins(root string, outcome *contracts.OutcomeRecord, paths 
 // ValidateScriptOriginsWithoutCorpus preserves exact script provenance without
 // requiring replay snapshots or labels. Recorded digests prove the bytes directly;
 // legacy receipts without bytes need an explicit README/metadata receipt link.
-func ValidateScriptOriginsWithoutCorpus(root string, outcome *contracts.OutcomeRecord, paths []string) error {
+func ValidateScriptOriginsWithoutCorpus(ctx context.Context, root, baseCommit string, outcome *contracts.OutcomeRecord, paths []string) error {
 	directories := map[string]bool{}
 	for _, path := range paths {
 		kind, _, ok := layout.Classify(path)
@@ -96,10 +98,7 @@ func ValidateScriptOriginsWithoutCorpus(root string, outcome *contracts.OutcomeR
 		if len(scripts) == 0 {
 			continue
 		}
-		var origins struct {
-			ScriptOrigins map[string]string `yaml:"script_origins"`
-			Incident      string            `yaml:"originating_incident"`
-		}
+		var origins ScriptOriginMetadata
 		if strings.HasPrefix(dir, layout.PlaybooksDir+"/") {
 			data, err := os.ReadFile(filepath.Join(base, "README.md"))
 			if err != nil {
@@ -117,10 +116,15 @@ func ValidateScriptOriginsWithoutCorpus(root string, outcome *contracts.OutcomeR
 		}
 		for _, script := range scripts {
 			digest := sdkprogram.ScriptDigest(script)
-			linked := ScriptReceiptMatches(script, origins.ScriptOrigins, origins.Incident, outcome)
+			origin := origins.ForScript(script)
+			linked := origin.IncidentID == outcome.GetIncidentId() && ScriptReceiptMatches(script, origin.LegacyOrigins, origin.IncidentID, outcome, origin.ReceiptID)
+			if !linked && baseCommit != "" && origin.IncidentID != "" {
+				accepted, err := memory.NewJSONStore(root).GetAt(ctx, baseCommit, origin.IncidentID)
+				linked = err == nil && ScriptReceiptMatches(script, origin.LegacyOrigins, origin.IncidentID, accepted.Record, origin.ReceiptID)
+			}
 
 			if !linked {
-				return fmt.Errorf("RunScript digest %s requires its original successful accepted receipt; for a receipt without recorded bytes, link script_origins in README front matter (or library metadata.yaml) with originating_incident", digest)
+				return fmt.Errorf("RunScript digest %s requires its original successful accepted receipt; link script_receipts[<digest>] = {incident_id, receipt_id} in README front matter (or library metadata.yaml) to the accepted original receipt; retain originating_incident and prior script origins", digest)
 			}
 		}
 	}
@@ -129,9 +133,16 @@ func ValidateScriptOriginsWithoutCorpus(root string, outcome *contracts.OutcomeR
 
 // ScriptReceiptMatches binds exact executed bytes, or an explicit legacy receipt
 // identity, to the independently accepted incident outcome.
-func ScriptReceiptMatches(script string, origins map[string]string, incident string, outcome *contracts.OutcomeRecord) bool {
+func ScriptReceiptMatches(script string, origins map[string]string, incident string, outcome *contracts.OutcomeRecord, receiptIDs ...string) bool {
 	digest := sdkprogram.ScriptDigest(script)
+	selectedID := origins[digest]
+	if len(receiptIDs) > 0 && receiptIDs[0] != "" {
+		selectedID = receiptIDs[0]
+	}
 	for _, receipt := range outcome.GetRepairActions() {
+		if selectedID != "" && receipt.GetActionId() != selectedID {
+			continue
+		}
 		if !receipt.GetSuccess() || receipt.GetStartedAt() == nil || receipt.GetCompletedAt() == nil || receipt.GetCompletedAt().AsTime().Before(receipt.GetStartedAt().AsTime()) {
 			continue
 		}
@@ -144,4 +155,34 @@ func ScriptReceiptMatches(script string, origins map[string]string, incident str
 		}
 	}
 	return false
+}
+
+// ScriptReceiptOrigin identifies one original incident receipt. Several script
+// revisions can retain different origins without rewriting the playbook's birth.
+type ScriptReceiptOrigin struct {
+	IncidentID    string            `yaml:"incident_id"`
+	ReceiptID     string            `yaml:"receipt_id"`
+	LegacyOrigins map[string]string `yaml:"-"`
+}
+
+// ScriptOriginMetadata is the shared README/library provenance shape. Legacy
+// digest-to-ID maps remain readable, while script_receipts preserves per-script
+// incident identity across later playbook and helper revisions.
+type ScriptOriginMetadata struct {
+	Incident       string                         `yaml:"originating_incident"`
+	ScriptOrigins  map[string]string              `yaml:"script_origins"`
+	ScriptReceipts map[string]ScriptReceiptOrigin `yaml:"script_receipts"`
+}
+
+func (m ScriptOriginMetadata) ForScript(script string) ScriptReceiptOrigin {
+	digest := sdkprogram.ScriptDigest(script)
+	origin, ok := m.ScriptReceipts[digest]
+	if ok && (origin.IncidentID == "" || origin.ReceiptID == "") {
+		return ScriptReceiptOrigin{}
+	}
+	if !ok {
+		origin = ScriptReceiptOrigin{IncidentID: m.Incident, ReceiptID: m.ScriptOrigins[digest]}
+	}
+	origin.LegacyOrigins = map[string]string{digest: origin.ReceiptID}
+	return origin
 }

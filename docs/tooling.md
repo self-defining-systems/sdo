@@ -20,3 +20,5 @@ Use existing gates when extending a contract. New agent implementations and comm
 | `benchmarks/sregym/adapter/context_preflight.py` | Offline real-scale shapes through production producers and the scripted provider's session writer. Fastloop preflight and the hermetic Python shard run the gate. |
 
 Run `scripts/format_code.sh` and `scripts/check_errors.sh` after code edits. Focused validation commands and cost boundaries live in [the testing guide](testing-guide.md).
+
+`scripts/check_pytest_imports.py` maps test files to pytest prepend-mode package names and rejects collisions before collection. `scripts/check_errors.sh` runs it before any Python test; its subprocess tests cover flat modules, distinct packages and matching package names in separate roots. Rename conflicting tests or make their package identity distinct.

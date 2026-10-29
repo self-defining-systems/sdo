@@ -14,6 +14,7 @@ func TestReplayOffIgnoresCorpusButRetainsSourceChecks(t *testing.T) {
 			remove(t, root, ".sdo/playbooks/base/scripts")
 			write(t, root, ".sdo/playbooks/base/diagnose.go", "package base\n\ntype Diagnose struct{}\n\nfunc (Diagnose) Spec() {}\nfunc (Diagnose) Diagnose() {}\n")
 			write(t, root, ".sdo/corpus/broken/labels.json", "not json")
+			write(t, root, ".sdo/corpus/broken/ignored.go", "package ignored\nfunc  Ignored() {}\n")
 			ds, err := Validate(context.Background(), Request{Root: root, Layers: Structural | Semantic, Replay: replay})
 			if err != nil {
 				t.Fatal(err)
@@ -21,6 +22,9 @@ func TestReplayOffIgnoresCorpusButRetainsSourceChecks(t *testing.T) {
 			invalid := false
 			for _, d := range ds {
 				invalid = invalid || strings.Contains(d.Message, "labels.json")
+				if replay == "off" && strings.HasPrefix(d.Path, ".sdo/corpus/") {
+					t.Fatalf("off checked inert corpus: %v", d)
+				}
 			}
 			if invalid != (replay != "off") {
 				t.Fatalf("replay %q corpus validation: %v", replay, ds)
@@ -50,5 +54,22 @@ func TestReplayOffDoesNotSelectHealthyCapture(t *testing.T) {
 	r, err := selectCompileBaseline(context.Background(), Request{Root: root, Base: "HEAD", Actor: Responder, Phase: ReflectionPhase, Replay: "off", HealthyBaseline: filepath.Join(root, "missing"), CoverageGaps: &gaps})
 	if err != nil || r.HealthyBaseline != "" || len(gaps) != 0 {
 		t.Fatalf("off still selected replay: %+v %v %v", r, err, gaps)
+	}
+}
+
+func TestReplayOffCorpusNeverEntersPublicationOrWorkerSnapshot(t *testing.T) {
+	root := goodTree(t)
+	commit(t, root, "accepted memory")
+	write(t, root, ".sdo/corpus/not-a-case/ignored.go", "package inert\nfunc  Inert() {}\n")
+	called := false
+	ds, err := Check(context.Background(), Request{Root: root, Base: "HEAD", Actor: Human, Phase: ImportPhase, Replay: "off"}, func(_ context.Context, r Request) ([]Diagnostic, error) {
+		called = true
+		if r.Replay != "off" {
+			t.Fatal("lost replay policy")
+		}
+		return nil, nil
+	})
+	if err != nil || len(ds) != 0 || !called {
+		t.Fatalf("inert corpus blocked publication: %v %v %v", ds, err, called)
 	}
 }

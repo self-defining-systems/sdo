@@ -32,3 +32,26 @@ async def test_replay_off_projects_guidance_and_tool_surface(tmp_path: Path, mon
     assert "create_corpus" not in names
     assert "capture_fields" not in names
     assert "SDO_REPLAY" in VALIDATION_ENVIRONMENT
+
+
+def test_reflection_instructions_select_only_enabled_replay_guidance(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sdo.agents.responder.reflection import render_reflection_prompt
+    from tests.unit.sdo.agents.prompts.cases import live_shaped_reflection
+
+    data = live_shaped_reflection()
+    for mode in ("on", "off"):
+        monkeypatch.setenv("SDO_REPLAY", mode)
+        prompt = render_reflection_prompt(
+            outcome=data.outcome,
+            history=[],
+            outcome_commit="a" * 40,
+            closure=data.closure,
+            guidance="baseline",
+            cause_work=data.cause_work,
+            unassigned_work=data.unassigned_work,
+        )
+        instructions = "".join(part.text for part in prompt.parts if part.name == "reflection.instructions")
+        assert ("Replay is informational" in instructions) == (mode == "on")
+        if mode == "off":
+            assert "corpus" not in instructions.lower()
+            assert "replay" not in instructions.lower()

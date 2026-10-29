@@ -59,6 +59,9 @@ func parseMemoryImport(args []string, getenv func(string) string) (memoryImportC
 	if err != nil {
 		return c, err
 	}
+	if _, err := settings.Replay(c.Replay); err != nil {
+		return c, err
+	}
 	if len(positional) != 0 || (c.Action != "prepare" && c.Action != "publish") || c.ID == "" || c.Workspaces == "" {
 		return c, errors.New("import requires prepare|publish, --id, and --worktree-root")
 	}

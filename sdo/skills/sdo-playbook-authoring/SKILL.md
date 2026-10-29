@@ -52,7 +52,8 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   narrow `SetField`; `ReconcileFromSource` restores a whole object. After a workload write, append
   `program.StalledRolloutRelease(v, ref)`.
 - `RunScript`: inline bash byte-identical to the recorded command, application inputs only through
-  relation-derived Env, and a successful accepted receipt for those bytes.
+  relation-derived Env, and a successful accepted receipt for those bytes; preserve
+  [each script revision's original receipt](references/script-receipts.md).
 <!-- replay:on -->
   Link the script digest to its receipt ID in the case's `script_origins`.
 <!-- /replay:on -->

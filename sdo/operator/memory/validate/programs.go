@@ -52,6 +52,9 @@ func (s *run) programRules(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if entry.IsDir() && s.req.Replay == "off" && abs == filepath.Join(s.req.Root, layout.CorpusDir) {
+			return filepath.SkipDir
+		}
 		if entry.IsDir() || !strings.HasSuffix(abs, ".go") {
 			return nil
 		}
