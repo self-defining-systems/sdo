@@ -16,6 +16,9 @@ import (
 func stagePrograms(ctx context.Context, config Config, workspace, module string) error {
 	root := filepath.Join(config.ApplicationRoot, ".sdo")
 	for _, part := range []string{"playbooks", "lib", "corpus"} {
+		if part == "corpus" && config.Replay == "off" {
+			continue
+		}
 		source := filepath.Join(root, part)
 		if _, err := os.Stat(source); os.IsNotExist(err) {
 			continue
@@ -66,7 +69,7 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 	if err != nil {
 		return err
 	}
-	if config.CompileOnly || adopted {
+	if config.CompileOnly || adopted || config.Replay == "off" {
 		inspect = programvalidation.InspectForAdoption
 	}
 	programs, err := inspect(workspace, module)
@@ -75,6 +78,9 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 	}
 	if err := generatePrograms(workspace, module, programs, changedPrograms(ctx, config.ApplicationRoot, programs)); err != nil {
 		return err
+	}
+	if config.Replay == "off" {
+		return os.Remove(filepath.Join(workspace, "generated", "programs_test.go"))
 	}
 	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sdo.dev/operator/contracts/settings"
 	"strings"
 	"syscall"
 	"unicode"
@@ -83,6 +84,7 @@ type SourceEvidence struct {
 
 type Broker struct {
 	codePath string
+	replay   string
 
 	// MetricsDetectors installs the optional generic metrics detectors when
 	// the health judge's initial memory is accepted. Set it only where a
@@ -151,6 +153,10 @@ func New(target, workspaceRoot string, validator Validator, policy ...Observatio
 		if policy[0].CodePath != "" && policy[0].CodePath != "go" && policy[0].CodePath != "shell" {
 			return nil, fmt.Errorf("unsupported broker code path %q", policy[0].CodePath)
 		}
+		if _, err := settings.Replay(policy[0].Replay); err != nil {
+			return nil, err
+		}
+		b.replay = policy[0].Replay
 		b.codePath = policy[0].CodePath
 		b.observationCeiling = policy[0].Ceiling
 		b.observationCeiling.Targets = append([]sdk.ObservationTarget(nil), policy[0].Ceiling.Targets...)
@@ -344,7 +350,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			}
 		}
 		// A corpus case stores each snapshot once; copies of fixed.json are removed.
-		if normalized, err := validate.NormalizeCapturedCorpus(proposal.Path, paths); err != nil {
+		if normalized, err := b.normalizeCorpus(proposal.Path, paths); err != nil {
 			return fmt.Errorf("normalize captured corpus: %w", err)
 		} else if len(normalized) > 0 {
 			if paths, err = validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit); err != nil {
@@ -928,10 +934,18 @@ func within(root, path string) bool {
 
 // ObservationPolicy is supplied only by the trusted installer host.
 type ObservationPolicy struct {
+	Replay string
 
 	// CodePath is trusted launch policy; shell selects hygiene instead of Go compilation.
 	CodePath string
 
 	Ceiling              sdk.ObservationScope
 	ApplicationNamespace string
+}
+
+func (b *Broker) normalizeCorpus(root string, paths []string) ([]string, error) {
+	if b.replay == "off" {
+		return nil, nil
+	}
+	return validate.NormalizeCapturedCorpus(root, paths)
 }

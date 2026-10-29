@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-from sdo.agents.responder import AGENT_SKILLS, prepare_codex_home, run_reflection_task
+from sdo.agents.responder import AGENT_SKILLS, prepare_claude_home, prepare_codex_home, run_reflection_task
 
 OUT = Path("/skilleval/out")
 TASK = Path("/sdo/request/agent-task.json")
@@ -74,10 +74,11 @@ def _incident_cases(checkout: Path, incident_id: str, destination: Path) -> tupl
 
 
 def _reflect() -> dict[str, object]:
-    codex_home = Path(os.environ["CODEX_HOME"])
+    provider = os.environ.get("SDO_AGENT_PROVIDER", "codex")
+    codex_home = Path(os.environ["CLAUDE_CONFIG_DIR" if provider == "claude" else "CODEX_HOME"])
     shutil.rmtree(codex_home / "skills", ignore_errors=True)
     # The evaluated skills are mounted over the image's skills root, which this installs from.
-    prepare_codex_home(skills=_skills())
+    (prepare_claude_home if provider == "claude" else prepare_codex_home)(skills=_skills())
     started = time.monotonic()
     result = run_reflection_task(TASK, "skilleval", FilePublisher())
     return {
@@ -138,6 +139,13 @@ def main() -> int:
             timeout=600,
             env=environment,
         )
+    summary["replay_mode"] = os.environ.get("SDO_REPLAY", "on")
+    if summary["replay_mode"] == "off":
+        summary["replay"] = {"skipped": "replay disabled"}
+        summary["replay_cases"] = []
+        summary["incident_cases"] = []
+        (OUT / "entry-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        return 0
     fixtures = OUT / "replay-fixtures"
     shutil.rmtree(fixtures, ignore_errors=True)
     fixtures.mkdir()

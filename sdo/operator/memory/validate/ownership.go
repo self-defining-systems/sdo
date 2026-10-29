@@ -148,7 +148,7 @@ func (s *run) ownership(ctx context.Context) error {
 		kind, id := kindSource, ""
 		if layout.IsMemoryPath(p) {
 			var ok bool
-			if kind, id, ok = layout.Classify(p); !ok {
+			if kind, id, ok = s.req.classify(p); !ok {
 				s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s cannot change an unclassified path", actor), Hint: "only paths in the operational-memory layout can be changed"})
 				continue
 			}

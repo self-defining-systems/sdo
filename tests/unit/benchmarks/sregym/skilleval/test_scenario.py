@@ -199,3 +199,100 @@ def test_build_scenario_rejects_a_session_of_another_incident(tmp_path: Path) ->
             image="sdo-sregym-responder:test",
             output=tmp_path / "scenario",
         )
+
+
+def test_claude_session_rewind_removes_reflection_and_derived_conversations(tmp_path: Path) -> None:
+    from benchmarks.sregym.skilleval.scenario import prepare_session
+
+    session = tmp_path / "session"
+    project = session / "claude" / "projects" / "-sdo-proposal"
+    project.mkdir(parents=True)
+    prefix = [
+        {"type": "user", "sessionId": THREAD, "message": {"content": "Respond."}},
+        {"type": "assistant", "sessionId": THREAD, "message": {"content": "Repaired."}},
+        {"type": "cost-state", "totalCostUSD": 2.0},
+    ]
+    records = prefix + [
+        {"type": "queue-operation", "content": f"Idempotency key: reflection:{INCIDENT}"},
+        {"type": "user", "sessionId": THREAD, "message": {"content": f"Idempotency key: reflection:{INCIDENT}"}},
+        {"type": "assistant", "message": {"content": "Learned secret future result."}},
+    ]
+    transcript = project / f"{THREAD}.jsonl"
+    transcript.write_text("".join(json.dumps(row) + "\n" for row in records))
+    (project / "later.jsonl").write_text("{}\n")
+    (session / "claude" / "history.jsonl").write_text("future\n")
+
+    thread, _ = prepare_session(session, provider="claude")
+
+    assert thread == THREAD
+    assert list(map(json.loads, transcript.read_text().splitlines())) == prefix
+    assert list((session / "claude").rglob("*.jsonl")) == [transcript]
+
+
+def test_claude_fresh_scenario_keeps_no_provider_transcript(tmp_path: Path) -> None:
+    from benchmarks.sregym.skilleval.scenario import prepare_session
+
+    project = tmp_path / "claude" / "projects" / "p"
+    project.mkdir(parents=True)
+    (project / "session.jsonl").write_text("{}\n")
+    assert prepare_session(tmp_path, fresh=True, provider="claude")[0] == ""
+    assert not list((tmp_path / "claude").rglob("*.jsonl"))
+
+
+def test_frozen_claude_copy_has_a_real_released_owner_for_the_worker_to_resume(tmp_path: Path) -> None:
+    from benchmarks.sregym.skilleval.scenario import prepare_session
+    from libs.agent_cli.session_ownership import SessionOwnership
+
+    project = tmp_path / "claude" / "projects" / "p"
+    project.mkdir(parents=True)
+    (project / f"{THREAD}.jsonl").write_text(
+        json.dumps({"type": "user", "sessionId": THREAD, "message": {"content": "Incident"}})
+        + "\n"
+        + json.dumps(
+            {"type": "user", "sessionId": THREAD, "message": {"content": f"Idempotency key: reflection:{INCIDENT}"}}
+        )
+        + "\n"
+    )
+    prepare_session(tmp_path, provider="claude")
+    owner = SessionOwnership(tmp_path / "thread-ownership", "claude", timeout_seconds=1, role="reflection")
+    owner.claim(THREAD, resume=True)
+    owner.close(writer_closed=True)
+
+
+def test_claude_scenario_build_preserves_context_and_excludes_all_provider_credentials(tmp_path: Path) -> None:
+    from libs.agent_cli.session_ownership import SessionOwnership
+
+    repository, commit = _memory_repository(tmp_path)
+    session = _session(tmp_path, commit)
+    project = session / "claude" / "projects" / "p"
+    project.mkdir(parents=True)
+    (session / "claude" / ".credentials.json").write_text("CANARY-provider-secret")
+    records = [
+        {"type": "user", "sessionId": THREAD, "message": {"content": "Respond"}},
+        {"type": "assistant", "sessionId": THREAD, "message": {"content": "Fixed"}},
+        {"type": "user", "sessionId": THREAD, "message": {"content": f"Idempotency key: reflection:{INCIDENT}"}},
+    ]
+    (project / f"{THREAD}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+    scenario = build_scenario(
+        scenario_id="claude",
+        row_dir=_row(tmp_path),
+        incident="000",
+        session_source=session,
+        memory_repository=str(repository),
+        image="sdo-sregym-responder:test",
+        output=tmp_path / "scenario",
+        provider="claude",
+        model="claude-opus-5-5",
+        effort="medium",
+    )
+    output = tmp_path / "scenario"
+    assert scenario == Scenario.load(output)
+    assert scenario.thread_id == THREAD
+    assert (output / "session/context/note.txt").read_text() == "context\n"
+    assert not list(output.rglob("auth.json"))
+    assert not list(output.rglob(".credentials.json"))
+    assert not list((output / "session").rglob("rollout-*.jsonl"))
+    assert (session / "claude/.credentials.json").read_text() == "CANARY-provider-secret"
+    owner = SessionOwnership(output / "session/thread-ownership", "claude", timeout_seconds=1, role="reflection")
+    owner.claim(THREAD, resume=True)
+    owner.close(writer_closed=True)

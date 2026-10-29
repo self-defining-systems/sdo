@@ -15,6 +15,7 @@ func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Ac
 	if runner != nil {
 		compile = func(ctx context.Context, request validate.Request) ([]validate.Diagnostic, error) {
 			ctx = context.WithValue(ctx, compileBaselineKey{}, request.HealthyBaseline)
+			ctx = context.WithValue(ctx, replayKey{}, request.Replay)
 			var jobGaps []validate.Diagnostic
 			ctx = context.WithValue(ctx, coverageGapsKey{}, &jobGaps)
 			err := runner(ctx, root, paths)
@@ -28,7 +29,7 @@ func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Ac
 			return nil, err
 		}
 	}
-	request := validate.Request{CodePath: b.codePath, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, MetricsDetectors: b.MetricsDetectors, CoverageGaps: gaps}
+	request := validate.Request{Replay: b.replay, CodePath: b.codePath, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, MetricsDetectors: b.MetricsDetectors, CoverageGaps: gaps}
 	diagnostics, err := validate.Check(ctx, request, compile)
 	if err != nil || len(diagnostics) > 0 || b.codePath != "shell" || compile == nil {
 		return diagnostics, err
@@ -44,3 +45,5 @@ func (b *Broker) PublishReflection(ctx context.Context, incidentID string, decis
 }
 
 type compileBaselineKey struct{}
+
+type replayKey struct{}

@@ -15,6 +15,7 @@ import (
 // credentials, and must enforce egress isolation. The root is broker-owned;
 // the worker never receives it.
 type ValidationJobRequest struct {
+	Replay string
 	// HealthyBaseline is selected by shared Check, outside candidate memory.
 	HealthyBaseline         string
 	CandidateRoot           string
@@ -66,7 +67,8 @@ func JobValidator(client ValidationJobClient) Validator {
 		if err != nil {
 			return err
 		}
-		request := ValidationJobRequest{
+		replay, _ := ctx.Value(replayKey{}).(string)
+		request := ValidationJobRequest{Replay: replay,
 			HealthyBaseline: compileBaseline(ctx), CandidateRoot: candidate, CandidateTree: tree, ChangedPaths: append([]string(nil), paths...),
 			ReadOnly: true, NoPublishingCredentials: true, EgressIsolated: true,
 		}

@@ -238,7 +238,8 @@
     "outcome_commit": "template_data.responder-reflection-outcome_commit",
     "memory_view_json": "reflection.memory",
     "current_outcome_view_json": "reflection.outcome",
-    "history_section": "template_data.responder-reflection-history_section"
+    "history_section": "template_data.responder-reflection-history_section",
+    "replay_guidance": "reflection.instructions"
   },
   "responder/reflection_check_correction": {
     "diagnostics": "template_data.responder-reflection_check_correction-diagnostics"
@@ -353,5 +354,6 @@
     "idempotency_key": "template_data.responder-turn_01-idempotency_key",
     "prompt": "template_data.responder-turn_01-prompt"
   },
-  "responder/verified_final": {}
+  "responder/verified_final": {},
+  "responder/reflection_replay": {}
 }

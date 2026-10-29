@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sdo.dev/operator/contracts/settings"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,6 +48,7 @@ type Config struct {
 	RepositoryPVC, CredentialsSecret, Model         string
 	AcceptedCommit                                  string
 	RepairPolicy, AgentProvider, AgentEffort        string
+	Replay                                          string
 	ReflectionSession, ReflectionGuidance           string
 	ForceReflection                                 bool
 	LateFindings                                    string
@@ -182,6 +184,9 @@ func (c Config) validate() error {
 	}
 	if c.AgentProvider != "" && c.AgentProvider != "codex" && c.AgentProvider != "claude" {
 		return errors.New("invalid agent provider")
+	}
+	if _, err := settings.Replay(c.Replay); err != nil {
+		return err
 	}
 	if c.AgentEffort != "" && !slices.Contains(worker_registry.AgentEfforts, c.AgentEffort) {
 		return fmt.Errorf("invalid agent effort %q", c.AgentEffort)
@@ -322,6 +327,9 @@ func controllerJob(c Config) *batchv1.Job {
 		args = append(args, "--script-image", c.ScriptImage)
 	}
 	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--validator-image", c.ValidatorImage, "--model", c.Model, "--responder-backend", provider)
+	if c.Replay != "" {
+		args = append(args, "--replay", c.Replay)
+	}
 	if c.AgentEffort != "" {
 		args = append(args, "--agent-effort", c.AgentEffort)
 	}
@@ -450,6 +458,7 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	return job
 }
+
 // MemoryUpstreamSSHDir is where the controller reads the memory remote's ssh
 // identity and known hosts.
 const MemoryUpstreamSSHDir = "/sdo/memory-upstream-ssh"

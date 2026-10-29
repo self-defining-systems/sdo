@@ -3,6 +3,7 @@ package operatorcli
 import (
 	"context"
 	"fmt"
+	"sdo.dev/operator/contracts/settings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -77,6 +78,11 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if err != nil {
 		return err
 	}
+	replay, err := settings.Replay(config.GetReplay())
+	if err != nil {
+		return err
+	}
+	environment[settings.ReplayEnvironment] = replay
 	environment = codePathWorkerEnvironment(config.GetCodePath(), environment)
 	environment["CODEX_HOME"], environment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
 	namespace := config.GetControlNamespace()

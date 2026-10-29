@@ -184,6 +184,10 @@ class TrackedAgent:
     def reasoning_effort(self) -> str | None:
         return getattr(self._inner, "reasoning_effort", None)
 
+    @property
+    def replay(self) -> str | None:
+        return getattr(self._inner, "replay", None)
+
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
         tracker = (
             make_tracker(problem_id, self._reader, self._settings, faults=self._stream_faults.get(problem_id, ()))
