@@ -130,8 +130,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Collect all Go-backed Python contracts once
-        if: matrix.mode == 'normal'
+      - name: Collect all Go-backed Python contracts for the exact plan
         id: python-plan
         run: |
           uv run python scripts/init_test_prereqs.py
@@ -181,15 +180,28 @@ jobs:
             .fastloop/test-bin
           key: ${{ steps.base-normal.outputs.cache-primary-key }}
 
-      - name: Pack the complete race build
+      - name: Select the exact race graph for each fixed bucket
+        if: matrix.mode == 'race'
+        run: python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json
+
+      - name: Pack the bounded current race test graph
         if: matrix.mode == 'race'
         run: bash scripts/go_ci_artifacts.sh pack race "${{ runner.temp }}/prepared-race"
       - name: Transfer the race build to this run's consumers
         if: matrix.mode == 'race'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: prepared-race
-          path: ${{ runner.temp }}/prepared-race/*.tar.zst
+          name: prepared-race-0
+          path: ${{ runner.temp }}/prepared-race/0/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Transfer the second bucket's race graph
+        if: matrix.mode == 'race'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-race-1
+          path: ${{ runner.temp }}/prepared-race/1/
           compression-level: 0
           if-no-files-found: error
           retention-days: 1
@@ -309,7 +321,7 @@ jobs:
       - name: Download this run's race build
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: prepared-race
+          name: prepared-race-${{ matrix.bin }}
           path: ${{ runner.temp }}/prepared-race
       - name: Unpack this run's race build
         run: GOCACHE="${{ runner.temp }}/sdo-go-build-race" bash scripts/go_ci_artifacts.sh unpack race "${{ runner.temp }}/prepared-race"
@@ -339,6 +351,7 @@ jobs:
         run: |
           uv run python scripts/check_ci_budget.py
           python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
+          cmp "$RUNNER_TEMP/prepared-race/plan.json" .fastloop/test-bin/pr-test-plan.json
       - name: Run the fixed regression set
         run: uv run --extra test python scripts/run_ci_contracts.py --plan .fastloop/test-bin/pr-test-plan.json --bin '${{ matrix.bin }}'
         env:

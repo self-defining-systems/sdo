@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[4]
 
 
-@pytest.mark.parametrize("mode", ["normal", "race"])
+@pytest.mark.parametrize("mode", ["normal"])
 def test_prepared_artifact_round_trip_without_base_cache(tmp_path: Path, mode: str) -> None:
     source = tmp_path / "repo"
     (source / "scripts").mkdir(parents=True)

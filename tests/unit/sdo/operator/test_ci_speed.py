@@ -168,13 +168,19 @@ def test_consumers_require_complete_run_artifacts_even_on_a_cold_base() -> None:
     jobs = workflow()["jobs"]
     for mode in ("normal", "race"):
         upload = next(
-            step for step in jobs["prepare-go"]["steps"] if step.get("with", {}).get("name") == f"prepared-{mode}"
+            step
+            for step in jobs["prepare-go"]["steps"]
+            if step.get("with", {}).get("name") == ("prepared-normal" if mode == "normal" else "prepared-race-0")
         )
         assert upload["uses"].startswith("actions/upload-artifact@")
         assert upload["with"]["if-no-files-found"] == "error"
         for name in ("python", "contracts") if mode == "normal" else ("contracts",):
             steps = jobs[name]["steps"]
-            assert any(step.get("with", {}).get("name") == f"prepared-{mode}" for step in steps)
+            assert any(
+                step.get("with", {}).get("name")
+                == ("prepared-normal" if mode == "normal" else "prepared-race-${{ matrix.bin }}")
+                for step in steps
+            )
             assert not any(step.get("uses", "").startswith("actions/cache") for step in steps)
             assert any(f"go_ci_artifacts.sh unpack {mode}" in step.get("run", "") for step in steps)
 
@@ -475,3 +481,16 @@ def test_static_python_job_cannot_compile_go_and_go_checks_run_on_prepared_race_
     assert go_checks["if"] == "matrix.mode == 'race'"
     assert "--go-only" in go_checks["run"]
     assert "-race" in go_checks["env"]["GOFLAGS"]
+
+
+def test_race_transfer_uses_the_graph_size_gate() -> None:
+    script = (ROOT / "scripts/go_ci_artifacts.sh").read_text()
+    assert 'exec python3 "$root/scripts/go_ci_race_artifact.py"' in script
+    jobs = workflow()["jobs"]
+    assert any(step.get("name") == "Pack the bounded current race test graph" for step in jobs["prepare-go"]["steps"])
+
+    published = {step.get("with", {}).get("name") for step in jobs["prepare-go"]["steps"]}
+    for bucket in jobs["contracts"]["strategy"]["matrix"]["bin"]:
+        assert f"prepared-race-{bucket}" in published
+    collector = next(step for step in jobs["prepare-go"]["steps"] if step.get("id") == "python-plan")
+    assert "if" not in collector  # Both producers derive the same exact bucket plan.

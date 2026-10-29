@@ -13,7 +13,12 @@ case "$mode" in
     names+=(modules tools)
     paths+=("${GOMODCACHE:-$HOME/go/pkg/mod}" "$root/.fastloop/test-bin")
     ;;
-  race) ;;
+  race)
+    if [[ "$action" == pack ]]; then
+      mkdir -p "$archive"
+      exec python3 "$root/scripts/go_ci_race_artifact.py" --plan "$root/.fastloop/test-bin/pr-test-plan.json" --output "$archive"
+    fi
+    ;;
   *) echo "unknown artifact mode: $mode" >&2; exit 1 ;;
 esac
 mkdir -p "$archive"
