@@ -180,15 +180,17 @@ class AccountRouter:
             now = self.clock()
             if state.status == "cooldown" and state.until <= now:
                 state.status, state.reason, state.until = "healthy", "cooldown_elapsed", 0
-            if account.disabled:
+            if account.disabled and state.reason != "auth_failed":
                 state.status, state.reason, state.until = "disabled", "registration_disabled", 0
-            elif account.unavailable_until > now and state.status != "disabled":
+            elif not account.disabled and state.status == "disabled" and state.reason == "registration_disabled":
+                state.status, state.reason, state.until = "healthy", "registered", 0
+            if account.unavailable_until > now and state.status != "disabled":
                 state.status, state.reason = "cooldown", "quota_exhausted"
                 state.until = max(account.unavailable_until, state.until)
-            if failure:
-                state.status = "cooldown" if failure == "rate_limited" else "disabled"
+            if failure and not (state.status == "disabled" and failure != "auth_failed"):
+                state.status = "disabled" if failure == "auth_failed" else "cooldown"
                 state.reason = failure
-                state.until = max(state.until, now + self.cooldown_seconds) if failure == "rate_limited" else 0
+                state.until = 0 if failure == "auth_failed" else max(state.until, now + self.cooldown_seconds)
             if old_status != state.status:
                 state.transition += 1
                 identity = f"{account.alias}:{account.generation}:{state.transition}:{state.status}"
@@ -393,7 +395,16 @@ def sync_cswap(
             except OSError:
                 identity = "unavailable"
             registrations[alias] = identity
-            unchanged = same and old_registrations.get(alias) == identity
+            # cswap rewrites `added` only for explicit add/add-token. Routine
+            # OAuth refresh must not clear a human-required auth quarantine.
+            if entry.get("added"):
+                identity = hashlib.sha256(
+                    json.dumps([entry["added"], entry.get("uuid"), email, entry.get("organizationUuid")]).encode()
+                ).hexdigest()
+                registrations[alias] = identity
+                unchanged = old_registrations.get(alias) == identity
+            else:
+                unchanged = same and old_registrations.get(alias) == identity
             generation = previous[alias].generation if unchanged and alias in previous else uuid4().hex
             row = usage.get(str(slot), {})
             until = 0.0

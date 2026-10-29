@@ -164,9 +164,8 @@ down that account and tries the next healthy one. Busy healthy accounts wait
 within the existing bounded admission budget. Tool output mentioning auth/limits
 is not a provider failure. Named sessions, ownership, tool audits and accounting
 survive the switch. Health is journaled by registration so stale Secret versions
-and torn writes cannot revive a disabled token. cswap credential replacement,
-including explicit re-registration of the same value, creates a new opaque
-registration ID.
+and torn writes cannot revive a disabled token. cswap add/add-token re-registration, including the same value, creates a new
+opaque registration ID. Ordinary OAuth refresh preserves the quarantine.
 
 Every selection/skip/failover is recorded by alias and typed reason in session
 `provider-waits.jsonl`; rows retain `account_events` for responder and reflection.

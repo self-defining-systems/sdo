@@ -140,6 +140,21 @@ def test_staggered_secret_versions_cannot_reenable_a_disabled_registration(tmp_p
     lagging.close()
 
 
+@pytest.mark.parametrize("late_failure", ["rate_limited", "credential_unavailable"])
+def test_late_error_cannot_clear_another_turns_auth_disable(tmp_path: Path, late_failure: str) -> None:
+    env = bundle(tmp_path)
+    clock = [0.0]
+    router = AccountRouter.from_environment(env, clock=lambda: clock[0])
+    selected = router.acquire()
+    selected.close()
+    router.fail(selected, "auth_failed")
+    router.fail(selected, late_failure)
+    clock[0] = 301
+    peer = router.acquire()
+    assert peer.alias == "a02"
+    peer.close()
+
+
 def test_all_accounts_disabled_is_typed_and_never_uses_default_login(tmp_path: Path) -> None:
     env = bundle(tmp_path)
     agent = ScriptedAgent(lambda _: failure(stderr=AUTH))
@@ -318,7 +333,7 @@ def test_cswap_usage_excludes_weekly_limit_but_not_setup_token_403(tmp_path: Pat
     reset = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
     for slot in range(1, 4):
         email = f"synthetic-{slot}@example.invalid"
-        accounts[str(slot)] = {"email": email}
+        accounts[str(slot)] = {"email": email, "added": f"registration-{slot}"}
         payload = json.dumps({"claudeAiOauth": {"accessToken": uuid.uuid4().hex}}).encode()
         (store / "credentials" / f".creds-{slot}-{email}.enc").write_bytes(base64.b64encode(payload))
         listing.append(
@@ -343,3 +358,19 @@ def test_cswap_usage_excludes_weekly_limit_but_not_setup_token_403(tmp_path: Pat
     account.close()
     for path in secret.glob("*.token"):
         assert path.read_text() not in json.dumps(inventory)
+    original = json.loads((secret / "accounts.json").read_text())
+    sync_cswap(store, secret, {"accounts": listing}, lanes=[], capacity=2)
+    assert json.loads((secret / "accounts.json").read_text()) == original
+    source = next((store / "credentials").glob(".creds-2-*.enc"))
+    stamp = source.stat()
+    os.utime(source, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 1000000))
+    sync_cswap(store, secret, {"accounts": listing}, lanes=[], capacity=2)
+    assert json.loads((secret / "accounts.json").read_text()) == original  # Ordinary refresh is not re-registration.
+    accounts["2"]["added"] = "human-re-registration"
+    (store / "sequence.json").write_text(json.dumps({"accounts": accounts}))
+    sync_cswap(store, secret, {"accounts": listing}, lanes=[], capacity=2)
+    renewed = json.loads((secret / "accounts.json").read_text())
+    assert renewed["accounts"][1]["generation"] != original["accounts"][1]["generation"]
+    source.unlink()
+    inventory = sync_cswap(store, secret, {"accounts": listing}, lanes=["50"], capacity=2)
+    assert inventory["lanes"] == {"50": "a03"}
