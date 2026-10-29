@@ -77,7 +77,7 @@ or reads. The full [program SDK](program-sdk.md) is rarely needed.
 - `type CredentialRef struct{Env string; ConfigMap *ConfigMapCredentialRef}`: selects exactly one reference kind.
 - `type ConfigMapCredentialRef struct{Name string; Key string; Assignment string}`: selects a key in the target Pod namespace.
 - `type DatabaseRole struct{Database string; Name string}`: is one directly granted role in a named database.
-- `type EnsureDatabaseUser struct{Target DatabaseTarget; User string; Roles []DatabaseRole; Password CredentialRef; Reason string}`: creates a missing user or restores its exact direct roles.
+- `type EnsureDatabaseUser struct{Target DatabaseTarget; User string; Roles []DatabaseRole; Password CredentialRef; Reason string}`: creates a missing user or replaces all of an existing user's direct roles with Roles.
 
 ## Any other hand repair: commands, HTTP, Jobs, raw API objects
 
