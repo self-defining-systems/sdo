@@ -9,6 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+
+	"sdo.dev/operator/install"
 )
 
 // localPod runs the Pod command on this host, as the sync and export Pods
@@ -212,6 +219,37 @@ func TestParseRuntimeArtifactsModes(t *testing.T) {
 		_, err := ParseRuntimeArtifactsLaunch(append(append([]string{}, base...), test.args...))
 		if (err == nil) != test.ok {
 			t.Fatalf("%v: ok=%v err=%v", test.args, test.ok, err)
+		}
+	}
+}
+
+func TestRuntimeSnapshotSealsOnlyInTheControllerMountingTheLanePVC(t *testing.T) {
+	sync := install.SyncConfig{ControlNamespace: "control", RepositoryPVC: "lane-repository", ControllerImage: "image"}
+	controller := func(name, claim string, phase corev1.PodPhase, readOnly bool) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "control", Labels: map[string]string{"job-name": install.ControllerJobName}},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "prober"}, {Name: "controller", VolumeMounts: []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace", ReadOnly: readOnly}}}},
+				Volumes:    []corev1.Volume{{Name: "repository", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim}}}},
+			},
+			Status: corev1.PodStatus{Phase: phase},
+		}
+	}
+	for _, test := range []struct {
+		name      string
+		pods      []runtime.Object
+		pod, cont string
+	}{
+		{"running controller", []runtime.Object{controller("run-a", "lane-repository", corev1.PodRunning, false)}, "run-a", "controller"},
+		{"other PVC", []runtime.Object{controller("run-a", "another-lane", corev1.PodRunning, false)}, "", ""},
+		{"read-only mount", []runtime.Object{controller("run-a", "lane-repository", corev1.PodRunning, true)}, "", ""},
+		{"not running", []runtime.Object{controller("run-a", "lane-repository", corev1.PodPending, false)}, "", ""},
+		{"ambiguous", []runtime.Object{controller("run-a", "lane-repository", corev1.PodRunning, false), controller("run-b", "lane-repository", corev1.PodRunning, false)}, "", ""},
+		{"no controller", nil, "", ""},
+	} {
+		pod, container, err := sealingController(context.Background(), fake.NewSimpleClientset(test.pods...), sync)
+		if err != nil || pod != test.pod || container != test.cont {
+			t.Fatalf("%s: got %q/%q err %v, want %q/%q", test.name, pod, container, err, test.pod, test.cont)
 		}
 	}
 }

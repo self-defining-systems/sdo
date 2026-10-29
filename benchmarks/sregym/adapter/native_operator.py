@@ -571,6 +571,8 @@ class RuntimeSnapshot:
     sha256: str
     bytes: int
     created: bool
+    # "controller" when sealed by exec in the running controller, "sync" via a sync Pod.
+    sealed_by: str = ""
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", self.snapshot_id):
@@ -592,6 +594,7 @@ def snapshot_runtime_artifacts(target: RuntimeEvidenceTarget, snapshot_id: str) 
             sha256=str(value["sha256"]),
             bytes=int(value.get("bytes", 0)),
             created=bool(value.get("created", False)),
+            sealed_by=str(value.get("sealed_by", "")),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise NativeOperatorError(f"Go runtime snapshot returned an invalid report: {exc}") from exc

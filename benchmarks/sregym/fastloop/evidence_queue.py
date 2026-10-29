@@ -397,7 +397,7 @@ class QueuedEvidenceExport:
                 str(receipt_dir.resolve()),
             ):
                 raise DuplicateExportError(f"snapshot {sealed.snapshot_id} belongs to another export")
-            return existing.receipt_record()
+            return existing.receipt_record() | {"sealed_by": sealed.sealed_by}
         job = ExportJob(
             incident_id=incident_id,
             snapshot_id=sealed.snapshot_id,
@@ -413,4 +413,4 @@ class QueuedEvidenceExport:
         if self.before_submit is not None:
             job = self.before_submit(job)
         self.queue.submit(job)
-        return job.receipt_record()
+        return job.receipt_record() | {"sealed_by": sealed.sealed_by}

@@ -16,6 +16,9 @@ import (
 	"regexp"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/worker_registry"
 )
@@ -63,6 +66,8 @@ type RuntimeArtifactsResult struct {
 	Created bool `json:"created,omitempty"`
 	// Retired reports that delivery removed the sealed archive from the PVC.
 	Retired bool `json:"retired,omitempty"`
+	// SealedBy names the Pod kind that sealed the archive: controller or sync.
+	SealedBy string `json:"sealed_by,omitempty"`
 }
 
 func ParseRuntimeArtifactsLaunch(args []string) (RuntimeArtifactsConfig, error) {
@@ -119,17 +124,28 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 	if err != nil {
 		return RuntimeArtifactsResult{}, err
 	}
-	execute, err := newPodExecutor(config, client)
+	run, err := newContainerExecutor(config, client)
 	if err != nil {
 		return RuntimeArtifactsResult{}, err
 	}
+	execute := inContainer(run, "")
 	installer := install.Installer{Client: client}
 	switch cfg.Mode {
 	case runtimeArtifactsModeSnapshot:
+		// The running controller already mounts the PVC, so sealing there costs
+		// one exec instead of a sync Pod start on the row's critical path.
+		if pod, container, err := sealingController(ctx, client, cfg.Sync); err == nil && pod != "" {
+			result, err := sealRuntimeSnapshot(ctx, inContainer(run, container), cfg.Sync.ControlNamespace, pod, "/workspace/.sdo-runtime", runtimeSnapshotRoot, cfg.SnapshotID)
+			if err == nil {
+				result.SealedBy = "controller"
+				return result, nil
+			}
+		}
 		var result RuntimeArtifactsResult
 		err := installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
 			var err error
 			result, err = sealRuntimeSnapshot(ctx, execute, cfg.Sync.ControlNamespace, install.RepositorySyncPodName, "/workspace/.sdo-runtime", runtimeSnapshotRoot, cfg.SnapshotID)
+			result.SealedBy = "sync"
 			return err
 		})
 		return result, err
@@ -190,6 +206,38 @@ func copyRuntimeArtifacts(ctx context.Context, execute podExecutor, namespace, d
 		return waitErr
 	}
 	return copyErr
+}
+
+// sealingController returns the one running controller Pod and container that
+// mount the lane repository PVC at /workspace, or "" when there is none.
+func sealingController(ctx context.Context, client kubernetes.Interface, sync install.SyncConfig) (string, string, error) {
+	pods, err := client.CoreV1().Pods(sync.ControlNamespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + install.ControllerJobName})
+	if err != nil {
+		return "", "", err
+	}
+	var pod, container string
+	for _, candidate := range pods.Items {
+		if candidate.Status.Phase != corev1.PodRunning || candidate.DeletionTimestamp != nil {
+			continue
+		}
+		volumes := map[string]bool{}
+		for _, volume := range candidate.Spec.Volumes {
+			if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == sync.RepositoryPVC && !volume.PersistentVolumeClaim.ReadOnly {
+				volumes[volume.Name] = true
+			}
+		}
+		for _, c := range candidate.Spec.Containers {
+			for _, mount := range c.VolumeMounts {
+				if mount.MountPath == "/workspace" && volumes[mount.Name] && !mount.ReadOnly && mount.SubPath == "" {
+					if pod != "" {
+						return "", "", nil
+					}
+					pod, container = candidate.Name, c.Name
+				}
+			}
+		}
+	}
+	return pod, container, nil
 }
 
 // sealRuntimeSnapshot freezes the current whitelisted evidence under snapshotRoot.
