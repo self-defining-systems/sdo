@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[4]
 def test_export_inventory_matches_real_race_test_listing(tmp_path: Path) -> None:
     (tmp_path / "go.mod").write_text("module fixture.test/inventory\n\ngo 1.26.0\n")
     (tmp_path / "internal_test.go").write_text("""package inventory
-import "testing"
+import ("testing"; "sync")
+func CopyLock() { var left sync.Mutex; right := left; _ = right }
 func TestInternal(t *testing.T) {}
 func Test(t *testing.T) {}
 func HelperNotATest(t *testing.T) {}

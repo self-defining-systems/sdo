@@ -42,7 +42,11 @@ func inventory(directory string, output io.Writer) error {
 	}
 	// go test -list also vets the selected test packages. Reuse the exported
 	// archives while preserving that rejection boundary, without any links.
-	vet := exec.Command("go", "vet", "-race", "./...")
+	// Match go test's high-confidence subset exactly; full go vet adds
+	// unrelated analyzers (such as copylocks) that the old listing did not run.
+	vet := exec.Command("go", "vet", "-race", "-atomic", "-bools", "-buildtag",
+		"-directive", "-errorsas", "-ifaceassert", "-nilfunc", "-printf",
+		"-stringintconv", "-tests", "./...")
 	vet.Dir = directory
 	vet.Stdout, vet.Stderr = os.Stderr, os.Stderr
 	if err := vet.Run(); err != nil {
