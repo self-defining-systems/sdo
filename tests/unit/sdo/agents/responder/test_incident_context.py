@@ -125,6 +125,25 @@ def test_absent_coverage_keeps_every_finding_unexplained() -> None:
     }
 
 
+def test_first_message_preserves_executable_match_bindings_and_selection() -> None:
+    """A repeat must not need menu discovery to recover named or scalar bindings."""
+    request = _request()
+    match = request.playbook_coverage.matches.add(
+        playbook_id="repair", can_mitigate=True, mitigation_selection="program-ready-option"
+    )
+    match.explained_finding_fingerprints.append("finding-0")
+    binding = match.bindings.add(name="service")
+    binding.object.CopyFrom(request.findings[0].primary_resource)
+    match.bindings.add(name="port").value.number_value = 8080
+    with prepared_incident_data(request) as rendered:
+        selected = incident_document(rendered)["playbook_coverage"]["matches"][0]
+        assert selected["mitigation_selection"] == match.mitigation_selection
+        assert selected["bindings"] == [
+            {"name": "service", "object": {"kind": "Service", "name": "service-0"}},
+            {"name": "port", "value": 8080.0},
+        ]
+
+
 def test_bulky_intent_does_not_hide_actionable_findings_and_coverage() -> None:
     request = _request()
     request.memory_snapshot.architecture_markdown = "Supplemental architecture. " * 1000

@@ -65,32 +65,8 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 			continue
 		}
 		for _, spec := range registry.List() {
-			var assignments []program.Bindings
-			if bound, err := program.BindFinding(spec, finding); err == nil {
-				assignments = append(assignments, bound)
-			}
-			hintOnly := false
-			if len(assignments) == 0 {
-				for _, reference := range finding.Playbooks {
-					id, err := layout.PlaybookID(reference)
-					if err == nil && id == spec.ID {
-						assignments = []program.Bindings{cloneProgramBindings(program.Bindings{Objects: finding.ParameterBindings})}
-						hintOnly = true
-						break
-					}
-				}
-			}
-			for _, bindings := range assignments {
-				source := "finding"
-				if hintOnly {
-					source = "hint"
-				} else {
-					for name, ref := range bindings.Objects {
-						if finding.ParameterBindings[name] == ref && ref.Kind != "" {
-							source = "hint"
-						}
-					}
-				}
+			bindings, source, ok := findingProgramBindings(spec, finding)
+			if ok {
 				add(spec.ID, bindings, FindingFingerprint(finding), source)
 			}
 		}
@@ -143,6 +119,34 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 	}
 	sortProgramRuns(runs)
 	return runs
+}
+
+// findingProgramBindings is the shared candidate/target boundary. Optional
+// object roles still need a finding resource; scalar defaults and an empty map
+// do not make an unrelated finding a diagnosis candidate. Explicit authored
+// hints remain visible even when incomplete, but carry only declared roles.
+func findingProgramBindings(spec program.ProgramSpec, finding sdk.Finding) (program.Bindings, string, bool) {
+	bound, err := program.BindFinding(spec, finding)
+	hasObjectRoles := false
+	for _, param := range spec.Params {
+		hasObjectRoles = hasObjectRoles || param.Kind != ""
+	}
+	if err == nil && (!hasObjectRoles || len(bound.Objects) > 0) {
+		source := "finding"
+		for name, ref := range bound.Objects {
+			if finding.ParameterBindings[name] == ref && ref.Kind != "" {
+				source = "hint"
+			}
+		}
+		return bound, source, true
+	}
+	for _, reference := range finding.Playbooks {
+		id, err := layout.PlaybookID(reference)
+		if err == nil && id == spec.ID {
+			return cloneProgramBindings(bound), "hint", true
+		}
+	}
+	return program.Bindings{}, "", false
 }
 
 func cloneProgramBindings(source program.Bindings) program.Bindings {

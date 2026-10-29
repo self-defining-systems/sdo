@@ -223,7 +223,10 @@ def _coverage_brief(request: IncidentRequest) -> dict[str, Any]:
         {
             "playbook_id": match.playbook_id,
             "can_mitigate": match.can_mitigate,
-            "bindings": [_ref(binding.object) for binding in match.bindings],
+            "mitigation_selection": match.mitigation_selection,
+            "bindings": [
+                json_format.MessageToDict(binding, preserving_proto_field_name=True) for binding in match.bindings
+            ],
             "explained_finding_fingerprints": explained,
             "verified": f"{match.verified_successes} succeeded, {match.verified_failures} failed",
         }

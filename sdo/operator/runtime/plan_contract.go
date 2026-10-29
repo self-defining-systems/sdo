@@ -197,6 +197,12 @@ func planActionProto(action program.Action) (*contracts.Action, error) {
 			return nil, err
 		}
 		return &contracts.Action{Kind: &contracts.Action_ScaleWorkload{ScaleWorkload: &contracts.ScaleWorkload{Ref: planRefProto(a.Ref), Replicas: value}}}, nil
+	case program.RetryAdmission:
+		return &contracts.Action{Kind: &contracts.Action_RetryAdmission{RetryAdmission: &contracts.RetryAdmission{Ref: planRefProto(a.Ref)}}}, nil
+	case *program.RetryAdmission:
+		if a != nil {
+			return planActionProto(*a)
+		}
 	case program.RetireOldRevision:
 		return &contracts.Action{Kind: &contracts.Action_RetireOldRevision{RetireOldRevision: &contracts.RetireOldRevision{Ref: planRefProto(a.Ref)}}}, nil
 	case program.Exec:
@@ -280,6 +286,8 @@ func planActionState(action *contracts.Action) program.Action {
 		decoded = program.DeletePod{Ref: objectRefState(kind.DeletePod.GetRef())}
 	case *contracts.Action_ScaleWorkload:
 		decoded = program.ScaleWorkload{Ref: objectRefState(kind.ScaleWorkload.GetRef()), Replicas: planValueState(kind.ScaleWorkload.GetReplicas())}
+	case *contracts.Action_RetryAdmission:
+		decoded = program.RetryAdmission{Ref: objectRefState(kind.RetryAdmission.GetRef())}
 	case *contracts.Action_RetireOldRevision:
 		decoded = program.RetireOldRevision{Ref: objectRefState(kind.RetireOldRevision.GetRef())}
 	case *contracts.Action_Exec:

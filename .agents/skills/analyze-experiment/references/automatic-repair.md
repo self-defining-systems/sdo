@@ -55,8 +55,38 @@ Source reconciliation action reports carry `source_reconcile`: the object refere
 
 Live diagnosis bindings come from `program.BindFinding` through `SelectProgramCandidates`, shared by stage selection, matched menu selection and reflection repeat observation. Stage target associations are separate from authored explanation coverage: an unlinked live Match remains applicable. Optional roles may be absent and scalar defaults need no explicit value entry; historical `unbound_parameter` skips can reflect the retired duplicate coverage/completeness gate, not a missing declared parameter.
 
+Programs declaring object roles need at least one finding-bound object or an explicit playbook hint to be
+candidates. Historical empty optional-role diagnoses often returned Unknown on unrelated findings; count
+affected repeats separately from repeats with an actually blocked repair. Initial runs are opening evidence;
+outcome runs also include later diagnoses, aliases and post-repair stale bindings, so do not add their
+counts as distinct failed attempts. Unknown without evidence/error has an unrecorded reason.
+
+Older contract projections dropped resource-free evidence unless its fact was exactly `diagnosis`.
+Consequently an empty wire Unknown can be a lost binding/catalog/relation explanation rather than a failed
+primitive. New projections carry all resource-free Unknown facts through `program_runs[].error`, keeping
+the scoped evidence contract intact. These are diagnostic reasons, never evidence of health or a Match.
+
+The automatic stage reserves rollout time for remaining candidates and continues after an application
+failure; every later binding diagnoses fresh state through the ordinary executor fences. Before this change,
+one failure could hand off otherwise matched repairs without attempting them. Compare stage receipt
+completion times with model tool invocations: the fastloop mitigation timestamp can be the last successful
+repair, whereas an earlier independently verified stage repair is already a first fix. Model turns require
+provider response IDs, not one count per controller tool call (one model response can execute several).
+
+Historical `wait for the cache to observe plan writes: write observation unknown` on a confirmed
+ResourceQuota delete can mean the barrier waited for a nonexistent informer. The current barrier requires
+cache catch-up only for watched kinds; an uncached kind needs the executor's fresh, process-local direct
+effect proof. Persisted receipts do not restore that proof. This removes the generic API operation failure
+class without treating missing observations as success or bypassing watched UID/version barriers.
+
 `ineffective` skips a match whose program revision already ended `applied_still_matching` in this incident for the same finding fingerprints (a replacement object, such as the Pod a restart creates, is a new binding but not new evidence; a finding that attempt did not target is). A deferred second diagnosis turn runs only after a turn that wrote or cleared something.
 
 `reverted_ineffective` (HALF1) is an applied attempt of the current run that cleared none of its target findings while a fresh diagnosis of the same program/binding still matched; the stage restored its writes from the executor's preimages (receipt `rolled_back=true`, a stage `rollback` tool call) before handoff, so the responder starts from the original fault. Other applied attempts that left findings open stay `applied_still_matching` with `kept_reason`: `partial` (cleared a finding or its own diagnosis), `irreversible` (delete, exec, script, external call, webhook CA sync or restart; never undone), or `rollback_failed` (`apply_receipt.rollback_error`). `touched_objects` lists what each attempt wrote. A reverted attempt counts toward `ineffective` skips, is not progress for a later pass, and reflection marks its playbook stale. Runs before HALF1 left such writes in place.
 
-`plan_not_executable` is a typed terminal skip for a structurally invalid learned plan (including an empty plan or incompatible raw patch/list edits). The common plan builder returns `NonExecutablePlanError`; accepted program/revision failures are remembered before another binding can prepare them, and the durable stage report restores that decision across refresh and restart. No writes are attempted for it; remaining work hands over to the agent. Observation, timeout and execution errors do not become structural terminal decisions merely because planning failed. This is runtime handling, never a replay publication gate.
+`plan_not_executable` is a typed terminal skip for a structurally invalid learned plan (including an empty plan or incompatible raw patch/list edits). The common plan builder returns `NonExecutablePlanError`; failures bind to the program revision and complete object/scalar assignment, and the durable stage report restores that binding's decision across refresh and restart. Other bindings remain eligible. Older builds cached by program/revision and could skip a real webhook after a phantom binding failed. No writes are attempted for the refused binding. Observation, timeout and execution errors remain retryable. This is runtime handling, never a replay publication gate.
+
+Before structural validation, learned `SyncWebhookCA` plans can fill missing Secret reference fields from
+one exact `AdmissionWebhooksFor` configuration/entry/serving-key relation, including through working-program
+pipes. Explicit fields are never overwritten; ambiguous or absent relations remain errors. No Secret read,
+key guess, program-name exception or extra mutation authority is added. Inspect the final bound plan when
+comparing older missing-Secret-parameter failures with current stage execution.
