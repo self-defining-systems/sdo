@@ -61,10 +61,12 @@ func TestWebhookCASyncPrivateRuntimeBoundary(t *testing.T) {
 			t.Fatal("Secret bytes leaked")
 		}
 	}
-	replay := &sdktest.ReplayReadView{Calls: record.RecordedReads()}
+	replay := &sdktest.ReplayReadView{Calls: record.RecordedReads()[:1]}
 	if matched, err = replay.WebhookCAMatchesSecret(target); err != nil || matched {
 		t.Fatal("open replay mismatch")
 	}
+	// State reads are frozen per view; replay the fixed observation separately.
+	replay = &sdktest.ReplayReadView{Calls: record.RecordedReads()[1:]}
 	if matched, err = replay.WebhookCAMatchesSecret(target); err != nil || !matched {
 		t.Fatal("fixed replay mismatch")
 	}

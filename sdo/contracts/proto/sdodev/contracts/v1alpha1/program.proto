@@ -90,6 +90,7 @@ message Action {
     RunScript run_script = 19;
     SyncWebhookCA sync_webhook_ca = 20;
     RetireOldRevision retire_old_revision = 21;
+    RetryAdmission retry_admission = 22;
   }
 }
 
@@ -201,6 +202,11 @@ message DeletePod {
 message ScaleWorkload {
   ObjectRef ref = 1 [(buf.validate.field).required = true];
   PlanValue replicas = 2 [(buf.validate.field).required = true];
+}
+
+// Requeue one admission-blocked ReplicaSet within the incident namespace.
+message RetryAdmission {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
 }
 
 // Scales one old-revision ReplicaSet of its controlling Deployment to zero.
