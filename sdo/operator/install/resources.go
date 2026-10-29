@@ -31,6 +31,7 @@ import (
 const (
 	ControllerJobName            = "sdo-controller-run"
 	RepositorySyncPodName        = "sdo-repository-sync"
+	RuntimeExportPodName         = "sdo-runtime-export"
 	InstallFingerprintAnnotation = "sdo.dev/install-fingerprint"
 	WorkerMountPolicyAnnotation  = "sdo.dev/worker-mount-policy"
 	ApplicationNamespaceLabel    = "sdo.dev/application-namespace"
@@ -302,6 +303,15 @@ func syncPod(c Config) *corev1.Pod {
 	no := false
 	zero := int64(0)
 	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: RepositorySyncPodName, Namespace: c.controlNamespace()}, Spec: corev1.PodSpec{TerminationGracePeriodSeconds: &zero, RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &no, SecurityContext: podSecurity(), Containers: []corev1.Container{{Name: "sync", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"sleep", "3600"}, SecurityContext: containerSecurity(), Resources: limits("50m", "64Mi", "250m", "256Mi"), VolumeMounts: []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}, {Name: "scratch", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{pvcVolume(c.RepositoryPVC), {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}}
+}
+
+// runtimeExportPod transports sealed evidence archives. It is independent of
+// the singleton sync Pod so delivery never blocks accepted-memory synchronization.
+func runtimeExportPod(c Config) *corev1.Pod {
+	pod := syncPod(c)
+	pod.Name = RuntimeExportPodName
+	pod.Spec.Containers[0].Name = "export"
+	return pod
 }
 
 func controllerJob(c Config) *batchv1.Job {
