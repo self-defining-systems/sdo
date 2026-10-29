@@ -10,10 +10,13 @@ from uuid import uuid4
 from benchmarks.sregym.adapter import (
     PersistentState,
     allowed_namespaces,
+    controller_settings,
+    deployed_lifecycle,
     incident_work_open,
     kubectl,
     native_install_config,
     pause_for_recovery,
+    runtime_config_payload,
     sync_existing,
 )
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
@@ -112,6 +115,10 @@ class WarmEnvironment:
         pod = self.ops.controller_pod(self.control)
         if record is None or pod is None or record.controller_pod_uid != pod.uid:
             raise ValueError("warm lane has no recorded live controller")
+        if controller_settings(record.runtime_config) != controller_settings(runtime_config_payload(self.config)):
+            raise ValueError("warm controller settings differ from the requested stage")
+        if record.lifecycle_fingerprint != deployed_lifecycle(env.namespace).fingerprint:
+            raise ValueError("warm controller topology differs from the requested stage")
         if not self.ops.install(self.config):
             raise ValueError("warm controller settings cannot be reused")
         standby = json.loads(
@@ -189,7 +196,15 @@ class WarmEnvironment:
         return proof
 
     def full_reset(self) -> None:
+        if self.environment.shared_accepted_id:
+            raise WarmLaneBusy("shared accepted memory cannot use destructive lane reset")
         self._assert_idle()
         if self.ops.controller_pod(self.control) is not None:
             pause_for_recovery(self.ops, self.control)
+            sync_existing(native_install_config(self.config))
+        elif (
+            self.environment.namespace in PersistentState.load(self.environment.state_path).controllers
+            and not self.planned_commit
+        ):
+            raise WarmLaneBusy("accepted memory has no paused live owner; refusing to rewind it")
         self._full_reset()

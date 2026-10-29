@@ -703,6 +703,13 @@ def _wipes_at_row_start(args: argparse.Namespace, environment: FastloopEnvironme
     return args.agent == "sdo" and environment.app != "toy" and not environment.shared_accepted_id
 
 
+def _warm_reset_args(args: argparse.Namespace, environment: FastloopEnvironment) -> argparse.Namespace:
+    # A warm caller retains accepted knowledge by default. An explicitly
+    # selected planned revision still owns the ordinary reset semantics.
+    planned = args.planned_commit or AcceptedSource.of(environment).revision
+    return argparse.Namespace(**{**vars(args), "planned_commit": planned})
+
+
 def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnvironment) -> Tier1Receipt:
     """Tier 1: delete SDO's control namespace and every harness leftover, then re-provision and re-seed SDO's inputs."""
     from benchmarks.sregym.fastloop.wipe import credentials_hook, wipe_environment
@@ -932,7 +939,7 @@ def _run_owned(args: argparse.Namespace) -> int:
 
         def full_reset() -> None:
             nonlocal tier1
-            tier1 = _wipe_sdo_and_harness(args, environment)
+            tier1 = _wipe_sdo_and_harness(_warm_reset_args(args, environment), environment)
 
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)
         with _worker(environment) as warm_worker:

@@ -178,3 +178,100 @@ def test_same_lane_cannot_have_two_warm_owners(tmp_path: Path) -> None:
     # Kernel ownership is released on exit; the lock inode must remain.
     with own_lane(tmp_path, "toy-lane"):
         pass
+
+
+def test_changed_runtime_settings_cannot_claim_controller_reuse(tmp_path: Path, monkeypatch) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.adapter import (
+        ControllerRecord,
+        PersistentState,
+        RuntimeConfig,
+        runtime_config_payload,
+    )
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.warm_environment import WarmEnvironment
+    from benchmarks.sregym.fastloop.wipe import LaneInjectionState
+
+    env = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="synthetic",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="app",
+        application="synthetic",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    monkeypatch.setenv("KUBECONFIG", str(env.kubeconfig))
+    monkeypatch.delenv("SREGYM_BASE_KUBECONFIG", raising=False)
+    config = RuntimeConfig(
+        repository=env.workspace,
+        namespace=env.namespace,
+        application=env.application,
+        controller_image="controller:synthetic",
+        responder_image="responder:synthetic",
+        repository_pvc="synthetic",
+        credentials_secret="reference-only",
+        model="scripted",
+        timeout_seconds=300,
+        controller_namespace="app-sdo",
+    )
+    state = PersistentState()
+    state.controllers[env.namespace] = ControllerRecord(
+        application=env.application,
+        namespace=env.namespace,
+        control_namespace="app-sdo",
+        lifecycle_fingerprint="same",
+        controller_pod_uid="controller-1",
+        controller_pod_name="controller",
+        installed_by_stage="fixture",
+        installed_at=NOW,
+        runtime_config=runtime_config_payload(replace(config, timeout_seconds=600)),
+    )
+    state.save(env.state_path)
+    LaneInjectionState(env.kubeconfig, env.namespace).recreated()
+    ops = SimpleNamespace(
+        controller_pod=lambda _: SimpleNamespace(name="controller", uid="controller-1"),
+        runtime_state=lambda _: {"version": "sdo.controller/v1"},
+        install=lambda _: pytest.fail("settings mismatch reached native reuse inspection"),
+    )
+    warm = WarmEnvironment(
+        env, ops, SimpleNamespace(), config, tmp_path / "proof", incoming_data_faults=(), full_reset=lambda: None
+    )
+    with pytest.raises(ValueError, match="controller settings"):
+        warm.inspect()
+
+
+def test_warm_fallback_keeps_current_accepted_memory_unless_revision_is_explicit(tmp_path: Path) -> None:
+    from argparse import Namespace
+
+    from benchmarks.sregym.fastloop import cli
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.wipe import reseed_workspace
+    from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
+
+    env = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="synthetic",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="app",
+        application="synthetic",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    seed = commit_accepted_source(env.workspace).revision
+    memory = env.workspace / ".sdo/playbooks/synthetic/README.md"
+    memory.parent.mkdir(parents=True)
+    memory.write_text("# Synthetic accepted memory\n")
+    accepted = commit_accepted_source(env.workspace).revision
+    env.seed_commit = seed
+    options = cli._warm_reset_args(Namespace(planned_commit=None), env)
+    reseed_workspace(env.workspace, options.planned_commit)
+    assert options.planned_commit == accepted
+    assert memory.is_file()
+    options = cli._warm_reset_args(Namespace(planned_commit=seed), env)
+    reseed_workspace(env.workspace, options.planned_commit)
+    assert not memory.exists()
