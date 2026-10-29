@@ -607,3 +607,25 @@ def test_tool_reads_the_complete_response_behind_a_capped_reply(
     assert json.loads(envelope)["summarized"] is True
     monkeypatch.setattr(scripted_worker, "_command", lambda *_args, **_kwargs: envelope + "\n")
     assert scripted_worker._tool("source", "Service/app/api") == full
+
+
+@pytest.mark.parametrize("replay", ["on", "off"])
+def test_recreation_capture_requirement_follows_replay_policy(tmp_path, monkeypatch, replay):
+    """Optional captures do not remove the source-backed executable step."""
+    from sdo.contracts import IncidentClosure
+
+    monkeypatch.setenv("SDO_REPLAY", replay)
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "absent"))
+    monkeypatch.setattr(scripted_worker, "PROGRAM_SOURCE", ROOT / "benchmarks/sregym/fastloop/scripted_program")
+    closure = IncidentClosure()
+    closure.request.incident_id = "synthetic-recreation"
+    closure.request.namespace = "demo"
+    closure.request.state_changes.changes.add(kind="ConfigMap", name="synthetic", change="removed")
+    if replay == "on":
+        with pytest.raises(FileNotFoundError):
+            scripted_worker._write_recreation_programs(tmp_path, closure)
+    else:
+        scripted_worker._write_recreation_programs(tmp_path, closure)
+        assert not (tmp_path / ".sdo/corpus").exists()
+        program = tmp_path / ".sdo/playbooks/resource-recreation-configmap"
+        assert "CreateFromSource" in (program / "mitigate.go").read_text()

@@ -34,6 +34,7 @@ from sdo.contracts import (
     DriftEvent,
     HealthJudgeRequest,
     HealthJudgeResult,
+    IncidentClosure,
     IncidentRequest,
     IncidentResult,
 )
@@ -682,8 +683,85 @@ def _check_reflection(worktree: Path, playbook_ids: list[str]) -> None:
         _command(["sdo-operator", "memory", "check", "--root", str(worktree), "--decision", str(decision)], timeout=180)
 
 
-def _checkout_reflection(worktree: Path, summary: str, reason: str) -> ReflectionTurn:
+def _write_recreation_programs(worktree: Path, closure: IncidentClosure) -> None:
+    """Encode source recreation from the native removed-object contract, never fault identity."""
+    replay = os.environ.get("SDO_REPLAY") or "on"
+    if replay not in {"on", "off"}:
+        raise ValueError(f"replay must be on or off, got {replay!r}")
+    incident = closure.request.incident_id
+    capture = Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"))
+    collections = {"Service": ("services", "Services"), "ConfigMap": ("configMaps", "ConfigMaps")}
+    for change in closure.request.state_changes.changes:
+        if change.change != "removed" or change.kind not in collections:
+            continue
+        section, collection = collections[change.kind]
+        program_id = "resource-recreation-" + change.kind.lower()
+        target = worktree / ".sdo/playbooks" / program_id
+        target.mkdir(parents=True, exist_ok=True)
+        for name in ("diagnose.go", "mitigate.go"):
+            template = (PROGRAM_SOURCE / "recreation" / (name + ".tmpl")).read_text()
+            source = (
+                template.replace("PROGRAM_ID", program_id)
+                .replace("RESOURCE_KIND", change.kind)
+                .replace("COLLECTION", collection)
+            )
+            (target / name).write_text(source)
+        _command(["gofmt", "-w", str(target / "diagnose.go"), str(target / "mitigate.go")])
+        readme = target / "README.md"
+        if not readme.exists():
+            readme.write_text(
+                f"---\nschema_version: 1\nowner: responder\nfault_class: {program_id}\n"
+                f"originating_incident: {incident}\n---\n# Recreate missing accepted {change.kind}\n\n"
+                "Diagnose an absent bound resource only when accepted source declares it. "
+                "Recreate it with CreateFromSource, then verify independent application health.\n"
+            )
+        note = f"- Verified source recreation in incident {incident}.\n"
+        if note not in readme.read_text():
+            with readme.open("a") as stream:
+                stream.write("\n" + note)
+        # Replay-off publication keeps the same typed program but does not require
+        # protected captures. If supplied, preserve them even in that mode.
+        opened_path, fixed_path = capture / "open@detect.json", capture / "fixed.json"
+        if replay == "off" and not (opened_path.is_file() and fixed_path.is_file()):
+            continue
+        opened, fixed = opened_path.read_bytes(), fixed_path.read_bytes()
+        opened_sections, fixed_sections = (capture_sections(json.loads(raw)) for raw in (opened, fixed))
+
+        def present(snapshot: dict[str, Any], section: str, name: str) -> bool:
+            return any(item.get("metadata", {}).get("name") == name for item in snapshot.get(section) or [])
+
+        if present(opened_sections, section, change.name) or not present(fixed_sections, section, change.name):
+            raise ValueError(f"recreation capture must show absent then present {change.kind}/{change.name}")
+        case_id = program_id + "-" + hashlib.sha256((incident + "/" + change.name).encode()).hexdigest()[:12]
+        case = worktree / ".sdo/corpus" / case_id
+        case.mkdir(parents=True, exist_ok=True)
+        for name, raw in {
+            "open.json": opened,
+            "fixed.json": fixed,
+            "recordings.json": (capture / "open@detect-recordings.json").read_bytes(),
+        }.items():
+            (case / name).write_bytes(raw)
+        ref = {"api_version": "v1", "kind": change.kind, "namespace": closure.request.namespace, "name": change.name}
+        labels = {
+            "root_cause_program_ids": [program_id],
+            "bindings": {"resource": ref},
+            "peer_bindings": {"resource": ref},
+            "provenance": {
+                "incident_id": incident,
+                "open_at": "detect",
+                "open_sha256": hashlib.sha256(opened).hexdigest(),
+                "fixed_sha256": hashlib.sha256(fixed).hexdigest(),
+            },
+        }
+        (case / "labels.json").write_text(json.dumps(labels))
+
+
+def _checkout_reflection(
+    worktree: Path, summary: str, reason: str, *, closure: IncidentClosure | None = None
+) -> ReflectionTurn:
     """Report the actual publication diff, including Go-prepared corpus edits."""
+    if closure is not None:
+        _write_recreation_programs(worktree, closure)
     base = os.environ.get("SDO_BASE_COMMIT", "HEAD")
     git = ["git", "-C", str(worktree)]
     paths: set[str] = set()
@@ -742,6 +820,14 @@ class ScriptedReflector:
             )
         pair = policy_pair or _captured_pair(capture, open_at)
         if pair is None:
+            closure = kwargs.get("closure")
+            if closure is not None and any(
+                change.change == "removed" and change.kind in {"Service", "ConfigMap"}
+                for change in closure.request.state_changes.changes
+            ):
+                return _checkout_reflection(
+                    worktree, "Captured source recreation", "No source recreation", closure=closure
+                )
             if os.environ.get("SDO_SCRIPTED_MEMORY_CHANGE") == "1":
                 # Exercise real memory publication even when this repair has
                 # no program fixture. This adds no diagnosis or trust credit.
@@ -773,6 +859,7 @@ class ScriptedReflector:
                 worktree,
                 "No captured target port repair",
                 "Captured incident has no target port transition and healthy peer",
+                closure=kwargs.get("closure"),
             )
         target = worktree / ".sdo/playbooks" / program_id
         target.parent.mkdir(parents=True, exist_ok=True)
