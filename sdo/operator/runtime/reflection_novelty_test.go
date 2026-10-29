@@ -59,43 +59,60 @@ func TestReflectionNoveltyRequiresCompleteRecordedCoverage(t *testing.T) {
 }
 
 func TestCoveredRepeatBrokerSkipsReflectionWorker(t *testing.T) {
-	ctx := context.Background()
-	root := nativeRepository(t)
-	nativeMemoryFixture(t, root)
-	t1Write(t, root, ".sdo/playbooks/contract-repair/README.md", []byte("---\nschema_version: 1\nowner: responder\nfault_class: contract-repair\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME>\n"))
-	nativeGit(t, root, "add", ".")
-	nativeGit(t, root, "commit", "-qm", "synthetic accepted program")
-	repository, err := broker.New(root, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	modelCalls := 0
-	native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), Replay: "off", ResponderBackend: "test", ResponderModel: "test",
-		Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-			o := coveredRepeatOutcome(t)
-			o.IncidentId = c.Request.IncidentID
-			return DerivedOutcome{Record: o, RequiresReflection: true}, nil
-		}),
-		Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
-			modelCalls++
-			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "covered"}, nil
-		}),
-	}
-	p, err := native.PrepareIncident(ctx, "covered-repeat")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := nativeClosure(p)
-	c.Request.RepairPolicy = "recorded-actions"
-	if _, err := native.ProcessClosure(ctx, c); err != nil {
-		t.Fatal(err)
-	}
-	ledger, err := native.readLedger(c.Request.IncidentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if modelCalls != 0 || ledger.GetReflectionDecision().GetNoChangeReason() != "accepted_programs_no_new_evidence" {
-		t.Fatalf("model calls=%d decision=%v", modelCalls, ledger.GetReflectionDecision())
+	for _, manual := range []bool{false, true} {
+		t.Run(fmt.Sprint("hand-repair=", manual), func(t *testing.T) {
+			ctx := context.Background()
+			root := nativeRepository(t)
+			nativeMemoryFixture(t, root)
+			t1Write(t, root, ".sdo/playbooks/contract-repair/README.md", []byte("---\nschema_version: 1\nowner: responder\nfault_class: contract-repair\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME>\n"))
+			nativeGit(t, root, "add", ".")
+			nativeGit(t, root, "commit", "-qm", "synthetic accepted program")
+			repository, err := broker.New(root, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			modelCalls := 0
+			native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), Replay: "off", ResponderBackend: "test", ResponderModel: "test",
+				Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+					o := coveredRepeatOutcome(t)
+					o.IncidentId = c.Request.IncidentID
+					if manual {
+						repair := proto.Clone(o.RepairActions[0]).(*contracts.RepairActionReceipt)
+						repair.ActionId = "hand-repair"
+						repair.Kind = "sdo-act"
+						o.RepairActions = append(o.RepairActions, repair)
+					}
+					return DerivedOutcome{Record: o, RequiresReflection: true}, nil
+				}),
+				Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+					modelCalls++
+					return ReflectionDecision{LearningDecision: "failed", Error: "synthetic learning worker observed new evidence"}, nil
+				}),
+			}
+			p, err := native.PrepareIncident(ctx, "covered-repeat")
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := nativeClosure(p)
+			c.Request.RepairPolicy = "recorded-actions"
+			if _, err := native.ProcessClosure(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			ledger, err := native.readLedger(c.Request.IncidentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if manual {
+				want = 1
+			}
+			if modelCalls != want {
+				t.Fatalf("model calls=%d want=%d", modelCalls, want)
+			}
+			if !manual && ledger.GetReflectionDecision().GetNoChangeReason() != "accepted_programs_no_new_evidence" {
+				t.Fatalf("model calls=%d decision=%v", modelCalls, ledger.GetReflectionDecision())
+			}
+		})
 	}
 }
 

@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -36,6 +38,7 @@ func (b *Broker) CheckReflection(ctx context.Context, incidentID string, decisio
 		if err != nil {
 			return err
 		}
+		report.Root, report.Base, report.Actor, report.Phase = p.Path, p.BaseCommit, string(Responder), string(ReflectionPhase)
 		paths, err := validate.ChangedPaths(ctx, p.Path, p.BaseCommit)
 		if err != nil {
 			return err
@@ -81,7 +84,6 @@ func (b *Broker) CheckReflection(ctx context.Context, incidentID string, decisio
 		if err != nil {
 			return err
 		}
-		report.Root, report.Base, report.Actor, report.Phase = p.Path, p.BaseCommit, string(Responder), string(ReflectionPhase)
 		report.Diagnostics, report.CoverageGaps = validate.ProtoDiagnostics(ds), validate.ProtoDiagnostics(gaps)
 		return nil
 	})
@@ -90,11 +92,23 @@ func (b *Broker) CheckReflection(ctx context.Context, incidentID string, decisio
 }
 
 func (b *Broker) checkAttestedCandidate(ctx context.Context, root, base string, actor Actor, phase Phase, paths []string, publication *validate.PublicationContext, decision *contracts.ReflectionDecision, gaps *[]validate.Diagnostic) ([]validate.Diagnostic, error) {
+	// Captures are frozen too: an ABA write to a live capture directory
+	// cannot make validation consume bytes different from its attestation.
+	if b.ValidationToolchain != "" && phase == ReflectionPhase && b.codePath != "shell" {
+		frozen, cleanup, err := b.freezeCaptureSource(ctx)
+		if err != nil {
+			slog.Info("reflection_attestation_skipped", "reason", "capture_snapshot_unavailable", "error", err)
+			return b.checkCandidate(ctx, root, base, actor, phase, paths, b.validator, publication, decision, gaps)
+		}
+		defer cleanup()
+		ctx = frozen
+	}
 	// An empty toolchain identity disables reuse. The launcher supplies only
 	// immutable image identities; mutable tags/development mounts fail closed.
 	identity, err := b.validationIdentity(ctx, root, base, actor, phase, publication, decision)
 	if err != nil {
-		return nil, err
+		slog.Info("reflection_attestation_skipped", "reason", "input_identity_unavailable", "error", err)
+		return b.checkCandidate(ctx, root, base, actor, phase, paths, b.validator, publication, decision, gaps)
 	}
 	id := publication.IncidentID
 	if attestation, ok := b.attestations[id]; identity != "" && ok && attestation.identity == identity {
@@ -119,7 +133,8 @@ func (b *Broker) checkAttestedCandidate(ctx context.Context, root, base string, 
 	if err == nil && len(ds) == 0 && identity != "" {
 		after, identityErr := b.validationIdentity(ctx, root, base, actor, phase, publication, decision)
 		if identityErr != nil {
-			return nil, identityErr
+			slog.Info("reflection_attestation_skipped", "reason", "checked_identity_unavailable", "error", identityErr)
+			return ds, nil
 		}
 		// Check can prepare generic policy files. Never attest inputs different
 		// from those selected at the start, including a concurrently changed capture.
@@ -200,13 +215,88 @@ func captureDigest(root string) (string, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("validation capture is not a regular file: %s", relative)
 		}
-		data, err := os.ReadFile(path)
+		file, err := os.Open(path)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(h, "%d:", len(data))
-		_, err = h.Write(data)
+		defer file.Close()
+		fmt.Fprintf(h, "%d:", info.Size())
+		_, err = io.Copy(h, file)
 		return err
 	})
 	return fmt.Sprintf("%x", h.Sum(nil)), err
+}
+
+// freezeCaptureSource gives Check an immutable broker-private copy. It uses
+// canonical directory permissions; original file bytes and modes are retained.
+func (b *Broker) freezeCaptureSource(ctx context.Context) (context.Context, func(), error) {
+	source, incident := validate.CaptureSource(ctx)
+	noop := func() {}
+	if source == "" {
+		return ctx, noop, nil
+	}
+	info, err := os.Lstat(source)
+	missing := os.IsNotExist(err)
+	if err != nil && !missing {
+		return ctx, noop, err
+	}
+	if !missing && !info.IsDir() {
+		return ctx, noop, fmt.Errorf("capture source must be a directory")
+	}
+	parent, err := os.MkdirTemp(b.workspaceRoot, ".validation-captures-")
+	if err != nil {
+		return ctx, noop, err
+	}
+	cleanup := func() { _ = os.RemoveAll(parent) }
+	destination := filepath.Join(parent, "capture")
+	if missing {
+		return validate.WithCaptureSource(ctx, destination, incident), cleanup, nil
+	}
+	err = filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destination, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0700)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("validation capture is not a regular file: %s", relative)
+		}
+		input, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer input.Close()
+		output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		if err := output.Chmod(info.Mode().Perm()); err != nil {
+			output.Close()
+			return err
+		}
+		_, copyErr := io.Copy(output, input)
+		closeErr := output.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+	if err != nil {
+		cleanup()
+		return ctx, noop, err
+	}
+	return validate.WithCaptureSource(ctx, destination, incident), cleanup, nil
 }

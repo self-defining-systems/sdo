@@ -18,6 +18,9 @@ import (
 // Check sends only a decision. Checkout, base, policy and toolchain are selected
 // by the incident-bound broker, never by request-supplied paths or environment.
 func Check(ctx context.Context, directory string, decision *contracts.ReflectionDecision) (*contracts.MemoryCheckReport, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if decision == nil {
 		return nil, fmt.Errorf("reflection decision is required")
 	}

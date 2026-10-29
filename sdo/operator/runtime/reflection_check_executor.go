@@ -21,21 +21,22 @@ type reflectionCheckExecutor struct {
 	Handle    func(context.Context, ToolRequest) ToolResponse
 }
 
-func (e reflectionCheckExecutor) Execute(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
-	server := SessionToolServer{Directory: e.Directory, Handle: e.Handle}
+func (e reflectionCheckExecutor) Execute(ctx context.Context, task *contracts.AgentTask) (result *contracts.AgentResult, err error) {
+	server := SessionToolServer{Directory: e.Directory, Handle: e.Handle, MaxRequestBytes: 2 * 1024 * 1024}
 	if err := server.Prepare(); err != nil {
 		return nil, fmt.Errorf("prepare reflection check endpoint: %w", err)
 	}
 	serving, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { err := server.Serve(serving); stop(); done <- err }()
-	result, err := e.Executor.Execute(serving, task)
-	stop()
-	serverErr := <-done
-	if err == nil {
-		err = serverErr
-	}
-	return result, err
+	defer func() {
+		stop()
+		serverErr := <-done
+		if err == nil {
+			err = serverErr
+		}
+	}()
+	return e.Executor.Execute(serving, task)
 }
 
 func (e reflectionCheckExecutor) RecoverCompleted(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, bool, error) {

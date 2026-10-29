@@ -15,9 +15,9 @@ import (
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/checktransport"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
- "sdo.dev/operator/memory/checktransport"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -240,19 +240,27 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		}
 	}
 
- // Reflection workers use the broker's complete isolated check when a trusted
- // endpoint is provisioned. Missing endpoints never silently claim a pass.
- if directory := getenv("SDO_MEMORY_CHECK_DIR"); directory != "" && phase == string(validate.ReflectionPhase) {
-  report, err := checktransport.Check(ctx, directory, decision)
-  if err != nil { return exitInfra, err }
-  if *asJSON {
-   if err := writeJSON(stdout, report); err != nil { return exitInfra, err }
-  } else {
-   for _, d := range report.GetDiagnostics() { fmt.Fprintln(stdout, d.GetRule()+": "+d.GetMessage()) }
-  }
-  if len(report.GetDiagnostics()) != 0 { return exitDiagnostics, nil }
-  return exitClean, nil
- }
+	// Reflection workers use the broker's complete isolated check when a trusted
+	// endpoint is provisioned. Missing endpoints never silently claim a pass.
+	if directory := getenv("SDO_MEMORY_CHECK_DIR"); directory != "" && phase == string(validate.ReflectionPhase) {
+		report, err := checktransport.Check(ctx, directory, decision)
+		if err != nil {
+			return exitInfra, err
+		}
+		if *asJSON {
+			if err := writeJSON(stdout, report); err != nil {
+				return exitInfra, err
+			}
+		} else {
+			for _, d := range report.GetDiagnostics() {
+				fmt.Fprintln(stdout, d.GetRule()+": "+d.GetMessage())
+			}
+		}
+		if len(report.GetDiagnostics()) != 0 {
+			return exitDiagnostics, nil
+		}
+		return exitClean, nil
+	}
 
 	// Mirror the broker: authored memory whitespace is normalized in place.
 	if base != "" {

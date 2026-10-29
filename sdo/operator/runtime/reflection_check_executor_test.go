@@ -53,6 +53,16 @@ func TestReflectionTrustedCheckTransportToPublication(t *testing.T) {
 		if len(report.GetDiagnostics()) > 0 {
 			t.Errorf("check rejected: %v", report)
 		}
+		// Decisions can be larger than the responder tool transport's default
+		// 64 KiB. They must reach validation, rather than fail transport truncation.
+		large := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: strings.Repeat("synthetic ", 16*1024)}
+		rejected, err := checktransport.Check(ctx, directory, large)
+		if err != nil {
+			return nil, err
+		}
+		if len(rejected.GetDiagnostics()) == 0 {
+			t.Error("no_change accepted the edited tree")
+		}
 		return &contracts.AgentResult{TaskId: task.GetTaskId()}, nil
 	})}
 	if _, err := executor.Execute(ctx, &contracts.AgentTask{TaskId: "synthetic-check"}); err != nil {

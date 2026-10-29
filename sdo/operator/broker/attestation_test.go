@@ -181,3 +181,82 @@ func TestReflectionAttestationInvalidatedByRestart(t *testing.T) {
 		t.Fatalf("restart trusted stale attestation: calls=%d", calls)
 	}
 }
+
+func TestReflectionAttestationFreezesCaptureBytes(t *testing.T) {
+	_, b, _ := sharedReflectionFixture(t)
+	b.ValidationToolchain = "synthetic-immutable-toolchain"
+	p := reflectionProposal(t, b, "lane-a")
+	writeLearning(t, p, "alpha", "New synthetic learning")
+	capture := t.TempDir()
+	path := filepath.Join(capture, "fixed.json")
+	if err := os.WriteFile(path, []byte("original synthetic observation"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := validate.WithCaptureSource(context.Background(), capture, "lane-a")
+	calls := 0
+	b.validator = func(compileCtx context.Context, _ string, _ []string) error {
+		calls++
+		frozen, _ := validate.CaptureSource(compileCtx)
+		if frozen == capture {
+			t.Error("validator received mutable capture source")
+		}
+		if calls == 1 {
+			if err := os.WriteFile(path, []byte("concurrent observation"), 0600); err != nil {
+				return err
+			}
+			data, err := os.ReadFile(filepath.Join(frozen, "fixed.json"))
+			if err != nil {
+				return err
+			}
+			if string(data) != "original synthetic observation" {
+				t.Errorf("snapshot changed during check: %s", data)
+			}
+		}
+		return nil
+	}
+	d := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"alpha"}}
+	if report, err := b.CheckReflection(ctx, "lane-a", d); err != nil || len(report.GetDiagnostics()) != 0 {
+		t.Fatalf("check: %v %v", report, err)
+	}
+	if _, err := b.PublishReflection(ctx, "lane-a", d); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("changed capture reused old attestation: %d", calls)
+	}
+}
+
+func TestReflectionAttestationPreservesAdvisoryResults(t *testing.T) {
+	_, b, _ := sharedReflectionFixture(t)
+	b.ValidationToolchain = "synthetic-immutable-toolchain"
+	p := reflectionProposal(t, b, "lane-a")
+	writeLearning(t, p, "alpha", "New synthetic learning")
+	calls := 0
+	b.validator = func(ctx context.Context, _ string, _ []string) error {
+		calls++
+		if gaps, ok := ctx.Value(coverageGapsKey{}).(*[]validate.Diagnostic); ok {
+			*gaps = append(*gaps, validate.Diagnostic{Rule: "synthetic.gap", Message: "advisory only"})
+		}
+		if notes, ok := ctx.Value(replayNotesKey{}).(*[]*contracts.MitigationReplayNote); ok {
+			*notes = append(*notes, &contracts.MitigationReplayNote{ProgramId: "alpha", CaseId: "synthetic", Status: contracts.MitigationReplayNote_STATUS_REPLAYED})
+		}
+		return nil
+	}
+	d := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"alpha"}}
+	for i := 0; i < 2; i++ {
+		report, err := b.CheckReflection(context.Background(), "lane-a", d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.GetCoverageGaps()) != 1 || len(report.GetMitigationReplayNotes()) != 1 {
+			t.Fatalf("lost advisory results: %v", report)
+		}
+	}
+	receipt, err := b.PublishReflection(context.Background(), "lane-a", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(receipt.CoverageGaps) != 1 {
+		t.Fatalf("calls=%d gaps=%v", calls, receipt.CoverageGaps)
+	}
+}
