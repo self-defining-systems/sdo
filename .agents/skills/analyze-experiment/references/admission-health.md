@@ -96,3 +96,5 @@ sides as restored, including removed selector keys and install-only metadata.
 Missing aggregate leaves with present descendants, absent objects and unavailable
 source evidence do not establish restoration. Status and independent closure
 share this comparison; historical fingerprints alone cannot hold restored drift.
+
+Native admission also requires `ControllerState.healthy_replay_ready == true`. The controller publishes this only after a successful healthy capture matches its current configuration baseline; it recomputes the prerequisite after restart. Clear detector history and qualified traffic alone do not prove this. A missing/false value blocks injection and is recorded in stabilization proof.

@@ -103,8 +103,10 @@ def controller_proof(state: dict[str, Any], required: set[str], not_before: str)
         if row.get("status") != "clear" or row.get("error") or not fresh:
             blocked[key] = row or {"reason": "no controller observation"}
     busy = incident_work_open(state)
+    replay_ready = state.get("healthy_replay_ready") is True
     return {
-        "passed": bool(required) and not blocked and not busy,
+        "passed": bool(required) and not blocked and not busy and replay_ready,
+        "healthy_replay_ready": replay_ready,
         "blocked": blocked,
         "incident_work_pending": busy,
         "latest": latest,
