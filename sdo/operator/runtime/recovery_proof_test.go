@@ -106,51 +106,59 @@ func (d recoveryHandoffDispatcher) Dispatch(_ context.Context, r IncidentRequest
 // Real executor -> real automatic stage -> controller closure -> real pipeline
 // handoff. A program's NoMatch is not clearance of its unrelated health peer.
 func TestRecoveryProofStageOnlyResidualReachesResponder(t *testing.T) {
-	loop, state := pipelineTestLoop(t, true)
-	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationCeiling: time.Millisecond}
-	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage}); err != nil {
-		t.Fatal(err)
-	}
-	if len(state.Findings) == 0 || len(state.PriorStages[0].Mitigations) == 0 {
-		t.Fatal("fixture did not produce partial repair")
-	}
-	now := time.Now().UTC()
-	produced, err := responsePipelineResult(state, now.Add(-time.Second), now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := recoveryHandoffDispatcher{requests: make(chan IncidentRequest, 1)}
-	cfg := testControllerConfig()
-	cfg.Namespace = "app"
-	c, err := NewController(cfg, loop.Detectors, loop.Provider, d, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.currentIncidentRequest = cloneIncidentRequest(&state.Request)
-	c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
-	c.incidentOpen = true
-	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
-	c.incidentDispatchedAt = now.Add(-time.Second)
-	c.handleDispatchCompletion(dispatchCompletion{incidentID: state.Request.IncidentID, result: produced, priorStages: state.PriorStages}, now)
-	if err := c.Step(context.Background(), now.Add(time.Second), nil); err != nil {
-		t.Fatal(err)
-	}
-	effect, ok := c.PendingDispatchEffect()
-	if !ok {
-		t.Fatal("active health after automatic repair did not hand off to responder")
-	}
-	if len(effect.Request.PriorStages) == 0 {
-		t.Fatal("handoff lost stage receipts")
-	}
-	if _, _, err := c.runResponsePipeline(context.Background(), effect.Request); err != nil {
-		t.Fatal(err)
-	}
-	got := awaitRequest(t, d.requests)
-	if len(got.Findings) == 0 || len(got.PriorStages[0].Mitigations) == 0 {
-		t.Fatal("responder lost residuals or repair receipts")
-	}
-	if _, ok := c.PendingIncidentClosure(); ok {
-		t.Fatal("active health became closure")
+	for _, phase := range []string{"stage-end", "verification-timeout"} {
+		t.Run(phase, func(t *testing.T) {
+			loop, state := pipelineTestLoop(t, true)
+			stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationCeiling: time.Millisecond}
+			if err := RunResponseStages(context.Background(), state, []ResponseStage{stage}); err != nil {
+				t.Fatal(err)
+			}
+			if len(state.Findings) == 0 || len(state.PriorStages[0].Mitigations) == 0 {
+				t.Fatal("fixture did not produce partial repair")
+			}
+			now := time.Now().UTC()
+			produced, err := responsePipelineResult(state, now.Add(-time.Second), now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := recoveryHandoffDispatcher{requests: make(chan IncidentRequest, 1)}
+			cfg := testControllerConfig()
+			cfg.Namespace = "app"
+			c, err := NewController(cfg, loop.Detectors, loop.Provider, d, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.currentIncidentRequest = cloneIncidentRequest(&state.Request)
+			c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
+			c.incidentOpen = true
+			c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+			c.incidentDispatchedAt = now.Add(-time.Second)
+			c.handleDispatchCompletion(dispatchCompletion{incidentID: state.Request.IncidentID, result: produced, priorStages: state.PriorStages}, now)
+			if phase == "verification-timeout" {
+				c.verificationDeadline = now
+			}
+			if err := c.Step(context.Background(), now.Add(time.Second), nil); err != nil {
+				t.Fatal(err)
+			}
+			effect, ok := c.PendingDispatchEffect()
+			if !ok {
+				t.Fatal("active health after automatic repair did not hand off to responder")
+			}
+			if len(effect.Request.PriorStages) == 0 {
+				t.Fatal("handoff lost stage receipts")
+			}
+			if _, _, err := c.runResponsePipeline(context.Background(), effect.Request); err != nil {
+				t.Fatal(err)
+			}
+			got := awaitRequest(t, d.requests)
+			if len(got.Findings) == 0 || len(got.PriorStages[0].Mitigations) == 0 {
+				t.Fatal("responder lost residuals or repair receipts")
+			}
+			if _, ok := c.PendingIncidentClosure(); ok {
+				t.Fatal("active health became closure")
+			}
+
+		})
 	}
 }
 
