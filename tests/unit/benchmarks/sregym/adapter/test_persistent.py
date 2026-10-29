@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -36,7 +37,6 @@ from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 DETECTED = datetime(2026, 9, 27, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -1724,3 +1724,83 @@ def test_unreadable_failure_state_still_exports_controller_log(tmp_path: Path) -
 
     export_closure_failure_evidence(UnreadableStateOps(), "hotel-sdo", tmp_path)
     assert (tmp_path / "sdo_runtime/controller_logs/sdo-controller-run-1.log").is_file()
+
+
+@pytest.mark.parametrize(
+    "perturbation",
+    [
+        {},
+        {"busy_until": "2026-09-27T13:00:00Z"},
+        {"queued_reflections_unknown": True},
+        {"queued_reflection_incident_ids": ["queued"]},
+        {"last_acknowledged_incident_id": "unrelated"},
+        {"last_acknowledged_incident_id": ""},
+        {"incident_open": True},
+    ],
+)
+def test_followup_uses_real_controller_ack_idle_publication(tmp_path: Path, perturbation: dict[str, Any]) -> None:
+    """Producer fixture comes from real closure/ACK execution, not a hand-written ACK."""
+    from benchmarks.sregym.adapter.persistent import _wait_for_verified_incident
+
+    fixture = Path(__file__).resolve().parents[4] / "fixtures/sdo/contracts/go/acknowledged_idle_state.json"
+    snapshot = json.loads(fixture.read_text())
+    known = {snapshot["last_acknowledged_incident_id"]}
+    snapshot.update(perturbation)
+    ops = FakeOps(states={"hotel-sdo": snapshot})
+    clock = _clock(ops)
+    started = clock.monotonic()
+    if not perturbation:
+        assert (
+            _wait_for_verified_incident(ops, "hotel-sdo", known, 600, clock, stop_when_acknowledged_idle=True) is None
+        )
+        assert clock.monotonic() == started
+    elif perturbation.get("last_acknowledged_incident_id") == "unrelated":
+        result = _wait_for_verified_incident(ops, "hotel-sdo", known, 5, clock, stop_when_acknowledged_idle=True)
+        assert result is not None
+        assert result.incident_id == "unrelated"
+    else:
+        with pytest.raises(PersistentControllerError, match="verified no new incident"):
+            _wait_for_verified_incident(ops, "hotel-sdo", known, 5, clock, stop_when_acknowledged_idle=True)
+        assert clock.monotonic() - started >= 5
+
+
+def test_first_incident_detection_does_not_end_at_previous_ack(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter.persistent import _wait_for_verified_incident
+
+    ops = FakeOps(states={"hotel-sdo": {"last_acknowledged_incident_id": "old"}})
+    clock = _clock(ops)
+    with pytest.raises(DetectionMissError):
+        _wait_for_verified_incident(ops, "hotel-sdo", {"old"}, 5, clock, detection_timeout=2)
+
+
+@pytest.mark.parametrize("resolution_path", ["agent", "deterministic"])
+@pytest.mark.parametrize("learning_decision", ["no_change", "updated"])
+def test_settled_receipt_requires_no_model_completion_event(
+    tmp_path: Path, resolution_path: str, learning_decision: str
+) -> None:
+    from benchmarks.sregym.adapter.persistent import _collect_settled_receipt
+
+    receipt = {
+        "schema_version": "sdo.production-receipt/v2",
+        "incident_id": "synthetic",
+        "native_ledger": {
+            "incident_id": "synthetic",
+            "acknowledged": True,
+            "requires_reflection": True,
+            "reflection_processed": True,
+            "reflection_decision": {"learning_decision": learning_decision},
+            "reflection_commit": "accepted" if learning_decision == "updated" else "",
+            "outcome_document": {"resolution_path": resolution_path},
+        },
+    }
+
+    class ReceiptOps(FakeOps):
+        def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+            return receipt
+
+    ops = ReceiptOps()
+    clock = _clock(ops)
+    config = _inputs(tmp_path, "synthetic").runtime_config
+    collected = _collect_settled_receipt(ops, config, "synthetic", tmp_path, clock)
+    assert collected == receipt
+    assert clock.monotonic() == 0

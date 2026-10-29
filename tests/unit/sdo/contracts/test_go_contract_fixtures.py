@@ -60,6 +60,7 @@ def test_every_go_fixture_is_present_and_null_free() -> None:
             *CLOSURES,
             "incident_request.json",
             "controller_state.json",
+            "acknowledged_idle_state.json",
             "broker_ledger.json",
         ]
     )

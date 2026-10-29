@@ -27,3 +27,15 @@ zero model calls/tokens. Rejection or timeout continues with the normal session;
 it does not suppress learning. A resumed native completion still performs the
 permanent responder-to-reflection session ownership transfer. No provider writer
 is started, and the broker independently checks the returned decision.
+
+### Composite post-ACK idle tails
+
+A composite report with `stop_reason=no_further_incident` and red `final_green`
+probes can include the adapter's follow-up incident wait after native learning
+already finished. Correlate the current attempt's `reflection_drain` timestamps
+with `controller_state_timeline` before attributing a near-600-second addition to
+reflection. Native ACK/idle now ends follow-up collection; benchmark fault
+probes remain reporting evidence. This applies equally to model-driven,
+model-free and no-change closures. Existing native reflection/rollout drain
+and strict receipt validation still precede that boundary. Ordinary export,
+probe stability and collection overhead is separate from this idle timeout.
