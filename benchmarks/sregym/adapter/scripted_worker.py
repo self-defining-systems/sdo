@@ -108,14 +108,42 @@ def _source_was_deleted(request: IncidentRequest, ref: dict[str, str]) -> bool:
     )
 
 
-def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> str:
+def _patch_matches(live: Any, patch: Any) -> bool:
+    """Compare only fields a merge/strategic patch would write, preserving server defaults."""
+    if isinstance(patch, dict):
+        return isinstance(live, dict) and all(_patch_matches(live.get(key), value) for key, value in patch.items())
+    if isinstance(patch, list):
+        if not isinstance(live, list):
+            return False
+        key = next(
+            (
+                key
+                for key in ("name", "port")
+                if patch and all(isinstance(item, dict) and key in item for item in patch)
+            ),
+            None,
+        )
+        if key is not None:
+            return all(
+                len(matches := [item for item in live if isinstance(item, dict) and item.get(key) == expected[key]])
+                == 1
+                and _patch_matches(matches[0], expected)
+                for expected in patch
+            )
+        return len(live) == len(patch) and all(
+            _patch_matches(left, right) for left, right in zip(live, patch, strict=True)
+        )
+    return live == patch
+
+
+def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> str | None:
     kind, name = ref["kind"], ref["name"]
     source = _tool("source", f"{kind}/{request.namespace}/{name}")["source"]
-    absent = _source_was_deleted(request, ref)
-    if not absent and kind in {"Service", *SOURCE_RESTORED_FIELDS}:
-        absent = not _command(
-            ["kubectl", "-n", request.namespace, "get", kind.lower(), name, "--ignore-not-found=true", "-o", "name"]
-        ).strip()
+    observed = _command(
+        ["kubectl", "-n", request.namespace, "get", kind.lower(), name, "--ignore-not-found=true", "-o", "json"]
+    ).strip()
+    live = json.loads(observed) if observed else None
+    absent = live is None and kind in {"Service", *SOURCE_RESTORED_FIELDS}
     if absent:
         with tempfile.TemporaryDirectory(prefix="sdo-scripted-source-") as directory:
             manifest = Path(directory) / "object.json"
@@ -156,6 +184,10 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> str:
         patch = {field: source[field]}
     else:
         raise RuntimeError(f"scripted fastloop has no source repair for {kind}")
+    if live is None:
+        raise RuntimeError(f"scripted fastloop cannot patch absent {kind}/{name}")
+    if _patch_matches(live, patch):
+        return None
     patch_type = "merge" if kind in SOURCE_RESTORED_FIELDS else "strategic"
     _command(
         [
@@ -417,6 +449,8 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             repair_kind = "kubectl-delete"
         else:
             repair_kind = _patch_from_source(request, ref)
+            if repair_kind is None:
+                continue
         repairs.append(
             {
                 "action_id": f"source-{len(repairs) + 1}",
@@ -476,6 +510,8 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
                 repair_kind = "kubectl-delete"
             else:
                 repair_kind = _patch_from_source(request, ref)
+                if repair_kind is None:
+                    continue
             repairs.append(
                 {
                     "action_id": f"source-{len(repairs) + 1}",
@@ -590,7 +626,13 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
                 "explained_detectors": [finding.detector_id for finding in request.findings],
             }
             for change in request.state_changes.changes
-            if change.kind in {"Service", "Deployment"} and change.change == "modified"
+            if change.kind in {"Service", "Deployment", "ConfigMap"}
+            and change.change in {"modified", "removed"}
+            and any(
+                ref["kind"] == change.kind and ref["name"] == change.name
+                for repair in repairs
+                for ref in repair["resources"]
+            )
         )
     completed = _now()
     return json_format.ParseDict(

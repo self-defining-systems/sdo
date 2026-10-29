@@ -72,12 +72,21 @@ def test_scripted_source_restore_repairs_declared_readiness(monkeypatch):
     }
     monkeypatch.setattr(scripted_worker, "_tool", lambda *args: {"source": source})
     calls = []
-    monkeypatch.setattr(scripted_worker, "_command", lambda args, **kwargs: calls.append(args))
+
+    def command(args, **kwargs):
+        calls.append(args)
+        if args[3] == "get":
+            observed = json.loads(json.dumps(source))
+            observed["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]["httpGet"]["path"] = "/wrong"
+            return json.dumps(observed)
+        return ""
+
+    monkeypatch.setattr(scripted_worker, "_command", command)
     request = SimpleNamespace(namespace="toy", state_changes=None)
     scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "backend"})
-    patched = json.loads(calls[0][-1])["spec"]["template"]["spec"]["containers"][0]
+    patched = json.loads(calls[1][-1])["spec"]["template"]["spec"]["containers"][0]
     assert patched["readinessProbe"] == probe
-    assert calls[1][:5] == ["kubectl", "-n", "toy", "rollout", "status"]
+    assert calls[2][:5] == ["kubectl", "-n", "toy", "rollout", "status"]
 
 
 def test_toy_seed_has_broker_metadata():

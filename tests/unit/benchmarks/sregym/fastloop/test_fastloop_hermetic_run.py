@@ -581,9 +581,9 @@ class Controller(FakeOps):
     def command(self, argv: list[str], **_kwargs: Any) -> str:
         if argv[0] == "kubectl":
             if argv[3] == "get":
-                assert argv[-3:] == ["--ignore-not-found=true", "-o", "name"]
+                assert argv[-3:] == ["--ignore-not-found=true", "-o", "json"]
                 kind, name = argv[4].title(), argv[5]
-                return f"{kind.lower()}/{name}" if (kind, name) in self.app.objects else ""
+                return json.dumps(self.app.objects[kind, name]) if (kind, name) in self.app.objects else ""
             if argv[3] == "rollout":
                 return ""
             assert argv[3] == "patch"
