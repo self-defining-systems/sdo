@@ -12,6 +12,14 @@ from tests.unit.benchmarks.sregym.fastloop.test_parallel_prepare import _commit,
 @pytest.mark.parametrize("name", ["accepted", "accepted quote' space"])
 @pytest.mark.parametrize("consumer", ["head", "ancestry", "lane-match", "accepted-source", "clone", "replay-clone"])
 def test_shared_checkout_uses_scoped_trust(monkeypatch, tmp_path, consumer, name):
+    # CI may trust every checkout globally. Exercise real Git ownership checks
+    # independently of the runner's system/global and environment config.
+    empty_config = tmp_path / "empty.gitconfig"
+    empty_config.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_config))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(empty_config))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "0")
+    monkeypatch.delenv("GIT_CONFIG_PARAMETERS", raising=False)
     accepted = tmp_path / name
     accepted.mkdir()
     _git(accepted, "init", "-q")
