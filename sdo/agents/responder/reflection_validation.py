@@ -128,8 +128,9 @@ class CheckMemoryReply:
                 )
             elif text_matches:
                 step = (
-                    f"passed; {', '.join(text_matches)} decide on diff.Text, which matches any container. Compare "
-                    f"typed fields (diff.ContainerChanges, diff.Field) and check again; after one rewrite return {returned}."
+                    f"passed; {', '.join(text_matches)} decide on diff.Text, which matches any container. "
+                    "Compare typed fields (diff.ContainerChanges, diff.Field) and check again; "
+                    f"after one rewrite return {returned}."
                 )
             else:
                 step = f"passed: return {returned} now. Other coverage_gaps are information, not work."
