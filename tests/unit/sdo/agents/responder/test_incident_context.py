@@ -527,3 +527,81 @@ def test_reuse_brief_uses_stage_evidence_instead_of_stale_opening_diagnoses() ->
         assert "program_runs" not in brief
         full = json.loads(Path(brief["details_file"]).read_text())
         assert full["initial_program_runs"][0]["program_id"] == "settled-opening-match"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "FailedCreate: exceeded quota: pod-count",
+        "FailedCreate: admission webhook denied the request",
+        "FailedScheduling: 0/2 nodes available: unschedulable",
+        "FailedCreate: violates PodSecurity restricted",
+        "Failed: ImagePullBackOff for replacement Pod",
+    ],
+)
+def test_stalled_program_names_cluster_blocker_and_retains_complete_evidence(reason: str) -> None:
+    request = _staged_request(1)
+    attempt = request.prior_stages[0].mitigations[1]
+    attempt.error = "rollout pending"
+    attempt.result = "rollout_pending_at_handoff"
+    pending = attempt.apply_receipt.rollout_pending
+    pending.reason = "replacement not ready"
+    blocker = pending.blockers.add(reason="replacement blocked")
+    blocker.ref.CopyFrom(request.findings[0].primary_resource)
+    blocker.warning_events.append(reason)
+    with prepared_incident_data(request) as rendered:
+        brief = _brief(rendered)
+        line = next(line for line in brief["stage_actions"] if attempt.playbook_id in line)
+        assert reason in line
+        assert "replacement blocked" in line
+        full = json.loads(Path(brief["details_file"]).read_text())
+        assert full["prior_stages"][0]["mitigations"][1]["apply_receipt"]["rollout_pending"]["blockers"][0][
+            "warning_events"
+        ] == [reason]
+
+
+def test_involved_playbook_readmes_survive_optional_context_trimming() -> None:
+    request = _staged_request(1)
+    for index in range(100):
+        request.memory_snapshot.playbooks.add(id=f"unrelated-{index}", markdown="# Unrelated")
+    for attempt in request.prior_stages[0].mitigations:
+        request.memory_snapshot.playbooks.add(id=attempt.playbook_id, markdown="# Saved repair\nUse accepted intent.")
+    with prepared_incident_data(request) as rendered:
+        brief = _brief(rendered)
+        assert set(brief["stage_playbooks"]) == {a.playbook_id for a in request.prior_stages[0].mitigations}
+        for path in brief["stage_playbooks"].values():
+            assert Path(path).read_text().startswith("# Saved repair")
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_long_rollout_observation_keeps_trailing_condition_explanation(structured: bool) -> None:
+    request = _staged_request(1)
+    attempt = request.prior_stages[0].mitigations[1]
+    attempt.result = "rollout_pending_at_handoff"
+    message = (
+        "Deployment/api rollout pending; "
+        + "old Pod detail; " * 100
+        + "ReplicaFailure FailedCreate: exceeded quota: memory-limit-quota"
+    )
+    attempt.error = message
+    if structured:
+        blocker = attempt.apply_receipt.rollout_pending.blockers.add(reason=message)
+        for index in range(20):
+            blocker.warning_events.append(f"Pod/api-{index}: " + "detail " * 100 + "FailedCreate: exceeded quota")
+    with prepared_incident_data(request) as rendered:
+        line = _brief(rendered)["stage_actions"][1]
+        assert "ReplicaFailure FailedCreate: exceeded quota: memory-limit-quota" in line
+        assert len(line) < 1300
+        full = json.loads(incident_facts_path(rendered).read_text())
+        assert full["prior_stages"][0]["mitigations"][1]["error"] == message
+
+
+def test_residual_finding_playbooks_remain_available_without_a_program_match() -> None:
+    request = _staged_request(1)
+    request.findings[0].playbook_ids.extend(["unmatched-fault", "missing-readme"])
+    request.memory_snapshot.playbooks.add(id="unmatched-fault", markdown="# Unmatched fault\nInvestigate live cause.")
+    with prepared_incident_data(request) as rendered:
+        books = _brief(rendered)["stage_playbooks"]
+        assert Path(books["unmatched-fault"]).read_text().startswith("# Unmatched fault")
+        assert books["missing-readme"] is None

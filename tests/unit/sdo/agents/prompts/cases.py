@@ -431,6 +431,18 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
         attempt.apply_receipt.applied = True
         attempt.apply_receipt.verification_completed = True
         attempt.apply_receipt.verification_passed = True
+        partial.memory_snapshot.playbooks.add(id="restore-route", markdown="# Restore route\nSaved route repair.")
+        partial.memory_snapshot.playbooks.add(
+            id="restore-workload", markdown="# Restore workload\nSaved workload repair."
+        )
+        stalled = stage.mitigations.add(
+            playbook_id="restore-workload", result="rollout_pending_at_handoff", plan_action_count=1
+        )
+        stalled.apply_receipt.application_id = "synthetic-pending-application"
+        stalled.apply_receipt.applied = True
+        blocker = stalled.apply_receipt.rollout_pending.blockers.add(reason="replacement creation refused")
+        blocker.ref.kind, blocker.ref.namespace, blocker.ref.name = "Deployment", "toy", "api"
+        blocker.warning_events.append("ReplicaSet/api-new FailedCreate: exceeded quota: pod-count")
         prompts["responder_partial_reuse"] = responder_prompt(partial)
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
         patch.setenv("SDO_LATE_FINDINGS", "pull")
