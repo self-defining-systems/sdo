@@ -580,6 +580,10 @@ class Controller(FakeOps):
 
     def command(self, argv: list[str], **_kwargs: Any) -> str:
         if argv[0] == "kubectl":
+            if argv[3] == "get":
+                assert argv[-3:] == ["--ignore-not-found=true", "-o", "json"]
+                kind, name = argv[4].title(), argv[5]
+                return json.dumps(self.app.objects[kind, name]) if (kind, name) in self.app.objects else ""
             if argv[3] == "rollout":
                 return ""
             assert argv[3] == "patch"
@@ -786,6 +790,11 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
 
     def admission_state(control):
         state = original_state(control)
+        healthy_capture = controller.capture / "healthy/healthy.json"
+        if app.healthy():
+            healthy_capture.parent.mkdir(parents=True, exist_ok=True)
+            healthy_capture.write_text(json.dumps(app.snapshot()))
+        state["healthy_replay_ready"] = app.healthy() and healthy_capture.is_file()
         state["history"] = [
             {
                 "detector_id": key,
@@ -904,6 +913,16 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     monkeypatch.setattr(scripted_worker, "_tool", controller.tool)
     monkeypatch.setattr(scripted_worker.time, "sleep", lambda _seconds: None)
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(controller.capture))
+
+    # Qualify this simulated producer through the real admission contract first:
+    # an incomplete fixture should fail here, not spend the live wait budget.
+    from benchmarks.sregym.adapter.eval_guards import controller_proof
+
+    assert controller_proof(
+        admission_state(NAMESPACE + "-sdo"),
+        {"workload-health", "service-endpoints", "service-reachability", "traffic-health"},
+        "2026-01-01T00:00:00Z",
+    )["passed"]
 
     assert (
         cli.main(

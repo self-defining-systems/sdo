@@ -608,3 +608,29 @@ def test_replaced_pod_under_unchanged_template_is_named_as_readiness_loss_not_ro
     assert "rollout not complete" not in message
     assert "ready 0/1" in message
     assert "currency-z4xmb Pending" in message
+
+
+def test_real_controller_history_does_not_require_closed_event_re_evaluation(tmp_path):
+    from benchmarks.sregym.adapter.eval_guards import controller_proof
+
+    root = Path(__file__).resolve().parents[5]
+    binary = tmp_path / "history"
+    subprocess.run(
+        ["go", "build", "-o", str(binary), str(root / "tests/fixtures/sregym/admission_history/main.go")],
+        cwd=root / "sdo/operator/runtime",
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result = subprocess.run([str(binary)], capture_output=True, text=True, check=True, timeout=5)
+    state = json.loads(result.stdout)
+    boundary = "2026-01-01T00:00:05Z"
+    proof = controller_proof(state, {"health"}, boundary)
+    assert proof["latest"]["event-policy"]["evaluated_at"] < boundary
+    assert proof["passed"], proof
+    # The same producer output must fail if the old policy is required as fresh health.
+    assert not controller_proof(state, {"health", "event-policy"}, boundary)["passed"]
+    for status, error in (("active", ""), ("pending", ""), ("clear", "detector failed")):
+        state["history"].append({"detector_id": "another-policy", "status": status, "error": error})
+        assert not controller_proof(state, {"health"}, boundary)["passed"]
+        state["history"].pop()

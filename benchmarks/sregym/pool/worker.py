@@ -54,8 +54,19 @@ def pair(spec: PairSpec) -> None:
     from benchmarks.sregym.fastloop.parallel import Encounter, ParallelPlan, run_parallel
 
     environment = FastloopEnvironment.load(spec.run_dir.resolve())
+    registrations = worker_registrations(spec, environment)
+    spec = spec.model_copy(update={"agent_registrations": registrations})
     if bool(environment.shared_accepted_id) != (spec.lane_memory == "shared"):
         raise ValueError(f"pool: lane {spec.lane} memory differs from the run's lane_memory={spec.lane_memory}")
+    if environment.memory_repo:
+        from benchmarks.sregym.fastloop.lane_guard import LaneGuard
+        from benchmarks.sregym.pool.real_apps import configure_workers, preflight_memory
+
+        LaneGuard(environment.cluster, environment.kubeconfig, spec.lease, str(spec.coord)).install()
+        preflight_memory(environment, spec.memory.repo, spec.memory.branch)
+        configure_workers(environment, registrations, spec.provider, spec.model, spec.reasoning_effort)
+        private_pair(spec, environment)
+        return
     if spec.lane_memory == "private":
         private_pair(spec, environment)
         return
@@ -67,6 +78,8 @@ def pair(spec: PairSpec) -> None:
         timeout_seconds=spec.timeout_seconds,
         provider=spec.provider,
         model=spec.model,
+        reasoning_effort=spec.reasoning_effort,
+        agent_registrations=spec.agent_registrations,
         capability_mode=spec.capability_mode,
         permissive_responder=spec.capability_mode == "permissive",
         diagnosis_grading=spec.diagnosis_grading,
@@ -78,6 +91,7 @@ def private_pair(spec: PairSpec, environment: FastloopEnvironment) -> None:
     """A lane with its own memory runs the same guarded encounter command as a parallel lane."""
     from benchmarks.sregym.fastloop.parallel import lane_process_environment, lane_run_command
     from benchmarks.sregym.fastloop.records import load_records, write_records
+    from benchmarks.sregym.pool.guard import guarded_module, keeper_environment
 
     results = environment.run_dir / "results" / spec.run_id
     if results.exists():
@@ -95,25 +109,72 @@ def private_pair(spec: PairSpec, environment: FastloopEnvironment) -> None:
         )
         + "\n"
     )
+    arguments = ["--provider", spec.provider, "--model", spec.model, "--reasoning-effort", spec.reasoning_effort]
+    if spec.agent_registrations:
+        arguments.extend(["--agent-registrations", str(spec.agent_registrations)])
+    if spec.credentials_hook:
+        arguments.extend(["--credentials-hook", str(spec.credentials_hook)])
     command = lane_run_command(
         environment.run_dir,
         spec.run_id,
         stream,
         spec.timeout_seconds,
-        ["--provider", spec.provider, "--model", spec.model],
+        arguments,
     )
+    command = guarded_module(
+        command, cluster=environment.cluster, kubeconfig=environment.kubeconfig, lease=spec.lease, coord=spec.coord
+    )
+    process_env = lane_process_environment(environment, 1)
+    jobs = min(4, max(1, int(os.environ.get("GOMAXPROCS", "4"))))
+    process_env.update(GOMAXPROCS=str(jobs), GOFLAGS=f"{os.environ.get('GOFLAGS', '')} -p={jobs}".strip())
+    keeper = None
     with (spec.output / "worker.log").open("w") as log:
-        completed = subprocess.run(
-            command,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            check=False,
-            env=lane_process_environment(environment, 1),
-        )
+        try:
+            if spec.credentials_keeper:
+                keeper_env = keeper_environment(
+                    spec.output / "keeper-bin",
+                    cluster=environment.cluster,
+                    kubeconfig=environment.kubeconfig,
+                    lease=spec.lease,
+                    coord=spec.coord,
+                )
+                keeper = subprocess.Popen(
+                    [str(spec.credentials_keeper), environment.cluster, environment.namespace + "-sdo"],
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    env={**process_env, **keeper_env},
+                )
+            completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=False, env=process_env)
+        finally:
+            if keeper is not None:
+                keeper.terminate()
+                try:
+                    keeper.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    keeper.kill()
+                    keeper.wait()
     path = results / "incidents.jsonl"
     write_records(spec.output / "incidents.jsonl", load_records(path) if path.exists() else [])
     if completed.returncode:
         raise SystemExit(completed.returncode)
+
+
+def worker_registrations(spec: PairSpec, environment: FastloopEnvironment) -> Path:
+    """One run setting reaches every role, including resumed reflection."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    source = spec.agent_registrations or root / (
+        "benchmarks/sregym/adapter/scripted_registrations" if environment.app == "toy" else "sdo/agents/registrations"
+    )
+    destination = spec.run_dir / "pool-registrations" / spec.run_id
+    destination.mkdir(parents=True, exist_ok=True)
+    for path in source.glob("*.json"):
+        registration = json.loads(path.read_text())
+        job = registration["kubernetes_job"]
+        job["image"] = environment.images.responder
+        (destination / path.name).write_text(json.dumps(registration, indent=2) + "\n")
+    return destination
 
 
 def attach_lane(

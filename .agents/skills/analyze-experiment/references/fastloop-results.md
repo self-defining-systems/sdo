@@ -205,3 +205,13 @@ manifest digest and verify their CRI config IDs. Total delivery `seconds`
 includes registry setup and transfer; it excludes retention and waiting for
 the host-wide image-delivery lock. Older entries lack this object. A fallback can retain
 partial registry metrics; use `path` and `success` to establish the result.
+# Cross-host pool preparation evidence
+
+Real-app pool lanes record `memory-preflight.json` with repo, branch and the
+fetch/push-tested head. `memory-bind.json` is the binding recovery record;
+neither is an incident result. Fresh seed receipts live in the seed Git
+directory (`sdo-pool-seed.json`) and bind build/source/seed revisions plus the
+accepted-render digest. Image delivery in pull-only mode must show `local` or
+`registry`, never `build`; the registry manifest is required in either case.
+Pool run arguments carry the single typed controller effort setting.
+Scripted registration proofs establish plumbing, not learned model behavior.

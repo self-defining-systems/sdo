@@ -16,7 +16,7 @@ import json
 import os
 import time
 from collections import Counter
-from pathlib import Path  # noqa: TC003 - Pydantic resolves this annotation at runtime.
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
@@ -70,8 +70,12 @@ class PoolConfig(BaseModel):
     build: str = Field(min_length=1)
     hosts: dict[str, HostConfig] = Field(min_length=1)
     lane_cpus: float = Field(default=DEFAULT_LANE_CPUS, gt=0)
-    provider: Literal["codex", "claude"] = "codex"
-    model: str = Field(default="gpt-6-luna", min_length=1)
+    provider: Literal["codex", "claude"] = "claude"
+    model: str = Field(default="claude-opus-5-5", min_length=1)
+    reasoning_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    agent_registrations: Path | None = None
+    credentials_hook: Path | None = None
+    credentials_keeper: Path | None = None
     timeout_seconds: int = Field(default=2400, gt=0)
     diagnosis_grading: Literal["off", "deferred", "inline"] = "off"
     capability_mode: Literal["strict", "permissive"] = "permissive"
@@ -84,6 +88,8 @@ class PoolConfig(BaseModel):
     #: Native ``infra_error`` values that end a pair without its repeat and keep the lane.
     known_continue: list[str] = Field(default_factory=list)
     max_attempts: int = Field(default=3, ge=1)
+    #: Optional balanced-proof quota. Completed lanes retain their booked cores.
+    max_pairs_per_lane: int | None = Field(default=None, ge=1)
     status_seconds: float = Field(default=600, ge=0)
     _items: list[StreamItem] = PrivateAttr(default_factory=list)
     _endpoints: dict[str, MemoryEndpoint] = PrivateAttr(default_factory=dict)
@@ -118,11 +124,17 @@ class PairSpec(BaseModel):
     output: Path
     provider: Literal["codex", "claude"]
     model: str
+    reasoning_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    agent_registrations: Path | None = None
+    credentials_hook: Path | None = None
+    credentials_keeper: Path | None = None
     timeout_seconds: int
     diagnosis_grading: Literal["off", "deferred", "inline"]
     capability_mode: Literal["strict", "permissive"]
     lane_memory: Literal["shared", "private"]
     memory: MemoryEndpoint
+    lease: str = ""
+    coord: Path = Path("/mnt/data/shli/coord/coord")
 
 
 class DeploySpec(BaseModel):
@@ -219,6 +231,7 @@ class Scheduler:
         self._lock: Any = None
         self._journal: Journal | None = None
         self._last_status = 0.0
+        self._last_registry_check = 0.0
 
     # -- ownership and journal -------------------------------------------------
     def __enter__(self) -> Self:
@@ -309,6 +322,11 @@ class Scheduler:
         return {status: counts.get(status, 0) for status in ("done", "held", "pending", "running")}
 
     def tick(self) -> None:
+        if time.monotonic() - self._last_registry_check >= 30:
+            for name, host in self.hosts.items():
+                if self.config.hosts[name].registry_relay is not None:
+                    host.ensure_registry()
+            self._last_registry_check = time.monotonic()
         for lane in self.registry.read().lanes:
             if lane.state == "preparing":
                 self._finish_deploy(lane)
@@ -320,7 +338,13 @@ class Scheduler:
             for name, host in self.hosts.items()
         ]
         pending = [
-            Pair(pair.id, pair.problem, pair.app, tuple(pair.encounters))
+            Pair(
+                pair.id,
+                pair.problem,
+                pair.app,
+                tuple(pair.encounters),
+                lane=pair.lane if pair.encounters == ["repeat"] else None,
+            )
             for pair in self.journal.pairs
             if pair.status == "pending"
         ]
@@ -331,6 +355,13 @@ class Scheduler:
             build=self.config.build,
             lane_cpus=self.config.lane_cpus,
             redeploy=self.config.redeploy_steps is not None,
+            unavailable=frozenset(
+                lane.id
+                for lane in lanes
+                if self.config.max_pairs_per_lane is not None
+                and sum(pair.status == "done" and pair.lane == lane.id for pair in self.journal.pairs)
+                >= self.config.max_pairs_per_lane
+            ),
         ):
             if isinstance(decision, Run):
                 self._start_pair(decision)
@@ -402,6 +433,9 @@ class Scheduler:
             "coord": str(config.coord),
             "repo": memory.repo,
             "branch": memory.branch,
+            "provider": self.config.provider,
+            "model": self.config.model,
+            "reasoning_effort": self.config.reasoning_effort,
         }
         spec = DeploySpec(
             lane=lane_id,
@@ -488,11 +522,17 @@ class Scheduler:
             output=self._output(lane.host, unit),
             provider=self.config.provider,
             model=self.config.model,
+            reasoning_effort=self.config.reasoning_effort,
+            agent_registrations=self.config.agent_registrations,
+            credentials_hook=self.config.credentials_hook,
+            credentials_keeper=self.config.credentials_keeper,
             timeout_seconds=self.config.timeout_seconds,
             diagnosis_grading=self.config.diagnosis_grading,
             capability_mode=self.config.capability_mode,
             lane_memory=self.config.lane_memory,
             memory=self.config.endpoints[record.app],
+            lease=self.config.hosts[lane.host].lease,
+            coord=self.config.hosts[lane.host].coord,
         )
         host.write_text(self._spec(lane.host, unit), spec.model_dump_json(indent=2) + "\n")
         # Journal and registry first: a crash before spawn leaves no native rows, which holds (never reinjects).

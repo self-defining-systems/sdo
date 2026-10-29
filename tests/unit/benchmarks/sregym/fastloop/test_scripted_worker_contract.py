@@ -258,3 +258,101 @@ def test_scripted_binding_args_extract_object_bindings(typed: bool) -> None:
 def test_scripted_binding_args_never_drop_scalar_values() -> None:
     with pytest.raises(ValueError, match="scalar value bindings"):
         scripted_worker._binding_args({"objects": {}, "values": {"count": 2}})
+
+
+@pytest.mark.parametrize(("kind", "section"), [("Service", "services"), ("ConfigMap", "configMaps")])
+def test_recreation_reflection_passes_real_memory_check(tmp_path, monkeypatch, operator_binary, kind, section):
+    _assert_recreation_memory_check(tmp_path, monkeypatch, operator_binary, kind, section, "on")
+
+
+def _assert_recreation_memory_check(tmp_path, monkeypatch, operator_binary, kind, section, replay, *, unrelated=False):
+    app = _accepted_app(tmp_path, verified=True)
+    if unrelated:
+        for relative in ("playbooks/service-targetport-mismatch", "corpus/targetport-mismatch"):
+            shutil.copytree(APP_FIXTURE / ".sdo" / relative, app / ".sdo" / relative)
+    resource = {"api_version": "v1", "kind": kind, "namespace": "demo", "name": "restored"}
+    outcome_path = next((app / ".sdo/outcomes").glob("*.json"))
+    outcome = json.loads(outcome_path.read_text())
+    outcome["findings"][0]["primary_resource"] = resource
+    outcome["repair_actions"][0].update(kind="kubectl-apply", target=f"{kind}/demo/restored", resources=[resource])
+    outcome["confirmed_root_causes"][0]["resources"] = [resource]
+    outcome_path.write_text(json.dumps(outcome))
+    subprocess.run(["git", "add", "."], cwd=app, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "recreation outcome\n\nSDO-Incident: scripted-incident\nSDO-Phase: outcome",
+        ],
+        cwd=app,
+        check=True,
+    )
+    capture = tmp_path / "capture"
+    capture.mkdir()
+    object_ = {"apiVersion": "v1", "kind": kind, "metadata": {"name": "restored", "namespace": "demo"}}
+    if kind == "Service":
+        object_["spec"] = {"ports": [{"port": 80}]}
+    else:
+        object_["data"] = {"key": "synthetic"}
+    source = app / "kubernetes/recreated.json"
+    source.parent.mkdir(exist_ok=True)
+    source.write_text(json.dumps(object_))
+    subprocess.run(["git", "add", "."], cwd=app, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "synthetic source"],
+        cwd=app,
+        check=True,
+    )
+    opened = {
+        "namespace": "demo",
+        "readings": [{"method": "DiffAgainstSource", "arguments": [resource], "result": {"changed": True}}],
+    }
+    fixed = {
+        "namespace": "demo",
+        section: [object_],
+        "readings": [{"method": "DiffAgainstSource", "arguments": [resource], "result": {"changed": False}}],
+    }
+    (capture / "open@detect.json").write_text(json.dumps(opened))
+    (capture / "fixed.json").write_text(json.dumps(fixed))
+    (capture / "open@detect-recordings.json").write_text(_captured_repair_receipts(app))
+    (capture / "healthy").mkdir()
+    (capture / "healthy/healthy.json").write_text(json.dumps(fixed))
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
+    monkeypatch.setenv("SDO_REPLAY", replay)
+    monkeypatch.setenv("SDO_ACTOR", "responder")
+    monkeypatch.setenv("SDO_PHASE", "reflection")
+    monkeypatch.setenv("SDO_BASE_COMMIT", "HEAD")
+    monkeypatch.setenv("SDO_OPERATOR_ROOT", str(OPERATOR))
+    monkeypatch.setenv("SDO_INCIDENT_ID", "scripted-incident")
+    monkeypatch.setattr(scripted_worker, "PROGRAM_SOURCE", ROOT / "benchmarks/sregym/fastloop/scripted_program")
+    command = scripted_worker._command
+    monkeypatch.setattr(
+        scripted_worker,
+        "_command",
+        lambda argv, **kwargs: command(
+            [str(operator_binary) if value == "sdo-operator" else value for value in argv], **kwargs
+        ),
+    )
+    closure = IncidentClosure()
+    closure.request.incident_id = "scripted-incident"
+    closure.request.namespace = "demo"
+    closure.request.state_changes.changes.add(kind=kind, name="restored", change="removed")
+    if replay == "off":
+        shutil.rmtree(capture)
+    turn = scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
+    assert turn.learning_decision == "updated"
+    assert turn.playbook_ids == ["resource-recreation-" + kind.lower()]
+    program = app / ".sdo/playbooks" / turn.playbook_ids[0]
+    assert "CreateFromSource" in (program / "mitigate.go").read_text()
+    assert bool(list((app / ".sdo/corpus").glob("*/labels.json"))) == (replay == "on")
+
+
+def test_existing_unrelated_program_cannot_suppress_recreation(tmp_path, monkeypatch, operator_binary):
+    _assert_recreation_memory_check(
+        tmp_path, monkeypatch, operator_binary, "ConfigMap", "configMaps", "on", unrelated=True
+    )

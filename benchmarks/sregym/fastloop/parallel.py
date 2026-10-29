@@ -37,6 +37,7 @@ class ParallelPlan(BaseModel):
     agent_registrations: Path | None = None
     provider: Literal["codex", "claude"] = "codex"
     model: str = Field(default="gpt-6-luna", min_length=1)
+    reasoning_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     # Same lane stream settings the other experiment streams carry.
     capability_mode: Literal["strict", "permissive"] = "strict"
     permissive_responder: bool = False
@@ -45,7 +46,7 @@ class ParallelPlan(BaseModel):
 
     def worker_arguments(self) -> list[str]:
         """One worker configuration for admission and every encounter in the proof."""
-        arguments = ["--provider", self.provider, "--model", self.model]
+        arguments = ["--provider", self.provider, "--model", self.model, "--reasoning-effort", self.reasoning_effort]
         if self.agent_registrations:
             arguments.extend(["--agent-registrations", str(self.agent_registrations.resolve())])
         return arguments

@@ -143,7 +143,9 @@ def test_scripted_responder_does_not_repair_prior_incident_drift(monkeypatch) ->
         ],
     )
     patches = []
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, ref: patches.append(ref))
+    monkeypatch.setattr(
+        scripted_worker, "_patch_from_source", lambda _request, ref: patches.append(ref) or "kubectl-patch"
+    )
     monkeypatch.setattr(scripted_worker, "_tool", lambda *_args: {"healthy": True})
 
     result = scripted_worker.scripted_responder(request)
@@ -308,3 +310,66 @@ def test_scripted_source_restore_allows_slow_init_clone(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(scripted_worker, "_command", command)
     scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "api"})
+
+
+@pytest.mark.parametrize(
+    ("kind", "field"),
+    [("Service", "spec"), ("ConfigMap", "data"), ("Ingress", "spec"), ("HorizontalPodAutoscaler", "spec")],
+)
+@pytest.mark.parametrize("with_history", [True, False])
+def test_deleted_source_objects_are_recreated_instead_of_patched(monkeypatch, kind, field, with_history):
+    import json
+
+    source = {"apiVersion": "v1", "kind": kind, "metadata": {"name": "api", "namespace": "app"}, field: {}}
+    request = IncidentRequest(
+        incident_id="repair",
+        namespace="app",
+        state_changes={"changes": [{"kind": kind, "name": "api", "change": "removed"}]},
+    )
+    if not with_history:
+        request.ClearField("state_changes")
+    monkeypatch.setattr(scripted_worker, "_tool", lambda *_: {"source": source})
+    applied = []
+
+    def command(argv, **kwargs):
+        if "get" in argv:
+            return ""
+        assert "patch" not in argv
+        assert "apply" in argv
+        applied.append(json.loads(Path(argv[argv.index("-f") + 1]).read_text()))
+        return "created"
+
+    monkeypatch.setattr(scripted_worker, "_command", command)
+    scripted_worker._patch_from_source(request, {"kind": kind, "name": "api"})
+    assert applied == [source]
+
+
+def test_real_state_tracker_removals_reach_source_repair_before_workload_waits(monkeypatch, tmp_path):
+    import json
+    import subprocess
+
+    root = Path(__file__).resolve().parents[5]
+    binary = tmp_path / "state-producer"
+    subprocess.run(
+        ["go", "build", "-o", str(binary), str(root / "tests/fixtures/sregym/admission_history/main.go")],
+        cwd=root / "sdo/operator/runtime",
+        check=True,
+    )
+    produced = subprocess.run([str(binary), "changes"], capture_output=True, text=True, check=True, timeout=5)
+    changes = json.loads(produced.stdout)
+    assert {c["kind"] for c in changes["changes"] if c["change"] == "removed"} == {"Service", "ConfigMap"}
+    request = IncidentRequest(incident_id="synthetic", namespace="synthetic", state_changes=changes)
+    repaired = []
+    monkeypatch.setattr(scripted_worker.time, "sleep", lambda _: None)
+    monkeypatch.setattr(scripted_worker, "_tool", lambda *_: {"healthy": len(repaired) == 3})
+    monkeypatch.setattr(
+        scripted_worker,
+        "_patch_from_source",
+        lambda request, ref: repaired.append(ref["kind"])
+        or ("kubectl-apply" if ref["kind"] in {"Service", "ConfigMap"} else "kubectl-patch"),
+    )
+    result = scripted_worker.scripted_responder(request)
+    assert result.status == "completed"
+    assert set(repaired[:2]) == {"Service", "ConfigMap"}
+    assert repaired[-1] == "Deployment"
+    assert [a.kind for a in result.repair_actions[:2]] == ["kubectl-apply", "kubectl-apply"]

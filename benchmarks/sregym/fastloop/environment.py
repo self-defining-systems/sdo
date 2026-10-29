@@ -107,6 +107,7 @@ class FastloopEnvironment(BaseModel):
     def worker_process_env(self) -> dict[str, str]:
         return {
             **self.worker_env,
+            "SREGYM_APP_SOURCE_DIR": str(self.workspace),
             "KUBECONFIG": str(self.kubeconfig),
             "PYTHONUNBUFFERED": "1",
             "FASTLOOP_ORACLE_BASELINES": str(self.run_dir / "oracle-baselines.json"),

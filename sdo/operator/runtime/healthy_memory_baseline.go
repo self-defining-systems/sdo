@@ -20,6 +20,12 @@ type healthyBaselineBoundaries interface {
 // configuration baseline. A candidate's recordings are collected at the start
 // of settle, then promoted with that candidate, never resampled after a fault.
 func (c *Controller) captureHealthyMemoryBaseline(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, healthy bool) {
+	defer func() {
+		ready := healthy && c.healthyMemoryBaselineError() == nil
+		c.mu.Lock()
+		c.healthyReplayReady = ready
+		c.mu.Unlock()
+	}()
 	now = now.UTC()
 	if !healthy {
 		c.healthyMemoryCaptured = false
@@ -131,12 +137,19 @@ func (c *Controller) completeHealthyEvaluation() bool {
 	return true
 }
 
-func (c *Controller) bindIncidentHealthyBaseline(incidentID string) error {
+func (c *Controller) healthyMemoryBaselineError() error {
 	if c.healthyMemoryReference == "" {
 		return fmt.Errorf("controller has no accepted healthy replay reference")
 	}
 	if baseline, ok := c.Baseline.(interface{ BaselineAt() time.Time }); ok && !baseline.BaselineAt().Equal(c.healthyMemoryBaselineAt) {
 		return fmt.Errorf("healthy configuration baseline has no matching replay capture")
+	}
+	return nil
+}
+
+func (c *Controller) bindIncidentHealthyBaseline(incidentID string) error {
+	if err := c.healthyMemoryBaselineError(); err != nil {
+		return err
 	}
 	return memory.BindIncidentHealthyBaseline(c.config.CorpusSessionRoot, c.healthyMemoryReference, incidentID)
 }

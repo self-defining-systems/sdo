@@ -331,3 +331,49 @@ func TestClosureDriftRemovedExtraFieldsAgreeWithStatus(t *testing.T) {
 		})
 	}
 }
+
+// Recreating an object proves its declared fields, not the old object's
+// server-assigned fields. Run the real source comparator into the shared
+// status/closure predicate, including apply-noop and source-absence controls.
+func TestRecreatedSourceDriftUsesDeclaredState(t *testing.T) {
+	for _, kind := range []string{"Service", "ConfigMap"} {
+		t.Run(kind, func(t *testing.T) {
+			source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": kind, "metadata": map[string]any{"name": "synthetic", "namespace": "app"}}}
+			if kind == "Service" {
+				source.Object["spec"] = map[string]any{"ports": []any{map[string]any{"port": int64(80)}}}
+			} else {
+				source.Object["data"] = map[string]any{"key": "synthetic"}
+			}
+			observed := source.DeepCopy()
+			path := "metadata.labels.server"
+			if kind == "Service" {
+				path = "spec.clusterIP"
+				_ = unstructured.SetNestedField(observed.Object, "10.0.0.9", "spec", "clusterIP")
+			} else {
+				_ = unstructured.SetNestedField(observed.Object, "allocated", "metadata", "labels", "server")
+			}
+			observed.SetAnnotations(withAcceptance(t, observed, source))
+			snapshot := sdktest.Snapshot{NamespaceName: "app", ObjectSnapshotVersion: sdktest.ObjectsOnlySnapshotVersion, Objects: []unstructured.Unstructured{*observed}}
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: kind, Namespace: "app", Name: "synthetic"}
+			view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+			diff, err := view.DiffAgainstSource(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			event := sdk.DriftEvent{Ref: ref, Operation: "delete", Fields: []sdk.DriftField{{Path: path, Old: "old allocation"}}}
+			if !sourceDriftRestored(diff, []sdk.DriftEvent{event}) {
+				t.Fatalf("recreated declared state retained old server fields: %+v", diff)
+			}
+			event.Operation = "Update"
+			if sourceDriftRestored(diff, []sdk.DriftEvent{event}) {
+				t.Fatal("ordinary admitted field mismatch was weakened")
+			}
+			event.Operation = "delete"
+			for _, invalid := range []program.Diff{{Changed: true, Text: diff.Text}, {SourceAbsent: true, Changed: true}, {Changed: false, Text: "accepted: {}\nobserved: null"}, {Changed: false, Text: "accepted: {\"data\":{\"key\":\"desired\"}}\nobserved: {\"data\":{\"key\":\"wrong\"}}"}} {
+				if sourceDriftRestored(invalid, []sdk.DriftEvent{event}) {
+					t.Fatalf("incomplete or contradictory recreation accepted: %+v", invalid)
+				}
+			}
+		})
+	}
+}

@@ -97,6 +97,7 @@ depends_on = [
 path = "benchmarks.sregym.pool"
 depends_on = [
     "benchmarks.sregym.fastloop",
+    "benchmarks.sregym.adapter",
 ]
 
 [[modules]]

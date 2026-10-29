@@ -1,0 +1,15 @@
+package resource_recreation
+
+import (
+	"context"
+
+	"sdo.dev/operator/sdk/program"
+)
+
+func (p Program) Mitigate(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Plan, error) {
+	verdict, err := p.Diagnose(ctx, view, bindings)
+	if err != nil || verdict.Result != program.Match {
+		return program.Plan{}, err
+	}
+	return program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: bindings.Objects["resource"], Reason: "recreate the missing accepted source object"}}}, nil
+}

@@ -570,6 +570,7 @@ def prepare_lane(plan: ParallelPlan, name: str) -> None:
             *plan.worker_arguments(),
         ]
     )
+    args.permissive_responder = plan.permissive_responder
     directory = environment.run_dir / "parallel-setup" / plan.run_id
     directory.mkdir(parents=True, exist_ok=True)
     with lane_environment(environment), cli._worker(environment) as worker:

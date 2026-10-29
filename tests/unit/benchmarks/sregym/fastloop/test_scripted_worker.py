@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -164,6 +165,9 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     monkeypatch.setattr(scripted_worker, "KubernetesResultPublisher", lambda **kwargs: api)
 
     def command(argv: list[str], **_kwargs: Any) -> str:
+        if argv[:4] == ["kubectl", "-n", "hotel", "get"]:
+            kind = "Service" if argv[4] == "service" else "Deployment"
+            return json.dumps(api.objects[kind, argv[5]]) if (kind, argv[5]) in api.objects else ""
         if argv[:4] == ["kubectl", "-n", "hotel", "patch"]:
             kind = "Service" if argv[4] == "service" else "Deployment"
             api.objects[kind, argv[5]] = json.loads(argv[-1])
@@ -335,13 +339,17 @@ def test_scripted_source_repair_preserves_deployment_container_fields(
 
     def command(argv: list[str], **_kwargs: Any) -> str:
         calls.append(argv)
+        if argv[3] == "get":
+            observed = json.loads(json.dumps(manifest))
+            observed["spec"]["template"]["spec"]["containers"][0]["image"] = "missing:v1"
+            return json.dumps(observed)
         return ""
 
     monkeypatch.setattr(scripted_worker, "_command", command)
     monkeypatch.setattr(scripted_worker, "_tool", lambda *_args: {"source": manifest})
     scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "front"})
-    assert calls[0][:7] == ["kubectl", "-n", "hotel", "patch", "deployment", "front", "--type=strategic"]
-    assert calls[1][:6] == ["kubectl", "-n", "hotel", "rollout", "status", "deployment/front"]
+    assert calls[1][:7] == ["kubectl", "-n", "hotel", "patch", "deployment", "front", "--type=strategic"]
+    assert calls[2][:6] == ["kubectl", "-n", "hotel", "rollout", "status", "deployment/front"]
 
 
 def test_scripted_responder_returns_typed_result_after_source_repair(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -365,7 +373,9 @@ def test_scripted_responder_returns_typed_result_after_source_repair(monkeypatch
         return {"healthy": len(calls) >= 3, "summary": "clear"}
 
     monkeypatch.setattr(scripted_worker, "_tool", tool)
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, ref: repairs.append(ref))
+    monkeypatch.setattr(
+        scripted_worker, "_patch_from_source", lambda _request, ref: repairs.append(ref) or "kubectl-patch"
+    )
     result = scripted_worker.scripted_responder(request)
     assert result.status == "completed"
     assert result.incident_id == request.incident_id
@@ -404,7 +414,9 @@ def test_scripted_responder_repairs_changed_service_behind_deployment_finding(mo
         return {"healthy": calls >= 3, "summary": "clear"}
 
     monkeypatch.setattr(scripted_worker, "_tool", tool)
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, ref: repairs.append(ref["name"]))
+    monkeypatch.setattr(
+        scripted_worker, "_patch_from_source", lambda _request, ref: repairs.append(ref["name"]) or "kubectl-patch"
+    )
     result = scripted_worker.scripted_responder(request)
     assert {"front", "back"} <= set(repairs)
     assert {"front", "back"} <= {resource.name for action in result.repair_actions for resource in action.resources}
@@ -445,7 +457,11 @@ def test_scripted_responder_removes_added_objects_and_restores_config_from_sourc
         return {"healthy": verifies >= 2, "summary": "clear"}
 
     monkeypatch.setattr(scripted_worker, "_tool", tool)
-    monkeypatch.setattr(scripted_worker, "_command", lambda argv, **_kwargs: calls.append(argv) or "")
+    monkeypatch.setattr(
+        scripted_worker,
+        "_command",
+        lambda argv, **_kwargs: calls.append(argv) or (json.dumps({"data": {"k": "broken"}}) if "get" in argv else ""),
+    )
     result = scripted_worker.scripted_responder(request)
     assert ["kubectl", "-n", "hotel", "delete", "resourcequota", "tight", "--ignore-not-found"] in calls
     assert ["kubectl", "delete", "validatingwebhookconfiguration", "deny", "--ignore-not-found"] in calls
@@ -531,7 +547,9 @@ def test_scripted_health_repair_is_not_suppressed_by_unsure_drift(
     )
     patches: list[dict[str, str]] = []
     monkeypatch.delenv("SDO_SCRIPTED_SOURCE_REPAIR", raising=False)
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, resource: patches.append(resource))
+    monkeypatch.setattr(
+        scripted_worker, "_patch_from_source", lambda _request, resource: patches.append(resource) or "kubectl-patch"
+    )
 
     def tool(op: str, *args: str) -> dict[str, object]:
         if op == "diagnose":
@@ -600,3 +618,128 @@ def test_tool_reads_the_complete_response_behind_a_capped_reply(
     assert json.loads(envelope)["summarized"] is True
     monkeypatch.setattr(scripted_worker, "_command", lambda *_args, **_kwargs: envelope + "\n")
     assert scripted_worker._tool("source", "Service/app/api") == full
+
+
+@pytest.mark.parametrize("replay", ["on", "off"])
+def test_recreation_capture_requirement_follows_replay_policy(tmp_path, monkeypatch, replay):
+    """Optional captures do not remove the source-backed executable step."""
+    from sdo.contracts import IncidentClosure
+
+    # Production responders have no Go toolchain. A toolchain available on
+    # the test host must not hide a worker-side formatting dependency.
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    formatter = tools / "gofmt"
+    formatter.write_text("#!/bin/sh\nexit 97\n")
+    formatter.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools) + ":" + os.environ["PATH"])
+    monkeypatch.setenv("SDO_REPLAY", replay)
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "absent"))
+    monkeypatch.setattr(scripted_worker, "PROGRAM_SOURCE", ROOT / "benchmarks/sregym/fastloop/scripted_program")
+    closure = IncidentClosure()
+    closure.request.incident_id = "synthetic-recreation"
+    closure.request.namespace = "demo"
+    closure.request.state_changes.changes.add(kind="ConfigMap", name="synthetic", change="removed")
+    if replay == "on":
+        with pytest.raises(FileNotFoundError):
+            scripted_worker._write_recreation_programs(tmp_path, closure)
+    else:
+        scripted_worker._write_recreation_programs(tmp_path, closure)
+        assert not (tmp_path / ".sdo/corpus").exists()
+        program = tmp_path / ".sdo/playbooks/resource-recreation-configmap"
+        assert "CreateFromSource" in (program / "mitigate.go").read_text()
+
+
+@pytest.mark.parametrize(
+    ("kind", "body"),
+    [
+        ("Service", {"spec": {"ports": [{"port": 80, "targetPort": 8080}]}}),
+        ("ConfigMap", {"data": {"key": "synthetic"}}),
+        ("Deployment", {"spec": {"template": {"spec": {"containers": [{"name": "main", "image": "synthetic:v1"}]}}}}),
+    ],
+)
+def test_source_restore_does_not_write_or_record_unchanged_health_peers(monkeypatch, kind, body):
+    request = IncidentRequest(namespace="synthetic")
+    source = {
+        "apiVersion": "apps/v1" if kind == "Deployment" else "v1",
+        "kind": kind,
+        "metadata": {"name": "peer", "namespace": "synthetic"},
+        **body,
+    }
+    live = json.loads(json.dumps(source))
+    live["metadata"]["uid"] = "server-assigned"
+    if kind == "Service":
+        live["spec"]["ports"][0]["protocol"] = "TCP"
+    monkeypatch.setattr(scripted_worker, "_tool", lambda *args: {"source": source})
+    calls = []
+
+    def command(argv, **kwargs):
+        calls.append(argv)
+        if argv[3] == "get":
+            return json.dumps(live) if argv[-1] == "json" else kind.lower() + "/peer"
+        return ""
+
+    monkeypatch.setattr(scripted_worker, "_command", command)
+    assert scripted_worker._patch_from_source(request, {"kind": kind, "name": "peer"}) is None
+    assert all(argv[3] == "get" for argv in calls)
+
+
+def test_recreation_records_only_changed_dependency_and_names_its_native_cause(monkeypatch):
+    sources = {
+        "ConfigMap": {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "config"},
+            "data": {"key": "synthetic"},
+        },
+        "Service": {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "peer"},
+            "spec": {"ports": [{"port": 80, "targetPort": 8080}]},
+        },
+        "Deployment": {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": "peer"},
+            "spec": {"template": {"spec": {"containers": [{"name": "main", "image": "synthetic:v1"}]}}},
+        },
+    }
+    live = {kind.lower(): json.loads(json.dumps(obj)) for kind, obj in sources.items() if kind != "ConfigMap"}
+    request = IncidentRequest(incident_id="synthetic-recreation", namespace="synthetic")
+    request.state_changes.changes.add(kind="ConfigMap", name="config", change="removed")
+    for kind in ("Service", "Deployment"):
+        request.findings.add(
+            detector_id="health",
+            rule_id="unavailable",
+            summary="dependency unavailable",
+            evidence="synthetic health observation",
+            primary_resource={"kind": kind, "namespace": "synthetic", "name": "peer"},
+        )
+    monkeypatch.delenv("SDO_SCRIPTED_SOURCE_REPAIR", raising=False)
+
+    def tool(op, *args):
+        if op == "source":
+            return {"source": sources[args[0].split("/")[0]]}
+        if op == "diagnose":
+            return {"program_runs": []}
+        return {"healthy": "configmap" in live}
+
+    writes = []
+
+    def command(argv, **kwargs):
+        if argv[3] == "get":
+            return json.dumps(live[argv[4]]) if argv[4] in live else ""
+        writes.append(argv[3])
+        assert argv[3] == "apply"
+        obj = json.loads(Path(argv[-1]).read_text())
+        live[obj["kind"].lower()] = obj
+        return "created"
+
+    monkeypatch.setattr(scripted_worker, "_tool", tool)
+    monkeypatch.setattr(scripted_worker, "_command", command)
+    result = scripted_worker.scripted_responder(request)
+    assert result.status == "completed"
+    assert writes == ["apply"]
+    assert [(a.kind, a.resources[0].kind) for a in result.repair_actions] == [("kubectl-apply", "ConfigMap")]
+    assert any(ref.kind == "ConfigMap" for cause in result.confirmed_root_causes for ref in cause.resources)

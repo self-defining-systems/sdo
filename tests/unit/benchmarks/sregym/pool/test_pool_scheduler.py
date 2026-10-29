@@ -255,3 +255,62 @@ def test_redeploy_runs_redeploy_steps_on_the_same_lane(tmp_path: Path) -> None:
     assert deploys[0]["steps"] == [["true"]]
     assert deploys[1]["steps"] == [["retire", "hotel_reservation", "social_network", str(lane.run_dir)]]
     assert any(post.startswith("REDEPLOY c5-l0") for post in posts)
+
+
+def test_lane_pair_quota_balances_the_proof_without_waiting_for_slow_preparation(tmp_path: Path) -> None:
+    from collections import Counter
+
+    pool, hosts, posts = scheduler(tmp_path, [(f"p{i}", "hotel_reservation") for i in range(4)], max_pairs_per_lane=2)
+    for host in hosts.values():
+        host.cores = 4
+    slow = hosts["chelan4"]
+    original = slow.active
+    delays: dict[str, int] = {}
+
+    def active(unit: str) -> bool:
+        if unit in slow.running and delays.get(unit, 0) < 5:
+            delays[unit] = delays.get(unit, 0) + 1
+            return True
+        return original(unit)
+
+    slow.active = active
+    assert run(pool)["done"] == 4
+    rows = json.loads((tmp_path / "state/pairs.json").read_text())["pairs"]
+    assert Counter(row["lane"] for row in rows) == {"c4-l0": 2, "c5-l0": 2}
+    first_start = next(i for i, post in enumerate(posts) if post.startswith("START "))
+    slow_ready = next(i for i, post in enumerate(posts) if post.startswith("READY c4-l0"))
+    assert first_start < slow_ready
+
+
+def test_scheduler_keeps_repeat_on_original_lane_after_load_order_changes(tmp_path: Path) -> None:
+    from benchmarks.sregym.pool.registry import Lane
+
+    pool, hosts, _ = scheduler(tmp_path, [("p0", "hotel_reservation")], {"p0": [[{}, NEVER_INJECTED], [{}]]})
+    hosts["chelan4"].load = 20
+    for host in hosts.values():
+        pool.registry.add(
+            Lane(
+                id=host.name,
+                host=host.name,
+                run_dir=tmp_path / host.name,
+                kubeconfig=tmp_path / "kc",
+                state="ready",
+                app="hotel_reservation",
+                build="h1",
+                source_digest="sha256:a",
+            )
+        )
+    active = hosts["chelan5"].active
+
+    def complete(unit: str) -> bool:
+        result = active(unit)
+        if hosts["chelan5"].attempts:
+            hosts["chelan5"].load = 30
+            hosts["chelan4"].load = 1
+        return result
+
+    hosts["chelan5"].active = complete
+    assert run(pool)["done"] == 1
+    specs = [json.loads(hosts["chelan5"].files[a[a.index("--spec") + 1]]) for _, a in hosts["chelan5"].spawned]
+    assert [spec["encounters"] for spec in specs] == [["first", "repeat"], ["repeat"]]
+    assert not hosts["chelan4"].spawned

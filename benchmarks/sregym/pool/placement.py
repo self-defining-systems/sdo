@@ -23,6 +23,7 @@ class Pair:
     problem: str
     app: str
     encounters: tuple[str, ...] = ("first", "repeat")
+    lane: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ def place(
     build: str,
     lane_cpus: float = DEFAULT_LANE_CPUS,
     redeploy: bool = True,
+    unavailable: frozenset[str] = frozenset(),
 ) -> list[Run | Deploy]:
     """Place waiting pairs in stream order.
 
@@ -79,13 +81,26 @@ def place(
        on a host at or above its load gate.
     """
     rooms = {room.name: room for room in hosts}
-    idle = [lane for lane in lanes if lane.state == "ready" and rooms.get(lane.host, None) and rooms[lane.host].open]
+    idle = [
+        lane
+        for lane in lanes
+        if lane.state == "ready" and lane.id not in unavailable and rooms.get(lane.host, None) and rooms[lane.host].open
+    ]
     idle.sort(key=lambda lane: (rooms[lane.host].load1, lane.host, lane.id))
     decisions: list[Run | Deploy] = []
     waiting: list[Pair] = []
     for pair in pairs:
-        match = next((lane for lane in idle if lane.app == pair.app and lane.build == build), None)
+        match = next(
+            (
+                lane
+                for lane in idle
+                if lane.app == pair.app and lane.build == build and (pair.lane is None or pair.lane == lane.id)
+            ),
+            None,
+        )
         if match is None:
+            if pair.lane is not None:
+                continue
             waiting.append(pair)
             continue
         idle.remove(match)

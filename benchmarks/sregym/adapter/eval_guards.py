@@ -100,11 +100,16 @@ def controller_proof(state: dict[str, Any], required: set[str], not_before: str)
             fresh = datetime.fromisoformat(row.get("evaluated_at", "").replace("Z", "+00:00")) >= boundary
         except (ValueError, TypeError):
             fresh = False
-        if row.get("status") != "clear" or row.get("error") or not fresh:
+        # Historical event-driven clears are not periodic health observations.
+        # Every finding must be clear; only the declared health policy must
+        # have evaluated inside this admission window.
+        if row.get("status") != "clear" or row.get("error") or (key in required and not fresh):
             blocked[key] = row or {"reason": "no controller observation"}
     busy = incident_work_open(state)
+    replay_ready = state.get("healthy_replay_ready") is True
     return {
-        "passed": bool(required) and not blocked and not busy,
+        "passed": bool(required) and not blocked and not busy and replay_ready,
+        "healthy_replay_ready": replay_ready,
         "blocked": blocked,
         "incident_work_pending": busy,
         "latest": latest,

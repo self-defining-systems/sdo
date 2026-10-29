@@ -178,6 +178,9 @@ def ensure_app_image(
             manifest = None
             record["registry_error"] = str(exc)
             print(f"WARNING: app image registry {registry} unavailable: {exc}", file=sys.stderr)
+        pull_only = os.environ.get("FASTLOOP_APP_IMAGE_PULL_ONLY") == "1"
+        if pull_only and manifest is None:
+            raise ValueError(f"pull-only app image {image_ref} missing from shared registry {registry}; seed it first")
         record["source"] = "local"
         if local_identity(image_ref) != identity:
             if manifest is not None:
@@ -189,7 +192,7 @@ def ensure_app_image(
                 record["source"] = "build"
             if local_identity(image_ref) != identity:
                 raise ValueError(f"{record['source']} image {image_ref} does not carry identity {identity}")
-        if manifest is None and "registry_error" not in record:
+        if not pull_only and manifest is None and "registry_error" not in record:
             target = f"{registry}/{APP_REPOSITORY}:{tag}"
             try:
                 _run(["docker", "tag", image_ref, target])

@@ -147,6 +147,7 @@
   "sdodev.contracts.v1alpha1.ControllerState.evaluation_iteration",
   "sdodev.contracts.v1alpha1.ControllerState.failed_closures",
   "sdodev.contracts.v1alpha1.ControllerState.finding_states",
+  "sdodev.contracts.v1alpha1.ControllerState.healthy_replay_ready",
   "sdodev.contracts.v1alpha1.ControllerState.history",
   "sdodev.contracts.v1alpha1.ControllerState.incident_detected_at",
   "sdodev.contracts.v1alpha1.ControllerState.incident_dispatched_at",

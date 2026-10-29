@@ -48,3 +48,10 @@ A complete authenticated native receipt is recovered as an existing decision. It
 ## Batch rehearsal on real apps
 
 `python -m benchmarks.sregym.assurance.rehearse_batch --real-apps --code-root <freeze> --tag <t> --image-tag <t> [--lane APP=ENV_DIR[:LEASE]] [--only-slot N]` runs every planned Phase 4 problem on its app's lane with scripted workers and no model (static catalog, controller RBAC and responder-write stages first). Per problem: admission, SREGym injection, detection, scripted responder (restores Service, Deployment, ConfigMap, Ingress and HPA from accepted source, deletes fault-added quotas, policies and webhooks, through the responder identity), closure, harness recovery, a cluster-object diff (`fault-leftover`) and a guarded reset. It runs on a private copy of the lane environment (own workspace clone and results), so recorded lane data is never written; after it the lane holds the scripted controller and needs `--prepare` before live use. Image source is checked against the code root before the lane is touched. Output: `real-<tag>/summary.{json,md}`, one row per problem with stages, wall seconds and an error class (`no-scripted-repair`, `closure-failed`, `fault-leftover`, `cluster-leftover` on teardown, ...), then one row per class. Apps without a given lane are the coverage class `no-lane`.
+
+The scripted reflector encodes native `removed` Service/ConfigMap repairs as
+`resource-recreation-<kind>` programs using `CreateFromSource`. Replay-on copies
+the protected absent/present captures and receipt recordings into a synthetic
+case; replay-off can publish the same typed program without captures under the
+replay policy supported by the operator. The real Go memory check still owns
+publication. Scripted programs establish infrastructure behavior, not model learning.

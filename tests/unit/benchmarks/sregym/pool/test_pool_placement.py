@@ -96,3 +96,38 @@ def test_without_redeploy_steps_idle_lanes_are_never_redeployed() -> None:
     decisions = place([pair(0, "social")], lanes, [room("c5", budget=8)], build="h1", redeploy=False)
     assert decisions == [Deploy(pair(0, "social"), "c5", lane=None)]
     assert place([pair(0, "social")], lanes, [room("c5", budget=4)], build="h1", redeploy=False) == []
+
+
+def test_completed_lane_quota_keeps_its_cores_booked():
+    from benchmarks.sregym.pool.placement import HostRoom, Pair, place
+    from benchmarks.sregym.pool.registry import Lane
+
+    lane = Lane(
+        id="c5-l0",
+        host="c5",
+        run_dir="/synthetic/lane",
+        cpus=4,
+        state="ready",
+        app="hotel",
+        build="h1",
+        source_digest="sha256:synthetic",
+        kubeconfig="/synthetic/kubeconfig",
+    )
+    assert (
+        place([Pair("p", "p", "hotel")], [lane], [HostRoom("c5", 4, 1)], build="h1", unavailable=frozenset({lane.id}))
+        == []
+    )
+
+
+def test_repeat_retry_stays_on_its_original_lane_even_when_peer_is_less_loaded():
+    retry = Pair("p0", "problem", "hotel", ("repeat",), lane="a")
+    lanes = [ready("a", "c5", "hotel"), ready("b", "c4", "hotel")]
+    assert place([retry], lanes, [room("c5", load1=20), room("c4", load1=1)], build="h1") == [Run(retry, "a")]
+    for changed in (
+        [],
+        [lanes[0].model_copy(update={"state": "busy", "work": "prior"}), lanes[1]],
+        [lanes[0].model_copy(update={"build": "old"}), lanes[1]],
+    ):
+        assert place([retry], changed, [room("c5"), room("c4")], build="h1") == []
+    assert place([retry], lanes, [room("c5", load1=40), room("c4")], build="h1") == []
+    assert place([retry], lanes, [room("c5"), room("c4")], build="h1", unavailable=frozenset({"a"})) == []
