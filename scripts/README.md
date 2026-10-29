@@ -64,7 +64,8 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   Genuinely unmeasured names reserve a provisional 15 seconds and run in the PR
   (they are admitted before measured tests) until a run records them; unmeasured
   work is never deferred. `ci_policy.json` `protected_patterns` name the memory,
-  broker, compile and publication guards, which are admitted before cheap filler.
+  broker, compile and publication guards (including native reflection launch/session
+  handoff and covered-repeat completion), which are admitted before cheap filler.
   No test-name or file-name placement list is maintained.
 - `link_cache.sh` + `linkcache/main.go`: a `go -toolexec` wrapper that serves a
   repeated link from `SDO_LINK_CACHE` (key: linker arguments, importcfg and every

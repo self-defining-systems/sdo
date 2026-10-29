@@ -26,6 +26,10 @@ func TestMitigationReplayNotesAreInformational(t *testing.T) {
 	if len(report.MitigationReplayNotes) != 1 || report.MitigationReplayNotes[0].Status != contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT {
 		t.Fatalf("lost typed note: %+v", &report)
 	}
+	notes := ParseReportReplayNotes("noise\n" + output.String())
+	if len(notes) != 1 || notes[0].GetProgramId() != note.ProgramID || notes[0].GetStatus() != contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT {
+		t.Fatalf("lost replay notes: %v", notes)
+	}
 	diagnostics, err := ParseReport(output.String())
 	if err != nil || Err(diagnostics) != nil {
 		t.Fatalf("note became rejection: %+v %v", diagnostics, err)

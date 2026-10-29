@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 # worker-pinned ownership and offline toolchain settings explicitly.
 VALIDATION_ENVIRONMENT = (
     "SDO_REPLAY",
+    "SDO_MEMORY_CHECK_DIR",
     "SDO_ACTOR",
     "SDO_SESSION_SCRATCH",
     "SDO_SESSION_DIR",
@@ -229,7 +230,8 @@ def validation_server(
         diagnostics. Compile/import/format/provenance checks remain required;
         Replay policy comes from SDO_REPLAY (on by default). Off skips corpus and replay;
         RunScript still requires its successful accepted receipt. Replay verdicts
-        are information. The broker repeats the check.
+        are information. The broker owns validation and may reuse its isolated
+        check only for identical bytes, accepted base, policy and toolchain.
         """
         if learning_decision is not None:
             if decision_path is not None:
