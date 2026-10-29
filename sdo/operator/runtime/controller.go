@@ -775,6 +775,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.cachedIncidentID = ""
 	c.closureStableSince = time.Time{}
 	c.closureMutationRevision = ""
+	c.recoverySafetyLost = false
 	c.earlyLastMutationAt = time.Time{}
 	c.responderLoop = nil
 	c.midStage = midIncidentStage{}
@@ -1356,6 +1357,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	generation := observationGeneration(snapshot)
 	var rolloutRefs []sdk.ObjectRef
+	var observedResult *IncidentResult
 	if early && safe && loop != nil {
 		// acquireClosureGuard holds the responder locks and loads controller-owned
 		// external action receipts, including writes before the final worker report.
@@ -1363,14 +1365,15 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		request := cloneIncidentRequest(c.currentIncidentRequest)
 		c.mu.Unlock()
 		if request != nil {
-			for _, action := range closureGuard.resultSnapshot(*request, now).RepairActions {
+			observedResult = closureGuard.resultSnapshot(*request, now)
+			for _, action := range observedResult.RepairActions {
 				rolloutRefs = append(rolloutRefs, action.Resources...)
 			}
 		}
 	}
 	source := closureSourceReport{}
 	if snapshotErr == nil {
-		source = c.verifyClosureSource(ctx, now, snapshot, nil, rolloutRefs...)
+		source = c.verifyClosureSource(ctx, now, snapshot, observedResult, rolloutRefs...)
 	}
 	c.mu.Lock()
 	// Any observed responder write restarts the stability window, including
@@ -1379,6 +1382,13 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.closureMutationRevision = guard.Revision
 		c.closureStableSince = time.Time{}
 		c.earlyLastMutationAt = now
+		repairs := observedResult
+		if repairs == nil {
+			repairs = c.currentIncidentResult
+		}
+		if at, ok := lastRepairCompletion(repairs); ok && !at.After(now) && !at.Before(c.incidentDispatchedAt) {
+			c.earlyLastMutationAt = at
+		}
 	}
 	finalStates, healthVerified := c.finalVerificationStates()
 	if snapshotErr != nil {
@@ -1395,7 +1405,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 		finalStates, healthVerified = c.latestEvaluations(ids, c.earlyLastMutationAt, true)
 	}
-	verified := healthVerified && len(source.Rollouts) == 0
+	verified := healthVerified && len(source.Rollouts) == 0 && len(source.Effects) == 0
 	if !safe || guard != nil && guard.Pending {
 		c.recoverySafetyLost = true
 	}
@@ -1435,6 +1445,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	verification.Healthy = false // Only the shared recovery proof can grant health.
 	c.cacheVerificationLocked(verification)
 	if waitForResponder {
+		verification.Summary = "awaiting responder investigation and controller recovery proof"
+		c.cacheVerificationLocked(verification)
 		// Refresh verify reports without ending the responder's whole turn.
 		c.mu.Unlock()
 		return
@@ -1496,7 +1508,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if driftPrompt {
 		continuationDeadline = c.currentIncidentRequest.ResponseDeadline
 	}
-	if ((!verified && (len(verification.Findings) > 0 || verification.Error != "" || len(verification.VerificationBlockers) > 0)) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(continuationDeadline) {
+	effectObservationOnly := len(source.Effects) > 0 && len(verification.Findings) == 0 && verification.Error == "" && len(verification.VerificationBlockers) == len(source.Effects)
+	if !effectObservationOnly && ((!verified && (len(verification.Findings) > 0 || verification.Error != "" || len(verification.VerificationBlockers) > 0)) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(continuationDeadline) {
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {
@@ -1960,7 +1973,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
 	c.verificationDeadline = controllerTime(state.GetVerificationDeadlineAt())
 	c.detectorClearSince = cloneClearSince(timestampsState(state.GetDetectorClearSince()))
-	c.recoveryObserverStarted = c.clock()
+	c.recoveryObserverStarted = c.startedAt
 	c.dispatchState = state.DispatchState
 	c.incidentFindingKeys = append([]string(nil), state.IncidentFindingKeys...)
 	c.pendingClosure = nil

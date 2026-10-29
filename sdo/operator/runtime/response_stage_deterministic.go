@@ -634,7 +634,10 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 	if err != nil {
 		return
 	}
+	state.Findings = retireDisappearedRecoveryEffects(view, state.Findings)
 	effects := repairedLifecycleEffects(view, loop.applicationsLog, state.Findings)
+	state.Findings = effects.observe(view, state.Findings)
+	state.refreshUnexplained()
 	eligible := func() bool {
 		for _, finding := range state.Findings {
 			if !health[finding.DetectorID] {

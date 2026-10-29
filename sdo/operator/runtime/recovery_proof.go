@@ -21,7 +21,7 @@ func (c *Controller) recoveryObservationEpochLocked() time.Time {
 // Call only after fresh health and every write/rollout prerequisite holds.
 // A restart never reuses an observer's in-memory proof.
 func (c *Controller) recoveryProofLocked(now time.Time, states []DetectorEvaluation, safe bool) bool {
-	if !safe || len(states) == 0 {
+	if !safe {
 		c.closureStableSince = time.Time{}
 		c.recoverySafetyLost = true
 		return false
@@ -53,4 +53,19 @@ func (c *Controller) recoveryProofLocked(now time.Time, states []DetectorEvaluat
 		c.closureStableSince = since
 	}
 	return !now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow))
+}
+
+// Completed receipt timestamps bound the applied write, independently of how
+// long the automatic stage or final narration later takes. An unjournalled
+// mutation uses its first controller observation instead.
+func lastRepairCompletion(result *IncidentResult) (time.Time, bool) {
+	var latest time.Time
+	if result != nil {
+		for _, receipt := range result.RepairActions {
+			if receipt.CompletedAt.After(latest) {
+				latest = receipt.CompletedAt
+			}
+		}
+	}
+	return latest, !latest.IsZero()
 }

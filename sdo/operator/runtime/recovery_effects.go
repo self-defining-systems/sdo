@@ -9,25 +9,30 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // recoveryEffects binds observational work to exact incarnations, not names.
 // Only complete repairs of an unchanged workload can explain its old children.
 // This grants waiting authority only: a live child still blocks until gone.
-type recoveryEffects map[string]sdk.ObjectRef
+type recoveryEffect struct {
+	Ref sdk.ObjectRef
+	UID types.UID
+}
+type recoveryEffects map[string]recoveryEffect
 
 func repairedLifecycleEffects(snapshot sdk.DetectionContext, applications []RecordedPlanApplication, findings []sdk.Finding) recoveryEffects {
 	repaired := map[types.UID]bool{}
 	for _, a := range applications {
-		if a.Pending || a.Error != "" || a.RolledBack || a.RollbackError != "" || !a.Result.Applied || a.Result.DryRun || a.Result.RolloutPending != nil || !a.Result.VerificationPassed {
+		if a.Pending || a.Error != "" || a.RolledBack || a.RollbackError != "" || !a.Result.Applied || a.Result.DryRun || a.Result.RolloutPending != nil || !a.Result.VerificationCompleted || !a.Result.VerificationPassed || a.Result.RolledBack || a.Result.RollbackError != "" {
 			continue
 		}
-		for _, patch := range a.Result.Patches {
-			if patch.Before == nil || patch.Before.GetKind() != "Deployment" || patch.Before.GetUID() == "" {
+		for _, effect := range a.Result.observedObjectEffects() {
+			if !effect.Confirmed || effect.State != "applied" || effect.Ref.APIVersion != "apps/v1" || effect.Ref.Kind != "Deployment" || effect.UID == "" || effect.Operation == "delete" {
 				continue
 			}
 			for _, d := range snapshot.Deployments() {
-				if d.Namespace == patch.Ref.Namespace && d.Name == patch.Ref.Name && d.UID == patch.Before.GetUID() {
+				if d.Namespace == effect.Ref.Namespace && d.Name == effect.Ref.Name && string(d.UID) == effect.UID {
 					repaired[d.UID] = true
 				}
 			}
@@ -80,14 +85,14 @@ func repairedLifecycleEffects(snapshot sdk.DetectionContext, applications []Reco
 		// changed or reused name cannot borrow the old finding's waiting authority.
 		current := &unstructured.Unstructured{Object: raw}
 		if reflect.DeepEqual(inventoryEvent(f).Fields, inventoryFields(current)) {
-			effects[FindingFingerprint(f)] = f.PrimaryResource
+			effects[FindingFingerprint(f)] = recoveryEffect{Ref: f.PrimaryResource, UID: object.GetUID()}
 		}
 	}
 	return effects
 }
 
-// observe retires only absent identities. A replacement at the same name is
-// not disappearance/equivalence, even if it looks healthy.
+// observe retires absent identities and empty, zero-sized historical sets.
+// A replacement at the same name is never disappearance/equivalence.
 func (effects recoveryEffects) observe(snapshot sdk.DetectionContext, findings []sdk.Finding) []sdk.Finding {
 	present := map[sdk.ObjectRef]bool{}
 	for _, p := range snapshot.Pods() {
@@ -98,10 +103,49 @@ func (effects recoveryEffects) observe(snapshot sdk.DetectionContext, findings [
 	}
 	remaining := make([]sdk.Finding, 0, len(findings))
 	for _, f := range findings {
-		ref, owned := effects[FindingFingerprint(f)]
-		if !owned || present[ref] {
+		effect, owned := effects[FindingFingerprint(f)]
+		if !owned {
+			remaining = append(remaining, f)
+			continue
+		}
+		if !present[effect.Ref] {
+			continue
+		}
+		equivalent := false
+		if effect.Ref.Kind == "ReplicaSet" {
+			for _, rs := range snapshot.ReplicaSets() {
+				if rs.Namespace != effect.Ref.Namespace || rs.Name != effect.Ref.Name || rs.UID != effect.UID || rs.Spec.Replicas == nil || *rs.Spec.Replicas != 0 || rs.Status.Replicas != 0 {
+					continue
+				}
+				equivalent = true
+				for _, pod := range snapshot.Pods() {
+					if pod.Namespace == rs.Namespace && rolloutOwnedBy(pod.OwnerReferences, "ReplicaSet", rs.UID) {
+						equivalent = false
+						break
+					}
+				}
+			}
+		}
+		if !equivalent {
 			remaining = append(remaining, f)
 		}
+	}
+	return remaining
+}
+
+// A child already gone at the first post-repair observation needs no retained
+// owner chain. Exact accepted-source absence plus observed live absence is the
+// proof; read errors and name reuse never count as disappearance.
+func retireDisappearedRecoveryEffects(view program.ReadView, findings []sdk.Finding) []sdk.Finding {
+	remaining := make([]sdk.Finding, 0, len(findings))
+	for _, f := range findings {
+		if inventoryFinding(f) && inventoryEvent(f).Source == "absent from accepted source" && (f.PrimaryResource.Kind == "Pod" || f.PrimaryResource.Kind == "ReplicaSet") {
+			diff, err := view.DiffAgainstSource(f.PrimaryResource)
+			if err == nil && diff.SourceAbsent && !diff.Changed {
+				continue
+			}
+		}
+		remaining = append(remaining, f)
 	}
 	return remaining
 }

@@ -272,8 +272,11 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 			if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{*patch}}); err != nil {
 				return result, err
 			}
-			if live, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil {
+			if live, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil && live != nil {
 				patch.After.SetResourceVersion(live.GetResourceVersion())
+				if live.GetUID() == patch.Before.GetUID() {
+					patch.ObservedUID = string(live.GetUID())
+				}
 			}
 		}
 		patch.DirectReadConfirmed = true
