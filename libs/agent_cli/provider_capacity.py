@@ -34,7 +34,7 @@ OPUS_POOL_ENVIRONMENT = (
 )
 _LIMIT = re.compile(
     r"rate_limit_error|overloaded_error|API Error:\s*(?:429|529)\b|"
-    r"you['’]ve hit your limit|you have hit your limit|usage limit reached|"
+    r"you['’]ve hit your (?:weekly )?limit|you have hit your (?:weekly )?limit|usage limit reached|"
     r"(?:rate limit|overloaded)\s*(?:reached|exceeded|error)",
     re.IGNORECASE,
 )
@@ -81,27 +81,29 @@ class RateLimitPolicy:
 class OpusPoolAllocation:
     """Run-owned static allocation; host shares must sum to the account cap."""
 
-    mode: Literal["shared", "per_host"]
+    mode: Literal["shared", "per_host", "per_account"]
     capacity: int
     host_id: str = ""
 
     def __post_init__(self) -> None:
-        if self.mode not in ("shared", "per_host"):
-            raise ValueError("Opus pool mode must be shared or per_host")
+        if self.mode not in ("shared", "per_host", "per_account"):
+            raise ValueError("Opus pool mode must be shared, per_host or per_account")
         if type(self.capacity) is not int or self.capacity <= 0:
             raise ValueError("Opus pool capacity must be a positive integer")
-        if self.mode == "per_host" and not self.host_id.strip():
+        if self.mode in ("per_host", "per_account") and not self.host_id.strip():
             raise ValueError("per_host Opus pool requires SDO_OPUS_POOL_HOST_ID")
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> OpusPoolAllocation:
         mode = environment.get("SDO_OPUS_POOL_MODE", "shared")
-        if mode not in ("shared", "per_host"):
-            raise ValueError("Opus pool mode must be shared or per_host")
+        if mode not in ("shared", "per_host", "per_account"):
+            raise ValueError("Opus pool mode must be shared, per_host or per_account")
         default = DEFAULT_OPUS_HOST_SHARE if mode == "per_host" else DEFAULT_OPUS_SESSIONS
         return cls(
             mode,
-            int(environment.get("SDO_OPUS_MAX_SESSIONS", str(default))),
+            int(environment.get("SDO_CLAUDE_ACCOUNT_MAX_SESSIONS", "2"))
+            if mode == "per_account"
+            else int(environment.get("SDO_OPUS_MAX_SESSIONS", str(default))),
             environment.get("SDO_OPUS_POOL_HOST_ID", ""),
         )
 

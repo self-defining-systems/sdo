@@ -359,9 +359,15 @@ class SdoPersistentAgent:
             if (
                 rate_limit_failure(exc) is not None
                 or "rate_limited:" in str(exc)
+                or "account_exhausted:" in str(exc)
                 or capacity_prevented_completion(evidence, str(exc))
             ):
-                raise RateLimitedRun(evidence) from exc
+                limited = rate_limit_failure(exc)
+                if "account_exhausted:" in str(exc) or (
+                    limited is not None and limited.failure_reason == "account_exhausted"
+                ):
+                    evidence = replace(evidence, exhausted=True, exhausted_reason="account_exhausted")
+                raise RateLimitedRun(evidence) from None
             raise
         self._checkpoint(index, str(resolution["incident_id"]), receipt_dir)
         if not windows:
@@ -381,6 +387,7 @@ class SdoPersistentAgent:
         return AgentOutcome(
             injection=windows[0],
             provider_waits=read_provider_waits(receipt_dir, incident_id=str(resolution["incident_id"])).intervals,
+            account_events=read_provider_waits(receipt_dir, incident_id=str(resolution["incident_id"])).account_events,
             detected_at=detected,
             responder_started_at=_timestamp(resolution.get("responder_started_at")),
             responder_finished_at=_timestamp(resolution.get("responder_finished_at")),
@@ -445,6 +452,9 @@ class SdoPersistentAgent:
                     self._unrecorded_checkpoint(index, exc)
                 else:
                     self._checkpoint(index, outcome.incident_id, receipt_dir)
+            evidence = read_provider_waits(Path(str(outcome.artifacts_dir)), incident_id=outcome.incident_id)
+            if evidence.exhausted and evidence.exhausted_reason == "account_exhausted":
+                raise RateLimitedRun(evidence) from None
         # Receipt rejection happens after the controller has acknowledged and relaunched.
         # Other drain failures leave the pending gate intact and stop the stream.
         record.pending = None
@@ -489,6 +499,7 @@ class SdoPersistentAgent:
             None,
         )
         return outcome.with_learning(
+            account_events=evidence.account_events,
             diagnosis=outcome.diagnosis or _summaries(receipt.get("confirmed_root_causes")),
             mitigation=outcome.mitigation or _summaries(receipt.get("repair_actions"), successful_only=True),
             reflection_seconds=self._clock.monotonic() - started,

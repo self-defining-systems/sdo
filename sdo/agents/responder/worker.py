@@ -124,7 +124,7 @@ def run_worker_task(
             task_id=task.task_id,
             status="failed",
             proposal_id=task.workspace.proposal_id,
-            failure_reason="rate_limited",
+            failure_reason=limited.failure_reason,
             error_summary=str(limited),
         )
         publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(envelope))

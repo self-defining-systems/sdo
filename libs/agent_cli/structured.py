@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -61,8 +62,14 @@ from agentshim import (
 from agentshim.execution.host import ProcessCommandHandle
 from agentshim.providers.codex import install_rules
 
+from libs.agent_cli.claude_accounts import AccountRouter, is_claude_auth_failure
 from libs.agent_cli.claude_usage import ClaudeBill, ClaudeLedger, api_tokens, session_ledger, token_mapping
-from libs.agent_cli.errors import ProviderRateLimited, StructuredTurnError
+from libs.agent_cli.errors import (
+    AccountAuthenticationFailed,
+    AccountExhausted,
+    ProviderRateLimited,
+    StructuredTurnError,
+)
 from libs.agent_cli.provider_capacity import ProviderCapacity, is_claude_rate_limit
 from libs.agent_cli.session_ownership import (
     HANDOFF_TIMEOUT_SECONDS,
@@ -281,6 +288,21 @@ def run_structured_turn(
     if timeout_seconds is not None and timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     capacity = provider_capacity or ProviderCapacity(environment={**os.environ, **(environment or {})})
+    account_mode = provider == "claude" and (
+        bool(capacity.environment.get("SDO_CLAUDE_ACCOUNTS_DIR"))
+        or capacity.environment.get("SDO_OPUS_POOL_MODE") == "per_account"
+    )
+    router = (
+        AccountRouter.from_environment(
+            capacity.environment, clock=lambda: capacity.now().timestamp(), record=capacity.record
+        )
+        if account_mode
+        else None
+    )
+    if router is not None:
+        workspace = Path(cwd).resolve()
+        if router.directory.is_relative_to(workspace) or router.pool_directory.is_relative_to(workspace):
+            raise AccountExhausted("account references and pool must be outside workspace", retryable=False)
     started = capacity.monotonic()
     session_id = resume_session_id
     prior_usage: dict[str, int | float] = {}
@@ -298,7 +320,9 @@ def run_structured_turn(
             on_usage(combined, complete)
 
     attempt = 0
+    account_retries: dict[str, int] = {}
     while True:
+        lease = None
         remaining = timeout_seconds
         if timeout_seconds is not None and attempt > 0:
             assert remaining is not None
@@ -311,8 +335,26 @@ def run_structured_turn(
                 raise StructuredTurnTimeout(timeout_seconds)
         try:
             with ExitStack() as scope:
+                attempt_environment = environment
                 if provider == "claude":
-                    scope.enter_context(capacity.opus_session(model, workspace=Path(cwd)))
+                    if router is not None:
+                        while lease is None:
+                            lease = router.try_acquire()
+                            if lease is None:
+                                if capacity.remaining_seconds <= 0:
+                                    raise AccountExhausted("account admission budget exhausted", retryable=False)
+                                with capacity.measured_wait("concurrency"):
+                                    capacity.sleep(min(1.0, capacity.remaining_seconds))
+                        scope.callback(lease.close)
+                        attempt_environment = router.environment(lease, {**capacity.environment, **(environment or {})})
+                        capacity.record(
+                            "account",
+                            "selected",
+                            account_alias=lease.alias,
+                            reason="primary" if lease.alias == router.primary else "fallback",
+                        )
+                    else:
+                        scope.enter_context(capacity.opus_session(model, workspace=Path(cwd)))
                     if capacity.wait_deadline is not None:
                         if capacity.remaining_seconds <= 0:
                             raise capacity.exhausted("provider retry budget exhausted", session_id=session_id or "")
@@ -333,7 +375,7 @@ def run_structured_turn(
                     resume_session_id=session_id,
                     executor=executor,
                     mcp_servers=mcp_servers,
-                    environment=environment,
+                    environment=attempt_environment,
                     on_session_started=on_session_started,
                     on_usage=checkpoint if provider == "claude" else on_usage,
                     session_ownership_directory=session_ownership_directory,
@@ -359,6 +401,9 @@ def run_structured_turn(
                 ) from exc
             raise
         except ProviderRateLimited as exc:
+            if isinstance(exc, AccountExhausted):
+                capacity.record("account", "exhausted", reason="account_exhausted")
+                raise exc from None
             if provider != "claude" or not exc.retryable:
                 raise
             session_id = exc.session_id or session_id
@@ -367,7 +412,21 @@ def run_structured_turn(
             for name, value in (exc.usage or attempt_usage).items():
                 prior_usage[name] = prior_usage.get(name, 0) + value
             attempt_usage.clear()
-            capacity.backoff(attempt, session_id=session_id or "")
+            if router is not None and lease is not None:
+                retries = account_retries.get(lease.alias, 0)
+                if isinstance(exc, AccountAuthenticationFailed):
+                    router.fail(lease, exc.account_failure_reason)
+                elif retries >= 1:
+                    router.fail(lease, "rate_limited")
+                else:
+                    delay = float(capacity.environment.get("SDO_CLAUDE_ACCOUNT_BACKOFF_SECONDS", "5"))
+                    if not math.isfinite(delay) or delay <= 0:
+                        raise ValueError("account backoff must be positive and finite") from None
+                    with capacity.measured_wait("rate_limit"):
+                        capacity.sleep(min(delay, capacity.remaining_seconds))
+                    account_retries[lease.alias] = retries + 1
+            else:
+                capacity.backoff(attempt, session_id=session_id or "")
             attempt += 1
 
 
@@ -537,6 +596,24 @@ def _run_structured_turn_once(
             StructuredTurn(
                 "", recorder.session_id or "", ProviderUsage(tokens=delta.tokens), model_requests=delta.requests
             )
+        )
+
+    def provider_failure(*streams: str) -> ProviderRateLimited | None:
+        account_mode = bool((environment or {}).get("SDO_CLAUDE_ACCOUNTS_DIR"))
+        failure_type = (
+            AccountAuthenticationFailed
+            if account_mode and any(is_claude_auth_failure(text) for text in streams)
+            else ProviderRateLimited
+            if any(is_claude_rate_limit(text) for text in streams)
+            else None
+        )
+        if failure_type is None or provider != "claude":
+            return None
+        return failure_type(
+            session_id=recorder.session_id or resume_session_id or "",
+            shell_commands=tuple(recorder.commands),
+            tool_calls=recorder.tool_calls,
+            usage=spent_usage(),
         )
 
     def stopped() -> StructuredTurnInterrupted:
@@ -737,24 +814,20 @@ def _run_structured_turn_once(
         # Both streams, stderr first: a provider may report the real cause on
         # either, and callers hand this text back to the next attempt.
         details = "\n".join(part.strip() for part in (exc.stderr, exc.stdout) if part.strip())
-        if provider == "claude" and (is_claude_rate_limit(exc.stderr) or is_claude_rate_limit(exc.stdout)):
-            raise ProviderRateLimited(
-                session_id=recorder.session_id or resume_session_id or "",
-                shell_commands=tuple(recorder.commands),
-                tool_calls=recorder.tool_calls,
-                usage=spent_usage(),
-            ) from exc
+        if failed := provider_failure(exc.stderr, exc.stdout):
+            raise failed from None
+        if (environment or {}).get("SDO_CLAUDE_ACCOUNTS_DIR"):
+            raise StructuredTurnError(
+                f"{provider} exited with code {exc.returncode}; provider output withheld"
+            ) from None
         raise StructuredTurnError(f"{provider} exited with code {exc.returncode}: {details or 'no output'}") from exc
     except AgentShimError as exc:
         if interrupted.is_set():
             raise stopped() from exc
-        if provider == "claude" and is_claude_rate_limit(str(exc)):
-            raise ProviderRateLimited(
-                session_id=recorder.session_id or resume_session_id or "",
-                shell_commands=tuple(recorder.commands),
-                tool_calls=recorder.tool_calls,
-                usage=spent_usage(),
-            ) from exc
+        if failed := provider_failure(str(exc)):
+            raise failed from None
+        if (environment or {}).get("SDO_CLAUDE_ACCOUNTS_DIR"):
+            raise StructuredTurnError(f"{provider} turn failed; provider output withheld") from None
         raise StructuredTurnError(f"{provider} turn failed: {exc}") from exc
 
     if on_usage is not None and provider == "codex" and resume_session_id is not None:
@@ -764,13 +837,9 @@ def _run_structured_turn_once(
             # Keep any observed partial checkpoint rather than billing it twice.
             raise StructuredTurnError("resumed cumulative token accounting unavailable after turn")
 
-    if provider == "claude" and result.structured_output is None and is_claude_rate_limit(result.text):
-        raise ProviderRateLimited(
-            session_id=result.session_id or resume_session_id or "",
-            shell_commands=tuple(recorder.commands),
-            tool_calls=recorder.tool_calls,
-            usage=spent_usage(),
-        )
+    if provider == "claude" and result.structured_output is None and (failed := provider_failure(result.text)):
+        raise failed from None
+
     structured_output: object = result.structured_output
     session_id = result.session_id or resume_session_id or ""
     model_requests: int | None = None

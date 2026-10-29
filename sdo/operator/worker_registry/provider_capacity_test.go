@@ -7,6 +7,45 @@ import (
 	"testing"
 )
 
+func TestAccountReferencesReachWorkersWithoutSubPathOrTokenEnvironment(t *testing.T) {
+	env := map[string]string{
+		"SDO_OPUS_POOL_MODE": "per_account", "SDO_OPUS_POOL_HOST_ID": "synthetic-host",
+		"SDO_OPUS_POOL_HOST_PATH":    "/opt/sdo-parallel/opus-pool",
+		"SDO_CLAUDE_ACCOUNTS_SECRET": "claude-accounts", "SDO_CLAUDE_ACCOUNT_PRIMARY": "a02",
+		"SDO_CLAUDE_ACCOUNT_MAX_SESSIONS": "2",
+	}
+	pod := &corev1.PodSpec{Containers: []corev1.Container{{Name: "worker"}}}
+	if err := ApplyProviderCapacity(pod, env); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, volume := range pod.Volumes {
+		if volume.Name == "claude-accounts" {
+			found = volume.Secret != nil && volume.Secret.SecretName == "claude-accounts"
+		}
+	}
+	if !found {
+		t.Fatal("account Secret not projected")
+	}
+	for _, mount := range pod.Containers[0].VolumeMounts {
+		if mount.Name == "claude-accounts" && (mount.SubPath != "" || !mount.ReadOnly) {
+			t.Fatal("account updates cannot be observed safely")
+		}
+	}
+	values := map[string]string{}
+	for _, variable := range pod.Containers[0].Env {
+		values[variable.Name] = variable.Value
+	}
+	if values["SDO_CLAUDE_ACCOUNTS_DIR"] != "/sdo/claude-accounts" || values["SDO_CLAUDE_ACCOUNT_PRIMARY"] != "a02" {
+		t.Fatal("account references lost")
+	}
+	for _, name := range []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
+		if _, ok := values[name]; ok {
+			t.Fatal("credential value rendered into Pod spec")
+		}
+	}
+}
+
 func TestHostProviderCapacityReachesColdAndStandbyJobs(t *testing.T) {
 	for _, standby := range []bool{false, true} {
 		t.Run(map[bool]string{false: "cold", true: "standby"}[standby], func(t *testing.T) {

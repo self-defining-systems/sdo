@@ -157,6 +157,30 @@ def test_rate_limited_agent_is_not_graded_and_cleanup_still_runs(tmp_path: Path)
     assert frozen["not_graded_reason"] == "rate_limited"
 
 
+@pytest.mark.parametrize("phase", ["responder", "reflection"])
+def test_account_exhaustion_at_either_agent_phase_is_not_an_sdo_failure(tmp_path: Path, phase: str) -> None:
+    from libs.agent_cli.errors import AccountExhausted
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class ExhaustedAgent(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            if phase == "responder":
+                inject()
+                raise AccountExhausted("no healthy account", retryable=False)
+            return super().resolve(index, problem_id, inject)
+
+        def learn(self, outcome):
+            raise AccountExhausted("no healthy account", retryable=False)
+
+    (record,) = run_incidents(ExhaustedAgent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    assert record.grade_status == "NOT-GRADED"
+    assert record.not_graded_reason == "account_exhausted"
+    assert record.error is None
+    assert "recover" in driver.events
+
+
 @pytest.mark.parametrize(("oracle_success", "recover_fails"), [(False, False), (False, True), (True, False)])
 def test_grade_precedes_learning_and_cleanup_without_feedback(
     tmp_path: Path, oracle_success: bool, recover_fails: bool
