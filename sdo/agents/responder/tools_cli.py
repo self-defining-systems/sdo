@@ -164,7 +164,7 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Output: session schema; correct feedback once. "
         "prior_stages: per-repair receipts; checked_stage_receipts: exact application IDs and scoped verification "
-        "in the first brief; findings: residual work. Full receipts remain in details_file. "
+        "in brief; findings: residual work. Full receipts remain in details_file. "
         "prior_response_progress: bounded failed-episode progress with omissions. "
         "Keep repairs; admission_blocked names a rollout prerequisite.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),

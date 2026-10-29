@@ -405,7 +405,11 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
         section = prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0]
         if section.startswith("Full: "):
             section = Path(os.path.expandvars(section.splitlines()[0].removeprefix("Full: "))).read_text()
-        current = json.loads(section)
+        # Outcome summaries and optional details are separate renderer parts.
+        # Consume the required document, then its authoritative full-outcome file.
+        current, _ = json.JSONDecoder().raw_decode(section.lstrip())
+        if "full_current_outcome_path" in current:
+            current = json.loads(Path(os.path.expandvars(current["full_current_outcome_path"])).read_text())
         assert current["classification"] == classification
         assert (
             current["repair_actions"][0]["details"]
