@@ -102,7 +102,7 @@ def _manifest(root: Path, kind: str, name: str) -> dict[str, Any]:
 
 def _source_was_deleted(request: IncidentRequest, ref: dict[str, str]) -> bool:
     return ref["kind"] in {"Service", *SOURCE_RESTORED_FIELDS} and any(
-        change.kind == ref["kind"] and change.name == ref["name"] and change.change == "deleted"
+        change.kind == ref["kind"] and change.name == ref["name"] and change.change == "removed"
         for change in (request.state_changes.changes if request.state_changes else [])
     )
 
@@ -446,7 +446,7 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             for change in changed
             if (
                 change.kind in {"Service", "Deployment", *SOURCE_RESTORED_FIELDS}
-                and change.change in {"modified", "deleted"}
+                and change.change in {"modified", "removed"}
             )
             or (change.kind in REMOVED_KINDS and change.change == "added")
         ]
@@ -454,6 +454,8 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             json_format.MessageToDict(finding.primary_resource, preserving_proto_field_name=True)
             for finding in request.findings
         )
+        # Restore absent dependencies before a workload rollout can wait on them.
+        candidates.sort(key=lambda ref: not _source_was_deleted(request, ref))
         for ref in candidates:
             removed = ref["kind"] in REMOVED_KINDS
             if ref["kind"] not in {"Service", "Deployment", *SOURCE_RESTORED_FIELDS} and not removed:
