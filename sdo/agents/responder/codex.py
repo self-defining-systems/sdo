@@ -270,7 +270,11 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
         raise ValueError("incident responder requires a logical memory snapshot")
     prompt = render_prompt(
         "responder",
-        "incident_shell" if agent_guidance() == "shell" else "incident_response_instructions",
+        "incident_shell"
+        if agent_guidance() == "shell"
+        else "incident_reuse_instructions"
+        if request.prior_stages
+        else "incident_response_instructions",
         part="responder.instructions",
         incident_id=request.incident_id,
         skills_root=selected_skills_root(SKILLS_ROOT),

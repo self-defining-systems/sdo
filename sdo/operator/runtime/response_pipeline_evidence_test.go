@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // The incident detector that supplied opening coverage need not be one of the
@@ -354,5 +356,113 @@ func TestSimScheduleDeterministicPipelineEvidence(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Opening traffic symptoms and newly observed symptoms have the same clearing
+// contract. The real stage applies both repairs before consuming this signal.
+func TestDeterministicResponseStageWaitsForOpeningHealthObservation(t *testing.T) {
+	for _, clears := range []bool{true, false} {
+		t.Run(fmt.Sprint(clears), func(t *testing.T) {
+			loop, state := pipelineTestLoop(t, false)
+			detector := &pipelineWindowedHealthDetector{window: 100 * time.Millisecond, lag: -1}
+			if clears {
+				detector.lag = 20 * time.Millisecond
+			}
+			loop.Detectors = append(loop.Detectors, detector)
+			opening := sdk.Finding{DetectorID: detector.Spec().ID, RuleID: "window-errors", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Summary: "traffic window still holds pre-repair errors"}
+			state.Request.Findings = append(state.Request.Findings, opening)
+			state.Findings = append(state.Findings, opening)
+			loop.Request = state.Request
+			calls := 0
+			stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationInterval: time.Millisecond, ObservationCeiling: 100 * time.Millisecond}
+			if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
+				t.Fatal(err)
+			}
+			expected := 1
+			if clears {
+				expected = 0
+			}
+			if calls != expected {
+				t.Fatalf("clears=%t dispatched=%d, reports=%v", clears, calls, state.PriorStages)
+			}
+			if len(loop.PlanApplications()) != 2 {
+				t.Fatal("test requires real repair applications")
+			}
+		})
+	}
+}
+
+type redundantPipelinePortProgram struct{ pipelinePortProgram }
+
+func (redundantPipelinePortProgram) Spec() program.ProgramSpec {
+	spec := (pipelinePortProgram{}).Spec()
+	spec.ID = "zzz-redundant-port"
+	return spec
+}
+
+// p019/p028: another repair makes an advisory match disappear. Its non-writing
+// skip cannot turn an otherwise successful stage into a model dispatch while
+// traffic is merely rolling over its observation window.
+func TestDeterministicResponseStageWaitsAfterRedundantMatchDisappears(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	registry, err := program.NewRegistry([]program.Diagnoser{pipelinePortProgram{}, pipelineImageProgram{}, redundantPipelinePortProgram{}}, []program.Mitigator{pipelinePortProgram{}, pipelineImageProgram{}, redundantPipelinePortProgram{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.Programs = registry
+	state.Coverage = nil
+	loop.Detectors = append(loop.Detectors, &pipelineWindowedHealthDetector{window: time.Second, lag: 50 * time.Millisecond})
+	calls := 0
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationInterval: time.Millisecond}
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
+		t.Fatal(err)
+	}
+	skips := 0
+	for _, attempt := range state.PriorStages[0].Mitigations {
+		if attempt.SkipReason == "diagnose_no_longer_matches" {
+			skips++
+		}
+	}
+	applied := 0
+	for _, attempt := range state.PriorStages[0].Mitigations {
+		if attempt.GetApplyReceipt().GetApplied() && len(attempt.GetApplyReceipt().GetActionsApplied()) > 0 {
+			applied++
+		}
+	}
+	if skips == 0 || applied != 2 {
+		t.Fatalf("fixture did not apply two repairs and obsolete the peer: skips=%d applications=%d reports=%v", skips, applied, state.PriorStages)
+	}
+	if calls != 0 {
+		t.Fatalf("obsolete match forced dispatch during traffic clearing: %v", state.PriorStages)
+	}
+}
+
+// A completed stage checkpoint transfers immutable writes, not a decision to
+// dispatch. Recovery still lets successful repairs' health observations settle.
+func TestDeterministicResponseStageRecoveryWaitsWithoutRepeatingWrites(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	health := &pipelineLaggingHealthDetector{remaining: -1}
+	loop.Detectors = append(loop.Detectors, health)
+	var durable []byte
+	loop.saveToolState = func(_ context.Context, payload []byte) error { durable = append([]byte(nil), payload...); return nil }
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationCeiling: time.Millisecond, ObservationInterval: time.Millisecond}
+	if _, err := stage.Run(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	fresh := NewResponderLoop(state.Request, loop.Programs, loop.Provider, loop.Detectors, loop.Executor, 5)
+	fresh.ReadView = loop.ReadView
+	if err := fresh.restoreToolSnapshot(durable); err != nil {
+		t.Fatal(err)
+	}
+	health.remaining = 2
+	recovered := &IncidentState{Request: state.Request, Findings: append([]sdk.Finding(nil), state.Request.Findings...), Coverage: state.Coverage}
+	calls := 0
+	stage = &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return fresh }, ObservationInterval: time.Millisecond}
+	if err := RunResponseStages(context.Background(), recovered, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || len(fresh.PlanApplications()) != 0 {
+		t.Fatalf("recovery dispatched or repeated writes: calls=%d applications=%d", calls, len(fresh.PlanApplications()))
 	}
 }

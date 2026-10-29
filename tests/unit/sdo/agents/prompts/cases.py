@@ -424,6 +424,14 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
             finding.fingerprint for finding in matched.findings[1:]
         )
         prompts["responder_matched_programs"] = responder_prompt(matched)
+        partial = scaled(warm=True)
+        stage = partial.prior_stages.add(stage="deterministic", cleared_finding_fingerprints=["settled-route"])
+        attempt = stage.mitigations.add(playbook_id="restore-route", result="applied_cleared", plan_action_count=1)
+        attempt.apply_receipt.application_id = "synthetic-application"
+        attempt.apply_receipt.applied = True
+        attempt.apply_receipt.verification_completed = True
+        attempt.apply_receipt.verification_passed = True
+        prompts["responder_partial_reuse"] = responder_prompt(partial)
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
         patch.setenv("SDO_LATE_FINDINGS", "pull")
         prompts["responder_optional"] = responder_prompt(scaled())

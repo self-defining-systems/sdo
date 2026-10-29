@@ -163,7 +163,9 @@ def _parser() -> argparse.ArgumentParser:
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Output: session schema; correct feedback once. "
-        "prior_stages: per-repair receipts; prior_response_progress: bounded failed-episode progress with omissions. "
+        "prior_stages: per-repair receipts; checked_stage_receipts: exact application IDs and scoped verification "
+        "in brief; findings: residual work. Full receipts remain in details_file. "
+        "prior_response_progress: bounded failed-episode progress with omissions. "
         "Keep repairs; admission_blocked names a rollout prerequisite.\n\n"
         "Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
@@ -414,7 +416,13 @@ def command_surface() -> CommandSurface:
     return {
         "commands": descriptions,
         "reference": "sdo-incident-response/references/commands.md",
-        "output": "Full JSON: read details_file; --json uses the same caps and complete evidence stays in files.",
+        "output": (
+            "Full JSON: read details_file; --json uses the same caps. "
+            "Menu: menu.options[].{option_id,parameters[].{name,schema}}. "
+            "Mutations: summary,details_file,error?,failure_reason?; "
+            "report arrays: actions,findings,fixed,new,unchanged,option_reports. "
+            "Use published parameter names and nested schemas; namespaces belong in object references."
+        ),
     }
 
 
