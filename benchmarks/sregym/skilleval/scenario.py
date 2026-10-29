@@ -23,6 +23,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from libs.agent_cli.session_ownership import SessionOwnership
+
 REFLECTION_MARKER = "Idempotency key: reflection:"
 SCENARIO_VERSION = 1
 # Codex rebuilds these from the rollout; a copy taken after reflection would leak the reflection turn.
@@ -61,11 +63,17 @@ class Scenario:
     source: ScenarioSource
     session_mode: str = "resume"
     live: dict[str, Any] = field(default_factory=dict)
+    provider: str = "codex"
+    model: str = "gpt-6-luna"
+    effort: str = "xhigh"
+    controller_image: str = ""
     version: int = SCENARIO_VERSION
 
     def __post_init__(self) -> None:
         if not self.scenario_id or "/" in self.scenario_id:
             raise ValueError(f"invalid scenario id {self.scenario_id!r}")
+        if self.provider not in {"codex", "claude"}:
+            raise ValueError(f"unsupported scenario provider {self.provider!r}")
         if not self.image:
             raise ValueError("scenario requires the recorded responder image")
         if not self.checkout_path.startswith("/"):
@@ -146,7 +154,7 @@ def first_reflection_attempt(session: Path) -> str | None:
     return attempts[0][1]
 
 
-def prepare_session(session: Path, *, fresh: bool = False) -> tuple[str, dict[str, Any]]:
+def prepare_session(session: Path, *, fresh: bool = False, provider: str = "codex") -> tuple[str, dict[str, Any]]:
     """Rewind a copied session directory to reflection start; return the thread ID and live evidence.
 
     A fresh reflection (no responder session to resume) starts with no rollout at all.
@@ -171,6 +179,8 @@ def prepare_session(session: Path, *, fresh: bool = False) -> tuple[str, dict[st
         live["attempts"].append(attempt)
         shutil.rmtree(request.parent)
     live["attempts"].sort(key=lambda item: item["validation_attempt"])
+    if provider == "claude":
+        return _prepare_claude(session, fresh=fresh), live
     codex = session / "codex"
     for child in list(codex.iterdir()) if codex.is_dir() else []:
         if child.is_file() and child.name.startswith(_CODEX_DERIVED):
@@ -198,6 +208,59 @@ def prepare_session(session: Path, *, fresh: bool = False) -> tuple[str, dict[st
     return thread_id, live
 
 
+def _prepare_claude(session: Path, *, fresh: bool) -> str:
+    """Keep only the responder prefix of the primary Claude Code conversation."""
+    home = session / "claude"
+    shutil.rmtree(session / "codex", ignore_errors=True)
+    selected: tuple[Path, list[str], str] | None = None
+    for path in sorted(home.glob("projects/**/*.jsonl")):
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            row = json.loads(line)
+            if row.get("type") in {"user", "queue-operation"} and REFLECTION_MARKER in line:
+                if not fresh:
+                    if selected is not None:
+                        raise ScenarioError("multiple Claude conversations carry reflection")
+                    prefix = lines[:index]
+                    ids = {json.loads(item).get("sessionId") for item in prefix} - {None, ""}
+                    if len(ids) != 1 or path.stem not in ids:
+                        raise ScenarioError("Claude responder prefix has an ambiguous session ID")
+                    selected = (path, prefix, path.stem)
+                break
+    # CLI indexes, cached summaries and side conversations may contain future turns.
+    for child in list(home.iterdir()) if home.is_dir() else []:
+        if child.name == "projects":
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    for path in list(home.glob("projects/**/*")):
+        if path.is_file() and (selected is None or path != selected[0]):
+            path.unlink()
+    if fresh:
+        return ""
+    if selected is None:
+        raise ScenarioError(f"no Claude responder transcript with reflection under {home}")
+    selected[0].write_text("".join(selected[1]), encoding="utf-8")
+    prepare_offline_ownership(session, "claude", selected[2])
+    return selected[2]
+
+
+def prepare_offline_ownership(session: Path, provider: str, thread_id: str) -> None:
+    """Give a private, rewound copy its own released writer via the native producer.
+
+    The source owner belongs to a different session volume, possibly a later
+    reflection. No process has opened this copied transcript. Never call this
+    on a live session directory; scenario construction only passes its copy.
+    """
+    directory = session / "thread-ownership"
+    shutil.rmtree(directory, ignore_errors=True)
+    owner = SessionOwnership(directory, provider, timeout_seconds=1, role="responder")
+    owner.claim(thread_id, resume=False)
+    owner.close(writer_closed=True)
+
+
 def clone_checkout(memory_repository: str, destination: Path, commit: str) -> None:
     for command in (
         ["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", memory_repository, str(destination)],
@@ -221,6 +284,10 @@ def build_scenario(
     expectation: str = "",
     host: str = "",
     encounter: str = "",
+    provider: str = "codex",
+    model: str = "gpt-6-luna",
+    effort: str = "xhigh",
+    controller_image: str = "",
 ) -> Scenario:
     """Write one scenario directory; ``session_source`` must be the full live session directory."""
 
@@ -247,7 +314,7 @@ def build_scenario(
     session_mode = request.get("session_mode") or "fresh"
     if session_mode not in {"fresh", "resume"}:
         raise ScenarioError(f"unknown reflection session mode {session_mode!r}")
-    thread_id, live = prepare_session(output / "session", fresh=session_mode == "fresh")
+    thread_id, live = prepare_session(output / "session", fresh=session_mode == "fresh", provider=provider)
     closure_session = request.get("closure", {}).get("result", {}).get("responder_session_id", "")
     if session_mode == "resume" and closure_session != thread_id:
         raise ScenarioError(f"responder session {closure_session} is not the cut rollout thread {thread_id}")
@@ -277,6 +344,10 @@ def build_scenario(
             problem_id=problems[0][len(incident) + 1 :] if problems else "",
             encounter=encounter,
         ),
+        provider=provider,
+        model=model,
+        effort=effort,
+        controller_image=controller_image,
         live=_live_summary(live),
         session_mode=session_mode,
     )
@@ -317,6 +388,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expectation", default="")
     parser.add_argument("--host", default="")
     parser.add_argument("--encounter", default="")
+    parser.add_argument("--provider", choices=("codex", "claude"), default="codex")
+    parser.add_argument("--model", default="gpt-6-luna")
+    parser.add_argument("--effort", default="xhigh")
+    parser.add_argument("--controller-image", default="")
     args = parser.parse_args(argv)
     scenario = build_scenario(
         scenario_id=args.id,
@@ -330,6 +405,10 @@ def main(argv: list[str] | None = None) -> int:
         expectation=args.expectation,
         host=args.host,
         encounter=args.encounter,
+        provider=args.provider,
+        model=args.model,
+        effort=args.effort,
+        controller_image=args.controller_image,
     )
     print(json.dumps(asdict(scenario)["source"] | {"id": scenario.scenario_id, "thread": scenario.thread_id}))
     return 0

@@ -80,6 +80,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.skilleval"
 depends_on = [
+    "libs.agent_cli",
     "sdo.agents.responder",
 ]
 
