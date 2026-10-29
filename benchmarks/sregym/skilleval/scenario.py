@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sregym.repository_git import host_clone_command, host_git_command
 from libs.agent_cli.session_ownership import SessionOwnership
 
 REFLECTION_MARKER = "Idempotency key: reflection:"
@@ -262,9 +263,14 @@ def prepare_offline_ownership(session: Path, provider: str, thread_id: str) -> N
 
 
 def clone_checkout(memory_repository: str, destination: Path, commit: str) -> None:
+    clone = (
+        host_clone_command(Path(memory_repository), destination, "--quiet", "--no-hardlinks", "--no-checkout")
+        if Path(memory_repository).is_dir()
+        else ["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", memory_repository, str(destination)]
+    )
     for command in (
-        ["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", memory_repository, str(destination)],
-        ["git", "-C", str(destination), "reset", "--quiet", "--hard", commit],
+        clone,
+        host_git_command(destination, "reset", "--quiet", "--hard", commit),
     ):
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
         if completed.returncode:

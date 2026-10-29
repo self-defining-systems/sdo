@@ -199,3 +199,48 @@ func TestEveryOutcomeClassificationHasItsOwnResolution(t *testing.T) {
 		t.Fatalf("unconfirmed has no label of its own: %v", seen)
 	}
 }
+
+// Successful startup may subsume a reflection with a later accepted health
+// refresh. Only the exact reflection revision must retain its original tree.
+func TestReceiptRolloutRevisionCorrelation(t *testing.T) {
+	for _, later := range []bool{false, true} {
+		for _, sameTree := range []bool{false, true} {
+			r := fixture()
+			expected := &c.ControllerRolloutExpectation{IncidentId: r.IncidentId, ReflectionCommit: r.NativeLedger.ReflectionCommit, BeforeDetectorFingerprint: "before", AfterDetectorFingerprint: "reflected"}
+			attempt := &c.ControllerRolloutReceipt{Expectation: proto.Clone(expected).(*c.ControllerRolloutExpectation), Success: true, BuildArtifact: "sha256:synthetic", ControllerRevision: expected.ReflectionCommit, ObservedDetectorFingerprint: "reflected", VerifiedAt: r.RecordedAt}
+			if later {
+				attempt.ControllerRevision = strings.Repeat("d", 40)
+			}
+			if !sameTree {
+				attempt.ObservedDetectorFingerprint = "refreshed"
+			}
+			r.NativeLedger.RolloutExpectation = expected
+			r.NativeLedger.RolloutReceipts = []*c.ControllerRolloutReceipt{attempt}
+			want := later || sameTree
+			if got := Evaluate(encoded(t, r), true); (got.Failure == nil) != want {
+				t.Fatalf("later=%v sameTree=%v: %v", later, sameTree, got.Failure)
+			}
+			if !want {
+				continue
+			}
+			for name, mutate := range map[string]func(*c.NativeProductionReceipt){
+				"missing observed tree": func(r *c.NativeProductionReceipt) { r.NativeLedger.RolloutReceipts[0].ObservedDetectorFingerprint = "" },
+				"missing revision":      func(r *c.NativeProductionReceipt) { r.NativeLedger.RolloutReceipts[0].ControllerRevision = "" },
+				"duplicate success": func(r *c.NativeProductionReceipt) {
+					r.NativeLedger.RolloutReceipts = append(r.NativeLedger.RolloutReceipts, proto.Clone(attempt).(*c.ControllerRolloutReceipt))
+				},
+				"wrong incident": func(r *c.NativeProductionReceipt) { r.NativeLedger.RolloutReceipts[0].Expectation.IncidentId = "other" },
+				"wrong reflection": func(r *c.NativeProductionReceipt) {
+					r.NativeLedger.RolloutReceipts[0].Expectation.ReflectionCommit = strings.Repeat("e", 40)
+				},
+				"failed attempt": func(r *c.NativeProductionReceipt) { r.NativeLedger.RolloutReceipts[0].Success = false },
+			} {
+				bad := proto.Clone(r).(*c.NativeProductionReceipt)
+				mutate(bad)
+				if got := Evaluate(encoded(t, bad), true); got.Failure == nil {
+					t.Fatalf("accepted %s (later=%v sameTree=%v)", name, later, sameTree)
+				}
+			}
+		}
+	}
+}

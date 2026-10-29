@@ -355,5 +355,11 @@
     "prompt": "template_data.responder-turn_01-prompt"
   },
   "responder/verified_final": {},
-  "responder/reflection_replay": {}
+  "responder/reflection_replay": {},
+  "responder/incident_reuse_instructions": {
+    "incident_id": "template_data.responder-incident_response_instructions-incident_id",
+    "skills_root": "template_data.responder-incident_response_instructions-skills_root",
+    "repair_policy": "template_data.responder-incident_response_instructions-repair_policy",
+    "branch_instruction": "template_data.responder-incident_response_instructions-branch_instruction"
+  }
 }

@@ -16,6 +16,7 @@ from apps.toy.faults import IMAGE, command, fault_spec
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
+from benchmarks.sregym.repository_git import host_git_command
 
 ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/toy"
@@ -219,9 +220,9 @@ def up(args: Any) -> int:
         ["add", "."],
         ["-c", "user.name=toy", "-c", "user.email=toy@invalid", "commit", "-qm", "feat: seed toy application"],
     ):
-        subprocess.run(["git", "-C", str(workspace), *git_args], check=True)
+        subprocess.run(host_git_command(workspace, *git_args), check=True)
     seed = subprocess.run(
-        ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        host_git_command(workspace, "rev-parse", "HEAD"), check=True, capture_output=True, text=True
     ).stdout.strip()
     source_commit = seed
     shutil.copytree(APP / "seed/.sdo", workspace / ".sdo")
@@ -230,12 +231,10 @@ def up(args: Any) -> int:
         b"".join(path.read_bytes() for path in sorted((workspace / "kubernetes").glob("*.yaml")))
     ).hexdigest()
     arch.write_text(arch.read_text().replace("SOURCE_COMMIT", source_commit).replace("TOPOLOGY_FINGERPRINT", topology))
-    subprocess.run(["git", "-C", str(workspace), "add", ".sdo"], check=True)
+    subprocess.run(host_git_command(workspace, "add", ".sdo"), check=True)
     subprocess.run(
-        [
-            "git",
-            "-C",
-            str(workspace),
+        host_git_command(
+            workspace,
             "-c",
             "user.name=toy",
             "-c",
@@ -243,11 +242,11 @@ def up(args: Any) -> int:
             "commit",
             "-qm",
             "feat: seed toy operational memory",
-        ],
+        ),
         check=True,
     )
     seed = subprocess.run(
-        ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        host_git_command(workspace, "rev-parse", "HEAD"), check=True, capture_output=True, text=True
     ).stdout.strip()
     command(str(kubeconfig), "default", "create", "namespace", NAMESPACE)
     with host_limits.admit("redeploy"):

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from sdo.contracts import ControllerObservation
@@ -347,7 +348,7 @@ def refresh_memory_mirror(repository: Path) -> None:
         ("reset", "--hard", "--quiet", "refs/sdo/upstream"),
     ):
         subprocess.run(
-            ["git", "-C", str(repository), *args],
+            host_git_command(repository, *args),
             check=True,
             capture_output=True,
             env=environment,

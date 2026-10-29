@@ -16,6 +16,7 @@ from benchmarks.sregym.fastloop.image_provenance import (
     image_source,
     uncommitted_build_files,
 )
+from benchmarks.sregym.repository_git import host_git_command
 
 FIRST_PARTY_APPS = ("hotel-reservation", "astronomy-shop", "social-network")
 
@@ -23,7 +24,7 @@ FIRST_PARTY_APPS = ("hotel-reservation", "astronomy-shop", "social-network")
 def assert_harness_sources(directory: Path) -> None:
     def git(path: Path, *args: str) -> str:
         result = subprocess.run(
-            ["git", "-C", str(path), *args], capture_output=True, text=True, timeout=wait_for(WaitKind.PROBE)
+            host_git_command(path, *args), capture_output=True, text=True, timeout=wait_for(WaitKind.PROBE)
         )
         if result.returncode:
             raise ValueError(f"eval: initialize pinned SREGym source prerequisite: {path}")
@@ -89,7 +90,7 @@ def _assert_image_source(image: str, current: ImageSource, worktree: Path) -> No
 def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = True) -> None:
     """Reject saved lane images from other code before resetting or injecting."""
     revision = subprocess.run(
-        ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+        host_git_command(worktree, "rev-parse", "HEAD"),
         check=True,
         capture_output=True,
         text=True,

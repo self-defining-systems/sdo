@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.records import IncidentRecord, append_record, load_records
 from benchmarks.sregym.fastloop.stream import StreamConfig, load_stream_config
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -124,13 +125,13 @@ class FastloopSlotEnvironment:
         # A seed pin is provenance, not permission to invent seed evidence. Normal
         # lifecycle/broker validation remains authoritative in the child run.
         subprocess.run(
-            ["git", "-C", str(env.workspace), "merge-base", "--is-ancestor", str(env.seed_commit), "HEAD"],
+            host_git_command(env.workspace, "merge-base", "--is-ancestor", str(env.seed_commit), "HEAD"),
             check=True,
             capture_output=True,
             text=True,
         )
         return subprocess.run(
-            ["git", "-C", str(env.workspace), "rev-parse", "HEAD"],
+            host_git_command(env.workspace, "rev-parse", "HEAD"),
             check=True,
             capture_output=True,
             text=True,

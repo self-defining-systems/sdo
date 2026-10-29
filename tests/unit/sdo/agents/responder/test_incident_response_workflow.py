@@ -189,3 +189,21 @@ def test_act_help_and_workflow_share_the_one_cause_per_action_principle() -> Non
     ):
         assert principle in body
         assert principle in act_help
+
+
+def test_partial_reuse_prompt_starts_from_receipts_without_mandatory_discovery() -> None:
+    from sdo.agents.responder.codex import _responder_prompt
+    from sdo.agents.responder.incident_context import prepared_incident_data
+    from sdo.contracts import IncidentRequest, OperationalMemorySnapshot
+
+    request = IncidentRequest(
+        incident_id="partial-repeat", memory_snapshot=OperationalMemorySnapshot(accepted_commit="accepted")
+    )
+    request.prior_stages.add(stage="deterministic")
+    with prepared_incident_data(request) as data:
+        prompt = _responder_prompt(request, incident_data=data)
+    instructions = str(prompt).split("Incident request:", 1)[0]
+    assert "Continue from stage_actions and checked_stage_receipts" in instructions
+    assert "findings are residual work" in instructions
+    assert "Read " not in instructions
+    assert len(instructions) <= 1500

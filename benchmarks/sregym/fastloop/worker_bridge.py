@@ -13,6 +13,7 @@ from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.app_images import install_shared_builds
 from benchmarks.sregym.fastloop.host_limits import HostLimits, install_node_limits
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -142,7 +143,7 @@ def main() -> int:
                     os.environ["FASTLOOP_ORACLE_IDENTITY"]
                     + ":"
                     + subprocess.check_output(
-                        ["git", "-C", str(Path(worker.__file__).resolve().parents[2]), "rev-parse", "HEAD"],
+                        host_git_command(Path(worker.__file__).resolve().parents[2], "rev-parse", "HEAD"),
                         text=True,
                         timeout=wait_for(WaitKind.PROBE),
                     ).strip(),

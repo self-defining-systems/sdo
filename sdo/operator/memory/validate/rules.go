@@ -83,6 +83,9 @@ const (
 	// Informational traffic coverage: a health-probe scenario that keeps the
 	// default latency bound. Never an acceptance diagnostic.
 	RuleTrafficDefaultLatency = "traffic.default-latency"
+	// RuleProgramDiffText notes (never rejects) a program deciding on a diff's
+	// Text, so reflection rewrites it with typed field comparisons.
+	RuleProgramDiffText = "program.diff-text-match"
 
 	// Compile.
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"

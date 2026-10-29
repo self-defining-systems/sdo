@@ -21,6 +21,9 @@ The authoring reference tool supplies the routing example.
   parameter or its default. Required scalar parameters need a `Default` so findings can bind them. Diagnose
   and Mitigate declare identical parameters. Two roles of one Kind never bind and are refused at save.
 - An emergency literal is a declared parameter the responder supplies and justifies.
+- Action fields use the compiled SDK contract. The shared memory check also rejects unknown parameter
+  names in documented built-in selections against the executor descriptor; object namespaces belong in
+  their typed references, not invented top-level parameters. Prefer typed executable steps over recipes.
 
 ## Source restoration
 
@@ -37,6 +40,10 @@ a handoff snapshot alone does not justify rewriting it.
 - `ReconcileFromSource` restores a whole source-owned object and removes reported additions;
   `CreateFromSource` restores a named missing object. `DeleteObject` is irreversible; a delete-style Diagnose
   matches on `diff.PresentButNotInSource()`, which turns false after the delete.
+- Diagnose on typed fields: `diff.ContainerChanges()` names each changed container by kind (init or
+  app) and name, and `diff.Field(path).Differs()` sees only fields source declares, never server
+  defaults. `diff.Text` is the whole document, so a substring matches any container; use it only as
+  Evidence. Memory check notes Text matching as `program.diff-text-match`; rewrite such programs.
 - A `dnsPolicy` repair does not remove an injected `dnsConfig`; remove that with a JSON patch.
 
 ## Stalled rollouts

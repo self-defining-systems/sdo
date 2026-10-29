@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, control_namespace_for, kubectl, wait_for
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
@@ -107,7 +108,7 @@ def endpoint_for(endpoints: dict[str, MemoryEndpoint], app: str) -> MemoryEndpoi
 
 
 def _git(repository: Path | None, *args: str, timeout: float | None = None) -> str:
-    command = ["git", *(["-C", str(repository)] if repository is not None else []), *args]
+    command = host_git_command(repository, *args) if repository is not None else ["git", *args]
     return subprocess.check_output(
         command,
         text=True,

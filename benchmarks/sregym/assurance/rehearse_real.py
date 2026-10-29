@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.assurance.rehearse_batch import Problem, Row, Stage, classify
+from benchmarks.sregym.repository_git import host_clone_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -136,7 +137,7 @@ def private_environment(
 def _git_clone(source: Path, target: Path) -> None:
     """Clone the lane's accepted workspace (a git repository) without touching it."""
 
-    subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(source), str(target)], check=True, timeout=300)
+    subprocess.run(host_clone_command(source, target, "--quiet", "--no-hardlinks"), check=True, timeout=300)
 
 
 def image_source_problems(
