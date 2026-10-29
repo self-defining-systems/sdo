@@ -30,6 +30,8 @@ PLAN_ACTIONS = (
     "and reports residual source differences and remaining old-revision ReplicaSets/Pods. "
     "The Deployment controller and responder handle the rollout.\n"
     "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.\n"
+    "Webhook repairs requeue affected admission-blocked ReplicaSets automatically; "
+    "after raw repairs use RetryAdmission in the incident namespace and verify recovery. "
     "RetireOldRevision scales an old-revision ReplicaSet to zero; stalled rollouts name it as their release."
 )
 

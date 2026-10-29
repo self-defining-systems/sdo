@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sdo.dev/operator/sdk/program"
 	"sort"
 	"strings"
 	"time"
@@ -21,13 +22,7 @@ func (e *AdmissionBlockedError) Error() string { return "admission_blocked: " + 
 
 var admissionWebhookName = regexp.MustCompile(`(?i)webhook\s+["']([^"']+)["']`)
 
-func admissionRejection(message string) bool {
-	lower := strings.ToLower(message)
-	// Scope comes from the workload ownership join; do not classify image pulls,
-	// scheduling failures or unrelated warning events as admission prerequisites.
-	return strings.Contains(lower, "webhook") && (strings.Contains(lower, "denied") || strings.Contains(lower, "failed calling") || strings.Contains(lower, "failed to call") || strings.Contains(lower, "x509") || strings.Contains(lower, "tls")) ||
-		strings.Contains(lower, "denied by policy") || strings.Contains(lower, "admission policy") && strings.Contains(lower, "denied")
-}
+func admissionRejection(message string) bool { return program.AdmissionRejection(message) }
 
 func (w KubernetesPlanRollouts) admissionBlocked(ctx context.Context, blocker *contracts.RolloutBlocker, messages []string) *AdmissionBlockedError {
 	if len(messages) == 0 {

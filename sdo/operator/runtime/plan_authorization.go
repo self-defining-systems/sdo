@@ -5,6 +5,8 @@ import "sdo.dev/operator/sdk/program"
 // planAuthorizationMode records how a plan obtains its value, not a policy grant.
 func planAuthorizationMode(action program.Action) string {
 	switch a := action.(type) {
+	case program.RetryAdmission, *program.RetryAdmission:
+		return "general"
 	case program.SetField:
 		if a.Value.Origin() == program.SourceValue {
 			return "accepted-source"

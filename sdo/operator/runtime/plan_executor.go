@@ -137,6 +137,19 @@ type PlanExecutor struct {
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
 	started := time.Now()
 	defer func() { result.Duration = time.Since(started) }()
+	var admissionRetries []program.Action
+	var admissionRecoveryErr error
+	if !e.deferConvergence {
+		expanded, expandErr := e.withAdmissionRetries(ctx, incident, plan)
+		admissionRecoveryErr = expandErr
+		if expandErr == nil {
+			admissionRetries = expanded.Actions[len(plan.Actions):]
+		}
+		if dryRun {
+			plan = expanded
+			admissionRetries = nil
+		}
+	}
 	plan = groupDocumentActions(plan)
 	defer func() {
 		if err != nil {
@@ -181,6 +194,14 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		}
 	}
 	if err == nil && !dryRun && !e.deferConvergence {
+		// Recovery follows the completed repair, outside its compensation
+		// scope. A retry failure must never put the admission blocker back.
+		if admissionRecoveryErr != nil {
+			return result, admissionRecoveryErr
+		}
+		if err = e.applyAdmissionRetries(ctx, incident, admissionRetries, &result); err != nil {
+			return result, err
+		}
 		var objectWrites []PlanPatch
 		var refs []sdk.ObjectRef
 		for _, patch := range result.Patches {
@@ -191,6 +212,11 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 				refs = append(refs, patch.Ref)
 			}
 		}
+		owners, ownerErr := e.admissionRetryRolloutRefs(ctx, result)
+		if ownerErr != nil {
+			return result, ownerErr
+		}
+		refs = append(refs, owners...)
 		if err = e.awaitObserved(ctx, objectWrites); err != nil {
 			return result, err
 		}
@@ -310,7 +336,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if patchErr != nil {
 			return result, patchErr
 		}
-		result.Patches = append(result.Patches, PlanPatch{Authorization: planAuthorizationMode(action), Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy(), Structured: structuredPlanRef(plan, ref), SourceCommit: incident.SourceCommit})
+		result.Patches = append(result.Patches, PlanPatch{Authorization: planAuthorizationMode(action), Irreversible: isAdmissionRetry(action), Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy(), Structured: structuredPlanRef(plan, ref), SourceCommit: incident.SourceCommit})
 		current[ref] = next
 	}
 	// Rollback and write reconciliation compare after-images with live values, so
@@ -777,6 +803,37 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 			return nil, errors.New("nil ScaleWorkload")
 		}
 		return e.prepareAction(ctx, incident, *a, current)
+	case program.RetryAdmission:
+		if current.GetUID() == "" || current.GetResourceVersion() == "" {
+			return nil, errors.New("RetryAdmission requires live UID and resourceVersion")
+		}
+		if incident.Namespace == "" || a.Ref.Namespace != incident.Namespace {
+			return nil, errors.New("RetryAdmission requires the incident namespace")
+		}
+		var set appsv1.ReplicaSet
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(current.Object, &set); err != nil {
+			return nil, err
+		}
+		if set.Spec.Replicas != nil && *set.Spec.Replicas <= set.Status.Replicas {
+			return next, nil
+		}
+		if len(program.AdmissionFailedCreate(set)) == 0 {
+			return nil, errors.New("RetryAdmission requires live admission FailedCreate and missing Pods")
+		}
+		now := time.Now
+		if e.Now != nil {
+			now = e.Now
+		}
+		// The version makes every retry an update even with a fixed clock.
+		token := now().UTC().Format(time.RFC3339Nano) + "/" + current.GetResourceVersion()
+		if err := unstructured.SetNestedField(next.Object, token, "metadata", "annotations", admissionRetryAnnotation); err != nil {
+			return nil, err
+		}
+	case *program.RetryAdmission:
+		if a == nil {
+			return nil, errors.New("nil RetryAdmission")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
 	case program.RetireOldRevision:
 		// The bound is checked against the live ReplicaSet and its live owner
 		// at write time, so every caller (stage, program, menu) inherits it.
@@ -914,6 +971,12 @@ func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 			return a.Ref, nil
 		}
 	case *program.ScaleWorkload:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case program.RetryAdmission:
+		return a.Ref, nil
+	case *program.RetryAdmission:
 		if a != nil {
 			return a.Ref, nil
 		}

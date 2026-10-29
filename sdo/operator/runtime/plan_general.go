@@ -60,6 +60,15 @@ func isGeneralAction(a program.Action) bool {
 	return isExternalAction(a)
 }
 func hasGeneralActions(p program.Plan) bool {
+	// A controller requeue is an opaque runtime signal. Mixed plans execute
+	// each action in order, never coalescing this signal into document edits.
+	if len(p.Actions) > 1 {
+		for _, action := range p.Actions {
+			if isAdmissionRetry(action) {
+				return true
+			}
+		}
+	}
 	for _, a := range p.Actions {
 		if isGeneralAction(a) {
 			return true

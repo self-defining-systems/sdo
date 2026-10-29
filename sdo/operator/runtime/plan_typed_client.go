@@ -53,6 +53,8 @@ func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 		object, err = c.Client.RbacV1().RoleBindings(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "v1/Pod":
 		object, err = c.Client.CoreV1().Pods(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "apps/v1/ReplicaSet":
+		object, err = c.Client.AppsV1().ReplicaSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "apps/v1/StatefulSet":
 		object, err = c.Client.AppsV1().StatefulSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "v1/Service":
@@ -108,6 +110,9 @@ func (c TypedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 		return err
 	case "rbac.authorization.k8s.io/v1/RoleBinding":
 		_, err := c.Client.RbacV1().RoleBindings(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
+	case "apps/v1/ReplicaSet":
+		_, err := c.Client.AppsV1().ReplicaSets(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
 		return err
 	case "apps/v1/StatefulSet":
 		_, err := c.Client.AppsV1().StatefulSets(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
