@@ -29,6 +29,10 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   to main or vic-lsh/dev/sdo-improve save shared Go caches; throwaway PR/queue refs
   restore the base and transfer artifacts without competing for its cache quota.
   Consumer jobs work even when the base entry is missing or evicted.
+- `unit-tools/go` rejects compiler commands in unmarked Python tests, including
+  Go invoked by child CLIs. The shared reflection-memory fixture routes all its
+  transitive consumers to `go_integration` before marker selection; new compiler
+  tests must use that marker. Python unit fixtures reuse the verified prepared CLI.
 - `python_go_tools.sh` prepares the real operator, receipt checker and submission
   guard once. Both Python jobs download its tar artifact from their own workflow
   run, verify the operator source stamp, and select the adapters' existing binary
