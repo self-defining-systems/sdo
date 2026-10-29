@@ -82,3 +82,26 @@ def test_malformed_roots_and_missing_snapshots_fail_with_context(tmp_path: Path)
         delta.Root.parse("no-separator")
     with pytest.raises(delta.CacheDeltaError, match="no snapshot"):
         delta.export(tmp_path / "missing", tmp_path / "out", [], 1)
+
+
+def test_cold_run_cli_transfers_complete_graph_without_a_cache_cap(tmp_path: Path) -> None:
+    producer, consumer = tmp_path / "producer", tmp_path / "consumer"
+    manifest, archive = tmp_path / "empty.manifest", tmp_path / "artifact"
+    specs = [f"gocache={producer / 'gocache'}", f"test-bin={producer / 'test-bin'}@content"]
+    assert delta.main(["snapshot", "--manifest", str(manifest), *specs]) == 0
+    write(producer, "gocache/aa/archive", "compiled archive", 0o444)
+    write(producer, "test-bin/setup", "executable", 0o755)
+    assert delta.main(["export", "--manifest", str(manifest), "--out", str(archive), *specs]) == 0
+    assert (
+        delta.main(
+            [
+                "apply",
+                "--delta",
+                str(archive),
+                *[f"gocache={consumer / 'gocache'}", f"test-bin={consumer / 'test-bin'}@content"],
+            ]
+        )
+        == 0
+    )
+    assert (consumer / "gocache/aa/archive").read_text() == "compiled archive"
+    assert (consumer / "test-bin/setup").stat().st_mode & 0o777 == 0o755

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Hand a PR's new Go build entries to its consumer jobs without saving the base cache again.
+"""Transfer newly compiled Go entries between jobs using run artifacts.
 
-Hosted caches saved on a pull request ref are private to it, and each full prepared build is
-about 1.6 GB, so a handful of concurrent PRs pass the 10 GB repository cap and evict each
-other. Base-branch pushes save the full archives. A PR run restores the newest base archive,
-records what it holds (`snapshot`), compiles, and saves only the entries it added (`export`).
-Consumers restore the base archive and the delta, then lay the delta over it (`apply`).
+Only durable base-branch pushes save shared compiler caches. Preparation records
+those restored entries, then exports its additions for this run's consumers.
+With a cold base the same export contains the complete prepared graph. Artifact
+transport preserves permissions and never competes for the repository cache quota.
 
 A root is `name=path` (content-addressed: an entry is new when its path is not in the
 snapshot) or `name=path@content` (mutable files such as rebuilt binaries: an entry is new
@@ -132,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--manifest", type=Path, required=True)
         if name == "export":
             command.add_argument("--out", type=Path, required=True)
-            command.add_argument("--max-bytes", type=int, required=True)
+            command.add_argument("--max-bytes", type=int, default=10 * 1024**3)
         command.add_argument("roots", nargs="+")
     command = commands.add_parser("apply")
     command.add_argument("--delta", type=Path, required=True)

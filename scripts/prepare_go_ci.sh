@@ -17,11 +17,7 @@ case "$mode" in
   race) build_flags=(-race) ;;
   *) echo "unknown Go preparation mode: $mode" >&2; exit 1 ;;
 esac
-test_build="$(mktemp -d)"
-trap 'rm -rf "$test_build"' EXIT
 for module in sdo/operator sdo/operator/runtime; do
-  destination="$test_build/$module"
-  mkdir -p "$destination"
   # The inventory must use the consumer's race build tags. Discover once while
   # compiling that graph; normal Python contracts still need their own archives.
   if [[ "$mode" == race ]]; then
@@ -30,7 +26,10 @@ for module in sdo/operator sdo/operator/runtime; do
     mkdir -p "$root/.fastloop/test-bin"
     (cd "$root/$module" && go test -race -list . -json ./...) > "$root/.fastloop/test-bin/inventory-$scope.json"
   else
-    (cd "$root/$module" && go test -c -o "$destination/" ./...)
+    # Normal consumers need production archives and source-bound tools; Go
+    # tests execute with -race. Linking normal test binaries only to discard
+    # them doubles the cold preparation work.
+    (cd "$root/$module" && go build ./...)
   fi
 done
 if [[ "$mode" == normal ]]; then
