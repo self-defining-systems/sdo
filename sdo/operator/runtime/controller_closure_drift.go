@@ -15,6 +15,7 @@ import (
 // settled yet. Drift is information: it never holds verification or closure.
 type closureSourceReport struct {
 	Rollouts []sdk.Finding
+	Effects  []sdk.Finding
 	Drift    []sdk.Finding
 }
 
@@ -92,6 +93,30 @@ func (c *Controller) verifyClosureSource(ctx context.Context, now time.Time, sna
 			c.recordDetectorError(id, now, err)
 		} else {
 			c.recordEvaluation(id, now, unresolved)
+		}
+	}
+	if result != nil {
+		all := append(append([]sdk.Finding(nil), findings...), report.Drift...)
+		effects := repairedLifecycleEffects(snapshot, result.PlanApplications, all)
+		waiting := map[string]bool{}
+		for _, finding := range effects.observe(snapshot, all) {
+			waiting[FindingFingerprint(finding)] = true
+		}
+		retained := report.Drift[:0]
+		for _, finding := range report.Drift {
+			fp := FindingFingerprint(finding)
+			if _, owned := effects[fp]; !owned || waiting[fp] {
+				retained = append(retained, finding)
+			}
+		}
+		report.Drift = retained
+		seen := map[string]bool{}
+		for _, finding := range all {
+			fp := FindingFingerprint(finding)
+			if _, ok := effects[fp]; ok && waiting[fp] && !seen[fp] {
+				report.Effects = append(report.Effects, finding)
+				seen[fp] = true
+			}
 		}
 	}
 	sortFindings(report.Drift)

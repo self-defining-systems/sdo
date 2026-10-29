@@ -19,6 +19,13 @@ to `prior_stages[].mitigations[].apply_receipt` in the full facts file when more
 `findings` in the brief is the residual work. Do not reapply settled work or probe known report shapes.
 A fully repaired incident may finish deterministically without starting a responder.
 
+Recovery is controller-owned. `verify` and closure consume the same fresh
+post-repair health observations and stability proof. Completed program receipts
+prove their own scope; remaining unhealthy behavior goes to the responder with
+those receipts. A repaired workload's old children require live disappearance or confirmed
+lifecycle equivalence, not another repair or a claim that they are benign. Final narration does not
+hold outcome publication after recovery and worker quiescence.
+
 For staged multi-fault work, clear blockers that prevent other repairs (admission, quota, scheduling,
 security policy) first, then re-run or re-trigger stalled saved repairs instead of re-deriving them.
 Start independent repairs together; combine repairs editing one object into one edit. Re-check with

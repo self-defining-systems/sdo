@@ -106,7 +106,7 @@ message DeleteObject {
 }
 
 message PlanObjectEffect {
-  string operation = 1 [(buf.validate.field).string = {in: ["create", "delete"]}];
+  string operation = 1 [(buf.validate.field).string = {in: ["create", "delete", "patch"]}];
   ObjectRef ref = 2 [(buf.validate.field).required = true];
   string uid = 3;
   string state = 4 [(buf.validate.field).string = {in: ["not_applied", "applied", "unknown"]}];

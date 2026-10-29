@@ -466,7 +466,10 @@ func continuationFeedback(attempt int, verification ToolResponse, repairs ...con
 // accepted source. Old clear samples await freshness without another Job;
 // named incomplete observations allow one bounded continuation.
 func (c *Controller) continuationVerificationLocked(healthVerified bool, source closureSourceReport) ToolResponse {
-	result := ToolResponse{Command: "verify", Healthy: healthVerified && len(source.Rollouts) == 0, Findings: append([]sdk.Finding(nil), source.Rollouts...), Drift: append([]sdk.Finding(nil), source.Drift...)}
+	result := ToolResponse{Command: "verify", Healthy: healthVerified && len(source.Rollouts) == 0 && len(source.Effects) == 0, Findings: append([]sdk.Finding(nil), source.Rollouts...), Drift: append([]sdk.Finding(nil), source.Drift...)}
+	for _, effect := range source.Effects {
+		result.VerificationBlockers = append(result.VerificationBlockers, VerificationBlocker{DetectorID: "controller.recovery-effect", Reason: "awaiting disappearance of repaired workload child " + effect.PrimaryResource.Kind + "/" + effect.PrimaryResource.Name})
+	}
 	ids := append([]string(nil), c.healthDetectorIDs...)
 	if len(ids) == 0 && c.currentIncidentRequest != nil {
 		seen := map[string]bool{}
@@ -490,7 +493,7 @@ func (c *Controller) continuationVerificationLocked(healthVerified bool, source 
 				break
 			}
 		}
-		if latest == nil || latest.Status == DetectorEvaluationPending || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.responderCompletedAt)) {
+		if latest == nil || latest.Status == DetectorEvaluationPending || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.recoveryObservationEpochLocked())) {
 			reason := "awaiting detector evaluation"
 			if latest != nil {
 				reason = latest.Reason
@@ -577,6 +580,12 @@ func (c *Controller) responderResultVerification(ctx context.Context, incidentID
 	}
 	_, health := c.finalVerificationStates()
 	response := c.continuationVerificationLocked(health, source)
+	// A direct result check may discover contradictions, but only the running
+	// controller publishes the continuous recovery proof consumed by tools.
+	response.Healthy = response.Healthy && c.cachedVerification != nil && c.cachedIncidentID == incidentID && c.cachedVerification.Healthy
+	if !response.Healthy && len(response.Findings) == 0 && response.Error == "" {
+		response.Summary = "awaiting controller recovery stability proof"
+	}
 	return response
 }
 

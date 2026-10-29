@@ -136,10 +136,11 @@ Mutating commands always store complete per-action results, evidence, program ru
 
 usage: sdo verify [-h] [--wait SECONDS]
 
-Reads the controller's cached health verdict immediately; drift[] lists
-objects that still differ from accepted source and never decides healthy.
-After a healthy return, SDO may resume once for source differences when
-progress remains; terminal inventory and no-progress stops do not resume.
+Reads the controller's shared recovery proof: fresh health after the last
+repair, observed write effects, and the unchanged 15-second stability window.
+drift[] lists objects that still differ from accepted source and never decides
+healthy. After a healthy return, SDO may resume once for source differences
+when progress remains; terminal inventory and no-progress stops do not resume.
 restore them or explain the intended difference. Pending observation windows,
 including unproven synthetic scenarios, are not healthy. verification_blockers
 names incomplete detectors and reasons. SDO resumes once for these blockers,
@@ -149,8 +150,9 @@ name owned ReplicaSet/Pod blockers and old-template Pods, including after
 recorded actions; inspect their evidence before repeating workload writes.
 Wait on SDO's verification instead of sleeping. After closure,
 incident_verified is an informational warning on every response; reads and
-reports remain available, while mutations are rejected. After verified
-closure, report grace and outcome/reflection work continue during maintenance
+reports remain available, while mutations are rejected. Verified recovery
+fences writes and publishes the outcome without waiting for final narration;
+worker quiescence and outcome/reflection work continue during maintenance
 pauses.
 
 options:

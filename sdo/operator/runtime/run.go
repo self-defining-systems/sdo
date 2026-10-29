@@ -214,7 +214,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	leaseDuration := flags.Duration("lease-duration", 60*time.Second, "leader-election Lease duration")
 	identity := flags.String("identity", defaultIdentity(), "unique leader-election identity")
 	closureStability := flags.Duration("closure-stability-window", 15*time.Second, "stable independent verification required to close a running incident")
-	reportGrace := flags.Duration("responder-report-grace", 30*time.Second, "time for a verified responder to finish its report")
+	reportGrace := flags.Duration("responder-report-grace", 30*time.Second, "deprecated compatibility setting; verified recovery does not wait for final narration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
 	restartAfterClosure := flags.Bool(
 		"restart-after-closure",
