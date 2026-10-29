@@ -315,3 +315,45 @@ func TestCompiledProgramObservationFailureRemainsRetryable(t *testing.T) {
 		t.Fatalf("transient compiled observation became terminal: calls=%d reads=%d report=%v", calls.Load(), view.reads.Load(), report)
 	}
 }
+
+// Authored code owns a defensive copy; mutating it cannot move a failure to
+// another input assignment or regain a retry for the original assignment.
+func TestTerminalPlanFailureUsesInvocationBindings(t *testing.T) {
+	loop, _ := pipelineTestLoopWithServices(t, true, "peer")
+	var calls atomic.Int32
+	p := mutatingFailureProgram{calls: &calls}
+	registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.Programs = registry
+	loop.matchedPlans = nil
+	binding := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
+	for i := 0; i < 2; i++ {
+		if response := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: binding}); response.Error == "" {
+			t.Fatal("empty invocation unexpectedly planned")
+		}
+	}
+	if calls.Load() != 1 || binding.Objects["service"].Name != "api" {
+		t.Fatalf("authored mutation changed failure ownership: calls=%d binding=%+v", calls.Load(), binding)
+	}
+	binding.Objects["service"] = sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "peer"}
+	response := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: binding})
+	if response.Error != "" || response.PlanID == "" || calls.Load() != 2 {
+		t.Fatalf("authored mutation poisoned peer input: calls=%d response=%+v", calls.Load(), response)
+	}
+}
+
+type mutatingFailureProgram struct {
+	pipelinePortProgram
+	calls *atomic.Int32
+}
+
+func (p mutatingFailureProgram) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
+	p.calls.Add(1)
+	if b.Objects["service"].Name == "api" {
+		b.Objects["service"] = sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "peer"}
+		return program.Plan{}, nil
+	}
+	return p.pipelinePortProgram.Mitigate(ctx, v, b)
+}

@@ -71,10 +71,10 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 		return program.Plan{}, prior
 	}
 	deadline := l.deadline()
-	bindings = cloneProgramBindings(bindings)
+	executionBindings := cloneProgramBindings(bindings)
 	origin := l.scriptProvenance(id)
 	if stepErr := withoutResponderLocks(l, "mitigator "+id, false, func() {
-		plan, err = BuildMitigationPlan(ctx, p, view, bindings, deadline, origin)
+		plan, err = BuildMitigationPlan(ctx, p, view, executionBindings, deadline, origin)
 	}); stepErr != nil {
 		err = stepErr
 	}
