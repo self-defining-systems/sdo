@@ -82,3 +82,85 @@ def test_standard_incident_report_uses_reconciled_usd_and_completeness(tmp_path:
     assert report.stages[0].cost_complete
     assert report.stages[0].responder_summary.usd == 0.00082
     assert report.stages[0].reflection_summary.usd == 0.00082
+
+
+def test_current_row_sums_all_episodes_once_and_excludes_prior_row_exports(tmp_path: Path) -> None:
+    import shutil
+
+    evidence(tmp_path, "current")
+    evidence(tmp_path, "followup")
+    evidence(tmp_path, "previous", offset=-86400)
+    shutil.copytree(tmp_path / "export", tmp_path / "duplicate")
+    row = {
+        "provider": "claude",
+        "model": MODEL,
+        "incident_id": "current",
+        "results": str(tmp_path),
+        "injection_started_at": "2026-10-28T00:00:00Z",
+    }
+    reconcile_claude_row(row)
+    assert row["cost_complete"]
+    assert len(row["cost_episodes"]) == 2
+    assert row["responder_usage"]["usd"] == 0.00164
+    assert row["reflection_usage"]["usd"] == 0.00164
+
+
+def test_legacy_complete_guard_rejects_cumulative_dollars(tmp_path: Path) -> None:
+    fragment = hashlib.sha256(b"current").hexdigest()[:32]
+    directory = tmp_path / "export" / "sdo_runtime" / "sessions" / fragment
+    usage = {
+        "input_tokens": 330,
+        "uncached_input_tokens": 100,
+        "cache_read_input_tokens": 200,
+        "cache_write_input_tokens": 30,
+        "cache_write_1h_input_tokens": 10,
+        "output_tokens": 10,
+        "total_cost_usd": 0.00082,
+    }
+    records = [
+        {"event": "start", "role": "reflection", "recorded_at_epoch": 1},
+        {"event": "complete", "role": "reflection", "recorded_at_epoch": 2, "usage": usage},
+    ]
+    path = directory / "trial2-turns.jsonl"
+    write(path, records)
+    row = {"provider": "claude", "model": MODEL, "incident_id": "current", "results": str(tmp_path)}
+    reconcile_claude_row(row)
+    assert row["reflection_usage"]["usd_complete"]
+    assert row["reflection_usage"]["usd"] == 0.00082
+    usage["total_cost_usd"] = 0.00164
+    write(path, records)
+    reconcile_claude_row(row)
+    assert not row["reflection_usage"]["usd_complete"]
+    assert row["reflection_usage"]["usd"] is None
+
+
+def test_shared_session_handoff_never_bills_a_request_in_both_phases(tmp_path: Path) -> None:
+    fragment = hashlib.sha256(b"current").hexdigest()[:32]
+    directory = tmp_path / "export" / "sdo_runtime" / "sessions" / fragment
+    records = [
+        assistant("a"),
+        state(1, 0.00082),
+        assistant("b", timestamp="2026-10-28T00:00:03Z"),
+        state(2, 0.00164),
+        assistant("c", timestamp="2026-10-28T00:00:05Z"),
+        state(3, 0.00246),
+    ]
+    write(directory / "claude" / "projects" / "synthetic" / "shared.jsonl", records)
+    write(
+        directory / "trial2-turns.jsonl",
+        [
+            {"event": event, "role": role, "recorded_at_epoch": 1793145600 + timestamp, "session_id": "shared"}
+            for event, role, timestamp in [
+                ("start", "responder", 0),
+                ("start", "reflection", 2),
+                ("complete", "responder", 4),
+                ("complete", "reflection", 6),
+            ]
+        ],
+    )
+    row = {"provider": "claude", "model": MODEL, "incident_id": "current", "results": str(tmp_path)}
+    reconcile_claude_row(row)
+    assert row["cost_complete"]
+    assert row["responder_usage"]["usd"] == 0.00164
+    assert abs(row["reflection_usage"]["usd"] - 0.00082) < 1e-10
+    assert row["reflection_usage"]["tokens"]["model_requests"] == 1

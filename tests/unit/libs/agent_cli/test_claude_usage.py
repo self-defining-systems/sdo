@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from agentshim import default_pricing, price_for
 
 from libs.agent_cli.claude_usage import ClaudeLedger
@@ -227,3 +228,108 @@ def test_request_deduplication_and_resume_partition_sweep() -> None:
             assert bill.tokens.input_tokens == 330 * (requests - split)
             assert abs(bill.usd - 0.00082 * (requests - split)) < 1e-10
             assert bill.usd_complete
+
+
+def test_resuming_after_a_cancelled_unbilled_response_does_not_charge_it_twice() -> None:
+    before = ledger(assistant("a"), state(1, 0.00082), assistant("b"))
+    first = before.since(ClaudeLedger(), default_pricing())
+    assert first.usd == 0.00164
+    after = ledger(assistant("a"), state(1, 0.00082), assistant("b"), assistant("c"), state(3, 0.00246))
+    resumed = after.since(before, default_pricing())
+    assert resumed.requests == 1
+    assert resumed.tokens.input_tokens == 330
+    assert abs(resumed.usd - 0.00082) < 1e-10
+
+
+def test_lag_catchup_cannot_substitute_an_earlier_requests_cache_ttl() -> None:
+    # The four counter classes coincide even though the caught-up request had a
+    # different TTL from the newly cancelled final response.
+    a, b, c, d = [assistant(name) for name in "abcd"]
+    b["message"]["usage"]["cache_creation"]["ephemeral_1h_input_tokens"] = 30
+    d["message"]["usage"]["cache_creation"]["ephemeral_1h_input_tokens"] = 0
+    before = ledger(a, state(1, 0.00082), b)
+    after = ledger(a, state(1, 0.00082), b, c, state(3, 0.00252), d)
+    resumed = after.since(before, default_pricing())
+    assert abs(resumed.usd - (0.00082 + 0.00079)) < 1e-10
+
+
+def test_resume_when_no_prior_billing_snapshot_was_written() -> None:
+    before = ledger(assistant("a"))
+    after = ledger(assistant("a"), assistant("b"), state(2, 0.00164))
+    resumed = after.since(before, default_pricing())
+    assert resumed.tokens.input_tokens == 330
+    assert abs(resumed.usd - 0.00082) < 1e-10
+
+
+def test_request_identity_partitions_survive_lag_and_ttl_sweep() -> None:
+    for count in range(2, 7):
+        messages = [assistant(str(i)) for i in range(count)]
+        prices = []
+        for i, message in enumerate(messages):
+            one_hour = i * 7 % 31
+            message["message"]["usage"]["cache_creation"] = {
+                "ephemeral_1h_input_tokens": one_hour,
+                "ephemeral_5m_input_tokens": 30 - one_hour,
+            }
+            prices.append(0.00079 + one_hour * 0.000003)
+        for split in range(1, count):
+            for before_billed in (0, split - 1):
+                for after_billed in (count - 1, count):
+                    old_records = list(messages[:before_billed])
+                    if before_billed:
+                        old_records.append(state(before_billed, sum(prices[:before_billed])))
+                    old_records.extend(messages[before_billed:split])
+                    before = ledger(*old_records)
+                    new_records = list(messages[:after_billed])
+                    new_records.append(state(after_billed, sum(prices[:after_billed])))
+                    new_records.extend(messages[after_billed:])
+                    after = ledger(*new_records)
+                    # Resumed files retain the earlier persisted billing state.
+                    after.states.extend(before.states)
+                    bill = after.since(before, default_pricing())
+                    assert bill.usd_complete
+                    assert bill.requests == count - split
+                    assert abs(bill.usd - sum(prices[split:])) < 1e-10
+
+
+@pytest.mark.parametrize("resumed", [True, False])
+def test_result_only_usd_requires_a_proven_session_baseline(tmp_path, monkeypatch, resumed: bool) -> None:
+    import json
+
+    from agentshim import TokenUsage
+    from agentshim.testing import FakeRun, scripted_turn
+
+    from libs.agent_cli.structured import run_structured_turn, turn_usage
+    from tests.structured_turns import ScriptedAgent
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "empty-home"))
+    monkeypatch.setenv("SDO_TURN_USAGE_LOG", str(tmp_path / "turns.jsonl"))
+    run = scripted_turn(
+        "claude",
+        session_id="s",
+        usage=TokenUsage(input_tokens=100, output_tokens=10, turns=1),
+        structured_output={"answer": "ok"},
+    )
+    lines = list(run.stdout)
+    terminal = json.loads(lines[-1])
+    terminal["total_cost_usd"] = 5.0
+    lines[-1] = json.dumps(terminal)
+    turn = run_structured_turn(
+        "claude",
+        "prompt",
+        output_schema={"type": "object"},
+        cwd=tmp_path,
+        model=MODEL,
+        access="danger-full-access",
+        resume_session_id="s" if resumed else None,
+        executor=ScriptedAgent(lambda _: FakeRun(stdout=lines)).executor,
+    )
+    record = json.loads((tmp_path / "turns.jsonl").read_text())
+    if resumed:
+        assert "total_cost_usd" not in turn_usage(turn)
+        assert not turn.usd_complete
+        assert record["cost_usd"] is None
+    else:
+        assert turn_usage(turn)["total_cost_usd"] == 5.0
+        assert turn.usd_complete
+        assert record["cost_usd"] == 5.0

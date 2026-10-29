@@ -73,11 +73,10 @@ def _guard_fallback(
     ):
         return None
     entry = price_for("claude", model, pricing)
-    if entry is None:
-        return None
     counts = TokenUsage()
     dollars = 0.0
     requests = 0
+    ttl_complete = True
     for event in done:
         usage = event.get("usage") or {}
         required = (
@@ -97,8 +96,15 @@ def _guard_fallback(
             cache_write_input_tokens=int(usage["cache_write_input_tokens"]),
             cache_write_1h_input_tokens=int(usage["cache_write_1h_input_tokens"]),
         )
-        if abs(cost_usd(tokens, entry) - usage["total_cost_usd"]) > 1e-7:
-            return None  # A session cumulative dollar amount is not a turn delta.
+        captured_fresh = (
+            event.get("schema") == "sdo.claude-usage/v1"
+            and event.get("usd_complete") is True
+            and event.get("resumed") is False
+        )
+        price_matches = entry is not None and abs(cost_usd(tokens, entry) - usage["total_cost_usd"]) <= 1e-7
+        if not captured_fresh and not price_matches:
+            return None  # A resumed session cumulative dollar amount is not a turn delta.
+        ttl_complete = ttl_complete and event.get("cache_write_ttl_complete", True)
         counts += tokens
         dollars += usage["total_cost_usd"]
         requests += int(usage.get("model_requests", usage.get("llm_calls", 0)))
@@ -107,7 +113,8 @@ def _guard_fallback(
         requests,
         dollars,
         True,
-        source="complete CLI result with exact token-price identity",
+        ttl_complete=ttl_complete,
+        source="captured fresh provider billing or complete CLI result with exact token-price identity",
         evidence=({"billing_start_usd": 0.0, "billing_end_usd": dollars, "provider_transcript_present": False},),
     )
     return _summary(bill)
@@ -132,6 +139,18 @@ def _episode(directories: list[Path], model: str, pricing: PricingTable) -> dict
             if sids and path.stem not in sids:
                 continue
             ledgers.setdefault(path.stem, ClaudeLedger()).merge_file(path)
+    role_sessions = {
+        role: {event["session_id"] for event in events if event.get("role") == role and event.get("session_id")}
+        for role in _ROLES
+    }
+    responder_end = max(
+        (
+            event["recorded_at_epoch"]
+            for event in events
+            if event.get("role") == "responder" and event["event"] in {"complete", "error"}
+        ),
+        default=None,
+    )
     result = {}
     for role in _ROLES:
         intervals = []
@@ -160,14 +179,30 @@ def _episode(directories: list[Path], model: str, pricing: PricingTable) -> dict
         parts = []
         if intervals and started is None:
             first, last = min(a for a, _ in intervals), max(b for _, b in intervals)
-            for ledger in ledgers.values():
+            for sid, ledger in ledgers.items():
+                shared = (
+                    sid in role_sessions["responder"]
+                    and sid in role_sessions["reflection"]
+                    or len(ledgers) == 1
+                    and not all(role_sessions.values())
+                )
+                handoff = responder_end if role == "reflection" and shared and responder_end is not None else None
                 phase = [
                     request
                     for request in ledger.requests.values()
                     if request.timestamp is not None and any(a <= request.timestamp <= b for a, b in intervals)
                 ]
                 if phase:
-                    parts.append(_summary(ledger.through(last).since(ledger.before(first), pricing)))
+                    before = (
+                        ledger.through(handoff) if handoff is not None and handoff >= first else ledger.before(first)
+                    )
+                    summary = _summary(ledger.through(last).since(before, pricing))
+                    if handoff is not None and handoff > first:
+                        summary["guard_overlap_seconds"] = handoff - first
+                        summary["phase_boundary_source"] = (
+                            "shared session: responder termination precedes reflection ownership"
+                        )
+                    parts.append(summary)
         result[role + "_usage"] = (
             _combine(parts) if parts else (_guard_fallback(events, role, model, pricing) or _unknown())
         )

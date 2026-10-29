@@ -194,6 +194,7 @@ class StructuredTurn:
     rate_limit_wait_seconds: float = 0.0
     concurrency_wait_seconds: float = 0.0
     usd_complete: bool | None = None
+    cache_write_ttl_complete: bool | None = None
 
 
 def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
@@ -517,7 +518,13 @@ def _run_structured_turn_once(
             observed = token_mapping(tokens, int(cast("int", claude_result.get("num_turns")) or 0))
             dollars = claude_result.get("total_cost_usd")
             entry = price_for("claude", model, default_pricing())
-            if isinstance(dollars, (int, float)) and entry and abs(cost_usd(tokens, entry) - dollars) < 1e-7:
+            fresh_billing = resume_session_id is None
+            price_matches = (
+                isinstance(dollars, (int, float))
+                and entry is not None
+                and abs(cost_usd(tokens, entry) - dollars) < 1e-7
+            )
+            if isinstance(dollars, (int, float)) and dollars >= 0 and (fresh_billing or price_matches):
                 observed["total_cost_usd"] = dollars
             return observed
         latest = _codex_rollout_totals(codex_home, recorder.session_id or resume_session_id)
@@ -654,15 +661,19 @@ def _run_structured_turn_once(
                 )
                 path.parent.mkdir(parents=True, exist_ok=True)
                 record = {
+                    "schema": "sdo.claude-usage/v1",
                     "event": event,
                     "role": session_ownership_role,
                     "provider": provider,
                     "model": model,
+                    "resumed": resume_session_id is not None,
                     "session_id": recorder.session_id or resume_session_id or "",
                     "recorded_at_epoch": turn_started if event == "start" else time.time(),
                     "cwd": str(workspace),
                     "usage": bill.usage() if bill else {},
                     "usd_complete": bill.usd_complete if bill else False,
+                    "cache_write_ttl_complete": bill.ttl_complete if bill else None,
+                    "reconciliation_evidence": list(bill.evidence) if bill else [],
                 }
                 with path.open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps(record, sort_keys=True) + "\n")
@@ -691,6 +702,25 @@ def _run_structured_turn_once(
                         raise StructuredTurnError(f"usage checkpoint failed: {usage_errors[0]}") from usage_errors[0]
                 if provider == "claude":
                     claude_bill = claude_snapshot()
+                    if not claude_bill.requests and claude_result:
+                        observed = spent_usage()
+                        dollars = observed.get("total_cost_usd")
+                        raw = claude_result.get("usage")
+                        if dollars is not None and isinstance(raw, dict):
+                            requests = int(observed["model_requests"])
+                            tokens = replace(api_tokens(cast("dict[str, Any]", raw)), turns=requests)
+                            claude_bill = ClaudeBill(
+                                tokens,
+                                requests,
+                                float(dollars),
+                                True,
+                                ttl_complete=not tokens.cache_write_input_tokens or "cache_creation" in raw,
+                                source=(
+                                    "complete CLI result; fresh session provider billing"
+                                    if resume_session_id is None
+                                    else "complete CLI result with exact token-price identity"
+                                ),
+                            )
                     if claude_bill.requests and on_usage is not None:
                         on_usage(claude_bill.usage(), claude_bill.usd_complete)
                     journal("complete" if turn_finished else "error", claude_bill)
@@ -746,9 +776,16 @@ def _run_structured_turn_once(
     model_requests: int | None = None
     model_requests_source: str | None = None
     usage = result.usage
+    if provider == "claude" and claude_bill is not None:
+        usage = replace(usage, total_cost_usd=claude_bill.usd)
     if provider == "claude" and claude_bill is not None and claude_bill.requests:
         usage = replace(result.usage, tokens=claude_bill.tokens, total_cost_usd=claude_bill.usd)
-        model_requests, model_requests_source = claude_bill.requests, "claude-unique-message-id"
+        model_requests = claude_bill.requests
+        model_requests_source = (
+            CLAUDE_TURNS_REQUEST_SOURCE
+            if claude_bill.source.startswith("complete CLI result")
+            else "claude-unique-message-id"
+        )
     elif provider == "claude" and result.usage.tokens.turns > 0:
         model_requests, model_requests_source = result.usage.tokens.turns, CLAUDE_TURNS_REQUEST_SOURCE
     elif rollout_after is not None:
@@ -772,6 +809,7 @@ def _run_structured_turn_once(
         resumed=resume_session_id is not None,
         skill_directory=skill_directory,
         usd_complete=claude_bill.usd_complete if claude_bill is not None else None,
+        cache_write_ttl_complete=claude_bill.ttl_complete if claude_bill is not None else None,
     )
     # A model can spend tokens and then fail the structured-response contract.
     # Persist its observed accounting before rejecting that response.
@@ -886,6 +924,7 @@ def _append_turn_usage(
         "shell_command_lines": [_bounded_command(command) for command in turn.shell_commands],
         "usage": turn_usage(turn),
         "usd_complete": turn.usd_complete,
+        "cache_write_ttl_complete": turn.cache_write_ttl_complete,
     }
     if turn.usage.total_cost_usd is not None:
         record["cost_usd"] = turn.usage.total_cost_usd

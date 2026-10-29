@@ -185,6 +185,18 @@ class ClaudeLedger:
     def since(self, before: ClaudeLedger, pricing: PricingTable) -> ClaudeBill:
         selected = [value for key, value in self.requests.items() if key not in before.requests]
         tokens = sum((value.tokens for value in selected), TokenUsage())
+
+        def request_price() -> float | None:
+            total = 0.0
+            for value in selected:
+                entry = price_for("claude", value.model, pricing)
+                if entry is None:
+                    if any(signature(value.tokens)):
+                        return None
+                else:
+                    total += cost_usd(value.tokens, entry)
+            return total if selected else None
+
         valid = [
             state
             for state in self.states
@@ -223,7 +235,23 @@ class ClaudeLedger:
             if finish is not None:
                 start, end = begin.usd if begin else 0.0, finish.usd
             actual = signature(tokens)
-            if finish is not None and all(value >= 0 for value in counters) and actual == counters:
+            before_counts = signature(sum((value.tokens for value in before.requests.values()), TokenUsage()))
+            after_counts = signature(sum((value.tokens for value in self.requests.values()), TokenUsage()))
+            begin_counts = begin.signature() if begin else (0, 0, 0, 0)
+            baseline_lag = before_counts != begin_counts and all(
+                a >= b for a, b in zip(before_counts, begin_counts, strict=True)
+            )
+            if baseline_lag and (
+                finish is None or all(a >= b for a, b in zip(after_counts, finish.signature(), strict=True))
+            ):
+                # Catch-up counters may substitute an earlier cancelled response
+                # for this turn's final response, even with identical core counts
+                # and different cache TTLs. Price only the new request identities.
+                dollars = request_price()
+                source = "unique new requests priced; earlier cancelled counter catch-up excluded"
+            elif baseline_lag:
+                source = "conflicting baseline lag and missing API responses"
+            elif finish is not None and all(value >= 0 for value in counters) and actual == counters:
                 start, end = begin.usd if begin else 0.0, finish.usd
                 dollars = end - start
                 source = "provider phase delta matches unique API requests"
@@ -241,16 +269,7 @@ class ClaudeLedger:
                 )
                 source = "provider billing includes requests absent from assistant JSONL"
             elif finish is None or all(a >= b for a, b in zip(actual, counters, strict=True)):
-                prices = [price_for("claude", value.model, pricing) for value in selected]
-                if selected and all(
-                    entry is not None or not any(signature(value.tokens))
-                    for value, entry in zip(selected, prices, strict=True)
-                ):
-                    dollars = sum(
-                        cost_usd(value.tokens, entry)
-                        for value, entry in zip(selected, prices, strict=True)
-                        if entry is not None
-                    )
+                dollars = request_price()
                 source = "recorded API requests priced; CLI counter lag retained"
             else:
                 source = "conflicting request/counter fields"
