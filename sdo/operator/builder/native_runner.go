@@ -111,7 +111,7 @@ func runOnce(ctx context.Context, config RunConfig) error {
 		return err
 	}
 	defer workspace.Close()
-	binary, err := workspace.ValidateAndBuild(ctx)
+	binary, err := workspace.BuildForLaunch(ctx)
 	if err != nil {
 		return err
 	}

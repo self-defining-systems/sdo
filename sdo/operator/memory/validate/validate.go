@@ -69,6 +69,10 @@ const (
 
 // Request describes one validation run.
 type Request struct {
+	// AcceptanceOnly omits informational test execution after all required gates.
+	// Isolated publication validators use it; local self-checks may collect notes.
+	AcceptanceOnly bool
+
 	// Replay is trusted run configuration: empty/on enables corpus and replay.
 	Replay string
 	// CodePath is trusted caller configuration, never read from candidate artifacts.

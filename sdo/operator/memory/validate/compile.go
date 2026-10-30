@@ -46,7 +46,11 @@ func (s *run) compile(ctx context.Context) error {
 		return nil
 	}
 	defer workspace.Close()
-	err = workspace.Check(ctx)
+	if s.req.AcceptanceOnly {
+		err = workspace.CheckAcceptance(ctx)
+	} else {
+		err = workspace.Check(ctx)
+	}
 	if s.req.StageTimings != nil {
 		*s.req.StageTimings = append(*s.req.StageTimings, workspace.StageTimings...)
 	}

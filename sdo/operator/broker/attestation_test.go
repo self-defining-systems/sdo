@@ -83,6 +83,12 @@ func TestReflectionAttestationBindsEveryInput(t *testing.T) {
 			if report, err := b.CheckReflection(ctx, "lane-a", d); err != nil || len(report.GetDiagnostics()) != 0 {
 				t.Fatalf("check: %v %v", report, err)
 			}
+			if report, err := b.CheckReflection(ctx, "lane-a", d); err != nil || len(report.GetDiagnostics()) != 0 {
+				t.Fatalf("repeated exact check: %v %v", report, err)
+			}
+			if calls != 1 {
+				t.Fatalf("exact inputs repeated validation: calls=%d", calls)
+			}
 			test.change(t, b, p, capture)
 			if _, err := b.PublishReflection(ctx, "lane-a", d); err != nil {
 				t.Fatal(err)
@@ -258,5 +264,56 @@ func TestReflectionAttestationPreservesAdvisoryResults(t *testing.T) {
 	}
 	if calls != 1 || len(receipt.CoverageGaps) != 1 {
 		t.Fatalf("calls=%d gaps=%v", calls, receipt.CoverageGaps)
+	}
+}
+
+// A candidate can recur after an intervening self-check. Exact identities,
+// rather than the latest result for an incident, determine reuse.
+func TestReflectionAttestationReusesEarlierExactCandidate(t *testing.T) {
+	_, b, _ := sharedReflectionFixture(t)
+	calls := 0
+	b.validator = func(context.Context, string, []string) error { calls++; return nil }
+	b.ValidationToolchain = "synthetic-immutable-toolchain"
+	p := reflectionProposal(t, b, "lane-a")
+	d := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"alpha"}}
+	for _, text := range []string{"First candidate", "Second candidate", "First candidate"} {
+		writeLearning(t, p, "alpha", text)
+		report, err := b.CheckReflection(context.Background(), "lane-a", d)
+		if err != nil || len(report.GetDiagnostics()) != 0 {
+			t.Fatalf("check: %v %v", report, err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("same exact candidate was validated again: calls=%d", calls)
+	}
+	if _, err := b.PublishReflection(context.Background(), "lane-a", d); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("publication repeated validation: calls=%d", calls)
+	}
+}
+
+func TestReflectionReleaseDiscardsEveryCandidateAttestation(t *testing.T) {
+	_, b, _ := sharedReflectionFixture(t)
+	b.ValidationToolchain = "synthetic-immutable-toolchain"
+	b.validator = func(context.Context, string, []string) error { return nil }
+	p := reflectionProposal(t, b, "lane-a")
+	d := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"alpha"}}
+	for _, text := range []string{"First candidate", "Second candidate"} {
+		writeLearning(t, p, "alpha", text)
+		report, err := b.CheckReflection(context.Background(), "lane-a", d)
+		if err != nil || len(report.GetDiagnostics()) != 0 {
+			t.Fatalf("check: %v %v", report, err)
+		}
+	}
+	if len(b.attestations) != 2 {
+		t.Fatalf("missing candidate attestations: %d", len(b.attestations))
+	}
+	if err := b.ReleaseProposal("lane-a", ReflectionPhase); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.attestations) != 0 {
+		t.Fatalf("released proposal retained attestations: %d", len(b.attestations))
 	}
 }

@@ -83,10 +83,10 @@ type SourceEvidence struct {
 }
 
 type Broker struct {
- // ValidationToolchain must identify immutable validator/compiler images and policy code.
- // Empty disables reuse. Attestations remain private to this broker instance.
- ValidationToolchain string
- attestations map[string]validationAttestation
+	// ValidationToolchain must identify immutable validator/compiler images and policy code.
+	// Empty disables reuse. Attestations remain private to this broker instance.
+	ValidationToolchain string
+	attestations        map[string]validationAttestation
 
 	codePath string
 	replay   string
@@ -539,7 +539,13 @@ func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
 	}
 	return b.locked(func() error {
 		return b.lockedAt(b.proposalRoot(incidentID, phase)+".lock", func() error {
-   if phase == ReflectionPhase { delete(b.attestations,incidentID) }
+			if phase == ReflectionPhase {
+				for identity, attestation := range b.attestations {
+					if attestation.incidentID == incidentID {
+						delete(b.attestations, identity)
+					}
+				}
+			}
 			return os.RemoveAll(b.proposalRoot(incidentID, phase))
 		})
 	})

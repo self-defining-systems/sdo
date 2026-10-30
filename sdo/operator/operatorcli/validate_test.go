@@ -39,7 +39,7 @@ func TestParseValidateLaunchRequiresBoundSchema(t *testing.T) {
 	}
 }
 
-func TestIsolatedValidatorChecksProgramCorpus(t *testing.T) {
+func TestIsolatedValidatorAcceptsWithoutRepeatingInformationalCorpus(t *testing.T) {
 	app := t.TempDir()
 	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app")
 	copy := exec.Command("cp", "-a", fixture+"/.", app)
@@ -51,8 +51,8 @@ func TestIsolatedValidatorChecksProgramCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Writing the faulty port is accepted for partial learning, but the isolated
-	// runner must report its failed repair replay as advisory information.
+	// Writing the faulty port is accepted for partial learning. The local
+	// self-check reports its replay; the publication Job only repeats required gates.
 	data = []byte(strings.Replace(string(data), "Value: replacementValue", "Value: program.FromObserved(ref, \"spec.ports[0].targetPort\")", 1))
 	data = []byte(strings.Replace(string(data), "if !matched && replacement > 0 {", "if !matched && replacement > 0 { _ = replacementValue", 1))
 	if err := os.WriteFile(path, data, 0644); err != nil {
@@ -66,12 +66,20 @@ func TestIsolatedValidatorChecksProgramCorpus(t *testing.T) {
 	if err != nil || len(diagnostics) != 0 {
 		t.Fatalf("replay became a blocking diagnostic: %v %v", diagnostics, err)
 	}
+	if strings.Contains(report.String(), "test (informational)") {
+		t.Fatalf("publication repeated informational tests: %s", report.String())
+	}
+	var localGaps []validate.Diagnostic
+	ds, err := validate.CompileCandidate(context.Background(), validate.Request{Root: app, OperatorRoot: "..", CoverageGaps: &localGaps})
+	if err != nil || len(ds) != 0 {
+		t.Fatalf("local acceptance differs: %v %v", ds, err)
+	}
 	observed := false
-	for _, gap := range validate.ParseReportGaps(report.String()) {
-		observed = observed || (gap.Rule == validate.RuleReplayObservation && (strings.Contains(gap.Message, "replay status: failed") && strings.Contains(gap.Message, "post diagnosis: Match")))
+	for _, gap := range localGaps {
+		observed = observed || (gap.Rule == validate.RuleReplayObservation && strings.Contains(gap.Message, "replay status: failed") && strings.Contains(gap.Message, "post diagnosis: Match"))
 	}
 	if !observed {
-		t.Fatalf("isolated validator lost the failed repair observation: %s", report.String())
+		t.Fatalf("local self-check lost replay observation: %v", localGaps)
 	}
 
 }

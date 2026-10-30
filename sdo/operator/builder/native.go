@@ -87,6 +87,21 @@ func (workspace *Workspace) runGo(ctx context.Context, args ...string) error {
 // ValidateAndBuild compiles detector tests and the controller binary inside
 // the isolated workspace. The returned path is valid until Close is called.
 func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error) {
+	binary, err := workspace.BuildForLaunch(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !workspace.compileOnly {
+		if err := workspace.collectAdvisories(ctx); err != nil {
+			return "", err
+		}
+	}
+	return binary, nil
+}
+
+// BuildForLaunch retains every launch gate and emits the controller/prober
+// artifacts. It omits informational tests already available from self-checks.
+func (workspace *Workspace) BuildForLaunch(ctx context.Context) (string, error) {
 	return workspace.validate(ctx, false)
 }
 
@@ -96,6 +111,17 @@ func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error
 // explicit CGO-disabled prober build still checks its portable launch target.
 // A rejected stage is reported as a *StageError.
 func (workspace *Workspace) Check(ctx context.Context) error {
+	if err := workspace.CheckAcceptance(ctx); err != nil {
+		return err
+	}
+	return workspace.collectAdvisories(ctx)
+}
+
+// CheckAcceptance runs every required acceptance gate without the optional
+// behavioral replay pass. Publication and relaunch must not wait for advisory
+// tests that cannot affect acceptance. Check additionally collects those notes
+// for callers explicitly requesting the informational self-check.
+func (workspace *Workspace) CheckAcceptance(ctx context.Context) error {
 	if workspace != nil && workspace.compileOnly {
 		return errors.New("unvalidated adoption workspace cannot run the acceptance checker")
 	}
@@ -142,28 +168,6 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 			return "", err
 		}
 	}
-	if !workspace.compileOnly {
-		started := time.Now()
-		err := workspace.runGo(ctx, "test", "-count=1", "-timeout=30s", "./...")
-		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: "test (informational)", Duration: time.Since(started)})
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		workspace.advisoryTestErrors = nil
-		if err != nil {
-			message := err.Error()
-			var failed *StageError
-			if errors.As(err, &failed) {
-				message = failed.Output
-			}
-			message = strings.ReplaceAll(message, workspace.Directory, "<workspace>")
-			message = advisoryDuration.ReplaceAllString(message, "")
-			if len(message) > 4096 {
-				message = message[:4096] + " (truncated)"
-			}
-			workspace.advisoryTestErrors = append(workspace.advisoryTestErrors, message)
-		}
-	}
 	if workspace.HasProber {
 		command := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", filepath.Join(workspace.Directory, "sdo-prober"), "./cmd/prober")
 		command.Dir = workspace.Directory
@@ -173,6 +177,30 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 		}
 	}
 	return binary, nil
+}
+
+func (workspace *Workspace) collectAdvisories(ctx context.Context) error {
+	started := time.Now()
+	err := workspace.runGo(ctx, "test", "-count=1", "-timeout=30s", "./...")
+	workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: "test (informational)", Duration: time.Since(started)})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	workspace.advisoryTestErrors = nil
+	if err != nil {
+		message := err.Error()
+		var failed *StageError
+		if errors.As(err, &failed) {
+			message = failed.Output
+		}
+		message = strings.ReplaceAll(message, workspace.Directory, "<workspace>")
+		message = advisoryDuration.ReplaceAllString(message, "")
+		if len(message) > 4096 {
+			message = message[:4096] + " (truncated)"
+		}
+		workspace.advisoryTestErrors = append(workspace.advisoryTestErrors, message)
+	}
+	return nil
 }
 
 func seedGoBuildCache(ctx context.Context) error {
