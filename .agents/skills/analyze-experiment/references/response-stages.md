@@ -24,7 +24,7 @@ Each mitigation identifies the accepted playbook revision, bindings, plan,
 Results distinguish `applied_cleared`, `applied_still_matching` (with `kept_reason`),
 `reverted_ineffective` (writes restored before handoff), `rollout_failed`,
 `rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`
-(`stage_budget` means the 45 s stage budget ran out before the match was applied).
+(historical `stage_budget` meant observation exhaustion; current observation exhaustion never suppresses an admitted write).
 `rollout_pending_at_handoff` whose `rollout_pending` reason says `cannot progress
 without another actor` is a stall handoff, a few seconds after the write: the
 replacement Pod is unschedulable, its ReplicaSet cannot create it (non-webhook
@@ -38,14 +38,11 @@ deadline, so every written object has a readback; `observation_error` on a
 fast object now means a real read failure, not a slow neighbour. A stalled
 pending reservation releases responder writes after a 2 s grace with
 `rollout_stalled` naming the blocker, not after the 90 s bound.
-The stage applies matched bindings sequentially, re-running Diagnose on fresh
-state after the preceding application returns. A pending handoff
+The stage applies matched bindings sequentially with a single rollout sample, re-running Diagnose on fresh
+state after the preceding application returns. It then observes all pending applications under one durable shared recovery deadline (up to 90 seconds, bounded by the response deadline). A pending handoff
 (`admission_blocked`, stalled or bounded rollout) keeps the pass: later matches
-still get their fresh diagnosis and may unblock it. Only a failed application
-(`apply_error`, `rollout_failed`) ends the pass; matches after it have no stage
-entry. Runs before this rule ended the pass at the first pending handoff. A nonmatching or
-unavailable diagnosis gets one deferred turn after the other candidates, within
-the same 45 s budget. A pending stage snapshot is superseded for reflection staleness only by a later verified final application with the same ID, plan, program IDs and start time. Missing, failed, rolled-back or ambiguous final receipts cannot excuse it; unresolved own findings and later hand repairs still require refinement.
+still get their fresh diagnosis and may unblock it. A failed application does not starve independent matches. After writes, uncovered faults, execution failures and verified admission dependencies hand off to another actor. Runs before this rule ended the pass at the first pending handoff. A nonmatching or
+unavailable diagnosis gets one deferred turn after the other candidates, without increasing write authority. A pending stage snapshot is superseded for reflection staleness only by a later verified final application with the same ID, plan, program IDs and start time. Missing, failed, rolled-back or ambiguous final receipts cannot excuse it; unresolved own findings and later hand repairs still require refinement.
 Each applied mitigation has its own `apply_receipt` and
 `application_id`; `plan_action_start` is zero and `plan_action_count` covers its
 plan. Historical merged-stage runs share one application ID and use the action
@@ -56,13 +53,12 @@ observations never replace independent controller closure/classification.
 
 The deterministic stage requires a fresh Match, exactly one mitigation entry
 point, and all parameters bound from covered findings. It has no trust gate and
-never automatically undoes a completed apply. Its own rollout wait is capped at
-30 seconds. Interrupted apply intent survives in the incident tool checkpoint;
+never automatically undoes a completed apply. Its recovery observation uses the shared deadline, never a serial per-candidate rollout budget. Interrupted apply intent survives in the incident tool checkpoint;
 a retry reports uncertainty instead of repeating a potentially landed mutation.
 
 `resolution_path: deterministic` means the incident needed no responder worker;
 usage is zero model work, while recorded plan actions remain repair evidence.
-These incidents still receive reflection using a fresh session and the same
+Fully covered repairs first use the broker shared no-change check without a learning worker, even when a watching responder session exists. Otherwise these incidents receive reflection using a fresh session and the same
 stage reports; a missing session from a failed responder does not enable that
 fallback. Attribute learning only from the accepted reflection and independently
 verified cause evidence. The responder's inline view summarizes stages; complete
@@ -100,3 +96,17 @@ Terminal responder dispatch errors preserve the worker Job failure as their
 cause, including curated conditions and container termination evidence. Warm
 startup preceding injection excludes Pod-create rejection as the cause of that
 worker's later exit; missing termination evidence cannot identify its cause.
+
+Recovery settlement uses `plan_applications[].final_verification_basis=recovery-settled`,
+plus the same application ID, accepted dependency revision and exact bindings in
+`prior_stages[].mitigations[]`. This receipt requires confirmed applied actions,
+scoped health clearing, bound final NoMatch, final field equivalence and no
+superseding corrective write to the causal resources. Health may clear inside
+the write interval; receipt completion is not the effect time. Timeout, pending,
+unconfirmed and truncated observations are neutral, never execution failures.
+Actual partial/execution failures, rollback and exact false matches remain adverse.
+Independent repairs on other resources do not supersede the application.
+Restart checkpoints retain observation preimages and patches without restoring
+prepared plans or rollback authority. Final receipts and covered work drive
+classification, learning admission and trust. Historical outcomes are immutable;
+missing historical proof grants neither inferred success nor inferred failure.

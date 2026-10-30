@@ -56,7 +56,16 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 			id := attempt.GetApplyReceipt().GetApplicationId()
 			for index := range applications {
 				app := &applications[index]
-				if app.ID != id || !app.Result.Applied || app.Result.DryRun || app.RolledBack || app.Result.RolledBack || app.RollbackError != "" || app.Result.RollbackError != "" || len(app.Result.ActionsApplied) != len(app.Result.Plan.Actions) || hasAppliedScript(app.Result.Plan.Actions) {
+				if app.ID != id {
+					continue
+				}
+				// A prior observation is never a permanent grant. Re-establish
+				// its exact recovery proof against all later corrective writes.
+				app.Result.FinalVerificationBasis = ""
+				app.Result.VerificationPassed = false
+				app.Result.FinalEquivalenceVerified = nil
+				attempt.Result = "applied_still_matching"
+				if !app.Result.Applied || app.Result.DryRun || app.RolledBack || app.Result.RolledBack || app.RollbackError != "" || app.Result.RollbackError != "" || len(app.Result.ActionsApplied) != len(app.Result.Plan.Actions) || hasAppliedScript(app.Result.Plan.Actions) {
 					continue
 				}
 				// Execution errors are history, not a transient observation. Only pending
@@ -76,6 +85,9 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				if err != nil {
 					continue
 				}
+				if wasPending && len(pendingWrite.Refs) > 0 {
+					refs = pendingWrite.Refs
+				}
 				pending, rolloutErr := executor.waitForRollouts(ctx, request, refs)
 				app.Result.VerificationCompleted = true
 				app.Result.VerificationPassed = false
@@ -86,6 +98,14 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				l.runs = append(l.runs, run)
 				attempt.PostApplyDiagnose = programRunContract(run)
 				exact := finalPlanFieldsMatch(app.Result, getFinal)
+				healthy := false
+				targets := append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...)
+				verifier := scopedMitigationVerifier(executor.Verifier, app.Result.Plan, l.mitigationIncident([]selectedPlan{{programID: attempt.PlaybookId, bindings: programBindingsState(attempt.Bindings), targetFingerprints: targets}}).Findings)
+				if verifier != nil {
+					healthy, _ = verifier.Verify(ctx)
+				} else if executor.Verifier != nil {
+					healthy, _ = executor.Verifier.Verify(ctx)
+				}
 				app.Result.FinalEquivalenceVerified = &exact
 				switch {
 				case rolloutErr != nil:
@@ -99,13 +119,15 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					attempt.Result = "rollout_failed"
 				case verdict.Result != program.NoMatch:
 					attempt.Result = "applied_still_matching"
+				case !healthy:
+					attempt.Result = "applied_still_matching"
 				case !exact:
 					attempt.Result = "rollout_failed"
 				}
 				attempt.Error = app.Error
-				if rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch && exact {
+				if rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch && exact && healthy {
 					app.Result.VerificationPassed = true
-                    app.Result.FinalVerificationBasis = "recovery-settled"
+					app.Result.FinalVerificationBasis = "recovery-settled"
 					app.Result.RolloutPending = nil
 					app.Error = ""
 					app.Pending = false
@@ -113,11 +135,17 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					attempt.Result = "applied_cleared"
 					attempt.ClearedFindingFingerprints = append(attempt.ClearedFindingFingerprints, attempt.RemainingFindingFingerprints...)
 					stage.ClearedFindingFingerprints = append(stage.ClearedFindingFingerprints, attempt.ClearedFindingFingerprints...)
+					slices.Sort(attempt.ClearedFindingFingerprints)
+					attempt.ClearedFindingFingerprints = slices.Compact(attempt.ClearedFindingFingerprints)
+					slices.Sort(stage.ClearedFindingFingerprints)
+					stage.ClearedFindingFingerprints = slices.Compact(stage.ClearedFindingFingerprints)
 					stage.RemainingFindingFingerprints = slices.DeleteFunc(stage.RemainingFindingFingerprints, func(fp string) bool { return slices.Contains(attempt.ClearedFindingFingerprints, fp) })
 					attempt.RemainingFindingFingerprints = nil
 					delete(l.pendingWrites, id)
 				}
-				l.applications[id] = app.Result
+				if _, live := l.applications[id]; live {
+					l.applications[id] = app.Result
+				}
 				receipt, err := recordedPlanContract(*app)
 				if err == nil {
 					attempt.ApplyReceipt = receipt
@@ -197,15 +225,32 @@ func recoveryObservationOnly(app RecordedPlanApplication, wasPending bool) bool 
 // Reject overlapping later corrective effects, not independent causes or
 // diagnostic helper writes. Unknown ordering is deliberately not positive proof.
 func recoverySuperseded(app RecordedPlanApplication, result IncidentResult, applications []RecordedPlanApplication) bool {
-	if app.StartedAt.IsZero() || app.CompletedAt.IsZero() {
+	if app.StartedAt.IsZero() || app.CompletedAt.IsZero() || len(result.RepairChanges) > 0 {
 		return true
 	}
+	// Worker-returned applications are immutable history too; their absence
+	// from this loop cannot prove that no competing corrective write occurred.
+	seen := map[string]bool{}
+	history := append([]RecordedPlanApplication(nil), applications...)
+	for _, candidate := range applications {
+		seen[candidate.ID] = true
+	}
+	for _, candidate := range result.PlanApplications {
+		if !seen[candidate.ID] {
+			history = append(history, candidate)
+			seen[candidate.ID] = true
+		}
+	}
 	generated := map[string]bool{}
-	for _, receipt := range ProgramRepairReceipts(applications, nil) {
+	for _, receipt := range ProgramRepairReceipts(history, nil) {
 		generated[receipt.ActionID] = true
 	}
 	own := ProgramRepairReceipts([]RecordedPlanApplication{app}, nil)
-	overlaps := func(refs []sdk.ObjectRef) bool {
+	overlaps := func(other RepairActionReceipt) bool {
+		refs := append([]sdk.ObjectRef(nil), other.Resources...)
+		for _, ownership := range other.Owners {
+			refs = append(refs, ownership.OwnerChain...)
+		}
 		for _, receipt := range own {
 			for _, target := range receipt.Resources {
 				for _, ref := range refs {
@@ -217,12 +262,12 @@ func recoverySuperseded(app RecordedPlanApplication, result IncidentResult, appl
 		}
 		return false
 	}
-	for _, other := range applications {
+	for _, other := range history {
 		if other.ID == app.ID || (!other.Result.Applied && len(other.Result.ActionsApplied) == 0) {
 			continue
 		}
 		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{other}, nil) {
-			if overlaps(receipt.Resources) && (other.StartedAt.IsZero() || !other.StartedAt.Before(app.StartedAt)) {
+			if overlaps(receipt) && (other.StartedAt.IsZero() || !other.StartedAt.Before(app.StartedAt)) {
 				return true
 			}
 		}
@@ -231,9 +276,14 @@ func recoverySuperseded(app RecordedPlanApplication, result IncidentResult, appl
 		if generated[receipt.ActionID] {
 			continue
 		}
-		if overlaps(receipt.Resources) && (receipt.StartedAt.IsZero() || !receipt.StartedAt.Before(app.StartedAt)) {
+		if overlaps(receipt) && (receipt.StartedAt.IsZero() || !receipt.StartedAt.Before(app.StartedAt)) {
 			return true
 		}
 	}
 	return false
+}
+
+// Every downstream consumer checks the same durable exact settlement receipt.
+func recoveryApplicationSucceeded(outcome *contracts.OutcomeRecord, app *contracts.PlanApplication, id, revision string) bool {
+	return app.GetFinalVerificationBasis() == "recovery-settled" && app.GetApplied() && !app.GetDryRun() && !app.GetRolledBack() && app.GetRollbackError() == "" && app.GetError() == "" && app.GetRolloutPending() == nil && app.GetVerificationCompleted() && app.GetVerificationPassed() && app.GetFinalEquivalenceVerified() && boundPostApplyNoMatch(outcome, app, id, revision)
 }

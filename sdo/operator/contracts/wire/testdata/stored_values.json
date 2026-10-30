@@ -181,7 +181,8 @@
   ],
   "sdodev.contracts.v1alpha1.PlanApplication.final_verification_basis": [
     "",
-    "observed-transition"
+    "observed-transition",
+    "recovery-settled"
   ],
   "sdodev.contracts.v1alpha1.PlanObjectEffect.operation": [
     "create",
@@ -278,7 +279,8 @@
   ],
   "sdodev.contracts.v1alpha1.RolloutPending.reason_code": [
     "",
-    "admission_blocked"
+    "admission_blocked",
+    "rollout_stalled"
   ],
   "sdodev.contracts.v1alpha1.RootCauseEvidence.kind": [
     "detector-finding",

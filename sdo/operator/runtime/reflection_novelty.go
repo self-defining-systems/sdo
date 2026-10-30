@@ -67,27 +67,3 @@ func applicationCoversMatch(outcome *contracts.OutcomeRecord, app *contracts.Pla
 	}
 	return false
 }
-
-// A generic-first incident needs the worker to assess cause visibility before
-// deciding no change. The worker owns the measured-delay hint; this conservative
-// admission filter adds no publication rule and no duplicate timing threshold.
-func genericHealthDetectedFirst(closure *contracts.IncidentClosure) bool {
-	var first *contracts.DetectorTimelineEntry
-	for _, entry := range closure.GetDetectorTimeline() {
-		if entry.GetFirstActivatedAt() == nil {
-			continue
-		}
-		if first == nil || entry.GetFirstActivatedAt().AsTime().Before(first.GetFirstActivatedAt().AsTime()) {
-			first = entry
-		}
-	}
-	if first == nil || first.GetDetectorClass() != "health" {
-		return false
-	}
-	for _, entry := range closure.GetDetectorTimeline() {
-		if entry.GetFirstActivatedAt() != nil && entry.GetFirstActivatedAt().AsTime().Equal(first.GetFirstActivatedAt().AsTime()) && entry.GetDetectorClass() != "health" {
-			return false
-		}
-	}
-	return true
-}

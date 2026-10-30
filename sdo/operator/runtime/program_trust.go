@@ -62,10 +62,10 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 		for _, application := range outcome.GetPlanApplications() {
 			// Pending rollout is neither an independent success nor a failure.
 			// Explicit settlement and failure signals below remain authoritative.
-			if application.GetRolloutPending() != nil {
+			if application.GetRolloutPending() != nil && !applicationExecutionFailed(application) {
 				continue
 			}
-			if !application.GetApplied() {
+			if !application.GetApplied() && len(application.GetActionsApplied()) == 0 {
 				continue
 			}
 			for _, id := range application.GetProgramIds() {
@@ -93,10 +93,10 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
 				}
-                if !failed && application.GetFinalVerificationBasis() == "recovery-settled" && application.GetFinalEquivalenceVerified() && boundPostApplyNoMatch(outcome, application, id, revision) && !creditedInOutcome[id] {
-                    state.VerifiedSuccesses++
-                    creditedInOutcome[id] = true
-                }
+				if !failed && recoveryApplicationSucceeded(outcome, application, id, revision) && !creditedInOutcome[id] {
+					state.VerifiedSuccesses++
+					creditedInOutcome[id] = true
+				}
 				stats[id] = state
 			}
 		}
@@ -307,7 +307,6 @@ func applicationExecutionFailed(app *contracts.PlanApplication) bool {
 			return true
 		}
 	}
-	// Legacy receipts without typed reports retain explicit execution errors;
-	// a completed health sample alone is never adverse write evidence.
-	return len(app.GetActionReports()) == 0 && app.GetError() != ""
+	// Missing/truncated reports and presentation errors prove no adverse write.
+	return false
 }

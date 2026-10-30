@@ -100,7 +100,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			ActionID: id, Kind: "program-plan", Target: refs[0].Kind + "/" + refs[0].Name, Resources: refs,
 			Summary: summary, Details: details,
 			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
-			Success: !application.Pending && !planApplicationPending(application.Result) && !application.RolledBack && application.RollbackError == "", Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
+			Success: application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result) && !application.RolledBack && application.RollbackError == "", Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
 			Owners: preImageOwners(application.Result.PreImages, refs),
 		})
 	}

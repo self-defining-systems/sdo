@@ -602,7 +602,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 
 		// A session is provenance, not new corrective evidence. The shared
 		// broker check below proves that accepted memory explains every write.
-		if effect.Attempt == 1 && !n.ForceReflection && !genericHealthDetectedFirst(effect.Closure) && coveredRepeatCandidate(effect.Outcome) {
+		if effect.Attempt == 1 && !n.ForceReflection && coveredRepeatCandidate(effect.Outcome) {
 			decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted_programs_no_new_evidence"}
 			checkCtx := ctx
 			if n.SessionRoot != "" {

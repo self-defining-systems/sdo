@@ -352,7 +352,6 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 				l.applicationsLog[i].Result = result
 				l.applicationsLog[i].Pending = planApplicationPending(result)
 				l.applicationsLog[i].Error = ""
-				l.applicationsLog[i].CompletedAt = time.Now().UTC()
 			}
 		}
 		l.updatePendingReport(application, pending.AttemptID, result.VerificationPassed, "direct_verification_unresolved")
@@ -473,7 +472,6 @@ func (l *ResponderLoop) failIneffectivePending(ctx context.Context, application 
 				l.applicationsLog[i].Result = result
 				l.applicationsLog[i].Pending = planApplicationPending(result)
 				l.applicationsLog[i].Error = reason + ": " + pending.ProgramID + " still matches after its writes; writes remain applied"
-				l.applicationsLog[i].CompletedAt = time.Now().UTC()
 			}
 		}
 	}

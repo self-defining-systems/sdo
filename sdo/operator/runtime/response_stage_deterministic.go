@@ -82,8 +82,8 @@ type DeterministicResponseStage struct {
 	KeepLoop bool
 	// Budget bounds observation (DefaultStageBudget when unset).
 	Budget time.Duration
-	// RolloutTimeout and ObservationCeiling can only shorten what the budget
-	// leaves for the rollout wait and the post-repair observation.
+	// RolloutTimeout caps each rollout sample; ObservationCeiling shortens
+	// the shared recovery deadline. Observations grant no writes.
 	RolloutTimeout      time.Duration
 	ObservationInterval time.Duration
 	ObservationCeiling  time.Duration
@@ -190,7 +190,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 			}
 			if progress.Complete && !state.Refresh {
-				stage.awaitRepairedHealth(ctx, loop, state, report, remaining())
+				stage.awaitRepairedHealth(ctx, loop, state, report, recoveryTimeLeft(stage, progress.RecoveryDeadline, remaining()))
 			}
 		}()
 		if progress.Complete && !state.Refresh {
@@ -395,7 +395,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, remaining, len(matches)-index, save); err != nil {
+		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, save); err != nil {
 			return report, err
 		}
 		progressed = true
@@ -414,7 +414,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	// Once all opening faults have verified repairs, let the remaining health
 	// detectors' own windows roll over before handoff.
 	if !state.Refresh {
-		stage.awaitRepairedHealth(ctx, loop, state, report, remaining())
+		stage.awaitRepairedHealth(ctx, loop, state, report, recoveryTimeLeft(stage, progress.RecoveryDeadline, remaining()))
 	}
 	if err := ctx.Err(); err != nil {
 		return report, err
@@ -774,7 +774,7 @@ type stagePlanned struct {
 
 // applyMatch retains each binding's own receipt and compensation boundary.
 // Its single rollout sample lets the other matches run while recovery progresses.
-func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, item stagePlanned, remaining func() time.Duration, candidatesLeft int, save func(bool) error) error {
+func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, item stagePlanned, save func(bool) error) error {
 	plan := loop.plans[item.planID]
 	item.attempt.PlanId = item.planID
 	item.attempt.PlanActionCount = int32(len(plan.plan.Actions))
@@ -788,6 +788,9 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 	}
 	// A sample never consumes a candidate's share of the recovery budget.
 	rolloutTimeout := time.Millisecond
+	if stage.RolloutTimeout > 0 {
+		rolloutTimeout = min(rolloutTimeout, stage.RolloutTimeout)
+	}
 	// Apply through the ordinary tool boundary: mutation fences, recorded
 	// writes, immutable receipts and compensation have one owner.
 	var applied ToolResponse
@@ -889,9 +892,6 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		if stage.Budget > 0 {
 			budget = min(budget, stage.Budget)
 		}
-		if stage.RolloutTimeout > 0 {
-			budget = min(budget, stage.RolloutTimeout)
-		}
 		if stage.ObservationCeiling > 0 {
 			budget = min(budget, stage.ObservationCeiling)
 		}
@@ -903,6 +903,8 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
+	observe, cancel := context.WithDeadline(ctx, progress.RecoveryDeadline)
+	defer cancel()
 	interval := stage.ObservationInterval
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
@@ -911,6 +913,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		pending := false
 		covered := map[string]bool{}
 		for _, attempt := range report.Mitigations {
+			if attempt.GetApplyReceipt().GetRolloutPending().GetReasonCode() == "rollout_stalled" {
+				return nil
+			}
 			for _, fp := range append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...) {
 				covered[fp] = true
 			}
@@ -925,8 +930,23 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		if !pending {
 			return nil
 		}
+		health := map[string]bool{}
+		for _, detector := range loop.Detectors {
+			health[detector.Spec().ID] = detector.Spec().Class == sdk.DetectorClassHealth
+		}
 		for _, finding := range state.Findings {
-			if !covered[FindingFingerprint(finding)] {
+			if covered[FindingFingerprint(finding)] {
+				continue
+			}
+			settling := false
+			if health[finding.DetectorID] {
+				for _, reservation := range loop.pendingWrites {
+					for _, ref := range reservation.Refs {
+						settling = settling || sameResource(ref, finding.PrimaryResource)
+					}
+				}
+			}
+			if !settling {
 				return nil
 			}
 		}
@@ -934,13 +954,16 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		if left <= 0 {
 			return nil
 		}
-		if err := wait(ctx, min(interval, left)); err != nil {
+		if err := wait(observe, min(interval, left)); err != nil {
+			if ctx.Err() == nil {
+				return nil
+			}
 			return err
 		}
 		response := ToolResponse{}
-		loop.verify(ctx, nil, &response, true)
+		loop.verify(observe, nil, &response, true)
 		updateStageFindings(state, response)
-		_, stages := loop.settleRecoveryApplicationsLocked(ctx, IncidentResult{PlanApplications: loop.applicationEvidenceLocked()}, []*contracts.StageReport{report})
+		_, stages := loop.settleRecoveryApplicationsLocked(observe, IncidentResult{PlanApplications: loop.applicationEvidenceLocked()}, []*contracts.StageReport{report})
 		if len(stages) > 0 {
 			proto.Reset(report)
 			proto.Merge(report, stages[0])
@@ -955,4 +978,15 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
+}
+
+func recoveryTimeLeft(stage *DeterministicResponseStage, deadline time.Time, legacy time.Duration) time.Duration {
+	if deadline.IsZero() {
+		return legacy
+	}
+	now := stage.recoveryNow
+	if now == nil {
+		now = time.Now
+	}
+	return deadline.Sub(now())
 }

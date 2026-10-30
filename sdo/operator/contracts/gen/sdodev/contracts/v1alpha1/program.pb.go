@@ -2332,7 +2332,9 @@ type PlanApplication struct {
 	ObjectEffects            []*PlanObjectEffect `protobuf:"bytes,19,rep,name=object_effects,json=objectEffects,proto3" json:"object_effects,omitempty"`
 	ActionReports            []*ActionReport     `protobuf:"bytes,20,rep,name=action_reports,json=actionReports,proto3" json:"action_reports,omitempty"`
 	RolloutPending           *RolloutPending     `protobuf:"bytes,21,opt,name=rollout_pending,json=rolloutPending,proto3" json:"rollout_pending,omitempty"`
-	// Fresh bound diagnosis and targeted health for opaque scripts, never exact effects.
+	// observed-transition proves opaque script recovery, never exact effects.
+	// recovery-settled proves the exact application/revision/binding after
+	// independently cleared targeted health and no superseding causal write.
 	FinalVerificationBasis string `protobuf:"bytes,22,opt,name=final_verification_basis,json=finalVerificationBasis,proto3" json:"final_verification_basis,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -4633,9 +4635,9 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x10program_revision\x18\a \x01(\tR\x0fprogramRevision\x12D\n" +
 	"\x0ebinding_source\x18\b \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\afindingR\x04hintR\x05sweepR\rbindingSource\x12&\n" +
 	"\fcan_mitigate\x18\t \x01(\bH\x00R\vcanMitigate\x88\x01\x01B\x0f\n" +
-	"\r_can_mitigate\"\xbc\x02\n" +
-	"\x0eRolloutPending\x12;\n" +
-	"\vreason_code\x18\x03 \x01(\tB\x1a\xbaH\x17r\x15R\x00R\x11admission_blockedR\n" +
+	"\r_can_mitigate\"\xcd\x02\n" +
+	"\x0eRolloutPending\x12L\n" +
+	"\vreason_code\x18\x03 \x01(\tB+\xbaH(r&R\x00R\x11admission_blockedR\x0frollout_stalledR\n" +
 	"reasonCode\x12_\n" +
 	"\x18admission_configurations\x18\x04 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x17admissionConfigurations\x12-\n" +
 	"\x12admission_webhooks\x18\x05 \x03(\tR\x11admissionWebhooks\x12\x16\n" +
@@ -4645,7 +4647,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12%\n" +
 	"\x0ewarning_events\x18\x03 \x03(\tR\rwarningEvents\x12;\n" +
-	"\arelease\x18\x04 \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\arelease\"\xa7\t\n" +
+	"\arelease\x18\x04 \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\arelease\"\xb9\t\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
@@ -4669,8 +4671,8 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x1afinal_equivalence_verified\x18\x12 \x01(\bH\x00R\x18finalEquivalenceVerified\x88\x01\x01\x12R\n" +
 	"\x0eobject_effects\x18\x13 \x03(\v2+.sdodev.contracts.v1alpha1.PlanObjectEffectR\robjectEffects\x12N\n" +
 	"\x0eaction_reports\x18\x14 \x03(\v2'.sdodev.contracts.v1alpha1.ActionReportR\ractionReports\x12R\n" +
-	"\x0frollout_pending\x18\x15 \x01(\v2).sdodev.contracts.v1alpha1.RolloutPendingR\x0erolloutPending\x12V\n" +
-	"\x18final_verification_basis\x18\x16 \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x13observed-transitionR\x16finalVerificationBasisB\x1d\n" +
+	"\x0frollout_pending\x18\x15 \x01(\v2).sdodev.contracts.v1alpha1.RolloutPendingR\x0erolloutPending\x12h\n" +
+	"\x18final_verification_basis\x18\x16 \x01(\tB.\xbaH+r)R\x00R\x13observed-transitionR\x10recovery-settledR\x16finalVerificationBasisB\x1d\n" +
 	"\x1b_final_equivalence_verifiedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
 	"pre_imagesR\apatches\"\xcf\x01\n" +
 	"\x0fProgramToolCall\x12\x18\n" +

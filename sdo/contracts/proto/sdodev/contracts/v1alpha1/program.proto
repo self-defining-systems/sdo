@@ -241,7 +241,7 @@ message ProgramRun {
 
 // A landed mutation whose rollout is blocked. This never supplies repair credit.
 message RolloutPending {
-  string reason_code = 3 [(buf.validate.field).string = {in: ["", "admission_blocked"]}];
+  string reason_code = 3 [(buf.validate.field).string = {in: ["", "admission_blocked", "rollout_stalled"]}];
   repeated ObjectRef admission_configurations = 4;
   repeated string admission_webhooks = 5;
   string reason = 1;
@@ -282,8 +282,10 @@ message PlanApplication {
   repeated PlanObjectEffect object_effects = 19;
   repeated ActionReport action_reports = 20;
   RolloutPending rollout_pending = 21;
-  // Fresh bound diagnosis and targeted health for opaque scripts, never exact effects.
-  string final_verification_basis = 22 [(buf.validate.field).string = {in: ["", "observed-transition"]}];
+  // observed-transition proves opaque script recovery, never exact effects.
+  // recovery-settled proves the exact application/revision/binding after
+  // independently cleared targeted health and no superseding causal write.
+  string final_verification_basis = 22 [(buf.validate.field).string = {in: ["", "observed-transition", "recovery-settled"]}];
 }
 
 message ProgramToolCall {

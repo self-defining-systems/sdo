@@ -24,12 +24,16 @@ func TestRecoverySettlementFeedsNoveltyAdmission(t *testing.T) {
 				rollout.failure = errors.New("synthetic execution rollout failed")
 			}
 			loop.Executor.Rollouts = rollout
-			if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+			if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{ObservationCeiling: time.Millisecond, NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
 				t.Fatal(err)
 			}
 			before, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
 			if err != nil {
 				t.Fatal(err)
+			}
+			if failed {
+				before.ResponderSessionID = "11111111-2222-4333-8444-555555555555"
+				before.ResolutionPath = "responder"
 			}
 			if len(before.PlanApplications) == 0 || before.PlanApplications[0].Result.VerificationPassed {
 				t.Fatal("fixture did not produce unsettled applications")
@@ -92,7 +96,14 @@ func settlementBrokerWorkers(t *testing.T, loop *ResponderLoop, closure Incident
 	}
 	closure.Request.RepositoryBaseCommit = workspace.BaseCommit
 	closure.Request.RepositoryWorktree = workspace.Worktree
-	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
+	receipt, err := native.ProcessClosure(context.Background(), closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := native.AcknowledgeClosure(context.Background(), receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := native.ProcessQueuedReflection(context.Background(), closure.Request.IncidentID); err != nil {
 		t.Fatal(err)
 	}
 	return calls
@@ -172,7 +183,7 @@ type settlementControllerDispatcher struct {
 }
 
 func (d *settlementControllerDispatcher) DeterministicResponseStage() ResponseStage {
-	return &DeterministicResponseStage{NewLoop: func(request IncidentRequest) *ResponderLoop {
+	return &DeterministicResponseStage{ObservationCeiling: time.Millisecond, NewLoop: func(request IncidentRequest) *ResponderLoop {
 		d.loop.Request = request
 		d.controller.mu.Lock()
 		d.controller.responderLoop = d.loop
@@ -183,7 +194,7 @@ func (d *settlementControllerDispatcher) DeterministicResponseStage() ResponseSt
 
 func TestRecoverySettlementPreservesIndependentReceiptIdentity(t *testing.T) {
 	loop, state := pipelineTestLoop(t, false)
-	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{ObservationCeiling: time.Millisecond, NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())

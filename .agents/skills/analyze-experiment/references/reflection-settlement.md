@@ -48,3 +48,9 @@ without a reflection commit; `reflection_results` retains the original worker
 decisions and `reflection_rejections` retains validator evidence. Older ledgers
 can omit the final decision after exhaustion: that is lost terminal evidence,
 not successful learning, and strict receipts reject it.
+
+Fully explained accepted-program recovery can pass the broker's shared no-change
+check before a learning worker is dispatched. A responder session alone does not
+require learning when it made no new corrective write. The broker still checks
+all committed evidence; a hand repair, missing binding proof or unresolved work
+keeps learning available. See [application settlement](response-stages.md).
