@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import time
@@ -24,6 +25,7 @@ class PreparedBinary(TypedDict):
     names: list[str]
     binary: str
     sha256: str
+    directory: str
 
 
 class PreparedManifest(TypedDict):
@@ -57,7 +59,7 @@ def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
     objects = output / "objects"
     objects.mkdir(exist_ok=True)
 
-    def compile_package(key: tuple[str, str]) -> tuple[tuple[str, str], Path]:
+    def compile_package(key: tuple[str, str]) -> tuple[tuple[str, str], tuple[Path, str]]:
         scope, package = key
         binary = objects / (hashlib.sha256(f"{scope}:{package}".encode()).hexdigest() + ".test")
         module = root / "sdo/operator" / ("runtime" if scope == "runtime" else "")
@@ -65,7 +67,10 @@ def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
         subprocess.run(
             ["go", "test", "-race", "-c", "-ldflags=-w", "-o", str(binary.resolve()), package], cwd=module, check=True
         )
-        return key, binary
+        package_dir = Path(
+            subprocess.check_output(["go", "list", "-f", "{{.Dir}}", package], cwd=module, text=True).strip()
+        )
+        return key, (binary, str(package_dir.relative_to(root)))
 
     tool = objects / "test2json"
     subprocess.run(["go", "build", "-o", str(tool.resolve()), "cmd/test2json"], cwd=root, check=True)
@@ -79,7 +84,7 @@ def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
         for (scope, package), names in sorted(packages(data, members).items()):
             filename = hashlib.sha256(f"{scope}:{package}".encode()).hexdigest() + ".test"
             binary = directory / filename
-            binary.hardlink_to(compiled[scope, package])
+            binary.hardlink_to(compiled[scope, package][0])
             entries.append(
                 {
                     "scope": scope,
@@ -87,6 +92,7 @@ def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
                     "names": sorted(names),
                     "binary": filename,
                     "sha256": digest(binary),
+                    "directory": compiled[scope, package][1],
                 }
             )
         manifest: PreparedManifest = {
@@ -119,7 +125,9 @@ def execute(plan: Path, index: int, directory: Path, *, root: Path = ROOT) -> No
         if binary.parent != directory or digest(binary) != entry["sha256"]:
             raise ValueError("prepared contract binary identity mismatch")
         selection = "^(" + "|".join(re.escape(name) for name in entry["names"]) + ")$"
-        module = root / "sdo/operator" / ("runtime" if entry["scope"] == "runtime" else "")
+        module = root / entry["directory"]
+        if not module.resolve().is_relative_to(root.resolve()) or not module.is_dir():
+            raise ValueError("prepared contract package directory is outside the checkout or missing")
         commands.append(
             (
                 [
@@ -141,7 +149,7 @@ def execute(plan: Path, index: int, directory: Path, *, root: Path = ROOT) -> No
     started = time.monotonic()
 
     def run(command: tuple[list[str], Path]) -> None:
-        run_tests(command[0], started=started, cwd=command[1])
+        run_tests(command[0], started=started, cwd=command[1], env={**os.environ, "PWD": str(command[1])})
 
     # Preserve go test's bounded package parallelism; propagate every failure.
     with ThreadPoolExecutor(max_workers=2) as pool:

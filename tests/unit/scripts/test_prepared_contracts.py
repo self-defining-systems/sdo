@@ -24,10 +24,17 @@ def test_real_prepared_race_binary_runs_selected_tests_without_compiling(tmp_pat
     module = root / "sdo/operator"
     module.mkdir(parents=True)
     (module / "go.mod").write_text("module synthetic.example/contracts\n\ngo 1.24\n")
-    (module / "selected_test.go").write_text("""//go:build race
+    nested = module / "nested"
+    nested.mkdir()
+    (nested / "fixture.txt").write_text("relative fixture")
+    (nested / "selected_test.go").write_text("""//go:build race
 package contracts
 import ("testing"; "os")
-func TestSelected(t *testing.T) { t.Run("child", func(t *testing.T) {}) }
+func TestSelected(t *testing.T) {
+ if _, err := os.ReadFile("fixture.txt"); err != nil { t.Fatal(err) }
+ wd, _ := os.Getwd(); if os.Getenv("PWD") != wd { t.Fatalf("PWD does not match package cwd") }
+ t.Run("child", func(t *testing.T) {})
+}
 func TestUnselected(t *testing.T) { t.Fatal("must not run") }
 func TestZeroExit(t *testing.T) { os.Exit(0) }
 func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string) {}) }
@@ -55,7 +62,12 @@ func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string)
             {
                 "bins": [["selected", "seed"], ["selected"], ["failure"], ["exit"]],
                 "items": {
-                    key: {"kind": "go", "scope": "operator", "packages": ["synthetic.example/contracts"], "name": name}
+                    key: {
+                        "kind": "go",
+                        "scope": "operator",
+                        "packages": ["synthetic.example/contracts/nested"],
+                        "name": name,
+                    }
                     for key, name in [
                         ("selected", "TestSelected"),
                         ("seed", "FuzzSeed"),

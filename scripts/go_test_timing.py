@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -60,12 +61,13 @@ def run_tests(
     started: float,
     cwd: Path = OPERATOR,
     budget_seconds: float | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> None:
     """Stream diagnostics; the unchanged Go and hosted job deadlines own failure."""
     shard_budget = SHARD_BUDGET_SECONDS if budget_seconds is None else budget_seconds
     events: list[dict] = []
     parse_error: json.JSONDecodeError | None = None
-    with subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, text=True) as process:
+    with subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE, text=True) as process:
         assert process.stdout is not None
         for line in process.stdout:
             print(line, end="", flush=True)
