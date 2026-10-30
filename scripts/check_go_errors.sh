@@ -38,12 +38,16 @@ else
     echo "==> proto contracts: skipped (buf not installed; enforced by the proto CI job)"
 fi
 
-# Cross-language parity (Go constants, Python models, protos) in seconds.
-"$SCRIPT_DIR/check_contracts_fast.sh" --go-only
-
 # Functional Go core: dependency/API lint plus structural purity checks.
 "$SCRIPT_DIR/check_go_core.sh"
 
 # Go programs under benchmarks/ must still compile against the operator API.
 echo "==> go mains (benchmarks/)"
 "$SCRIPT_DIR/check_go_mains.sh"
+
+# Runtime parity tests need the full runtime test archive. Wait for its
+# independent compiler instead of starting a second cold compile of it.
+if [[ -n "${SDO_GO_RUNTIME_READY:-}" ]]; then
+    read -r -t 230 ready < "$SDO_GO_RUNTIME_READY"
+fi
+"$SCRIPT_DIR/check_contracts_fast.sh" --go-only

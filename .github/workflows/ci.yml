@@ -174,7 +174,11 @@ jobs:
           # graph compilation overlaps those checks without compiling the
           # operator's cold dependency graph twice.
           export SDO_GO_OPERATOR_READY="$RUNNER_TEMP/operator-ready"
-          mkfifo "$SDO_GO_OPERATOR_READY"
+          export SDO_GO_RUNTIME_READY="$RUNNER_TEMP/runtime-ready"
+          mkfifo "$SDO_GO_OPERATOR_READY" "$SDO_GO_RUNTIME_READY"
+          # Hold the receipts open so an early quality failure cannot block a
+          # compiler writer; the final wait still propagates that failure.
+          exec 3<> "$SDO_GO_OPERATOR_READY" 4<> "$SDO_GO_RUNTIME_READY"
           (
             read -r -t 230 ready < "$SDO_GO_OPERATOR_READY"
             GOFLAGS="$GOFLAGS -race" bash scripts/check_errors.sh --go-only --defer-prepared

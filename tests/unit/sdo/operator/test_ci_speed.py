@@ -690,7 +690,9 @@ def test_race_archives_overlap_quality_but_cannot_publish_after_failure(
     # quality worker to start, so losing overlap fails deterministically.
     (scripts / "prepare_go_ci.sh").write_bytes((ROOT / "scripts/prepare_go_ci.sh").read_bytes())
     (scripts / "check_errors.sh").write_text(
-        f'#!/bin/bash\necho started > "{started}"\nread -r -t 3 marker <> "{fifo}" || exit 99\nexit {quality_status}\n'
+        f'#!/bin/bash\necho started > "{started}"\n'
+        'read -r -t 3 ready < "$SDO_GO_RUNTIME_READY" || exit 96\n'
+        f'read -r -t 3 marker <> "{fifo}" || exit 99\nexit {quality_status}\n'
     )
     (tmp_path / "nightly-tests.md").write_text("synthetic manifest")
     for index in range(2):

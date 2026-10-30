@@ -41,6 +41,9 @@ for module in sdo/operator sdo/operator/runtime; do
     # this same bounded preparation command compiles the runtime graph.
     printf 'ready\n' > "$SDO_GO_OPERATOR_READY"
   fi
+  if [[ "$mode" == race && "$module" == sdo/operator/runtime && -n "${SDO_GO_RUNTIME_READY:-}" ]]; then
+    printf 'ready\n' > "$SDO_GO_RUNTIME_READY"
+  fi
 done
 if [[ "$mode" == normal ]]; then
   # Python static analysis vets benchmark mains against the same source graph.
