@@ -14,6 +14,7 @@ from pathlib import Path
 from go_cost_plan import check_budget, go_command
 from go_test_timing import run_tests
 from operator_test_binary import build_operator
+from prepared_contracts import execute
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,6 +24,7 @@ def main() -> None:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--bin", type=int, required=True)
     parser.add_argument("--nightly", action="store_true")
+    parser.add_argument("--prepared", type=Path, help="same-run selected race test executables")
     args = parser.parse_args()
     data = json.loads(args.plan.read_text())
     if args.bin < 0 or args.bin >= len(data["bins"]):
@@ -41,18 +43,21 @@ def main() -> None:
         return
     os.environ["SDO_TEST_OPERATOR_BINARY"] = str(build_operator(ROOT / "sdo/operator", ROOT / ".fastloop/test-bin"))
     started = time.monotonic()
-    for scope in ("operator", "runtime"):
-        names = [
-            data["items"][key]["name"]
-            for key in members
-            if data["items"][key]["kind"] == "go" and data["items"][key]["scope"] == scope
-        ]
-        if names:
-            run_tests(
-                go_command(data["go"][scope], names),
-                started=started,
-                cwd=ROOT / "sdo/operator" / ("runtime" if scope == "runtime" else ""),
-            )
+    if args.prepared:
+        execute(args.plan, args.bin, args.prepared)
+    else:
+        for scope in ("operator", "runtime"):
+            names = [
+                data["items"][key]["name"]
+                for key in members
+                if data["items"][key]["kind"] == "go" and data["items"][key]["scope"] == scope
+            ]
+            if names:
+                run_tests(
+                    go_command(data["go"][scope], names),
+                    started=started,
+                    cwd=ROOT / "sdo/operator" / ("runtime" if scope == "runtime" else ""),
+                )
     nodes = [data["items"][key]["name"] for key in members if data["items"][key]["kind"] == "python"]
     if nodes:
         subprocess.run([sys.executable, "scripts/init_test_prereqs.py"], cwd=ROOT, check=True)

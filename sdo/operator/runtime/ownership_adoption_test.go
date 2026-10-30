@@ -96,7 +96,7 @@ func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http
 	// Default rendering is a dry-run CREATE of source alone, never an apply
 	// that could merge with a live object at the probe name.
 	if request.Method == http.MethodPost {
-		if request.URL.Query().Get("dryRun") != metav1.DryRunAll || request.URL.Path != "/api/v1/namespaces/"+a.service.Namespace+"/services" {
+		if request.URL.Query().Get("dryRun") != metav1.DryRunAll || request.URL.Path != "/api/v1/namespaces/"+a.service.Namespace+"/services" || !strings.HasSuffix(applied.Name, defaultRenderSuffix) {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}

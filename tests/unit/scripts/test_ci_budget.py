@@ -46,3 +46,10 @@ def test_growing_matrix_fails_closed():
     source["contracts"]["strategy"]["matrix"] = "${{ fromJSON(needs.prepare-go.outputs.matrix) }}"
     with pytest.raises(ValueError, match="fixed"):
         budget.check(source)
+
+
+def test_preparation_growth_cannot_hide_outside_test_job_limit():
+    source = jobs()
+    source["prepare-go-race"] = {"timeout-minutes": 4}
+    with pytest.raises(ValueError, match="7"):
+        budget.check(source)
