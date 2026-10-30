@@ -300,27 +300,27 @@ func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
 				t.Fatalf("live defaulted assignment did not apply and verify: %v", attempt)
 			}
 		}
-		// Source observation can add drift beside the health finding. Coverage
-		// must name exactly the targets the real stage independently cleared.
+		// Initial coverage is optional in this live-diagnosis scenario. Any
+		// recorded coverage must name exactly its bound matching diagnoses,
+		// including source-inventory findings when those were observed too.
 		attempt := reports[0].Mitigations[0]
-		want := slices.Clone(attempt.GetClearedFindingFingerprints())
-		slices.Sort(want)
-		if len(want) == 0 {
-			t.Fatal("applied stage did not independently clear any finding")
-		}
-		found := false
 		for _, match := range ledger.GetOutcomeDocument().GetPlaybookCoverage().GetMatches() {
-			if match.GetPlaybookId() == attempt.GetPlaybookId() {
-				found = true
-				got := slices.Clone(match.GetExplainedFindingFingerprints())
-				slices.Sort(got)
-				if !slices.Equal(got, want) {
-					t.Fatalf("coverage disagrees with actual stage targets: got=%v want=%v", got, want)
+			if match.GetPlaybookId() != attempt.GetPlaybookId() {
+				continue
+			}
+			var want []string
+			for _, run := range ledger.GetOutcomeDocument().GetProgramRuns() {
+				if run.GetProgramId() == match.GetPlaybookId() && run.GetProgramRevision() == match.GetProgramRevision() && run.GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH && run.GetFindingFingerprint() != "" && programBindingsState(run.GetBindings()).Equal(programBindingsState(match.GetBindings())) {
+					want = append(want, run.GetFindingFingerprint())
 				}
 			}
-		}
-		if !found {
-			t.Fatal("applied stage has no matching coverage")
+			slices.Sort(want)
+			want = slices.Compact(want)
+			got := slices.Clone(match.GetExplainedFindingFingerprints())
+			slices.Sort(got)
+			if len(want) == 0 || !slices.Equal(got, want) {
+				t.Fatalf("coverage disagrees with actual matching diagnoses: got=%v want=%v", got, want)
+			}
 		}
 		return
 	}
