@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 import re
 import shlex
@@ -245,7 +246,7 @@ def test_image_jobs_use_the_compilation_owners_schema_identity() -> None:
     assert jobs["prepare-go"]["outputs"]["schema_identity"] == "${{ steps.schema.outputs.value }}"
 
 
-@pytest.mark.parametrize("mode", ["normal", "race"])
+@pytest.mark.parametrize("mode", ["normal", "race", "contracts"])
 def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp_path: Path, mode: str) -> None:
     """Preparation shares archives; each shard owns its test binary and execution."""
     command = tmp_path / "go"
@@ -266,8 +267,8 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
     invocations = [line.split(":", 1) for line in calls.read_text().splitlines()]
     for module in ("sdo/operator", "sdo/operator/runtime"):
         commands = [shlex.split(args) for directory, args in invocations if directory == str(ROOT / module)]
-        if mode == "race":
-            assert not commands
+        if mode in ("race", "contracts"):
+            assert all(args[:2] == ["mod", "download"] for args in commands)
             assert any(
                 shlex.split(args) == ["run", str(ROOT / "scripts/go_test_inventory.go"), str(ROOT / module)]
                 for _, args in invocations
@@ -496,15 +497,20 @@ def test_contracts_build_locally_without_same_run_artifact_dependencies() -> Non
     contracts = workflow()["jobs"]["contracts"]
     assert "needs" not in contracts
     assert not any(step.get("uses", "").startswith("actions/download-artifact@") for step in contracts["steps"])
-    restores = [step for step in contracts["steps"] if step.get("uses", "").startswith("actions/cache/restore@")]
+    restores = json.loads(
+        next(
+            step["with"]["caches"]
+            for step in contracts["steps"]
+            if step.get("uses") == "./.github/actions/restore-go-caches"
+        )
+    )
     assert len(restores) == 2
     for restore in restores:
-        assert restore["with"]["key"].endswith("${{ github.sha }}")
-        assert "restore-keys" in restore["with"]
-        assert "fail-on-cache-miss" not in restore["with"]
+        assert restore["key"].endswith("${{ github.sha }}")
+        assert "restore-keys" in restore
+        assert "fail-on-cache-miss" not in restore
     commands = "\n".join(step.get("run", "") for step in contracts["steps"])
-    assert "prepare_go_ci.sh normal" in commands
-    assert "prepare_go_ci.sh race" in commands
+    assert "prepare_go_ci.sh contracts" in commands
     assert "go_cost_plan.py --prepared" in commands
     assert "python_cost_plan.py --inventory-only" in commands
 
@@ -546,8 +552,14 @@ def test_contract_cache_inputs_match_their_base_producers() -> None:
     jobs = workflow()["jobs"]
     for mode in ("normal", "race"):
         producer = next(step for step in jobs["prepare-go"]["steps"] if step.get("id") == f"base-{mode}")
-        consumer = next(step for step in jobs["contracts"]["steps"] if step.get("id") == f"base-{mode}")
-        assert consumer["with"] == producer["with"]
+        consumers = json.loads(
+            next(
+                step["with"]["caches"]
+                for step in jobs["contracts"]["steps"]
+                if step.get("uses") == "./.github/actions/restore-go-caches"
+            )
+        )
+        assert producer["with"] in consumers
 
 
 def test_shared_quality_checks_do_not_consume_python_test_deadlines() -> None:
@@ -558,3 +570,26 @@ def test_shared_quality_checks_do_not_consume_python_test_deadlines() -> None:
     assert {step["name"] for step in quality} == quality_names
     assert all(step["if"] == "matrix.mode == 'normal'" for step in quality)
     assert any("--python-only" in step.get("run", "") for step in quality)
+
+
+def test_contract_preparation_does_not_repeat_full_normal_graph() -> None:
+    commands = "\n".join(step.get("run", "") for step in workflow()["jobs"]["contracts"]["steps"])
+    assert "prepare_go_ci.sh normal" not in commands
+    assert "prepare_go_ci.sh contracts" in commands
+
+
+def test_contract_cache_restores_overlap() -> None:
+    steps = workflow()["jobs"]["contracts"]["steps"]
+    assert not any(step.get("uses", "").startswith("actions/cache/restore@") for step in steps)
+    assert any(step.get("uses") == "./.github/actions/restore-go-caches" for step in steps)
+
+
+def test_parallel_cache_client_contracts() -> None:
+    subprocess.run(["node", "--test", str(ROOT / ".github/actions/restore-go-caches/restore.test.cjs")], check=True)
+
+
+def test_cache_union_accepts_a_cold_or_evicted_archive(tmp_path: Path) -> None:
+    normal, race = tmp_path / "normal", tmp_path / "race"
+    subprocess.run(["bash", str(ROOT / "scripts/merge_go_ci_caches.sh"), str(normal), str(race)], check=True)
+    assert normal.is_dir()
+    assert race.is_dir()
