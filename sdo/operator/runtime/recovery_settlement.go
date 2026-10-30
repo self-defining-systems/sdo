@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,10 +24,14 @@ func (l *ResponderLoop) SettleRecoveryApplications(ctx context.Context, result I
 }
 
 func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, result IncidentResult, stages []*contracts.StageReport) (IncidentResult, []*contracts.StageReport) {
+	if l.recoverySettlement != nil {
+		return projectRecoverySettlement(result, l.recoverySettlement), cloneStageReports(l.recoverySettlement.stages)
+	}
 	stages = cloneStageReports(stages)
 	if l.Programs == nil || l.Executor.Client == nil || l.Executor.Rollouts == nil {
 		return result, stages
 	}
+	initialRuns := len(l.runs)
 	view, err := l.snapshotView(ctx)
 	if err != nil {
 		return result, stages
@@ -54,7 +59,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 			id := attempt.GetApplyReceipt().GetApplicationId()
 			for index := range l.applicationsLog {
 				app := &l.applicationsLog[index]
-				if app.ID != id || !app.Result.Applied || app.Result.DryRun || app.RolledBack || app.Result.RolledBack || app.RollbackError != "" || hasAppliedScript(app.Result.Plan.Actions) {
+				if app.ID != id || !app.Result.Applied || app.Result.DryRun || app.RolledBack || app.Result.RolledBack || app.RollbackError != "" || app.Result.RollbackError != "" || len(app.Result.ActionsApplied) != len(app.Result.Plan.Actions) || hasAppliedScript(app.Result.Plan.Actions) {
 					continue
 				}
 				// Execution errors are history, not a transient observation. Only pending
@@ -87,6 +92,22 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				attempt.PostApplyDiagnose = programRunContract(run)
 				exact := finalPlanFieldsMatch(app.Result, getFinal)
 				app.Result.FinalEquivalenceVerified = &exact
+				switch {
+				case rolloutErr != nil:
+					app.Error = rolloutErr.Error()
+					attempt.Result = "rollout_failed"
+					if pending != nil {
+						attempt.Result = "rollout_pending_at_handoff"
+					}
+				case sourceErr != nil:
+					app.Error = sourceErr.Error()
+					attempt.Result = "rollout_failed"
+				case verdict.Result != program.NoMatch:
+					attempt.Result = "applied_still_matching"
+				case !exact:
+					attempt.Result = "rollout_failed"
+				}
+				attempt.Error = app.Error
 				if rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch && exact {
 					app.Result.VerificationPassed = true
 					app.Result.RolloutPending = nil
@@ -94,6 +115,9 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					app.Pending = false
 					attempt.Error = ""
 					attempt.Result = "applied_cleared"
+					attempt.ClearedFindingFingerprints = append(attempt.ClearedFindingFingerprints, attempt.RemainingFindingFingerprints...)
+					stage.ClearedFindingFingerprints = append(stage.ClearedFindingFingerprints, attempt.ClearedFindingFingerprints...)
+					stage.RemainingFindingFingerprints = slices.DeleteFunc(stage.RemainingFindingFingerprints, func(fp string) bool { return slices.Contains(attempt.ClearedFindingFingerprints, fp) })
 					attempt.RemainingFindingFingerprints = nil
 					delete(l.pendingWrites, id)
 				}
@@ -105,16 +129,32 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 			}
 		}
 	}
-	// Replace evidence by application identity; preserve manual repairs, sessions
-	// and resolution metadata. Historical stage snapshots no longer override it.
+
+	stageResult, _ := responsePipelineResult(&IncidentState{Request: l.Request, PriorStages: stages}, result.Timing.StartedAt, result.Timing.CompletedAt)
+	settled := &recoveryApplicationSettlement{causes: stageResult.ConfirmedRootCauses, stages: stages, applications: append([]RecordedPlanApplication(nil), l.applicationsLog...), runs: append([]ProgramRun(nil), l.runs[initialRuns:]...)}
+	l.recoverySettlement = settled
+	return projectRecoverySettlement(result, settled), stages
+}
+
+type recoveryApplicationSettlement struct {
+	causes       []ConfirmedRootCause
+	stages       []*contracts.StageReport
+	applications []RecordedPlanApplication
+	runs         []ProgramRun
+}
+
+// Replace evidence by application identity; preserve manual repairs, sessions
+// and resolution metadata. Historical stage snapshots no longer override it.
+func projectRecoverySettlement(result IncidentResult, settled *recoveryApplicationSettlement) IncidentResult {
 	for i := range result.PlanApplications {
-		for _, app := range l.applicationsLog {
+		for _, app := range settled.applications {
 			if result.PlanApplications[i].ID == app.ID {
 				result.PlanApplications[i] = app
 			}
 		}
 	}
-	result.ProgramRuns = append([]ProgramRun(nil), l.runs...)
+	result.ProgramRuns = append(result.ProgramRuns, settled.runs...)
+	result.ConfirmedRootCauses = reconcileEarlyCauses(settled.causes, result.ConfirmedRootCauses)
 	existing := []RepairActionReceipt{}
 	for _, receipt := range result.RepairActions {
 		generated := false
@@ -127,5 +167,5 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 		}
 	}
 	result.RepairActions = ProgramRepairReceipts(result.PlanApplications, existing)
-	return result, stages
+	return result
 }

@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -186,4 +187,19 @@ func TestDeterministicStagePanicFailsOnlyThatStep(t *testing.T) {
 	}
 	loop.mu.Unlock()
 	loop.operationMu.Unlock()
+}
+
+func TestFinalPlanEquivalenceRequiresOriginalObjectInstance(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	before := planObject(ref, map[string]any{"ports": []any{map[string]any{"port": int64(80), "targetPort": int64(9999)}}})
+	before.SetUID("original")
+	preview := PlanApplicationResult{PreImages: []PlanPreImage{{Ref: ref, Object: before}}, Patches: []PlanPatch{{Ref: ref, Patch: []byte(`{"spec":{"ports":[{"port":80,"targetPort":8080}]}}`)}}}
+	for _, uid := range []string{"original", "replacement", ""} {
+		current := before.DeepCopy()
+		current.SetUID(types.UID(uid))
+		current.Object["spec"].(map[string]any)["ports"].([]any)[0].(map[string]any)["targetPort"] = int64(8080)
+		if got := finalPlanFieldsMatch(preview, func(sdk.ObjectRef) *unstructured.Unstructured { return current }); got != (uid == "original") {
+			t.Fatalf("UID %q equivalence=%v", uid, got)
+		}
+	}
 }
