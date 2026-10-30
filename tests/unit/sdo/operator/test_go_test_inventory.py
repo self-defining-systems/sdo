@@ -35,10 +35,25 @@ func Example_withoutOutput() {}
     (tmp_path / "plain_test.go").write_text(
         '//go:build !race\n\npackage inventory\nimport "testing"\nfunc TestPlainOnly(t *testing.T) {}\n'
     )
-    env = {**os.environ, "GOFLAGS": "-p=2 -trimpath"}
+    trace = tmp_path / "tool-commands"
+    wrapper = tmp_path / "trace-tool"
+    wrapper.write_text(
+        '#!/bin/sh\ncase "$1" in */compile) '
+        'printf "%s:%s\\n" "$TOOLEXEC_IMPORTPATH" "$*" >> "$SDO_TEST_TOOL_COMMANDS";; esac\nexec "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    env = {
+        **os.environ,
+        "GOFLAGS": (f"-p=2 -trimpath -toolexec={wrapper} -gcflags=fixture.test/inventory.test=-D={tmp_path}"),
+        "SDO_TEST_TOOL_COMMANDS": str(trace),
+    }
     actual = subprocess.check_output(
         ["go", "run", str(ROOT / "scripts/go_test_inventory.go"), str(tmp_path)], env=env, text=True
     )
+    # Discovery uses generated tables and vets every package. Generated main
+    # archives are needed only for selected executables, never for discovery.
+    # A per-fixture compiler flag makes this guard independent of warm caches.
+    assert not any(line.startswith("fixture.test/inventory.test:") for line in trace.read_text().splitlines())
     result = subprocess.run(
         ["go", "test", "-race", "-list", ".", "-json", "./..."], cwd=tmp_path, env=env, text=True, capture_output=True
     )

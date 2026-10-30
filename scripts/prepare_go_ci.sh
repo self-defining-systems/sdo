@@ -26,8 +26,8 @@ for module in sdo/operator sdo/operator/runtime; do
     scope=operator
     if [[ "$module" == sdo/operator/runtime ]]; then scope=runtime; fi
     mkdir -p "$root/.fastloop/test-bin"
-    # Go generates the canonical test tables while exporting the test archive.
-    # Read those tables without linking and discarding every test executable.
+    # Go generates canonical test tables; vet checks every test package.
+    # Only selected executables need compiled generated-main archives.
     go run "$root/scripts/go_test_inventory.go" "$root/$module" > "$root/.fastloop/test-bin/inventory-$scope.json"
   else
     # Normal consumers need production archives and source-bound tools; Go
