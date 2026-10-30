@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import time
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
@@ -25,7 +26,13 @@ from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 from sdo.agents.replay import replay_mode, selected_skills_root
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.detection_learning import detection_learning
-from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, check_reflection_result
+from sdo.agents.responder.memory_check import (
+    VALIDATION_TIMEOUT_FILE_ENV,
+    VALIDATION_TIMEOUT_SECONDS,
+    MemoryCheckTimeout,
+    ValidationResult,
+    check_reflection_result,
+)
 from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_evidence import reflection_memory_view
@@ -596,6 +603,32 @@ class CodexSessionBackend:
         idempotency_key: str,
         session_id: str | None,
     ) -> ReflectionTurn:
+        # The MCP server is a child process. A private per-turn latch carries a
+        # terminal timeout back to the final checker without trusting a pass.
+        with tempfile.TemporaryDirectory(prefix="sdo-check-timeout-") as temporary:
+            previous = os.environ.get(VALIDATION_TIMEOUT_FILE_ENV)
+            os.environ[VALIDATION_TIMEOUT_FILE_ENV] = os.path.join(temporary, "timeout.json")
+            try:
+                return self._checked_turn(
+                    worktree=worktree,
+                    prompt=prompt,
+                    idempotency_key=idempotency_key,
+                    session_id=session_id,
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop(VALIDATION_TIMEOUT_FILE_ENV, None)
+                else:
+                    os.environ[VALIDATION_TIMEOUT_FILE_ENV] = previous
+
+    def _checked_turn(
+        self,
+        *,
+        worktree: Path,
+        prompt: str,
+        idempotency_key: str,
+        session_id: str | None,
+    ) -> ReflectionTurn:
         budget = reflection_budget_seconds() if self.timeout_seconds is None else self.timeout_seconds
         deadline = time.monotonic() + budget
         # Keep validation inside the frozen worker budget. Small explicit test or
@@ -650,6 +683,8 @@ class CodexSessionBackend:
                 return ReflectionTurn.from_model_output(
                     json_format.MessageToDict(decision, preserving_proto_field_name=True)
                 ).with_usage(usage)
+            if check.timed_out:
+                raise MemoryCheckTimeout(check)
             if attempt == 3 or time.monotonic() >= deadline:
                 raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
             if check == previous_failure:

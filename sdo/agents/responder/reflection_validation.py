@@ -21,7 +21,13 @@ from mcp.types import TextContent
 
 from sdo.agents.context_output import budget_for, save_context
 from sdo.agents.replay import replay_mode
-from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, ValidationResult, validation_output
+from sdo.agents.responder.memory_check import (
+    VALIDATION_TIMEOUT_SECONDS,
+    ValidationResult,
+    prior_timeout,
+    remember_timeout,
+    validation_output,
+)
 from sdo.agents.responder.reflection_authoring import SdkGap, install_authoring_tools
 from sdo.agents.responder.reflection_evidence import install_evidence_tools
 from sdo.agents.responder.tool_output import bound_reply
@@ -36,6 +42,7 @@ if TYPE_CHECKING:
 VALIDATION_ENVIRONMENT = (
     "SDO_REPLAY",
     "SDO_MEMORY_CHECK_DIR",
+    "SDO_MEMORY_CHECK_TIMEOUT_FILE",
     "SDO_ACTOR",
     "SDO_SESSION_SCRATCH",
     "SDO_SESSION_DIR",
@@ -136,7 +143,7 @@ class CheckMemoryReply:
             else:
                 step = f"passed: return {returned} now. Other coverage_gaps are information, not work."
         elif result.timed_out:
-            step = "timed out: check again once."
+            step = "terminal memory_check_timeout: stop validation; report this failure. Do not retry."
         else:
             step = "fix each diagnostic as its hint says, then check again."
             if replay_mode() == "on":
@@ -209,6 +216,8 @@ def validation_server(
     server = _TextToolServer("sdo_reflection")
     install_authoring_tools(server, checkout)
     install_evidence_tools(server)
+    terminal_timeout: ValidationResult | None = None
+    check_lock = asyncio.Lock()
 
     @server.tool()
     async def check_memory(
@@ -225,7 +234,7 @@ def validation_server(
         Supply the typed decision fields directly; this tool writes the result
         JSON outside the authored tree. Return the same decision and logical IDs.
         It first gofmt-formats Go files changed under .sdo/. The reply's next
-        field says what to do: return on a pass, else fix the diagnostics.
+        field says what to do: return on a pass, fix diagnostics, or stop on a terminal timeout.
         Legacy decision_path files are also supported. One call waits for final
         diagnostics. Responder incident detectors use the same validation; health
         detectors remain judge-owned. Compile/import/format/provenance checks remain required;
@@ -257,6 +266,16 @@ def validation_server(
         return CheckMemoryReply.after(await run_check(decision_path), None, [])
 
     async def run_check(decision_path: str | None) -> ValidationResult:
+        # Providers can issue parallel calls. One owned check may run at a time;
+        # callers queued behind a timeout observe its terminal result.
+        async with check_lock:
+            return await run_serial_check(decision_path)
+
+    async def run_serial_check(decision_path: str | None) -> ValidationResult:
+        nonlocal terminal_timeout
+        terminal_timeout = terminal_timeout or prior_timeout()
+        if terminal_timeout is not None:
+            return terminal_timeout
         await _format_changed_memory_go(checkout)
         argv = ["sdo-operator", "memory", "check", "--json"]
         if decision_path is not None:
@@ -294,12 +313,14 @@ def validation_server(
                 process.returncode or 0, False, validation_output(stdout), validation_output(stderr)
             )
         stdout, stderr = await stop()
-        return ValidationResult(
+        terminal_timeout = ValidationResult(
             2,
             True,
             validation_output(stdout),
             f"memory check timed out after {timeout_seconds:g}s\n{validation_output(stderr)}",
         )
+        remember_timeout(terminal_timeout)
+        return terminal_timeout
 
     return server
 

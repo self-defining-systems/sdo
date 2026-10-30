@@ -767,3 +767,51 @@ def test_reflection_still_refuses_a_snapshot_or_base_unrelated_to_the_outcome(
 
     with pytest.raises(ValueError, match="not bound to committed outcome"):
         run_reflection_task(path, "result-map", Publisher(), reflector=Reflector())
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_real_final_check_timeout_publishes_terminal_worker_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str
+) -> None:
+    import os
+    import subprocess
+    import sys
+
+    from sdo.agents.responder.memory_check import check_reflection_result
+    from sdo.agents.responder.reflection import ClaudeSessionBackend, CodexSessionBackend, SessionReflector
+    from tests.structured_turns import ScriptedAgent, reply
+
+    executable = tmp_path / "sdo-operator"
+    executable.write_text(f"#!{sys.executable}\nimport time\nprint('checking', flush=True)\ntime.sleep(600)\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+
+    def expire(process, seconds):
+        assert process.stdout.readline() == b"checking\n"
+        raise subprocess.TimeoutExpired(process.args, seconds)
+
+    def check(root, decision, seconds):
+        return check_reflection_result(root, decision, seconds, communicate=expire)
+
+    agent = ScriptedAgent(
+        lambda _: reply(
+            provider,
+            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    backend = CodexSessionBackend if provider == "codex" else ClaudeSessionBackend
+    publisher = Publisher()
+    result = run_reflection_task(
+        _task_path(tmp_path),
+        "result-map",
+        publisher,
+        reflector=SessionReflector(backend(executor=agent.executor, memory_checker=check)),
+    )
+    assert (result.status, result.failure_reason) == ("failed", "agent_timeout")
+    assert "memory check timed out" in result.error_summary
+    assert not result.HasField("response")
+    assert len(agent.requests) == 1
+    assert publisher.payload == to_canonical_json(result)
+    validate(result)

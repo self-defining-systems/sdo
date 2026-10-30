@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import signal
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 VALIDATION_TIMEOUT_SECONDS = 300
+VALIDATION_TIMEOUT_FILE_ENV = "SDO_MEMORY_CHECK_TIMEOUT_FILE"
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,25 @@ class ValidationResult:
     timed_out: bool
     stdout: str
     stderr: str
+
+
+class MemoryCheckTimeout(RuntimeError):
+    """Validation exhausted its bound; a provider correction cannot fix a timeout."""
+
+    def __init__(self, check: ValidationResult) -> None:
+        super().__init__(f"reflection memory check timed out: {check.stdout}\n{check.stderr}")
+
+
+def remember_timeout(check: ValidationResult) -> None:
+    """Record a terminal timeout for this worker turn, across MCP process boundaries."""
+    if path := os.environ.get(VALIDATION_TIMEOUT_FILE_ENV):
+        Path(path).write_text(json.dumps(asdict(check)), encoding="utf-8")
+
+
+def prior_timeout() -> ValidationResult | None:
+    if (path := os.environ.get(VALIDATION_TIMEOUT_FILE_ENV)) and Path(path).is_file():
+        return ValidationResult(**json.loads(Path(path).read_text(encoding="utf-8")))
+    return None
 
 
 def validation_output(raw: bytes) -> str:
@@ -43,6 +64,8 @@ def check_reflection_result(
     communicate: Callable[[subprocess.Popen[bytes], float], tuple[bytes, bytes]] = communicate_within,
 ) -> ValidationResult:
     """Check the exact returned decision and final files, independently of model tool use."""
+    if check := prior_timeout():
+        return check
     if timeout_seconds <= 0:
         return ValidationResult(2, True, "", "reflection deadline expired before memory check")
     with tempfile.TemporaryDirectory(prefix="sdo-final-decision-") as temporary:

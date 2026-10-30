@@ -495,3 +495,44 @@ def test_shared_acceptance_of_decline_reason_survives_python_view(
     assert result.no_change_reason == reason
     assert result.decline_reason == "no_recorded_repair"
     assert len(agent.requests) == 1
+
+
+@pytest.mark.parametrize("backend_type", [CodexSessionBackend, ClaudeSessionBackend])
+def test_memory_timeout_is_terminal_before_any_provider_correction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend_type
+) -> None:
+    import sys
+
+    from sdo.agents.responder.memory_check import check_reflection_result
+    from sdo.agents.responder.reflection_worker import _failure_reason
+
+    executable = tmp_path / "sdo-operator"
+    executable.write_text(f"#!{sys.executable}\nimport time\nprint('compile started', flush=True)\ntime.sleep(600)\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+
+    def expire(process, seconds):
+        assert process.stdout.readline() == b"compile started\n"
+        raise subprocess.TimeoutExpired(process.args, seconds)
+
+    def check(root, decision, seconds):
+        return check_reflection_result(root, decision, seconds, communicate=expire)
+
+    provider = "codex" if backend_type is CodexSessionBackend else "claude"
+    agent = ScriptedAgent(
+        lambda _: reply(
+            provider,
+            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    with pytest.raises(RuntimeError) as failure:
+        backend_type(executor=agent.executor, memory_checker=check).fresh(
+            worktree=tmp_path,
+            prompt="reflect",
+            idempotency_key="one-dispatch",
+        )
+    assert _failure_reason(failure.value) == "agent_timeout"
+    assert "memory check timed out" in str(failure.value)
+    assert len(agent.requests) == 1, "validation timeouts cannot be corrected by another model turn"

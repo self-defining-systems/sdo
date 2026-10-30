@@ -85,6 +85,10 @@ sys.exit(1)
 async def test_validation_tool_timeout_returns_failure_and_stops_children(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from sdo.agents.responder.memory_check import check_reflection_result
+    from sdo.contracts import ReflectionResult
+
+    monkeypatch.setenv("SDO_MEMORY_CHECK_TIMEOUT_FILE", str(tmp_path / "timeout.json"))
     started = tmp_path / "validator-started"
     _validator(
         tmp_path,
@@ -111,6 +115,18 @@ time.sleep(600)
     assert result["exit_code"] != 0
     assert "checking replay" in result["stdout"]
     assert "timed out after 0.3s" in result["stderr"]
+    assert "check again" not in result["next"]
+    assert "terminal" in result["next"]
+    (again,) = await server.call_tool("check_memory", {"decision_path": "decision.json"})
+    assert json.loads(again.text) == result, "a timed-out server must never start a replacement check"
+    # The real MCP producer's terminal result crosses into the final CLI
+    # consumer, even after the tool server is recreated. No replacement starts.
+    checked = check_reflection_result(tmp_path, ReflectionResult(), 0.3)
+    assert checked.timed_out
+    assert checked.stdout == result["stdout"]
+    restarted = validation_server(tmp_path)
+    (latched,) = await restarted.call_tool("check_memory", {"decision_path": "decision.json"})
+    assert json.loads(latched.text) == result
     child = pathlib.Path("/proc") / started.read_text()
     async with asyncio.timeout(60):  # Bounds only a failure: a killed child is already exiting.
         while child.exists() and (child / "stat").read_text().split(") ")[-1][0] != "Z":
