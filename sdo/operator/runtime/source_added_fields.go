@@ -569,3 +569,23 @@ func defaultNormalizedAdditions(paths []string, observed, source, defaults *unst
 	}
 	return out
 }
+
+// sourceDriftAdditions uses the live view's API normalization when available.
+// Snapshot-only views need no transport and retain the same acceptance policy.
+func sourceDriftAdditions(view program.ReadView, ref sdk.ObjectRef, observed, source *unstructured.Unstructured) ([]string, error) {
+	var paths []string
+	var err error
+	if normalizer, ok := view.(interface {
+		sourceAdditions(sdk.ObjectRef, *unstructured.Unstructured, *unstructured.Unstructured) ([]string, error)
+	}); ok {
+		paths, err = normalizer.sourceAdditions(ref, observed, source)
+	} else {
+		paths, err = addedSourceFields(observed, source)
+	}
+	// Missing acceptance evidence must not invent additions. Declared-field
+	// admission remains available through declaredSourceDiff.
+	if errors.Is(err, ErrAcceptanceRecordUnavailable) {
+		return nil, nil
+	}
+	return paths, err
+}
