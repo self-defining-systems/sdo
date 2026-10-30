@@ -446,7 +446,7 @@ func TestDeterministicResponseStageRejoinDoesNotRepeatWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fresh.PlanApplications()) != 0 || !proto.Equal(first, second) || len(replay.Findings) != 1 || !proto.Equal(state.Coverage, replay.Coverage) || len(replay.Request.InitialProgramRuns) != len(state.Request.InitialProgramRuns) {
+	if len(fresh.PlanApplications()) != len(loop.PlanApplications()) || !proto.Equal(first, second) || len(replay.Findings) != 1 || !proto.Equal(state.Coverage, replay.Coverage) || len(replay.Request.InitialProgramRuns) != len(state.Request.InitialProgramRuns) {
 		t.Fatalf("rejoin repeated/lost stage: first=%v second=%v applications=%v", first, second, fresh.PlanApplications())
 	}
 }
@@ -491,7 +491,7 @@ func TestDeterministicResponseStageInterruptedCompletionNeverReplaysMutation(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fresh.PlanApplications()) != 0 || len(report.Mitigations) != 1 || report.Mitigations[0].Result != "apply_error" || report.Mitigations[0].Error == "" || len(replay.Findings) != 1 {
+	if len(fresh.PlanApplications()) != len(loop.PlanApplications()) || len(report.Mitigations) != 1 || report.Mitigations[0].Result != "apply_error" || report.Mitigations[0].Error == "" || len(replay.Findings) != 1 {
 		t.Fatalf("uncertain mutation replayed or hidden: %v, applications=%v, findings=%v", report, fresh.PlanApplications(), replay.Findings)
 	}
 }

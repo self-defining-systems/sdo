@@ -217,17 +217,19 @@ type ResponderLoop struct {
 	plans                 map[string]selectedPlan
 	applications          map[string]PlanApplicationResult
 	applicationsLog       []RecordedPlanApplication
-	completedRepairs      []continuationRepair
-	failureSignals        []string
-	calls                 []ToolCall
-	runs                  []ProgramRun
-	matchedViews          map[string]program.ReadView
-	matchedPlans          map[string]PlanApplicationResult
-	matchedPlanErrors     map[string]error
-	terminalPlanErrors    map[string]*NonExecutablePlanError
-	lastDiagnosisView     program.ReadView
-	findings              []sdk.Finding
-	drift                 []sdk.Finding
+	// Restored application evidence has no live plan or rollback handles.
+	archivedApplications []RecordedPlanApplication
+	completedRepairs     []continuationRepair
+	failureSignals       []string
+	calls                []ToolCall
+	runs                 []ProgramRun
+	matchedViews         map[string]program.ReadView
+	matchedPlans         map[string]PlanApplicationResult
+	matchedPlanErrors    map[string]error
+	terminalPlanErrors   map[string]*NonExecutablePlanError
+	lastDiagnosisView    program.ReadView
+	findings             []sdk.Finding
+	drift                []sdk.Finding
 	// batches counts the agent's response loops, the budget the agent is told.
 	// A loop is one act→verify cycle: loopOpen is set by the first write after a
 	// verification and cleared by the next one. applySeq numbers every apply,
@@ -325,8 +327,28 @@ func (l *ResponderLoop) ProgramRuns() []ProgramRun {
 func (l *ResponderLoop) PlanApplications() []RecordedPlanApplication {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return append([]RecordedPlanApplication(nil), l.applicationsLog...)
+	return l.planApplicationsLocked()
 }
+
+// Caller holds l.mu. Live observations supersede the archived receipt for the
+// same application; unrelated restored receipts must survive subsequent saves.
+func (l *ResponderLoop) planApplicationsLocked() []RecordedPlanApplication {
+	result := append([]RecordedPlanApplication(nil), l.archivedApplications...)
+	positions := map[string]int{}
+	for i, application := range result {
+		positions[application.ID] = i
+	}
+	for _, application := range l.applicationsLog {
+		if i, ok := positions[application.ID]; ok {
+			result[i] = application
+		} else {
+			positions[application.ID] = len(result)
+			result = append(result, application)
+		}
+	}
+	return result
+}
+
 func (l *ResponderLoop) FailureSignals() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -122,7 +122,7 @@ func earlyResultSnapshotLocked(l *ResponderLoop, request IncidentRequest, at tim
 	result.ResponderSessionID = l.menuSession.GetProviderSessionId()
 	result.ProgramToolCalls = append([]ToolCall(nil), l.calls...)
 	result.ProgramRuns = append([]ProgramRun(nil), l.runs...)
-	result.PlanApplications = append([]RecordedPlanApplication(nil), l.applicationsLog...)
+	result.PlanApplications = l.planApplicationsLocked()
 	result.ProgramFailureSignals = append([]string(nil), l.failureSignals...)
 	result.RepairActions = ProgramRepairReceipts(result.PlanApplications, nil)
 	result.RepairActions = append(result.RepairActions, l.menuRepairs...)

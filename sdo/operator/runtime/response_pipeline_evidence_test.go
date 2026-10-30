@@ -300,7 +300,7 @@ func TestDeterministicResponseStageRejoinReobservesRetainedIncidentFinding(t *te
 	if _, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return fresh }}).Run(context.Background(), replay); err != nil {
 		t.Fatal(err)
 	}
-	if len(replay.Findings) != 1 || len(fresh.PlanApplications()) != 0 {
+	if len(replay.Findings) != 1 || len(fresh.PlanApplications()) != len(loop.PlanApplications()) {
 		t.Fatalf("rejoin resurrected stale repaired finding or repeated a write: findings=%v applications=%v", replay.Findings, fresh.PlanApplications())
 	}
 }
@@ -344,7 +344,7 @@ func TestSimScheduleDeterministicPipelineEvidence(t *testing.T) {
 				if calls != 0 || len(state.Findings) != 0 || len(state.PriorStages) != 1 {
 					t.Fatalf("tick=%d lost automatic repair progress: calls=%d stages=%v findings=%v", tick, calls, state.PriorStages, state.Findings)
 				}
-				if tick > 0 && len(loop.PlanApplications()) != 0 {
+				if tick > 0 && len(loop.PlanApplications()) != 2 {
 					t.Fatalf("tick=%d replayed a completed mutation", tick)
 				}
 				result, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
@@ -462,7 +462,7 @@ func TestDeterministicResponseStageRecoveryWaitsWithoutRepeatingWrites(t *testin
 	if err := RunResponseStages(context.Background(), recovered, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 0 || len(fresh.PlanApplications()) != 0 {
+	if calls != 0 || len(fresh.PlanApplications()) != len(loop.PlanApplications()) {
 		t.Fatalf("recovery dispatched or repeated writes: calls=%d applications=%d", calls, len(fresh.PlanApplications()))
 	}
 }
