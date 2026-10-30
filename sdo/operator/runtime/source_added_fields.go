@@ -544,3 +544,28 @@ func setLeaf(object map[string]any, path string, value any) {
 		}
 	}
 }
+
+// defaultNormalizedAdditions excludes only new, undeclared scalar fields equal
+// to the API render of accepted source. Changed accepted values remain drift;
+// a render never grants acceptance to a writer's different value or new object.
+func defaultNormalizedAdditions(paths []string, observed, source, defaults *unstructured.Unstructured) []string {
+	if defaults == nil {
+		return paths
+	}
+	actual, declared, rendered := flattenDriftObject(observed), flattenDriftObject(source), flattenDriftObject(defaults)
+	changed := map[string]bool{}
+	if record, ok := currentAcceptanceRecord(observed, source); ok {
+		for _, path := range changedAcceptedValues(observed, record) {
+			changed[path] = true
+		}
+	}
+	out := []string{}
+	for _, path := range paths {
+		fallback, ok := rendered[path]
+		if !changed[path] && !declaredPath(declared, path) && valueTracked(path) && ok && fallback != nil && sameScalar(actual[path], fallback) {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
+}
