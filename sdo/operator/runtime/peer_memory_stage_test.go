@@ -83,8 +83,11 @@ func TestPeerMemoryPublicationNeverBlocksBoundStage(t *testing.T) {
 			if err := peer.SetIncidentBroker(peerBroker); err != nil {
 				t.Fatal(err)
 			}
+			now := start
+			peer.now = func() time.Time { return now }
 			for tick := 0; tick < 30; tick++ {
-				if err := peer.Step(ctx, start.Add(time.Duration(tick)*time.Second), nil); err != nil {
+				now = start.Add(time.Duration(tick) * time.Second)
+				if err := peer.Step(ctx, now, nil); err != nil {
 					t.Fatal(err)
 				}
 				if effect, ok := peer.PendingWorkspaceEffect(); ok {

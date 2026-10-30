@@ -77,6 +77,7 @@ type Controller struct {
 	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
 	closureRecheckIdentity      string
 	closureRecheckSince         time.Time
+	closureRecheckRetryAt       time.Time
 	codePath                    *CodePath
 	startedAt                   time.Time
 	scheduler                   *Scheduler

@@ -234,6 +234,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 					}
 				}
 				if expiredHealth == nil {
+					c.scheduleClosureRecheck()
 					cancel()
 					return c.PersistState(ctx)
 				}
@@ -273,6 +274,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 				}
 			}
 			if expiredHealth == nil {
+				c.scheduleClosureRecheck()
 				cancel()
 				return c.PersistState(ctx)
 			}
@@ -283,6 +285,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			// "Not yet" is never a contradiction: wait for the window, bounded by
 			// the detectors' own clearing horizons, then commit unconfirmed.
 			if !c.closureRecheckWaitExpired(effect.Identity, recheck.Bound) {
+				c.scheduleClosureRecheck()
 				cancel()
 				return nil
 			}
@@ -723,10 +726,19 @@ func (c *Controller) closureRecheckWaitExpired(identity string, bound time.Durat
 	return now.Sub(c.closureRecheckSince) >= bound
 }
 
+// A pending observation owns its next wake in both active and maintenance
+// modes. Waiting for application events can strand paused closure work.
+func (c *Controller) scheduleClosureRecheck() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closureRecheckRetryAt = c.clock().Add(time.Second)
+}
+
 func (c *Controller) clearClosureRecheckWait() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closureRecheckIdentity, c.closureRecheckSince = "", time.Time{}
+	c.closureRecheckRetryAt = time.Time{}
 }
 
 func (c *Controller) PendingClosureAcknowledgmentEffect() (ClosureAcknowledgmentEffect, bool) {

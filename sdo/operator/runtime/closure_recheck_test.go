@@ -248,3 +248,48 @@ func TestClosureRecheckPreservesNamedBlockersInOutcomeHistory(t *testing.T) {
 		t.Fatalf("unconfirmed outcome history lost its named observation blocker: %+v", controller.pendingClosure.PartialDetectorStates)
 	}
 }
+
+// The recheck producer must wake both runtime modes while it holds a closure.
+// Without an application event a paused runtime otherwise sleeps for an hour.
+func TestClosureObservationWaitSchedulesBothRuntimeModes(t *testing.T) {
+	for _, kind := range []string{"window", "transport", "stability", "recovering"} {
+		t.Run(kind, func(t *testing.T) {
+			now := time.Unix(1000, 0).UTC()
+			detector := &windowDetector{}
+			broker := &recordingClosureBroker{}
+			c := newClosureRecheckController(t, detector, broker, &now)
+			if kind == "transport" {
+				detector.err = apierrors.NewServerTimeout(schema.GroupResource{Resource: "services"}, "list", 1)
+			}
+			if kind == "stability" || kind == "recovering" {
+				detector.set(true, kind == "recovering")
+				c.pendingClosure.ClosureStabilityWindow = c.config.ClosureStabilityWindow
+				c.discardRestoredHealthObservations(now)
+			}
+			executeRecheck(t, c)
+			assertStillPending(t, c, broker)
+			for _, wake := range []time.Time{c.PausedWake(), c.NextWake()} {
+				if !wake.Equal(now.Add(time.Second)) {
+					t.Fatalf("pending %s observation has no bounded runtime wake: %v", kind, wake)
+				}
+			}
+			detector.err = nil
+			detector.set(true, false)
+			limit := now.Add(c.config.ClosureStabilityWindow + time.Second)
+			for c.closureState == contracts.ClosureState_CLOSURE_STATE_PENDING {
+				now = c.PausedWake()
+				if now.IsZero() || now.After(limit) {
+					t.Fatalf("pending observation stranded or exceeded its window: %v", now)
+				}
+				if err := executePausedEffects(context.Background(), c); err != nil {
+					t.Fatal(err)
+				}
+			}
+			awaitBrokerResult(t, c.closureResults)
+			c.processBrokerCompletions()
+			if broker.processCalls() != 1 || !c.PausedWake().IsZero() {
+				t.Fatal("settled observation retained a wake or duplicated the broker effect")
+			}
+		})
+	}
+}

@@ -232,7 +232,7 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 				// rejection must still end reflection durably and exactly once.
 				return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "scripted schedule has no executable playbook author"}, nil
 			})}
-		reporter := &simReportingResponder{base: w.responder, repaired: make(chan IncidentResult, 1), release: make(chan struct{}), terminating: int((seed >> 1) % 2)}
+		reporter := &simReportingResponder{base: w.responder, repaired: make(chan IncidentResult, 1), release: make(chan struct{}), terminating: 1 + int((seed>>1)%2)}
 		w.config.SourceCommit = nativeGit(t, root, "rev-parse", "HEAD")
 		w.config.DeployedCommit = w.config.SourceCommit
 		w.config.RepositoryWorktree = root
@@ -295,18 +295,11 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		if !ok || !closure.VerifiedWhileResponderRunning {
 			t.Fatal("scripted worker never reached early closure")
 		}
-		// The live failure paused exactly one second after verification. The
-		// second pause position is seeded within the remaining report grace.
-		offset := time.Second
-		if !restart {
-			offset = time.Duration(1+w.rng.IntN(28)) * time.Second
-		}
-		w.clock.now = closure.VerifiedAt.Add(offset)
-		if seed%2 == 1 {
-			if err := w.controller.EvaluateAll(ctx, w.clock.Now()); err != nil {
-				t.Fatal(err)
-			}
-		}
+		// Narration no longer holds a verified outcome. Pause at verification
+		// while the independently observed worker termination is still pending.
+		// Seeded one/two-step termination proves that a pause/restart retains
+		// that real prerequisite without introducing a report-grace delay.
+		w.clock.now = closure.VerifiedAt
 		observations := w.cache.snapshots
 		w.applyScheduleEvent(simScheduleEvent{kind: simPause})
 		if restart {
@@ -315,8 +308,11 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			w.restart()
 		}
 		if seed%2 == 1 {
-			// An ACTIVE save may fail immediately before maintenance starts.
-			// An unchanged paused step must restore known durability too.
+			// A real dispatch completion changes bookkeeping without another
+			// application sample. Its failed save must be retried during pause.
+			close(reporter.release)
+			w.await(func() bool { return len(active.results) > 0 })
+			w.controller.processDispatchCompletions(w.clock.Now())
 			failInherited := true
 			w.client.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, kruntime.Object, error) {
 				if !failInherited {
@@ -336,14 +332,14 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			t.Fatal("unchanged paused step stranded an inherited state-save failure")
 		}
 		if _, ok := w.controller.PendingClosureEffect(); ok {
-			t.Fatal("paused closure bypassed report grace")
+			t.Fatal("paused closure bypassed independently observed worker termination")
 		}
 		if w.cache.snapshots != observations {
-			t.Fatal("paused startup/report grace sampled the application")
+			t.Fatal("paused worker retirement sampled the application")
 		}
-		deadline := closure.VerifiedAt.Add(w.controller.config.ResponderReportGrace)
+		deadline := w.clock.Now().Add(time.Second)
 		if wake := w.controller.PausedWake(); !wake.Equal(deadline) {
-			t.Fatalf("paused report wake=%v, want %v", wake, deadline)
+			t.Fatalf("paused termination retry wake=%v, want %v", wake, deadline)
 		}
 		w.clock.now = deadline
 		failedSave := (seed>>1)%2 == 1
@@ -361,15 +357,21 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		if failedSave && len(w.controller.closureResults) > 0 {
 			t.Fatal("broker ran before paused closure state persisted")
 		}
-		for retry := 0; retry < 2; retry++ {
+		for len(w.controller.closureResults) == 0 {
 			wake := w.controller.PausedWake()
-			if wake.IsZero() {
+			if !wake.IsZero() {
+				if !wake.Equal(w.clock.Now().Add(time.Second)) {
+					t.Fatalf("paused retirement/save retry wake=%v", wake)
+				}
+				w.clock.now = wake
+			} else {
 				break
 			}
-			if !wake.Equal(w.clock.Now().Add(time.Second)) {
-				t.Fatalf("paused retirement/save retry wake=%v", wake)
+			if w.clock.Now().After(w.controller.closureVerificationDeadline(closure)) {
+				t.Fatal("paused closure exceeded its original verification bound")
 			}
-			w.clock.now = wake
+			// Follow the production wake through termination, persistence and
+			// closure rechecks; do not invent observation ticks in the harness.
 			if err := executePausedEffects(ctx, w.controller); err != nil {
 				t.Fatal(err)
 			}
@@ -443,7 +445,7 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			t.Fatal("scope restart rewrote historical outcome or credited interrupted learning")
 		}
 		if reporter.stops != reporter.terminating+1 || w.controller.LastAcknowledgedIncidentID() != id {
-			t.Fatal("report grace did not retire worker and acknowledge closure")
+			t.Fatal("worker retirement did not acknowledge closure")
 		}
 		w.controller.provider = w.controller.provider.(simChangedScopeProvider).SnapshotProvider
 		w.applyScheduleEvent(simScheduleEvent{kind: simResume})
