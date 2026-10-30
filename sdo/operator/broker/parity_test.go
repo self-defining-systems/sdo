@@ -821,14 +821,13 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				if len(report.GetMitigationReplayNotes()) == 0 {
 					t.Fatal("CLI omitted advisory replay")
 				}
-				cliObserved, brokerObserved := false, false
+				cliObserved := false
 				for _, gap := range report.GetCoverageGaps() {
 					cliObserved = cliObserved || gap.GetRule() == validate.RuleReplayObservation
 				}
-				for _, gap := range receipt.CoverageGaps {
-					brokerObserved = brokerObserved || gap.Rule == validate.RuleReplayObservation
-				}
-				if !cliObserved || !brokerObserved {
+				// The isolated Job repeats required gates only. Optional replay
+				// observations belong to the local self-check, not publication.
+				if !cliObserved {
 					t.Fatalf("advisory replay lost: CLI=%v broker=%v", report.GetCoverageGaps(), receipt.CoverageGaps)
 				}
 			}

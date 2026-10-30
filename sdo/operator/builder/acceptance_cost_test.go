@@ -22,7 +22,7 @@ func acceptanceFixture(t testing.TB) *Workspace {
 	return workspace
 }
 
-// Acceptance compiles every package, vets and executes its tests/replay. Only
+// Acceptance compiles every package, vets and executes required tests. Only
 // the launch path needs a retained controller artifact after those gates.
 func assertAcceptanceDoesNotRelinkLaunchArtifacts(t *testing.T, workspace *Workspace) {
 	t.Helper()
@@ -41,7 +41,7 @@ func assertAcceptanceDoesNotRelinkLaunchArtifacts(t *testing.T, workspace *Works
 func BenchmarkAcceptanceCheck(b *testing.B) {
 	for b.Loop() {
 		workspace := acceptanceFixture(b)
-		if err := workspace.Check(context.Background()); err != nil {
+		if err := workspace.CheckAcceptance(context.Background()); err != nil {
 			b.Fatal(err)
 		}
 		for _, stage := range workspace.StageTimings {
@@ -50,5 +50,36 @@ func BenchmarkAcceptanceCheck(b *testing.B) {
 		if err := workspace.Close(); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// BenchmarkPublicationPhases compares the same generated publication fixture
+// with and without the informational pass. Use -benchtime=1x for phase seconds.
+func BenchmarkPublicationPhases(b *testing.B) {
+	for _, advisory := range []bool{true, false} {
+		name := "acceptance_only"
+		if advisory {
+			name = "with_informational"
+		}
+		b.Run(name, func(b *testing.B) {
+			for b.Loop() {
+				w := acceptanceFixture(b)
+				var err error
+				if advisory {
+					err = w.Check(context.Background())
+				} else {
+					err = w.CheckAcceptance(context.Background())
+				}
+				if err != nil {
+					b.Fatal(err)
+				}
+				for _, stage := range w.StageTimings {
+					b.ReportMetric(stage.Duration.Seconds(), strings.ReplaceAll(strings.ReplaceAll(stage.Stage, w.Directory, "WORKSPACE"), " ", "_")+"-seconds")
+				}
+				if err := w.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

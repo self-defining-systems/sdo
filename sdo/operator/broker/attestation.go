@@ -22,6 +22,7 @@ import (
 // this record. Restart discards it and safely repeats validation.
 type validationAttestation struct {
 	identity    string
+	incidentID  string
 	gaps        []validate.Diagnostic
 	replayNotes []*contracts.MitigationReplayNote
 }
@@ -111,7 +112,7 @@ func (b *Broker) checkAttestedCandidate(ctx context.Context, root, base string, 
 		return b.checkCandidate(ctx, root, base, actor, phase, paths, b.validator, publication, decision, gaps)
 	}
 	id := publication.IncidentID
-	if attestation, ok := b.attestations[id]; identity != "" && ok && attestation.identity == identity {
+	if attestation, ok := b.attestations[identity]; identity != "" && ok {
 		slog.Info("reflection_attestation_reused", "incident_id", id, "identity", identity)
 		if gaps != nil {
 			*gaps = append(*gaps, attestation.gaps...)
@@ -143,7 +144,11 @@ func (b *Broker) checkAttestedCandidate(ctx context.Context, root, base string, 
 			if b.attestations == nil {
 				b.attestations = map[string]validationAttestation{}
 			}
-			b.attestations[id] = validationAttestation{identity: identity, gaps: append([]validate.Diagnostic(nil), notes...), replayNotes: replayNotes}
+			// Bound the process-local cache. Eviction only repeats validation.
+			if len(b.attestations) >= 128 {
+				b.attestations = map[string]validationAttestation{}
+			}
+			b.attestations[identity] = validationAttestation{identity: identity, incidentID: id, gaps: append([]validate.Diagnostic(nil), notes...), replayNotes: replayNotes}
 			slog.Info("reflection_attestation_checked", "incident_id", id, "identity", identity)
 		}
 	}
