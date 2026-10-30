@@ -1,16 +1,16 @@
 # CI tooling map
 
 PR CI has **four fixed test jobs**: two exhaustive non-Go Python parts and two
-native contract jobs. The two compile/cache preparation jobs finish before Python tests;
-native contracts consume exact run-scoped caches after both preparations;
-only `Required PR CI` is required. Preparation is capped at five minutes, test jobs
-at four minutes, and the aggregate gate at one minute. The maximum
-executed critical path is ten minutes; runner queue time is outside that bound.
+native contract jobs. Two independent producer jobs prepare normal inputs and
+selected race executables. Python waits only for the normal producer; contracts
+wait for both. Including `Required PR CI`, the workflow executes seven jobs.
+Preparation is capped at five minutes, test jobs at four minutes, and the gate
+at one minute. The maximum executed critical path is ten minutes; runner queue
+time is outside that configured bound.
 
 - `check_ci_budget.py` structurally checks the workflow: no computed PR matrices,
   at most four test jobs and seven executed jobs total, dependency critical path
-  <=600 seconds, and contract
-  work plus setup margin within the job cap. It runs before test fanout and in
+  <=600 seconds, and contract work plus setup margin within the job cap. It runs before test fanout and in
   `check_errors.sh`. Its negative controls add a fifth job or extend the path.
 - `ci_policy.json` owns the two contract buckets' fixed capacity (180 seconds of
   measured work each, 60 seconds reserved for setup). Inventory growth never adds
@@ -58,7 +58,8 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   consumer never rebuilds an adapter as a handoff fallback.
 - `go_cost_plan.py` collects the real race inventory, including test/fuzz/example
   names and bounded chaos/explorer cases. `python_cost_plan.py` collects exact
-  pytest node IDs. Contract shards consume Go inventories from their exact preparation; both collect Python node IDs locally.
+  pytest node IDs. The race producer collects both source-bound inventories and publishes the exact
+  fixed plan; shards execute that plan without recollecting it.
 - `run_ci_contracts.py` executes a fixed PR bucket or a nightly bucket with the
   real Go and pytest commands. `go_test_timing.py` streams timing diagnostics;
   assertion failures always fail. `pytest_ci.py` records every pytest phase.
