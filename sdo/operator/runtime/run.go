@@ -380,17 +380,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	bootstrapProvider := &core.KubernetesSnapshotProvider{Namespace: *namespace, Client: options.Client}
-	leaseClient := options.Client
-	if options.Client == nil {
-		bootstrapProvider, err = core.NewKubernetesSnapshotProvider(*namespace)
-		if err != nil {
-			return fmt.Errorf("create Kubernetes snapshot provider: %w", err)
-		}
-		leaseClient, err = core.NewKubernetesClient()
-		if err != nil {
-			return fmt.Errorf("create dedicated leader-election client: %w", err)
-		}
+	bootstrapProvider, leaseClient, stateClient, err := controllerKubernetesClients(*namespace, options.Client)
+	if err != nil {
+		return err
 	}
 	planExecConfig, genericCapture, err := initializePlanTransports(options, clientInjected, *namespace)
 	if err != nil {
@@ -791,7 +783,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
-	stateStore := lifecycleio.NewConfigMapStateStore(bootstrapProvider.Client, *controlNamespace, controllerStateConfigMap, filepath.Join(*repositoryMountPath, ".sdo-runtime", "controller-evidence"))
+	stateStore := lifecycleio.NewConfigMapStateStore(stateClient, *controlNamespace, controllerStateConfigMap, filepath.Join(*repositoryMountPath, ".sdo-runtime", "controller-evidence"))
 	if err := controller.AttachStateStore(ctx, stateStore); err != nil {
 		return fmt.Errorf("restore controller state: %w", err)
 	}
