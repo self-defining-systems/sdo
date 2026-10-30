@@ -201,7 +201,16 @@ def test_ci_pins_actions_to_commits_and_installs_from_the_lockfile() -> None:
     actions = re.findall(r"uses:\s*(\S+)", workflow)
 
     assert actions
-    assert [action for action in actions if not re.search(r"@[0-9a-f]{40}$", action)] == []
+    # Local composites are bound to the immutable checkout; inspect their
+    # remote dependencies too so introducing a composite cannot bypass pinning.
+    for action in list(actions):
+        if action.startswith("./"):
+            composite = REPO_ROOT / action / "action.yml"
+            assert composite.is_file()
+            actions.extend(re.findall(r"uses:\s*(\S+)", composite.read_text(encoding="utf-8")))
+    assert [
+        action for action in actions if not action.startswith("./") and not re.search(r"@[0-9a-f]{40}$", action)
+    ] == []
     syncs = re.findall(r"uv sync[^\n]*", workflow)
     assert syncs
     assert all("--locked" in sync for sync in syncs)
