@@ -201,3 +201,40 @@ func FuzzRuntimeSeed(f *testing.F) {
     assert len(selected) == len(expected)
     assert {name for name in passed if "/" not in name} == expected
     assert "FuzzRuntimeSeed/seed#0" in passed
+
+
+def test_deterministic_response_contracts_cannot_be_displaced_by_cheap_filler():
+    import json
+
+    policy = json.loads((planner.ROOT / "scripts/ci_policy.json").read_text())
+    names = {
+        "TestDeterministicResponseStageRecoveryWaitsWithoutRepeatingWrites": 3,
+        "TestDeterministicResponseStageRolloutWaitIsBoundedByBudget": 25,
+        "TestDeterministicResponseStageFutureDeadlineContract": 5,
+        "TestRolloutBudgetNeverInvokesConsumerAfterDeadline": 1,
+    }
+    guards = {f"go:runtime:{name}" for name in names}
+    names |= {f"TestFiller{i}": 0.1 for i in range(4000)}
+    source = {
+        "runtime": {
+            "packages": {name: ["sdo.dev/operator/runtime"] for name in names},
+            "costs": names,
+            "unmeasured": [f"TestFiller{i}" for i in range(4000)],
+        }
+    }
+    plan = planner.build(source, {"costs": {}}, policy)
+    assert guards <= {name for bucket in plan["bins"] for name in bucket}
+    assert len(plan["bins"]) == policy["contract_jobs"]
+    for bucket in plan["bins"]:
+        planner.costs.check_budget(
+            bucket,
+            {key: item["seconds"] for key, item in plan["items"].items()},
+            budget=policy["contract_work_seconds"],
+        )
+
+
+def test_required_contract_overflow_fails_instead_of_silently_deferring():
+    source = {"runtime": {"packages": {"TestRequired": ["pkg"]}, "costs": {"TestRequired": 181}}}
+    policy = {"contract_work_seconds": 180, "contract_jobs": 2, "required_patterns": ["TestRequired"]}
+    with pytest.raises(ValueError, match="required PR contracts exceed fixed budget"):
+        planner.build(source, {"costs": {}}, policy)
