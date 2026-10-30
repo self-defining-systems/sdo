@@ -71,3 +71,18 @@ receipts remain in its private incident facts and committed outcome.
 ### Receipts after responder retirement
 
 The controller may retire a responder Job after an early report. Post-reflection receipt collection uses the broker ledger's frozen incident request, correlated result, durable dispatch/completion timestamps, independently verified closure, and accepted acknowledgment. A live responder Job is not a receipt prerequisite. An empty `responder_job_evidence` means no Kubernetes success claim is made; the Go checker requires valid ordered lifecycle timestamps and a completed correlated result instead. Historical receipts with Job evidence retain their original validation.
+
+At independently verified recovery, the controller settles accepted stage
+applications once using fresh rollout/readback, the same bound program revision
+and diagnosis, and final object-field equivalence. A converged application whose
+diagnosis is NoMatch becomes `applied_cleared`; its final `apply_receipt`, bound
+`post_apply_diagnose`, and outcome application supersede the earlier bounded
+handoff observation. No writes or restored rollback authority are involved.
+Execution failures, changed object UIDs, superseded writes, unknown observations,
+and genuine source residuals remain unverified and available to reflection.
+Readback/drift comparison excludes new undeclared scalar fields only when equal
+to the API's isolated dry-run rendering of accepted source; changed accepted
+values and API errors remain evidence. No receipt fields or schema change.
+Covered-repeat admission and the broker's no-new-evidence check consume this
+settled evidence; successful global health alone never grants a no-change skip.
+The generic-health-first detector-learning gate remains unchanged.

@@ -163,7 +163,8 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	scriptRefusals map[string]error
+	recoverySettlement *recoveryApplicationSettlement
+	scriptRefusals     map[string]error
 
 	stageProgress map[string]responseStageProgress
 	// WorkingProgramRoot is set by the production loop factory to the mounted
@@ -1046,7 +1047,10 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 			boundPlansNoMatch(selected, response.ProgramRuns) &&
 			targetedFindingsClear(l.mitigationIncident(selected).Findings, response.Findings) &&
 			result.VerificationPassed
-		if !result.VerificationPassed {
+		var sourceObservation *SourceReconcilePartialError
+		if !result.VerificationPassed && !errors.As(err, &sourceObservation) {
+			// Source readback is settled at recovery. Its typed residual receipt
+			// retains unresolved work without declaring a program execution failure.
 			// Program trust counts an unverified application against the program's
 			// current revision, durably, even if the responder is restarted.
 			failedRuns := make([]ProgramRun, 0, len(programIDs))
