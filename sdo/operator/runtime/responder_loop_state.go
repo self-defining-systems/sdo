@@ -11,8 +11,10 @@ import (
 // applicationEvidence stores historical executor facts, never prepared handles.
 // Pending is retained separately because it is not part of PlanApplication.
 type applicationEvidence struct {
-	Receipt json.RawMessage
-	Pending bool
+	Receipt   json.RawMessage
+	Pending   bool
+	PreImages []PlanPreImage
+	Patches   []PlanPatch
 }
 
 // recordedRepairEvidence keeps controller-only ownership out of responder
@@ -27,9 +29,10 @@ type recordedRepairEvidence struct {
 // independently of continuation feedback. Legacy execution fields in version 1
 // journals are deliberately ignored.
 type responderToolState struct {
-	StageProgress    map[string]responseStageProgress
-	PendingWrites    map[string]pendingMitigation
-	CompletedRepairs []recordedRepairEvidence
+	ApplicationBindings map[string][]recoveryBinding
+	StageProgress       map[string]responseStageProgress
+	PendingWrites       map[string]pendingMitigation
+	CompletedRepairs    []recordedRepairEvidence
 	// ProtoJSON application facts, independent of execution authority.
 	ApplicationEvidence []applicationEvidence
 	Continuation        responderContinuation
@@ -62,13 +65,13 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("encode application evidence: %w", err)
 		}
-		evidence = append(evidence, applicationEvidence{Receipt: encoded, Pending: application.Pending})
+		evidence = append(evidence, applicationEvidence{Receipt: encoded, Pending: application.Pending, PreImages: application.Result.PreImages, Patches: application.Result.Patches})
 	}
 	var repairs []recordedRepairEvidence
 	for _, repair := range l.applicationRepairsLocked() {
 		repairs = append(repairs, recordedRepairEvidence{continuationRepair: repair, Owners: repair.Receipt.Owners})
 	}
-	payload, err := json.Marshal(responderToolState{ApplicationEvidence: evidence, StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: repairs, Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, LoopOpen: l.loopOpen, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
+	payload, err := json.Marshal(responderToolState{ApplicationBindings: l.applicationBindings, ApplicationEvidence: evidence, StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: repairs, Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, LoopOpen: l.loopOpen, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -114,6 +117,8 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 		seen[receipt.ApplicationId] = true
 		application := planApplicationState(&receipt)
 		application.Pending = entry.Pending
+		application.Result.PreImages = entry.PreImages
+		application.Result.Patches = entry.Patches
 		archived = append(archived, application)
 	}
 	l.archivedApplications = archived
@@ -121,6 +126,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 		l.sessionID = state.SessionID
 	}
 	l.stageProgress = state.StageProgress
+	l.applicationBindings = state.ApplicationBindings
 	l.restoreTerminalStagePlanErrors()
 	l.pendingWrites = state.PendingWrites
 	l.completedRepairs = nil

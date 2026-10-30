@@ -600,10 +600,9 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			return logicalReflectionDecision(decision), nil
 		}
 
-		// Resumed sessions still enter the worker's no-model probe, which owns
-		// writer termination and permanent session handoff. Only a session-free
-		// closure can safely omit that worker entirely.
-		if effect.Attempt == 1 && !n.ForceReflection && effect.Closure.GetResult().GetResponderSessionId() == "" && stageOnlyClosure(incidentClosureState(effect.Closure)) && !genericHealthDetectedFirst(effect.Closure) && coveredRepeatCandidate(effect.Outcome) {
+		// A session is provenance, not new corrective evidence. The shared
+		// broker check below proves that accepted memory explains every write.
+		if effect.Attempt == 1 && !n.ForceReflection && coveredRepeatCandidate(effect.Outcome) {
 			decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted_programs_no_new_evidence"}
 			checkCtx := ctx
 			if n.SessionRoot != "" {

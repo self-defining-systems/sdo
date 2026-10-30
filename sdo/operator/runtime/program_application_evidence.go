@@ -29,6 +29,21 @@ func appliedPlanBindings(outcome *contracts.OutcomeRecord, application *contract
 			}
 		}
 	}
+	for _, stage := range outcome.GetPriorStages() {
+		for _, attempt := range stage.GetMitigations() {
+			if attempt.GetPlaybookId() != id || attempt.GetApplyReceipt().GetApplicationId() != application.GetApplicationId() {
+				continue
+			}
+			binding := programBindingsState(attempt.GetBindings())
+			duplicate := false
+			for _, existing := range applied {
+				duplicate = duplicate || binding.Equal(existing)
+			}
+			if !duplicate {
+				applied = append(applied, binding)
+			}
+		}
+	}
 	return applied
 }
 

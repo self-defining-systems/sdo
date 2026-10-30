@@ -62,10 +62,10 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 		for _, application := range outcome.GetPlanApplications() {
 			// Pending rollout is neither an independent success nor a failure.
 			// Explicit settlement and failure signals below remain authoritative.
-			if application.GetRolloutPending() != nil {
+			if application.GetRolloutPending() != nil && !applicationExecutionFailed(application) {
 				continue
 			}
-			if !application.GetApplied() {
+			if !application.GetApplied() && len(application.GetActionsApplied()) == 0 && !applicationExecutionFailed(application) {
 				continue
 			}
 			for _, id := range application.GetProgramIds() {
@@ -75,23 +75,15 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 					revision = outcome.GetSourceCommit()
 				}
 				state = stateForRevision(id, revision)
-				failed := outcome.GetClassification() != "success" || application.GetDryRun() || application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH
-				for _, signal := range outcome.GetProgramFailureSignals() {
-					// Count durable responder failures after applications, so the
-					// same failure does not also count against a successful retry.
-					if strings.HasPrefix(signal, "application_verification_failure:") {
-						continue
-					}
-					failedID, failedRevision, signalFailure := parseProgramTrustFailureSignal(signal)
-					if strings.HasSuffix(signal, ":"+id) || (signalFailure && failedID == id && (failedRevision == "" || failedRevision == revision)) {
-						failed = true
-						break
-					}
-				}
+				failed := applicationExecutionFailed(application)
 				if failed {
 					state.Failures = recordFailure(id, revision)
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
+				}
+				if !failed && recoveryApplicationSucceeded(outcome, application, id, revision) && !creditedInOutcome[id] {
+					state.VerifiedSuccesses++
+					creditedInOutcome[id] = true
 				}
 				stats[id] = state
 			}
@@ -287,4 +279,22 @@ func parseTrustFailureSignal(signal, prefix string) (id, revision string, ok boo
 		return "", "", false
 	}
 	return id, revision, true
+}
+
+// Observation, health and incident summaries cannot prove an execution failure.
+// Only immutable adverse execution facts (or an exact false match) do so.
+func applicationExecutionFailed(app *contracts.PlanApplication) bool {
+	if app.GetDryRun() {
+		return false
+	}
+	if app.GetRolledBack() || app.GetRollbackError() != "" {
+		return true
+	}
+	for _, report := range app.GetActionReports() {
+		if report.GetFailureReason() != "" && report.GetFailureReason() != "source_residual" && report.GetFailureReason() != "outcome_unknown" {
+			return true
+		}
+	}
+	// Missing/truncated reports and presentation errors prove no adverse write.
+	return false
 }

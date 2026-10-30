@@ -164,10 +164,10 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	recoverySettlement *recoveryApplicationSettlement
-	scriptRefusals     map[string]error
+	scriptRefusals map[string]error
 
-	stageProgress map[string]responseStageProgress
+	stageProgress       map[string]responseStageProgress
+	applicationBindings map[string][]recoveryBinding
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
 	WorkingProgramRoot string
@@ -206,6 +206,7 @@ type ResponderLoop struct {
 	MaxBatches            int
 	Trust                 map[string]ProgramTrust
 	CorpusSessionRoot     string
+	RecoverySessionRoot   string
 	capturePhase          string
 	sourceCompared        map[string]bool
 	stageNotes            []StageNote
@@ -1040,6 +1041,14 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		programIDs = append(programIDs, plan.programID)
 	}
 	entry := RecordedPlanApplication{ID: id, ProgramIDs: programIDs, PlanIDs: append([]string(nil), request.PlanIDs...), Result: PlanApplicationResult{Plan: batch}, StartedAt: started, Pending: true}
+	if l.applicationBindings == nil {
+		l.applicationBindings = map[string][]recoveryBinding{}
+	}
+	actionStart := 0
+	for _, plan := range selected {
+		l.applicationBindings[id] = append(l.applicationBindings[id], recoveryBinding{ProgramID: plan.programID, ProgramRevision: plan.revision, Bindings: cloneProgramBindings(plan.bindings), FindingFingerprints: append([]string(nil), plan.targetFingerprints...), ActionStart: actionStart, ActionCount: len(plan.plan.Actions)})
+		actionStart += len(plan.plan.Actions)
+	}
 	l.applicationsLog = append(l.applicationsLog, entry)
 	if err := l.persistToolState(ctx); err != nil {
 		response.Error = err.Error()
@@ -1083,28 +1092,10 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 			boundPlansNoMatch(selected, response.ProgramRuns) &&
 			targetedFindingsClear(l.mitigationIncident(selected).Findings, response.Findings) &&
 			result.VerificationPassed
-		var sourceObservation *SourceReconcilePartialError
-		if !result.VerificationPassed && !errors.As(err, &sourceObservation) {
-			// Source readback is settled at recovery. Its typed residual receipt
-			// retains unresolved work without declaring a program execution failure.
-			// Program trust counts an unverified application against the program's
-			// current revision, durably, even if the responder is restarted.
-			failedRuns := make([]ProgramRun, 0, len(programIDs))
-			for _, plan := range selected {
-				failedRuns = append(failedRuns, ProgramRun{ProgramID: plan.programID, ProgramRevision: plan.revision})
-			}
-			fillProgramRevisions(ctx, failedRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
-			for _, run := range failedRuns {
-				signal := "application_verification_failure:" + run.ProgramID
-				if run.ProgramRevision != "" {
-					signal += "@" + run.ProgramRevision
-				}
-				l.addFailureSignal(signal)
-			}
-			if persistErr := l.persistToolState(ctx); persistErr != nil {
-				response.Error = persistErr.Error()
-			}
-		}
+		// Observation is not execution failure. Typed immutable action reports
+		// and rollback facts persist with the application; recovery settlement
+		// owns later credit. Do not publish a second health-as-failure signal.
+
 	}
 	if response.Error != "" {
 		response.Healthy = false
@@ -1154,9 +1145,6 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		run := ProgramRun{ProgramRevision: plan.revision, ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: time.Since(started)}
 		response.ProgramRuns = append(response.ProgramRuns, run)
 		l.runs = append(l.runs, run)
-		if verdict.Result == program.Match {
-			l.addFailureSignal("applied_diagnosis_still_match:" + plan.programID)
-		}
 	}
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
@@ -1180,17 +1168,9 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	}
 	l.drift = retainedDrift(l.Request.Findings, view)
 	l.findings = findings
-	if len(applied) > 0 {
-		old := map[string]bool{}
-		for _, finding := range previous {
-			old[FindingFingerprint(finding)] = true
-		}
-		for _, finding := range findings {
-			if !old[FindingFingerprint(finding)] && !onlyUnrelatedFindings(applied, []sdk.Finding{finding}) {
-				l.addFailureSignal("new_finding_after_apply:" + FindingFingerprint(finding))
-			}
-		}
-	} else if !stage && !l.appliedAny() && len(previous) > 0 && len(findings) == 0 {
+	// Typed diagnoses and findings retain observation history. They are not
+	// durable execution failures; only actual ad hoc work needs a novelty flag.
+	if len(applied) == 0 && !stage && !l.appliedAny() && len(previous) > 0 && len(findings) == 0 {
 		matched := false
 		for _, run := range l.runs {
 			if run.Verdict.Result == program.Match {
@@ -1249,32 +1229,6 @@ func boundPlansNoMatch(selected []selectedPlan, runs []ProgramRun) bool {
 		}
 		if !clear {
 			return false
-		}
-	}
-	return true
-}
-
-// Only explicit findings on resources outside the applied bindings can explain
-// why global health is still red after those bound diagnoses have cleared.
-func onlyUnrelatedFindings(applied []selectedPlan, findings []sdk.Finding) bool {
-	if len(applied) == 0 || len(findings) == 0 {
-		return false
-	}
-	for _, finding := range findings {
-		if finding.PrimaryResource.Kind == "" || finding.PrimaryResource.Name == "" {
-			return false
-		}
-		for _, plan := range applied {
-			for _, bound := range plan.bindings.Objects {
-				if sameResource(finding.PrimaryResource, bound) {
-					return false
-				}
-				for _, ref := range finding.ParameterBindings {
-					if sameResource(ref, bound) {
-						return false
-					}
-				}
-			}
 		}
 	}
 	return true

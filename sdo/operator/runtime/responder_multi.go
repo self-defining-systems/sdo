@@ -223,6 +223,26 @@ func (l *ResponderLoop) reservePending(application string, result PlanApplicatio
 	if err != nil {
 		refs = planCaptureRefs(result.Plan)
 	}
+	exclusive := l.applicationWriteRefs(result)
+	sort.Slice(refs, func(i, j int) bool { return writeObjectKey(refs[i]) < writeObjectKey(refs[j]) })
+	var diagnoser program.Diagnoser
+	revision := ""
+	if programID != "" && l.Programs != nil {
+		diagnoser, _ = l.Programs.Diagnoser(programID)
+		revision = l.programRevision(programID)
+	}
+	if programID != "" && revision != "" && diagnoser != nil && len(l.applicationBindings[application]) == 0 {
+		if l.applicationBindings == nil {
+			l.applicationBindings = map[string][]recoveryBinding{}
+		}
+		l.applicationBindings[application] = []recoveryBinding{{ProgramID: programID, ProgramRevision: revision, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...)}}
+	}
+	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, WriteRefs: exclusive, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: time.Now().UTC()}
+}
+
+// applicationWriteRefs is the shared desired-state scope for reservation and
+// recovery attribution. Requeues and confirmed unchanged writes only observe.
+func (l *ResponderLoop) applicationWriteRefs(result PlanApplicationResult) *[]sdk.ObjectRef {
 	writes := program.Plan{}
 	for _, action := range result.ActionsApplied {
 		// A requeue changes no desired state. Every prerequisite repair may
@@ -265,14 +285,7 @@ func (l *ResponderLoop) reservePending(application string, result PlanApplicatio
 		}
 		exclusive = &writeRefs
 	}
-	sort.Slice(refs, func(i, j int) bool { return writeObjectKey(refs[i]) < writeObjectKey(refs[j]) })
-	var diagnoser program.Diagnoser
-	revision := ""
-	if programID != "" && l.Programs != nil {
-		diagnoser, _ = l.Programs.Diagnoser(programID)
-		revision = l.programRevision(programID)
-	}
-	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, WriteRefs: exclusive, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: time.Now().UTC()}
+	return exclusive
 }
 
 // Reservations are observation state, never restored write or rollback authority.
@@ -352,7 +365,6 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 				l.applicationsLog[i].Result = result
 				l.applicationsLog[i].Pending = planApplicationPending(result)
 				l.applicationsLog[i].Error = ""
-				l.applicationsLog[i].CompletedAt = time.Now().UTC()
 			}
 		}
 		l.updatePendingReport(application, pending.AttemptID, result.VerificationPassed, "direct_verification_unresolved")
@@ -429,6 +441,17 @@ func (l *ResponderLoop) pendingOverlaps(ref sdk.ObjectRef, pending pendingMitiga
 	return false
 }
 
+// Causal attribution includes owned children; admission still reserves only
+// exclusive desired-state writes, never the wider observation scope.
+func (l *ResponderLoop) pendingCausallyOverlaps(ctx context.Context, ref sdk.ObjectRef, pending pendingMitigation) bool {
+	for _, causal := range l.recoveryOwnerRefs(ctx, []sdk.ObjectRef{ref}, l.applicationsLog) {
+		if l.pendingOverlaps(causal, pending) {
+			return true
+		}
+	}
+	return false
+}
+
 // failIneffectivePending ends a held program application whose writes landed
 // but whose own diagnosis still matches while a finding it targeted is still
 // active: its plan did not address the fault, so waiting for its rollout
@@ -473,7 +496,6 @@ func (l *ResponderLoop) failIneffectivePending(ctx context.Context, application 
 				l.applicationsLog[i].Result = result
 				l.applicationsLog[i].Pending = planApplicationPending(result)
 				l.applicationsLog[i].Error = reason + ": " + pending.ProgramID + " still matches after its writes; writes remain applied"
-				l.applicationsLog[i].CompletedAt = time.Now().UTC()
 			}
 		}
 	}
@@ -516,7 +538,7 @@ func (l *ResponderLoop) pendingConflict(ctx context.Context, refs []sdk.ObjectRe
 
 // A held reservation refuses overlapping writes unless it is shown not to have
 // addressed its fault (failIneffectivePending). A released one is superseded
-// by any later write that is not refused: the write may be what let its
+// by a later causal write that is not refused: the write may be what let its
 // rollout finish (an owned ReplicaSet or Pod, a claim, a node), so the stalled
 // application earns no late credit. Reservations of attempt itself are skipped.
 func (l *ResponderLoop) pendingConflictExcept(ctx context.Context, refs []sdk.ObjectRef, response *ToolResponse, attempt string) bool {
@@ -542,7 +564,12 @@ func (l *ResponderLoop) pendingConflictExcept(ctx context.Context, refs []sdk.Ob
 	}
 	for application, pending := range l.pendingWrites {
 		if pending.Released && (attempt == "" || pending.AttemptID != attempt) {
-			pending.Superseded = true
+			for _, ref := range refs {
+				if l.pendingCausallyOverlaps(ctx, ref, pending) {
+					pending.Superseded = true
+					break
+				}
+			}
 			l.pendingWrites[application] = pending
 		}
 	}
