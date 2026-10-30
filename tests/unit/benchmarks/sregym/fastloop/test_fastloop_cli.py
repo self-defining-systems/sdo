@@ -187,7 +187,7 @@ def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypa
     with pytest.raises(SystemExit, match="credentials Secret.*sdo-agent-credentials.*missing"):
         main(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
 
-    assert checked == [["get", "secret", "sdo-agent-credentials"]]
+    assert checked == [["get", "secret", "sdo-agent-credentials", "-o", "name"]]
 
 
 def test_detection_timeout_reaches_single_and_composite_sdo_stages(

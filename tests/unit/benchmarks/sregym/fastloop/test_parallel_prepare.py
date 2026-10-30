@@ -197,6 +197,7 @@ class _Cluster:
         self.events: list[tuple[str, str]] = []
         self.lock = threading.Lock()
         self.repositories = lane_repositories
+        self.mounts = set()
         real = shared_memory._command
 
         def command(*argv):
@@ -205,6 +206,10 @@ class _Cluster:
             if argv[0] == "docker":
                 with self.lock:
                     self.events.append(("docker", " ".join(argv)))
+                if "stat" in argv:
+                    return "1:2" if argv[-1].endswith("/accepted") or (argv[2], argv[-1]) in self.mounts else "3:4"
+                if "mount" in argv:
+                    self.mounts.add((argv[argv.index("--privileged") + 1], argv[-1]))
                 return ""
             return real(*argv)
 

@@ -16,9 +16,26 @@ import (
 
 type podExecutor func(context.Context, string, string, []string, io.Writer, io.Writer) error
 
+// containerExecutor runs in a named container; "" selects the Pod's default.
+type containerExecutor func(ctx context.Context, namespace, pod, container string, command []string, stdout, stderr io.Writer) error
+
+func inContainer(execute containerExecutor, container string) podExecutor {
+	return func(ctx context.Context, namespace, pod string, command []string, stdout, stderr io.Writer) error {
+		return execute(ctx, namespace, pod, container, command, stdout, stderr)
+	}
+}
+
+func newPodExecutor(config *rest.Config, client kubernetes.Interface) (podExecutor, error) {
+	execute, err := newContainerExecutor(config, client)
+	if err != nil {
+		return nil, err
+	}
+	return inContainer(execute, ""), nil
+}
+
 // The upgrade transport is built once beside the ordinary client. Each SPDY
 // exec requires its own upgraded stream; ordinary API calls retain their pool.
-func newPodExecutor(config *rest.Config, client kubernetes.Interface) (podExecutor, error) {
+func newContainerExecutor(config *rest.Config, client kubernetes.Interface) (containerExecutor, error) {
 	transport, upgrader, err := spdy.RoundTripperFor(config)
 	if err != nil {
 		return nil, err
@@ -26,7 +43,7 @@ func newPodExecutor(config *rest.Config, client kubernetes.Interface) (podExecut
 	// client-go's SPDY upgrader stores the current connection internally.
 	// Serialize this evidence executor rather than sharing that mutable slot.
 	active := make(chan struct{}, 1)
-	return func(ctx context.Context, namespace, pod string, command []string, stdout, stderr io.Writer) error {
+	return func(ctx context.Context, namespace, pod, container string, command []string, stdout, stderr io.Writer) error {
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		select {
@@ -38,7 +55,7 @@ func newPodExecutor(config *rest.Config, client kubernetes.Interface) (podExecut
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		target := client.CoreV1().RESTClient().Post().Namespace(namespace).Resource("pods").Name(pod).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Command: command, Stdout: stdout != nil, Stderr: stderr != nil}, scheme.ParameterCodec).URL()
+		target := client.CoreV1().RESTClient().Post().Namespace(namespace).Resource("pods").Name(pod).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: container, Command: command, Stdout: stdout != nil, Stderr: stderr != nil}, scheme.ParameterCodec).URL()
 		executor, err := remotecommand.NewSPDYExecutorForTransports(transport, upgrader, http.MethodPost, target)
 		if err != nil {
 			return err
