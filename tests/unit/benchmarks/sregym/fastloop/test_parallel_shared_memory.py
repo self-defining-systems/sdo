@@ -5,7 +5,12 @@ from subprocess import CompletedProcess
 import pytest
 
 from benchmarks.sregym.adapter import native_operator
-from benchmarks.sregym.adapter.native_operator import NativeInstallConfig, NativeOperatorError
+from benchmarks.sregym.adapter.native_operator import (
+    NativeInstallConfig,
+    NativeOperatorError,
+    SharedRepositoryControllerNotReady,
+    SharedRepositoryIdentityMismatch,
+)
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.shared_memory import shared_controller_job
 
@@ -29,16 +34,20 @@ def config(tmp_path):
     )
 
 
-def test_shared_sync_checks_identity_without_archive_copy(monkeypatch, tmp_path):
+@pytest.mark.parametrize("ready", [None, "False", "True"])
+def test_shared_sync_checks_identity_without_archive_copy(monkeypatch, tmp_path, ready):
     selected = config(tmp_path)
     identity = selected.repository / ".git" / "sdo-shared-id"
     identity.parent.mkdir(parents=True)
     identity.write_text(TOKEN)
     monkeypatch.setattr(native_operator, "execute_operator", lambda *a, **k: pytest.fail("archive copy in shared mode"))
+    status = {"phase": "Running"}
+    if ready is not None:
+        status["conditions"] = [{"type": "Ready", "status": ready}]
     monkeypatch.setattr(
         native_operator,
         "_kubectl_json",
-        lambda *_: {"items": [{"metadata": {"name": "controller"}, "status": {"phase": "Running"}}]},
+        lambda *_: {"items": [{"metadata": {"name": "controller"}, "status": status}]},
     )
     calls = []
 
@@ -47,11 +56,16 @@ def test_shared_sync_checks_identity_without_archive_copy(monkeypatch, tmp_path)
         return CompletedProcess(argv, 0, TOKEN + "\n", "")
 
     monkeypatch.setattr(native_operator.subprocess, "run", command)
+    if ready != "True":
+        with pytest.raises(SharedRepositoryControllerNotReady):
+            native_operator.sync_existing(selected)
+        assert calls == [], "unready controllers must be rejected before identity exec"
+        return
     native_operator.sync_existing(selected)
     assert len(calls) == 1
     assert calls[0][-2:] == ["cat", "/workspace/application/.git/sdo-shared-id"]
     monkeypatch.setattr(native_operator.subprocess, "run", lambda argv, **kw: CompletedProcess(argv, 0, "wrong", ""))
-    with pytest.raises(NativeOperatorError, match="identity"):
+    with pytest.raises(SharedRepositoryIdentityMismatch, match="identity"):
         native_operator.sync_existing(selected)
 
 
