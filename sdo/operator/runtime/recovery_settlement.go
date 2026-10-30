@@ -537,3 +537,58 @@ func (l *ResponderLoop) recoveryAPIWrites(ctx context.Context, result IncidentRe
 	}
 	return incidentResultState(&contracts.IncidentResult{RepairActions: observed}).RepairActions, true
 }
+
+// settledApplicationCoverage projects the same durable settlement used for
+// repair credit. Live diagnoses can cease matching after a successful repair;
+// they cannot erase the opening Match that authorized that settled application.
+// No live menu or execution authority is reconstructed here.
+func settledApplicationCoverage(request *contracts.IncidentRequest, result *contracts.IncidentResult) *contracts.PlaybookCoverage {
+	coverage := cloneCoverage(request.GetPlaybookCoverage())
+	if result == nil {
+		return coverage
+	}
+	outcome := &contracts.OutcomeRecord{SourceCommit: request.GetSourceCommit(), ProgramRuns: result.GetProgramRuns(), PriorStages: request.GetPriorStages()}
+	runs := append(append([]*contracts.ProgramRun(nil), request.GetInitialProgramRuns()...), result.GetProgramRuns()...)
+	for _, stage := range request.GetPriorStages() {
+		for _, attempt := range stage.GetMitigations() {
+			if attempt.GetResult() != "applied_cleared" {
+				continue
+			}
+			id, revision := attempt.GetPlaybookId(), attempt.GetProgramRevision()
+			app := attempt.GetApplyReceipt()
+			// Use the final application, not an older copy in a stage snapshot.
+			for _, final := range result.GetPlanApplications() {
+				if final.GetApplicationId() != app.GetApplicationId() || !recoveryApplicationSucceeded(outcome, final, id, revision) {
+					continue
+				}
+				bindings := programBindingsState(attempt.GetBindings())
+				for _, run := range runs {
+					fp := run.GetFindingFingerprint()
+					if fp == "" || run.GetProgramId() != id || run.GetProgramRevision() != revision || run.GetError() != "" || run.GetVerdict().GetResult() != contracts.Verdict_RESULT_MATCH || !bindings.Equal(programBindingsState(run.GetBindings())) || !slices.Contains(attempt.GetClearedFindingFingerprints(), fp) {
+						continue
+					}
+					if coverage == nil {
+						coverage = &contracts.PlaybookCoverage{}
+					}
+					var match *contracts.PlaybookMatch
+					for _, existing := range coverage.Matches {
+						if existing.GetPlaybookId() == id && existing.GetProgramRevision() == revision && bindings.Equal(programBindingsState(existing.GetBindings())) {
+							match = existing
+							break
+						}
+					}
+					if match == nil {
+						match = &contracts.PlaybookMatch{PlaybookId: id, ProgramRevision: revision, Bindings: programBindingsContract(bindings)}
+						coverage.Matches = append(coverage.Matches, match)
+					}
+					if !slices.Contains(match.ExplainedFindingFingerprints, fp) {
+						match.ExplainedFindingFingerprints = append(match.ExplainedFindingFingerprints, fp)
+						slices.Sort(match.ExplainedFindingFingerprints)
+					}
+					coverage.UnexplainedFindingFingerprints = slices.DeleteFunc(coverage.UnexplainedFindingFingerprints, func(candidate string) bool { return candidate == fp })
+				}
+			}
+		}
+	}
+	return coverage
+}
