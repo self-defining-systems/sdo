@@ -15,7 +15,7 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   measured work each, 60 seconds reserved for setup). Inventory growth never adds
   a PR job. `pr_test_plan.py` keeps the broadest cheap regression set within that
   capacity; every other test is assigned to nightly. Both sets are exhaustive
-  and disjoint, and a generated Markdown artifact lists every deferred test.
+  and disjoint, and a generated Markdown job summary lists every deferred test.
 - `prepare_go_ci.sh` compiles normal production archives and race test archives.
   `go_test_inventory.go` reads Go's generated test tables after `go list -test
   -export -race` and retains vet checks, avoiding discarded test-executable links.
@@ -25,10 +25,10 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   whole Kubernetes runtime. The CLI and bootstrap fixture are cached once.
   `download_go_modules.sh` warms each full module graph through temporary module
   metadata; cache preparation never rewrites the source-bound go.mod/go.sum.
-- `go_ci_artifacts.sh` packs prepared compiler/module/tool roots into
+- `go_ci_artifacts.sh` packs module/tool roots into
   same-run artifacts and restores executable permissions on consumers. Only pushes
   to main or vic-lsh/dev/sdo-improve save shared Go caches; throwaway PR/queue refs
-  restore the base and transfer artifacts without competing for its cache quota.
+  restore the base without competing for its cache quota.
   Consumer jobs work even when the base entry is missing or evicted. Compiler-free
   Python jobs fetch only module sources and tools, excluding the compiler archive.
   Contract jobs never download same-run build or inventory artifacts. They restore
@@ -36,7 +36,9 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   local preparation at the immutable event SHA. Go validates every cached input;
   missing/stale entries are compiled. They collect both inventories locally and
   derive the same deterministic plan. This removes artifact service throughput
-  and producer completion from the contracts' critical path.
+  and producer completion from the contracts' critical path. Timings go to job
+  logs and deferred checks to the step summary, so uploads cannot consume the
+  contract deadline either.
 - `check_errors.sh --go-only` owns Go static contracts (schema/deadline/fixture
   ratchets, generated Go references, parity and purity) and runs on the prepared
   race graph. `--python-only` owns Python checks and runs behind the compiler
