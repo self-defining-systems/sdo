@@ -659,3 +659,48 @@ def test_python_waits_only_for_its_normal_producer_without_growing_jobs() -> Non
     assert jobs["python"]["needs"] == "prepare-go"
     assert set(jobs["contracts"]["needs"]) == {"prepare-go", "prepare-go-race"}
     assert "prepare-go-race" in jobs["required-pr-ci"]["needs"]
+
+
+@pytest.mark.parametrize("quality_status", [0, 23])
+def test_race_archives_overlap_quality_but_cannot_publish_after_failure(tmp_path, quality_status):
+    """Execute the workflow shell; a failing check still rejects finished archives."""
+    steps = workflow()["jobs"]["prepare-go-race"]["steps"]
+    command = next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Check Go static contracts and prepare selected executables"
+    )
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "link_cache.sh").write_text("#!/bin/bash\n")
+    # The quality check can finish only once both archives exist. A bounded
+    # read makes a serial-wait regression fail without leaving a child behind.
+    fifo = tmp_path / "packed"
+    os.mkfifo(fifo)
+    (scripts / "check_errors.sh").write_text(
+        f'#!/bin/bash\nread -r -t 3 marker <> "{fifo}" || exit 99\nexit {quality_status}\n'
+    )
+    (tmp_path / "nightly-tests.md").write_text("synthetic manifest")
+    for index in range(2):
+        (tmp_path / "prepared-contracts" / str(index)).mkdir(parents=True)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name in ("uv", "python3"):
+        path = bindir / name
+        path.write_text("#!/bin/sh\nexit 0\n")
+        path.chmod(0o755)
+    # Compression itself is exercised by the real tar/zstd. Signal quality
+    # only after the workflow's second du, which follows the second tar.
+    du = bindir / "du"
+    du.write_text(f'#!/bin/bash\nif [[ "$*" == *contract-1.tar.zst* ]]; then echo packed > "{fifo}"; fi\n')
+    du.chmod(0o755)
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", command],
+        cwd=tmp_path,
+        env={**os.environ, "RUNNER_TEMP": str(tmp_path), "PATH": f"{bindir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == quality_status, result.stderr
+    assert all((tmp_path / f"contract-{index}.tar.zst").is_file() for index in range(2))

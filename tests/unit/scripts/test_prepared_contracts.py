@@ -56,6 +56,15 @@ func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string)
         ],
         check=True,
     )
+    # Distinct packages share one graph load; equal output basenames must
+    # still retain their own executable and package working directory.
+    extra_packages = ["other", "another/nested"]
+    for relative in extra_packages:
+        directory = module / relative
+        directory.mkdir(parents=True)
+        (directory / "selected_test.go").write_text(
+            'package contracts\nimport "testing"\nfunc TestBatch(t *testing.T) {}\n'
+        )
     plan = root / "plan.json"
     plan.write_text(
         json.dumps(
@@ -78,8 +87,31 @@ func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string)
             }
         )
     )
-    output = root / "prepared"
-    prepared.prepare(plan, output, root=root)
+    data = json.loads(plan.read_text())
+    data["items"]["batch"] = {
+        "kind": "go",
+        "scope": "operator",
+        "name": "TestBatch",
+        "packages": ["synthetic.example/contracts/" + package for package in extra_packages],
+    }
+    data["bins"][0].append("batch")
+    plan.write_text(json.dumps(data))
+    commands = []
+    original_run = subprocess.run
+
+    def record_run(command, **kwargs):
+        commands.append(command)
+        return original_run(command, **kwargs)
+
+    with monkeypatch.context() as recording:
+        recording.setattr(subprocess, "run", record_run)
+        output = root / "prepared"
+        prepared.prepare(plan, output, root=root)
+    # One metadata query per module and only the necessary collision batches,
+    # rather than one graph load per selected package.
+    assert len([command for command in commands if command[:2] == ["go", "list"]]) == 1
+    assert len([command for command in commands if command[:2] == ["go", "test"]]) == 2
+
     # The consumer uses the published test2json tool and cannot invoke Go.
     bindir = tmp_path / "bin"
     bindir.mkdir()

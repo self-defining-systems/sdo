@@ -59,23 +59,44 @@ def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
     objects = output / "objects"
     objects.mkdir(exist_ok=True)
 
-    def compile_package(key: tuple[str, str]) -> tuple[tuple[str, str], tuple[Path, str]]:
-        scope, package = key
-        binary = objects / (hashlib.sha256(f"{scope}:{package}".encode()).hexdigest() + ".test")
+    compiled: dict[tuple[str, str], tuple[Path, str, str]] = {}
+    for scope in sorted({scope for scope, _ in selected}):
         module = root / "sdo/operator" / ("runtime" if scope == "runtime" else "")
-        # go test normally omits DWARF; -c would retain it unless disabled.
-        subprocess.run(
-            ["go", "test", "-race", "-c", "-ldflags=-w", "-o", str(binary.resolve()), package], cwd=module, check=True
+        names = sorted(package for selected_scope, package in selected if selected_scope == scope)
+        # Each Go invocation loads the module graph. Discover all selected
+        # directories once and let Go schedule their links in one build graph.
+        metadata = subprocess.check_output(
+            ["go", "list", "-race", "-f", "{{.ImportPath}}\t{{.Dir}}", *names], cwd=module, text=True
         )
-        package_dir = Path(
-            subprocess.check_output(["go", "list", "-race", "-f", "{{.Dir}}", package], cwd=module, text=True).strip()
-        )
-        return key, (binary, str(package_dir.relative_to(root)))
+        directories = dict(line.split("\t", 1) for line in metadata.splitlines())
+        if set(directories) != set(names):
+            raise ValueError("prepared package directories do not match selected packages")
+        # go test -c names output by the last import-path element. Split only
+        # collisions, so unrelated packages still share one graph load.
+        batches: list[dict[str, str]] = []
+        for package in names:
+            basename = package.rsplit("/", 1)[-1] + ".test"
+            batch = next((batch for batch in batches if basename not in batch), None)
+            if batch is None:
+                batch = {}
+                batches.append(batch)
+            batch[basename] = package
+        for index, batch in enumerate(batches):
+            directory = objects / scope / str(index)
+            directory.mkdir(parents=True)
+            # go test normally omits DWARF; -c retains it unless disabled.
+            subprocess.run(
+                ["go", "test", "-race", "-c", "-ldflags=-w", "-o", str(directory.resolve()), *batch.values()],
+                cwd=module,
+                check=True,
+            )
+            for basename, package in batch.items():
+                binary = directory / basename
+                compiled[scope, package] = (binary, str(Path(directories[package]).relative_to(root)), digest(binary))
 
     tool = objects / "test2json"
     subprocess.run(["go", "build", "-o", str(tool.resolve()), "cmd/test2json"], cwd=root, check=True)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        compiled = dict(pool.map(compile_package, sorted(selected)))
+    tool_digest = digest(tool)
     for index, members in enumerate(data["bins"]):
         directory = output / str(index)
         directory.mkdir(parents=True, exist_ok=True)
@@ -91,7 +112,7 @@ def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
                     "package": package,
                     "names": sorted(names),
                     "binary": filename,
-                    "sha256": digest(binary),
+                    "sha256": compiled[scope, package][2],
                     "directory": compiled[scope, package][1],
                 }
             )
@@ -100,7 +121,7 @@ def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
             "plan_sha256": digest(plan),
             "bin": index,
             "entries": entries,
-            "test2json_sha256": digest(tool),
+            "test2json_sha256": tool_digest,
         }
         (directory / "manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
         (directory / "pr-test-plan.json").write_bytes(plan.read_bytes())

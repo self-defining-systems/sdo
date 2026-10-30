@@ -189,13 +189,15 @@ jobs:
           uv run python scripts/python_cost_plan.py --inventory-only --output .fastloop/test-bin/python-test-plan.json
           python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
           python3 scripts/prepared_contracts.py --plan .fastloop/test-bin/pr-test-plan.json --output "$RUNNER_TEMP/prepared-contracts"
-          wait "$quality_pid"
-          trap - EXIT
           for bin in 0 1; do
             cp "$RUNNER_TEMP/nightly-tests.md" "$RUNNER_TEMP/prepared-contracts/$bin/"
             tar -I 'zstd -T2 -3' -cf "$RUNNER_TEMP/contract-$bin.tar.zst" -C "$RUNNER_TEMP/prepared-contracts/$bin" .
             du -h "$RUNNER_TEMP/contract-$bin.tar.zst"
           done
+          # Compress immutable outputs while quality checks finish, but never
+          # publish a binary until every independent check has succeeded.
+          wait "$quality_pid"
+          trap - EXIT
       - name: Publish selected contract executables for bin 0
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
