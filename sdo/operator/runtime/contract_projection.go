@@ -467,6 +467,7 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	if closure.DispatchError != "" {
 		message.DispatchError = &closure.DispatchError
 	}
+	request.PlaybookCoverage = settledApplicationCoverage(request, message.Result)
 	message.DetectorTimeline = detectorTimelineContract(closure.DetectorTimeline)
 	return message, nil
 }

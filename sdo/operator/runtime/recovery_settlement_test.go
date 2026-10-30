@@ -79,7 +79,11 @@ func settlementBrokerWorkers(t *testing.T, loop *ResponderLoop, closure Incident
 	t.Helper()
 	root := nativeRepository(t)
 	nativeMemoryFixture(t, root)
-	for _, match := range closure.Request.PlaybookCoverage.Matches {
+	derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, match := range derived.Record.GetPlaybookCoverage().GetMatches() {
 		id := match.PlaybookId
 		t1Write(t, root, ".sdo/playbooks/"+id+"/README.md", []byte("---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: initial\n---\nSynthetic accepted repair <RESOURCE_NAME>\n"))
 	}
@@ -112,6 +116,15 @@ func settlementBrokerWorkers(t *testing.T, loop *ResponderLoop, closure Incident
 	}
 	if err := native.ProcessQueuedReflection(context.Background(), closure.Request.IncidentID); err != nil {
 		t.Fatal(err)
+	}
+	if calls == 0 {
+		ledger, err := native.readLedger(closure.Request.IncidentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ledger.GetReflectionDecision().GetLearningDecision() != "no_change" || ledger.GetReflectionDecision().GetNoChangeReason() != "accepted_programs_no_new_evidence" {
+			t.Fatalf("zero workers without broker admission: %v", ledger.GetReflectionDecision())
+		}
 	}
 	return calls
 }

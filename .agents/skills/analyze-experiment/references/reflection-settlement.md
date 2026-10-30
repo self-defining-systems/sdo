@@ -54,3 +54,13 @@ check before a learning worker is dispatched. A responder session alone does not
 require learning when it made no new corrective write. The broker still checks
 all committed evidence; a hand repair, missing binding proof or unresolved work
 keeps learning available. See [application settlement](response-stages.md).
+
+Final closure coverage also projects settled applications from their immutable
+opening Match runs. A live diagnosis returning NoMatch after repair may remove
+current menu coverage without erasing the explanation for that repair. Restored
+matches require the same application receipt, program revision, bindings and
+cleared finding fingerprint under the shared recovery settlement predicate;
+they do not restore mitigation selections or execution authority. Compare final
+outcome coverage with the settled stages and opening runs when investigating an
+unexpected learning dispatch. A stale, partial or superseded application cannot
+supply this historical coverage.

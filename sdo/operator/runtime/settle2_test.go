@@ -106,6 +106,18 @@ func TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitDispatchCompletionQueued(t, controller)
+	// Production preparation may run again after the repair (for example on
+	// standby/rejoin). Exercise its real live diagnosis/coverage producer.
+	controller.mu.Lock()
+	request := *cloneIncidentRequest(controller.currentIncidentRequest)
+	controller.mu.Unlock()
+	refreshed := loop.prepareDispatch(context.Background(), request, loop.Trust, goCodePathCoverage{})
+	if len(refreshed.PlaybookCoverage.GetMatches()) != 0 {
+		t.Fatalf("post-repair diagnosis unexpectedly matched: %v", refreshed.PlaybookCoverage)
+	}
+	controller.mu.Lock()
+	controller.currentIncidentRequest = &refreshed
+	controller.mu.Unlock()
 	if clock.Now().Sub(start) != time.Minute {
 		t.Fatalf("shared wait=%s", clock.Now().Sub(start))
 	}
@@ -122,6 +134,9 @@ func TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels(t *testing.T) {
 		derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if len(derived.Record.GetPlaybookCoverage().GetMatches()) != 2 || len(derived.Record.GetPlaybookCoverage().GetUnexplainedFindingFingerprints()) != 0 {
+			t.Fatalf("settled opening coverage erased by live refresh: %v", derived.Record.GetPlaybookCoverage())
 		}
 		if derived.Record.Classification != "success" || !coveredRepeatCandidate(derived.Record) {
 			t.Fatalf("covered recovery lost: %v", derived.Record)
@@ -785,6 +800,93 @@ func TestSettlementObservesRecordedAPIWritesBeforeDerivation(t *testing.T) {
 			want := kind == "watching" || kind == "own-write"
 			if got := result.PlanApplications[0].Result.FinalVerificationBasis == "recovery-settled"; got != want {
 				t.Fatalf("history=%s settlement=%v want=%v", kind, got, want)
+			}
+		})
+	}
+}
+
+// Live coverage describes what is broken now; settled coverage describes what
+// the accepted application explained before it repaired that exact binding.
+func TestSettlementCoverageSurvivesLaterPassAndDispatchPreparation(t *testing.T) {
+	for _, refresh := range []string{"later-pass", "dispatch-preparation"} {
+		t.Run(refresh, func(t *testing.T) {
+			loop, state := pipelineTestLoop(t, false)
+			stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true}
+			if err := RunResponseStages(context.Background(), state, []ResponseStage{stage}); err != nil {
+				t.Fatal(err)
+			}
+			result, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if refresh == "later-pass" {
+				if _, err := RunStageAgain(context.Background(), state, stage); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				state.Request = loop.prepareDispatch(context.Background(), state.Request, loop.Trust, goCodePathCoverage{})
+			}
+			result, stages := loop.SettleRecoveryApplications(context.Background(), result, state.PriorStages)
+			at := time.Now()
+			closure := IncidentClosure{Request: state.Request, Result: &result, VerifiedAt: at, HealthClearedAt: &at, FinalDetectorStates: []DetectorEvaluation{{DetectorID: loop.Detectors[0].Spec().ID, Status: DetectorEvaluationClear, EvaluatedAt: at}}, Frozen: true}
+			closure.Request.PriorStages = stages
+			derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(derived.Record.GetPlaybookCoverage().GetMatches()) != 2 || len(derived.Record.GetPlaybookCoverage().GetUnexplainedFindingFingerprints()) != 0 || !coveredRepeatCandidate(derived.Record) {
+				t.Fatalf("settled producer lost coverage at consumer: %v", derived.Record)
+			}
+			if calls := settlementBrokerWorkers(t, loop, closure); calls != 0 {
+				t.Fatalf("covered repeat dispatched %d learning workers", calls)
+			}
+			// Historical coverage must not borrow a peer revision/binding or
+			// an unrelated finding, nor survive withdrawal of settlement proof.
+			for _, corrupt := range []string{"revision", "binding", "fingerprint", "diagnose-unknown", "no-opening-match", "unsettled", "receipt-mismatch"} {
+				t.Run(corrupt, func(t *testing.T) {
+					bad := cloneIncidentClosure(&closure)
+					typedResult, err := incidentResultContract(*closure.Result)
+					if err != nil {
+						t.Fatal(err)
+					}
+					independentResult := incidentResultState(typedResult)
+					bad.Result = &independentResult
+					bad.Request.PlaybookCoverage = nil
+					bad.Request.InitialProgramRuns = nil
+					for i := range bad.Result.ProgramRuns {
+						run := &bad.Result.ProgramRuns[i]
+						if run.Verdict.Result != program.Match {
+							continue
+						}
+						switch corrupt {
+						case "revision":
+							run.ProgramRevision = "synthetic-other-revision"
+						case "binding":
+							run.Bindings = program.Bindings{Objects: map[string]sdk.ObjectRef{"peer": {Kind: "Service", Namespace: "app", Name: "peer"}}}
+						case "fingerprint":
+							run.FindingFingerprint = "synthetic-other-finding"
+						case "diagnose-unknown":
+							run.Verdict.Result = program.Unknown
+						case "no-opening-match":
+							run.Verdict.Result = program.NoMatch
+						}
+					}
+					for i := range bad.Result.PlanApplications {
+						if corrupt == "unsettled" {
+							bad.Result.PlanApplications[i].Result.FinalVerificationBasis = ""
+						}
+						if corrupt == "receipt-mismatch" {
+							bad.Result.PlanApplications[i].ID += "-other"
+						}
+					}
+					derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), *bad, "", "test", "test")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(derived.Record.GetPlaybookCoverage().GetMatches()) != 0 || coveredRepeatCandidate(derived.Record) {
+						t.Fatalf("ambiguous evidence restored coverage: %v", derived.Record.GetPlaybookCoverage())
+					}
+				})
 			}
 		})
 	}
