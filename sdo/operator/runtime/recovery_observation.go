@@ -126,6 +126,19 @@ func (c *Controller) recordRecoveryObservation(id string, now time.Time, finding
 		changes := c.tracker.Observe(now, id, findings)
 		c.batcher.RemoveKeys(changes.Cleared)
 		c.recordEvaluation(id, now, findings)
+		if detector := c.detectors[id]; detector != nil {
+			spec := detector.Spec()
+			c.recordFiring(spec, now, findings, changes)
+			for _, finding := range changes.Activated {
+				if c.mergeIntoOpenIncident(finding) || c.attachBeforeLaunch([]sdk.Finding{finding}) {
+					continue
+				}
+				if spec.Class != "" && !severityAtLeast(finding.Severity, spec.Batching.Severity) {
+					continue
+				}
+				c.batcher.AddAtWithDebounce(finding, now, spec.Batching.Debounce)
+			}
+		}
 	}
 	if len(c.history) > 100 {
 		c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)

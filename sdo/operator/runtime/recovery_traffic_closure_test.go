@@ -3,8 +3,13 @@ package runtime
 import (
 	"context"
 	"errors"
+	"google.golang.org/protobuf/proto"
 	"k8s.io/client-go/kubernetes/fake"
+	"path/filepath"
+	"sdo.dev/operator/apihistory"
+	"sdo.dev/operator/broker"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory"
 	"testing"
 	"time"
 
@@ -55,6 +60,12 @@ func repairedTrafficController(t *testing.T) (*Controller, *changingProvider, ti
 	c.incidentDispatchedAt = now.Add(-time.Second)
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	c.handleDispatchCompletion(dispatchCompletion{incidentID: state.Request.IncidentID, result: result, priorStages: state.PriorStages}, now)
+	gate, err := apihistory.PrepareMutationGate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.MutationGate = gate
+	c.responderLoop = loop
 	c.now = func() time.Time { return now }
 	return c, provider, now
 }
@@ -100,6 +111,7 @@ func TestClosureActiveTrafficWaitsThenRecoversOrHandsOff(t *testing.T) {
 	for _, clears := range []bool{true, false} {
 		t.Run(map[bool]string{true: "settles", false: "residual"}[clears], func(t *testing.T) {
 			c, p, start := repairedTrafficController(t)
+			gate := c.responderLoop.MutationGate
 			broker := &recordingClosureBroker{}
 			if err := c.SetIncidentBroker(broker); err != nil {
 				t.Fatal(err)
@@ -136,7 +148,11 @@ func TestClosureActiveTrafficWaitsThenRecoversOrHandsOff(t *testing.T) {
 			} else {
 				now = start.Add(time.Minute)
 				dispatcher := KubernetesJobDispatcher{Client: fake.NewSimpleClientset(), Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), RepositoryPVC: "repo", RepositoryMountPath: t.TempDir(), ServiceAccount: "responder", LoopFactory: func(r IncidentRequest) *ResponderLoop {
-					return NewResponderLoop(r, nil, p, []sdk.Detector{trafficDetector("traffic-health", "health")}, PlanExecutor{}, 5)
+					loop := NewResponderLoop(r, nil, p, []sdk.Detector{trafficDetector("traffic-health", "health")}, PlanExecutor{}, 5)
+					loop.MutationGate = gate
+					loop.IncidentStatus = func() *apihistory.IncidentVerified { return c.incidentVerificationWarning(r.IncidentID) }
+					loop.CurrentEvidence = func() *IncidentRequest { return cloneIncidentRequest(c.currentIncidentRequest) }
+					return loop
 				}}
 				c.dispatcher = dispatcher
 				p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
@@ -160,6 +176,13 @@ func TestClosureActiveTrafficWaitsThenRecoversOrHandsOff(t *testing.T) {
 				}
 				typed := new(contracts.IncidentRequest)
 				if err := task.GetRequest().UnmarshalTo(typed); err != nil {
+					t.Fatal(err)
+				}
+				lease, err := gate.Begin()
+				if err != nil {
+					t.Fatalf("residual responder is still fenced after recovery was withdrawn: %v", err)
+				}
+				if err := lease.Finish(false); err != nil {
 					t.Fatal(err)
 				}
 				if len(typed.GetFindings()) != 1 || typed.GetFindings()[0].GetDetectorId() != "traffic-health" || len(typed.GetPriorStages()) == 0 || !typed.GetResponseDeadline().AsTime().Equal(c.currentIncidentRequest.ResponseDeadline) {
@@ -387,4 +410,282 @@ func TestClosureTrafficSharesClearingPersistenceWithoutSerialWindow(t *testing.T
 	if broker.processCalls() != 1 {
 		t.Fatal("broker started a second stability window after clearing persistence")
 	}
+}
+
+// No reflection worker or final responder report delays this native pipeline.
+// Recovery, an intervening red window and renewed proof all run through the
+// real controller before the native broker may publish its model-free skip.
+func TestRecoveryTrafficEarlyClosureSkipsReflectionOnlyAfterHealthProof(t *testing.T) {
+	ctx := context.Background()
+	c, _, step := earlyWaitController(t, stateFinding("health"), stateFinding("health"), sdk.Finding{})
+	p := &changingProvider{}
+	c.provider = p
+	trafficHealth := trafficDetector("traffic-health", "health")
+	c.detectors["traffic-health"] = trafficHealth
+	c.detectorSpecs["traffic-health"] = trafficHealth.Spec()
+	c.healthDetectorIDs = append(c.healthDetectorIDs, "traffic-health")
+	policy := trafficHealth.Spec().Persistence
+	c.tracker.SetPolicy("traffic-health", policy.Firing, policy.Clearing, policy.MinDuration)
+	c.scheduler = NewScheduler(c.detectorList(), time.Unix(2, 0))
+	now := time.Unix(2, 0).UTC()
+	c.now = func() time.Time { return now }
+	set := func(second int, latency time.Duration) {
+		now = time.Unix(int64(second), 0).UTC()
+		snapshot := recoveryTrafficSnapshot(t, now, latency)
+		snapshot.NamespaceName = c.config.Namespace
+		p.snapshot = snapshot
+	}
+	root := nativeRepository(t)
+	nativeMemoryFixture(t, root)
+	repository, err := broker.New(root, filepath.Join(t.TempDir(), "proposals"), simMemoryStructureValidator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "scripted", ResponderModel: "none", Now: func() time.Time { return now }}
+	workspace, err := native.PrepareIncident(ctx, c.currentIncidentRequest.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := c.currentIncidentRequest.IncidentID
+	c.currentIncidentRequest.RepairPolicy = "recorded-actions"
+	c.currentIncidentRequest.RepositoryWorktree = workspace.Worktree
+	c.currentIncidentRequest.RepositoryBaseCommit = workspace.BaseCommit
+	c.currentIncidentRequest.SourceCommit = workspace.BaseCommit
+	c.currentIncidentRequest.DeployedCommit = workspace.BaseCommit
+	c.broker = native
+	for second := 2; second < 36; second++ {
+		latency := 100 * time.Millisecond
+		if second <= 20 {
+			latency = 330 * time.Millisecond
+		}
+		set(second, latency)
+		step(second)
+		if !c.IncidentOpen() {
+			t.Fatalf("early/model-free path closed while traffic was settling at %d", second)
+		}
+	}
+	set(36, 100*time.Millisecond)
+	step(36)
+	if c.IncidentOpen() {
+		t.Fatal("clear traffic never produced recovery")
+	}
+	set(37, 330*time.Millisecond)
+	step(37)
+	executeRecheck(t, c)
+	if c.closureFailure != nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING {
+		t.Fatal("fresh red traffic became a permanent native closure failure")
+	}
+	if got := c.cachedResponderVerification(ctx, id, 0); got.Healthy || got.IncidentVerified != nil {
+		t.Fatal("verify retained the invalidated recovery proof")
+	}
+	for _, second := range []int{38, 52} {
+		set(second, 100*time.Millisecond)
+		executeRecheck(t, c)
+		if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING {
+			t.Fatal("native outcome skipped renewed stability")
+		}
+	}
+	set(53, 100*time.Millisecond)
+	executeRecheck(t, c)
+	awaitBrokerResult(t, c.closureResults)
+	completion := <-c.closureResults
+	if completion.err != nil {
+		t.Fatal(completion.err)
+	}
+	outcome, err := memory.NewJSONStore(root).Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Record.GetReflectionSkipReason() != "no_session" {
+		t.Fatalf("expected model-free reflection skip: %v", outcome.Record)
+	}
+	ledger, err := native.readLedger(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ledger.ReflectionDecision.GetNoChangeReason() != "no_session" || !ledger.Closure.GetVerifiedAt().AsTime().Equal(now) {
+		t.Fatal("native skip preceded fresh stable health proof")
+	}
+}
+
+func TestRecoveryFrozenClosureAtHealthBudgetPublishesFailureWithoutRewritingCommand(t *testing.T) {
+	for _, scenario := range []struct {
+		name                                  string
+		sameFinding, sourcePending, lateClear bool
+	}{{name: "new-finding"}, {name: "same-finding-new-episode", sameFinding: true}, {name: "unpublished-source", sourcePending: true}, {name: "late-clear-after-budget", lateClear: true}} {
+		t.Run(scenario.name, func(t *testing.T) {
+			sameFinding := scenario.sameFinding
+			ctx := context.Background()
+			c, _, step := earlyWaitController(t, stateFinding("health"), stateFinding("health"), sdk.Finding{})
+			root := nativeRepository(t)
+			nativeMemoryFixture(t, root)
+			interrupted := true
+			repository, err := broker.New(root, filepath.Join(t.TempDir(), "proposals"), func(ctx context.Context, root string, changed []string) error {
+				if scenario.sourcePending && interrupted {
+					return errors.New("synthetic interruption before source acceptance")
+				}
+				return simMemoryStructureValidator(ctx, root, changed)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Unix(2, 0).UTC()
+			c.now = func() time.Time { return now }
+			native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "scripted", ResponderModel: "none", Now: func() time.Time { return now }, Deriver: OutcomeDeriverFunc(func(ctx context.Context, closure IncidentClosure, proposal, backend, model string) (DerivedOutcome, error) {
+				if interrupted {
+					return DerivedOutcome{}, errors.New("synthetic exit before outcome")
+				}
+				return (ProtoOutcomeDeriver{}).Derive(ctx, closure, proposal, backend, model)
+			})}
+			workspace, err := native.PrepareIncident(ctx, c.currentIncidentRequest.IncidentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario.sourcePending {
+				tracingWrite(t, workspace.Worktree, "app.txt", "unpublished repair\n")
+			}
+			id := c.currentIncidentRequest.IncidentID
+			c.currentIncidentRequest.RepairPolicy = "recorded-actions"
+			c.currentIncidentRequest.RepositoryWorktree = workspace.Worktree
+			c.currentIncidentRequest.RepositoryBaseCommit = workspace.BaseCommit
+			c.currentIncidentRequest.SourceCommit = workspace.BaseCommit
+			c.currentIncidentRequest.DeployedCommit = workspace.BaseCommit
+			c.broker = native
+			for second := 2; second <= 18; second++ {
+				now = time.Unix(int64(second), 0).UTC()
+				step(second)
+			}
+			executeRecheck(t, c)
+			awaitBrokerResult(t, c.closureResults)
+			c.processBrokerCompletions()
+			ledger, err := native.readLedger(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frozen := proto.Clone(ledger.Closure)
+			if !c.pendingClosure.Frozen || c.closureFailure == nil || c.closureFailure.Permanent {
+				t.Fatal("fixture did not freeze and interrupt before outcome")
+			}
+			interrupted = false
+			var detector sdk.Detector = trafficDetector("health", "health")
+			if sameFinding {
+				detector = &namedRecoveryDetector{windowDetector: &windowDetector{confirmed: true, active: true}, id: "health"}
+			}
+			c.detectors["health"] = detector
+			c.detectorSpecs["health"] = detector.Spec()
+			c.tracker.SetPolicy("health", 2, 2, 9*time.Second)
+			p := &changingProvider{}
+			c.provider = p
+			now = time.Unix(20, 0).UTC()
+			p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
+			executeRecheck(t, c)
+			if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.closureFailure.Permanent || c.closureFailure.Attempts != 1 {
+				t.Fatal("active health spent the broker retry budget")
+			}
+			if scenario.lateClear {
+				// Detector observations continue while broker delivery is delayed.
+				// A new streak after the bound cannot retroactively earn recovery.
+				c.scheduler = NewScheduler(c.detectorList(), now)
+				for _, second := range []int{70, 85} {
+					now = time.Unix(int64(second), 0).UTC()
+					p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
+					if err := c.Step(ctx, now, nil); err != nil {
+						t.Fatal(err)
+					}
+				}
+			} else {
+				now = c.closureVerificationDeadline(*c.pendingClosure)
+				p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
+			}
+			executeRecheck(t, c)
+			if c.closureState != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
+				t.Fatal("frozen red closure waited past its original health budget instead of finalizing failed")
+			}
+			awaitBrokerResult(t, c.closureResults)
+			c.processBrokerCompletions()
+			if c.closureReceipt == nil || c.closureFailure != nil {
+				t.Fatalf("expired health did not get a normal failure receipt: %+v", c.closureFailure)
+			}
+			ledger, err = native.readLedger(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(ledger.Closure, frozen) {
+				t.Fatal("bounded failure rewrote the immutable broker command")
+			}
+			outcome, err := memory.NewJSONStore(root).Get(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario.sourcePending && (ledger.ProposalCommit != "" || nativeGit(t, root, "show", "HEAD:app.txt") != "base") {
+				t.Fatal("expired health published an unaccepted source repair")
+			}
+			expected := "failed"
+			if scenario.lateClear {
+				expected = "unconfirmed"
+			}
+			if outcome.Record.GetClassification() != expected {
+				t.Fatalf("red traffic received success: %v", outcome.Record)
+			}
+			if scenario.lateClear {
+				return
+			}
+			if len(c.batcher.Snapshot().Findings) == 0 {
+				t.Fatal("failure did not retain active residual work for the next responder")
+			}
+			before := proto.Clone(outcome.Record)
+			replay, err := native.processUnverifiedClosure(ctx, incidentClosureState(ledger.Closure), closureHealthObservation{At: now, Reason: "later unavailable read"})
+			if err != nil || replay.OutcomeCommit != c.closureReceipt.OutcomeCommit {
+				t.Fatalf("accepted outcome replay failed: %v", err)
+			}
+			after, err := memory.NewJSONStore(root).Get(ctx, id)
+			if err != nil || !proto.Equal(before, after.Record) {
+				t.Fatal("later health rewrote an accepted outcome")
+			}
+			ack, ok := c.PendingClosureAcknowledgmentEffect()
+			if !ok {
+				t.Fatal("missing failed-outcome acknowledgment")
+			}
+			if err := c.ExecuteClosureAcknowledgmentEffect(ctx, ack); err != nil {
+				t.Fatal(err)
+			}
+			awaitBrokerResult(t, c.acknowledgmentResults)
+			c.processBrokerCompletions()
+			if c.pendingClosure != nil {
+				t.Fatal("failure receipt did not acknowledge")
+			}
+			residual := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+			c.dispatcher = residual
+			now = now.Add(time.Second)
+			c.scheduler = NewScheduler(c.detectorList(), now)
+			p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
+			if err := c.Step(ctx, now, nil); err != nil {
+				t.Fatal(err)
+			}
+			if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID == id || len(c.currentIncidentRequest.Findings) == 0 {
+				t.Fatal("acknowledgment dropped a post-proof health episode instead of handing it to a responder")
+			}
+			work, ok := c.PendingWorkspaceEffect()
+			if !ok {
+				t.Fatal("residual did not reach the native workspace handoff")
+			}
+			if err := c.ExecuteWorkspaceEffect(ctx, work); err != nil {
+				t.Fatal(err)
+			}
+			awaitBrokerResult(t, c.workspaceResults)
+			c.processBrokerCompletions()
+			effect, ok := c.PendingDispatchEffect()
+			if !ok {
+				t.Fatal("native residual workspace did not release responder")
+			}
+			if _, _, err := c.runResponsePipeline(ctx, effect.Request); err != nil {
+				t.Fatal(err)
+			}
+			if received := awaitRequest(t, residual.requests); len(received.Findings) == 0 {
+				t.Fatal("responder lost the residual health episode")
+			}
+
+		})
+	}
+
 }

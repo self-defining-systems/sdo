@@ -180,3 +180,25 @@ func (o *MutationObservation) Fence(at time.Time) error {
 	return os.Rename(temporary, filepath.Join(o.gate.Directory, "incident-verified.json"))
 }
 func (o *MutationObservation) Close() error { return o.file.Close() }
+
+// Reopen withdraws a verification fence after the controller has proved the
+// old responder quiescent and returned an unpublished closure to observation.
+// Pending, in-flight or uncertain writes can never be unfenced.
+func (g *MutationGate) Reopen() error {
+	observation, err := g.TryObserve()
+	if err != nil {
+		return err
+	}
+	if observation == nil {
+		return errors.New("mutation still in flight while reopening recovery")
+	}
+	defer observation.Close()
+	if observation.Pending {
+		return errors.New("pending or uncertain mutation blocks reopening recovery")
+	}
+	err = os.Remove(filepath.Join(g.Directory, "incident-verified.json"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
