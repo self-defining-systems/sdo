@@ -42,7 +42,7 @@ export GOMAXPROCS="$hermetic_jobs" GOFLAGS="${GOFLAGS:-} -p=$hermetic_jobs"
     export GOMAXPROCS="$reflection_jobs" GOFLAGS="${GOFLAGS:-} -p=$reflection_jobs"
     cd "$root/sdo/operator/runtime"
     reflection_status=0
-    go test -run '^(TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker|TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker|TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms|TestHermeticAdoptedHostPortRepairLearnsAndReplays|TestFirstEncounterNamingReplacedPodPublishesWorkloadPlaybook)$' -count=1 -timeout=5m . || reflection_status=$?
+    go test -run '^(TestAcceptedSourceBridgeDryRunCreateDoesNotPolluteTypedLists|TestRecreatedObjectKeepsItsCarriedAcceptanceRecord|TestAdoptedDeploymentDNSPolicyDriftIsNamedAndRestoredWithoutImageEvidence|TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker|TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker|TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms|TestHermeticAdoptedHostPortRepairLearnsAndReplays|TestFirstEncounterNamingReplacedPodPublishesWorkloadPlaybook)$' -count=1 -timeout=5m . || reflection_status=$?
     # Shared-memory publication owns independent repositories and a full package
     # budget; it must not start at the end of the reflection package deadline.
     go test -run '^TestHermeticSharedMemoryControllers$' -count=1 -timeout=5m . || reflection_status=$?

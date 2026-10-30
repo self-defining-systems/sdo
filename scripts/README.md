@@ -19,6 +19,10 @@ executed critical path is ten minutes; runner queue time is outside that bound.
 - `prepare_go_ci.sh` compiles normal production archives and race test archives.
   `go_test_inventory.go` reads Go's generated test tables after `go list -test
   -export -race` and retains vet checks, avoiding discarded test-executable links.
+  Native contracts use the `contracts` mode: race inventory, the source-bound CLI
+  and offline module metadata, without repeating the full normal/static graph.
+  `.github/actions/restore-go-caches` restores the disjoint normal and race archives
+  concurrently using the pinned standard Actions cache client.
   A real Go fixture checks parity with `go test -race -list`, including build tags,
   external tests, examples and fuzz targets. The portable graph warms only
   `runtime/prober`, the generated traffic binary's dependency, rather than the

@@ -88,13 +88,15 @@ func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http
 		_ = json.NewEncoder(writer).Encode(&a.service)
 		return
 	}
+	var applied corev1.Service
+	if json.NewDecoder(request.Body).Decode(&applied) != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	// Default rendering is a dry-run CREATE of source alone, never an apply
+	// that could merge with a live object at the probe name.
 	if request.Method == http.MethodPost {
-		if request.URL.Query().Get("dryRun") != metav1.DryRunAll || !strings.HasSuffix(request.URL.Path, "/services") {
-			writer.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		var applied corev1.Service
-		if json.NewDecoder(request.Body).Decode(&applied) != nil || !strings.HasSuffix(applied.Name, defaultRenderSuffix) {
+		if request.URL.Query().Get("dryRun") != metav1.DryRunAll || request.URL.Path != "/api/v1/namespaces/"+a.service.Namespace+"/services" || !strings.HasSuffix(applied.Name, defaultRenderSuffix) {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -110,11 +112,6 @@ func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http
 	}
 	manager := request.URL.Query().Get("fieldManager")
 	if request.Method != http.MethodPatch || (manager != "sdo-deployer" && manager != acceptanceFieldManager) || request.URL.Query().Get("force") != "true" {
-		writer.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	var applied corev1.Service
-	if json.NewDecoder(request.Body).Decode(&applied) != nil {
 		writer.WriteHeader(http.StatusBadRequest)
 		return
 	}

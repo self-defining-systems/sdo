@@ -11,7 +11,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -48,7 +50,15 @@ func TestAdoptedDeploymentDNSPolicyDriftIsNamedAndRestoredWithoutImageEvidence(t
 	}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "nginx-thrift-1", Namespace: "app", Labels: labelsOf}, Spec: live.Spec.Template.Spec, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "nginx-thrift", Image: "example/openresty-thrift:xenial", Ready: true}}}}
 	client := fake.NewSimpleClientset(live, pod)
-	installSyntheticAdoptedDefaults(t, client)
+	// The API server defaults omitted DNS policy during isolated source
+	// rendering. The typed fake has no Kubernetes admission/defaulting layer.
+	client.PrependReactor("create", "deployments", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		deployment := action.(ktesting.CreateAction).GetObject().(*appsv1.Deployment)
+		if deployment.Spec.Template.Spec.DNSPolicy == "" {
+			deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
+		}
+		return false, nil, nil
+	})
 	sourceClient := bridgeFake(t, client)
 	source := GitPlanSource{Repository: repo, ManifestPaths: paths}
 

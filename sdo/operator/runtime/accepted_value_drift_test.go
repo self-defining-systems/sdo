@@ -367,7 +367,11 @@ func TestAcceptanceRecordKeepsValuesOfConfigurationOnly(t *testing.T) {
 func installSyntheticAdoptedDefaults(t *testing.T, client *fake.Clientset) {
 	t.Helper()
 	client.PrependReactor("create", "deployments", func(action ktesting.Action) (bool, kruntime.Object, error) {
-		object := action.(ktesting.CreateAction).GetObject().(*unstructured.Unstructured).DeepCopy()
+		values, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(action.(ktesting.CreateAction).GetObject())
+		if err != nil {
+			return true, nil, err
+		}
+		object := &unstructured.Unstructured{Object: values}
 		defaults := map[string]any{"replicas": int64(1), "strategy": map[string]any{"type": "RollingUpdate"}}
 		for key, value := range defaults {
 			if _, found, _ := unstructured.NestedFieldNoCopy(object.Object, "spec", key); !found {
@@ -391,7 +395,11 @@ func installSyntheticAdoptedDefaults(t *testing.T, client *fake.Clientset) {
 		return true, object, nil
 	})
 	client.PrependReactor("create", "services", func(action ktesting.Action) (bool, kruntime.Object, error) {
-		object := action.(ktesting.CreateAction).GetObject().(*unstructured.Unstructured).DeepCopy()
+		values, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(action.(ktesting.CreateAction).GetObject())
+		if err != nil {
+			return true, nil, err
+		}
+		object := &unstructured.Unstructured{Object: values}
 		for key, value := range map[string]any{"type": "ClusterIP", "sessionAffinity": "None", "internalTrafficPolicy": "Cluster"} {
 			if _, found, _ := unstructured.NestedFieldNoCopy(object.Object, "spec", key); !found {
 				_ = unstructured.SetNestedField(object.Object, value, "spec", key)
