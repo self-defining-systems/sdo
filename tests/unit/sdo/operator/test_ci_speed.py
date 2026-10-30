@@ -661,8 +661,12 @@ def test_python_waits_only_for_its_normal_producer_without_growing_jobs() -> Non
     assert "prepare-go-race" in jobs["required-pr-ci"]["needs"]
 
 
-@pytest.mark.parametrize("quality_status", [0, 23])
-def test_race_archives_overlap_quality_but_cannot_publish_after_failure(tmp_path, quality_status):
+@pytest.mark.parametrize(
+    ("quality_status", "inventory_status", "compile_status"), [(0, 0, 0), (23, 0, 0), (0, 29, 0), (0, 0, 31)]
+)
+def test_race_archives_overlap_quality_but_cannot_publish_after_failure(
+    tmp_path, quality_status, inventory_status, compile_status
+):
     """Execute the workflow shell; a failing check still rejects finished archives."""
     steps = workflow()["jobs"]["prepare-go-race"]["steps"]
     command = next(
@@ -695,12 +699,15 @@ def test_race_archives_overlap_quality_but_cannot_publish_after_failure(tmp_path
     bindir.mkdir()
     for name in ("uv", "python3"):
         path = bindir / name
-        path.write_text(f'#!/bin/bash\ncase "$*" in *python_cost_plan.py*) echo discovered > "{discovered}";; esac\n')
+        path.write_text(
+            '#!/bin/bash\ncase "$*" in *python_cost_plan.py*) '
+            f'echo discovered > "{discovered}"; exit {inventory_status};; esac\n'
+        )
         path.chmod(0o755)
     go = bindir / "go"
     go.write_text(
         '#!/bin/bash\ncase "$*" in *go_test_inventory.go*runtime*)\n'
-        f'read -r -t 3 marker <> "{started}" || exit 98\ntouch "{tmp_path}/graph-finished";;\n'
+        f'read -r -t 3 marker <> "{started}" || exit 98\ntouch "{tmp_path}/graph-finished"\nexit {compile_status};;\n'
         f'*go_test_inventory.go*) read -r -t 3 marker <> "{discovered}" || exit 97;;\nesac\n'
     )
     go.chmod(0o755)
@@ -717,6 +724,7 @@ def test_race_archives_overlap_quality_but_cannot_publish_after_failure(tmp_path
         text=True,
         timeout=10,
     )
-    assert result.returncode == quality_status, result.stderr
+    assert result.returncode == (compile_status or inventory_status or quality_status), result.stderr
     assert (tmp_path / "graph-finished").is_file()
-    assert all((tmp_path / f"contract-{index}.tar.zst").is_file() for index in range(2))
+    for index in range(2):
+        assert (tmp_path / f"contract-{index}.tar.zst").is_file() == (not compile_status and not inventory_status)
