@@ -343,7 +343,10 @@ def test_recorded_reflection_withholds_persistently_rejected_result(tmp_path: Pa
 
 
 @pytest.mark.parametrize("classification", ["success", "failed"])
-def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_path: Path, classification: str) -> None:
+@pytest.mark.parametrize("unrelated_playbooks", [0, 100], ids=["compact-memory", "large-memory"])
+def test_recorded_program_replay_accepts_session_fixture_without_captures(
+    tmp_path: Path, classification: str, unrelated_playbooks: int
+) -> None:
     fixture = ROOT / "tests/fixtures/sdo/playbook_program_app/.sdo"
     corpus = fixture / "corpus/targetport-mismatch"
     fixed = json.loads((corpus / "fixed.json").read_text())
@@ -405,7 +408,15 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
         section = prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0]
         if section.startswith("Full: "):
             section = Path(os.path.expandvars(section.splitlines()[0].removeprefix("Full: "))).read_text()
-        current = json.loads(section)
+            current = json.loads(section)
+        else:
+            # The renderer separates required repair evidence from optional
+            # outcome details so budget enforcement can omit only the latter.
+            current, end = json.JSONDecoder().raw_decode(section)
+            assert isinstance(json.loads(section[end:]), dict)
+            full = json.loads(Path(os.path.expandvars(current["full_current_outcome_path"])).read_text())
+            assert current["classification"] == full["classification"]
+            assert current["repair_actions"] == full["repair_actions"]
         assert current["classification"] == classification
         assert (
             current["repair_actions"][0]["details"]
@@ -420,6 +431,7 @@ def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_pa
         verified_service=True,
         classification=classification,
         check_prompt=check_prompt,
+        unrelated_playbooks=unrelated_playbooks,
     )
     result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
     assert result["proposals"][0]["status"] == "accepted", result["proposals"][0].get("error", result)
