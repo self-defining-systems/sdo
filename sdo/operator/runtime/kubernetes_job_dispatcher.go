@@ -114,6 +114,12 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 	}
 	if d.LoopFactory != nil {
 		if loop := d.LoopFactory(request); loop != nil {
+			// Preparation also registers this loop with the controller. Preserve
+			// accepted automatic-stage evidence for closure before any worker is
+			// published; task preparation must not replace it with an empty loop.
+			if err := d.restoreToolState(ctx, request, loop); err != nil {
+				return IncidentRequest{}, err
+			}
 			if err := d.reopenWithdrawnRecovery(ctx, request, loop); err != nil {
 				return IncidentRequest{}, err
 			}
