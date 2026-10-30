@@ -803,13 +803,16 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 		return err
 	}
 	var receipt *contracts.PlanApplication
+	complete := false
 	for _, application := range loop.applicationsLog {
 		if len(application.PlanIDs) == len(planIDs) && application.PlanIDs[0] == planIDs[0] {
 			var err error
 			if receipt, err = recordedPlanContract(application); err != nil {
 				return err
 			}
-			item.attempt.TouchedObjects = touchedObjects(attemptApplication(application, item.attempt).Result)
+			scoped := attemptApplication(application, item.attempt).Result
+			complete = PlanActionsComplete(scoped)
+			item.attempt.TouchedObjects = touchedObjects(scoped)
 		}
 	}
 	// Pending rollouts still get one fresh diagnosis/detector observation.
@@ -837,7 +840,7 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 			attempt.Result = "admission_blocked"
 		case attempt.ApplyReceipt.GetRolloutPending() != nil:
 			attempt.Result = "rollout_pending_at_handoff"
-		case !attempt.ApplyReceipt.GetApplied() || attempt.ApplyReceipt.GetRolledBack() || len(attempt.ApplyReceipt.GetActionsApplied()) < int(attempt.PlanActionStart+attempt.PlanActionCount):
+		case !attempt.ApplyReceipt.GetApplied() || attempt.ApplyReceipt.GetRolledBack() || !complete:
 			attempt.Result = "apply_error"
 		case applied.Error != "":
 			attempt.Result = "rollout_failed"
