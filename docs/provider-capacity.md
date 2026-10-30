@@ -123,7 +123,8 @@ without hiding healthy peers.
   uv run python scripts/prepare_claude_accounts.py \
     --directory /private/claude-accounts --pool /host/account-pool \
     --alias /existing/astronomy-parallel-root/account-pool \
-    --lane 50 --lane 53 --lane 54 --capacity 2
+    --lane 50 --lane 53 --lane 54 --capacity 2 \
+    --slot 2 --slot 3 --slot 4  # Optional: only these cswap slots are assignable or failover targets.
 )
 export SDO_OPUS_POOL_MODE=per_account
 export SDO_OPUS_POOL_HOST_ID=chelan4

@@ -138,7 +138,7 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
     assert "COPY --from=go-deps /go/pkg/mod /go/pkg/mod" in dockerfile
     assert "COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator" in dockerfile
     assert "GOPROXY=off" in dockerfile
-    assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile
+    assert 'GOFLAGS="-mod=mod -p=2 -trimpath"' in dockerfile
     assert "SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs" in dockerfile
     assert "! command -v go" in (REPO_ROOT / "scripts/build_sdo_images.sh").read_text()
     for relative in (
@@ -158,7 +158,7 @@ def test_validator_image_uses_its_immutable_offline_toolchain() -> None:
     runtime = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text()
     assert 'cd "$dir" && go mod download all' in runtime
     assert "GOPROXY=off" in runtime
-    assert 'GOFLAGS="-mod=mod -p=2"' in runtime
+    assert 'GOFLAGS="-mod=mod -p=2 -trimpath"' in runtime
     assert "FROM validator-toolchain AS validator" in runtime
     assert "ENV GOCACHEPROG=/usr/local/bin/sdo-go-cache" in runtime
 

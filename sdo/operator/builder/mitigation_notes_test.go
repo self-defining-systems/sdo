@@ -21,19 +21,23 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
 		t.Fatal(err)
 	}
-	w, err := buildProgramFixture(t, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer w.Close()
-	if err := w.Check(context.Background()); err != nil {
-		t.Fatalf("unverified replay blocked saving: %v", err)
-	}
-	notes, err := w.MitigationReplayResults()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(notes) != 1 || notes[0].Status == "replayed" || !strings.Contains(strings.Join(notes[0].Effects, " "), "PlanExecutor:") {
-		t.Fatalf("unverified replay reason missing: %v", notes)
+	// Notes are file outputs of the generated replay test, not just test stdout.
+	// Re-staging must retain them even when Go reuses unchanged packages.
+	for repeat := 0; repeat < 2; repeat++ {
+		w, err := buildProgramFixture(t, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer w.Close()
+		if err := w.Check(context.Background()); err != nil {
+			t.Fatalf("unverified replay blocked saving: %v", err)
+		}
+		notes, err := w.MitigationReplayResults()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(notes) != 1 || notes[0].Status == "replayed" || !strings.Contains(strings.Join(notes[0].Effects, " "), "PlanExecutor:") {
+			t.Fatalf("unverified replay reason missing: %v", notes)
+		}
 	}
 }

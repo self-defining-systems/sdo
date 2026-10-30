@@ -83,6 +83,13 @@ fails publishes `AgentResult` `status=failed` with a typed `failure_reason`
 (`agent_timeout`, `agent_failed` or `result_too_large`) and `error_summary`,
 recorded as `learning_decision=failed`; a failed reflection Job without such a
 result is a worker crash, not an agent failure.
+Memory-check timeouts are terminal within the worker turn: `check_memory.timed_out`
+is true, including broker deadlines transported as CLI exit 124. The worker
+publishes `agent_timeout` with memory-check/stage context and does not ask for a
+provider correction or replacement check. `memory_check_stage_started` / `_finished`
+logs identify the active Go stage; varying timings do not make unchanged blocking
+diagnostics a new correction. Replay off skips corpus/replay, not compilation,
+vet, detector safety tests or the prober build.
 Restart retains the original task/deadline and cannot create another Job once
 that deadline expires. Leadership cancellation before expiry remains retryable.
 Completed result recovery precedes execution: after Job TTL deletion, the frozen

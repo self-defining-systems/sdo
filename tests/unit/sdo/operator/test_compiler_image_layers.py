@@ -23,3 +23,11 @@ def test_controller_and_validator_inherit_one_compiler_base():
             if re.search(r"^COPY .* " + re.escape(destination) + r"/?$", body, re.MULTILINE):
                 owners.setdefault(destination, set()).add(stage)
     assert owners == {path: {"compiler-base"} for path in ("/usr/local/go", "/go/pkg/mod", "/go/build-cache")}
+
+
+def test_compiler_seed_and_worker_share_relocatable_go_cache_flags() -> None:
+    source = (ROOT / "sdo/operator/Dockerfile.runtime").read_text()
+    # Both cache layers and every worker must use the same path policy. Otherwise
+    # a seeded compiler silently rebuilds its entire transitive dependency graph.
+    assert 'GOFLAGS="-p=4 -trimpath"' in source
+    assert 'GOFLAGS="-mod=mod -p=2 -trimpath"' in source

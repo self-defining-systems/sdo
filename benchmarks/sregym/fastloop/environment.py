@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import MutableMapping  # noqa: TC003
 from pathlib import Path  # noqa: TC003 - Pydantic resolves this annotation at runtime.
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -48,6 +49,10 @@ class FastloopEnvironment(BaseModel):
     dev_mount: Path | None = None
     dev_mount_snapshot: bool = False
     images: Images = Field(default_factory=Images)
+    #: Controller, compiler and validator run from immutable digests with no dev mount, so the
+    #: broker may reuse publication attestations. Node mounts (shared memory) stay; each row
+    #: checks the rendered controller Job before injection.
+    pinned_tools: bool = False
     #: Environment for the SREGym worker process (deploy-from-source, kind, builder settings).
     worker_env: dict[str, str] = Field(default_factory=dict)
     #: Optional host directory mounted on every kind node before shared attachment.
@@ -75,6 +80,33 @@ class FastloopEnvironment(BaseModel):
         if not self.problem_application and not self.parallel_lane:
             self.problem_application = self.application
         return self
+
+    @model_validator(mode="after")
+    def pinned_tools_are_digests(self) -> FastloopEnvironment:
+        from benchmarks.sregym.fastloop.pinned_tools import immutable_image
+
+        if self.pinned_tools:
+            for role in ("controller", "validator"):
+                image = getattr(self.images, role)
+                if not immutable_image(image):
+                    raise ValueError(f"pinned_tools requires an immutable {role} digest, not {image!r}")
+        return self
+
+    @property
+    def controller_dev_mount(self) -> bool:
+        """Whether the controller (and the workers it launches) run the dev-mounted sources."""
+
+        return self.dev_mount is not None and not self.pinned_tools
+
+    def apply_operator_env(self, environ: MutableMapping[str, str]) -> None:
+        """Point the host operator CLI at the lane's binary and its controller at the right sources."""
+
+        if self.dev_mount is not None:
+            environ["SDO_OPERATOR_BIN"] = str(self.dev_mount / ".fastloop/sdo-operator")
+        if self.controller_dev_mount:
+            environ["SDO_DEV_MOUNT"] = "1"
+        else:
+            environ.pop("SDO_DEV_MOUNT", None)
 
     @property
     def path(self) -> Path:

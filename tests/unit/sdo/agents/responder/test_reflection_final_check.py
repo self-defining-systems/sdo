@@ -495,3 +495,124 @@ def test_shared_acceptance_of_decline_reason_survives_python_view(
     assert result.no_change_reason == reason
     assert result.decline_reason == "no_recorded_repair"
     assert len(agent.requests) == 1
+
+
+@pytest.mark.parametrize("backend_type", [CodexSessionBackend, ClaudeSessionBackend])
+def test_memory_timeout_is_terminal_before_any_provider_correction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend_type
+) -> None:
+    import sys
+
+    from sdo.agents.responder.memory_check import check_reflection_result
+    from sdo.agents.responder.reflection_worker import _failure_reason
+
+    executable = tmp_path / "sdo-operator"
+    executable.write_text(f"#!{sys.executable}\nimport time\nprint('compile started', flush=True)\ntime.sleep(600)\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+
+    def expire(process, seconds):
+        assert process.stdout.readline() == b"compile started\n"
+        raise subprocess.TimeoutExpired(process.args, seconds)
+
+    def check(root, decision, seconds):
+        return check_reflection_result(root, decision, seconds, communicate=expire)
+
+    provider = "codex" if backend_type is CodexSessionBackend else "claude"
+    agent = ScriptedAgent(
+        lambda _: reply(
+            provider,
+            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    with pytest.raises(RuntimeError) as failure:
+        backend_type(executor=agent.executor, memory_checker=check).fresh(
+            worktree=tmp_path,
+            prompt="reflect",
+            idempotency_key="one-dispatch",
+        )
+    assert _failure_reason(failure.value) == "agent_timeout"
+    assert "memory check timed out" in str(failure.value)
+    assert len(agent.requests) == 1, "validation timeouts cannot be corrected by another model turn"
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"exit_code": 0, "timed_out": False, "stdout": "passed", "stderr": ""},
+        {"exit_code": 0, "timed_out": True, "stdout": "passed", "stderr": ""},
+        {"exit_code": 2, "timed_out": False, "stdout": "", "stderr": ""},
+        {"unexpected": "shape"},
+    ],
+)
+def test_timeout_record_can_never_authorize_final_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, record: dict
+) -> None:
+    from sdo.agents.responder.memory_check import check_reflection_result
+    from sdo.contracts import ReflectionResult
+
+    marker = tmp_path / "timeout.json"
+    marker.write_text(json.dumps(record))
+    monkeypatch.setenv("SDO_MEMORY_CHECK_TIMEOUT_FILE", str(marker))
+    with pytest.raises(ValueError, match="terminal memory-check timeout record"):
+        check_reflection_result(tmp_path, ReflectionResult(), 1)
+
+
+def test_unchanged_compiler_diagnostics_stop_despite_stage_timing_logs(
+    learned_reflection: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Go stage timing is observability, never another reason to spend a model turn."""
+    monkeypatch.setenv("SDO_REPLAY", "off")
+    path = learned_reflection / ".sdo/playbooks/service-targetport-mismatch/diagnose.go"
+    path.write_text(path.read_text() + "\nvar _ = checktimeUndefined\n")
+    subprocess.run(["gofmt", "-w", str(path)], check=True)
+    agent = ScriptedAgent(
+        lambda _: reply(
+            "codex",
+            {
+                "summary": "saved",
+                "learning_decision": "updated",
+                "proposed_artifact_ids": ["service-targetport-mismatch"],
+            },
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    with pytest.raises(RuntimeError, match="unchanged_validation_failure"):
+        CodexSessionBackend(executor=agent.executor).fresh(
+            worktree=learned_reflection,
+            prompt="reflect",
+            idempotency_key="one-dispatch",
+        )
+    assert len(agent.requests) == 2
+
+
+@pytest.mark.parametrize("backend_type", [CodexSessionBackend, ClaudeSessionBackend])
+def test_broker_deadline_exit_stops_the_final_checker_without_reprompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend_type
+) -> None:
+    import sys
+
+    from sdo.agents.responder.memory_check import MemoryCheckTimeout
+
+    executable = tmp_path / "sdo-operator"
+    executable.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "print('broker memory check: context deadline exceeded', file=sys.stderr)\nsys.exit(124)\n"
+    )
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    provider = "codex" if backend_type is CodexSessionBackend else "claude"
+    agent = ScriptedAgent(
+        lambda _: reply(
+            provider,
+            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    with pytest.raises(MemoryCheckTimeout, match="context deadline exceeded"):
+        backend_type(executor=agent.executor).fresh(worktree=tmp_path, prompt="reflect", idempotency_key="one-dispatch")
+    assert len(agent.requests) == 1

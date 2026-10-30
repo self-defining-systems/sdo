@@ -85,6 +85,10 @@ sys.exit(1)
 async def test_validation_tool_timeout_returns_failure_and_stops_children(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from sdo.agents.responder.memory_check import check_reflection_result
+    from sdo.contracts import ReflectionResult
+
+    monkeypatch.setenv("SDO_MEMORY_CHECK_TIMEOUT_FILE", str(tmp_path / "timeout.json"))
     started = tmp_path / "validator-started"
     _validator(
         tmp_path,
@@ -105,12 +109,30 @@ time.sleep(600)
             await asyncio.sleep(0.01)
 
     server = validation_server(tmp_path, timeout_seconds=0.3, expire=expire_once_started)
-    (block,) = await server.call_tool("check_memory", {"decision_path": "decision.json"})
+    first, queued = await asyncio.gather(
+        server.call_tool("check_memory", {"decision_path": "decision.json"}),
+        server.call_tool("check_memory", {"decision_path": "decision.json"}),
+    )
+    (block,) = first
+    (queued_block,) = queued
     result = json.loads(block.text)
+    assert json.loads(queued_block.text) == result
     assert result["timed_out"]
     assert result["exit_code"] != 0
     assert "checking replay" in result["stdout"]
     assert "timed out after 0.3s" in result["stderr"]
+    assert "check again" not in result["next"]
+    assert "terminal" in result["next"]
+    (again,) = await server.call_tool("check_memory", {"decision_path": "decision.json"})
+    assert json.loads(again.text) == result, "a timed-out server must never start a replacement check"
+    # The real MCP producer's terminal result crosses into the final CLI
+    # consumer, even after the tool server is recreated. No replacement starts.
+    checked = check_reflection_result(tmp_path, ReflectionResult(), 0.3)
+    assert checked.timed_out
+    assert checked.stdout == result["stdout"]
+    restarted = validation_server(tmp_path)
+    (latched,) = await restarted.call_tool("check_memory", {"decision_path": "decision.json"})
+    assert json.loads(latched.text) == result
     child = pathlib.Path("/proc") / started.read_text()
     async with asyncio.timeout(60):  # Bounds only a failure: a killed child is already exiting.
         while child.exists() and (child / "stat").read_text().split(") ")[-1][0] != "Z":
@@ -133,6 +155,7 @@ def test_reflection_backend_installs_blocking_validation_tool(
     monkeypatch.setenv("SDO_ACTOR", "responder")
     monkeypatch.setenv("SDO_PHASE", "reflection")
     monkeypatch.setenv("PYTHONPATH", "/opt/sdo")
+    monkeypatch.setenv("GOCACHEPROG", "/usr/local/bin/sdo-go-cache")
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-validator")
 
     def respond(request: CommandRequest) -> FakeRun:
@@ -143,6 +166,7 @@ def test_reflection_backend_installs_blocking_validation_tool(
         assert server["env"]["SDO_PHASE"] == "reflection"
         assert server["env"]["SDO_BASE_COMMIT"] == base
         assert server["env"]["PYTHONPATH"] == "/opt/sdo"
+        assert server["env"]["GOCACHEPROG"] == "/usr/local/bin/sdo-go-cache"
         assert "OPENAI_API_KEY" not in server["env"]
         assert server["args"] == ["-m", "sdo.agents.responder.reflection_validation", "--root", str(tmp_path)]
         if provider == "codex":
@@ -304,7 +328,7 @@ sys.exit(0 if source == "package fixture\\n\\nfunc Diagnose() {\\n\\tx := 1\\n\\
         assert corpus.read_text() == "package inert\nfunc  Ignored() {}\n"
 
 
-@pytest.mark.parametrize(("exit_code", "expected"), [(0, "passed"), (1, "fix each diagnostic")])
+@pytest.mark.parametrize(("exit_code", "expected"), [(0, "passed"), (1, "fix each diagnostic"), (124, "terminal")])
 async def test_check_memory_reply_leads_with_the_next_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int, expected: str
 ) -> None:
@@ -321,6 +345,8 @@ async def test_check_memory_reply_leads_with_the_next_step(
     reply = json.loads(block.text)
     assert next(iter(reply)) == "next", "the instruction leads so a capped reply keeps it"
     assert expected in reply["next"]
+    if exit_code == 124:
+        assert reply["timed_out"]
     if exit_code == 0:
         assert "information" in reply["next"]
         assert '"updated"' in reply["next"]
@@ -368,3 +394,20 @@ async def test_check_memory_pass_names_programs_that_match_on_diff_text(
     assert ".sdo/playbooks/image-drift/diagnose.go:17" in step
     assert "diff.ContainerChanges" in step
     assert "cause-without-program" not in step
+
+
+async def test_launch_contract_preserves_cache_helper_into_real_validation_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sdo.agents.responder.session_turn import session_mcp_servers
+
+    monkeypatch.setenv("GOCACHEPROG", "/usr/local/bin/sdo-go-cache")
+    _validator(tmp_path, 'import os\nassert os.environ["GOCACHEPROG"] == "/usr/local/bin/sdo-go-cache"\n', monkeypatch)
+    launch = session_mcp_servers(tmp_path, "codex")[0]
+    parameters = StdioServerParameters(command=launch.command, args=launch.args, env=launch.env)
+    async with stdio_client(parameters) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool("check_memory", {"learning_decision": "no_change", "summary": "s"})
+            (block,) = result.content
+            assert json.loads(block.text)["exit_code"] == 0

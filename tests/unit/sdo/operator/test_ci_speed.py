@@ -123,13 +123,9 @@ def test_go_shards_restore_the_completed_preparation_cache() -> None:
     warm = jobs["prepare-go"]
     assert warm["timeout-minutes"] == 5
     assert any("scripts/prepare_go_ci.sh" in step.get("run", "") for step in warm["steps"])
-    for name in ("python", "contracts"):
-        assert "prepare-go" in jobs[name]["needs"]
-        assert any(
-            step.get("with", {}).get("name") == "prepared-python"
-            or step.get("with", {}).get("pattern") == "prepared-{normal,race-${{ matrix.bin }}}"
-            for step in jobs[name]["steps"]
-        )
+    assert jobs["python"]["needs"] == "prepare-go"
+    assert any(step.get("with", {}).get("name") == "prepared-python" for step in jobs["python"]["steps"])
+    assert "needs" not in jobs["contracts"]
 
 
 def test_pull_requests_restore_a_prepared_cache_from_their_base_branch() -> None:
@@ -172,8 +168,6 @@ def test_only_durable_base_pushes_save_go_caches() -> None:
     ("job", "mode", "published", "downloaded"),
     [
         ("python", "python", "prepared-python", "prepared-python"),
-        ("contracts", "normal", "prepared-normal", "prepared-{normal,race-${{ matrix.bin }}}"),
-        ("contracts", "race", "prepared-race-0", "prepared-{normal,race-${{ matrix.bin }}}"),
     ],
 )
 def test_consumers_require_complete_run_artifacts_even_on_a_cold_base(
@@ -201,7 +195,8 @@ def test_consumers_require_complete_run_artifacts_even_on_a_cold_base(
 def test_go_test_jobs_never_download_modules(tmp_path: Path) -> None:
     """Controller jobs run offline on the module graph that preparation caches."""
     controller = workflow()["jobs"]["contracts"]
-    assert controller["env"]["GOPROXY"] == "off"
+    run = next(step for step in controller["steps"] if step.get("name") == "Run the fixed regression set")
+    assert run["env"]["GOPROXY"] == "off"
     command = tmp_path / "go"
     command.write_text('#!/bin/sh\nprintf "%s:%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n')
     command.chmod(0o755)
@@ -469,7 +464,7 @@ def test_all_integration_contracts_use_fixed_shared_capacity() -> None:
     jobs = workflow()["jobs"]
     integration = jobs["contracts"]
     assert integration["strategy"]["matrix"]["bin"] == [0, 1]
-    assert any(step.get("with", {}).get("name") == "compiled-python-test-plan" for step in integration["steps"])
+    assert any("python_cost_plan.py --inventory-only" in step.get("run", "") for step in integration["steps"])
     assert set(jobs) == {"prepare-go", "python", "contracts", "required-pr-ci"}
     assert integration["timeout-minutes"] == 4
 
@@ -484,8 +479,9 @@ def test_preparation_uses_available_compiler_cpu_without_changing_build_identity
 
 def test_static_python_job_cannot_compile_go_and_go_checks_run_on_prepared_race_graph() -> None:
     jobs = workflow()["jobs"]
-    static = next(step for step in jobs["python"]["steps"] if step.get("name") == "Check static contracts")
+    static = next(step for step in jobs["prepare-go"]["steps"] if step.get("name") == "Check static contracts")
     assert "--python-only" in static["run"]
+    assert static["if"] == "matrix.mode == 'normal'"
     guard = next(step for step in jobs["python"]["steps"] if step.get("name") == "Enforce compiler-free Python jobs")
     assert "scripts/unit-tools" in guard["run"]
     assert "SDO_UNIT_REAL_GO" in guard["run"]
@@ -496,24 +492,69 @@ def test_static_python_job_cannot_compile_go_and_go_checks_run_on_prepared_race_
     assert "-race" in go_checks["env"]["GOFLAGS"]
 
 
-def test_race_transfer_uses_the_graph_size_gate() -> None:
-    script = (ROOT / "scripts/go_ci_artifacts.sh").read_text()
-    assert 'exec python3 "$root/scripts/go_ci_race_artifact.py"' in script
+def test_contracts_build_locally_without_same_run_artifact_dependencies() -> None:
+    contracts = workflow()["jobs"]["contracts"]
+    assert "needs" not in contracts
+    assert not any(step.get("uses", "").startswith("actions/download-artifact@") for step in contracts["steps"])
+    restores = [step for step in contracts["steps"] if step.get("uses", "").startswith("actions/cache/restore@")]
+    assert len(restores) == 2
+    for restore in restores:
+        assert restore["with"]["key"].endswith("${{ github.sha }}")
+        assert "restore-keys" in restore["with"]
+        assert "fail-on-cache-miss" not in restore["with"]
+    commands = "\n".join(step.get("run", "") for step in contracts["steps"])
+    assert "prepare_go_ci.sh normal" in commands
+    assert "prepare_go_ci.sh race" in commands
+    assert "go_cost_plan.py --prepared" in commands
+    assert "python_cost_plan.py --inventory-only" in commands
+
+
+def assert_native_jobs_use_local_builds(configuration: dict) -> None:
+    for name, job in configuration["jobs"].items():
+        commands = "\n".join(step.get("run", "") for step in job["steps"])
+        if "go test " not in commands and "scripts/run_ci_contracts.py" not in commands:
+            continue
+        assert not any(
+            step.get("uses", "").startswith(("actions/download-artifact@", "actions/upload-artifact@"))
+            for step in job["steps"]
+        ), f"{name}: native tests must build locally from Go caches; artifact transfers consume their deadline"
+
+
+def test_native_test_jobs_do_not_transfer_prepared_compiler_artifacts() -> None:
+    assert_native_jobs_use_local_builds(workflow())
+
+
+@pytest.mark.parametrize("command", ["go test -race ./...", "python scripts/run_ci_contracts.py --bin 0"])
+@pytest.mark.parametrize("artifact", ["prepared-normal", "compiled-go-test-plan", "renamed-build"])
+@pytest.mark.parametrize("action", ["download", "upload"])
+def test_native_artifact_guard_rejects_every_artifact_name(command: str, artifact: str, action: str) -> None:
+    configuration = {
+        "jobs": {
+            "native": {
+                "steps": [
+                    {"uses": f"actions/{action}-artifact@pinned", "with": {"name": artifact}},
+                    {"run": command},
+                ]
+            }
+        }
+    }
+    with pytest.raises(AssertionError, match="native tests must build locally"):
+        assert_native_jobs_use_local_builds(configuration)
+
+
+def test_contract_cache_inputs_match_their_base_producers() -> None:
     jobs = workflow()["jobs"]
-    assert any(step.get("name") == "Pack the bounded current race test graph" for step in jobs["prepare-go"]["steps"])
-
-    published = {step.get("with", {}).get("name") for step in jobs["prepare-go"]["steps"]}
-    for bucket in jobs["contracts"]["strategy"]["matrix"]["bin"]:
-        assert f"prepared-race-{bucket}" in published
-    collector = next(step for step in jobs["prepare-go"]["steps"] if step.get("id") == "python-plan")
-    assert "if" not in collector  # Both producers derive the same exact bucket plan.
+    for mode in ("normal", "race"):
+        producer = next(step for step in jobs["prepare-go"]["steps"] if step.get("id") == f"base-{mode}")
+        consumer = next(step for step in jobs["contracts"]["steps"] if step.get("id") == f"base-{mode}")
+        assert consumer["with"] == producer["with"]
 
 
-def test_contract_inputs_are_fetched_concurrently() -> None:
-    downloads = [
-        step
-        for step in workflow()["jobs"]["contracts"]["steps"]
-        if step.get("uses", "").startswith("actions/download-artifact@") and "prepared-" in str(step.get("with", {}))
-    ]
-    assert len(downloads) == 1, "serial network stalls must not add across compiler graphs"
-    assert downloads[0]["with"]["pattern"] == "prepared-{normal,race-${{ matrix.bin }}}"
+def test_shared_quality_checks_do_not_consume_python_test_deadlines() -> None:
+    jobs = workflow()["jobs"]
+    quality_names = {"Check formatting", "Check static contracts"}
+    assert not any(step.get("name") in quality_names for step in jobs["python"]["steps"])
+    quality = [step for step in jobs["prepare-go"]["steps"] if step.get("name") in quality_names]
+    assert {step["name"] for step in quality} == quality_names
+    assert all(step["if"] == "matrix.mode == 'normal'" for step in quality)
+    assert any("--python-only" in step.get("run", "") for step in quality)

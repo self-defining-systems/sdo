@@ -78,7 +78,7 @@ for target in "${selected[@]}"; do
     docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
       command -v go >/dev/null
       test "$GOPROXY" = off
-      test "$GOFLAGS" = "-mod=mod -p=2"
+      test "$GOFLAGS" = "-mod=mod -p=2 -trimpath"
       cd /opt/sdo/sdo/operator/sdk
       go list ./program >/dev/null
     '

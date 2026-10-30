@@ -73,11 +73,15 @@ func Check(ctx context.Context, directory string, decision *contracts.Reflection
 		data, err := root.ReadFile(responsePath)
 		if err == nil {
 			var response struct {
-				Error  string          `json:"error"`
-				Report json.RawMessage `json:"memory_check_report"`
+				Error    string          `json:"error"`
+				TimedOut bool            `json:"memory_check_timed_out"`
+				Report   json.RawMessage `json:"memory_check_report"`
 			}
 			if err := json.Unmarshal(data, &response); err != nil {
 				return nil, err
+			}
+			if response.TimedOut {
+				return nil, fmt.Errorf("broker memory check timed out: %s: %w", response.Error, context.DeadlineExceeded)
 			}
 			if response.Error != "" {
 				return nil, fmt.Errorf("broker memory check: %s", response.Error)

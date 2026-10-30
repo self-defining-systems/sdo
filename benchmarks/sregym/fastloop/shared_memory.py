@@ -371,9 +371,7 @@ def lane_environment(environment: FastloopEnvironment) -> Iterator[None]:
     try:
         for name in names[:2]:
             os.environ[name] = str(environment.kubeconfig)
-        if environment.dev_mount is not None:
-            os.environ["SDO_DEV_MOUNT"] = "1"
-            os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
+        environment.apply_operator_env(os.environ)
         yield
     finally:
         for name, value in previous.items():
