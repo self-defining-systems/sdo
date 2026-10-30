@@ -60,6 +60,22 @@ def build(go: dict, python: dict, policy: dict) -> dict:
     return {"bins": bins, "nightly": sorted(nightly), "items": items, "policy": policy, "go": go}
 
 
+def nightly_bins(data: dict) -> list[list[str]]:
+    """Replay every runtime contract nightly, plus deferred non-runtime work.
+
+    A green PR subset cannot establish that the runtime package is green. Use
+    the same compiled inventory and cost owner to cover it without adding PR
+    jobs or maintaining another list of test names.
+    """
+    selected = sorted(
+        set(data["nightly"])
+        | {key for key, item in data["items"].items() if item["kind"] == "go" and item["scope"] == "runtime"}
+    )
+    seconds = {key: data["items"][key]["seconds"] for key in selected}
+    groups, oversized = costs.pack(selected, seconds)
+    return groups + [[key] for key in oversized] or [[]]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--go", type=Path, required=True)
@@ -74,12 +90,7 @@ def main() -> None:
         json.loads((ROOT / "scripts/ci_policy.json").read_text()),
     )
     if args.nightly:
-        selected = data["nightly"]
-        seconds = {key: data["items"][key]["seconds"] for key in selected}
-        groups, oversized = costs.pack(selected, seconds)
-        data["bins"] = groups + [[key] for key in oversized]
-        if not data["bins"]:
-            data["bins"] = [[]]
+        data["bins"] = nightly_bins(data)
         print(
             "nightly_matrix="
             + json.dumps(

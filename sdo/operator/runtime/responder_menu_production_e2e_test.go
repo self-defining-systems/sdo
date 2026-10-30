@@ -72,7 +72,7 @@ func (productionMenuHealth) Detect(_ context.Context, view sdk.DetectionContext)
 }
 
 // The watch cache's causal write barrier relies on API resource versions.
-func productionMenuClient(service *corev1.Service) *productionMenuAPI {
+func productionMenuClient(t *testing.T, service *corev1.Service) *productionMenuAPI {
 	client := fake.NewSimpleClientset(service)
 	// client-go's tracker does not advance resourceVersion on patches. Reusing
 	// the pre-write version lets AwaitWrites certify an older cached snapshot.
@@ -107,13 +107,14 @@ func productionMenuClient(service *corev1.Service) *productionMenuAPI {
 		}
 		return true, next.DeepCopy(), nil
 	})
-	return &productionMenuAPI{client}
+	installSyntheticAdoptedDefaults(t, client)
+	return &productionMenuAPI{bridgeFake(t, client)}
 }
 
 func TestProductionMenuFixtureAdvancesServiceWriteVersions(t *testing.T) {
 	ctx := context.Background()
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
-	client := productionMenuClient(service)
+	client := productionMenuClient(t, service)
 	previous := service.ResourceVersion
 	for _, port := range []int{7777, 8080} {
 		patch := []byte(fmt.Sprintf(`{"spec":{"ports":[{"port":80,"targetPort":%d}]}}`, port))
@@ -222,7 +223,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := productionMenuClient(service)
+	client := productionMenuClient(t, service)
 	// client-go's object tracker omits list resource versions. Supply an opaque
 	// direct-API version in this synthetic transport; never use this in production.
 	client.PrependReactor("list", "*", func(action ktesting.Action) (bool, kruntime.Object, error) {
@@ -253,7 +254,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
 	done := make(chan error, 1)
 	start := time.Now().UTC()
 	go func() {
-		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--response-stages", stages, "--toolchain-image", "synthetic/controller:compiler", "--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--deployed-manifest-path", "app.yaml", "--deployed-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--verification-timeout", "5s", "--exit-after-closure"}, Client: client, Programs: registry, NativeBroker: native, Stdout: writer, Stderr: writer})
+		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--response-stages", stages, "--toolchain-image", "synthetic/controller:compiler", "--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--deployed-manifest-path", "app.yaml", "--deployed-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--exit-after-closure"}, Client: client, Programs: registry, NativeBroker: native, Stdout: writer, Stderr: writer})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -299,11 +300,26 @@ func testProductionResponderMenuFactory(t *testing.T, enabled, automatic bool) {
 				t.Fatalf("live defaulted assignment did not apply and verify: %v", attempt)
 			}
 		}
-		// Coverage uses the stage's own rule: a recorded match of the applied
-		// diagnosis explains the finding that bound it, with no detector list.
+		// Initial coverage is optional in this live-diagnosis scenario. Any
+		// recorded coverage must name exactly its bound matching diagnoses,
+		// including source-inventory findings when those were observed too.
+		attempt := reports[0].Mitigations[0]
 		for _, match := range ledger.GetOutcomeDocument().GetPlaybookCoverage().GetMatches() {
-			if match.GetPlaybookId() == reports[0].Mitigations[0].GetPlaybookId() && len(match.ExplainedFindingFingerprints) != 1 {
-				t.Fatalf("coverage disagrees with the automatic stage's applied match: %v", match)
+			if match.GetPlaybookId() != attempt.GetPlaybookId() {
+				continue
+			}
+			var want []string
+			for _, run := range ledger.GetOutcomeDocument().GetProgramRuns() {
+				if run.GetProgramId() == match.GetPlaybookId() && run.GetProgramRevision() == match.GetProgramRevision() && run.GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH && run.GetFindingFingerprint() != "" && programBindingsState(run.GetBindings()).Equal(programBindingsState(match.GetBindings())) {
+					want = append(want, run.GetFindingFingerprint())
+				}
+			}
+			slices.Sort(want)
+			want = slices.Compact(want)
+			got := slices.Clone(match.GetExplainedFindingFingerprints())
+			slices.Sort(got)
+			if len(want) == 0 || !slices.Equal(got, want) {
+				t.Fatalf("coverage disagrees with actual matching diagnoses: got=%v want=%v", got, want)
 			}
 		}
 		return

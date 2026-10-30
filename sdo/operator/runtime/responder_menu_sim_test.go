@@ -115,7 +115,9 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 	w.config.SourceCommit = revision
 	w.config.DeployedCommit = revision
 	w.config.RepositoryWorktree = accepted
-	w.config.VerificationTimeout = 5 * time.Second
+	// Successful schedules need the configured recovery window plus the next
+	// simulated observation; a five-second bound cannot prove a 15-second window.
+	w.config.VerificationTimeout = w.controller.config.ClosureStabilityWindow + time.Second
 	bind := func() {
 		w.controller.dispatcher = driver
 		if err := w.controller.SetIncidentBroker(native); err != nil {
@@ -298,7 +300,7 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 	w.setPort(simServiceName(0), 9999)
 	failAll := schedule == "five-fail-next"
 	for tick := 0; tick < 30; tick++ {
-		w.clock.now = w.clock.now.Add(time.Second)
+		w.clock.Advance(time.Second)
 		pump(failAll)
 		if w.idle() || w.endedUnverified() {
 			break
@@ -317,7 +319,7 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 		restart()
 		w.setPort(simServiceName(2), 9999)
 		for tick := 0; tick < 30; tick++ {
-			w.clock.now = w.clock.now.Add(time.Second)
+			w.clock.Advance(time.Second)
 			pump(false)
 			if w.idle() {
 				break

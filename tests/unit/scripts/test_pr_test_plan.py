@@ -126,3 +126,78 @@ def test_reflection_launch_guards_displace_cheap_filler(guard: str):
     selected = {name for bucket in plan["bins"] for name in bucket}
     assert f"go:runtime:{guard}" in selected
     assert len(plan["bins"]) == policy["contract_jobs"]
+
+
+def test_nightly_runs_full_runtime_even_when_pr_selected_it():
+    source = {
+        "runtime": {
+            "packages": {"TestFast": ["pkg"], "TestSlow": ["pkg"]},
+            "costs": {"TestFast": 1, "TestSlow": 200},
+        },
+        "operator": {"packages": {"TestOther": ["other"]}, "costs": {"TestOther": 1}},
+    }
+    plan = planner.build(
+        source, {"costs": {"test_a.py::test_slow": 200}}, {"contract_work_seconds": 180, "contract_jobs": 2}
+    )
+    pr_bins = [list(members) for members in plan["bins"]]
+    bins = planner.nightly_bins(plan)
+    selected = [key for members in bins for key in members]
+    assert sorted(selected) == ["go:runtime:TestFast", "go:runtime:TestSlow", "python:test_a.py::test_slow"]
+    assert len(selected) == len(set(selected))
+    assert plan["bins"] == pr_bins  # Nightly coverage never expands the PR budget.
+    for members in bins:
+        planner.costs.check_budget(members, {key: plan["items"][key]["seconds"] for key in members})
+
+
+@pytest.mark.go_integration
+def test_compiled_runtime_inventory_reaches_nightly_runner(tmp_path, monkeypatch):
+    """The real compiler inventory and execution cover PR-selected and deferred tests."""
+    import json
+    import subprocess
+
+    module = tmp_path / "sdo/operator/runtime"
+    module.mkdir(parents=True)
+    (module / "go.mod").write_text("module synthetic.example/nightly\n\ngo 1.24\n")
+    (module / "runtime_test.go").write_text("""package nightly
+import "testing"
+func TestSelectedByPR(t *testing.T) {}
+func TestDeferred(t *testing.T) {}
+func FuzzRuntimeSeed(f *testing.F) {
+    f.Add("synthetic")
+    f.Fuzz(func(t *testing.T, s string) {})
+}
+""")
+    profiles = tmp_path / "scripts"
+    profiles.mkdir()
+    (profiles / "runtime_test_costs.json").write_text(
+        json.dumps(
+            {
+                "costs": {
+                    "TestSelectedByPR": 1,
+                    "TestDeferred": 200,
+                    "FuzzRuntimeSeed": 1,
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(planner.costs, "ROOT", tmp_path)
+    inventory = planner.costs.inventory("runtime")
+    go = {"runtime": planner.costs.plan("runtime", inventory, include_dedicated=True)}
+    plan = planner.build(go, {"costs": {}}, {"contract_work_seconds": 180, "contract_jobs": 2})
+    assert "go:runtime:TestSelectedByPR" in {key for members in plan["bins"] for key in members}
+    assert "go:runtime:TestDeferred" in plan["nightly"]
+    passed = set()
+    selected = []
+    for members in planner.nightly_bins(plan):
+        names = [plan["items"][key]["name"] for key in members]
+        selected.extend(names)
+        output = subprocess.check_output(planner.costs.go_command(go["runtime"], names), cwd=module, text=True)
+        for line in output.splitlines():
+            event = json.loads(line)
+            if event.get("Action") == "pass" and event.get("Test"):
+                passed.add(event["Test"])
+    expected = {name for names in inventory.values() for name in names}
+    assert set(selected) == expected
+    assert len(selected) == len(expected)
+    assert {name for name in passed if "/" not in name} == expected
+    assert "FuzzRuntimeSeed/seed#0" in passed

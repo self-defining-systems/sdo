@@ -99,6 +99,9 @@ func (d *sequenceDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.
 type staticProvider struct{ snapshot sdk.DetectionContext }
 
 func (p staticProvider) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	if p.snapshot == nil {
+		return sdktest.Snapshot{}, nil
+	}
 	return p.snapshot, nil
 }
 

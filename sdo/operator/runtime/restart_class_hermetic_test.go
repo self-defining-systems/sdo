@@ -442,7 +442,7 @@ func TestRestartClassHermetic(t *testing.T) {
 // STALE3: the detector scope changing mid-incident (SDO's own judge or
 // reflection changed a detector) is not evidence about the cluster. The
 // recheck runs under the detectors now in force: a healthy closure commits
-// verified, an unhealthy one is refused by that live health.
+// verified; recovering health waits under the original verification bound.
 func TestRestartClassRechecksUnderCurrentScopeBeforeCommit(t *testing.T) {
 	for _, mutation := range []string{"generation", "health"} {
 		t.Run(mutation, func(t *testing.T) {
@@ -481,8 +481,27 @@ func TestRestartClassRechecksUnderCurrentScopeBeforeCommit(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || exportState(t, c).GetClosureState() != contracts.ClosureState_CLOSURE_STATE_FAILED || !strings.Contains(exportState(t, c).GetClosureFailure().GetLastError(), "is active") {
-				t.Fatalf("restored success was not revalidated against fresh health: %v", err)
+			if err != nil || exportState(t, c).GetClosureState() != contracts.ClosureState_CLOSURE_STATE_PENDING || c.closureFailure != nil || c.PausedWake().IsZero() {
+				t.Fatalf("recovering health did not retain bounded verification: %v", err)
+			}
+			states, _ := c.latestEvaluations([]string{"health"}, time.Time{}, false)
+			if len(states) != 1 || states[0].Status != DetectorEvaluationFiring {
+				t.Fatalf("recheck did not retain the fresh active-health evidence: %v", states)
+			}
+			now := c.closureVerificationDeadline(effect.Closure)
+			c.now = func() time.Time { return now }
+			if err := c.ExecuteClosureEffect(ctx, effect); err != nil {
+				t.Fatal(err)
+			}
+			if !c.IncidentOpen() || !c.verificationDeadline.Equal(now) {
+				t.Fatal("recovering closure did not return its work under the original bound")
+			}
+			if err := c.Step(ctx, now, nil); err != nil {
+				t.Fatal(err)
+			}
+			bounded, ok := c.PendingIncidentClosure()
+			if !ok || bounded.Request.IncidentID != id || len(bounded.FinalDetectorStates) != 0 || bounded.VerifiedAt.After(now) {
+				t.Fatal("still-active health gained verification or a new deadline")
 			}
 			ledger, err := native.readLedger(id)
 			if err != nil || ledger.Receipt != nil || ledger.OutcomeDocument != nil {

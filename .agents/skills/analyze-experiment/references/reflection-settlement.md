@@ -39,3 +39,12 @@ probes remain reporting evidence. This applies equally to model-driven,
 model-free and no-change closures. Existing native reflection/rollout drain
 and strict receipt validation still precede that boundary. Ordinary export,
 probe stability and collection overhead is separate from this idle timeout.
+
+
+Terminal validation exhaustion records `reflection_rejected=true`,
+`reflection_processed=true`, and `reflection_decision.learning_decision=failed`
+with an `error` naming the final validator diagnostics. The closure completes
+without a reflection commit; `reflection_results` retains the original worker
+decisions and `reflection_rejections` retains validator evidence. Older ledgers
+can omit the final decision after exhaustion: that is lost terminal evidence,
+not successful learning, and strict receipts reject it.

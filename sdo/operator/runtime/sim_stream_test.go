@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"sync"
 	"testing"
@@ -77,7 +78,7 @@ func simServiceName(i int) string { return fmt.Sprintf("svc-%d", i) }
 func (w *simWorld) violate(format string, args ...any) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.violations = append(w.violations, fmt.Sprintf("t+%s: ", w.clock.now.Sub(simEpoch))+fmt.Sprintf(format, args...))
+	w.violations = append(w.violations, fmt.Sprintf("t+%s: ", w.clock.Now().Sub(simEpoch))+fmt.Sprintf(format, args...))
 }
 
 // setPort writes a Service's targetPort straight into the simulated server, as
@@ -205,7 +206,7 @@ func (b *simBroker) ProcessClosure(_ context.Context, closure IncidentClosure) (
 
 func (b *simBroker) AcknowledgeClosure(context.Context, ClosureReceipt) error { return nil }
 
-var simEpoch = newSimClock().now
+var simEpoch = newSimClock().Now()
 
 func newSimWorld(t *testing.T, seed uint64) *simWorld {
 	t.Helper()
@@ -281,7 +282,7 @@ func (w *simWorld) startController() {
 	if detectors == nil {
 		detectors = []sdk.Detector{fastloopDetector{}}
 	}
-	controller, err := NewController(w.config, detectors, w.cache, w.responder, w.clock.now)
+	controller, err := NewController(w.config, detectors, w.cache, w.responder, w.clock.Now())
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -427,6 +428,12 @@ func (w *simWorld) drain() {
 			if err := w.controller.ExecuteClosureEffect(ctx, effect); err != nil {
 				return
 			}
+			// Returning from a recheck does not mean a broker was dispatched.
+			// A pending observation owns its next wake; let the outer schedule
+			// advance time instead of waiting for a nonexistent completion.
+			if w.controller.closureState != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
+				return
+			}
 			w.await(func() bool { return len(w.controller.closureResults) > 0 })
 			progressed = true
 		} else if effect, ok := w.controller.PendingClosureAcknowledgmentEffect(); ok {
@@ -474,7 +481,7 @@ func TestSimIncidentStream(t *testing.T) {
 		}
 		restartP := 0.02 * w.rng.Float64()
 		for tick := 0; tick < simStreamMaxTicks; tick++ {
-			w.clock.now = w.clock.now.Add(time.Second + time.Duration(w.rng.IntN(400))*time.Millisecond)
+			w.clock.Advance(time.Second + time.Duration(w.rng.IntN(400))*time.Millisecond)
 			for _, at := range injectAt {
 				if at == tick {
 					name := simServiceName(w.rng.IntN(simStreamServices))
@@ -517,7 +524,7 @@ func TestSimNextIncidentAfterFailedRepair(t *testing.T) {
 			w.broker.reject = func() bool { return false }
 			w.setPort(simServiceName(0), 9999)
 			for tick := 0; tick < 300 && !w.endedUnverified(); tick++ {
-				w.clock.now = w.clock.now.Add(time.Second)
+				w.clock.Advance(time.Second)
 				w.step()
 				w.drain()
 			}
@@ -532,7 +539,7 @@ func TestSimNextIncidentAfterFailedRepair(t *testing.T) {
 			w.responder.behavior = func() simBehavior { return simFixAll }
 			w.setPort(simServiceName(1), 9999)
 			for tick := 0; tick < 300 && !w.idle(); tick++ {
-				w.clock.now = w.clock.now.Add(time.Second)
+				w.clock.Advance(time.Second)
 				w.step()
 				w.drain()
 			}

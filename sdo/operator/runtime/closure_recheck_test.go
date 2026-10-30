@@ -248,3 +248,87 @@ func TestClosureRecheckPreservesNamedBlockersInOutcomeHistory(t *testing.T) {
 		t.Fatalf("unconfirmed outcome history lost its named observation blocker: %+v", controller.pendingClosure.PartialDetectorStates)
 	}
 }
+
+// The recheck producer must wake both runtime modes while it holds a closure.
+// Without an application event a paused runtime otherwise sleeps for an hour.
+func TestClosureObservationWaitSchedulesBothRuntimeModes(t *testing.T) {
+	for _, kind := range []string{"window", "transport", "stability", "recovering"} {
+		t.Run(kind, func(t *testing.T) {
+			now := time.Unix(1000, 0).UTC()
+			detector := &windowDetector{}
+			broker := &recordingClosureBroker{}
+			c := newClosureRecheckController(t, detector, broker, &now)
+			if kind == "transport" {
+				detector.err = apierrors.NewServerTimeout(schema.GroupResource{Resource: "services"}, "list", 1)
+			}
+			if kind == "stability" || kind == "recovering" {
+				detector.set(true, kind == "recovering")
+				c.pendingClosure.ClosureStabilityWindow = c.config.ClosureStabilityWindow
+				c.discardRestoredHealthObservations(now)
+			}
+			executeRecheck(t, c)
+			assertStillPending(t, c, broker)
+			for _, wake := range []time.Time{c.PausedWake(), c.NextWake()} {
+				if !wake.Equal(now.Add(time.Second)) {
+					t.Fatalf("pending %s observation has no bounded runtime wake: %v", kind, wake)
+				}
+			}
+			detector.err = nil
+			detector.set(true, false)
+			limit := now.Add(c.config.ClosureStabilityWindow + time.Second)
+			for c.closureState == contracts.ClosureState_CLOSURE_STATE_PENDING {
+				now = c.PausedWake()
+				if now.IsZero() || now.After(limit) {
+					t.Fatalf("pending observation stranded or exceeded its window: %v", now)
+				}
+				if err := executePausedEffects(context.Background(), c); err != nil {
+					t.Fatal(err)
+				}
+			}
+			awaitBrokerResult(t, c.closureResults)
+			c.processBrokerCompletions()
+			if broker.processCalls() != 1 || !c.PausedWake().IsZero() {
+				t.Fatal("settled observation retained a wake or duplicated the broker effect")
+			}
+		})
+	}
+}
+
+func TestClosureObservationWakeAfterBrokerBackoffDoesNotSpin(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	detector := &windowDetector{confirmed: true}
+	broker := &recordingClosureBroker{rejectingIncidentBroker: rejectingIncidentBroker{rejections: 1}}
+	c := newClosureRecheckController(t, detector, broker, &now)
+	c.pendingClosure.ClosureStabilityWindow = c.config.ClosureStabilityWindow
+	driveObservation := func() {
+		t.Helper()
+		for c.closureState == contracts.ClosureState_CLOSURE_STATE_PENDING {
+			wake := c.PausedWake()
+			if !wake.After(now) || wake.After(c.closureVerificationDeadline(*c.pendingClosure)) {
+				t.Fatalf("pending observation has no future wake inside its bound: %v", wake)
+			}
+			now = wake
+			executeRecheck(t, c)
+		}
+	}
+	executeRecheck(t, c)
+	driveObservation()
+	awaitBrokerResult(t, c.closureResults)
+	c.processBrokerCompletions()
+	if c.closureFailure == nil || !c.PausedWake().Equal(c.closureFailure.NextAttemptAt) {
+		t.Fatal("broker rejection lost its backoff")
+	}
+	now = c.PausedWake()
+	detector.set(true, true)
+	executeRecheck(t, c)
+	if wake := c.PausedWake(); !wake.Equal(now.Add(time.Second)) {
+		t.Fatalf("expired broker backoff overrode the new observation wake: %v", wake)
+	}
+	detector.set(true, false)
+	driveObservation()
+	awaitBrokerResult(t, c.closureResults)
+	c.processBrokerCompletions()
+	if broker.processCalls() != 2 || !c.PausedWake().IsZero() {
+		t.Fatal("recovered observation duplicated or stranded broker work")
+	}
+}
