@@ -88,21 +88,14 @@ func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http
 		_ = json.NewEncoder(writer).Encode(&a.service)
 		return
 	}
-	manager := request.URL.Query().Get("fieldManager")
-	if request.Method != http.MethodPatch || (manager != "sdo-deployer" && manager != acceptanceFieldManager) || request.URL.Query().Get("force") != "true" {
-		writer.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	var applied corev1.Service
-	if json.NewDecoder(request.Body).Decode(&applied) != nil {
-		writer.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	// A dry-run apply at another name creates nothing: it renders the body
-	// with the defaults the server fills into a new Service.
-	if !strings.HasSuffix(request.URL.Path, "/"+a.service.Name) {
-		if request.URL.Query().Get("dryRun") == "" || !strings.HasSuffix(request.URL.Path, "/"+applied.Name) {
-			writer.WriteHeader(http.StatusNotFound)
+	if request.Method == http.MethodPost {
+		if request.URL.Query().Get("dryRun") != metav1.DryRunAll || !strings.HasSuffix(request.URL.Path, "/services") {
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var applied corev1.Service
+		if json.NewDecoder(request.Body).Decode(&applied) != nil || !strings.HasSuffix(applied.Name, defaultRenderSuffix) {
+			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		a.renders++
@@ -113,6 +106,20 @@ func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http
 			applied.Spec.SessionAffinity = corev1.ServiceAffinityNone
 		}
 		_ = json.NewEncoder(writer).Encode(&applied)
+		return
+	}
+	manager := request.URL.Query().Get("fieldManager")
+	if request.Method != http.MethodPatch || (manager != "sdo-deployer" && manager != acceptanceFieldManager) || request.URL.Query().Get("force") != "true" {
+		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var applied corev1.Service
+	if json.NewDecoder(request.Body).Decode(&applied) != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if !strings.HasSuffix(request.URL.Path, "/"+a.service.Name) {
+		writer.WriteHeader(http.StatusNotFound)
 		return
 	}
 	if manager == acceptanceFieldManager {

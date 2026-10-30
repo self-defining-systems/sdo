@@ -48,6 +48,7 @@ func TestAdoptedDeploymentDNSPolicyDriftIsNamedAndRestoredWithoutImageEvidence(t
 	}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "nginx-thrift-1", Namespace: "app", Labels: labelsOf}, Spec: live.Spec.Template.Spec, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "nginx-thrift", Image: "example/openresty-thrift:xenial", Ready: true}}}}
 	client := fake.NewSimpleClientset(live, pod)
+	installSyntheticAdoptedDefaults(t, client)
 	sourceClient := bridgeFake(t, client)
 	source := GitPlanSource{Repository: repo, ManifestPaths: paths}
 
@@ -92,7 +93,7 @@ func TestAdoptedDeploymentDNSPolicyDriftIsNamedAndRestoredWithoutImageEvidence(t
 		t.Fatalf("drift does not name spec.template.spec.dnsPolicy: %+v", diff)
 	}
 
-	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Source: source, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{unschedulable{}}, Provider: provider}}
+	executor := PlanExecutor{Client: TypedPlanClient{Client: sourceClient}, Source: source, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{unschedulable{}}, Provider: provider}}
 	result, err := executor.Apply(ctx, IncidentRequest{IncidentID: "dns", Namespace: "app", SourceCommit: locked, RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}, false)
 	if err != nil || !result.Applied {
 		t.Fatalf("ReconcileFromSource did not apply: %+v %v", result, err)
