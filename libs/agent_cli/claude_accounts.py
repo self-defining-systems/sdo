@@ -25,7 +25,7 @@ from libs.agent_cli.errors import AccountCredentialUnavailable, AccountExhausted
 from libs.agent_cli.provider_capacity import OpusPool, prepare_host_pool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Collection, Mapping
 
 ACCOUNT_ENVIRONMENT = (
     "SDO_CLAUDE_ACCOUNTS_DIR",
@@ -356,12 +356,20 @@ def _cswap_token(source: Path) -> str | None:
 
 
 def sync_cswap(
-    store: Path, directory: Path, listing: Mapping[str, Any], *, lanes: list[str], capacity: int = 2
+    store: Path,
+    directory: Path,
+    listing: Mapping[str, Any],
+    *,
+    lanes: list[str],
+    capacity: int = 2,
+    slots: Collection[int] | None = None,
 ) -> dict[str, Any]:
     """Linux cswap 0.28 file backend; never consult the unmanaged current login.
 
     `listing` comes from captured `cswap list --json`; usage API 403 is unknown,
     not an auth failure. Only measured exhausted 5h/7d windows exclude accounts.
+    `slots` restricts the bundle to those cswap slots: other registrations never
+    become assignable or failover targets, and their earlier tokens are removed.
     """
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     directory.chmod(0o700)
@@ -383,6 +391,14 @@ def sync_cswap(
         )
         registrations: dict[str, str] = {}
         registered = cast("dict[str, dict[str, Any]]", registry["accounts"])
+        if slots is not None:
+            missing = set(slots) - {int(slot) for slot in registered}
+            if not slots or missing:
+                raise ValueError
+            for slot in registered:
+                if int(slot) not in slots:
+                    (directory / f"a{int(slot):02d}.token").unlink(missing_ok=True)
+            registered = {slot: entry for slot, entry in registered.items() if int(slot) in slots}
         for slot, entry in sorted(registered.items(), key=lambda pair: int(pair[0])):
             alias = f"a{int(slot):02d}"
             email = entry["email"]
