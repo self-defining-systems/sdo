@@ -227,6 +227,14 @@
     "hint",
     "sweep"
   ],
+  "sdodev.contracts.v1alpha1.RecoveryWait.exit_reason": [
+    "EXIT_REASON_BLOCKER",
+    "EXIT_REASON_CLEARED",
+    "EXIT_REASON_DEADLINE",
+    "EXIT_REASON_FAILED",
+    "EXIT_REASON_UNCOVERED",
+    "EXIT_REASON_UNSPECIFIED"
+  ],
   "sdodev.contracts.v1alpha1.ReflectionCauseWork.learning_basis": [
     "",
     "observed_transition"

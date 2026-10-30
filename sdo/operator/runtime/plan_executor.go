@@ -98,6 +98,7 @@ type PlanApplicationResult struct {
 	FinalEquivalenceVerified  *bool
 	FinalVerificationBasis    string
 	SettlementRejectionReason contracts.SettlementRejectionReason
+	RecoveryWait              *contracts.RecoveryWait
 	ActionsApplied            []program.Action
 	Patches                   []PlanPatch
 	Duration                  time.Duration

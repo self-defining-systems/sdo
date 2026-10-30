@@ -573,6 +573,7 @@ message StageReport {
   repeated string remaining_finding_fingerprints = 3;
   string error = 4;
   repeated string cleared_finding_fingerprints = 5;
+  RecoveryWait recovery_wait = 6;
 }
 
 message StageMitigation {

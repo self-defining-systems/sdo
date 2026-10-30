@@ -137,3 +137,16 @@ history: an unpaired, partial or unresolved relevant mutation prevents credit.
 A recorded corrective child write also follows its controller-owner lineage;
 a Pod receipt ending at a ReplicaSet cannot evade a Deployment's attribution
 check. These are neutral attribution gaps, not program execution failures.
+
+Stage recovery telemetry is `prior_stages[].recovery_wait` and the same field on
+`plan_applications[]` / mitigation `apply_receipt`: `exit_reason` is the typed
+`EXIT_REASON_CLEARED`, `DEADLINE`, `BLOCKER`, `FAILED` or `UNCOVERED` enum, and
+`duration` is measured observation time (protobuf Duration), accumulated across
+stage re-entry. Missing telemetry in historical receipts is unknown, never zero.
+This measures the recovery observation interval, not apply duration or dispatch
+latency. A health finding may wait on a pending write through typed resource
+relations (including Service selectors and traffic-related resources); this does
+not add authored coverage or grant attribution. Action completion uses every
+indexed action report, including successful WaitFor and satisfied EnsureExec,
+not the number of mutations. Rollout-only source residuals and unavailable
+readback are pending; actual configuration residuals remain partial failures.

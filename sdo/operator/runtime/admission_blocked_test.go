@@ -386,8 +386,9 @@ func (r pendingDeploymentRollout) Wait(_ context.Context, refs []sdk.ObjectRef) 
 	return nil
 }
 
-// Apply already waited as long as waiting can help. A pending handoff that is
-// admission-blocked, stalled or bounded must not end the pass: the next match
+// Isolate the write pass from shared recovery, exercised by the stage wait
+// tests. A pending handoff that is admission-blocked, stalled or bounded must
+// not end the pass: the next match
 // gets its own fresh diagnosis, and it may be the actor the rollout needs.
 func TestStagePendingHandoffKeepsIndependentMatchesInThePass(t *testing.T) {
 	stalled := &rolloutBlockedError{blockers: []*contracts.RolloutBlocker{{Ref: &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}, Reason: "replacement Pod cannot schedule"}}, cause: errRolloutStalled}
@@ -399,7 +400,7 @@ func TestStagePendingHandoffKeepsIndependentMatchesInThePass(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			loop, state := pipelineTestLoop(t, false)
 			loop.Executor.Rollouts = rollouts
-			report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, Budget: 20 * time.Second}).Run(context.Background(), state)
+			report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, Budget: 20 * time.Second, ObservationCeiling: time.Nanosecond}).Run(context.Background(), state)
 			if err != nil {
 				t.Fatal(err)
 			}

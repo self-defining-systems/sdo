@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -116,12 +117,6 @@ func (l *ResponderLoop) restoreTerminalStagePlanErrors() {
 func (*DeterministicResponseStage) Name() string { return "deterministic" }
 
 func (stage *DeterministicResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
-	started := time.Now()
-	budget := stage.Budget
-	if budget <= 0 {
-		budget = DefaultStageBudget
-	}
-	remaining := func() time.Duration { return max(0, budget-time.Since(started)) }
 	report := &contracts.StageReport{Stage: stage.Name()}
 	if stage.NewLoop == nil {
 		return report, nil
@@ -190,9 +185,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 						clearVerifiedStageTargets(state, fresh, attempt.ClearedFindingFingerprints, response)
 					}
 				}
-			}
-			if progress.Complete && !state.Refresh {
-				stage.awaitRepairedHealth(ctx, loop, state, report, recoveryTimeLeft(stage, progress.RecoveryDeadline, remaining()))
 			}
 		}()
 		if progress.Complete && !state.Refresh {
@@ -413,11 +405,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if err := stage.revertIneffective(ctx, loop, state, report, appliedHere, save); err != nil {
 		return report, err
 	}
-	// Once all opening faults have verified repairs, let the remaining health
-	// detectors' own windows roll over before handoff.
-	if !state.Refresh {
-		stage.awaitRepairedHealth(ctx, loop, state, report, recoveryTimeLeft(stage, progress.RecoveryDeadline, remaining()))
-	}
 	if err := ctx.Err(); err != nil {
 		return report, err
 	}
@@ -627,105 +614,6 @@ func clearVerifiedStageTargets(state *IncidentState, attempt *contracts.StageMit
 // Health observations after complete repairs may consume this wait, including
 // opening traffic symptoms whose rolling windows still contain pre-repair errors.
 // Failed repairs, pending writes and incident findings require investigation.
-// Non-writing advisory skips cannot invalidate completed repairs. The wait
-// follows each remaining detector's clearing horizon, bounded by the
-// declared ceiling. Waiting never grants closure.
-func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, left time.Duration) {
-	if len(state.Findings) == 0 || len(report.Mitigations) == 0 || left <= 0 {
-		return
-	}
-	repaired := false
-	for _, attempt := range report.Mitigations {
-		if attempt.GetResult() == "applied_cleared" {
-			repaired = true
-			continue
-		}
-		// A skipped advisory that wrote nothing is not unfinished execution.
-		// Pending, reverted, failed or interrupted writes must reach the agent.
-		if attempt.GetResult() != "skipped" || attempt.GetApplyReceipt() != nil || attempt.GetError() != "" {
-			return
-		}
-	}
-	if !repaired {
-		return
-	}
-	health := map[string]bool{}
-	for _, detector := range loop.Detectors {
-		health[detector.Spec().ID] = detector.Spec().Class == sdk.DetectorClassHealth
-	}
-	view, err := loop.snapshotView(ctx)
-	if err != nil {
-		return
-	}
-	state.Findings = retireDisappearedRecoveryEffects(view, state.Findings)
-	effects := repairedLifecycleEffects(view, loop.applicationsLog, state.Findings)
-	state.Findings = effects.observe(view, state.Findings)
-	state.refreshUnexplained()
-	eligible := func() bool {
-		for _, finding := range state.Findings {
-			if !health[finding.DetectorID] {
-				if _, owned := effects[FindingFingerprint(finding)]; owned {
-					continue
-				}
-				return false
-			}
-		}
-		return len(state.Findings) > 0
-	}
-	if !eligible() {
-		return
-	}
-	horizons := map[string]time.Duration{}
-	for _, detector := range loop.Detectors {
-		horizons[detector.Spec().ID] = sdk.ClearingHorizon(detector, view)
-	}
-	ceiling := left
-	if stage.ObservationCeiling > 0 && stage.ObservationCeiling < ceiling {
-		ceiling = stage.ObservationCeiling
-	}
-	interval := stage.ObservationInterval
-	if interval <= 0 {
-		interval = 250 * time.Millisecond
-	}
-	started := time.Now()
-	observe, cancel := context.WithTimeout(ctx, ceiling)
-	defer cancel()
-	for eligible() {
-		var horizon time.Duration
-		for _, finding := range state.Findings {
-			horizon = max(horizon, horizons[finding.DetectorID])
-			if _, owned := effects[FindingFingerprint(finding)]; owned {
-				horizon = ceiling
-			}
-		}
-		if time.Since(started) >= horizon {
-			return
-		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-observe.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		if observe.Err() != nil {
-			return
-		}
-		response := ToolResponse{}
-		loop.verify(observe, nil, &response, true)
-		updateStageFindings(state, response)
-		if fresh, err := loop.snapshotView(observe); err == nil {
-			state.Findings = effects.observe(fresh, state.Findings)
-			state.refreshUnexplained()
-		} else {
-			return
-		}
-		if response.Error != "" {
-			return
-		}
-	}
-}
-
 // ResponderStepPanicError reports a panic inside one step that ran with the
 // responder loop locks released. The step fails with this error; the
 // controller keeps running.
@@ -802,6 +690,10 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 	}); err != nil {
 		return err
 	}
+	// Pending rollouts still get one fresh diagnosis/detector observation.
+	if applied.RolloutPending != nil {
+		loop.verify(ctx, selected, &applied, true)
+	}
 	var receipt *contracts.PlanApplication
 	complete := false
 	for _, application := range loop.applicationsLog {
@@ -815,14 +707,13 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 			item.attempt.TouchedObjects = touchedObjects(scoped)
 		}
 	}
-	// Pending rollouts still get one fresh diagnosis/detector observation.
-	if applied.RolloutPending != nil {
-		loop.verify(ctx, selected, &applied, true)
-	}
 	updateStageFindings(state, applied)
 	{
 		attempt := item.attempt
-		attempt.Error = applied.Error
+		attempt.Error = receipt.GetError()
+		if receipt == nil {
+			attempt.Error = applied.Error
+		}
 		attempt.ApplyReceipt = receipt
 		for _, run := range applied.ProgramRuns {
 			if run.ProgramID == item.match.PlaybookId && run.Bindings.Equal(item.bindings) {
@@ -842,7 +733,7 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 			attempt.Result = "rollout_pending_at_handoff"
 		case !attempt.ApplyReceipt.GetApplied() || attempt.ApplyReceipt.GetRolledBack() || !complete:
 			attempt.Result = "apply_error"
-		case applied.Error != "":
+		case attempt.Error != "":
 			attempt.Result = "rollout_failed"
 		case attempt.PostApplyDiagnose.GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH && len(attempt.RemainingFindingFingerprints) == 0:
 			attempt.Result = "applied_cleared"
@@ -884,7 +775,7 @@ func attemptApplication(application RecordedPlanApplication, attempt *contracts.
 
 // All admitted writes precede one shared recovery wait. Observation cannot
 // select another write or replenish apply authority. Deadline survives restart.
-func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, progress *responseStageProgress, save func(bool) error) error {
+func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, progress *responseStageProgress, save func(bool) error) (errOut error) {
 	now := stage.recoveryNow
 	if now == nil {
 		now = time.Now
@@ -902,6 +793,34 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			}
 		}
 	}
+	started := now()
+	elapsed := report.GetRecoveryWait().GetDuration().AsDuration()
+	exit := contracts.RecoveryWait_EXIT_REASON_FAILED
+	defer func() {
+		observation := &contracts.RecoveryWait{ExitReason: exit, Duration: durationpb.New(elapsed + max(0, now().Sub(started)))}
+		report.RecoveryWait = observation
+		ids := map[string]bool{}
+		for _, attempt := range report.Mitigations {
+			if attempt.ApplyReceipt != nil {
+				attempt.ApplyReceipt.RecoveryWait = proto.Clone(observation).(*contracts.RecoveryWait)
+				ids[attempt.ApplyReceipt.ApplicationId] = true
+			}
+		}
+		for _, entries := range [][]RecordedPlanApplication{loop.applicationsLog, loop.archivedApplications} {
+			for i := range entries {
+				if ids[entries[i].ID] {
+					entries[i].Result.RecoveryWait = proto.Clone(observation).(*contracts.RecoveryWait)
+				}
+			}
+		}
+		for id := range ids {
+			if result, ok := loop.applications[id]; ok {
+				result.RecoveryWait = proto.Clone(observation).(*contracts.RecoveryWait)
+				loop.applications[id] = result
+			}
+		}
+		errOut = errors.Join(errOut, save(false))
+	}()
 	if progress.RecoveryDeadline.IsZero() {
 		budget := DefaultMitigationRolloutTimeout
 		if stage.Budget > 0 {
@@ -918,24 +837,27 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
-	if recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
-		return ctx.Err()
-	}
 	observe, cancel := context.WithDeadline(ctx, progress.RecoveryDeadline)
 	defer cancel()
 	interval := stage.ObservationInterval
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
+	effects := recoveryEffects{}
 	for {
 		pending := false
+		applied := false
 		covered := map[string]bool{}
 		for _, attempt := range report.Mitigations {
-			if attempt.GetApplyReceipt().GetRolloutPending().GetReasonCode() == "rollout_stalled" {
+			if reason := attempt.GetApplyReceipt().GetRolloutPending().GetReasonCode(); reason == "rollout_stalled" || reason == "admission_blocked" {
+				exit = contracts.RecoveryWait_EXIT_REASON_BLOCKER
 				return nil
 			}
-			for _, fp := range append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...) {
-				covered[fp] = true
+			if attempt.GetApplyReceipt().GetApplied() && !attempt.GetApplyReceipt().GetRolledBack() {
+				applied = true
+				for _, fp := range append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...) {
+					covered[fp] = true
+				}
 			}
 			switch attempt.Result {
 			case "rollout_pending_at_handoff":
@@ -945,7 +867,30 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				return nil // Real failure or a verified dependency needs another actor.
 			}
 		}
-		if !pending {
+		if !applied && len(state.Findings) > 0 {
+			exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
+			return nil
+		}
+		if !pending && len(state.Findings) == 0 {
+			exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
+			return nil
+		}
+		if recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
+			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
+			return ctx.Err()
+		}
+		view, viewErr := loop.snapshotView(observe)
+		if viewErr != nil {
+			return nil
+		}
+		state.Findings = retireDisappearedRecoveryEffects(view, state.Findings)
+		for fp, effect := range repairedLifecycleEffects(view, loop.applicationEvidenceLocked(), state.Findings) {
+			effects[fp] = effect
+		}
+		state.Findings = effects.observe(view, state.Findings)
+		state.refreshUnexplained()
+		if !pending && len(state.Findings) == 0 {
+			exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
 			return nil
 		}
 		health := map[string]bool{}
@@ -956,29 +901,49 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			if covered[FindingFingerprint(finding)] {
 				continue
 			}
-			settling := false
+			_, settling := effects[FindingFingerprint(finding)]
 			if health[finding.DetectorID] {
 				for _, reservation := range loop.pendingWrites {
-					for _, ref := range reservation.Refs {
-						settling = settling || sameResource(ref, finding.PrimaryResource)
+					if reservation.Superseded {
+						continue
+					}
+					refs := reservation.Refs
+					if reservation.WriteRefs != nil {
+						refs = *reservation.WriteRefs
+					}
+					for _, ref := range refs {
+						settling = settling || coverageFindingRelated(view, finding, program.Bindings{Objects: map[string]sdk.ObjectRef{"pending": ref}})
+					}
+				}
+			}
+			if health[finding.DetectorID] && !settling {
+				for _, attempt := range report.Mitigations {
+					if attempt.GetApplyReceipt().GetApplied() && !attempt.GetApplyReceipt().GetRolledBack() {
+						for _, ref := range attempt.TouchedObjects {
+							settling = settling || coverageFindingRelated(view, finding, program.Bindings{Objects: map[string]sdk.ObjectRef{"applied": objectRefState(ref)}})
+						}
 					}
 				}
 			}
 			if !settling {
+				exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
 				return nil
 			}
 		}
 		left := progress.RecoveryDeadline.Sub(now())
 		if left <= 0 {
+			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
 			return nil
 		}
 		if err := wait(observe, min(interval, left)); err != nil {
 			if observe.Err() != nil && ctx.Err() == nil {
+				exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
 				return nil
 			}
 			return err
 		}
 		if observe.Err() != nil || recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
+			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
 			return ctx.Err()
 		}
 		response := ToolResponse{}

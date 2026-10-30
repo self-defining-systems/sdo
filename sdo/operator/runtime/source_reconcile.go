@@ -46,12 +46,14 @@ func terminalSourceResiduals(result *PlanApplicationResult, err error) error {
 	var partial *SourceReconcilePartialError
 	if errors.As(err, &partial) {
 		result.VerificationPassed = false
-		observedResidual := false
+		configurationResidual := false
 		for _, report := range partial.Results {
-			observedResidual = observedResidual || len(report.ResidualPaths) > 0
+			for _, path := range report.ResidualPaths {
+				configurationResidual = configurationResidual || !strings.HasPrefix(path, "rollout.")
+			}
 		}
-		if !observedResidual {
-			pending := &contracts.RolloutPending{Reason: "source readback is unavailable; writes remain applied and unverified"}
+		if !configurationResidual {
+			pending := &contracts.RolloutPending{Reason: "source rollout or readback remains pending; writes remain applied and unverified"}
 			for _, report := range partial.Results {
 				pending.Blockers = append(pending.Blockers, &contracts.RolloutBlocker{Ref: report.Ref, Reason: report.ObservationError})
 			}

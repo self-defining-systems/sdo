@@ -234,8 +234,8 @@ def _parser() -> argparse.ArgumentParser:
             "rollout_stalled releases writes once stuck or at its bound; "
             "a program whose diagnosis still matches after its writes fails as diagnosis_persists "
             "and releases them to your repair. "
-            "Source reconciliation waits for old objects to drain; observed differences return source_residual, "
-            "unavailable readback stays pending and unverified. "
+            "Source reconciliation waits for old objects to drain; configuration differences return source_residual, "
+            "old rollout objects and unavailable readback stay pending and unverified. "
             "Script fixes are learnable; unlinked bytes are refused as script_unprovenanced."
             + " "
             + WORKING_PROGRAM_HELP

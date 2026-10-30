@@ -38,3 +38,13 @@ Blocker messages are observations at handoff, so confirm whether they still appl
 message is not proof that a rollout can progress. Full unabridged facts stay in `details_file`.
 `stage_playbooks` maps involved program IDs to accepted README files (null if unavailable), including
 finding-linked playbooks without a current match, settled programs and matches whose findings have since cleared. Other playbooks remain optional context.
+
+The automatic stage observes saved writes together while dependent health and traffic settle.
+It hands off for uncovered work, verified blockers, failures or its recovery deadline.
+The same decision is rechecked before a first worker claim; prepared requests alone
+do not force a model call after recovery. Existing worker ownership is rejoined.
+`prior_stages[].recovery_wait` records typed `exit_reason` and measured `duration`;
+its application receipts retain the same observation. A deadline is unconfirmed,
+not failed execution. Successful waits and already-satisfied ensures count as
+completed actions without adding writes. Use the residual findings to choose work;
+dependency admission grants observation time, not new explanation or repair credit.

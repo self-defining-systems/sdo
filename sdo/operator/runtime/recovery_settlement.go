@@ -127,20 +127,8 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					continue
 				}
 				if !PlanActionsComplete(app.Result) {
-					// Typed source residuals are an observation of a completed
-					// write. Refresh that observation before asking the producer's
-					// strict completion predicate; never reinterpret partial
-					// execution or clear a real action failure here.
-					if recoveryObservationOnly(*app) {
-						if err := executor.observeSourceResiduals(ctx, request, &app.Result); err != nil {
-							reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL)
-							continue
-						}
-					}
-					if !PlanActionsComplete(app.Result) {
-						reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION)
-						continue
-					}
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION)
+					continue
 				}
 				if !recoveryObservationOnly(*app) {
 					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED)
