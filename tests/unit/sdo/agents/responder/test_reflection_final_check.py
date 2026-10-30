@@ -558,3 +558,32 @@ def test_timeout_record_can_never_authorize_final_acceptance(
     monkeypatch.setenv("SDO_MEMORY_CHECK_TIMEOUT_FILE", str(marker))
     with pytest.raises(ValueError, match="terminal memory-check timeout record"):
         check_reflection_result(tmp_path, ReflectionResult(), 1)
+
+
+def test_unchanged_compiler_diagnostics_stop_despite_stage_timing_logs(
+    learned_reflection: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Go stage timing is observability, never another reason to spend a model turn."""
+    monkeypatch.setenv("SDO_REPLAY", "off")
+    path = learned_reflection / ".sdo/playbooks/service-targetport-mismatch/diagnose.go"
+    path.write_text(path.read_text() + "\nvar _ = checktimeUndefined\n")
+    subprocess.run(["gofmt", "-w", str(path)], check=True)
+    agent = ScriptedAgent(
+        lambda _: reply(
+            "codex",
+            {
+                "summary": "saved",
+                "learning_decision": "updated",
+                "proposed_artifact_ids": ["service-targetport-mismatch"],
+            },
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    with pytest.raises(RuntimeError, match="unchanged_validation_failure"):
+        CodexSessionBackend(executor=agent.executor).fresh(
+            worktree=learned_reflection,
+            prompt="reflect",
+            idempotency_key="one-dispatch",
+        )
+    assert len(agent.requests) == 2

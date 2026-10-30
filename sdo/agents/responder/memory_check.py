@@ -28,6 +28,13 @@ class ValidationResult:
     stdout: str
     stderr: str
 
+    def same_failure(self, other: ValidationResult | None) -> bool:
+        # Exit 1 is the CLI's structured diagnostic result. Stderr carries
+        # toolchain timing/logs, which cannot make unchanged diagnostics new.
+        if other is not None and self.exit_code == other.exit_code == 1:
+            return self.stdout == other.stdout
+        return self == other
+
 
 class MemoryCheckTimeout(RuntimeError):
     """Validation exhausted its bound; a provider correction cannot fix a timeout."""

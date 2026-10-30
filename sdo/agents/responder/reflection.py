@@ -687,7 +687,7 @@ class CodexSessionBackend:
                 raise MemoryCheckTimeout(check)
             if attempt == 3 or time.monotonic() >= deadline:
                 raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
-            if check == previous_failure:
+            if check.same_failure(previous_failure):
                 raise ReflectionCorrectionStopped("unchanged_validation_failure", check)
             if remaining() <= validation_reserve:
                 raise ReflectionCorrectionStopped("validation_budget_reserved", check)
