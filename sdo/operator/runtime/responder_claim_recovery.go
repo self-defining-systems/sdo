@@ -20,30 +20,34 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 	if loop == nil || deterministicStageReport(request.PriorStages) == nil {
 		return nil, nil
 	}
-	if d.RepositoryMountPath != "" {
-		owned, err := (worker_registry.KubernetesExecutor{RepositoryMountPath: d.RepositoryMountPath}).HasBoundStandby(task)
-		if err != nil {
-			return nil, err
-		}
-		if owned {
-			return nil, nil
-		}
-	}
 	if d.Client != nil {
-		_, err := d.Client.BatchV1().Jobs(d.Namespace).Get(ctx, worker_registry.JobName(task.TaskId), metav1.GetOptions{})
-		if err == nil {
+		names, err := worker_registry.IncidentExecutionNames(ctx, d.Client, d.Namespace, d.RepositoryMountPath, request.IncidentID, false)
+		if err != nil {
+			return nil, fmt.Errorf("observe responder ownership: %w", err)
+		}
+		// The inventory always contains the legacy task name. Additional names
+		// come from durable bindings/execution identities, including vanished
+		// workers whose result must still be recovered.
+		if len(names) > 1 {
 			return nil, nil
 		}
-		if !apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("observe responder claim: %w", err)
-		}
-		for _, suffix := range []string{"-request", "-result"} {
-			_, err := d.Client.CoreV1().ConfigMaps(d.Namespace).Get(ctx, worker_registry.JobName(task.TaskId)+suffix, metav1.GetOptions{})
+		names = append(names, worker_registry.TaskJobName(task))
+		for _, name := range names {
+			_, err := d.Client.BatchV1().Jobs(d.Namespace).Get(ctx, name, metav1.GetOptions{})
 			if err == nil {
 				return nil, nil
 			}
 			if !apierrors.IsNotFound(err) {
-				return nil, fmt.Errorf("observe published responder task: %w", err)
+				return nil, fmt.Errorf("observe responder claim: %w", err)
+			}
+			for _, suffix := range []string{"-request", "-result", "-execution"} {
+				_, err := d.Client.CoreV1().ConfigMaps(d.Namespace).Get(ctx, name+suffix, metav1.GetOptions{})
+				if err == nil {
+					return nil, nil
+				}
+				if !apierrors.IsNotFound(err) {
+					return nil, fmt.Errorf("observe published responder task: %w", err)
+				}
 			}
 		}
 	}
