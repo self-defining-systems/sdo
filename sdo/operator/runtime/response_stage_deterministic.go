@@ -414,7 +414,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	var applications []RecordedPlanApplication
 	if err := withoutResponderLocks(loop, "credit-equivalent-repairs", true, func() {
 		loop.CreditEquivalentRepairs(ctx, loop.ApplicationRepairReceipts(state.RepairActions))
-		applications = loop.PlanApplications()
+		applications = loop.ApplicationEvidence()
 	}); err != nil {
 		return report, err
 	}

@@ -65,7 +65,7 @@ func TestSavedProgramOwnershipSurvivesResponderRestart(t *testing.T) {
 					t.Fatal(applied.Error)
 				}
 			}
-			before, err := incidentResultContract(IncidentResult{PlanApplications: loop.PlanApplications()})
+			before, err := incidentResultContract(IncidentResult{PlanApplications: loop.ApplicationEvidence()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -76,6 +76,9 @@ func TestSavedProgramOwnershipSurvivesResponderRestart(t *testing.T) {
 			fresh, _ := trustedPortLoop(t, false, false, true)
 			if err := fresh.restoreToolSnapshot(saved); err != nil {
 				t.Fatal(err)
+			}
+			if len(fresh.PlanApplications()) != 0 || fresh.LoopsUsed() != loop.LoopsUsed() {
+				t.Fatal("historical evidence restored live applications or reset repair budget")
 			}
 			// Reproduce the p45 shape: a pre-restart application followed by
 			// another accepted program through the responder menu. Both owners
@@ -97,7 +100,7 @@ func TestSavedProgramOwnershipSurvivesResponderRestart(t *testing.T) {
 				if applied.Error != "" || !applied.TargetedHealthy {
 					t.Fatalf("second program: %+v", applied)
 				}
-				live, err := incidentResultContract(IncidentResult{PlanApplications: fresh.PlanApplications()})
+				live, err := incidentResultContract(IncidentResult{PlanApplications: fresh.ApplicationEvidence()})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -112,7 +115,7 @@ func TestSavedProgramOwnershipSurvivesResponderRestart(t *testing.T) {
 			if err := again.restoreToolSnapshot(saved); err != nil {
 				t.Fatal(err)
 			}
-			result, err := incidentResultContract(IncidentResult{PlanApplications: again.PlanApplications(), RepairActions: append(again.ApplicationRepairReceipts(nil), again.MenuRepairActions()...)})
+			result, err := incidentResultContract(IncidentResult{PlanApplications: again.ApplicationEvidence(), RepairActions: append(again.ApplicationRepairReceipts(nil), again.MenuRepairActions()...)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -192,14 +195,14 @@ func TestPendingApplicationOwnershipSurvivesCheckpoint(t *testing.T) {
 		}
 	}
 	response := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
-	if response.RolloutPending == nil || len(loop.PlanApplications()) != 1 || !loop.PlanApplications()[0].Pending {
+	if response.RolloutPending == nil || len(loop.ApplicationEvidence()) != 1 || !loop.ApplicationEvidence()[0].Pending {
 		t.Fatalf("expected real pending execution: %+v", response)
 	}
 	fresh, _ := menuB3Loop(t)
 	if err := fresh.restoreToolSnapshot(saved); err != nil {
 		t.Fatal(err)
 	}
-	applications := fresh.PlanApplications()
+	applications := fresh.ApplicationEvidence()
 	if len(applications) != 1 || !applications[0].Pending || applications[0].Result.VerificationPassed {
 		t.Fatalf("recovery changed pending status: %+v", applications)
 	}

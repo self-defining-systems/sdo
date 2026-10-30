@@ -324,15 +324,26 @@ func (l *ResponderLoop) ProgramRuns() []ProgramRun {
 	defer l.mu.Unlock()
 	return append([]ProgramRun(nil), l.runs...)
 }
+
+// PlanApplications returns only applications observed in this process. Restarted
+// evidence cannot be used as live execution state.
 func (l *ResponderLoop) PlanApplications() []RecordedPlanApplication {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.planApplicationsLocked()
+	return append([]RecordedPlanApplication(nil), l.applicationsLog...)
+}
+
+// ApplicationEvidence returns historical and live facts for outcome/learning
+// attribution only. It confers no execution or rollback authority.
+func (l *ResponderLoop) ApplicationEvidence() []RecordedPlanApplication {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.applicationEvidenceLocked()
 }
 
 // Caller holds l.mu. Live observations supersede the archived receipt for the
 // same application; unrelated restored receipts must survive subsequent saves.
-func (l *ResponderLoop) planApplicationsLocked() []RecordedPlanApplication {
+func (l *ResponderLoop) applicationEvidenceLocked() []RecordedPlanApplication {
 	result := append([]RecordedPlanApplication(nil), l.archivedApplications...)
 	positions := map[string]int{}
 	for i, application := range result {

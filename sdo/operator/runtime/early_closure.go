@@ -122,7 +122,7 @@ func earlyResultSnapshotLocked(l *ResponderLoop, request IncidentRequest, at tim
 	result.ResponderSessionID = l.menuSession.GetProviderSessionId()
 	result.ProgramToolCalls = append([]ToolCall(nil), l.calls...)
 	result.ProgramRuns = append([]ProgramRun(nil), l.runs...)
-	result.PlanApplications = l.planApplicationsLocked()
+	result.PlanApplications = l.applicationEvidenceLocked()
 	result.ProgramFailureSignals = append([]string(nil), l.failureSignals...)
 	// Archived applications have no live preimages; retain their original
 	// persisted receipts rather than reconstructing weaker evidence.

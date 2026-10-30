@@ -53,7 +53,7 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 		return nil
 	}
 	var evidence []applicationEvidence
-	for _, application := range l.planApplicationsLocked() {
+	for _, application := range l.applicationEvidenceLocked() {
 		projected, err := incidentResultContract(IncidentResult{PlanApplications: []RecordedPlanApplication{application}})
 		if err != nil {
 			return fmt.Errorf("project application evidence: %w", err)
