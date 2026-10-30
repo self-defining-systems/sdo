@@ -51,7 +51,7 @@ func TestValidateNotesDependencyEdgesNoHealthScenarioDrives(t *testing.T) {
 		t.Fatal(err)
 	}
 	for path, content := range map[string]string{
-		"traffic/generators/shop.go":   readOnlyShop,
+		"traffic/generators/shop.go":    readOnlyShop,
 		"traffic/workloads/health.yaml": readOnlyHealth,
 		"traffic/workloads/links.yaml":  shopLinks,
 	} {
@@ -67,30 +67,34 @@ func TestValidateNotesDependencyEdgesNoHealthScenarioDrives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: app, DiagnosticsRoot: diagnostics, OperatorRoot: operatorRoot})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workspace.Close()
-	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
-		t.Fatalf("an undriven edge must not reject memory: %v", err)
-	}
-	gaps, err := workspace.TrafficCoverageGaps()
-	if err != nil {
-		t.Fatal(err)
-	}
-	joined := strings.Join(gaps, "\n")
-	if !strings.Contains(joined, "traffic edge checkout -> payment:8080 is not driven") || strings.Contains(joined, "frontend -> catalog") {
-		t.Fatalf("want exactly the undriven checkout -> payment edge noted, got %q", gaps)
-	}
-	// The read keeps the generous default latency bound, so its path could
-	// slow many times over without firing. The check notes it, again
-	// without rejecting the memory.
-	latency, err := workspace.TrafficLatencyGaps()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(latency) != 1 || !strings.Contains(latency[0], "scenario browse keeps the default") {
-		t.Fatalf("want the browse scenario's default latency bound noted, got %q", latency)
+	// Real generated tests produce these reports in each isolated directory.
+	// The cache must not preserve a pass while dropping its report files.
+	for repeat := 0; repeat < 2; repeat++ {
+		workspace, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: app, DiagnosticsRoot: diagnostics, OperatorRoot: operatorRoot})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer workspace.Close()
+		if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
+			t.Fatalf("an undriven edge must not reject memory: %v", err)
+		}
+		gaps, err := workspace.TrafficCoverageGaps()
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(gaps, "\n")
+		if !strings.Contains(joined, "traffic edge checkout -> payment:8080 is not driven") || strings.Contains(joined, "frontend -> catalog") {
+			t.Fatalf("want exactly the undriven checkout -> payment edge noted, got %q", gaps)
+		}
+		// The read keeps the generous default latency bound, so its path could
+		// slow many times over without firing. The check notes it, again
+		// without rejecting the memory.
+		latency, err := workspace.TrafficLatencyGaps()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(latency) != 1 || !strings.Contains(latency[0], "scenario browse keeps the default") {
+			t.Fatalf("want the browse scenario's default latency bound noted, got %q", latency)
+		}
 	}
 }

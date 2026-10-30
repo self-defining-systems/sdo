@@ -33,7 +33,10 @@ class MemoryCheckTimeout(RuntimeError):
     """Validation exhausted its bound; a provider correction cannot fix a timeout."""
 
     def __init__(self, check: ValidationResult) -> None:
-        super().__init__(f"reflection memory check timed out: {check.stdout}\n{check.stderr}")
+        self.check = check
+        # Worker summaries are capped. Keep the active stage (the stderr tail)
+        # ahead of potentially large JSON output so the cause survives the cap.
+        super().__init__(f"reflection memory check timed out: {check.stderr[-3000:]}\n{check.stdout[:512]}")
 
 
 def remember_timeout(check: ValidationResult) -> None:
@@ -44,7 +47,15 @@ def remember_timeout(check: ValidationResult) -> None:
 
 def prior_timeout() -> ValidationResult | None:
     if (path := os.environ.get(VALIDATION_TIMEOUT_FILE_ENV)) and Path(path).is_file():
-        return ValidationResult(**json.loads(Path(path).read_text(encoding="utf-8")))
+        try:
+            check = ValidationResult(**json.loads(Path(path).read_text(encoding="utf-8")))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid terminal memory-check timeout record") from exc
+        # This cross-process signal can only stop a check; never accept a
+        # worker-writable record as a successful validation attestation.
+        if check.timed_out is not True or not isinstance(check.exit_code, int) or check.exit_code == 0:
+            raise ValueError("terminal memory-check timeout record cannot authorize a pass")
+        return check
     return None
 
 

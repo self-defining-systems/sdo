@@ -109,8 +109,14 @@ time.sleep(600)
             await asyncio.sleep(0.01)
 
     server = validation_server(tmp_path, timeout_seconds=0.3, expire=expire_once_started)
-    (block,) = await server.call_tool("check_memory", {"decision_path": "decision.json"})
+    first, queued = await asyncio.gather(
+        server.call_tool("check_memory", {"decision_path": "decision.json"}),
+        server.call_tool("check_memory", {"decision_path": "decision.json"}),
+    )
+    (block,) = first
+    (queued_block,) = queued
     result = json.loads(block.text)
+    assert json.loads(queued_block.text) == result
     assert result["timed_out"]
     assert result["exit_code"] != 0
     assert "checking replay" in result["stdout"]
@@ -149,6 +155,7 @@ def test_reflection_backend_installs_blocking_validation_tool(
     monkeypatch.setenv("SDO_ACTOR", "responder")
     monkeypatch.setenv("SDO_PHASE", "reflection")
     monkeypatch.setenv("PYTHONPATH", "/opt/sdo")
+    monkeypatch.setenv("GOCACHEPROG", "/usr/local/bin/sdo-go-cache")
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-validator")
 
     def respond(request: CommandRequest) -> FakeRun:
@@ -159,6 +166,7 @@ def test_reflection_backend_installs_blocking_validation_tool(
         assert server["env"]["SDO_PHASE"] == "reflection"
         assert server["env"]["SDO_BASE_COMMIT"] == base
         assert server["env"]["PYTHONPATH"] == "/opt/sdo"
+        assert server["env"]["GOCACHEPROG"] == "/usr/local/bin/sdo-go-cache"
         assert "OPENAI_API_KEY" not in server["env"]
         assert server["args"] == ["-m", "sdo.agents.responder.reflection_validation", "--root", str(tmp_path)]
         if provider == "codex":
@@ -384,3 +392,20 @@ async def test_check_memory_pass_names_programs_that_match_on_diff_text(
     assert ".sdo/playbooks/image-drift/diagnose.go:17" in step
     assert "diff.ContainerChanges" in step
     assert "cause-without-program" not in step
+
+
+async def test_launch_contract_preserves_cache_helper_into_real_validation_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sdo.agents.responder.session_turn import session_mcp_servers
+
+    monkeypatch.setenv("GOCACHEPROG", "/usr/local/bin/sdo-go-cache")
+    _validator(tmp_path, 'import os\nassert os.environ["GOCACHEPROG"] == "/usr/local/bin/sdo-go-cache"\n', monkeypatch)
+    launch = session_mcp_servers(tmp_path, "codex")[0]
+    parameters = StdioServerParameters(command=launch.command, args=launch.args, env=launch.env)
+    async with stdio_client(parameters) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool("check_memory", {"learning_decision": "no_change", "summary": "s"})
+            (block,) = result.content
+            assert json.loads(block.text)["exit_code"] == 0

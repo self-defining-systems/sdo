@@ -25,12 +25,26 @@ func TestCheckReusesExactPackagesAcrossWorkspaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 4; attempt++ {
 		w := acceptanceFixture(t)
+		helper := filepath.Join(w.Directory, "lib", "cachehelper", "helper.go")
+		if err := os.MkdirAll(filepath.Dir(helper), 0755); err != nil {
+			t.Fatal(err)
+		}
+		value := "true"
+		if attempt == 3 {
+			value = "false"
+		}
+		if err := os.WriteFile(helper, []byte("package cachehelper\nconst Valid = "+value+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 		for _, name := range []string{"changed", "unchanged"} {
 			source := "package probe\nimport \"testing\"\nfunc TestCacheIdentity(t *testing.T) {}\n"
+			if name == "changed" {
+				source = "package probe\nimport (\"testing\"; \"fixture-diagnostics/lib/cachehelper\")\nfunc TestCacheIdentity(t *testing.T) { if !cachehelper.Valid { t.Fatal(\"changed dependency executed\") } }\n"
+			}
 			if attempt == 2 && name == "changed" {
-				source = strings.Replace(source, "{}", `{ t.Fatal("changed bytes executed") }`, 1)
+				source = strings.Replace(source, "if !cachehelper.Valid", `if cachehelper.Valid { t.Fatal("changed bytes executed") }; if !cachehelper.Valid`, 1)
 			}
 			path := filepath.Join(w.Directory, "playbooks", name, "cache_test.go")
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -57,6 +71,9 @@ func TestCheckReusesExactPackagesAcrossWorkspaces(t *testing.T) {
 		}
 		if attempt == 2 && !strings.Contains(strings.Join(w.advisoryTestErrors, "\n"), "changed bytes executed") {
 			t.Fatalf("changed package reused stale success: %v", w.advisoryTestErrors)
+		}
+		if attempt == 3 && !strings.Contains(strings.Join(w.advisoryTestErrors, "\n"), "changed dependency executed") {
+			t.Fatalf("changed transitive dependency reused stale success: %v", w.advisoryTestErrors)
 		}
 		if err := w.Close(); err != nil {
 			t.Fatal(err)

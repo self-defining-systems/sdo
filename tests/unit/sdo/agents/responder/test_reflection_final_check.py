@@ -536,3 +536,25 @@ def test_memory_timeout_is_terminal_before_any_provider_correction(
     assert _failure_reason(failure.value) == "agent_timeout"
     assert "memory check timed out" in str(failure.value)
     assert len(agent.requests) == 1, "validation timeouts cannot be corrected by another model turn"
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"exit_code": 0, "timed_out": False, "stdout": "passed", "stderr": ""},
+        {"exit_code": 0, "timed_out": True, "stdout": "passed", "stderr": ""},
+        {"exit_code": 2, "timed_out": False, "stdout": "", "stderr": ""},
+        {"unexpected": "shape"},
+    ],
+)
+def test_timeout_record_can_never_authorize_final_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, record: dict
+) -> None:
+    from sdo.agents.responder.memory_check import check_reflection_result
+    from sdo.contracts import ReflectionResult
+
+    marker = tmp_path / "timeout.json"
+    marker.write_text(json.dumps(record))
+    monkeypatch.setenv("SDO_MEMORY_CHECK_TIMEOUT_FILE", str(marker))
+    with pytest.raises(ValueError, match="terminal memory-check timeout record"):
+        check_reflection_result(tmp_path, ReflectionResult(), 1)
