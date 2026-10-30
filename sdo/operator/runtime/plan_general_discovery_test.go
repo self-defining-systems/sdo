@@ -8,6 +8,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	discoveryfake "k8s.io/client-go/discovery/fake"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
@@ -28,7 +29,7 @@ func generalDiscoveryClient(ref sdk.ObjectRef, kindResource string, complete boo
 		return false, nil, nil
 	})
 	discovery := &discoveryfake.FakeDiscovery{Fake: &clienttesting.Fake{Resources: []*metav1.APIResourceList{{GroupVersion: ref.APIVersion, APIResources: []metav1.APIResource{{Kind: ref.Kind, Name: kindResource, Namespaced: ref.Namespace != "", Verbs: []string{"get", "list", "patch", "create", "delete"}}}}}}}
-	return GenericPlanClient{Objects: &core.GenericCapture{Client: dynamic, Discovery: discovery, Namespace: "app"}}
+	return GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: fake.NewSimpleClientset()}, Objects: &core.GenericCapture{Client: dynamic, Discovery: discovery, Namespace: "app"}}
 }
 func TestGeneralDiscoverableArbitraryObject(t *testing.T) {
 	for _, namespace := range []string{"app", "other", ""} {

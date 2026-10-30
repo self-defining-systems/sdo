@@ -4,6 +4,7 @@ name: Nightly fuzz
 # whole budget, so they stay out of PR CI; every PR still replays each target's
 # seed corpus through plain `go test`. Oversized atomic tests use separate
 # cost-planned nightly jobs with the same prepared graph and unchanged caps.
+# The full compiled runtime inventory is replayed here, including PR-selected tests.
 # One job per fuzz module keeps a single
 # instrumented compile per job and each job under the 5-minute fuzz cap.
 on:
@@ -147,7 +148,7 @@ jobs:
           echo "value=${identity}" >> "$GITHUB_OUTPUT"
 
   plan:
-    name: deferred test plan
+    name: full runtime and deferred test plan
     needs: prepare-go
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -224,7 +225,7 @@ jobs:
           path: .fastloop/test-bin
       - name: Share linked binaries between tests
         run: bash scripts/link_cache.sh >> "$GITHUB_ENV"
-      - name: Run every deferred assertion
+      - name: Run full runtime and deferred assertions
         run: |
           if [[ '${{ matrix.needs_uv }}' == true ]]; then
             uv run --extra test python scripts/run_ci_contracts.py --plan .fastloop/test-bin/nightly-test-plan.json --bin '${{ matrix.bin }}' --nightly

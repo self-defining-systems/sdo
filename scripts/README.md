@@ -14,8 +14,10 @@ executed critical path is ten minutes; runner queue time is outside that bound.
 - `ci_policy.json` owns the two contract buckets' fixed capacity (180 seconds of
   measured work each, 60 seconds reserved for setup). Inventory growth never adds
   a PR job. `pr_test_plan.py` keeps the broadest cheap regression set within that
-  capacity; every other test is assigned to nightly. Both sets are exhaustive
+  capacity; every other test is assigned to nightly. The PR/deferred assignment is exhaustive
   and disjoint, and a generated Markdown job summary lists every deferred test.
+  Nightly additionally replays the complete runtime inventory, including the
+  runtime tests selected by PR CI.
 - `prepare_go_ci.sh` compiles normal production archives and race test archives.
   `go_test_inventory.go` reads Go's generated test tables after `go list -test
   -export -race` and retains vet checks, avoiding discarded test-executable links.
@@ -88,8 +90,8 @@ Nightly owns deferred real-compiler/provider/simulation tests, image builds/smok
 proto toolchain/lint/codegen drift, full SDK/core compatibility at Go 1.24.5 and
 1.26.8, full race protocol contracts, and the existing coverage-guided fuzz campaigns.
 The extra short schedule/fuzz replay invocation was deleted: its seeds already run
-in the one ordinary test inventory. Nightly does not rerun the same cheap Go/native
-nodes selected for PR CI.
+in the one ordinary test inventory. Nightly replays every runtime node, including cheap contracts selected for PR
+CI; other Go/native nodes retain the disjoint PR/deferred assignment.
 
 `check_model_cli_versions.py` runs in the image's `model-deps` stage after npm
 installation. `sdo/operator/model_cli_requirements.json` keeps the image's default
