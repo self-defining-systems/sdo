@@ -18,6 +18,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,19 +94,24 @@ func newSimRNG(seed uint64) *rand.Rand {
 	return rand.New(rand.NewPCG(seed, seed^0xd1b54a32d192ed03))
 }
 
-// simClock is the virtual clock: Sleep advances it and never blocks.
+// simClock is shared with asynchronous controller effects. Atomic storage
+// makes advancing and reading virtual time safe without exposing a raw time.
 type simClock struct {
-	now    time.Time
-	sleeps []time.Duration
+	nanos atomic.Int64
 }
 
-func newSimClock() *simClock { return &simClock{now: time.Unix(1_700_000_000, 0).UTC()} }
+func newSimClock() *simClock {
+	clock := &simClock{}
+	clock.Set(time.Unix(1_700_000_000, 0).UTC())
+	return clock
+}
 
-func (c *simClock) Now() time.Time { return c.now }
+func (c *simClock) Now() time.Time          { return time.Unix(0, c.nanos.Load()).UTC() }
+func (c *simClock) Set(now time.Time)       { c.nanos.Store(now.UnixNano()) }
+func (c *simClock) Advance(d time.Duration) { c.nanos.Add(int64(d)) }
 
 func (c *simClock) Sleep(_ context.Context, d time.Duration) error {
-	c.sleeps = append(c.sleeps, d)
-	c.now = c.now.Add(d)
+	c.Advance(d)
 	return nil
 }
 

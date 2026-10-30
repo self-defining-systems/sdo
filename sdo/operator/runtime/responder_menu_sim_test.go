@@ -300,7 +300,7 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 	w.setPort(simServiceName(0), 9999)
 	failAll := schedule == "five-fail-next"
 	for tick := 0; tick < 30; tick++ {
-		w.clock.now = w.clock.now.Add(time.Second)
+		w.clock.Advance(time.Second)
 		pump(failAll)
 		if w.idle() || w.endedUnverified() {
 			break
@@ -319,7 +319,7 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 		restart()
 		w.setPort(simServiceName(2), 9999)
 		for tick := 0; tick < 30; tick++ {
-			w.clock.now = w.clock.now.Add(time.Second)
+			w.clock.Advance(time.Second)
 			pump(false)
 			if w.idle() {
 				break

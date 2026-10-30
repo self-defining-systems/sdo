@@ -109,7 +109,7 @@ func runSimForeignPodDuringUnrelatedIncident(t *testing.T, seed uint64) {
 	// Closure follows removal within a few ticks plus the success soak.
 	settle := 3 + int(w.controller.config.ClosureStabilityWindow/time.Second)
 	for tick := 0; tick < remove+settle+27; tick++ {
-		w.clock.now = w.clock.now.Add(time.Second)
+		w.clock.Advance(time.Second)
 		if tick == 1 {
 			w.setPort(simServiceName(0), 9999)
 		}
@@ -240,7 +240,7 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		w.configure = func(c *Controller) { c.dispatcher = reporter }
 		w.restart()
 		w.setPort(simServiceName(0), 9999)
-		w.clock.now = w.clock.now.Add(time.Second)
+		w.clock.Advance(time.Second)
 		w.step()
 		workspace, ok := w.controller.PendingWorkspaceEffect()
 		if !ok {
@@ -288,7 +288,7 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		loop.menuRepairs = result.RepairActions
 		w.controller.responderLoop = loop
 		for tick := 0; tick < 40 && w.controller.IncidentOpen(); tick++ {
-			w.clock.now = w.clock.now.Add(time.Second)
+			w.clock.Advance(time.Second)
 			w.step()
 		}
 		closure, ok := w.controller.PendingIncidentClosure()
@@ -299,7 +299,7 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		// while the independently observed worker termination is still pending.
 		// Seeded one/two-step termination proves that a pause/restart retains
 		// that real prerequisite without introducing a report-grace delay.
-		w.clock.now = closure.VerifiedAt
+		w.clock.Set(closure.VerifiedAt)
 		observations := w.cache.snapshots
 		w.applyScheduleEvent(simScheduleEvent{kind: simPause})
 		if restart {
@@ -341,7 +341,7 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		if wake := w.controller.PausedWake(); !wake.Equal(deadline) {
 			t.Fatalf("paused termination retry wake=%v, want %v", wake, deadline)
 		}
-		w.clock.now = deadline
+		w.clock.Set(deadline)
 		failedSave := (seed>>1)%2 == 1
 		failNext := failedSave
 		w.client.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, kruntime.Object, error) {
@@ -363,7 +363,7 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 				if !wake.Equal(w.clock.Now().Add(time.Second)) {
 					t.Fatalf("paused retirement/save retry wake=%v", wake)
 				}
-				w.clock.now = wake
+				w.clock.Set(wake)
 			} else {
 				break
 			}

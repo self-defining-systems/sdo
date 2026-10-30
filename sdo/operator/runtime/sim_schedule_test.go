@@ -38,7 +38,7 @@ func runSimSchedule(t *testing.T, seed uint64, raw []byte) {
 				w.applyScheduleEvent(simScheduleEvent{kind: simResume})
 			}
 		}
-		w.clock.now = w.clock.now.Add(10 * time.Second)
+		w.clock.Advance(10 * time.Second)
 		for i := 0; i < 10; i++ {
 			injection := 2 + i*20 + int(at(1+2*i))%10
 			if tick == injection {
@@ -71,14 +71,14 @@ func runSimSchedule(t *testing.T, seed uint64, raw []byte) {
 	w.responder.behavior = func() simBehavior { return simFixAll }
 	w.broker.reject = func() bool { return false }
 	for i := 0; i < 10; i++ {
-		w.clock.now = w.clock.now.Add(10 * time.Second)
+		w.clock.Advance(10 * time.Second)
 		w.step()
 		w.drain()
 	}
 	before := w.responder.calls
 	w.setPort(simServiceName(0), 9999)
 	for i := 0; i < 60 && (w.responder.calls == before || !w.idle()); i++ {
-		w.clock.now = w.clock.now.Add(10 * time.Second)
+		w.clock.Advance(10 * time.Second)
 		w.step()
 		w.drain()
 	}
@@ -162,12 +162,12 @@ func TestSimSchedulePartialRepairClosesOnHealthWithDriftRecorded(t *testing.T) {
 				w.restart()
 				w.setPort(simServiceName(0), 9999)
 				w.setPort(simServiceName(1), 9999)
-				w.clock.now = w.clock.now.Add(time.Second)
+				w.clock.Advance(time.Second)
 				w.step()
 				// Admission evidence is synthetic and source-grounded, like the watch
 				// classifier's owned-field event; no benchmark verdict reaches closure.
-				w.controller.queueUnexplainedFinding(w.clock.now, sdk.DriftEvent{
-					Ref: simServiceRef(simServiceName(1)), Source: "differs from accepted manifest", ObservedAt: w.clock.now, Classification: sdk.DriftUnexplained,
+				w.controller.queueUnexplainedFinding(w.clock.Now(), sdk.DriftEvent{
+					Ref: simServiceRef(simServiceName(1)), Source: "differs from accepted manifest", ObservedAt: w.clock.Now(), Classification: sdk.DriftUnexplained,
 					Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort", Old: "8080", New: "9999", Source: "8080"}},
 				})
 				w.persist()
@@ -177,7 +177,7 @@ func TestSimSchedulePartialRepairClosesOnHealthWithDriftRecorded(t *testing.T) {
 					t.Fatalf("partial repair fixture: %v", faulty)
 				}
 				for tick := 1; tick <= 200; tick++ {
-					w.clock.now = w.clock.now.Add(time.Second)
+					w.clock.Advance(time.Second)
 					if tick == restartAfter {
 						state := exportState(t, w.controller)
 						if !state.IncidentOpen || !state.ResponderDone {
@@ -265,20 +265,20 @@ func TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure(t *testing.
 				w.restart()
 				inject := func(index int) {
 					w.setPort(simServiceName(index), 9999)
-					w.controller.queueUnexplainedFinding(w.clock.now, sdk.DriftEvent{
-						Ref: simServiceRef(simServiceName(index)), Source: "differs from accepted manifest", ObservedAt: w.clock.now, Classification: sdk.DriftUnexplained,
+					w.controller.queueUnexplainedFinding(w.clock.Now(), sdk.DriftEvent{
+						Ref: simServiceRef(simServiceName(index)), Source: "differs from accepted manifest", ObservedAt: w.clock.Now(), Classification: sdk.DriftUnexplained,
 						Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort", Old: "8080", New: "9999", Source: "8080"}},
 					})
 				}
-				w.clock.now = w.clock.now.Add(time.Second)
-				firstAt := w.clock.now
+				w.clock.Advance(time.Second)
+				firstAt := w.clock.Now()
 				inject(0)
 				w.step()
 				if gap >= 20*time.Second {
-					w.clock.now = firstAt.Add(20 * time.Second)
+					w.clock.Set(firstAt.Add(20 * time.Second))
 					w.step() // Open the first incident without draining its effects yet.
 				}
-				w.clock.now = firstAt.Add(gap)
+				w.clock.Set(firstAt.Add(gap))
 				inject(1)
 				w.step()
 				w.persist()
@@ -286,14 +286,14 @@ func TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure(t *testing.
 					w.restart()
 				}
 				if gap < 20*time.Second {
-					w.clock.now = firstAt.Add(20 * time.Second)
+					w.clock.Set(firstAt.Add(20 * time.Second))
 					w.step()
 				}
 				w.drain()
 				// Restart at a seeded verification tick (while cache reads can still
 				// lag), then require exactly one independently verified outcome.
 				for tick := 0; tick < 20; tick++ {
-					w.clock.now = w.clock.now.Add(time.Second)
+					w.clock.Advance(time.Second)
 					if tick == int(seed%3) {
 						w.restart()
 					}
@@ -311,7 +311,7 @@ func TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure(t *testing.
 					t.Fatal("verified closure left a stale binding")
 				}
 				w.restart()
-				w.clock.now = w.clock.now.Add(30 * time.Second)
+				w.clock.Advance(30 * time.Second)
 				w.step()
 				w.drain()
 				if w.responder.calls != 1 {
@@ -320,7 +320,7 @@ func TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure(t *testing.
 				// Control against accidentally suppressing the reused binding forever.
 				inject(1)
 				w.step()
-				w.clock.now = w.clock.now.Add(20 * time.Second)
+				w.clock.Advance(20 * time.Second)
 				w.step()
 				w.drain()
 				if w.responder.calls != 2 || len(w.violations) > 0 {
