@@ -1014,7 +1014,9 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	executor := l.Executor
 	executor.ApplicationID = id
-	executor.PollRollouts = !request.stage
+	// Both automatic and responder applications observe once. A rollout may
+	// depend on another matched binding that has not been written yet.
+	executor.PollRollouts = true
 	if request.stage && request.rolloutTimeout > 0 {
 		executor.RolloutTimeout = request.rolloutTimeout
 	}
