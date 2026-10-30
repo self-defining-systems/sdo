@@ -285,6 +285,49 @@ func recoveryObservationOnly(app RecordedPlanApplication) bool {
 	return true
 }
 
+// recoveryOwnerRefs completes known controller lineage for causal attribution.
+func (l *ResponderLoop) recoveryOwnerRefs(ctx context.Context, refs []sdk.ObjectRef, history []RecordedPlanApplication) []sdk.ObjectRef {
+	// Receipt owner chains may stop at a ReplicaSet. Complete that known
+	// controller lineage from captured preimages or fresh namespace reads.
+	for index := 0; index < len(refs) && index < 32; index++ {
+		ref := refs[index]
+		if ref.Namespace != l.Request.Namespace || (ref.Kind != "Pod" && ref.Kind != "ReplicaSet" && ref.Kind != "Job") {
+			continue
+		}
+		var object *unstructured.Unstructured
+		for _, candidate := range history {
+			for _, image := range candidate.Result.PreImages {
+				if sameResource(image.Ref, ref) && image.Object != nil {
+					object = image.Object
+					break
+				}
+			}
+			for _, effect := range candidate.Result.ObjectEffects {
+				if sameResource(effect.Ref, ref) && effect.DeletedPreImage != nil {
+					object = effect.DeletedPreImage
+					break
+				}
+			}
+		}
+		if object == nil {
+			object, _ = l.Executor.Client.Get(ctx, ref)
+		}
+		if object == nil {
+			continue
+		}
+		for _, owner := range object.GetOwnerReferences() {
+			if owner.Controller == nil || !*owner.Controller || owner.Kind == "Secret" {
+				continue
+			}
+			parent := sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: ref.Namespace, Name: owner.Name}
+			if !slices.Contains(refs, parent) {
+				refs = append(refs, parent)
+			}
+		}
+	}
+	return refs
+}
+
 // Reject overlapping later corrective effects, not independent causes or
 // diagnostic helper writes. Unknown ordering is deliberately not positive proof.
 func (l *ResponderLoop) recoverySuperseded(ctx context.Context, app RecordedPlanApplication, result IncidentResult, applications []RecordedPlanApplication, observedWrites []RepairActionReceipt, automatic bool) bool {
@@ -314,44 +357,7 @@ func (l *ResponderLoop) recoverySuperseded(ctx context.Context, app RecordedPlan
 		for _, ownership := range other.Owners {
 			refs = append(refs, ownership.OwnerChain...)
 		}
-		// Receipt owner chains may stop at a ReplicaSet. Complete that known
-		// controller lineage from captured preimages or fresh namespace reads.
-		for index := 0; index < len(refs) && index < 32; index++ {
-			ref := refs[index]
-			if ref.Namespace != l.Request.Namespace || (ref.Kind != "Pod" && ref.Kind != "ReplicaSet" && ref.Kind != "Job") {
-				continue
-			}
-			var object *unstructured.Unstructured
-			for _, candidate := range history {
-				for _, image := range candidate.Result.PreImages {
-					if sameResource(image.Ref, ref) && image.Object != nil {
-						object = image.Object
-						break
-					}
-				}
-				for _, effect := range candidate.Result.ObjectEffects {
-					if sameResource(effect.Ref, ref) && effect.DeletedPreImage != nil {
-						object = effect.DeletedPreImage
-						break
-					}
-				}
-			}
-			if object == nil {
-				object, _ = l.Executor.Client.Get(ctx, ref)
-			}
-			if object == nil {
-				continue
-			}
-			for _, owner := range object.GetOwnerReferences() {
-				if owner.Controller == nil || !*owner.Controller || owner.Kind == "Secret" {
-					continue
-				}
-				parent := sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: ref.Namespace, Name: owner.Name}
-				if !slices.Contains(refs, parent) {
-					refs = append(refs, parent)
-				}
-			}
-		}
+		refs = l.recoveryOwnerRefs(ctx, refs, history)
 		for _, receipt := range own {
 			for _, target := range receipt.Resources {
 				for _, ref := range refs {

@@ -441,6 +441,17 @@ func (l *ResponderLoop) pendingOverlaps(ref sdk.ObjectRef, pending pendingMitiga
 	return false
 }
 
+// Causal attribution includes owned children; admission still reserves only
+// exclusive desired-state writes, never the wider observation scope.
+func (l *ResponderLoop) pendingCausallyOverlaps(ctx context.Context, ref sdk.ObjectRef, pending pendingMitigation) bool {
+	for _, causal := range l.recoveryOwnerRefs(ctx, []sdk.ObjectRef{ref}, l.applicationsLog) {
+		if l.pendingOverlaps(causal, pending) {
+			return true
+		}
+	}
+	return false
+}
+
 // failIneffectivePending ends a held program application whose writes landed
 // but whose own diagnosis still matches while a finding it targeted is still
 // active: its plan did not address the fault, so waiting for its rollout
@@ -527,7 +538,7 @@ func (l *ResponderLoop) pendingConflict(ctx context.Context, refs []sdk.ObjectRe
 
 // A held reservation refuses overlapping writes unless it is shown not to have
 // addressed its fault (failIneffectivePending). A released one is superseded
-// by any later write that is not refused: the write may be what let its
+// by a later causal write that is not refused: the write may be what let its
 // rollout finish (an owned ReplicaSet or Pod, a claim, a node), so the stalled
 // application earns no late credit. Reservations of attempt itself are skipped.
 func (l *ResponderLoop) pendingConflictExcept(ctx context.Context, refs []sdk.ObjectRef, response *ToolResponse, attempt string) bool {
@@ -554,7 +565,7 @@ func (l *ResponderLoop) pendingConflictExcept(ctx context.Context, refs []sdk.Ob
 	for application, pending := range l.pendingWrites {
 		if pending.Released && (attempt == "" || pending.AttemptID != attempt) {
 			for _, ref := range refs {
-				if ref.Kind == "*" || l.pendingOverlaps(ref, pending) {
+				if l.pendingCausallyOverlaps(ctx, ref, pending) {
 					pending.Superseded = true
 					break
 				}
