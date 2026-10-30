@@ -177,6 +177,10 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 			continue
 		}
 		requestFile, err := s.requests.Open(name)
+		// Clients own cancellation cleanup and may disappear after ReadDir.
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -225,7 +229,8 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 			_ = s.responses.Remove(temporary)
 			return err
 		}
-		if err := s.requests.Remove(name); err != nil {
+		// The client also removes its request after reading the response or cancelling.
+		if err := s.requests.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}

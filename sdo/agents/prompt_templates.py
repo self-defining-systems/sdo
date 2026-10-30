@@ -158,11 +158,15 @@ def count_chars(text: str) -> int:
     return len(text)
 
 
-def render_prompt(role: str, name: str, /, *, part: str, **values: object) -> RenderedPrompt:
+def render_prompt(
+    role: str, name: str, /, *, part: str, optional_values: tuple[str, ...] = (), **values: object
+) -> RenderedPrompt:
     """Read a sibling prompts/*.md file; missing substitutions always raise KeyError.
 
     Nested rendered values retain their own part names. Other substitutions are
     data belonging to this role; literal template text belongs to ``part``.
+    ``optional_values`` marks summarizable runtime data, retaining each manifest
+    budget. Embedded rendered values always preserve their own requirements.
     Binary reading avoids silently normalizing CRLF before measuring the prompt.
     """
     template = Template((Path(__file__).parent / role / "prompts" / f"{name}.md").read_bytes().decode("utf-8"))
@@ -177,6 +181,8 @@ def render_prompt(role: str, name: str, /, *, part: str, **values: object) -> Re
         raise ValueError(f"Missing prompt placeholder budget entries: {role}/{name}")
     for budget_name in configured.values():
         budget_for(budget_name)
+    if not set(optional_values) <= identifiers:
+        raise ValueError(f"Unknown optional prompt placeholders: {role}/{name}")
     template.substitute(values)  # validate missing placeholders before writing evidence
     parts: list[PromptPart] = []
     cursor = 0
@@ -189,7 +195,7 @@ def render_prompt(role: str, name: str, /, *, part: str, **values: object) -> Re
             if isinstance(value, RenderedPrompt):
                 parts.extend(value.parts)
             else:
-                parts.append(PromptPart(configured[key], str(value)))
+                parts.append(PromptPart(configured[key], str(value), required=key not in optional_values))
         elif match.group("escaped") is not None:
             parts.append(PromptPart(part, "$"))
         cursor = match.end()
