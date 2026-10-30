@@ -33,6 +33,24 @@ type PlanActionReport struct {
 	RecordingError string                      `json:"recording_error,omitempty"`
 }
 
+// PlanActionsComplete reports execution completion, independently of how many
+// actions mutated state. A successful wait or an already-satisfied ensure is
+// complete; dry runs, compensation and uncertain execution are not. A typed
+// source readback residual follows a completed write; convergence and health
+// settlement remain separate decisions.
+func PlanActionsComplete(result PlanApplicationResult) bool {
+	if result.DryRun || result.RolledBack || result.RollbackError != "" || len(result.Plan.Actions) == 0 || len(result.ActionReports) != len(result.Plan.Actions) {
+		return false
+	}
+	for i, report := range result.ActionReports {
+		sourceReadback := isSourceReconcile(result.Plan.Actions[i]) && report.SourceReconcile != nil && !report.SourceReconcile.Converged && report.Status == "partial" && report.FailureReason == "source_residual"
+		if report.ActionIndex != i || (!sourceReadback && (report.Status != "applied" || report.FailureReason != "")) {
+			return false
+		}
+	}
+	return true
+}
+
 func newPlanReports(plan program.Plan) []PlanActionReport {
 	out := make([]PlanActionReport, len(plan.Actions))
 	for i := range out {

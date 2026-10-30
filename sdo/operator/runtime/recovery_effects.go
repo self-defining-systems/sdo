@@ -38,6 +38,32 @@ func repairedLifecycleEffects(snapshot sdk.DetectionContext, applications []Reco
 			}
 		}
 	}
+	return lifecycleEffects(snapshot, findings, repaired, false)
+}
+
+// Stage observation needs completed, UID-read-back writes, not health credit.
+// This admits draining scale-down children while the repair is still settling.
+func stageLifecycleEffects(snapshot sdk.DetectionContext, applications []RecordedPlanApplication, findings []sdk.Finding) recoveryEffects {
+	repaired := map[types.UID]bool{}
+	for _, a := range applications {
+		if !a.Result.Applied || a.Result.RollingBack || !PlanActionsComplete(a.Result) || a.RolledBack || a.RollbackError != "" {
+			continue
+		}
+		for _, patch := range a.Result.Patches {
+			if patch.Ref.APIVersion != "apps/v1" || patch.Ref.Kind != "Deployment" || patch.Before == nil || patch.Before.GetUID() == "" || string(patch.Before.GetUID()) != patch.ObservedUID {
+				continue
+			}
+			for _, d := range snapshot.Deployments() {
+				if d.Namespace == patch.Ref.Namespace && d.Name == patch.Ref.Name && d.UID == patch.Before.GetUID() {
+					repaired[d.UID] = true
+				}
+			}
+		}
+	}
+	return lifecycleEffects(snapshot, findings, repaired, true)
+}
+
+func lifecycleEffects(snapshot sdk.DetectionContext, findings []sdk.Finding, repaired map[types.UID]bool, draining bool) recoveryEffects {
 	sets := map[types.UID]appsv1.ReplicaSet{}
 	for _, rs := range snapshot.ReplicaSets() {
 		owner := metav1.GetControllerOf(&rs)
@@ -45,7 +71,7 @@ func repairedLifecycleEffects(snapshot sdk.DetectionContext, applications []Reco
 			continue
 		}
 		for _, d := range snapshot.Deployments() {
-			if d.UID == owner.UID && d.Name == owner.Name && d.Namespace == rs.Namespace && !sameRolloutTemplate(rs.Spec.Template, d.Spec.Template) {
+			if d.UID == owner.UID && d.Name == owner.Name && d.Namespace == rs.Namespace && (draining || !sameRolloutTemplate(rs.Spec.Template, d.Spec.Template)) {
 				sets[rs.UID] = rs
 			}
 		}

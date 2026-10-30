@@ -161,6 +161,12 @@ func (stage AgentResponseStage) Run(ctx context.Context, state *IncidentState) (
 	}
 	result, err := stage.Dispatcher.Dispatch(ctx, request)
 	state.Result = &result
+	if result.automaticStages != nil {
+		state.PriorStages = cloneStageReports(result.automaticStages)
+		if result.ResolutionPath == "deterministic" {
+			state.Findings = append([]sdk.Finding(nil), result.UnresolvedFindings...)
+		}
+	}
 	if err == nil && len(result.FinalDetectorStates) > 0 {
 		updateStageFindings(state, ToolResponse{Findings: result.UnresolvedFindings, DetectorStates: result.FinalDetectorStates})
 	}

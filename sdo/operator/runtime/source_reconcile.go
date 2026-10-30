@@ -46,12 +46,14 @@ func terminalSourceResiduals(result *PlanApplicationResult, err error) error {
 	var partial *SourceReconcilePartialError
 	if errors.As(err, &partial) {
 		result.VerificationPassed = false
-		observedResidual := false
+		configurationResidual := false
 		for _, report := range partial.Results {
-			observedResidual = observedResidual || len(report.ResidualPaths) > 0
+			for _, path := range report.ResidualPaths {
+				configurationResidual = configurationResidual || !strings.HasPrefix(path, "rollout.")
+			}
 		}
-		if !observedResidual {
-			pending := &contracts.RolloutPending{Reason: "source readback is unavailable; writes remain applied and unverified"}
+		if !configurationResidual {
+			pending := &contracts.RolloutPending{Reason: "source rollout or readback remains pending; writes remain applied and unverified"}
 			for _, report := range partial.Results {
 				pending.Blockers = append(pending.Blockers, &contracts.RolloutBlocker{Ref: report.Ref, Reason: report.ObservationError})
 			}
@@ -75,14 +77,30 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 		return nil
 	}
 	var partial []*contracts.SourceReconcileResult
+	// Applied actions are a mutation collection, not a positional prefix of a
+	// mixed plan. Successful waits/ensures do not add entries to it.
+	written := map[sdk.ObjectRef]bool{}
+	for _, action := range result.ActionsApplied {
+		if isSourceReconcile(action) {
+			ref, _ := planActionRef(action)
+			written[ref] = true
+		}
+	}
+	writtenSource := func(index int, action program.Action) bool {
+		if !isSourceReconcile(action) || index >= len(result.ActionReports) {
+			return false
+		}
+		ref, _ := planActionRef(action)
+		return written[ref]
+	}
 	unread := 0
 	for index, action := range result.Plan.Actions {
-		if isSourceReconcile(action) && index < len(result.ActionsApplied) && index < len(result.ActionReports) {
+		if writtenSource(index, action) {
 			unread++
 		}
 	}
 	for index, action := range result.Plan.Actions {
-		if !isSourceReconcile(action) || index >= len(result.ActionsApplied) || index >= len(result.ActionReports) {
+		if !writtenSource(index, action) {
 			continue
 		}
 		// Each object's readback gets its share of what remains, so one slow read

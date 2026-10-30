@@ -258,6 +258,20 @@ message RolloutBlocker {
   repeated Action release = 4;
 }
 
+// Shared recovery observation telemetry. This never grants mutation or repair credit.
+message RecoveryWait {
+  enum ExitReason {
+    EXIT_REASON_UNSPECIFIED = 0;
+    EXIT_REASON_CLEARED = 1;
+    EXIT_REASON_DEADLINE = 2;
+    EXIT_REASON_BLOCKER = 3;
+    EXIT_REASON_FAILED = 4;
+    EXIT_REASON_UNCOVERED = 5;
+  }
+  ExitReason exit_reason = 1 [(buf.validate.field).enum.defined_only = true];
+  google.protobuf.Duration duration = 2 [(buf.validate.field).duration.gte = {}];
+}
+
 message PlanApplication {
   Plan plan = 1 [(buf.validate.field).required = true];
   bool applied = 2;
@@ -285,6 +299,7 @@ message PlanApplication {
   // observed-transition proves opaque script recovery, never exact effects.
   // recovery-settled proves the exact application/revision/binding after
   // independently cleared targeted health and no superseding causal write.
+  RecoveryWait recovery_wait = 24;
   string final_verification_basis = 22 [(buf.validate.field).string = {in: ["", "observed-transition", "recovery-settled"]}];
 }
 

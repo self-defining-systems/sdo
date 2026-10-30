@@ -3765,6 +3765,7 @@ type StageReport struct {
 	RemainingFindingFingerprints []string               `protobuf:"bytes,3,rep,name=remaining_finding_fingerprints,json=remainingFindingFingerprints,proto3" json:"remaining_finding_fingerprints,omitempty"`
 	Error                        string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
 	ClearedFindingFingerprints   []string               `protobuf:"bytes,5,rep,name=cleared_finding_fingerprints,json=clearedFindingFingerprints,proto3" json:"cleared_finding_fingerprints,omitempty"`
+	RecoveryWait                 *RecoveryWait          `protobuf:"bytes,6,opt,name=recovery_wait,json=recoveryWait,proto3" json:"recovery_wait,omitempty"`
 	unknownFields                protoimpl.UnknownFields
 	sizeCache                    protoimpl.SizeCache
 }
@@ -3830,6 +3831,13 @@ func (x *StageReport) GetError() string {
 func (x *StageReport) GetClearedFindingFingerprints() []string {
 	if x != nil {
 		return x.ClearedFindingFingerprints
+	}
+	return nil
+}
+
+func (x *StageReport) GetRecoveryWait() *RecoveryWait {
+	if x != nil {
+		return x.RecoveryWait
 	}
 	return nil
 }
@@ -4519,13 +4527,14 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x19state_persistence_failure\x18\x1b \x01(\v22.sdodev.contracts.v1alpha1.StatePersistenceFailureR\x17statePersistenceFailure\x12\x16\n" +
 	"\x06frozen\x18\x1c \x01(\bR\x06frozenB\x11\n" +
 	"\x0f_dispatch_errorB\x14\n" +
-	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\x98\x02\n" +
+	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\xe6\x02\n" +
 	"\vStageReport\x12\x1d\n" +
 	"\x05stage\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05stage\x12L\n" +
 	"\vmitigations\x18\x02 \x03(\v2*.sdodev.contracts.v1alpha1.StageMitigationR\vmitigations\x12D\n" +
 	"\x1eremaining_finding_fingerprints\x18\x03 \x03(\tR\x1cremainingFindingFingerprints\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12@\n" +
-	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\"\xb6\t\n" +
+	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\x12L\n" +
+	"\rrecovery_wait\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.RecoveryWaitR\frecoveryWait\"\xb6\t\n" +
 	"\x0fStageMitigation\x12(\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"playbookId\x12)\n" +
@@ -4633,7 +4642,8 @@ var file_sdodev_contracts_v1alpha1_messages_proto_goTypes = []any{
 	(*ProgramToolCall)(nil),             // 55: sdodev.contracts.v1alpha1.ProgramToolCall
 	(*PlanApplication)(nil),             // 56: sdodev.contracts.v1alpha1.PlanApplication
 	(*durationpb.Duration)(nil),         // 57: google.protobuf.Duration
-	(*Binding)(nil),                     // 58: sdodev.contracts.v1alpha1.Binding
+	(*RecoveryWait)(nil),                // 58: sdodev.contracts.v1alpha1.RecoveryWait
+	(*Binding)(nil),                     // 59: sdodev.contracts.v1alpha1.Binding
 }
 var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	47,  // 0: sdodev.contracts.v1alpha1.Finding.primary_resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
@@ -4737,19 +4747,20 @@ var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	0,   // 98: sdodev.contracts.v1alpha1.IncidentClosure.unconfirmed_reason:type_name -> sdodev.contracts.v1alpha1.ClosureUnconfirmedReason
 	42,  // 99: sdodev.contracts.v1alpha1.IncidentClosure.state_persistence_failure:type_name -> sdodev.contracts.v1alpha1.StatePersistenceFailure
 	40,  // 100: sdodev.contracts.v1alpha1.StageReport.mitigations:type_name -> sdodev.contracts.v1alpha1.StageMitigation
-	58,  // 101: sdodev.contracts.v1alpha1.StageMitigation.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	56,  // 102: sdodev.contracts.v1alpha1.StageMitigation.apply_receipt:type_name -> sdodev.contracts.v1alpha1.PlanApplication
-	52,  // 103: sdodev.contracts.v1alpha1.StageMitigation.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	47,  // 104: sdodev.contracts.v1alpha1.StageMitigation.touched_objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	47,  // 105: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	47,  // 106: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	47,  // 107: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	47,  // 108: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	109, // [109:109] is the sub-list for method output_type
-	109, // [109:109] is the sub-list for method input_type
-	109, // [109:109] is the sub-list for extension type_name
-	109, // [109:109] is the sub-list for extension extendee
-	0,   // [0:109] is the sub-list for field type_name
+	58,  // 101: sdodev.contracts.v1alpha1.StageReport.recovery_wait:type_name -> sdodev.contracts.v1alpha1.RecoveryWait
+	59,  // 102: sdodev.contracts.v1alpha1.StageMitigation.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	56,  // 103: sdodev.contracts.v1alpha1.StageMitigation.apply_receipt:type_name -> sdodev.contracts.v1alpha1.PlanApplication
+	52,  // 104: sdodev.contracts.v1alpha1.StageMitigation.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	47,  // 105: sdodev.contracts.v1alpha1.StageMitigation.touched_objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	47,  // 106: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	47,  // 107: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	47,  // 108: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	47,  // 109: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	110, // [110:110] is the sub-list for method output_type
+	110, // [110:110] is the sub-list for method input_type
+	110, // [110:110] is the sub-list for extension type_name
+	110, // [110:110] is the sub-list for extension extendee
+	0,   // [0:110] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_messages_proto_init() }

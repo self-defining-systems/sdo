@@ -68,12 +68,20 @@ type agentLifecycleDispatcher struct{ controller *Controller }
 
 func (d agentLifecycleDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
 	c := d.controller
-	c.mu.Lock()
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseDispatched, RecordedAt: contractTimestamp(c.clock()), IncidentId: request.IncidentID,
-		Worktree: request.RepositoryWorktree, BaseCommit: request.RepositoryBaseCommit,
-	})
-	c.mu.Unlock()
+	claimed := func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.emitLifecycleLocked(&contracts.LifecycleEvent{
+			Event: PhaseDispatched, RecordedAt: contractTimestamp(c.clock()), IncidentId: request.IncidentID,
+			Worktree: request.RepositoryWorktree, BaseCommit: request.RepositoryBaseCommit,
+		})
+	}
+	if dispatcher, ok := c.dispatcher.(interface {
+		DispatchWithClaim(context.Context, IncidentRequest, func()) (IncidentResult, error)
+	}); ok {
+		return dispatcher.DispatchWithClaim(ctx, request, claimed)
+	}
+	claimed()
 	return c.dispatcher.Dispatch(ctx, request)
 }
 
@@ -85,20 +93,24 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		result, err := dispatcher.Dispatch(ctx, request)
 		return result, nil, err
 	}
-	// A durable agent handoff transfers ownership for the rest of this incident.
-	// Transport rejoin and controller continuations must collect that worker's
-	// result, never reclassify its repairs as an automatic-only completion.
+	// Prepared requests re-enter dispatch, where actual execution ownership
+	// forces rejoin. Unclaimed requests still pass the shared recovery decision
+	// immediately before their first worker publication.
 	if request.PreparedAgentTask != "" && len(request.PriorStages) > 0 {
 		c.mu.Lock()
 		c.responseStagesRunning = false
 		c.mu.Unlock()
 		result, err := dispatcher.Dispatch(ctx, request)
-		state := &IncidentState{Request: request, PriorStages: cloneStageReports(request.PriorStages), Result: &result}
+		reports := request.PriorStages
+		if result.automaticStages != nil {
+			reports = result.automaticStages
+		}
+		state := &IncidentState{Request: request, PriorStages: cloneStageReports(reports), Result: &result}
 		merged, encodeErr := responsePipelineResult(state, result.Timing.StartedAt, result.Timing.CompletedAt)
 		if err == nil {
 			err = encodeErr
 		}
-		return merged, cloneStageReports(request.PriorStages), err
+		return merged, cloneStageReports(reports), err
 	}
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage)}
 	var stages []ResponseStage

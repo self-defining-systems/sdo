@@ -169,10 +169,9 @@ func TestSourceConvergenceWaitsForKubernetesOldObjects(t *testing.T) {
 					t.Fatalf("draining rollout failed: report=%v observations=%d err=%v", report, observations, err)
 				}
 			} else {
-				var partial *SourceReconcilePartialError
 				var pending *RolloutPendingError
 				// Waiting keeps at most a quarter of the bound for the final readback.
-				if errors.As(err, &pending) || result.RolloutPending != nil || !errors.As(err, &partial) || report.Converged || report.ObservationError != "" || result.VerificationPassed || time.Now().Before(started.Add(deadline.Sub(started)*3/4)) || !strings.Contains(strings.Join(report.ResidualPaths, " "), "old-pod") {
+				if !errors.As(err, &pending) || result.RolloutPending == nil || result.ActionReports[0].Status != "applied" || report.Converged || report.ObservationError != "" || result.VerificationPassed || time.Now().Before(started.Add(deadline.Sub(started)*3/4)) || !strings.Contains(strings.Join(report.ResidualPaths, " "), "old-pod") {
 					t.Fatalf("deadline lost residual: report=%v err=%v", report, err)
 				}
 			}

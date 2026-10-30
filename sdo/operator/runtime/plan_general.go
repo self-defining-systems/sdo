@@ -264,7 +264,11 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 		if dry {
 			return r, nil
 		}
-		return r, e.waitForField(ctx, a)
+		err = e.waitForField(ctx, a)
+		if err == nil {
+			r.ActionReports[0].Status = "applied"
+		}
+		return r, err
 	}
 	ref, refErr := planActionRef(action)
 	if refErr != nil {
