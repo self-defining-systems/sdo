@@ -271,6 +271,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
                 "responder",
                 "result_section_02",
                 part="reflection_brief.instructions",
+                optional_values=("dispatch_error",),
                 dispatch_error=dispatch_error or "none",
             )
         )
@@ -278,7 +279,13 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
     lines.append(
         render_prompt("responder", "result_section_03", part="reflection_brief.instructions", status=result.status)
         + (
-            render_prompt("responder", "result_section_04", part="reflection_brief.instructions", error=result.error)
+            render_prompt(
+                "responder",
+                "result_section_04",
+                part="reflection_brief.instructions",
+                optional_values=("error",),
+                error=result.error,
+            )
             if result.error
             else ""
         )
@@ -345,6 +352,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
                         "responder",
                         "result_section_11",
                         part="reflection_brief.instructions",
+                        optional_values=("clip",),
                         clip=application.error,
                     )
                     if application.error
@@ -366,6 +374,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
             "responder",
             "result_section_14",
             part="reflection_brief.instructions",
+            optional_values=("summary",),
             summary=cause.summary,
             join="; ".join(_ref(ref) for ref in cause.resources),
         )
@@ -382,6 +391,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
             value="ok" if action.success else "FAILED",
             kind=action.kind,
             target=action.target,
+            optional_values=("summary", "clip"),
             summary=action.summary,
             clip=action.details,
         )
@@ -402,6 +412,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
             part="reflection_brief.instructions",
             value="passed" if evidence.passed else "FAILED",
             name=evidence.name,
+            optional_values=("clip",),
             clip=evidence.details,
         )
         for evidence in result.verification_evidence
