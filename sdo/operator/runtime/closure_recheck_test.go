@@ -135,7 +135,7 @@ func TestClosureRecheckWaitsForIncompleteWindowThenCommitsVerifiedOutcome(t *tes
 	}
 }
 
-func TestClosureRecheckSupersedesWhenWindowReopens(t *testing.T) {
+func TestClosureRecheckWaitsWhenWindowReopens(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	detector := &windowDetector{}
 	broker := &recordingClosureBroker{}
@@ -148,10 +148,19 @@ func TestClosureRecheckSupersedesWhenWindowReopens(t *testing.T) {
 	detector.set(false, true)
 	now = now.Add(time.Second)
 	executeRecheck(t, controller)
-	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || len(failures) != 1 || broker.processCalls() != 0 ||
-		!strings.Contains(failures[0].LastError, "health is active") || failures[0].Reason == contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED {
-		t.Fatalf("a reopened finding must supersede: state=%v failures=%+v processed=%d", controller.closureState, failures, broker.processCalls())
+	assertStillPending(t, controller, broker)
+	if len(failures) != 0 {
+		t.Fatal("active health must not be a permanent closure failure")
 	}
+	detector.set(true, false)
+	now = now.Add(time.Second)
+	executeRecheck(t, controller)
+	awaitBrokerResult(t, controller.closureResults)
+	controller.processBrokerCompletions()
+	if broker.processCalls() != 1 {
+		t.Fatal("recovered window did not close")
+	}
+
 }
 
 func TestClosureRecheckIncompleteAtBoundCommitsUnconfirmed(t *testing.T) {

@@ -46,6 +46,10 @@ func detectObserved(ctx context.Context, detector Detector, view DetectionContex
 		}
 	}
 	findings, err := detector.Detect(ctx, view)
+	// Detectors may retain their result slice; normalization owns its copy.
+	if len(findings) > 0 {
+		findings = append([]Finding(nil), findings...)
+	}
 	for i := range findings {
 		if findings[i].DetectorID == "" {
 			findings[i].DetectorID = detector.Spec().ID

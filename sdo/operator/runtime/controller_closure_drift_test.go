@@ -75,7 +75,9 @@ func newClosureDriftFixture(t *testing.T, owned, declared bool, namespace string
 	}
 	config := testControllerConfig()
 	config.Namespace, config.FiringThreshold, config.ClearThreshold = "app", 1, 1
-	config.VerificationTimeout = 5 * time.Second
+	// These fixtures test source/rollout ownership, not budget expiry. The
+	// verification budget must contain the unchanged 15-second health window.
+	config.VerificationTimeout = time.Minute
 	dispatcher := closureImageResponder{requests: make(chan IncidentRequest, 1)}
 	f.c, err = NewController(config, []sdk.Detector{closureImageHealth{}}, fastloopObjects{f.client}, dispatcher, f.start)
 	if err != nil {
