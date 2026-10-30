@@ -146,3 +146,36 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
         check=False,
     )
     assert (completed.returncode == 0) is accepted
+
+
+def assert_native_jobs_use_local_builds(configuration: dict) -> None:
+    for name, job in configuration["jobs"].items():
+        commands = "\n".join(step.get("run", "") for step in job["steps"])
+        if "go test " not in commands and "scripts/run_ci_contracts.py" not in commands:
+            continue
+        assert not any(
+            step.get("uses", "").startswith(("actions/download-artifact@", "actions/upload-artifact@"))
+            for step in job["steps"]
+        ), f"{name}: native tests must build locally from Go caches; artifact transfers consume their deadline"
+
+
+def test_native_test_jobs_do_not_transfer_prepared_compiler_artifacts() -> None:
+    assert_native_jobs_use_local_builds(workflow())
+
+
+@pytest.mark.parametrize("command", ["go test -race ./...", "python scripts/run_ci_contracts.py --bin 0"])
+@pytest.mark.parametrize("artifact", ["prepared-normal", "compiled-go-test-plan", "renamed-build"])
+@pytest.mark.parametrize("action", ["download", "upload"])
+def test_native_artifact_guard_rejects_every_artifact_name(command: str, artifact: str, action: str) -> None:
+    configuration = {
+        "jobs": {
+            "native": {
+                "steps": [
+                    {"uses": f"actions/{action}-artifact@pinned", "with": {"name": artifact}},
+                    {"run": command},
+                ]
+            }
+        }
+    }
+    with pytest.raises(AssertionError, match="native tests must build locally"):
+        assert_native_jobs_use_local_builds(configuration)
