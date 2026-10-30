@@ -11,6 +11,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/worker_registry"
+	"strings"
 	"testing"
 	"time"
 )
@@ -64,7 +65,7 @@ func TestStageRecoveryRechecksBeforeFirstWorkerPublication(t *testing.T) {
 // Ownership checks precede recovery reclassification. Published requests and
 // results are uncertain/already-executed worker facts, not fresh claim authority.
 func TestStageClaimGateKeepsPublishedWorkerOwnership(t *testing.T) {
-	for _, kind := range []string{"job", "request", "result"} {
+	for _, kind := range []string{"job", "request", "result", "addressed-job", "addressed-request", "addressed-result", "addressed-execution"} {
 		t.Run(kind, func(t *testing.T) {
 			loop, state := pipelineTestLoop(t, true)
 			if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationCeiling: time.Nanosecond}}); err != nil {
@@ -73,20 +74,26 @@ func TestStageClaimGateKeepsPublishedWorkerOwnership(t *testing.T) {
 			request := state.Request
 			request.PriorStages = state.PriorStages
 			client := fake.NewSimpleClientset()
+			task := &contracts.AgentTask{TaskId: request.IncidentID}
 			name := worker_registry.JobName(request.IncidentID)
-			if kind == "job" {
+			evidence := kind
+			if strings.HasPrefix(kind, "addressed-") {
+				name = worker_registry.TaskJobName(task)
+				evidence = strings.TrimPrefix(kind, "addressed-")
+			}
+			if evidence == "job" {
 				_, err := client.BatchV1().Jobs("control").Create(context.Background(), &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "control"}}, metav1.CreateOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				_, err := client.CoreV1().ConfigMaps("control").Create(context.Background(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-" + kind, Namespace: "control"}}, metav1.CreateOptions{})
+				_, err := client.CoreV1().ConfigMaps("control").Create(context.Background(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-" + evidence, Namespace: "control"}}, metav1.CreateOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
 			d := KubernetesJobDispatcher{Client: client, Namespace: "control"}
-			recovered, err := d.beforeFirstResponderClaim(context.Background(), request, &contracts.AgentTask{TaskId: request.IncidentID}, loop)
+			recovered, err := d.beforeFirstResponderClaim(context.Background(), request, task, loop)
 			if err != nil || recovered != nil {
 				t.Fatalf("published worker was reclassified: %v %v", recovered, err)
 			}
