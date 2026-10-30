@@ -195,9 +195,12 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 func writeObjectKey(ref sdk.ObjectRef) string { return ref.Kind + "/" + ref.Namespace + "/" + ref.Name }
 
 type pendingMitigation struct {
-	ProgramRevision     string
-	diagnoser           program.Diagnoser
-	Refs                []sdk.ObjectRef
+	ProgramRevision string
+	diagnoser       program.Diagnoser
+	Refs            []sdk.ObjectRef
+	// WriteRefs separates exclusive desired-state writes from rollout observation.
+	// Nil preserves conservative scope for older checkpoints.
+	WriteRefs           *[]sdk.ObjectRef
 	AttemptID           string
 	ProgramID           string
 	Bindings            program.Bindings
@@ -212,13 +215,45 @@ type pendingMitigation struct {
 	Reason string
 }
 
-func (l *ResponderLoop) reservePending(application string, plan program.Plan, attempt, programID string, bindings program.Bindings, fingerprints []string) {
+func (l *ResponderLoop) reservePending(application string, result PlanApplicationResult, attempt, programID string, bindings program.Bindings, fingerprints []string) {
 	if l.pendingWrites == nil {
 		l.pendingWrites = map[string]pendingMitigation{}
 	}
-	refs, err := l.menuPlanWriteRefs(plan)
+	refs, err := l.menuPlanWriteRefs(result.Plan)
 	if err != nil {
-		refs = planCaptureRefs(plan)
+		refs = planCaptureRefs(result.Plan)
+	}
+	writes := program.Plan{}
+	for _, action := range result.ActionsApplied {
+		// A requeue changes no desired state. Every prerequisite repair may
+		// retrigger the controller, even while its earlier rollout is pending.
+		if isAdmissionRetry(action) {
+			continue
+		}
+		ref, _ := planActionRef(action)
+		unchanged := false
+		for _, patch := range result.Patches {
+			if patch.Ref == ref && patch.Before != nil && patch.After != nil {
+				unchanged = planValuesEqual(patch.Before.Object, patch.After.Object)
+				if !unchanged {
+					break
+				}
+			}
+		}
+		if !unchanged {
+			writes.Actions = append(writes.Actions, action)
+		}
+	}
+	if result.PendingAction != nil && *result.PendingAction >= 0 && *result.PendingAction < len(result.Plan.Actions) {
+		writes.Actions = append(writes.Actions, result.Plan.Actions[*result.PendingAction])
+	}
+	writeRefs, writeErr := l.menuPlanWriteRefs(writes)
+	var exclusive *[]sdk.ObjectRef
+	if writeErr == nil {
+		if writeRefs == nil {
+			writeRefs = []sdk.ObjectRef{}
+		}
+		exclusive = &writeRefs
 	}
 	sort.Slice(refs, func(i, j int) bool { return writeObjectKey(refs[i]) < writeObjectKey(refs[j]) })
 	var diagnoser program.Diagnoser
@@ -227,7 +262,7 @@ func (l *ResponderLoop) reservePending(application string, plan program.Plan, at
 		diagnoser, _ = l.Programs.Diagnoser(programID)
 		revision = l.programRevision(programID)
 	}
-	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: time.Now().UTC()}
+	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, WriteRefs: exclusive, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: time.Now().UTC()}
 }
 
 // Reservations are observation state, never restored write or rollback authority.
@@ -367,8 +402,16 @@ func (l *ResponderLoop) releaseStalledPending(ctx context.Context, application s
 	}
 }
 
+// Observation targets include idempotent retries; only writes need exclusion.
+func (p pendingMitigation) exclusiveRefs() []sdk.ObjectRef {
+	if p.WriteRefs != nil {
+		return *p.WriteRefs
+	}
+	return p.Refs
+}
+
 func (l *ResponderLoop) pendingOverlaps(ref sdk.ObjectRef, pending pendingMitigation) bool {
-	for _, target := range pending.Refs {
+	for _, target := range pending.exclusiveRefs() {
 		if ref.Kind == "*" || target.Kind == "*" || writeObjectKey(ref) == writeObjectKey(target) {
 			return true
 		}
@@ -475,11 +518,11 @@ func (l *ResponderLoop) pendingConflictExcept(ctx context.Context, refs []sdk.Ob
 			if l.pendingOverlaps(ref, pending) && l.failIneffectivePending(ctx, application, pending) {
 				continue
 			}
-			if len(pending.Refs) == 0 {
+			if len(pending.Refs) == 0 && pending.WriteRefs == nil {
 				l.refuseSelection(response, "pending_write_conflict", "pending application "+application+" has unknown write scope")
 				return true
 			}
-			for _, target := range pending.Refs {
+			for _, target := range pending.exclusiveRefs() {
 				if ref.Kind == "*" || target.Kind == "*" || writeObjectKey(ref) == writeObjectKey(target) {
 					l.refuseSelection(response, "pending_write_conflict", fmt.Sprintf("%s conflicts with pending application %s", writeObjectKey(ref), application))
 					return true

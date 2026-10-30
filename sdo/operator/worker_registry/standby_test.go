@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
@@ -357,6 +359,16 @@ pathlib.Path(os.environ['TEST_RESULT']).write_text(json.dumps(result))
 	if _, err := os.Stat(e.Environment["TEST_RESULT"]); !os.IsNotExist(err) {
 		t.Fatal("standby executed before receiving an incident")
 	}
+	// Admission may be broken after this responder was imported. Binding and
+	// execution must use the running worker, without creating another Job.
+	var rejectCreation atomic.Bool
+	rejectCreation.Store(true)
+	e.Client.(*fake.Clientset).PrependReactor("create", "jobs", func(ktesting.Action) (bool, kruntime.Object, error) {
+		if rejectCreation.Load() {
+			return true, nil, fmt.Errorf("failed calling webhook: x509: certificate signed by unknown authority")
+		}
+		return false, nil, nil
+	})
 	bound, err := pool.TryBind(ctx, e, task)
 	if err != nil || bound.WarmBinding == nil {
 		t.Fatal(err)
@@ -390,6 +402,7 @@ pathlib.Path(os.environ['TEST_RESULT']).write_text(json.dumps(result))
 	if err := <-resultDone; err != nil {
 		t.Fatal(err)
 	}
+	rejectCreation.Store(false)
 	if err := pool.Ensure(ctx); err != nil {
 		t.Fatal(err)
 	}
