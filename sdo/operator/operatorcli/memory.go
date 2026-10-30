@@ -72,7 +72,8 @@ commands:
         coverage_gap lines, or in the JSON coverage_gaps field. Replay outcomes and
         reasons use program.replay-observation and are retained with reflection.
         Exit 0 when clean,
-        1 for diagnostics, 2 for missing inputs or infrastructure/usage errors.
+        1 for diagnostics, 2 for missing inputs or infrastructure/usage errors,
+        124 for an exceeded validation deadline. Report timeouts; do not retry.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
         List artifacts by logical ID.
   new playbook <id> [--root .] [--incident I]
@@ -94,6 +95,7 @@ const (
 	exitClean       = 0
 	exitDiagnostics = 1
 	exitInfra       = 2
+	exitTimeout     = 124
 )
 
 // RunMemory runs "sdo-operator memory <args>" and returns the process exit
@@ -137,6 +139,9 @@ func RunMemory(ctx context.Context, args []string, getenv func(string) string, s
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "sdo-operator memory:", err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return exitTimeout
+		}
 		return exitInfra
 	}
 	return code

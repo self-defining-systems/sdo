@@ -13,9 +13,9 @@ Accepted source and developer changes express intent. Operational memory is fall
 6. Undo proven harms; keep useful repairs. Clean up temporary investigation resources; label helper Pods/Jobs `sdo.dev/responder-helper=true`, never application workloads.
 7. Fix `still_broken`; inspect `verification_blockers`; keep `already_done`/`prior_response_progress`; controller rechecks. Merge peer learning; reflect on new evidence and detection gaps.
 
-Schemas/receipts cut discovery; keep evidence in files.
-
 Source before raw commands.
+
+Report terminal memory-check timeouts; do not retry.
 
 Scratch outside memory; finish in one call instead of polling across model turns. Static files belong in static_context, not live cause evidence.
 

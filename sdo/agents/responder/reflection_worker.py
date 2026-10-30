@@ -16,7 +16,7 @@ from sdo.agents.provider import resolve_agent
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.detection_learning import detector_learning_needed
 from sdo.agents.responder.job import KubernetesResultPublisher
-from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, check_reflection_result
+from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, MemoryCheckTimeout, check_reflection_result
 from sdo.agents.responder.reflection import (
     REFLECTION_DEADLINE_ENV,
     REFLECTION_GUIDANCE_MODES,
@@ -176,8 +176,8 @@ def run_reflection_task(
             # A measured cause-detection gap remains useful learning even when
             # validation would accept the existing repair memory unchanged.
             # Ask the existing Go authority before spending a model turn on a
-            # decision it already accepts. A failed or timed-out probe does not
-            # reject learning: the normal session handles the incident below.
+            # decision it already accepts. Diagnostics can be corrected by the
+            # normal session; a timed-out check is a terminal infrastructure failure.
             covered = ReflectionTurn(
                 summary="Accepted memory requires no change under the native check.",
                 learning_decision="no_change",
@@ -188,7 +188,9 @@ def run_reflection_task(
                 covered.to_result(),
                 min(VALIDATION_TIMEOUT_SECONDS, reflection_budget_seconds() / 3),
             )
-            if check.exit_code == 0 and not check.timed_out:
+            if check.timed_out:
+                raise MemoryCheckTimeout(check)
+            if check.exit_code == 0:
                 if session_mode == "resume":
                     # Even without a provider process, reflection permanently
                     # takes the same released writer ownership as a model turn.
@@ -262,6 +264,8 @@ def _failure_reason(exc: BaseException) -> str:
         return limited.failure_reason
     cause: BaseException | None = exc
     while cause is not None:
+        if isinstance(cause, MemoryCheckTimeout):
+            return "agent_timeout"
         if isinstance(cause, SessionHandoffTimeout):
             return "session_handoff_timeout"
         if isinstance(cause, SessionHandoffError):

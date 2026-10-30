@@ -28,7 +28,9 @@ RUN mkdir /deps \
 
 FROM go-modules AS go-deps
 # Bound shared-host build parallelism, including nested compiler jobs.
-ENV GOMAXPROCS=4 GOFLAGS="-p=4"
+# Match transient memory-check/JIT flags; a mismatched seed causes cold
+# recompilation of the entire runtime and Kubernetes dependency graph per Job.
+ENV GOMAXPROCS=4 GOFLAGS="-p=4 -trimpath"
 COPY --from=go-dep-list /deps /deps
 RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
       (cd "$dir" && go build $(cat "/deps/$(echo "$dir" | tr / _).txt")); \
@@ -60,7 +62,7 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
     GOPROXY=off \
     GOSUMDB=off \
     GOMAXPROCS=2 \
-    GOFLAGS="-mod=mod -p=2" \
+    GOFLAGS="-mod=mod -p=2 -trimpath" \
     CGO_ENABLED=0 \
     SDO_GO_CACHE_SEED=/go/build-cache \
     SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs

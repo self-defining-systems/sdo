@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,8 +77,25 @@ func lean(args ...string) []string {
 }
 
 func (workspace *Workspace) runGo(ctx context.Context, args ...string) error {
+	return workspace.runGoEnv(ctx, nil, args...)
+}
+
+func (workspace *Workspace) runGoEnv(ctx context.Context, environment []string, args ...string) error {
+	// Go's exact-input cache can survive a new isolated staging directory only
+	// when temporary source paths are omitted from compiled package identities.
+	if len(args) > 0 && (args[0] == "build" || args[0] == "vet" || args[0] == "test") {
+		args = append([]string{args[0], "-trimpath"}, args[1:]...)
+	}
+	started := time.Now()
+	slog.Info("memory_check_stage_started", "stage", strings.Join(args, " "))
+	defer func() {
+		slog.Info("memory_check_stage_finished", "stage", strings.Join(args, " "), "duration", time.Since(started))
+	}()
 	command := exec.CommandContext(ctx, "go", args...)
 	command.Dir = workspace.Directory
+	if environment != nil {
+		command.Env = environment
+	}
 	if output, err := command.CombinedOutput(); err != nil {
 		return &StageError{Stage: strings.Join(args, " "), Output: strings.TrimSpace(string(output)), Err: err}
 	}
@@ -169,11 +187,11 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 		}
 	}
 	if workspace.HasProber {
-		command := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", filepath.Join(workspace.Directory, "sdo-prober"), "./cmd/prober")
-		command.Dir = workspace.Directory
-		command.Env = append(os.Environ(), "CGO_ENABLED=0")
-		if output, err := command.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("go build prober: %w: %s", err, strings.TrimSpace(string(output)))
+		started := time.Now()
+		err := workspace.runGoEnv(ctx, append(os.Environ(), "CGO_ENABLED=0"), "build", "-buildvcs=false", "-o", filepath.Join(workspace.Directory, "sdo-prober"), "./cmd/prober")
+		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: "build prober", Duration: time.Since(started)})
+		if err != nil {
+			return "", fmt.Errorf("go build prober: %w", err)
 		}
 	}
 	return binary, nil
@@ -181,7 +199,7 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 
 func (workspace *Workspace) collectAdvisories(ctx context.Context) error {
 	started := time.Now()
-	err := workspace.runGo(ctx, "test", "-count=1", "-timeout=30s", "./...")
+	err := workspace.runGo(ctx, "test", "-timeout=30s", "./...")
 	workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: "test (informational)", Duration: time.Since(started)})
 	if ctx.Err() != nil {
 		return ctx.Err()
