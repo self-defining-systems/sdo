@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"slices"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -144,6 +143,10 @@ type recoveryApplicationSettlement struct {
 // Replace evidence by application identity; preserve manual repairs, sessions
 // and resolution metadata. Historical stage snapshots no longer override it.
 func projectRecoverySettlement(result IncidentResult, settled *recoveryApplicationSettlement) IncidentResult {
+	generatedIDs := map[string]bool{}
+	for _, receipt := range ProgramRepairReceipts(result.PlanApplications, nil) {
+		generatedIDs[receipt.ActionID] = true
+	}
 	for i := range result.PlanApplications {
 		for _, app := range settled.applications {
 			if result.PlanApplications[i].ID == app.ID {
@@ -155,12 +158,7 @@ func projectRecoverySettlement(result IncidentResult, settled *recoveryApplicati
 	result.ConfirmedRootCauses = reconcileEarlyCauses(settled.causes, result.ConfirmedRootCauses)
 	existing := []RepairActionReceipt{}
 	for _, receipt := range result.RepairActions {
-		generated := false
-		for _, app := range result.PlanApplications {
-			base := "sdo-program-" + app.ID
-			generated = generated || receipt.ActionID == base || strings.HasPrefix(receipt.ActionID, base+"-")
-		}
-		if !generated {
+		if !generatedIDs[receipt.ActionID] {
 			existing = append(existing, receipt)
 		}
 	}

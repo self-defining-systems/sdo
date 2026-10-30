@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
@@ -178,4 +179,24 @@ func (d *settlementControllerDispatcher) DeterministicResponseStage() ResponseSt
 		d.controller.mu.Unlock()
 		return d.loop
 	}}
+}
+
+func TestRecoverySettlementPreservesIndependentReceiptIdentity(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	independent := RepairActionReceipt{ActionID: "sdo-program-" + result.PlanApplications[0].ID + "-independent", Kind: "recorded-action", Summary: "independent write must remain evidence", Success: true, Resources: []sdk.ObjectRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "peer"}}}
+	result.RepairActions = append(result.RepairActions, independent)
+	settled, _ := loop.SettleRecoveryApplications(context.Background(), result, state.PriorStages)
+	for _, receipt := range settled.RepairActions {
+		if receipt.ActionID == independent.ActionID && reflect.DeepEqual(receipt, independent) {
+			return
+		}
+	}
+	t.Fatal("settlement deleted an independent repair merely sharing a controller receipt prefix")
 }
