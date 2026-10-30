@@ -10,8 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[4]
 
 
-@pytest.mark.parametrize("mode", ["normal", "python"])
-def test_prepared_artifact_round_trip_without_base_cache(tmp_path: Path, mode: str) -> None:
+def test_prepared_artifact_round_trip_without_base_cache(tmp_path: Path) -> None:
     source = tmp_path / "repo"
     (source / "scripts").mkdir(parents=True)
     shutil.copy2(ROOT / "scripts/go_ci_artifacts.sh", source / "scripts")
@@ -29,19 +28,24 @@ def test_prepared_artifact_round_trip_without_base_cache(tmp_path: Path, mode: s
     artifact = tmp_path / "artifact"
     env = {**os.environ, "GOMODCACHE": str(modules), "GOCACHE": str(cache)}
     command = ["bash", str(source / "scripts/go_ci_artifacts.sh")]
-    subprocess.run([*command, "pack", mode, str(artifact)], env=env, check=True)
+    subprocess.run([*command, "pack", "python", str(artifact)], env=env, check=True)
     shutil.rmtree(cache)
     shutil.rmtree(modules)
     shutil.rmtree(tools)
-    subprocess.run([*command, "unpack", mode, str(artifact)], env=env, check=True)
-    if mode == "normal":
-        assert (cache / "compiled-a").read_text() == "compiler archive"
-    else:
-        assert not cache.exists()
-    if mode in {"normal", "python"}:
-        assert (modules / "module.zip").read_text() == "module archive"
-        assert executable.read_text() == "executable"
-        assert executable.stat().st_mode & 0o777 == 0o755
-    else:
-        assert not modules.exists()
-        assert not tools.exists()
+    subprocess.run([*command, "unpack", "python", str(artifact)], env=env, check=True)
+    assert not cache.exists()
+    assert (modules / "module.zip").read_text() == "module archive"
+    assert executable.read_text() == "executable"
+    assert executable.stat().st_mode & 0o777 == 0o755
+
+
+@pytest.mark.parametrize("mode", ["normal", "race"])
+def test_compiler_artifact_modes_are_rejected(tmp_path: Path, mode: str) -> None:
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/go_ci_artifacts.sh"), "pack", mode, str(tmp_path / "artifact")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "only compiler-free Python artifacts" in result.stderr

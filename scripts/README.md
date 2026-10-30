@@ -1,7 +1,8 @@
 # CI tooling map
 
 PR CI has **four fixed test jobs**: two exhaustive non-Go Python parts and two
-native contract jobs. The two compile/cache preparation jobs finish before tests;
+native contract jobs. The two compile/cache preparation jobs finish before Python tests;
+native contracts restore base caches and build locally in parallel with preparation;
 only `Required PR CI` is required. Preparation is capped at five minutes, test jobs
 at four minutes, and the aggregate gate at one minute. The maximum
 executed critical path is ten minutes; runner queue time is outside that bound.
@@ -14,7 +15,7 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   measured work each, 60 seconds reserved for setup). Inventory growth never adds
   a PR job. `pr_test_plan.py` keeps the broadest cheap regression set within that
   capacity; every other test is assigned to nightly. Both sets are exhaustive
-  and disjoint, and a generated Markdown artifact lists every deferred test.
+  and disjoint, and a generated Markdown job summary lists every deferred test.
 - `prepare_go_ci.sh` compiles normal production archives and race test archives.
   `go_test_inventory.go` reads Go's generated test tables after `go list -test
   -export -race` and retains vet checks, avoiding discarded test-executable links.
@@ -24,24 +25,25 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   whole Kubernetes runtime. The CLI and bootstrap fixture are cached once.
   `download_go_modules.sh` warms each full module graph through temporary module
   metadata; cache preparation never rewrites the source-bound go.mod/go.sum.
-- `go_ci_artifacts.sh` packs prepared compiler/module/tool roots into
+- `go_ci_artifacts.sh` packs module/tool roots into
   same-run artifacts and restores executable permissions on consumers. Only pushes
   to main or vic-lsh/dev/sdo-improve save shared Go caches; throwaway PR/queue refs
-  restore the base and transfer artifacts without competing for its cache quota.
+  restore the base without competing for its cache quota.
   Consumer jobs work even when the base entry is missing or evicted. Compiler-free
   Python jobs fetch only module sources and tools, excluding the compiler archive.
-  `go_ci_race_artifact.py` derives the same fixed plan on the race producer,
-  then asks Go for each bucket's selected test dependency exports and publishes
-  a separate artifact per bucket. Contract jobs fetch their normal and selected
-  race inputs concurrently to avoid adding independent network stalls. It omits stale archives and compiled static
-  tools. The consumer verifies that the accompanying plan matches its own.
-  Only matching Go action records accompany the exports; consumer Go commands
-  retain their own validity checks. A 320 MiB compressed size gate rejects growth
-  during preparation; the durable cache is unchanged. A real producer/empty-consumer fixture rejects dependency rebuilds.
+  Contract jobs never download same-run build or inventory artifacts. They restore
+  the durable normal/race caches, merge their content-addressed entries, and run
+  local preparation at the immutable event SHA. Go validates every cached input;
+  missing/stale entries are compiled. They collect both inventories locally and
+  derive the same deterministic plan. This removes artifact service throughput
+  and producer completion from the contracts' critical path. Timings go to job
+  logs and deferred checks to the step summary, so uploads cannot consume the
+  contract deadline either.
 - `check_errors.sh --go-only` owns Go static contracts (schema/deadline/fixture
   ratchets, generated Go references, parity and purity) and runs on the prepared
-  race graph. `--python-only` owns Python checks and runs behind the compiler
-  guard in Python CI. The default local command retains both sets.
+  race graph. `--python-only` owns Python checks and runs once in normal
+  preparation alongside formatting; the four-minute Python workers spend their
+  deadline on setup and tests, with their compiler guard enabled. The default local command retains both sets.
 - `unit-tools/go` rejects compiler commands in unmarked Python tests, including
   Go invoked by child CLIs. The shared reflection-memory fixture routes all its
   transitive consumers to `go_integration` before marker selection; new compiler
@@ -53,7 +55,7 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   consumer never rebuilds an adapter as a handoff fallback.
 - `go_cost_plan.py` collects the real race inventory, including test/fuzz/example
   names and bounded chaos/explorer cases. `python_cost_plan.py` collects exact
-  pytest node IDs. Same-run artifacts bind consumers to those inventories.
+  pytest node IDs. Contract shards derive inventories from their own checkout; nightly transfers its inventories.
 - `run_ci_contracts.py` executes a fixed PR bucket or a nightly bucket with the
   real Go and pytest commands. `go_test_timing.py` streams timing diagnostics;
   assertion failures always fail. `pytest_ci.py` records every pytest phase.

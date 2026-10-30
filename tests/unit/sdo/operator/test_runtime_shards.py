@@ -1,4 +1,4 @@
-"""Fixed job counts and shared immutable inventory artifacts are PR contracts."""
+"""Fixed job counts and source-derived inventories are PR contracts."""
 
 from pathlib import Path
 
@@ -17,8 +17,10 @@ def test_fixed_jobs_and_single_required_result():
     assert jobs["required-pr-ci"]["name"] == "Required PR CI"
     assert "contracts" in jobs["required-pr-ci"]["needs"]
     preparation = jobs["prepare-go"]["steps"]
-    plan = next(step for step in preparation if step.get("id") == "cost-plan")
-    assert plan["if"] == "matrix.mode == 'race'"
+    plan = next(step for step in jobs["contracts"]["steps"] if "scripts/go_cost_plan.py" in step.get("run", ""))
+    assert "if" not in plan
+    assert "--prepared" in plan["run"]
+    assert "needs" not in jobs["contracts"]
     assert "--include-dedicated" in plan["run"]
     assert any("scripts/check_ci_budget.py" in step.get("run", "") for step in preparation)
 
