@@ -1,7 +1,8 @@
 # CI tooling map
 
 PR CI has **four fixed test jobs**: two exhaustive non-Go Python parts and two
-native contract jobs. The two compile/cache preparation jobs finish before tests;
+native contract jobs. The two compile/cache preparation jobs finish before Python tests;
+native contracts restore base caches and build locally in parallel with preparation;
 only `Required PR CI` is required. Preparation is capped at five minutes, test jobs
 at four minutes, and the aggregate gate at one minute. The maximum
 executed critical path is ten minutes; runner queue time is outside that bound.
@@ -30,14 +31,12 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   restore the base and transfer artifacts without competing for its cache quota.
   Consumer jobs work even when the base entry is missing or evicted. Compiler-free
   Python jobs fetch only module sources and tools, excluding the compiler archive.
-  `go_ci_race_artifact.py` derives the same fixed plan on the race producer,
-  then asks Go for each bucket's selected test dependency exports and publishes
-  a separate artifact per bucket. Contract jobs fetch their normal and selected
-  race inputs concurrently to avoid adding independent network stalls. It omits stale archives and compiled static
-  tools. The consumer verifies that the accompanying plan matches its own.
-  Only matching Go action records accompany the exports; consumer Go commands
-  retain their own validity checks. A 320 MiB compressed size gate rejects growth
-  during preparation; the durable cache is unchanged. A real producer/empty-consumer fixture rejects dependency rebuilds.
+  Contract jobs never download same-run build or inventory artifacts. They restore
+  the durable normal/race caches, merge their content-addressed entries, and run
+  local preparation at the immutable event SHA. Go validates every cached input;
+  missing/stale entries are compiled. They collect both inventories locally and
+  derive the same deterministic plan. This removes artifact service throughput
+  and producer completion from the contracts' critical path.
 - `check_errors.sh --go-only` owns Go static contracts (schema/deadline/fixture
   ratchets, generated Go references, parity and purity) and runs on the prepared
   race graph. `--python-only` owns Python checks and runs behind the compiler
@@ -53,7 +52,7 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   consumer never rebuilds an adapter as a handoff fallback.
 - `go_cost_plan.py` collects the real race inventory, including test/fuzz/example
   names and bounded chaos/explorer cases. `python_cost_plan.py` collects exact
-  pytest node IDs. Same-run artifacts bind consumers to those inventories.
+  pytest node IDs. Contract shards derive inventories from their own checkout; nightly transfers its inventories.
 - `run_ci_contracts.py` executes a fixed PR bucket or a nightly bucket with the
   real Go and pytest commands. `go_test_timing.py` streams timing diagnostics;
   assertion failures always fail. `pytest_ci.py` records every pytest phase.
