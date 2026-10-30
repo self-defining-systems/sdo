@@ -2,6 +2,8 @@ package runtime
 
 import "time"
 
+const recoveryStabilitySummary = "awaiting controller recovery stability proof"
+
 // Narration is not a mutation. Completed responder turns retain the same
 // observation epoch as their writes, so completion cannot start a second clock.
 // A response without a registered mutation observer retains the legacy fresh

@@ -189,6 +189,9 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		if len(effect.Closure.FinalDetectorStates) > 0 {
 			c.mu.Lock()
 			response := ToolResponse{Command: "verify", Summary: recheck.Reason, DetectorStates: cloneEvaluations(recheck.States)}
+			if response.Summary == "" {
+				response.Summary = recoveryStabilitySummary
+			}
 			for _, observation := range recheck.Observations {
 				for _, finding := range observation.Findings {
 					if finding.Status == sdk.FindingActive {
@@ -206,42 +209,49 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			// restart cannot change it, and only a contradiction can retire it.
 			recheck.Verdict = closureRecheckConfirmed
 		}
+		if effect.Freeze && recheck.SourceOnly {
+			_ = c.closureRecheckWaitExpired(effect.Identity, recheck.Bound)
+		}
+		if len(effect.Closure.FinalDetectorStates) > 0 && effect.Closure.ClosureStabilityWindow > 0 && (recheck.Verdict == closureRecheckConfirmed || recheck.SourceOnly) {
+			c.mu.Lock()
+			clear := c.recoveryTrackersClear(effect.Closure.Request)
+			stable := clear && c.recoveryProofForEpochLocked(c.clock(), recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow), c.closureVerificationDeadline(effect.Closure))
+			if !clear {
+				c.closureStableSince = time.Time{}
+			}
+			c.mu.Unlock()
+			if !stable {
+				if !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) {
+					if effect.Freeze {
+						cancel()
+						return c.resumeClosureVerification(ctx, effect)
+					}
+					if _, ok := configuredBroker.(unverifiedClosureBroker); ok {
+						expiredHealth = closureObservation(c.clock(), recheck)
+					} else {
+						cancel()
+						return fmt.Errorf("broker cannot finalize an expired frozen recovery observation")
+					}
+				}
+				if expiredHealth == nil {
+					cancel()
+					return c.PersistState(ctx)
+				}
+			}
+		}
+		if len(effect.Closure.FinalDetectorStates) > 0 && expiredHealth == nil && (recheck.Verdict == closureRecheckConfirmed || recheck.SourceOnly) {
+			c.mu.Lock()
+			response := ToolResponse{Command: "verify", Healthy: true, Summary: "controller independently verified healthy", DetectorStates: cloneEvaluations(recheck.States)}
+			c.cachedIncidentID = effect.Closure.Request.IncidentID
+			c.cacheVerificationLocked(response)
+			c.mu.Unlock()
+		}
+		if expiredHealth != nil {
+			recheck.Verdict = closureRecheckConfirmed
+		}
 		switch recheck.Verdict {
 		case closureRecheckConfirmed:
-			if len(effect.Closure.FinalDetectorStates) > 0 && effect.Closure.ClosureStabilityWindow > 0 {
-				c.mu.Lock()
-				clear := c.recoveryTrackersClear(effect.Closure.Request)
-				stable := clear && c.recoveryProofForEpochLocked(c.clock(), recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow), c.closureVerificationDeadline(effect.Closure))
-				if !clear {
-					c.closureStableSince = time.Time{}
-				}
-				c.mu.Unlock()
-				if !stable {
-					if !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) {
-						if effect.Freeze {
-							cancel()
-							return c.resumeClosureVerification(ctx, effect)
-						}
-						if _, ok := configuredBroker.(unverifiedClosureBroker); ok {
-							expiredHealth = closureObservation(c.clock(), recheck)
-						} else {
-							cancel()
-							return fmt.Errorf("broker cannot finalize an expired frozen recovery observation")
-						}
-					}
-					if expiredHealth == nil {
-						cancel()
-						return c.PersistState(ctx)
-					}
-				}
-			}
-			if len(effect.Closure.FinalDetectorStates) > 0 && expiredHealth == nil {
-				c.mu.Lock()
-				response := ToolResponse{Command: "verify", Healthy: true, Summary: "controller independently verified healthy", DetectorStates: cloneEvaluations(recheck.States)}
-				c.cachedIncidentID = effect.Closure.Request.IncidentID
-				c.cacheVerificationLocked(response)
-				c.mu.Unlock()
-			}
+
 			recoveryStates = recheck.States
 			c.clearClosureRecheckWait()
 		case closureRecheckRecovering:
@@ -281,6 +291,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 				// never became available are information on the outcome.
 				c.clearClosureRecheckWait()
 				notes = append(notes, recheck.SourceNotes...)
+				recoveryStates = recheck.States
 				slog.Warn("closure_source_check_unavailable", "incident_id", effect.Closure.Request.IncidentID, "notes", recheck.SourceNotes)
 				break
 			}
@@ -505,7 +516,8 @@ const closureInventoryLoadBound = 30 * time.Second
 // waits and is noted, and only an observed difference contradicts.
 func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) (result closureRecheck) {
 	var observations []recoveryObservation
-	defer func() { result.Observations = observations }()
+	var states []DetectorEvaluation
+	defer func() { result.Observations = observations; result.States = states }()
 	confirmed := closureRecheck{Verdict: closureRecheckConfirmed}
 	if len(closure.FinalDetectorStates) == 0 || closure.DispatchError != "" {
 		// Already unverified or without detector states to recheck; the outcome
@@ -540,7 +552,6 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	}
 	var denied, gone []string
 	evaluated := 0
-	var states []DetectorEvaluation
 	var active []string
 	for _, id := range ordered {
 		detector := c.detectors[id]

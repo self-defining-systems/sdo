@@ -15,6 +15,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -510,9 +511,9 @@ func TestRecoveryTrafficEarlyClosureSkipsReflectionOnlyAfterHealthProof(t *testi
 
 func TestRecoveryFrozenClosureAtHealthBudgetPublishesFailureWithoutRewritingCommand(t *testing.T) {
 	for _, scenario := range []struct {
-		name                                  string
-		sameFinding, sourcePending, lateClear bool
-	}{{name: "new-finding"}, {name: "same-finding-new-episode", sameFinding: true}, {name: "unpublished-source", sourcePending: true}, {name: "late-clear-after-budget", lateClear: true}} {
+		name                                                       string
+		sameFinding, sourcePending, lateClear, observerUnavailable bool
+	}{{name: "new-finding"}, {name: "same-finding-new-episode", sameFinding: true}, {name: "unpublished-source", sourcePending: true}, {name: "late-clear-after-budget", lateClear: true}, {name: "observer-unavailable", observerUnavailable: true}} {
 		t.Run(scenario.name, func(t *testing.T) {
 			sameFinding := scenario.sameFinding
 			ctx := context.Background()
@@ -578,6 +579,11 @@ func TestRecoveryFrozenClosureAtHealthBudgetPublishesFailureWithoutRewritingComm
 			c.provider = p
 			now = time.Unix(20, 0).UTC()
 			p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
+			if scenario.observerUnavailable {
+				window := p.snapshot.(sdktest.Snapshot).Traffic["health"]
+				window.LoadError = "synthetic prober unavailable"
+				p.snapshot.(sdktest.Snapshot).Traffic["health"] = window
+			}
 			executeRecheck(t, c)
 			if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.closureFailure.Permanent || c.closureFailure.Attempts != 1 {
 				t.Fatal("active health spent the broker retry budget")
@@ -596,6 +602,11 @@ func TestRecoveryFrozenClosureAtHealthBudgetPublishesFailureWithoutRewritingComm
 			} else {
 				now = c.closureVerificationDeadline(*c.pendingClosure)
 				p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
+			}
+			if scenario.observerUnavailable {
+				window := p.snapshot.(sdktest.Snapshot).Traffic["health"]
+				window.LoadError = "synthetic prober unavailable"
+				p.snapshot.(sdktest.Snapshot).Traffic["health"] = window
 			}
 			executeRecheck(t, c)
 			if c.closureState != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
@@ -621,13 +632,13 @@ func TestRecoveryFrozenClosureAtHealthBudgetPublishesFailureWithoutRewritingComm
 				t.Fatal("expired health published an unaccepted source repair")
 			}
 			expected := "failed"
-			if scenario.lateClear {
+			if scenario.lateClear || scenario.observerUnavailable {
 				expected = "unconfirmed"
 			}
 			if outcome.Record.GetClassification() != expected {
 				t.Fatalf("red traffic received success: %v", outcome.Record)
 			}
-			if scenario.lateClear {
+			if scenario.lateClear || scenario.observerUnavailable {
 				return
 			}
 			if len(c.batcher.Snapshot().Findings) == 0 {
@@ -688,4 +699,88 @@ func TestRecoveryFrozenClosureAtHealthBudgetPublishesFailureWithoutRewritingComm
 		})
 	}
 
+}
+
+func TestRecoverySourceInformationCannotBypassRenewedHealthWindow(t *testing.T) {
+	c, p, start := repairedTrafficController(t)
+	c.config.VerificationTimeout = 90 * time.Second
+	broker := &recordingClosureBroker{}
+	if err := c.SetIncidentBroker(broker); err != nil {
+		t.Fatal(err)
+	}
+	now := start
+	c.now = func() time.Time { return now }
+	for _, second := range []int{0, 10, 15} {
+		now = start.Add(time.Duration(second) * time.Second)
+		p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
+		if err := c.Step(context.Background(), now, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.ConfigureDrift(DriftControllerConfig{Inventory: true, View: func(s sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: s.(sdktest.Snapshot)}
+	}})
+	now = start.Add(16 * time.Second)
+	p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
+	recheck := c.revalidateClosure(context.Background(), p.snapshot, *c.pendingClosure)
+	if !recheck.SourceOnly {
+		t.Fatalf("fixture did not produce informational source wait: %+v", recheck)
+	}
+	executeRecheck(t, c)
+	assertStillPending(t, c, broker)
+	now = start.Add(45 * time.Second)
+	p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
+	executeRecheck(t, c)
+	assertStillPending(t, c, broker)
+	now = start.Add(46 * time.Second)
+	p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
+	executeRecheck(t, c)
+	assertStillPending(t, c, broker)
+	if response := c.cachedResponderVerification(context.Background(), c.pendingClosure.Request.IncidentID, 0); response.Healthy || response.Summary == "" {
+		t.Fatal("renewed proof wait was hidden or read as healthy")
+	}
+	now = start.Add(60 * time.Second)
+	p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
+	executeRecheck(t, c)
+	assertStillPending(t, c, broker)
+	now = start.Add(61 * time.Second)
+	p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
+	executeRecheck(t, c)
+	awaitBrokerResult(t, c.closureResults)
+	if broker.processCalls() != 1 {
+		t.Fatal("source information started another health stability window")
+	}
+}
+
+func TestRecoveryResidualCannotDispatchPastOriginalResponseBudget(t *testing.T) {
+	c, p, start := repairedTrafficController(t)
+	c.currentIncidentRequest.ResponseDeadline = start.Add(time.Minute)
+	if err := c.SetIncidentBroker(&recordingClosureBroker{}); err != nil {
+		t.Fatal(err)
+	}
+	now := start
+	c.now = func() time.Time { return now }
+	for _, second := range []int{0, 10, 15} {
+		now = start.Add(time.Duration(second) * time.Second)
+		p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
+		if err := c.Step(context.Background(), now, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now = start.Add(16 * time.Second)
+	p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
+	executeRecheck(t, c)
+	now = start.Add(time.Minute)
+	p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
+	executeRecheck(t, c)
+	if err := c.Step(context.Background(), now, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.PendingDispatchEffect(); ok {
+		t.Fatal("residual handoff reset an exhausted original response budget")
+	}
+	closure, ok := c.PendingIncidentClosure()
+	if !ok || len(closure.FinalDetectorStates) > 0 || c.closureFailure != nil {
+		t.Fatal("exhausted response budget did not produce an ordinary unverified closure")
+	}
 }

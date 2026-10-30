@@ -1435,7 +1435,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		verified = c.recoveryProofLocked(now, finalStates, safe && (guard == nil || !guard.Pending))
 		verification.Healthy = verified
 		if !verified {
-			verification.Summary = "awaiting controller recovery stability proof"
+			verification.Summary = recoveryStabilitySummary
 		}
 		c.cacheVerificationLocked(verification)
 		if !verified && (early || now.Before(c.verificationDeadlineLocked())) {
@@ -1455,7 +1455,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	// An automatic stage has no provider continuation to resume. Transfer its
 	// receipts and residuals through the first-worker handoff, rather than
 	// treating a missing continuation checkpoint as exhausted model work.
-	if !early && !verified && !terminalFailure && stageOnlyClosure(IncidentClosure{Request: *c.currentIncidentRequest, Result: c.currentIncidentResult}) &&
+	if !early && !verified && !terminalFailure && now.Before(c.currentIncidentRequest.ResponseDeadline) && stageOnlyClosure(IncidentClosure{Request: *c.currentIncidentRequest, Result: c.currentIncidentResult}) &&
 		(len(verification.Findings) > 0 || (!now.Before(c.verificationDeadlineLocked()) && len(c.activeHealthDetectors()) > 0)) {
 		request := *cloneIncidentRequest(c.currentIncidentRequest)
 		request.Findings = append([]sdk.Finding(nil), verification.Findings...)
