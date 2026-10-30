@@ -165,6 +165,13 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 			paths = append(paths, path)
 		}
 	}
+	// A deletion cannot introduce fields. Without changed owned paths there
+	// is nothing left to compare, and the deleted object need not be captured
+	// in the current snapshot. Surviving objects still need addition checks
+	// even when the deployer owns none of their changed paths.
+	if len(paths) == 0 && change.New == nil {
+		return nil, nil
+	}
 	// Comparison, rather than deployer ownership, owns the additions policy.
 	// A writer can add effect-bearing fields that the deployer never owned.
 	diff, err := declaredSourceDiff(view, ref)

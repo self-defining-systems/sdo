@@ -51,7 +51,12 @@ func TestAddedFieldDriftProducerReachesRepairStage(t *testing.T) {
 				t.Fatal(err)
 			}
 			c.ConfigureDrift(DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView { return view }})
-			c.processDrift(context.Background(), start, snapshot, []ObjectChange{{Old: old, New: live}})
+			// A deleted, unowned foreign object has no surviving additions.
+			// It must not turn this batch into a source-capture retry while
+			// the unrelated post-acceptance addition still reaches repair.
+			c.OnError = func(err error) { t.Errorf("drift batch failed: %v", err) }
+			deleted := driftObject(foreignPolicy("deleted-policy"), sdk.WatchKind{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app"})
+			c.processDrift(context.Background(), start, snapshot, []ObjectChange{{Old: deleted}, {Old: old, New: live}})
 			findings := c.batcher.Snapshot().Findings
 			if len(findings) != 1 {
 				t.Fatalf("addition lost before stage: findings=%+v", findings)
