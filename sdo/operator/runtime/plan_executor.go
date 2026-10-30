@@ -94,6 +94,7 @@ type PlanApplicationResult struct {
 	RollbackError            string
 	VerificationPassed       bool
 	VerificationCompleted    bool
+	RecoveryWait             *contracts.RecoveryWait
 	RolloutPending           *contracts.RolloutPending
 	FinalEquivalenceVerified *bool
 	FinalVerificationBasis   string

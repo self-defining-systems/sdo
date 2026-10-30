@@ -446,7 +446,17 @@ func TestDeterministicResponseStageRejoinDoesNotRepeatWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fresh.PlanApplications()) != 0 || len(fresh.ApplicationEvidence()) != len(loop.ApplicationEvidence()) || !proto.Equal(first, second) || len(replay.Findings) != 1 || !proto.Equal(state.Coverage, replay.Coverage) || len(replay.Request.InitialProgramRuns) != len(state.Request.InitialProgramRuns) {
+	// Re-observation accumulates measured wait time; immutable application
+	// identity, writes and all other stage evidence must stay byte-identical.
+	expected := proto.Clone(first).(*contracts.StageReport)
+	if second.GetRecoveryWait().GetExitReason() != first.GetRecoveryWait().GetExitReason() || second.GetRecoveryWait().GetDuration().AsDuration() < first.GetRecoveryWait().GetDuration().AsDuration() {
+		t.Fatalf("rejoin lost wait evidence: first=%v second=%v", first.RecoveryWait, second.RecoveryWait)
+	}
+	expected.RecoveryWait = proto.Clone(second.RecoveryWait).(*contracts.RecoveryWait)
+	for i, attempt := range expected.Mitigations {
+		attempt.ApplyReceipt.RecoveryWait = proto.Clone(second.Mitigations[i].ApplyReceipt.RecoveryWait).(*contracts.RecoveryWait)
+	}
+	if len(fresh.PlanApplications()) != 0 || len(fresh.ApplicationEvidence()) != len(loop.ApplicationEvidence()) || !proto.Equal(expected, second) || len(replay.Findings) != 1 || !proto.Equal(state.Coverage, replay.Coverage) || len(replay.Request.InitialProgramRuns) != len(state.Request.InitialProgramRuns) {
 		t.Fatalf("rejoin repeated/lost stage: first=%v second=%v applications=%v", first, second, fresh.PlanApplications())
 	}
 }

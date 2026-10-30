@@ -55,6 +55,17 @@ func (e PlanExecutor) waitForRollouts(ctx context.Context, incident IncidentRequ
 	if err == nil {
 		return nil, nil
 	}
+	// Preserve producer-owned pending evidence through every consumer, including
+	// recovery settlement. Never turn a typed observation into a bare error.
+	var pendingError *RolloutPendingError
+	if errors.As(err, &pendingError) && pendingError.Pending != nil {
+		pending := pendingError.Pending
+		if pendingError.Stalled && pending.GetReasonCode() == "" {
+			pending = proto.Clone(pending).(*contracts.RolloutPending)
+			pending.ReasonCode = "rollout_stalled"
+		}
+		return pending, err
+	}
 	var admission *AdmissionBlockedError
 	if errors.As(err, &admission) {
 		return admission.Pending, admission

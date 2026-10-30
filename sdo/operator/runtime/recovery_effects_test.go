@@ -134,7 +134,9 @@ func TestRecoveryEffectsStageWaitConsumesLiveDisappearance(t *testing.T) {
 	}
 	state.Findings = []sdk.Finding{f}
 	stage := &DeterministicResponseStage{ObservationCeiling: 100 * time.Millisecond, ObservationInterval: time.Millisecond}
-	stage.awaitRepairedHealth(context.Background(), loop, state, state.PriorStages[0], time.Second)
+	if err := stage.awaitApplications(context.Background(), loop, state, state.PriorStages[0], &responseStageProgress{}, func(bool) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
 	if len(state.Findings) != 0 || p.samples < 3 {
 		t.Fatalf("own old Pod forced responder: findings=%v samples=%d", state.Findings, p.samples)
 	}
@@ -257,7 +259,9 @@ func TestRecoveryEffectsAlreadyDisappearedBeforeStageWait(t *testing.T) {
 		return LiveReadView{DetectionContext: recoveryAPISnapshot{s, loop.Executor.Client.(TypedPlanClient)}, Source: recoveryAcceptedSource{loop.Executor.Source}, SourceCommit: state.Request.SourceCommit}
 	}
 	state.Findings = []sdk.Finding{f}
-	(&DeterministicResponseStage{ObservationCeiling: time.Millisecond}).awaitRepairedHealth(context.Background(), loop, state, state.PriorStages[0], time.Second)
+	if err := (&DeterministicResponseStage{ObservationCeiling: time.Millisecond}).awaitApplications(context.Background(), loop, state, state.PriorStages[0], &responseStageProgress{}, func(bool) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
 	if len(state.Findings) != 0 {
 		t.Fatal("already observed disappearance forced model handoff")
 	}

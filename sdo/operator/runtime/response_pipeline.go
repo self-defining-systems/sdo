@@ -93,12 +93,16 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		c.responseStagesRunning = false
 		c.mu.Unlock()
 		result, err := dispatcher.Dispatch(ctx, request)
-		state := &IncidentState{Request: request, PriorStages: cloneStageReports(request.PriorStages), Result: &result}
+		reports := request.PriorStages
+		if result.automaticStages != nil {
+			reports = result.automaticStages
+		}
+		state := &IncidentState{Request: request, PriorStages: cloneStageReports(reports), Result: &result}
 		merged, encodeErr := responsePipelineResult(state, result.Timing.StartedAt, result.Timing.CompletedAt)
 		if err == nil {
 			err = encodeErr
 		}
-		return merged, cloneStageReports(request.PriorStages), err
+		return merged, cloneStageReports(reports), err
 	}
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage)}
 	var stages []ResponseStage
