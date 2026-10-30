@@ -64,10 +64,8 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				}
 				// Execution errors are history, not a transient observation. Only pending
 				// rollout/readback or measured source residuals can be superseded by proof.
-				if app.Error != "" && app.Result.RolloutPending == nil && !strings.HasPrefix(app.Error, "source_reconcile_partial:") && !strings.HasPrefix(app.Error, "rollout_stalled:") {
-					continue
-				}
-				if pending, ok := l.pendingWrites[id]; ok && pending.Superseded {
+				pendingWrite, wasPending := l.pendingWrites[id]
+				if pendingWrite.Superseded || !recoveryObservationOnly(*app, wasPending) {
 					continue
 				}
 				if attempt.ProgramRevision == "" || attempt.ProgramRevision != l.programRevision(attempt.PlaybookId) {
@@ -168,4 +166,27 @@ func projectRecoverySettlement(result IncidentResult, settled *recoveryApplicati
 	}
 	result.RepairActions = ProgramRepairReceipts(result.PlanApplications, existing)
 	return result
+}
+
+// Typed action/readback evidence distinguishes an unsettled observation from
+// an execution failure. Error text is presentation and grants no credit.
+func recoveryObservationOnly(app RecordedPlanApplication, wasPending bool) bool {
+	if app.Error == "" {
+		return true
+	}
+	if len(app.Result.ActionReports) != len(app.Result.Plan.Actions) {
+		return false
+	}
+	observation := wasPending || app.Result.RolloutPending != nil
+	for _, report := range app.Result.ActionReports {
+		sourcePartial := report.SourceReconcile != nil && !report.SourceReconcile.Converged
+		if report.RecordingError != "" || (report.FailureReason != "" && !(sourcePartial && report.FailureReason == "source_residual")) {
+			return false
+		}
+		if report.Status != "applied" && !(sourcePartial && report.Status == "partial") {
+			return false
+		}
+		observation = observation || sourcePartial
+	}
+	return observation
 }

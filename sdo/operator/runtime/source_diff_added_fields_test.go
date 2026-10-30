@@ -136,6 +136,14 @@ func diffEveryViewResults(t *testing.T, live *unstructured.Unstructured) map[str
 			client.PrependReactor("patch", "deployments", func(ktesting.Action) (bool, kruntime.Object, error) {
 				return true, typed.DeepCopy(), nil
 			})
+			client.PrependReactor("create", "deployments", func(ktesting.Action) (bool, kruntime.Object, error) {
+				// Isolated source render has API defaults but no live additions.
+				var rendered appsv1.Deployment
+				if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(addedFieldsLive().Object, &rendered); err != nil {
+					t.Fatal(err)
+				}
+				return true, &rendered, nil
+			})
 			view.Client = bridgeFake(t, client)
 		case "replayed-capture":
 			view.DetectionContext = stored

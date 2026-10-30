@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk"
 	"testing"
 	"time"
 
@@ -94,4 +95,87 @@ func settlementBrokerWorkers(t *testing.T, loop *ResponderLoop, closure Incident
 		t.Fatal(err)
 	}
 	return calls
+}
+
+func TestControllerRecoveryProofSettlesStageReceipts(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	loop.Executor.Rollouts = &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
+	dispatcher := &settlementControllerDispatcher{pipelineScenarioDispatcher: pipelineScenarioDispatcher{loop: loop}}
+	config := testControllerConfig()
+	config.Application = state.Request.Application
+	config.Namespace = "app"
+	config.SourceCommit = state.Request.SourceCommit
+	config.DeployedCommit = state.Request.DeployedCommit
+	config.RepositoryWorktree = t.TempDir()
+	config.RepairPolicy = "recorded-actions"
+	config.FiringThreshold = 1
+	config.ClearThreshold = 1
+	config.BatchDebounce = time.Millisecond
+	start := time.Now().UTC()
+	controller, err := NewController(config, []sdk.Detector{pipelineDetector{}}, loop.Provider, dispatcher, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.SetLifecycleSink(&memoryLifecycleSink{})
+	// Production LoopFactory registers this loop when the stage is built.
+	dispatcher.controller = controller
+	closed := make(chan IncidentClosure, 1)
+	controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
+	for i := 0; i < 3; i++ {
+		if err := controller.Step(context.Background(), start.Add(time.Duration(i)*time.Second), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	effect, ok := controller.PendingDispatchEffect()
+	if !ok {
+		t.Fatal("stage not admitted")
+	}
+	if err := controller.ExecuteDispatchEffect(context.Background(), effect); err != nil {
+		t.Fatal(err)
+	}
+	awaitDispatchCompletionQueued(t, controller)
+	applications := loop.PlanApplications()
+	if len(applications) != 2 || applications[0].Result.RolloutPending == nil {
+		t.Fatal("stage did not hand off pending evidence")
+	}
+	observer := observedDeploymentRollout{client: loop.Executor.Client.(TypedPlanClient).Client}
+	if err := observer.Wait(context.Background(), []sdk.ObjectRef{{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}}); err != nil {
+		t.Fatal(err)
+	}
+	loop.Executor.Rollouts = observer
+	for i := 3; i < 23; i++ {
+		if err := controller.Step(context.Background(), start.Add(time.Duration(i)*time.Second), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case closure := <-closed:
+		if dispatcher.agentCalls != 0 {
+			t.Fatal("covered repairs dispatched a responder")
+		}
+		outcome, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !coveredRepeatCandidate(outcome.Record) {
+			t.Fatalf("controller froze unsettled receipts: %v", outcome.Record)
+		}
+	default:
+		t.Fatal("controller recovery did not close")
+	}
+}
+
+type settlementControllerDispatcher struct {
+	pipelineScenarioDispatcher
+	controller *Controller
+}
+
+func (d *settlementControllerDispatcher) DeterministicResponseStage() ResponseStage {
+	return &DeterministicResponseStage{NewLoop: func(request IncidentRequest) *ResponderLoop {
+		d.loop.Request = request
+		d.controller.mu.Lock()
+		d.controller.responderLoop = d.loop
+		d.controller.mu.Unlock()
+		return d.loop
+	}}
 }

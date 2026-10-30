@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sdo.dev/operator/sdk/sdktest"
-	"strings"
 	"testing"
 	"time"
 
@@ -220,13 +219,13 @@ func TestAPIDefaultRenderFeedsSourceComparison(t *testing.T) {
 				if serveTestDiscovery(w, r) {
 					return
 				}
-				if r.Method != http.MethodPatch || r.URL.Query().Get("dryRun") != "All" {
+				if (r.Method != http.MethodPatch && r.Method != http.MethodPost) || r.URL.Query().Get("dryRun") != "All" {
 					t.Errorf("unexpected non-observation API request: %s %s", r.Method, r.URL)
 					http.Error(w, "unexpected request", 500)
 					return
 				}
 				response := live.DeepCopy()
-				if strings.HasSuffix(r.URL.Path, defaultRenderSuffix) {
+				if r.Method == http.MethodPost {
 					renders++
 					response = source.DeepCopy()
 					response.SetName(source.GetName() + defaultRenderSuffix)
@@ -247,5 +246,41 @@ func TestAPIDefaultRenderFeedsSourceComparison(t *testing.T) {
 				t.Fatalf("plan source default transport: %v %v renders=%d", defaults, err, renders)
 			}
 		})
+	}
+}
+
+// A dry-run apply over a coincidentally existing probe can retain a writer's
+// fields and mislabel them as API defaults. Create must fail on collision.
+func TestDefaultRenderUsesIsolatedCreate(t *testing.T) {
+	source := addedFieldsSource()
+	creates := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestDiscovery(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/apis/apps/v1/namespaces/app/deployments" || r.URL.Query().Get("dryRun") != "All" {
+			http.Error(w, "default rendering must create in isolation", http.StatusConflict)
+			return
+		}
+		var object unstructured.Unstructured
+		if err := json.NewDecoder(r.Body).Decode(&object); err != nil {
+			t.Error(err)
+		}
+		if object.GetName() != source.GetName()+defaultRenderSuffix {
+			t.Errorf("probe name=%s", object.GetName())
+		}
+		if object.GetUID() != "" || object.GetResourceVersion() != "" {
+			t.Error("probe retained object instance identity")
+		}
+		creates++
+		syntheticContainerDefaults(&object)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&object)
+	}))
+	defer server.Close()
+	client := kubernetes.NewForConfigOrDie(&rest.Config{Host: server.URL})
+	_, err := (TypedPlanClient{Client: client}).SourceDefaults(context.Background(), addedFieldsRef(), source)
+	if err != nil || creates != 1 {
+		t.Fatalf("isolated create: creates=%d err=%v", creates, err)
 	}
 }

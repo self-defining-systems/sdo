@@ -144,9 +144,23 @@ func (r acceptedResource) renderDefaults(ctx context.Context, ref sdk.ObjectRef,
 	}
 	object := source.DeepCopy()
 	object.SetName(probe.Name)
-	object.SetAnnotations(nil)
-	at := acceptedResource{client: r.client, path: strings.TrimSuffix(r.path, "/"+ref.Name) + "/" + probe.Name, namespaced: r.namespaced}
-	return at.applyAs(ctx, probe, object, true, "sdo-deployer")
+	// Default a new instance, never an SSA merge with an existing probe.
+	// Preserve authored admission annotations, but no captured server identity.
+	metadata, _ := object.Object["metadata"].(map[string]any)
+	for _, field := range []string{"uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "managedFields"} {
+		delete(metadata, field)
+	}
+	removeRevisionStamp(metadata)
+	delete(object.Object, "status")
+	body, err := json.Marshal(object.Object)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := bodyOf(ctx, r.client.Post().AbsPath(strings.TrimSuffix(r.path, "/"+ref.Name)).Param("dryRun", metav1.DryRunAll).Body(body))
+	if err != nil {
+		return nil, err
+	}
+	return decodeAcceptedObject(raw, probe)
 }
 
 func (r acceptedResource) applyAs(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool, manager string) (*unstructured.Unstructured, error) {
