@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -48,11 +50,15 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			if err != nil || ref.Kind == "" {
 				continue
 			}
-			applied := index < len(application.Result.ActionsApplied)
+			// Action reports prove completion, including successful observations.
+			// Only actual mutations (or confirmed effects below) own resources.
+			applied := slices.ContainsFunc(application.Result.ActionsApplied, func(mutation program.Action) bool {
+				return reflect.DeepEqual(action, mutation)
+			})
 			reason := ""
 			if index < len(application.Result.ActionReports) {
 				report := application.Result.ActionReports[index]
-				applied = report.Status == "applied"
+				applied = applied && report.Status == "applied"
 				reason = report.FailureReason
 				if report.Status == "unknown" && reason == "" {
 					reason = "outcome_unknown"
