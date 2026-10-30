@@ -8,47 +8,21 @@ cd "$PROJECT_ROOT"
 echo "==> GitHub Actions workflows"
 bash "$SCRIPT_DIR/check_actions.sh"
 
-# Bind controller and validator to the same source identity and exercise an
-# SDK branch merge without generated pin edits before the broader gates.
-# Bound test execution with -timeout; cold module downloads and compilation need their own time.
-echo "==> validator schema identity"
-(
-    cd "$PROJECT_ROOT/sdo/operator"
-    go test ./builder ./operatorcli \
-        -run '^(TestSchemaIdentity.*|TestSDKBranchesMergeWithoutIdentityPins|TestControllerSchemaIdentityFailsClosed|TestParseValidateLaunchRequiresBoundSchema)$' \
-        -count=1 -timeout=20s
-)
+# Local checks execute these tests here. CI prepares the same packages and
+# runs the same selections/timeouts in its existing native contract jobs.
+quality_mode=()
+case "${1:-}" in
+    "") ;;
+    --defer-prepared) quality_mode=(--defer-prepared) ;;
+    *) echo "unknown Go check mode: $1" >&2; exit 2 ;;
+esac
+for group in schema git deadlines capture; do
+    python3 "$SCRIPT_DIR/go_quality_checks.py" --group "$group" "${quality_mode[@]}"
+done
 
-# Fixture Git must not leave detached writers behind TempDir cleanup.
-echo "==> Go git fixture lifetime policy"
-(
-    cd "$PROJECT_ROOT/sdo/operator"
-    go test ./internal/testutil -run '^TestGit(CreationPolicyNegativeControls|FixtureCreationUsesHelper)$' -count=1 -timeout=20s
-)
-
-# Tests must wait for the condition they assert, not race Execute against a
-# fixed sub-second deadline (flaky under -race and host load).
-echo "==> Go Execute deadline policy"
-(
-    cd "$PROJECT_ROOT/sdo/operator"
-    go test ./internal/testutil -run '^Test(ExecuteDeadlinePolicyNegativeControls|NoFixedShortDeadlineAroundExecuteInTests|CountedPollingPolicyNegativeControls|CountedPollingAllowances|NoShortCountedPollingInTests)$' -count=1 -timeout=20s
-)
-
-# Capture fixtures must come from the real CaptureSnapshot projection.
-echo "==> Go capture fixture policy"
-(
-    cd "$PROJECT_ROOT/sdo/operator"
-    go test ./internal/capturefixture -count=1 -timeout=20s
-)
-
-# Generated skill references: the root sdk package test only runs when that
-# package changes, so an sdk/program-only edit can leave program-sdk.md stale.
 echo "==> generated skill references"
 bash "$SCRIPT_DIR/gen_skill_references.sh" --check
-(
-    cd "$PROJECT_ROOT/sdo/operator"
-    go test ./memory/validate -run '^TestMemoryLayoutReference$' -count=1 -timeout=20s
-)
+python3 "$SCRIPT_DIR/go_quality_checks.py" --group layout "${quality_mode[@]}"
 
 echo "==> generated read-only Kubernetes client facade"
 bash "$SCRIPT_DIR/gen_kube_read_clients.sh" --check

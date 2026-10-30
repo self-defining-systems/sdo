@@ -177,7 +177,7 @@ jobs:
           mkfifo "$SDO_GO_OPERATOR_READY"
           (
             read -r -t 230 ready < "$SDO_GO_OPERATOR_READY"
-            GOFLAGS="$GOFLAGS -race" bash scripts/check_errors.sh --go-only
+            GOFLAGS="$GOFLAGS -race" bash scripts/check_errors.sh --go-only --defer-prepared
           ) &
           quality_pid=$!
           # Python collection and its source checkout do not depend on Go's
@@ -192,7 +192,7 @@ jobs:
           wait "$inventory_pid"
           python3 scripts/go_cost_plan.py --prepared --include-dedicated --inventory-only --output .fastloop/test-bin/go-test-plan.json
           python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
-          python3 scripts/prepared_contracts.py --plan .fastloop/test-bin/pr-test-plan.json --output "$RUNNER_TEMP/prepared-contracts"
+          python3 scripts/prepared_contracts.py --quality-checks --plan .fastloop/test-bin/pr-test-plan.json --output "$RUNNER_TEMP/prepared-contracts"
           for bin in 0 1; do
             cp "$RUNNER_TEMP/nightly-tests.md" "$RUNNER_TEMP/prepared-contracts/$bin/"
             tar -I 'zstd -T2 -3' -cf "$RUNNER_TEMP/contract-$bin.tar.zst" -C "$RUNNER_TEMP/prepared-contracts/$bin" .
