@@ -1,12 +1,8 @@
 name: CI
 
 on:
-  # Hosted caches saved on refs/pull/N are private to that PR. A PR can also
-  # restore its base branch's caches, so pushes to every branch PRs target are
-  # the only runs that save the large prepared Go builds (about 1.6 GB each);
-  # Other runs restore the newest one. Native contracts build locally;
-  # Python jobs receive compiler-free source/tool artifacts. Saving a build per throwaway ref passed the 10 GB
-  # repository cap with a few concurrent PRs and evicted entries mid-run.
+  # Durable base caches accelerate preparation. Every run publishes its own
+  # exact prepared graphs; native shards never rebuild after a cache miss.
   push:
     branches: [main, "vic-lsh/dev/**"]
   workflow_dispatch:
@@ -152,7 +148,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Save the durable normal build
-        if: matrix.mode == 'normal' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        if: matrix.mode == 'normal' && inputs.cold != true && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
@@ -162,12 +158,39 @@ jobs:
           key: ${{ steps.base-normal.outputs.cache-primary-key }}
 
       - name: Save the durable race build
-        if: matrix.mode == 'race' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        if: matrix.mode == 'race' && inputs.cold != true && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ${{ runner.temp }}/sdo-go-build-race
           key: ${{ steps.base-race.outputs.cache-primary-key }}
+
+      # Publish after all preparation checks, including race vet and inventories.
+      # Keys cannot collide with older/partial graphs or a different source revision.
+      - name: Stage race inventories
+        if: matrix.mode == 'race'
+        run: |
+          mkdir -p .fastloop/race-inventory
+          cp .fastloop/test-bin/inventory-*.json .fastloop/race-inventory/
+      - name: Publish this run's normal build
+        if: matrix.mode == 'normal'
+        id: run-normal
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-normal
+            ~/go/pkg/mod
+            .fastloop/test-bin
+          key: ci-run-v1-normal-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}
+      - name: Publish this run's race build
+        if: matrix.mode == 'race'
+        id: run-race
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-race
+            .fastloop/race-inventory
+          key: ci-run-v1-race-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}
 
   python:
     name: ${{ matrix.name }}
@@ -244,6 +267,7 @@ jobs:
 
   contracts:
     name: native contracts (${{ matrix.bin }})
+    needs: prepare-go
     runs-on: ubuntu-latest
     timeout-minutes: 4
     strategy:
@@ -260,36 +284,32 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: false
-      - name: Restore independent Go caches concurrently
-        if: inputs.cold != true
+      - name: Restore this run's exact prepared Go caches concurrently
         uses: ./.github/actions/restore-go-caches
         with:
           caches: |
             [
               {
                 "path": "${{ runner.temp }}/sdo-go-build-normal\n~/go/pkg/mod\n.fastloop/test-bin\n",
-                "key": "ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}",
-                "restore-keys": "ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-\nci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-\n"
+                "key": "ci-run-v1-normal-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}",
+                "required": true
               },
               {
-                "path": "${{ runner.temp }}/sdo-go-build-race",
-                "key": "ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}",
-                "restore-keys": "ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-\nci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-\n"
+                "path": "${{ runner.temp }}/sdo-go-build-race\n.fastloop/race-inventory\n",
+                "key": "ci-run-v1-race-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}",
+                "required": true
               }
             ]
       - name: Combine prepared compiler entries without replacing existing files
-        run: bash scripts/merge_go_ci_caches.sh '${{ runner.temp }}/sdo-go-build-normal' '${{ runner.temp }}/sdo-go-build-race'
+        run: |
+          bash scripts/merge_go_ci_caches.sh '${{ runner.temp }}/sdo-go-build-normal' '${{ runner.temp }}/sdo-go-build-race'
+          cp .fastloop/race-inventory/*.json .fastloop/test-bin/
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
           version: "0.9.24"
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
-      # Caches are acceleration only: Go checks content identities at this SHA.
-      # Build missing outputs here instead of waiting for same-run artifacts.
-      - name: Prepare contract builds locally from the warm Go cache
-        run: |
-          bash scripts/prepare_go_ci.sh contracts
       - name: Share linked binaries between tests
         run: bash scripts/link_cache.sh >> "$GITHUB_ENV"
       - name: Build the same fixed-capacity plan on both runners

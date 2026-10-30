@@ -14,7 +14,7 @@ go build -o "$root/.fastloop/test-bin/linkcache" "$root/scripts/linkcache/main.g
 mode="${1:-normal}"
 case "$mode" in
   normal) build_flags=() ;;
-  race|contracts) build_flags=(-race) ;;
+  race) build_flags=(-race) ;;
   *) echo "unknown Go preparation mode: $mode" >&2; exit 1 ;;
 esac
 echo "Preparation mode=$mode CPUs=$(getconf _NPROCESSORS_ONLN) GOMAXPROCS=$GOMAXPROCS"
@@ -22,7 +22,7 @@ for module in sdo/operator sdo/operator/runtime; do
   echo "Preparing $module ($mode) at $(date -u +%FT%TZ)"
   # The inventory must use the consumer's race build tags. Discover once while
   # compiling that graph; normal Python contracts still need their own archives.
-  if [[ "$mode" == race || "$mode" == contracts ]]; then
+  if [[ "$mode" == race ]]; then
     scope=operator
     if [[ "$module" == sdo/operator/runtime ]]; then scope=runtime; fi
     mkdir -p "$root/.fastloop/test-bin"
@@ -47,12 +47,7 @@ if [[ "$mode" == normal ]]; then
   python3 "$root/scripts/operator_test_binary.py"
   (cd "$root/sdo/operator" && go build -o "$root/.fastloop/test-bin/setup" "$root/tests/unit/benchmarks/sregym/fastloop/fixtures/setup.go")
 fi
-if [[ "$mode" == contracts ]]; then
-  # Native jobs need the source-bound CLI, not normal-mode static-check tools,
-  # benchmark mains, portable probers or a second full production archive walk.
-  python3 "$root/scripts/operator_test_binary.py"
-fi
-if [[ "$mode" == normal || "$mode" == contracts ]]; then
+if [[ "$mode" == normal ]]; then
   # The controller jobs run with GOPROXY=off. Generated fixture workspaces run
   # `go mod tidy`/`-mod=mod`, which also needs transitive modules' go.mod files
   # outside the build graph; `all` covers them (as testutil.OfflineGo does).

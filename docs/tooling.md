@@ -34,3 +34,10 @@ reconciler requires positive native no-dispatch evidence; peer billing cannot
 prove another role's cost is zero.
 
 Controller recovery integration fixtures use `sdo/operator/runtime/recovery_fixture_test.go`: bind the native cached-proof consumer and drive real detector observations before, just before and at the stability boundary. The PR planner protects Controller, Recovery, Closure, SourceInventory, Latent and Continuation families; synthetic planner displacement controls in `tests/unit/scripts/test_pr_test_plan.py` prevent cheaper filler from hiding them. Standalone detector/report units do not assert controller closure.
+
+Native CI preparation publishes exact run/revision-scoped Go caches after the
+normal and race graphs pass their checks. Contracts depend on both producers,
+require exact parallel restores, and read their prepared inventories; a missing
+archive fails explicitly rather than compiling under the shard deadline.
+`tests/unit/sdo/operator/test_ci_speed.py` binds every consumer path/key to its
+producer, and the cache client's Node tests reject missing or fallback results.

@@ -20,7 +20,7 @@ def test_fixed_jobs_and_single_required_result():
     plan = next(step for step in jobs["contracts"]["steps"] if "scripts/go_cost_plan.py" in step.get("run", ""))
     assert "if" not in plan
     assert "--prepared" in plan["run"]
-    assert "needs" not in jobs["contracts"]
+    assert jobs["contracts"]["needs"] == "prepare-go"
     assert "--include-dedicated" in plan["run"]
     assert any("scripts/check_ci_budget.py" in step.get("run", "") for step in preparation)
 
