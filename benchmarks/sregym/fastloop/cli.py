@@ -26,7 +26,7 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -62,8 +62,9 @@ from sdo.agents.provider import AGENT_EFFORTS, DEFAULT_AGENT_EFFORT
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from benchmarks.sregym.adapter import ClusterOps
+    from benchmarks.sregym.adapter import ClusterOps, RuntimeConfig
     from benchmarks.sregym.fastloop.composite import CompositeSettings
+    from benchmarks.sregym.fastloop.evidence_queue import EvidenceExportQueue
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
     from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent
     from benchmarks.sregym.fastloop.wipe import Tier1Receipt, Tier2Reason
@@ -510,6 +511,14 @@ def _up(args: argparse.Namespace) -> int:
     return 0
 
 
+def _repair_repository_bind(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.shared_memory import ensure_repository_bind
+
+    environment = FastloopEnvironment.load(args.run_dir.resolve())
+    print(json.dumps(asdict(ensure_repository_bind(environment)), sort_keys=True))
+    return 0
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -547,22 +556,8 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
     return selected
 
 
-def _sdo_agent(
-    args: argparse.Namespace,
-    environment: FastloopEnvironment,
-    results_dir: Path,
-    *,
-    composite: bool = False,
-    stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
-    worker: SregymWorker | None = None,
-) -> IncidentAgent:
-    from benchmarks.sregym.adapter import (
-        RuntimeConfig,
-        control_namespace_for,
-        deployed_lifecycle,
-        launch_native_lifecycle,
-    )
-    from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
+def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path) -> RuntimeConfig:
+    from benchmarks.sregym.adapter import RuntimeConfig, control_namespace_for
 
     registrations = args.agent_registrations.resolve() if args.agent_registrations else None
     if registrations is None and environment.app == "toy":
@@ -572,7 +567,7 @@ def _sdo_agent(
 
         registrations = recording_registrations(results_dir, environment.images.responder)
 
-    runtime_config = RuntimeConfig(
+    return RuntimeConfig(
         repository=environment.workspace,
         namespace=environment.namespace,
         application=environment.application,
@@ -602,6 +597,26 @@ def _sdo_agent(
         shared_accepted_id=environment.shared_accepted_id,
         reuse_existing=bool(environment.shared_accepted_id),
     )
+
+
+def _sdo_agent(
+    args: argparse.Namespace,
+    environment: FastloopEnvironment,
+    results_dir: Path,
+    *,
+    composite: bool = False,
+    stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
+    worker: SregymWorker | None = None,
+    evidence_queue: EvidenceExportQueue | None = None,
+) -> IncidentAgent:
+    from benchmarks.sregym.adapter import (
+        control_namespace_for,
+        deployed_lifecycle,
+        launch_native_lifecycle,
+    )
+    from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
+
+    runtime_config = _runtime_config(args, environment, results_dir)
     settings = SdoAgentSettings(
         repository=environment.workspace,
         namespace=environment.namespace,
@@ -683,11 +698,18 @@ def _sdo_agent(
             composite=_composite_settings(args),
             stream_faults=stream_faults,
         )
-    return SdoPersistentAgent(settings, **agent_arguments)
+    return SdoPersistentAgent(settings, **agent_arguments, evidence_queue=evidence_queue)
 
 
 def _wipes_at_row_start(args: argparse.Namespace, environment: FastloopEnvironment) -> bool:
     return args.agent == "sdo" and environment.app != "toy" and not environment.shared_accepted_id
+
+
+def _warm_reset_args(args: argparse.Namespace, environment: FastloopEnvironment) -> argparse.Namespace:
+    # A warm caller retains accepted knowledge by default. An explicitly
+    # selected planned revision still owns the ordinary reset semantics.
+    planned = args.planned_commit or AcceptedSource.of(environment).revision
+    return argparse.Namespace(**{**vars(args), "planned_commit": planned})
 
 
 def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnvironment) -> Tier1Receipt:
@@ -830,10 +852,35 @@ def deploy_with_setup_proof(
 
 
 def _run(args: argparse.Namespace) -> int:
-    run_started = time.monotonic()
-    if args.sweep_service and (args.stream is None or args.agent != "sdo"):
+    from benchmarks.sregym.fastloop.warm_lane import own_lane
+
+    if getattr(args, "sweep_service", None) and (args.stream is None or args.agent != "sdo"):
         raise SystemExit("--sweep-service requires an SDO --stream run")
+    # A full-reset caller must obey the same ownership as a warm caller; otherwise
+    # it could wipe the controller while the warm transaction proves continuity.
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    limits = HostLimits.from_env(environment.worker_env)
+    with own_lane(limits.directory, environment.cluster):
+        if not getattr(args, "warm_lane", False):
+            return _run_owned(args)
+        from benchmarks.sregym.fastloop.evidence_queue import lane_queue
+
+        # The warm lane keeps its PVC across rows, so evidence delivery may outlive
+        # the row: the earlier row's archive resumes here, beside this row's setup.
+        queue = lane_queue(environment)
+        try:
+            return _run_owned(args, evidence_queue=queue)
+        finally:
+            queue.close(drain=False, timeout=wait_for(WaitKind.OPERATION))
+
+
+def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue | None = None) -> int:
+    run_started = time.monotonic()
+    environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if environment.shared_accepted_id:
+        from benchmarks.sregym.fastloop.shared_memory import prepare_shared_lane
+
+        prepare_shared_lane(environment)
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
     args.run_id = run_id
     results_dir = environment.run_dir / "results" / run_id
@@ -891,13 +938,47 @@ def _run(args: argparse.Namespace) -> int:
         warn_fallback(
             environment.image_delivery_reason, environment.image_delivery_images, environment.image_delivery_seconds
         )
-    tier1 = _wipe_sdo_and_harness(args, environment) if _wipes_at_row_start(args, environment) else None
+    data_faults = {key: item.data_level_faults() for key, item in descriptions.items()}
+    incoming = stream[0] if stream else (problems[0],)
+    incoming_data_faults = tuple(f"{key}: {fault}" for key in incoming for fault in data_faults.get(key, ()))
+    warm_preparation = None
+    tier1 = None
+    if getattr(args, "warm_lane", False):
+        if not _wipes_at_row_start(args, environment):
+            raise ValueError("--warm-lane requires a private non-toy SDO lane")
+        from benchmarks.sregym.fastloop.warm_environment import WarmEnvironment
+        from benchmarks.sregym.fastloop.warm_lane import prepare_lane
+
+        def full_reset() -> None:
+            nonlocal tier1
+            if evidence_queue is not None:
+                evidence_queue.drain()
+            tier1 = _wipe_sdo_and_harness(_warm_reset_args(args, environment), environment)
+
+        os.environ["KUBECONFIG"] = str(environment.kubeconfig)
+        with _worker(environment) as warm_worker:
+            warm_preparation = WarmEnvironment(
+                environment,
+                _cluster_ops(args, environment.namespace),
+                warm_worker,
+                _runtime_config(args, environment, results_dir),
+                results_dir / "warm",
+                incoming_data_faults=incoming_data_faults,
+                full_reset=full_reset,
+                planned_commit=args.planned_commit,
+            )
+            warm_receipt = prepare_lane(warm_preparation, results_dir / "warm-transaction.json")
+        if not warm_receipt.reused:
+            warm_preparation = None
+    elif _wipes_at_row_start(args, environment):
+        tier1 = _wipe_sdo_and_harness(args, environment)
+
     if args.agent == "sdo":
         from benchmarks.sregym.adapter import control_namespace_for
 
         secret = "sdo-agent-credentials"
         checked = kubectl(
-            ["get", "secret", secret],
+            ["get", "secret", secret, "-o", "name"],
             namespace=control_namespace_for(environment.namespace),
             kubeconfig=environment.kubeconfig,
             check=False,
@@ -928,7 +1009,7 @@ def _run(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     config = LoopConfig(
-        row_start_tier2=_wipes_at_row_start(args, environment) and (len(stream) if stream else args.incidents) == 1,
+        row_start_tier2=tier1 is not None and (len(stream) if stream else args.incidents) == 1,
         delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
         image_delivery_reason=environment.image_delivery_reason,
@@ -948,9 +1029,6 @@ def _run(args: argparse.Namespace) -> int:
     )
     write_loop_manifest(config)
     marker = AttemptMarker(environment.run_dir)
-    data_faults = {key: item.data_level_faults() for key, item in descriptions.items()}
-    incoming = config.stream[0] if config.stream else (config.problems[0],)
-    incoming_data_faults = tuple(f"{key}: {fault}" for key in incoming for fault in data_faults.get(key, ()))
     redeploy_reason = (
         _application_needs_redeploy(environment, marker, incoming_data_faults) if tier1 is not None else None
     )
@@ -958,7 +1036,7 @@ def _run(args: argparse.Namespace) -> int:
         logger.info(
             "Tier-2 recreate of the application: %s (%s)", redeploy_reason.trigger.value, redeploy_reason.detail
         )
-    if tier1 is not None:
+    if tier1 is not None or warm_preparation is not None:
         marker.begin()
     with _worker(environment) as worker:
         worker_ready = time.monotonic()
@@ -973,7 +1051,7 @@ def _run(args: argparse.Namespace) -> int:
                 deploy=lambda: None,
                 timeout_seconds=wait_for(WaitKind.ROLLOUT),
             ).write(results_dir)
-        if redeploy_reason is None:
+        if redeploy_reason is None and warm_preparation is None:
             deploy_with_setup_proof(
                 environment, worker, results_dir, allow_reuse=args.agent == "sdo" and environment.app != "toy"
             )
@@ -1049,6 +1127,7 @@ def _run(args: argparse.Namespace) -> int:
                     composite=registered_composites,
                     stream_faults=faults_by_incident,
                     worker=worker,
+                    evidence_queue=evidence_queue,
                 ),
                 driver,
                 config,
@@ -1274,10 +1353,13 @@ def _summary(args: argparse.Namespace) -> int:
 
 def _down(args: argparse.Namespace) -> int:
     from benchmarks.sregym.adapter import KubectlClusterOps, teardown
+    from benchmarks.sregym.fastloop.evidence_queue import settle_lane_exports
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
+    failed_exports = settle_lane_exports(environment)
     errors = teardown(environment.state_path, ops=KubectlClusterOps()) if environment.state_path.exists() else []
+    errors.extend(f"evidence export for {job.incident_id} failed: {job.error}" for job in failed_exports)
     for error in errors:
         logger.error("persistent controller teardown: %s", error)
     if args.delete_cluster:
@@ -1583,6 +1665,12 @@ def build_parser() -> argparse.ArgumentParser:
     dry_run.add_argument("--setup-timeout", type=setup_budget, default=900)
     dry_run.set_defaults(handler=lambda args: execute(args.run_dir, args.timeout, args.setup_timeout))
 
+    rebind = commands.add_parser(
+        "repair-repository-bind", help="verify or repair the attached repository bind on its owning node"
+    )
+    rebind.add_argument("--run-dir", type=Path, required=True)
+    rebind.set_defaults(handler=_repair_repository_bind)
+
     reset = commands.add_parser("reset", help="restore a warm cluster to its application and controller baseline")
     reset.add_argument("--run-dir", type=Path, required=True)
     reset.add_argument(
@@ -1598,6 +1686,11 @@ def build_parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="loop incidents against the warm environment")
     run.add_argument("--run-dir", type=Path, required=True)
     run.add_argument("--agent", choices=("sdo", "codex"), required=True)
+    run.add_argument(
+        "--warm-lane",
+        action="store_true",
+        help="try persistent lane preparation; fall back to the full row reset on uncertainty",
+    )
     run.add_argument("--no-checkpoints", action="store_true", help="skip optional offline replay checkpoint export")
     run.add_argument(
         "--credentials-hook",

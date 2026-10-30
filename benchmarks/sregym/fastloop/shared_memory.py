@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -116,6 +117,107 @@ def repository_volume_path(environment: FastloopEnvironment) -> str:
     return path
 
 
+@dataclass(frozen=True)
+class RepositoryBind:
+    node: str
+    volume_path: str
+    identity: str
+    repaired: bool
+
+
+def bind_repository_on_node(environment: FastloopEnvironment, node: str, volume_path: str) -> RepositoryBind:
+    from benchmarks.sregym.fastloop.host_limits import HostLimits
+    from benchmarks.sregym.fastloop.warm_lane import own_lane
+
+    # The read/compare/mount/readback transaction has one owner even when an
+    # attach retry and a row-start preflight race on the same host.
+    root = environment.parallel_root.resolve() if environment.parallel_root else None
+    key = f"repository-bind:{root}:{environment.cluster}"
+    with own_lane(HostLimits.from_env(environment.worker_env).directory, key):
+        return _bind_repository_on_node(environment, node, volume_path)
+
+
+def _bind_repository_on_node(environment: FastloopEnvironment, node: str, volume_path: str) -> RepositoryBind:
+    """The one node-bind implementation, shared by initial attach and restart repair.
+
+    Only the selected lane PV may be rebound. Readback proves device + inode,
+    and an unexpected existing mount is never hidden by stacking a new bind.
+    """
+    if node not in lane_nodes(environment) or volume_path != repository_volume_path(environment):
+        raise ValueError("eval: repository bind differs from the selected lane's node/PV")
+    source = NODE_ROOT + "/accepted"
+    target = volume_path + "/application"
+    source_inode = _command("docker", "exec", node, "stat", "-c", "%d:%i", source)
+    target_inode = _command("docker", "exec", node, "stat", "-c", "%d:%i", target)
+    if not re.fullmatch(r"[0-9]+:[0-9]+", source_inode):
+        raise ValueError("eval: accepted source identity is unavailable on the repository node")
+    if source_inode == target_inode:
+        return RepositoryBind(node, volume_path, source_inode, False)
+    try:
+        mounted = _command(
+            "docker", "exec", node, "findmnt", "--noheadings", "--output", "TARGET", "--mountpoint", target
+        )
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+        mounted = ""
+    if mounted:
+        raise ValueError("eval: repository target has an unexpected mount; refusing to stack another bind")
+    _command("docker", "exec", "--privileged", node, "mount", "--bind", source, target)
+    if _command("docker", "exec", node, "stat", "-c", "%d:%i", target) != source_inode:
+        raise ValueError("eval: repaired repository bind failed device/inode readback")
+    return RepositoryBind(node, volume_path, source_inode, True)
+
+
+def ensure_repository_bind(environment: FastloopEnvironment) -> RepositoryBind:
+    """Repair a restart-lost bind on the PV's one node, before reading/adopting Git.
+
+    This does not restart controllers, reset memory, or bind peer nodes. A
+    controller whose volume did not observe the repaired mount still fails the
+    subsequent native shared-identity check and cannot inject.
+    """
+    if environment.memory_repo or environment.memory_branch:
+        raise ValueError("eval: remote memory uses a private PVC and has no host repository bind")
+    if not environment.shared_accepted_id or not environment.parallel_lane or environment.parallel_root is None:
+        raise ValueError("eval: repository bind repair requires an attached shared lane")
+    accepted = (environment.parallel_root / "accepted").resolve()
+    if environment.workspace.resolve() != accepted:
+        raise ValueError("eval: selected accepted checkout differs from the shared host root")
+    if (accepted / ".git" / SHARED_ID).read_text().strip() != environment.shared_accepted_id:
+        raise ValueError("eval: shared repository identity differs; refusing bind repair")
+    volume_path = repository_volume_path(environment)
+    control = control_namespace_for(environment.namespace)
+    claim = _json(environment, "get", "pvc", PVC_NAME, "-o", "json", namespace=control)
+    volume = _json(environment, "get", "pv", claim["spec"]["volumeName"], "-o", "json")
+    terms = volume["spec"].get("nodeAffinity", {}).get("required", {}).get("nodeSelectorTerms", [])
+    selected = set()
+    for term in terms:
+        hostnames = [row for row in term.get("matchExpressions", []) if row.get("key") == "kubernetes.io/hostname"]
+        if len(hostnames) != 1 or hostnames[0].get("operator") != "In" or len(hostnames[0].get("values", [])) != 1:
+            raise ValueError("eval: repository PV must select exactly one lane node")
+        selected.add(hostnames[0]["values"][0])
+    if len(selected) != 1:
+        raise ValueError("eval: repository PV has no unambiguous owning node")
+    node = selected.pop()
+    if node not in lane_nodes(environment):
+        raise ValueError("eval: repository PV selects a foreign node")
+    source_git_inode = _command("docker", "exec", node, "stat", "-c", "%i", NODE_ROOT + "/accepted/.git")
+    if source_git_inode != str((accepted / ".git").stat().st_ino):
+        raise ValueError("eval: node source does not resolve to the selected host accepted Git directory")
+    return bind_repository_on_node(environment, node, volume_path)
+
+
+def prepare_shared_lane(environment: FastloopEnvironment) -> RepositoryBind | None:
+    if environment.memory_repo or environment.memory_branch:
+        if not environment.memory_repo or not environment.memory_branch:
+            raise ValueError("eval: remote memory requires both repository and branch")
+        _assert_native_shared_identity(environment)
+        return None
+    binding = ensure_repository_bind(environment)
+    assert_shared_lane(environment)
+    return binding
+
+
 def lane_git_command(environment: FastloopEnvironment, volume_path: str, accepted: Path, *git: str) -> tuple[str, ...]:
     """Command that reads a lane's mounted accepted repository outside the kind node.
 
@@ -217,8 +319,6 @@ def assert_lane_isolation(environments: list[FastloopEnvironment]) -> None:
 
 
 def assert_shared_lane(environment: FastloopEnvironment) -> None:
-    from benchmarks.sregym.adapter import RuntimeConfig, assert_shared_repository, native_install_config
-
     if not environment.shared_accepted_id or not environment.parallel_lane or environment.parallel_root is None:
         raise ValueError("eval: attach shared memory before running parallel lanes")
     if environment.workspace.resolve() != (environment.parallel_root / "accepted").resolve():
@@ -239,6 +339,12 @@ def assert_shared_lane(environment: FastloopEnvironment) -> None:
     ]
     if len(matching) != 1:
         raise ValueError("eval: repository PVC does not resolve to the host accepted Git directory")
+    _assert_native_shared_identity(environment)
+
+
+def _assert_native_shared_identity(environment: FastloopEnvironment) -> None:
+    from benchmarks.sregym.adapter import RuntimeConfig, assert_shared_repository, native_install_config
+
     config = RuntimeConfig(
         repository=environment.workspace,
         namespace=environment.namespace,
@@ -371,7 +477,7 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
     if not joining and not recovering:
         assert_lane_isolation(list(environments.values()))
         for environment in environments.values():
-            assert_shared_lane(environment)
+            prepare_shared_lane(environment)
         return
     phase = "preflight"
     cohort: Literal["late", "initial"] = "late" if live else "initial"
@@ -504,24 +610,11 @@ def attach_shared_memory(plan: ParallelPlan, report: Path) -> None:
         if cohort == "initial":
             for command in accepted_ownership_commands(NODE_ROOT + "/accepted", host_gid=os.getgid()):
                 _command("docker", "exec", attachments[0].node, *command)
-        for item in attachments:
-            # Bind mounts survive process death. Do not stack another bind on retry.
-            source_inode = _command("docker", "exec", item.node, "stat", "-c", "%d:%i", NODE_ROOT + "/accepted")
-            target_inode = _command(
-                "docker", "exec", item.node, "stat", "-c", "%d:%i", item.volume_path + "/application"
-            )
-            if source_inode and source_inode == target_inode:
-                continue
-            _command(
-                "docker",
-                "exec",
-                "--privileged",
-                item.node,
-                "mount",
-                "--bind",
-                NODE_ROOT + "/accepted",
-                item.volume_path + "/application",
-            )
+    # In-node binds survive a process crash but not a node/host restart. The
+    # journal's all-bound phase therefore never substitutes for live readback.
+    for item in attachments:
+        bind_repository_on_node(item.environment, item.node, item.volume_path)
+    if phases.index(phase) < phases.index("all-bound"):
         save("all-bound")
     names = {e.cluster: name for name, e in environments.items()}
     for item in attachments:

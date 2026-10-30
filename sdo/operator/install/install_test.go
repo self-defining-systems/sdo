@@ -718,3 +718,42 @@ func TestKubeconfigSeederUsesExplicitContextWithoutChangingProcessEnvironment(t 
 		t.Fatalf("process KUBECONFIG changed to %q", got)
 	}
 }
+
+// The export Pod is created ungated, so the fake marks it ready at creation.
+func readyExportPodOnCreate(client *fake.Clientset, namespace string) {
+	client.PrependReactor("create", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		pod := action.(ktesting.CreateAction).GetObject().(*corev1.Pod)
+		if action.GetNamespace() == namespace && pod.Name == RuntimeExportPodName {
+			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+		}
+		return false, nil, nil
+	})
+}
+
+func TestRuntimeExportPodCoexistsWithRepositorySync(t *testing.T) {
+	cfg := testConfig()
+	stale := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: RuntimeExportPodName, Namespace: cfg.ControlNamespace, UID: "crashed-delivery"}}
+	client := fake.NewSimpleClientset(stale)
+	readySyncPodOnActivation(client, cfg.ControlNamespace)
+	readyExportPodOnCreate(client, cfg.ControlNamespace)
+	installer := Installer{Client: client, PollInterval: time.Millisecond, SyncTimeout: time.Second}
+	sync := SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage}
+	synced := false
+	err := installer.WithRuntimeExportPod(context.Background(), sync, func(ctx context.Context, _ Config) error {
+		pod, err := client.CoreV1().Pods(cfg.ControlNamespace).Get(ctx, RuntimeExportPodName, metav1.GetOptions{})
+		if err != nil || pod.UID == stale.UID || pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != cfg.RepositoryPVC {
+			t.Fatalf("export callback did not receive a fresh repository PVC Pod: %v %#v", err, pod)
+		}
+		// The next row's accepted-memory synchronization must not wait for delivery.
+		return installer.WithSyncPod(ctx, sync, func(context.Context, Config) error { synced = true; return nil })
+	})
+	if err != nil || !synced {
+		t.Fatalf("repository sync blocked behind evidence delivery: synced=%v err=%v", synced, err)
+	}
+	if _, err := client.CoreV1().Pods(cfg.ControlNamespace).Get(context.Background(), RuntimeExportPodName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("export Pod survived delivery: %v", err)
+	}
+	if _, err := client.CoreV1().ConfigMaps(cfg.ControlNamespace).Get(context.Background(), OperateLockConfigMap, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("evidence delivery left the operate lock held: %v", err)
+	}
+}

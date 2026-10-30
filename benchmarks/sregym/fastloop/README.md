@@ -96,3 +96,38 @@ appended to `app_images.jsonl` next to `image_delivery.jsonl`, with its
 `source` (`local`, `registry` or `build`), `published`, `pull_seconds` and
 `seconds`. Node delivery is unchanged: kind nodes still receive app images
 through the host's image-delivery path above.
+
+### Opt-in persistent row preparation
+
+`run --warm-lane` tries to retain the application, controller and standby responder
+on a private non-toy SDO lane. It requires a recorded live controller, a live
+standby, known injection history without data effects, terminal prior reflection,
+and the installed cluster inventory. It pauses intake, synchronizes the accepted
+repository back to the host, reconciles changed application resources, and proves
+fresh baseline health against that exact revision. The usual injection admission
+still runs. Default runs retain the existing full-reset policy. Both run modes
+take the same host/lane lock, so a concurrent full-reset caller cannot invalidate
+a warm transaction. A competing caller stops before any lane mutation.
+
+An uncertain warm transaction falls back to the ordinary row-start reset; an open
+prior incident stops preparation without deleting its owner. Each attempt writes
+`results/<run-id>/warm-transaction.json` with phase timings and a typed fallback
+reason. `reused: false` describes reset selection, not successful admission. The
+warm option currently leaves evidence export synchronous and does not claim the
+30-second target; use measured row prelude and gate timings to assess it.
+
+Private warm reuse also requires a sealed passing no-fault setup receipt. The
+cluster configuration (including existing RBAC, webhooks, API registrations,
+storage classes, volumes and namespaces), plus retained nonsecret infrastructure
+objects in other namespaces, must match that receipt. Application and accepted
+memory changes are reconciled separately. Missing evidence takes full reset;
+preparation never seals a post-fault cluster as a new clean baseline.
+
+Shared-lane preflight verifies the accepted-repository bind on the PV's owning
+node before native identity inspection or revision adoption. A node restart can
+lose this in-node mount. `repair-repository-bind --run-dir <lane-run-dir>` invokes
+the same idempotent bind implementation as initial attachment and verifies its
+device/inode readback. It binds only the owning node, never stacks an unexpected
+mount, and never resets the accepted checkout. If an already-running controller
+does not see the repaired mount, native shared-identity inspection still refuses
+admission; controller recovery remains separate.

@@ -66,6 +66,7 @@ Before attributing throttled rows to SDO, read [provider capacity evidence](refe
 For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md) and [restartable lane/conversion receipts](references/fastloop-sequences.md).
 For injection identity, grade checkpoints and per-fault timings, read [fault tracking evidence](references/fault-tracking.md).
 For scripted repair gates, read [scripted rehearsal evidence](references/scripted-rehearsals.md).
+For persistent lane preparation and restart bind repair, read [warm-lane evidence](references/warm-lane.md).
 Before judging mixed-app slot validity or recovery, read [slot cleanup evidence](references/slot-cleanup.md).
 For fresh-memory installs and legacy onboarding references, read [fresh memory control state](references/fresh-memory.md).
 Before reconstructing a timeline, read [telemetry and trajectories](references/telemetry.md).
