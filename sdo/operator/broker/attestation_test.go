@@ -83,6 +83,12 @@ func TestReflectionAttestationBindsEveryInput(t *testing.T) {
 			if report, err := b.CheckReflection(ctx, "lane-a", d); err != nil || len(report.GetDiagnostics()) != 0 {
 				t.Fatalf("check: %v %v", report, err)
 			}
+			if report, err := b.CheckReflection(ctx, "lane-a", d); err != nil || len(report.GetDiagnostics()) != 0 {
+				t.Fatalf("repeated exact check: %v %v", report, err)
+			}
+			if calls != 1 {
+				t.Fatalf("exact inputs repeated validation: calls=%d", calls)
+			}
 			test.change(t, b, p, capture)
 			if _, err := b.PublishReflection(ctx, "lane-a", d); err != nil {
 				t.Fatal(err)
