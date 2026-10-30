@@ -157,7 +157,7 @@ func (l *ResponderLoop) ApplicationRepairReceipts(existing []RepairActionReceipt
 	seen := map[string]bool{}
 	for _, repair := range completed {
 		receipt := repair.Receipt
-		result = append(result, RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, ScriptDigest: receipt.ScriptDigest, FailureReason: receipt.FailureReason, Owners: append([]ResourceOwners(nil), receipt.Owners...)})
+		result = append(result, repairActionFromContinuation(receipt))
 		seen[receipt.ActionID] = true
 	}
 	for _, receipt := range existing {
@@ -167,4 +167,10 @@ func (l *ResponderLoop) ApplicationRepairReceipts(existing []RepairActionReceipt
 		}
 	}
 	return result
+}
+
+// repairActionFromContinuation is shared by normal and early closure so the
+// same persisted controller facts reach either outcome path.
+func repairActionFromContinuation(receipt continuationReceipt) RepairActionReceipt {
+	return RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, ScriptDigest: receipt.ScriptDigest, FailureReason: receipt.FailureReason, Owners: append([]ResourceOwners(nil), receipt.Owners...)}
 }

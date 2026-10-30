@@ -220,6 +220,19 @@ func (n NativeIncidentBroker) PrepareIncidentAt(ctx context.Context, incidentID,
 }
 
 func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure IncidentClosure) (ClosureReceipt, error) {
+	return n.processClosure(ctx, closure, nil)
+}
+
+// The command identity remains frozen. Current controller health is a separate
+// outcome fact: it may withdraw recovery before any outcome has been accepted.
+func (n NativeIncidentBroker) processUnverifiedClosure(ctx context.Context, closure IncidentClosure, observation closureHealthObservation) (ClosureReceipt, error) {
+	if !closure.Frozen || observation.At.IsZero() || observation.At.Before(closure.VerifiedAt) {
+		return ClosureReceipt{}, errors.New("unverified closure requires a fresh controller observation of a frozen command")
+	}
+	return n.processClosure(ctx, closure, &observation)
+}
+
+func (n NativeIncidentBroker) processClosure(ctx context.Context, closure IncidentClosure, observation *closureHealthObservation) (ClosureReceipt, error) {
 	if n.Repository == nil || n.Deriver == nil || n.ResponderBackend == "" || n.ResponderModel == "" {
 		return ClosureReceipt{}, errors.New("native broker requires repository, outcome deriver, and responder identity")
 	}
@@ -275,6 +288,20 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		if ledger.Receipt != nil {
 			receipt = *closureReceiptState(ledger.Receipt)
 			return nil
+		}
+
+		if observation != nil && ledger.OutcomeCommit == "" {
+			// Recover an accepted write before considering a new health fact.
+			// A lost ledger acknowledgement never rewrites a historical outcome.
+			if accepted, ok, err := n.Repository.AcceptedCommit(ctx, id, broker.OutcomePhase); err != nil {
+				return err
+			} else if ok {
+				ledger.OutcomeCommit = accepted.Commit
+			}
+			if ledger.OutcomeCommit == "" {
+				closure = observation.withoutRecovery(closure)
+				ledger.OutcomeDocument = nil
+			}
 		}
 
 		if ledger.ProposalCommit == "" {
