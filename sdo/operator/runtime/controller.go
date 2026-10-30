@@ -1634,6 +1634,15 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			closure.Result = &merged
 		}
 	}
+	if verified && loop != nil && closure.Result != nil && len(closure.Request.PriorStages) > 0 {
+		c.mu.Unlock()
+		if early {
+			*closure.Result, closure.Request.PriorStages = loop.settleRecoveryApplicationsLocked(ctx, *closure.Result, closure.Request.PriorStages)
+		} else {
+			*closure.Result, closure.Request.PriorStages = loop.SettleRecoveryApplications(ctx, *closure.Result, closure.Request.PriorStages)
+		}
+		c.mu.Lock()
+	}
 	if verified {
 		c.retainSourceInventoryAcceptancesLocked(c.currentIncidentResult)
 	}

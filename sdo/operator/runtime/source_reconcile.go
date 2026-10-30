@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -122,6 +123,18 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 				report.ObservationError = "accepted source unavailable for readback comparison"
 			} else {
 				report.ResidualPaths, report.AdditionsKnown = sourceResidualPaths(observed, source)
+				if len(report.ResidualPaths) > 0 {
+					if renderer, ok := e.Client.(interface {
+						SourceDefaults(context.Context, sdk.ObjectRef, *unstructured.Unstructured) (*unstructured.Unstructured, error)
+					}); ok {
+						defaults, defaultErr := renderer.SourceDefaults(readCtx, ref, source)
+						if defaultErr != nil {
+							report.ObservationError = "API source default rendering unavailable"
+						} else {
+							report.ResidualPaths = defaultNormalizedAdditions(report.ResidualPaths, observed, source, defaults)
+						}
+					}
+				}
 				if observer, ok := e.Rollouts.(interface {
 					SourceRolloutResiduals(context.Context, *unstructured.Unstructured) ([]string, error)
 				}); ok {

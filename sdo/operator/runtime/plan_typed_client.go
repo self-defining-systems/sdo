@@ -278,3 +278,19 @@ func (c TypedPlanClient) RecordAcceptance(ctx context.Context, ref sdk.ObjectRef
 	}
 	return resource.recordInstanceAcceptance(ctx, ref, record, live)
 }
+
+// SourceDefaults asks the API to default accepted source in isolation. Applying
+// over the live object would retain injected fields and cannot identify defaults.
+func (c TypedPlanClient) SourceDefaults(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if c.Client == nil || source == nil {
+		return nil, fmt.Errorf("Kubernetes client and accepted source are required for default rendering")
+	}
+	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
+		return nil, err
+	}
+	resource, err := resolveAcceptedResource(c.Client, ref)
+	if err != nil {
+		return nil, err
+	}
+	return resource.renderDefaults(ctx, ref, source)
+}

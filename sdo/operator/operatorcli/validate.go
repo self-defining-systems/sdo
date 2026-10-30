@@ -65,6 +65,7 @@ func RunValidateReport(ctx context.Context, config builder.Config, out io.Writer
 	var gaps []validate.Diagnostic
 	var timings []builder.StageTiming
 	diagnostics, err := validate.CompileCandidate(ctx, validate.Request{
+		AcceptanceOnly:        true,
 		MitigationReplayNotes: &notes, CoverageGaps: &gaps, StageTimings: &timings,
 		Replay: config.Replay, Root: config.ApplicationRoot, Layers: validate.Compile, OperatorRoot: config.OperatorRoot, HealthyBaseline: config.HealthyBaseline,
 	})

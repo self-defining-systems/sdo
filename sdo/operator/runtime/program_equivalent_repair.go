@@ -196,6 +196,9 @@ func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.Objec
 		if current == nil || !samePlanRef(current, preImage.Ref) {
 			return false
 		}
+		if !preImage.Absent && preImage.Object != nil && preImage.Object.GetUID() != "" && current.GetUID() != preImage.Object.GetUID() {
+			return false
+		}
 		owner := baseline
 		if len(owner.GetManagedFields()) == 0 {
 			owner = current

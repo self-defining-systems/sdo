@@ -10,6 +10,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
@@ -66,7 +67,17 @@ func bridgeFake(t *testing.T, client *fake.Clientset) acceptedSourceBridge {
 		if serveTestDiscovery(writer, request) {
 			return
 		}
-		gvr, namespace, name, ok := parseTestObjectPath(request.URL.Path)
+		path := request.URL.Path
+		var created *unstructured.Unstructured
+		if request.Method == http.MethodPost {
+			created = &unstructured.Unstructured{}
+			if err := json.NewDecoder(request.Body).Decode(&created.Object); err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			path += "/" + created.GetName()
+		}
+		gvr, namespace, name, ok := parseTestObjectPath(path)
 		if !ok {
 			writer.WriteHeader(http.StatusNotFound)
 			return
@@ -75,6 +86,8 @@ func bridgeFake(t *testing.T, client *fake.Clientset) acceptedSourceBridge {
 		switch request.Method {
 		case http.MethodGet:
 			action = ktesting.NewGetAction(gvr, namespace, name)
+		case http.MethodPost:
+			action = ktesting.NewCreateAction(gvr, namespace, created)
 		case http.MethodPatch:
 			body, _ := io.ReadAll(request.Body)
 			action = ktesting.NewPatchAction(gvr, namespace, name, types.ApplyPatchType, body)
