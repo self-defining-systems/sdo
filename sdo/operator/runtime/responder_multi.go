@@ -233,8 +233,18 @@ func (l *ResponderLoop) reservePending(application string, result PlanApplicatio
 		ref, _ := planActionRef(action)
 		unchanged := false
 		for _, patch := range result.Patches {
-			if patch.Ref == ref && patch.Before != nil && patch.After != nil {
-				unchanged = planValuesEqual(patch.Before.Object, patch.After.Object)
+			if patch.Ref == ref && patch.Operation == "" && patch.Before != nil && patch.After != nil {
+				// API bookkeeping can advance on an unchanged write. Use the
+				// same configuration boundary as the executor's readback.
+				unchanged = true
+				for _, field := range planPatchFields(patch) {
+					before, beforeOK := planConfigurationField(patch.Before, field)
+					after, afterOK := planConfigurationField(patch.After, field)
+					if beforeOK != afterOK || !planValuesEqual(before, after) {
+						unchanged = false
+						break
+					}
+				}
 				if !unchanged {
 					break
 				}

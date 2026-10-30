@@ -10,12 +10,32 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/workloadhealth"
 )
+
+// API bookkeeping advances even when a patch leaves configuration unchanged.
+type admissionReadbackClient struct{ TypedPlanClient }
+
+func (c admissionReadbackClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, data []byte) error {
+	if err := c.TypedPlanClient.Patch(ctx, ref, kind, data); err != nil {
+		return err
+	}
+	if ref.Kind == "ReplicaSet" {
+		set, err := c.Client.AppsV1().ReplicaSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		set.ResourceVersion += "-next"
+		_, err = c.Client.AppsV1().ReplicaSets(ref.Namespace).Update(ctx, set, metav1.UpdateOptions{})
+		return err
+	}
+	return nil
+}
 
 // Both repairs really write the retry annotation. Requeueing a controller is
 // not ownership of its desired state: the prerequisite repair must be able to
@@ -54,12 +74,12 @@ func TestAdmissionRecoveryCanRequeuePendingTemplateRepair(t *testing.T) {
 			if _, err := kube.AdmissionregistrationV1().ValidatingWebhookConfigurations().Update(ctx, config, metav1.UpdateOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			loop.Executor = PlanExecutor{Client: TypedPlanClient{Client: kube}, Rollouts: rollouts, Verifier: planFakeVerifier{true}, RolloutTimeout: time.Second}
+			loop.Executor = PlanExecutor{Client: admissionReadbackClient{TypedPlanClient{Client: kube}}, Rollouts: rollouts, Verifier: planFakeVerifier{true}, RolloutTimeout: time.Second}
 			deployment := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
 			retry := program.RetryAdmission{Ref: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: "app", Name: rs.Name}}
 			var initial program.Action = retry
 			if scope == "unchanged-object" {
-				initial = program.PatchObject{Ref: retry.Ref, Type: "json", Patch: json.RawMessage(`[{"op":"replace","path":"/metadata/annotations/unchanged","value":"yes"}]`), Reason: "already restored"}
+				initial = program.SetField{Ref: retry.Ref, Path: "spec.template.spec.containers[0].image", Value: testPlanValue("good:v1"), Reason: "already restored"}
 			}
 			loop.plans["template"] = selectedPlan{plan: program.Plan{Actions: []program.Action{program.PatchObject{Ref: deployment, Type: "json", Patch: json.RawMessage(`[{"op":"replace","path":"/spec/template/spec/containers/0/image","value":"good:v1"}]`), Reason: "restore template"}, initial}}}
 			loop.plans["prerequisite"] = selectedPlan{plan: program.Plan{Actions: []program.Action{program.SyncWebhookCA{Target: program.WebhookCA{Ref: sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: config.Name}, Webhook: "validate.example.test", SecretNamespace: "app", SecretName: "serving", SecretKey: "ca.crt"}, Reason: "restore admission"}, retry}}}
