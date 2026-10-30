@@ -72,12 +72,18 @@ class AttachmentCluster:
             elif "chown" in args:
                 self.stop("ownership")
             elif "stat" in args:
+                if args[-1].endswith("/accepted/.git"):
+                    return str((self.accepted / ".git").stat().st_ino)
                 node = args[2]
                 return "1:2" if args[-1].endswith("/accepted") or node in self.mounts else "3:4"
             return ""
 
         def json_(environment, *args, **kwargs):
             control = environment.namespace + "-sdo"
+            if args[:2] == ("get", "pvc"):
+                return shared_memory.parallel_volume_objects(environment, environment.cluster)[2]
+            if args[:2] == ("get", "pv"):
+                return shared_memory.parallel_volume_objects(environment, environment.cluster)[1]
             if args[:2] == ("get", "pods"):
                 return {
                     "items": (
@@ -276,3 +282,14 @@ def test_initial_attach_resumes_midway_through_ownership_setup(monkeypatch, tmp_
     shared_memory.attach_shared_memory(cluster.plan, cluster.report)
     assert json.loads(cluster.report.read_text())["phase"] == "attached"
     assert sorted(cluster.creates) == ["app-a-sdo", "app-b-sdo"]
+
+
+def test_all_bound_journal_rechecks_mounts_after_node_restart(monkeypatch, tmp_path):
+    cluster = AttachmentCluster(monkeypatch, tmp_path, cut="phase:all-bound")
+    with pytest.raises(Interrupted):
+        shared_memory.attach_shared_memory(cluster.plan, cluster.report)
+    assert json.loads(cluster.report.read_text())["phase"] == "all-bound"
+    cluster.mounts.clear()  # host/node restart loses only the in-node mounts
+    shared_memory.attach_shared_memory(cluster.plan, cluster.report)
+    assert cluster.mounts == set(cluster.lanes)
+    assert json.loads(cluster.report.read_text())["phase"] == "attached"

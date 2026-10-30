@@ -295,7 +295,18 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
             if proof.CLUSTER_RESOURCES in command:
                 objects = [node]
             else:
-                objects = [service] if command[command.index("-n") + 1] == "app" else [state, controller]
+                assert "--all-namespaces" in command
+                objects = [
+                    service,
+                    state,
+                    controller,
+                    {
+                        "apiVersion": "v1",
+                        "kind": "ConfigMap",
+                        "metadata": {"namespace": "kube-system", "name": "coredns", "uid": "dns-uid"},
+                        "data": {"Corefile": "synthetic routing"},
+                    },
+                ]
             stdout = json.dumps({"items": objects})
         return SimpleNamespace(stdout=stdout)
 
@@ -322,8 +333,9 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
     assert measured.installed_memory_commit == "b" * 40
     assert len(measured.images) == 3
     assert "app/Service/web" in measured.live_objects
+    assert "kube-system/ConfigMap/coredns" in measured.live_objects
     assert all(0 < kwargs["timeout"] <= 15 for _, kwargs in calls)
-    assert sum(command[0] == "kubectl" for command, _ in calls) == 4
+    assert sum(command[0] == "kubectl" for command, _ in calls) == 3
     assert measured.tools["lane-configuration"]
     environment.worker_env["SREGYM_PREINSTALL"] = "true"
     changed = proof.collect_fingerprint(environment, run=run)

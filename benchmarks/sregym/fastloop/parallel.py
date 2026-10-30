@@ -75,7 +75,7 @@ def preflight_lane(name: str, run_dir: Path, plan: ParallelPlan) -> None:
     from benchmarks.sregym.adapter import assert_lane_resources
     from benchmarks.sregym.fastloop.cli import check_host_capacity
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
-    from benchmarks.sregym.fastloop.shared_memory import assert_lane_isolation, assert_shared_lane
+    from benchmarks.sregym.fastloop.shared_memory import assert_lane_isolation, prepare_shared_lane
     from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
 
     environment = FastloopEnvironment.load(run_dir.resolve())
@@ -87,7 +87,7 @@ def preflight_lane(name: str, run_dir: Path, plan: ParallelPlan) -> None:
     if environment.parallel_lane != name:
         raise ValueError(f"eval: lane identity differs for {name}")
     assert_harness_sources(environment.sregym_dir)
-    assert_shared_lane(environment)
+    prepare_shared_lane(environment)
 
 
 def lane_process_environment(environment: FastloopEnvironment, lanes: int) -> dict[str, str]:

@@ -149,6 +149,62 @@ func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, actio
 	return action(ctx, cfg)
 }
 
+// WithRuntimeExportPod gives a transport callback access to sealed runtime
+// evidence on the repository PVC. It takes no operate lock: the callback may
+// read and retire only immutable snapshot archives, never the live checkout.
+func (i Installer) WithRuntimeExportPod(ctx context.Context, syncConfig SyncConfig, action func(context.Context, Config) error) (resultErr error) {
+	if i.Client == nil || action == nil {
+		return errors.New("Kubernetes client and export Pod action are required")
+	}
+	if !namespaceName.MatchString(syncConfig.ControlNamespace) || !namespaceName.MatchString(syncConfig.RepositoryPVC) || strings.TrimSpace(syncConfig.ControllerImage) == "" {
+		return errors.New("runtime evidence export requires control namespace, PVC, and controller image")
+	}
+	cfg := Config{Namespace: syncConfig.ControlNamespace, ControlNamespace: syncConfig.ControlNamespace, RepositoryPVC: syncConfig.RepositoryPVC, ControllerImage: syncConfig.ControllerImage}
+	pods := i.Client.CoreV1().Pods(cfg.controlNamespace())
+	// A crashed earlier delivery may leave its Pod; one lane delivers serially.
+	if err := i.deletePod(ctx, cfg.controlNamespace(), RuntimeExportPodName); err != nil {
+		return err
+	}
+	if _, err := pods.Create(ctx, runtimeExportPod(cfg), metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("start runtime export Pod: %w", err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		resultErr = errors.Join(resultErr, i.deletePod(cleanup, cfg.controlNamespace(), RuntimeExportPodName))
+	}()
+	if err := i.waitPodReady(ctx, cfg.controlNamespace(), RuntimeExportPodName); err != nil {
+		return err
+	}
+	return action(ctx, cfg)
+}
+
+func (i Installer) deletePod(ctx context.Context, namespace, name string) error {
+	pods := i.Client.CoreV1().Pods(namespace)
+	pod, err := pods.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := pods.Delete(ctx, name, syncPodDeleteOptions(pod.ObjectMeta)); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	for {
+		remaining, err := pods.Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) || err == nil && remaining.UID != pod.UID {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := i.pause(ctx); err != nil {
+			return fmt.Errorf("wait for %s retirement: %w", name, err)
+		}
+	}
+}
+
 // InstallPrepared starts the controller from a clean accepted checkout already
 // on the host-prepared shared PVC. It needs only namespaced runtime privileges.
 func (i Installer) InstallPrepared(ctx context.Context, cfg Config, acceptedRoot string) (Result, error) {
@@ -411,6 +467,10 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 }
 
 func (i Installer) waitSync(ctx context.Context, namespace string) error {
+	return i.waitPodReady(ctx, namespace, RepositorySyncPodName)
+}
+
+func (i Installer) waitPodReady(ctx context.Context, namespace, name string) error {
 	timeout := i.SyncTimeout
 	if timeout <= 0 {
 		timeout = 180 * time.Second
@@ -418,7 +478,7 @@ func (i Installer) waitSync(ctx context.Context, namespace string) error {
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for {
-		pod, err := i.Client.CoreV1().Pods(namespace).Get(waitCtx, RepositorySyncPodName, metav1.GetOptions{})
+		pod, err := i.Client.CoreV1().Pods(namespace).Get(waitCtx, name, metav1.GetOptions{})
 		if err == nil {
 			for _, condition := range pod.Status.Conditions {
 				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
@@ -426,13 +486,13 @@ func (i Installer) waitSync(ctx context.Context, namespace string) error {
 				}
 			}
 			if pod.Status.Phase == corev1.PodFailed {
-				return errors.New("repository sync Pod failed")
+				return fmt.Errorf("%s Pod failed", name)
 			}
 		} else if !apierrors.IsNotFound(err) {
 			return err
 		}
 		if err := i.pause(waitCtx); err != nil {
-			return fmt.Errorf("repository sync Pod did not become ready: %w", err)
+			return fmt.Errorf("%s Pod did not become ready: %w", name, err)
 		}
 	}
 }
