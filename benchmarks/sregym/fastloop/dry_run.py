@@ -321,7 +321,8 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(Wait
         report.save(report_path)
 
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-    environment.apply_operator_env(os.environ)
+    if environment.dev_mount is not None:
+        environment.apply_operator_env(os.environ)
     try:
         initial, report.setup_proof = check_reuse(environment)
         report.save(report_path)

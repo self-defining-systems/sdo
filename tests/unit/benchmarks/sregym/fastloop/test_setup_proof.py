@@ -158,12 +158,7 @@ def test_dry_run_reuse_does_not_reset_or_redeploy_and_refreshes_health(tmp_path,
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
     environment = SimpleNamespace(
-        run_dir=tmp_path,
-        cluster="fixture",
-        namespace="app",
-        kubeconfig=tmp_path / "kube",
-        dev_mount=None,
-        apply_operator_env=lambda environ: None,
+        run_dir=tmp_path, cluster="fixture", namespace="app", kubeconfig=tmp_path / "kube", dev_mount=None
     )
     report = dry_run.DryRunReport("fixture", code_revision=fingerprint.code_revision)
     report.passed = True
@@ -212,12 +207,7 @@ def test_dry_run_reuse_rejects_drift_during_live_checks(tmp_path, fingerprint, m
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
     environment = SimpleNamespace(
-        run_dir=tmp_path,
-        cluster="fixture",
-        namespace="app",
-        kubeconfig=tmp_path / "kube",
-        dev_mount=None,
-        apply_operator_env=lambda environ: None,
+        run_dir=tmp_path, cluster="fixture", namespace="app", kubeconfig=tmp_path / "kube", dev_mount=None
     )
     report = dry_run.DryRunReport("fixture", code_revision=fingerprint.code_revision)
     report.passed = True
