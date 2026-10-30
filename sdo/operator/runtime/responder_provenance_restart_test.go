@@ -24,6 +24,7 @@ func TestSavedProgramOwnershipSurvivesResponderRestart(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			ctx := context.Background()
 			loop, _ := trustedPortLoop(t, false, false, true)
+			loop.Executor.Verifier = PlanHealthVerifier{Detectors: loop.Detectors, Provider: loop.Provider}
 			loop.MenuConfig = productionResponderMenu()
 			var saved []byte
 			loop.saveToolState = func(_ context.Context, data []byte) error { saved = append([]byte(nil), data...); return nil }
@@ -80,6 +81,7 @@ func TestSavedProgramOwnershipSurvivesResponderRestart(t *testing.T) {
 			// another accepted program through the responder menu. Both owners
 			// must survive, even though the first is no longer a live handle.
 			if path == "apply" {
+				fresh.Executor.Verifier = PlanHealthVerifier{Detectors: fresh.Detectors, Provider: fresh.Provider}
 				fresh.MenuConfig = productionResponderMenu()
 				menu := fresh.Handle(ctx, ToolRequest{Command: "menu", ProgramID: "service-targetport-mismatch", Parameters: map[string]string{"service": "Service/app/api"}})
 				if menu.Error != "" || len(menu.Menu.GetOptions()) == 0 {
@@ -211,6 +213,7 @@ func TestPendingApplicationOwnershipSurvivesCheckpoint(t *testing.T) {
 func TestRecoveredProgramOwnersReachEarlyClosure(t *testing.T) {
 	ctx := context.Background()
 	loop, client := trustedPortLoop(t, false, false, true)
+	loop.Executor.Verifier = PlanHealthVerifier{Detectors: loop.Detectors, Provider: loop.Provider}
 	service, err := client.CoreV1().Services("app").Get(ctx, "api", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
