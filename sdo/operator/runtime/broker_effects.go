@@ -209,7 +209,11 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		case closureRecheckConfirmed:
 			if len(effect.Closure.FinalDetectorStates) > 0 && effect.Closure.ClosureStabilityWindow > 0 {
 				c.mu.Lock()
-				stable := c.recoveryProofForEpochLocked(c.clock(), recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow))
+				clear := c.recoveryTrackersClear(effect.Closure.Request)
+				stable := clear && c.recoveryProofForEpochLocked(c.clock(), recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow))
+				if !clear {
+					c.closureStableSince = time.Time{}
+				}
 				c.mu.Unlock()
 				if !stable {
 					cancel()
@@ -219,17 +223,21 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 					return c.PersistState(ctx)
 				}
 			}
-			c.mu.Lock()
-			response := ToolResponse{Command: "verify", Healthy: true, Summary: "controller independently verified healthy", DetectorStates: cloneEvaluations(recheck.States)}
-			c.cachedIncidentID = effect.Closure.Request.IncidentID
-			c.cacheVerificationLocked(response)
-			c.mu.Unlock()
+			if len(effect.Closure.FinalDetectorStates) > 0 {
+				c.mu.Lock()
+				response := ToolResponse{Command: "verify", Healthy: true, Summary: "controller independently verified healthy", DetectorStates: cloneEvaluations(recheck.States)}
+				c.cachedIncidentID = effect.Closure.Request.IncidentID
+				c.cacheVerificationLocked(response)
+				c.mu.Unlock()
+			}
 			recoveryStates = recheck.States
 			c.clearClosureRecheckWait()
 		case closureRecheckRecovering:
 			// A live SLO is evidence to observe, not a broker rejection. The
 			// same proof owner now requires a new continuous clear window.
-			c.resetEarlyStability()
+			c.mu.Lock()
+			c.closureStableSince = time.Time{}
+			c.mu.Unlock()
 			cancel()
 			if !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) && effect.Freeze {
 				return c.resumeClosureVerification(ctx, effect)

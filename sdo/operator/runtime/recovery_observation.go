@@ -35,13 +35,39 @@ func (c *Controller) recoveryDetectorIDs(request IncidentRequest) []string {
 	return slices.Compact(ids)
 }
 
+// Clearing persistence belongs to the same health authority at publication
+// and broker handoff. It overlaps the raw clear streak; it never starts a
+// second stability clock. Caller holds c.mu.
+func (c *Controller) recoveryTrackersClear(request IncidentRequest) bool {
+	if len(c.healthDetectorIDs) == 0 {
+		var findings []sdk.Finding
+		for _, finding := range request.Findings {
+			if !strings.HasPrefix(finding.DetectorID, "drift.") {
+				findings = append(findings, finding)
+			}
+		}
+		return !c.tracker.HasActiveKeys(findingKeys(findings))
+	}
+	for _, id := range c.healthDetectorIDs {
+		if c.tracker.HasActiveDetector(id) {
+			return false
+		}
+	}
+	return true
+}
+
 // readRecoveryDetector is shared by the proof producer and closure consumer.
 // A successful transport read alone cannot turn incomplete observations green.
 func readRecoveryDetector(ctx context.Context, detector sdk.Detector, snapshot sdk.DetectionContext) ([]sdk.Finding, DetectorEvaluationStatus, error) {
 	findings, err := sdk.DetectObserved(ctx, detector, snapshot)
+	return validateDetectorObservation(detector, snapshot, findings, err)
+}
+
+func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionContext, findings []sdk.Finding, err error) ([]sdk.Finding, DetectorEvaluationStatus, error) {
 	if err != nil {
 		return nil, DetectorEvaluationError, err
 	}
+	findings = append([]sdk.Finding(nil), findings...)
 	status := DetectorEvaluationClear
 	for i := range findings {
 		f := &findings[i]

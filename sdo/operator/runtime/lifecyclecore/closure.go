@@ -168,9 +168,10 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 			return next, nil
 		}
 		if proof := event.Closure; proof != nil && proof.GetRequest().GetIncidentId() == pending.GetRequest().GetIncidentId() {
-			pending.FinalDetectorStates = proto.Clone(proof).(*contracts.IncidentClosure).FinalDetectorStates
-			pending.VerifiedAt = proof.GetVerifiedAt()
-			pending.HealthClearedAt = proof.GetHealthClearedAt()
+			copy := proto.Clone(proof).(*contracts.IncidentClosure)
+			pending.FinalDetectorStates = copy.FinalDetectorStates
+			pending.VerifiedAt = copy.VerifiedAt
+			pending.HealthClearedAt = copy.HealthClearedAt
 		}
 		pending.SourceCheckNotes = append(pending.SourceCheckNotes, event.SourceCheckNotes...)
 		pending.Frozen = true

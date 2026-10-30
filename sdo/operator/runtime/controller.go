@@ -517,14 +517,14 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		if !cached {
 			result.findings, result.err = sdk.DetectObserved(ctx, detector, snapshot)
 		}
-		findings, detectErr := result.findings, result.err
+		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err)
 		if detectErr != nil {
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)
 			errored = true
 			continue
 		}
-		if len(findings) == 0 && !detectorConfirmed(detector, snapshot) {
+		if status == DetectorEvaluationPending {
 			c.resetGate(spec.ID)
 			c.history = append(c.history, DetectorEvaluation{DetectorID: spec.ID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationPending, Reason: detectorConfirmationReason(detector, snapshot)})
 			if len(c.history) > 100 {
@@ -533,28 +533,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.trackClearStreak(spec.ID, now, false)
 			continue
 		}
-		validFindings := make([]sdk.Finding, 0, len(findings))
-		valid := true
-		for _, finding := range findings {
-			if finding.DetectorID == "" {
-				finding.DetectorID = spec.ID
-			}
-			if len(finding.Playbooks) == 0 && len(spec.Playbooks) > 0 {
-				finding.Playbooks = append([]string(nil), spec.Playbooks...)
-			}
-			finding.Fingerprint = FindingFingerprint(finding)
-			if validationErr := core.ValidateFinding(spec, finding); validationErr != nil {
-				c.resetGate(spec.ID)
-				c.recordDetectorError(spec.ID, now, validationErr)
-				valid = false
-				errored = true
-				break
-			}
-			validFindings = append(validFindings, finding)
-		}
-		if !valid {
-			continue
-		}
+		validFindings := findings
 		if setupHealthy && learnedIncidentDetector(spec) && c.disableSetupDetector(spec, validFindings, now, onboardingCandidate) {
 			continue
 		}
@@ -1459,7 +1438,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			verification.Summary = "awaiting controller recovery stability proof"
 		}
 		c.cacheVerificationLocked(verification)
-		if !verified {
+		if !verified && (early || now.Before(c.verificationDeadlineLocked())) {
 			c.mu.Unlock()
 			return
 		}
@@ -1747,23 +1726,13 @@ func logIncidentVerified(incidentID string, healthClearedAt *time.Time, responde
 // holds the closure for pending rollouts found by verifyClosureSource; drift is
 // reported there but never decides.
 func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
-	ids := c.recoveryDetectorIDs(*c.currentIncidentRequest)
-	if len(c.healthDetectorIDs) == 0 {
-		var health []sdk.Finding
-		for _, finding := range c.currentIncidentRequest.Findings {
-			if !strings.HasPrefix(finding.DetectorID, "drift.") {
-				health = append(health, finding)
-			}
-		}
-		if c.tracker.HasActiveKeys(findingKeys(health)) {
-			return nil, false
-		}
-	} else {
-		for _, id := range ids {
-			if c.tracker.HasActiveDetector(id) {
-				return nil, false
-			}
-		}
+	request := IncidentRequest{}
+	if c.currentIncidentRequest != nil {
+		request = *c.currentIncidentRequest
+	}
+	ids := c.recoveryDetectorIDs(request)
+	if !c.recoveryTrackersClear(request) {
+		return nil, false
 	}
 	return c.latestEvaluations(ids, c.recoveryObservationEpochLocked(), true)
 }
