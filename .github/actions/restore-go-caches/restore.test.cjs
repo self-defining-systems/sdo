@@ -28,3 +28,13 @@ test('waits for the other restore before reporting an archive failure', async ()
   finish('race-hit');
   await assert.rejects(result, /Go cache restore failed/);
 });
+
+test('required same-run archives reject misses and fallback hits without rebuilding', async () => {
+  for (const restored of [undefined, 'older-run']) {
+    await assert.rejects(restoreAll([{path: 'race', key: 'this-run', required: true}], async (paths, key, keys) => {
+      assert.deepEqual(keys, []);
+      return restored;
+    }), error => error.errors[0].message.includes('Required prepared Go cache missing: this-run'));
+  }
+  assert.deepEqual(await restoreAll([{path: 'race', key: 'this-run', required: true}], async () => 'this-run'), ['this-run']);
+});

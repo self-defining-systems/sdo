@@ -18,7 +18,7 @@ def test_every_python_shard_requires_the_current_runs_tools_before_tests() -> No
     producer = next(
         step for step in jobs["prepare-go"]["steps"] if step.get("name") == "Publish prepared Python Go tools"
     )
-    assert producer["if"] == "matrix.mode == 'normal'"
+    assert "if" not in producer
     assert producer["with"]["if-no-files-found"] == "error"
     steps = jobs["python"]["steps"]
     download = next(step for step in steps if step.get("name") == "Download prepared Python Go tools")
