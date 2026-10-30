@@ -189,6 +189,9 @@ func TestExhaustiveReflectionLifecycle(t *testing.T) {
 			if after.ReflectionPhase == contracts.ReflectionPhase_REFLECTION_PHASE_RESET && len(after.ReflectionRejections) == 0 {
 				t.Fatal("checkout reset without a durable typed rejection")
 			}
+			if after.GetReflectionPhase() == contracts.ReflectionPhase_REFLECTION_PHASE_DONE && after.ReflectionRejected && (after.GetReflectionDecision().GetLearningDecision() != "failed" || after.GetReflectionDecision().GetError() == "") {
+				t.Fatal("terminal rejection lost its failed decision")
+			}
 			if len(after.ReflectionRejections) > 3 {
 				t.Fatal("correction budget exceeded")
 			}

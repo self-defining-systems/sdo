@@ -150,6 +150,9 @@ func TestNativeBrokerRecordsTerminalRejectionAfterRetryBound(t *testing.T) {
 	if !ledger.ReflectionRejected || !ledger.ReflectionProcessed || len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries {
 		t.Fatalf("terminal state not recorded: %+v", ledger)
 	}
+	if ledger.GetReflectionDecision().GetLearningDecision() != "failed" || ledger.GetReflectionDecision().GetError() == "" {
+		t.Fatalf("completed rejected reflection lacks terminal failure evidence: %v", ledger)
+	}
 	for _, rejection := range ledger.ReflectionRejections {
 		if len(rejection.GetDiagnostics()) == 0 {
 			t.Fatalf("rejection without diagnostics: %+v", rejection)
