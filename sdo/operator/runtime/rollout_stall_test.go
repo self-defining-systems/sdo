@@ -67,8 +67,8 @@ func TestSourceRolloutStallHandsOffNamingTheBlocker(t *testing.T) {
 				t.Fatalf("written object lost its readback: %+v", report)
 			}
 			if mode == "old-pod-terminating" {
-				var partial *SourceReconcilePartialError
-				if !errors.As(err, &partial) || result.RolloutPending != nil || elapsed < bound-500*time.Millisecond {
+				var pending *RolloutPendingError
+				if !errors.As(err, &pending) || result.RolloutPending == nil || elapsed < bound-500*time.Millisecond {
 					t.Fatalf("draining rollout was not given its bounded wait: elapsed=%s err=%v", elapsed, err)
 				}
 				return
@@ -176,8 +176,8 @@ func TestSourceReadbackBudgetIsPerObject(t *testing.T) {
 					t.Fatalf("slow readback was not the only pending observation: %v", err)
 				}
 			} else {
-				var partial *SourceReconcilePartialError
-				if !errors.As(err, &partial) || len(partial.Results) != 1 || result.RolloutPending != nil || result.VerificationPassed {
+				var pending *RolloutPendingError
+				if !errors.As(err, &pending) || len(pending.Pending.GetBlockers()) != 1 || result.RolloutPending == nil || result.VerificationPassed {
 					t.Fatalf("slow object was not the only residual: %v", err)
 				}
 			}

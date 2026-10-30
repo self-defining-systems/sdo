@@ -93,9 +93,9 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		result, err := dispatcher.Dispatch(ctx, request)
 		return result, nil, err
 	}
-	// A durable agent handoff transfers ownership for the rest of this incident.
-	// Transport rejoin and controller continuations must collect that worker's
-	// result, never reclassify its repairs as an automatic-only completion.
+	// Prepared requests re-enter dispatch, where actual execution ownership
+	// forces rejoin. Unclaimed requests still pass the shared recovery decision
+	// immediately before their first worker publication.
 	if request.PreparedAgentTask != "" && len(request.PriorStages) > 0 {
 		c.mu.Lock()
 		c.responseStagesRunning = false

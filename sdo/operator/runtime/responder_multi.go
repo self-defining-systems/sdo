@@ -403,6 +403,15 @@ func (l *ResponderLoop) releaseStalledPending(ctx context.Context, application s
 	const reason = "rollout_stalled"
 	if result, ok := l.applications[application]; ok {
 		_ = l.Executor.reportSourceResiduals(ctx, l.Request, &result)
+		// This owner has exhausted the reservation's convergence bound. Source
+		// rollout residuals remain pending during observation, but must retain
+		// their failure evidence when the writes are released to the responder.
+		for i := range result.ActionReports {
+			if report := result.ActionReports[i].SourceReconcile; report != nil && len(report.ResidualPaths) > 0 {
+				result.ActionReports[i].Status = "partial"
+				result.ActionReports[i].FailureReason = "source_residual"
+			}
+		}
 		result.RolloutPending = nil
 		l.applications[application] = result
 		for i := range l.applicationsLog {
