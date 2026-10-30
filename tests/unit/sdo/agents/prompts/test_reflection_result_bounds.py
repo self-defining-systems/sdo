@@ -14,13 +14,15 @@ from tests.context_helpers import expand_context
 from tests.unit.sdo.agents.prompts.cases import ReflectionCapture, live_shaped_reflection
 
 
+@pytest.mark.parametrize("guidance", ["go", "shell"])
 @pytest.mark.parametrize("mode", ["resume", "fresh"])
 @pytest.mark.parametrize("retry", [False, True])
 @pytest.mark.parametrize("detail_field", ["application_error", "action_details", "verification_details"])
 def test_reflection_variants_render_unbounded_producer_details(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, retry: bool, detail_field: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, guidance: str, mode: str, retry: bool, detail_field: str
 ) -> None:
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    monkeypatch.setenv("SDO_AGENT_GUIDANCE", guidance)
     live = live_shaped_reflection()
     result = IncidentResult(
         schema_version="sdo.dev/v1alpha1",
