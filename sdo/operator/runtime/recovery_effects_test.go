@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -16,10 +17,15 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-func recoveryEffectFixture(t *testing.T) (*ResponderLoop, *IncidentState, sdktest.Snapshot, sdk.Finding) {
+func recoveryEffectFixture(t *testing.T, pending ...bool) (*ResponderLoop, *IncidentState, sdktest.Snapshot, sdk.Finding) {
 	t.Helper()
 	loop, state := pipelineTestLoop(t, false)
-	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}
+	if len(pending) > 0 && pending[0] {
+		loop.Executor.Rollouts = &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
+		stage.ObservationCeiling = time.Nanosecond
+	}
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := loop.Provider.Snapshot(context.Background())
@@ -112,33 +118,50 @@ func TestRecoveryEffectsRequireCompleteOwnedRepairAndDisappearance(t *testing.T)
 }
 
 type recoveryEffectProvider struct {
-	snapshot sdktest.Snapshot
-	samples  int
+	snapshot       sdktest.Snapshot
+	samples        int
+	disappearAfter int
 }
 
 func (p *recoveryEffectProvider) Snapshot(context.Context) (sdk.DetectionContext, error) {
 	p.samples++
 	s := p.snapshot
-	if p.samples > 2 {
+	after := p.disappearAfter
+	if after == 0 {
+		after = 2
+	}
+	if p.samples > after {
 		s.PodList = s.PodList[:len(s.PodList)-1]
 	}
 	return s, nil
 }
 
 func TestRecoveryEffectsStageWaitConsumesLiveDisappearance(t *testing.T) {
-	loop, state, snapshot, f := recoveryEffectFixture(t)
-	p := &recoveryEffectProvider{snapshot: snapshot}
-	loop.Provider = p
-	loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
-		return &sdktest.ReplayReadView{Snapshot: s.(sdktest.Snapshot)}
-	}
-	state.Findings = []sdk.Finding{f}
-	stage := &DeterministicResponseStage{ObservationCeiling: 100 * time.Millisecond, ObservationInterval: time.Millisecond}
-	if err := stage.awaitApplications(context.Background(), loop, state, state.PriorStages[0], &responseStageProgress{}, func(bool) error { return nil }); err != nil {
-		t.Fatal(err)
-	}
-	if len(state.Findings) != 0 || p.samples < 3 {
-		t.Fatalf("own old Pod forced responder: findings=%v samples=%d", state.Findings, p.samples)
+	for _, pending := range []bool{false, true} {
+		for _, current := range []bool{false, true} {
+			t.Run(fmt.Sprintf("pending=%v/current=%v", pending, current), func(t *testing.T) {
+				loop, state, snapshot, f := recoveryEffectFixture(t, pending)
+				if current {
+					snapshot.ReplicaSetList[len(snapshot.ReplicaSetList)-1].Spec.Template = *snapshot.DeploymentList[0].Spec.Template.DeepCopy()
+				}
+				loop.Executor.Rollouts = observedDeploymentRollout{client: loop.Executor.Client.(TypedPlanClient).Client}
+				p := &recoveryEffectProvider{snapshot: snapshot, disappearAfter: 4}
+				loop.Provider = p
+				loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
+					return &sdktest.ReplayReadView{Snapshot: s.(sdktest.Snapshot)}
+				}
+				state.Findings = []sdk.Finding{f}
+				now := time.Now()
+				start := now
+				stage := &DeterministicResponseStage{ObservationCeiling: 90 * time.Second, ObservationInterval: 3500 * time.Millisecond, recoveryNow: func() time.Time { return now }, recoveryWait: func(_ context.Context, d time.Duration) error { now = now.Add(d); return nil }}
+				if err := stage.awaitApplications(context.Background(), loop, state, state.PriorStages[0], &responseStageProgress{}, func(bool) error { return nil }); err != nil {
+					t.Fatal(err)
+				}
+				if len(state.Findings) != 0 || p.samples < 3 || now.Sub(start) != 7*time.Second {
+					t.Fatalf("own draining Pod forced responder: findings=%v samples=%d wait=%s", state.Findings, p.samples, now.Sub(start))
+				}
+			})
+		}
 	}
 }
 
@@ -264,5 +287,32 @@ func TestRecoveryEffectsAlreadyDisappearedBeforeStageWait(t *testing.T) {
 	}
 	if len(state.Findings) != 0 {
 		t.Fatal("already observed disappearance forced model handoff")
+	}
+}
+
+// Real completed and pending write receipts both authorize observation of their
+// draining children. Current-template scale-down is as asynchronous as rollout.
+func TestStageLifecycleEffectsFromRealWrite(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		for _, current := range []bool{false, true} {
+			t.Run(fmt.Sprintf("pending=%v/current=%v", pending, current), func(t *testing.T) {
+				loop, _, snapshot, f := recoveryEffectFixture(t, pending)
+				if current {
+					snapshot.ReplicaSetList[len(snapshot.ReplicaSetList)-1].Spec.Template = *snapshot.DeploymentList[0].Spec.Template.DeepCopy()
+				}
+				effects := stageLifecycleEffects(snapshot, loop.applicationsLog, []sdk.Finding{f})
+				if len(effects) != 1 || len(effects.observe(snapshot, []sdk.Finding{f})) != 1 {
+					t.Fatalf("own draining child not held: %v", effects)
+				}
+				snapshot.PodList = snapshot.PodList[:len(snapshot.PodList)-1]
+				if len(effects.observe(snapshot, []sdk.Finding{f})) != 0 {
+					t.Fatal("disappearance did not clear")
+				}
+				snapshot.DeploymentList[0].UID = "replacement"
+				if len(stageLifecycleEffects(snapshot, loop.applicationsLog, []sdk.Finding{f})) != 0 {
+					t.Fatal("replacement borrowed waiting authority")
+				}
+			})
+		}
 	}
 }

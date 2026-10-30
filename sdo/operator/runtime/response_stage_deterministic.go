@@ -891,7 +891,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return nil
 		}
 		state.Findings = retireDisappearedRecoveryEffects(view, state.Findings)
-		for fp, effect := range repairedLifecycleEffects(view, loop.applicationEvidenceLocked(), state.Findings) {
+		for fp, effect := range stageLifecycleEffects(view, loop.applicationEvidenceLocked(), state.Findings) {
 			effects[fp] = effect
 		}
 		state.Findings = effects.observe(view, state.Findings)
@@ -991,7 +991,12 @@ func stageFindingDependsOnWrite(view sdk.DetectionContext, detector sdk.Detector
 		_, windowedRole := detector.(sdk.WindowedDetector)
 		endpointRole := finding.RuleID == servicehealth.RuleNoReadyEndpoints || finding.RuleID == servicehealth.RuleServicePortUnreachable
 		if !trafficRole && !windowedRole && !endpointRole {
-			return false
+			// Authored rule names carry no role. Accepted Service configuration
+			// with missing backends can still demonstrate availability dependence.
+			diff, err := view.DiffAgainstSource(finding.PrimaryResource)
+			if err != nil || diff.Changed || diff.SourceAbsent || view.ReadyEndpointCountForService(finding.PrimaryResource.Namespace, finding.PrimaryResource.Name) != 0 {
+				return false
+			}
 		}
 	}
 	return coverageFindingRelated(view, finding, program.Bindings{Objects: map[string]sdk.ObjectRef{"write": ref}})

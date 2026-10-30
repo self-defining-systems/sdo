@@ -58,10 +58,10 @@ func TestSourceConvergenceBeforeTerminalReceipt(t *testing.T) {
 				executor := PlanExecutor{Values: program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "command", ValueKind: program.StringValue, Default: "/bin/true"}}}}, Client: convergenceExecClient{client}, Source: convergenceTestSource{planFakeSource{source: addedFieldsSource()}}, Rollouts: rollout, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: 350 * time.Millisecond}
 				started := time.Now()
 				result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: actions}, false)
-				var partial *SourceReconcilePartialError
+				var pending *RolloutPendingError
 				if persistent {
 					// Waiting keeps at most a quarter of the bound for the final readbacks.
-					if elapsed := time.Since(started); !errors.As(err, &partial) || result.VerificationPassed || elapsed < executor.RolloutTimeout*3/4 || elapsed > executor.RolloutTimeout+100*time.Millisecond {
+					if elapsed := time.Since(started); !errors.As(err, &pending) || result.RolloutPending == nil || result.VerificationPassed || elapsed < executor.RolloutTimeout*3/4 || elapsed > executor.RolloutTimeout+100*time.Millisecond {
 						t.Fatalf("residual did not wait for bound: result=%+v observations=%d err=%v", result, rollout.observations, err)
 					}
 				} else if err != nil || !result.VerificationPassed || !result.ActionReports[0].SourceReconcile.Converged {
