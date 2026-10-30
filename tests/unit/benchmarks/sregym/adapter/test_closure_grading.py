@@ -456,3 +456,79 @@ def test_recovery_ends_a_follow_up_wait_on_a_controller_that_stopped_evaluating(
     with pytest.raises(ControllerStalledError, match="dispatch_state=DISPATCH_STATE_COMPLETED"):
         pause_for_recovery(FrozenOps(logs={"hotel-sdo": []}), "hotel-sdo", incident_id="incident-1", clock=clock)
     assert elapsed[0] <= wait_for(WaitKind.SLOW_COMMAND) + wait_for(WaitKind.MINUTE)
+
+
+@pytest.mark.parametrize("queued", [False, True])
+def test_recovery_open_followup_gets_its_full_closure_budget(queued: bool) -> None:
+    from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+    from benchmarks.sregym.adapter.persistent import pause_for_recovery
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+
+    elapsed, clock = _fake_clock()
+    reflection_cap = wait_for(WaitKind.REFLECTION_ATTEMPT) + CLOSEOUT_MARGIN
+    closure_bound = 2 * reflection_cap
+
+    class Ops(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            if elapsed[0] <= reflection_cap:
+                return {
+                    "last_acknowledged_incident_id": "incident-1",
+                    "incident_request": {"incident_id": "incident-2"},
+                    "busy_until": _busy_until(closure_bound),
+                    "queued_reflection_incident_ids": ["incident-1"] if queued else [],
+                }
+            return {"last_acknowledged_incident_id": "incident-2"}
+
+    ops = Ops(logs={"hotel-sdo": []})
+    result = pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1", clock=clock)
+    assert result is not None
+    assert result.closed
+    assert "incident-2" in result.followup_incident_ids
+    assert result.bound_seconds == closure_bound + CLOSEOUT_MARGIN
+    assert elapsed[0] > reflection_cap
+    assert ops.events == [("paused", "hotel-sdo")]
+
+
+def test_recovery_waits_for_followup_admitted_during_pause_ack() -> None:
+    from benchmarks.sregym.adapter.persistent import pause_for_recovery
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+
+    elapsed, clock = _fake_clock()
+
+    class Ops(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            if self.events and elapsed[0] < 3:
+                return {
+                    "last_acknowledged_incident_id": "incident-1",
+                    "incident_request": {"incident_id": "incident-raced"},
+                    "busy_until": _busy_until(FOLLOWUP_BUSY_SECONDS),
+                }
+            return {"last_acknowledged_incident_id": "incident-1"}
+
+    ops = Ops(logs={"hotel-sdo": []})
+    result = pause_for_recovery(ops, "hotel-sdo", incident_id="incident-1", clock=clock)
+    assert result is not None
+    assert result.closed
+    assert result.followup_incident_ids == ("incident-raced",)
+    assert elapsed[0] == 3
+    assert len(ops.events) == 1
+
+
+def test_open_incident_fence_cannot_be_renewed_by_sliding_controller_deadline() -> None:
+    from benchmarks.sregym.adapter.persistent import FollowupClosureTimeout, pause_for_recovery
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+
+    elapsed, clock = _fake_clock()
+
+    class Ops(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            return {
+                "last_acknowledged_incident_id": "incident-1",
+                "incident_request": {"incident_id": "incident-2"},
+                "busy_until": _busy_until(elapsed[0] + FOLLOWUP_BUSY_SECONDS),
+            }
+
+    with pytest.raises(FollowupClosureTimeout) as caught:
+        pause_for_recovery(Ops(), "hotel-sdo", incident_id="incident-1", clock=clock)
+    assert caught.value.wait.bound_seconds == FOLLOWUP_BUSY_SECONDS + CLOSEOUT_MARGIN
+    assert elapsed[0] == caught.value.wait.bound_seconds

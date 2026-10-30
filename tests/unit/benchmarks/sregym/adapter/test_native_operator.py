@@ -338,3 +338,52 @@ def test_adapter_agent_efforts_match_the_production_provider() -> None:
 
     assert native_operator.AGENT_EFFORTS == provider.AGENT_EFFORTS
     assert native_operator.DEFAULT_AGENT_EFFORT == provider.DEFAULT_AGENT_EFFORT
+
+
+@pytest.mark.parametrize("failure", ["not_ready", "exec_failed", "timeout", "mismatch"])
+def test_shared_identity_distinguishes_transport_readiness_and_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from benchmarks.sregym.adapter import native_operator as native
+
+    config = replace(_install(tmp_path), shared_accepted_id="a" * 32)
+    identity = config.repository / ".git" / "sdo-shared-id"
+    identity.parent.mkdir(parents=True)
+    identity.write_text(config.shared_accepted_id)
+    monkeypatch.setattr(native, "refresh_memory_mirror", lambda *_: None)
+    monkeypatch.setattr(
+        native,
+        "_kubectl_json",
+        lambda *_: {
+            "items": [
+                {
+                    "metadata": {"name": "controller-pod"},
+                    "status": {
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "False" if failure == "not_ready" else "True"}],
+                    },
+                }
+            ]
+        },
+    )
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(args, 30)
+        return subprocess.CompletedProcess(args, 1 if failure == "exec_failed" else 0, "b" * 32, "SENSITIVE_CANARY")
+
+    monkeypatch.setattr(native.subprocess, "run", run)
+    expected = {
+        "not_ready": "SharedRepositoryControllerNotReady",
+        "exec_failed": "SharedRepositoryExecFailed",
+        "timeout": "SharedRepositoryExecFailed",
+        "mismatch": "SharedRepositoryIdentityMismatch",
+    }
+    with pytest.raises(NativeOperatorError) as caught:
+        native.assert_shared_repository(config)
+    assert type(caught.value).__name__ == expected[failure]
+    assert "hotel-sdo" in str(caught.value)
+    assert "CANARY" not in str(caught.value)
+    assert bool(calls) is (failure != "not_ready")

@@ -1220,18 +1220,18 @@ def pause_for_recovery(
     clock = clock or Clock()
     closed: set[str] = set()
 
-    def require_closed() -> None:
+    def require_closed(*, allow_followup: bool = False) -> None:
         if closure_open:
             return
         snapshot = ops.runtime_state(control)
-        if not snapshot or incident_work_open(snapshot):
-            raise PersistentControllerError("eval: recovery requires a closed incident and available controller state")
         closed.update(terminal_incident_ids(snapshot))
+        if not snapshot or (incident_work_open(snapshot) and (not allow_followup or incident_id not in closed)):
+            raise PersistentControllerError("eval: recovery requires a closed incident and available controller state")
         if incident_id is not None and incident_id not in closed:
             raise PersistentControllerError(f"eval: recovery incident {incident_id!r} is not durably closed")
 
     wait = _wait_for_followup_closure(ops, control, incident_id, closed, clock)
-    require_closed()
+    require_closed(allow_followup=incident_id is not None)
     generation = f"benchmark-recovery-{uuid.uuid4().hex}-paused"
     ops.set_maintenance(control, paused=True, generation=generation)
     wait_for_maintenance_ack(ops, control, generation, clock)
@@ -1240,9 +1240,20 @@ def pause_for_recovery(
         for row in _log_records(ops.controller_logs(control))
     ):
         raise PersistentControllerError("eval: recovery requires an acknowledged paused intake")
-    # Admission may have raced the pause request; no recovery write is safe until
-    # the acknowledged pause is followed by a fresh, idle controller snapshot.
+    # Admission may have raced the pause request. Acknowledged maintenance blocks
+    # further intake, but existing incident work must finish within its own budget.
+    raced_wait = _wait_for_followup_closure(ops, control, incident_id, closed, clock)
     require_closed()
+    if raced_wait is not None:
+        if wait is None:
+            return raced_wait
+        return FollowupClosureWait(
+            wait.graded_incident_id,
+            tuple(dict.fromkeys((*wait.followup_incident_ids, *raced_wait.followup_incident_ids))),
+            wait.waited_seconds + raced_wait.waited_seconds,
+            wait.waited_seconds + raced_wait.bound_seconds,
+            True,
+        )
     return wait
 
 
@@ -1255,8 +1266,8 @@ def _wait_for_followup_closure(
 ) -> FollowupClosureWait | None:
     """Wait while the graded incident is closed and a later incident or a queued reflection is still open.
 
-    The bound is the controller's ``busy_until`` plus one closeout margin; it grows only when the controller
-    raises it, so a queue that drains never shortens a wait already in progress.
+    An open incident uses the controller's full ``busy_until`` plus one closeout margin,
+    frozen on first observation. Reflection-only work retains the per-attempt queue cap.
     """
 
     if incident_id is None:
@@ -1265,6 +1276,7 @@ def _wait_for_followup_closure(
     followups: list[str] = []
     busy = BusyDeadline(wait_for(WaitKind.CLOSEOUT_SETTLE))
     progress = ProgressWatch(wait_for(WaitKind.SLOW_COMMAND))
+    incident_bound: float | None = None
     while True:
         snapshot = ops.runtime_state(control)
         if not snapshot or not busy.observe(snapshot, clock.monotonic(), clock.now()):
@@ -1277,14 +1289,28 @@ def _wait_for_followup_closure(
         closed.update(terminal_incident_ids(snapshot))
         queued = queued_reflection_ids(snapshot)
         # A reflection queued behind a closure is SDO work even when it belongs to the graded incident.
-        names = queued or [_open_incident_id(snapshot)]
+        open_id = _open_incident_id(snapshot)
+        has_open_incident = open_id != "unidentified" and open_id not in closed
+        if not queued and open_id == "unidentified":
+            break
+        names = list(queued)
+        if has_open_incident or not names:
+            names.append(open_id)
+        if has_open_incident and incident_bound is None:
+            # Freeze the controller's full incident/closure budget at the fence. An open
+            # response is not merely a queued reflection. Subsequent polls cannot renew it.
+            incident_bound = clock.monotonic() - started + busy.seconds_left(clock.monotonic())
         if incident_id not in closed or (not queued and names == [incident_id]):
             break
         followups.extend(name for name in names if name not in followups)
         waited = clock.monotonic() - started
-        # The controller's busy_until is a generous backstop (hours); the cap is the work it names: one
-        # reflection attempt per incident or queued reflection, from the one deadline owner.
-        cap = wait_for(WaitKind.REFLECTION_ATTEMPT, len(followups)) + wait_for(WaitKind.CLOSEOUT_SETTLE)
+        # A queued reflection gets its attempt budget. An incident already open at the
+        # fence gets the controller's own full closure budget, frozen on first observation.
+        cap = (
+            incident_bound
+            if incident_bound is not None
+            else (wait_for(WaitKind.REFLECTION_ATTEMPT, len(followups)) + wait_for(WaitKind.CLOSEOUT_SETTLE))
+        )
         if busy.expired(clock.monotonic()) or waited >= cap:
             bound = min(waited + busy.seconds_left(clock.monotonic()), cap)
             raise FollowupClosureTimeout(
@@ -1297,7 +1323,13 @@ def _wait_for_followup_closure(
     waited = clock.monotonic() - started
     logger.info("recovery waited %.1fs for follow-up incident(s) %s to close", waited, ", ".join(followups))
     return FollowupClosureWait(
-        incident_id, tuple(followups), waited, waited + busy.seconds_left(clock.monotonic()), True
+        incident_id,
+        tuple(followups),
+        waited,
+        min(waited + busy.seconds_left(clock.monotonic()), incident_bound)
+        if incident_bound is not None
+        else waited + busy.seconds_left(clock.monotonic()),
+        True,
     )
 
 

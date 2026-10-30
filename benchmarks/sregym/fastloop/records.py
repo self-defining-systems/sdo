@@ -22,6 +22,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field
 from benchmarks.sregym.faults.description import CapabilityMode, FaultCapability  # noqa: TC001
 from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 - Pydantic resolves this at runtime.
 from benchmarks.sregym.protocol.provider_capacity import AccountEvent, ProviderWaitInterval, wait_seconds_between
+from benchmarks.sregym.protocol.recovery import RecoveryFailureReason  # noqa: TC001 - Pydantic runtime annotation
 from libs.agent_cli.provider_capacity import OpusPoolAllocation  # noqa: TC001 - Pydantic resolves this at runtime.
 
 if TYPE_CHECKING:
@@ -217,6 +218,7 @@ class IncidentRecord(_PersistedModel):
     #: Run-configured pool allocation; capacity is this host's share in per_host mode.
     opus_pool: OpusPoolAllocation | None = None
     recovery_error: str | None = None
+    recovery_failures: list[RecoveryFailureReason] = Field(default_factory=list)
     injection_evidence: dict[str, Any] = Field(default_factory=dict)
     fault_components: list[FaultComponent] = Field(default_factory=list)
     capability_mode: CapabilityMode | None = None

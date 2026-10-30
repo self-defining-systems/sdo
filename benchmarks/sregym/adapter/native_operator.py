@@ -42,6 +42,18 @@ class NativeOperatorError(RuntimeError):
     """The native Go operation failed or returned an invalid receipt."""
 
 
+class SharedRepositoryControllerNotReady(NativeOperatorError):
+    """Repository identity cannot be checked until the controller is Ready."""
+
+
+class SharedRepositoryExecFailed(NativeOperatorError):
+    """The controller identity read failed; it does not establish an ID mismatch."""
+
+
+class SharedRepositoryIdentityMismatch(NativeOperatorError):
+    """A successful identity read disagrees with the configured shared repository."""
+
+
 @dataclass(frozen=True)
 class NativeInstallConfig:
     repository: Path
@@ -361,11 +373,22 @@ def assert_shared_repository(config: NativeInstallConfig) -> None:
     refresh_memory_mirror(config.repository)
     identity = config.repository / ".git" / "sdo-shared-id"
     if not config.shared_accepted_id or identity.read_text().strip() != config.shared_accepted_id:
-        raise NativeOperatorError("shared accepted repository host identity differs")
+        raise SharedRepositoryIdentityMismatch(
+            f"shared accepted repository host identity differs: repository={config.repository}, "
+            f"control_namespace={config.control_namespace}; verify the host shared-ID file"
+        )
     pods = _kubectl_json(config, "get", "pods", "--selector", "job-name=sdo-controller-run").get("items", [])
     active = [pod for pod in pods if pod.get("status", {}).get("phase") == "Running"]
-    if len(active) != 1:
-        raise NativeOperatorError("shared identity requires one running controller")
+    context = f"control_namespace={config.control_namespace}"
+    if len(active) != 1 or not any(
+        condition.get("type") == "Ready" and condition.get("status") == "True"
+        for condition in active[0].get("status", {}).get("conditions", [])
+    ):
+        raise SharedRepositoryControllerNotReady(
+            f"shared identity requires one Ready controller: {context}, running_pods={len(active)}; "
+            "inspect controller Pod readiness and container runtime before retrying"
+        )
+    context += f", pod={active[0]['metadata']['name']}"
     args = ["kubectl"]
     if config.kubeconfig:
         args.extend(["--kubeconfig", str(config.kubeconfig)])
@@ -380,9 +403,22 @@ def assert_shared_repository(config: NativeInstallConfig) -> None:
             "/workspace/application/.git/sdo-shared-id",
         ]
     )
-    observed = subprocess.run(args, text=True, capture_output=True, check=False, timeout=wait_for(WaitKind.COMMAND))
-    if observed.returncode or observed.stdout.strip() != config.shared_accepted_id:
-        raise NativeOperatorError("controller shared accepted repository identity differs")
+    try:
+        observed = subprocess.run(args, text=True, capture_output=True, check=False, timeout=wait_for(WaitKind.COMMAND))
+    except (subprocess.TimeoutExpired, OSError) as error:
+        raise SharedRepositoryExecFailed(
+            f"controller shared identity exec failed: {context}, failure={type(error).__name__}; "
+            "inspect Pod exec connectivity and container runtime"
+        ) from None
+    if observed.returncode:
+        raise SharedRepositoryExecFailed(
+            f"controller shared identity exec failed: {context}, exit_code={observed.returncode}; "
+            "inspect Pod exec connectivity and container runtime"
+        )
+    if observed.stdout.strip() != config.shared_accepted_id:
+        raise SharedRepositoryIdentityMismatch(
+            f"controller shared accepted repository identity differs: {context}; verify the shared repository mount"
+        )
 
 
 def set_maintenance(
