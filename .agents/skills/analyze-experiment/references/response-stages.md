@@ -132,3 +132,8 @@ prevents attribution; incomplete recorded history is neutral. Known automatic
 writes within their own original interval are not a later responder correction.
 A returned result omitting applications cannot erase complete controller-owned
 checkpoint facts. Missing checkpoint facts still grant no positive credit.
+The storage edge distinguishes positive API receipts from complete recovery
+history: an unpaired, partial or unresolved relevant mutation prevents credit.
+A recorded corrective child write also follows its controller-owner lineage;
+a Pod receipt ending at a ReplicaSet cannot evade a Deployment's attribution
+check. These are neutral attribution gaps, not program execution failures.

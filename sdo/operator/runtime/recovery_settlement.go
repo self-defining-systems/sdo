@@ -77,7 +77,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				// Execution errors are history, not a transient observation. Only pending
 				// rollout/readback or measured source residuals can be superseded by proof.
 				pendingWrite, wasPending := l.pendingWrites[id]
-				if pendingWrite.Superseded || !historyComplete || l.recoverySuperseded(*app, result, applications, observedWrites, stage.Stage == "deterministic") || !recoveryObservationOnly(*app) {
+				if pendingWrite.Superseded || !historyComplete || l.recoverySuperseded(ctx, *app, result, applications, observedWrites, stage.Stage == "deterministic") || !recoveryObservationOnly(*app) {
 					continue
 				}
 				if attempt.ProgramRevision == "" || attempt.ProgramRevision != l.programRevision(attempt.PlaybookId) {
@@ -287,7 +287,7 @@ func recoveryObservationOnly(app RecordedPlanApplication) bool {
 
 // Reject overlapping later corrective effects, not independent causes or
 // diagnostic helper writes. Unknown ordering is deliberately not positive proof.
-func (l *ResponderLoop) recoverySuperseded(app RecordedPlanApplication, result IncidentResult, applications []RecordedPlanApplication, observedWrites []RepairActionReceipt, automatic bool) bool {
+func (l *ResponderLoop) recoverySuperseded(ctx context.Context, app RecordedPlanApplication, result IncidentResult, applications []RecordedPlanApplication, observedWrites []RepairActionReceipt, automatic bool) bool {
 	if app.StartedAt.IsZero() || app.CompletedAt.IsZero() || len(result.RepairChanges) > 0 {
 		return true
 	}
@@ -313,6 +313,44 @@ func (l *ResponderLoop) recoverySuperseded(app RecordedPlanApplication, result I
 		refs := append([]sdk.ObjectRef(nil), other.Resources...)
 		for _, ownership := range other.Owners {
 			refs = append(refs, ownership.OwnerChain...)
+		}
+		// Receipt owner chains may stop at a ReplicaSet. Complete that known
+		// controller lineage from captured preimages or fresh namespace reads.
+		for index := 0; index < len(refs) && index < 32; index++ {
+			ref := refs[index]
+			if ref.Namespace != l.Request.Namespace || (ref.Kind != "Pod" && ref.Kind != "ReplicaSet" && ref.Kind != "Job") {
+				continue
+			}
+			var object *unstructured.Unstructured
+			for _, candidate := range history {
+				for _, image := range candidate.Result.PreImages {
+					if sameResource(image.Ref, ref) && image.Object != nil {
+						object = image.Object
+						break
+					}
+				}
+				for _, effect := range candidate.Result.ObjectEffects {
+					if sameResource(effect.Ref, ref) && effect.DeletedPreImage != nil {
+						object = effect.DeletedPreImage
+						break
+					}
+				}
+			}
+			if object == nil {
+				object, _ = l.Executor.Client.Get(ctx, ref)
+			}
+			if object == nil {
+				continue
+			}
+			for _, owner := range object.GetOwnerReferences() {
+				if owner.Controller == nil || !*owner.Controller || owner.Kind == "Secret" {
+					continue
+				}
+				parent := sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: ref.Namespace, Name: owner.Name}
+				if !slices.Contains(refs, parent) {
+					refs = append(refs, parent)
+				}
+			}
 		}
 		for _, receipt := range own {
 			for _, target := range receipt.Resources {
@@ -486,7 +524,7 @@ func (l *ResponderLoop) recoveryAPIWrites(ctx context.Context, result IncidentRe
 	if len(resources) == 0 {
 		return nil, true
 	}
-	observed, err := memory.IncidentAPIRepairReceipts(l.RecoverySessionRoot, l.Request.IncidentID, resources, since, time.Now())
+	observed, err := memory.IncidentAPIRecoveryReceipts(l.RecoverySessionRoot, l.Request.IncidentID, resources, since, time.Now())
 	if err != nil {
 		slog.WarnContext(ctx, "application_recovery_history_unavailable", "incident_id", l.Request.IncidentID, "error", err)
 		return nil, false

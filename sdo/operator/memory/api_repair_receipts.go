@@ -22,17 +22,29 @@ import (
 // A hard-stopped writer may leave Open=true; durable complete request pairs
 // remain facts, while dropped/stale generations never grant receipt authority.
 func IncidentAPIRepairReceipts(root, incident string, resources []*contracts.ObjectRef, since, until time.Time) ([]*contracts.RepairActionReceipt, error) {
-	sub, err := PrepareIncidentSession(root, "", incident)
+	history, err := incidentAPIRepairHistory(root, incident, since, until)
 	if err != nil {
 		return nil, err
+	}
+	return apiRepairReceipts(history, incident, resources, since, until)
+}
+
+func incidentAPIRepairHistory(root, incident string, since, until time.Time) (apihistory.History, error) {
+	sub, err := PrepareIncidentSession(root, "", incident)
+	if err != nil {
+		return apihistory.History{}, err
 	}
 	history, err := apihistory.Read(filepath.Join(root, sub, "api-history"))
 	if err != nil {
-		return nil, err
+		return apihistory.History{}, err
 	}
 	if history.Manifest.Incident != incident || history.Manifest.Dropped != 0 || uint64(len(history.Events)) != history.Manifest.Events || since.IsZero() || until.Before(since) {
-		return nil, fmt.Errorf("API repair receipt evidence is incomplete, stale or outside the incident")
+		return apihistory.History{}, fmt.Errorf("API repair receipt evidence is incomplete, stale or outside the incident")
 	}
+	return history, nil
+}
+
+func apiRepairReceipts(history apihistory.History, incident string, resources []*contracts.ObjectRef, since, until time.Time) ([]*contracts.RepairActionReceipt, error) {
 	starts := map[string]apihistory.Event{}
 	ends := map[string]apihistory.Event{}
 	duplicates := map[string]bool{}
@@ -134,4 +146,74 @@ func IncidentAPIRepairReceipts(root, incident string, resources []*contracts.Obj
 		return a.Before(b)
 	})
 	return result, nil
+}
+
+// IncidentAPIRecoveryReceipts additionally proves that relevant mutation
+// observations are paired and conclusive. Positive repair receipts alone never
+// prove absence of an intervening write. Open read streams need not finish.
+func IncidentAPIRecoveryReceipts(root, incident string, resources []*contracts.ObjectRef, since, until time.Time) ([]*contracts.RepairActionReceipt, error) {
+	history, err := incidentAPIRepairHistory(root, incident, since, until)
+	if err != nil {
+		return nil, err
+	}
+	starts, ends := map[string]apihistory.Event{}, map[string]apihistory.Event{}
+	counts := map[string]int{}
+	for _, event := range history.Events {
+		if event.Phase == "start" {
+			starts[event.RequestID] = event
+		}
+		if event.Phase == "end" {
+			ends[event.RequestID] = event
+		}
+		counts[event.RequestID]++
+	}
+	relevant := func(event apihistory.Event) bool {
+		if event.DryRun || event.Started.After(until) {
+			return false
+		}
+		if !event.Finished.IsZero() && event.Finished.Before(since) {
+			return false
+		}
+		if event.Verb != "patch" && event.Verb != "put" && event.Verb != "post" && event.Verb != "delete" && event.Subresource != "exec" && event.Subresource != "attach" {
+			return false
+		}
+		name := event.Name
+		if name == "" && event.Verb == "post" {
+			end := ends[event.RequestID]
+			var object struct {
+				Metadata struct {
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+				} `json:"metadata"`
+			}
+			if end.BodyFormat == "projected_json" && json.Unmarshal(history.Body(end), &object) == nil && object.Metadata.Namespace == event.Namespace {
+				name = object.Metadata.Name
+			}
+		}
+		for _, ref := range resources {
+			if ref == nil || ref.GetKind() == "Secret" {
+				continue
+			}
+			gv, err := schema.ParseGroupVersion(ref.GetApiVersion())
+			if err != nil {
+				continue
+			}
+			gvr, _ := meta.UnsafeGuessKindToResource(gv.WithKind(ref.GetKind()))
+			if event.Group == gvr.Group && event.Version == gvr.Version && event.Resource == gvr.Resource && event.Namespace == ref.GetNamespace() && (name == "" || name == ref.GetName()) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, event := range history.Events {
+		if !relevant(event) {
+			continue
+		}
+		start, hasStart := starts[event.RequestID]
+		end, hasEnd := ends[event.RequestID]
+		if !hasStart || !hasEnd || counts[event.RequestID] != 2 || event.RequestID == "" || start.Sequence >= end.Sequence || start.Epoch != end.Epoch || !start.Started.Equal(end.Started) || start.Verb != end.Verb || start.Group != end.Group || start.Version != end.Version || start.Resource != end.Resource || start.Namespace != end.Namespace || start.Name != end.Name || start.Subresource != end.Subresource || start.DryRun != end.DryRun || start.Partial || end.Partial || end.Finished.Before(start.Started) || end.Finished.After(until) || end.Status < 200 || end.Status >= 500 || end.Subresource == "exec" || end.Subresource == "attach" {
+			return nil, fmt.Errorf("API recovery history has an unresolved mutation on %s/%s", event.Resource, event.Name)
+		}
+	}
+	return apiRepairReceipts(history, incident, resources, since, until)
 }

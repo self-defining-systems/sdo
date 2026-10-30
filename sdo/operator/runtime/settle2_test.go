@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -228,7 +229,7 @@ func TestSettlementProducerConsumerSweep(t *testing.T) {
 }
 
 func TestSettlementAdverseEvidenceSweep(t *testing.T) {
-	for _, scenario := range []string{"unknown", "truncated", "partial", "rollback", "same-resource", "independent-resource", "inside-apply", "timed-out", "missing-result"} {
+	for _, scenario := range []string{"unknown", "truncated", "partial", "rollback", "same-resource", "independent-resource", "inside-apply", "timed-out", "missing-result", "owned-child"} {
 		t.Run(scenario, func(t *testing.T) {
 			loop, state := pipelineTestLoop(t, false)
 			loop.Executor.Rollouts = &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
@@ -265,6 +266,14 @@ func TestSettlementAdverseEvidenceSweep(t *testing.T) {
 			case "rollback":
 				app.RolledBack = true
 				app.Result.RolledBack = true
+			case "owned-child":
+				yes := true
+				rs := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "synthetic-child-set", Namespace: "app", UID: "synthetic-child-set", OwnerReferences: []metav1.OwnerReference{{APIVersion: ref.APIVersion, Kind: ref.Kind, Name: ref.Name, UID: "synthetic-deployment", Controller: &yes}}}}
+				if _, err := loop.Executor.Client.(TypedPlanClient).Client.AppsV1().ReplicaSets("app").Create(context.Background(), rs, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+				pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "synthetic-child"}
+				before.RepairActions = append(before.RepairActions, RepairActionReceipt{ActionID: "synthetic-child-correction", Kind: "recorded-action", Resources: []sdk.ObjectRef{pod}, Owners: []ResourceOwners{{Resource: pod, OwnerChain: []sdk.ObjectRef{{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: "app", Name: rs.Name}}}}, StartedAt: app.CompletedAt.Add(time.Second), CompletedAt: app.CompletedAt.Add(2 * time.Second), Success: true})
 			case "same-resource", "independent-resource":
 				if scenario == "independent-resource" {
 					ref = sdk.ObjectRef{Kind: "ConfigMap", Namespace: "app", Name: "peer"}
@@ -724,7 +733,7 @@ func TestSettlementAgentApplicationsShareTheRecoveryOwner(t *testing.T) {
 }
 
 func TestSettlementObservesRecordedAPIWritesBeforeDerivation(t *testing.T) {
-	for _, kind := range []string{"watching", "own-write", "later-write", "incomplete"} {
+	for _, kind := range []string{"watching", "own-write", "later-write", "incomplete", "unpaired", "partial"} {
 		t.Run(kind, func(t *testing.T) {
 			loop, state := pipelineTestLoop(t, false)
 			loop.Executor.Rollouts = &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
@@ -755,7 +764,7 @@ func TestSettlementObservesRecordedAPIWritesBeforeDerivation(t *testing.T) {
 					started = app.StartedAt.Add(time.Nanosecond)
 					finished = app.CompletedAt.Add(-time.Nanosecond)
 				}
-				if kind == "later-write" {
+				if kind == "later-write" || kind == "unpaired" || kind == "partial" {
 					verb = "patch"
 				}
 				event := apihistory.Event{RequestID: "synthetic-api", Phase: "start", Started: started, Verb: verb, Group: "apps", Version: "v1", Resource: "deployments", Namespace: "app", Name: "api"}
@@ -763,7 +772,10 @@ func TestSettlementObservesRecordedAPIWritesBeforeDerivation(t *testing.T) {
 				event.Phase = "end"
 				event.Finished = finished
 				event.Status = 200
-				store.Record(event, nil)
+				event.Partial = kind == "partial"
+				if kind != "unpaired" {
+					store.Record(event, nil)
+				}
 				store.Close()
 			}
 			loop.RecoverySessionRoot = root
