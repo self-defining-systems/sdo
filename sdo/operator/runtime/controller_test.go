@@ -788,7 +788,9 @@ func awaitRequest(t *testing.T, requests <-chan IncidentRequest) IncidentRequest
 
 func awaitDispatchCompletionQueued(t *testing.T, controller *Controller) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	// Completion includes real repository/API work and race instrumentation.
+	// This is a failure ceiling, not the controller's injected recovery clock.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if len(controller.results) > 0 {
 			return

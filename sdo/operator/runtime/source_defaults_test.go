@@ -145,8 +145,9 @@ func (p settlementSnapshot) Snapshot(ctx context.Context) (sdk.DetectionContext,
 // check. The diagnosis clears in both cases; source residuals must still decide
 // whether there is new work, independently of global health success.
 func TestSourceDefaultStageProducerReachesNoveltyConsumer(t *testing.T) {
-	for _, real := range []bool{false, true} {
-		t.Run(map[bool]string{false: "default-only", true: "real-residual"}[real], func(t *testing.T) {
+	for _, scenario := range []string{"default-only", "real-residual", "delayed-residual"} {
+		t.Run(scenario, func(t *testing.T) {
+			real := scenario != "default-only"
 			loop, state := pipelineTestLoop(t, false)
 			source, err := loop.Executor.Source.AcceptedManifest(context.Background(), state.Request.SourceCommit, sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"})
 			if err != nil {
@@ -185,6 +186,10 @@ func TestSourceDefaultStageProducerReachesNoveltyConsumer(t *testing.T) {
 			if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
 				t.Fatal(err)
 			}
+			if scenario == "delayed-residual" {
+				real = false
+				syntheticContainerDefaults(workload.objects[ref])
+			}
 			result, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
 			if err != nil {
 				t.Fatal(err)
@@ -193,7 +198,7 @@ func TestSourceDefaultStageProducerReachesNoveltyConsumer(t *testing.T) {
 			closure := IncidentClosure{Request: state.Request, Result: &result, VerifiedAt: time.Now(), FinalDetectorStates: []DetectorEvaluation{{DetectorID: loop.Detectors[0].Spec().ID, Status: DetectorEvaluationClear, EvaluatedAt: time.Now()}}, Frozen: true}
 			closure.Request.PriorStages = stages
 			if calls := settlementBrokerWorkers(t, loop, closure); (calls > 0) != real {
-				t.Fatalf("reflection workers=%d real residual=%v", calls, real)
+				t.Fatalf("reflection workers=%d real residual=%v applications=%+v stages=%v", calls, real, result.PlanApplications, stages)
 			}
 		})
 	}

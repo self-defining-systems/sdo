@@ -16,7 +16,7 @@ func coveredRepeatCandidate(outcome *contracts.OutcomeRecord) bool {
 	}
 	applied := map[string][]*contracts.PlanApplication{}
 	for _, app := range outcome.GetPlanApplications() {
-		if !app.GetApplied() || app.GetDryRun() || app.GetRolledBack() || app.GetError() != "" || app.GetRollbackError() != "" || app.GetRolloutPending() != nil || !app.GetVerificationCompleted() || !app.GetVerificationPassed() || app.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH {
+		if app.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED || !app.GetApplied() || app.GetDryRun() || app.GetRolledBack() || app.GetError() != "" || app.GetRollbackError() != "" || app.GetRolloutPending() != nil || !app.GetVerificationCompleted() || !app.GetVerificationPassed() || app.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH {
 			return false
 		}
 		for _, id := range app.GetProgramIds() {

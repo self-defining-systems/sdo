@@ -36,7 +36,7 @@ func stageObservationSettled(stage *contracts.StageMitigation, outcome *contract
 			final = application
 		}
 	}
-	if final == nil || !final.GetApplied() || final.GetDryRun() || final.GetRolledBack() || final.GetRollbackError() != "" || final.GetRolloutPending() != nil ||
+	if final == nil || final.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED || !final.GetApplied() || final.GetDryRun() || final.GetRolledBack() || final.GetRollbackError() != "" || final.GetRolloutPending() != nil ||
 		!strings.HasPrefix(final.GetError(), "wait for the cache to observe plan writes: write observation unknown:") ||
 		final.GetError() != initial.GetError() || !initial.GetApplied() || initial.GetDryRun() || initial.GetRolledBack() ||
 		!slices.Contains(final.GetProgramIds(), stage.GetPlaybookId()) || !slices.Equal(final.GetProgramIds(), initial.GetProgramIds()) ||

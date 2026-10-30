@@ -17,23 +17,28 @@ import (
 // SettleRecoveryApplications refreshes accepted stage evidence after the
 // controller's independent recovery proof. It observes only: no apply, retry,
 // compensation or publication authority is recreated here.
-func (l *ResponderLoop) SettleRecoveryApplications(ctx context.Context, result IncidentResult, stages []*contracts.StageReport) (IncidentResult, []*contracts.StageReport) {
+func (l *ResponderLoop) SettleRecoveryApplications(ctx context.Context, result IncidentResult, stages []*contracts.StageReport, closedAt ...time.Time) (IncidentResult, []*contracts.StageReport) {
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.settleRecoveryApplicationsLocked(ctx, result, stages)
+	return l.settleRecoveryApplicationsLocked(ctx, result, stages, closedAt...)
 }
 
-func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, result IncidentResult, stages []*contracts.StageReport) (IncidentResult, []*contracts.StageReport) {
+func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, result IncidentResult, stages []*contracts.StageReport, closedAt ...time.Time) (IncidentResult, []*contracts.StageReport) {
 	stages = l.recoveryStageEvidence(stages)
+	unavailable := contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED
 	if l.Programs == nil || l.Executor.Client == nil || l.Executor.Rollouts == nil {
-		return result, stages
+		unavailable = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE
 	}
 	initialRuns := len(l.runs)
-	view, err := l.snapshotView(ctx)
-	if err != nil {
-		return result, stages
+	var view program.ReadView
+	if unavailable == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+		var err error
+		view, err = l.snapshotView(ctx)
+		if err != nil {
+			unavailable = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE
+		}
 	}
 	executor := l.Executor
 	executor.PollRollouts = true
@@ -56,47 +61,101 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 		return object
 	}
 	applications := l.applicationEvidenceLocked()
-	observedWrites, historyComplete := l.recoveryAPIWrites(ctx, result, applications)
+	through := time.Now()
+	if len(closedAt) > 0 {
+		through = closedAt[0]
+	}
+	observedWrites, historyComplete := l.recoveryAPIWrites(ctx, result, applications, through)
+	knownApplications := map[string]bool{}
+	for i := range applications {
+		knownApplications[applications[i].ID] = true
+		applications[i].Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED
+	}
 	for _, stage := range stages {
 		for _, attempt := range stage.Mitigations {
 			id := attempt.GetApplyReceipt().GetApplicationId()
+			if id != "" && !knownApplications[id] {
+				attempt.ApplyReceipt.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE
+				if attempt.Result == "applied_cleared" {
+					attempt.Result = "applied_still_matching"
+				}
+			}
 			for index := range applications {
 				app := &applications[index]
 				if app.ID != id {
 					continue
 				}
-				// A prior observation is never a permanent grant. Re-establish
-				// its exact recovery proof against all later corrective writes.
-				app.Result.FinalVerificationBasis = ""
-				app.Result.VerificationPassed = false
-				app.Result.FinalEquivalenceVerified = nil
-				attempt.Result = "applied_still_matching"
-				if !app.Result.Applied || app.Result.DryRun || app.RolledBack || app.Result.RolledBack || app.RollbackError != "" || app.Result.RollbackError != "" || len(app.Result.ActionsApplied) != len(app.Result.Plan.Actions) {
+				// Execution and earlier scoped observations are immutable facts. A
+				// closure veto withholds attribution without erasing them.
+				reject := func(reason contracts.SettlementRejectionReason) {
+					if app.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+						app.Result.SettlementRejectionReason = reason
+					}
+					if attempt.Result == "applied_cleared" {
+						attempt.Result = "applied_still_matching"
+					}
+				}
+				if unavailable != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+					reject(unavailable)
 					continue
 				}
-				// Execution errors are history, not a transient observation. Only pending
-				// rollout/readback or measured source residuals can be superseded by proof.
+				if !app.Result.Applied {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_NOT_APPLIED)
+					continue
+				}
+				if app.Result.DryRun {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DRY_RUN)
+					continue
+				}
+				if app.RolledBack || app.Result.RolledBack || app.RollbackError != "" || app.Result.RollbackError != "" {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLED_BACK)
+					continue
+				}
 				pendingWrite, wasPending := l.pendingWrites[id]
-				if pendingWrite.Superseded || !historyComplete || l.recoverySuperseded(ctx, *app, result, applications, observedWrites, stage.Stage == "deterministic") || !recoveryObservationOnly(*app) {
+				if pendingWrite.Superseded {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SUPERSEDED)
+					app.Result.FinalVerificationBasis = ""
+					continue
+				}
+				if !historyComplete {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN)
+					continue
+				}
+				if l.recoverySuperseded(ctx, *app, result, applications, observedWrites, stage.Stage == "deterministic") {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SUPERSEDED)
+					app.Result.FinalVerificationBasis = ""
+					continue
+				}
+				if !PlanActionsComplete(app.Result) {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION)
+					continue
+				}
+				if !recoveryObservationOnly(*app) {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED)
 					continue
 				}
 				if attempt.ProgramRevision == "" || attempt.ProgramRevision != l.programRevision(attempt.PlaybookId) {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH)
 					continue
 				}
 				diagnoser, ok := l.Programs.Diagnoser(attempt.PlaybookId)
 				if !ok {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE)
 					continue
 				}
 				refs, err := l.menuPlanWriteRefs(app.Result.Plan)
 				if err != nil {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN)
 					continue
 				}
 				if wasPending && len(pendingWrite.Refs) > 0 {
 					refs = pendingWrite.Refs
 				}
+				// A confirmed removal is observed through fresh absence, never
+				// through a rollout of the deliberately absent workload.
+				refs = l.recoveryRolloutRefs(app.Result, refs, func(ref sdk.ObjectRef) bool { getFinal(ref); return apierrors.IsNotFound(readErrors[ref]) })
 				pending, rolloutErr := executor.waitForRollouts(ctx, request, refs)
 				app.Result.VerificationCompleted = true
-				app.Result.VerificationPassed = false
 				app.Result.RolloutPending = pending
 				sourceErr := executor.reportSourceResiduals(ctx, request, &app.Result)
 				verdict := program.RunDiagnose(ctx, diagnoser, view, programBindingsState(attempt.Bindings), l.deadline())
@@ -124,19 +183,25 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				}
 				switch {
 				case rolloutErr != nil:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED)
 					app.Error = rolloutErr.Error()
 					attempt.Result = "rollout_failed"
 					if pending != nil {
+						app.Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING
 						attempt.Result = "rollout_pending_at_handoff"
 					}
 				case sourceErr != nil:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL)
 					app.Error = sourceErr.Error()
 					attempt.Result = "rollout_failed"
 				case verdict.Result != program.NoMatch:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR)
 					attempt.Result = "applied_still_matching"
 				case !healthy:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR)
 					attempt.Result = "applied_still_matching"
 				case !exact && !transition:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED)
 					attempt.Result = "rollout_failed"
 				}
 				attempt.Error = app.Error
@@ -186,9 +251,8 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				}
 			}
 		}
-		if found && !complete {
-			app.Result.VerificationPassed = false
-			app.Result.FinalVerificationBasis = ""
+		if ((!found && len(app.ProgramIDs) > 0) || (found && !complete)) && app.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+			app.Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE
 		}
 		if _, live := l.applications[app.ID]; live {
 			l.applications[app.ID] = app.Result
@@ -240,8 +304,15 @@ func projectRecoverySettlement(result IncidentResult, settled *recoveryApplicati
 		generatedIDs[receipt.ActionID] = true
 	}
 	positions := map[string]int{}
+	known := map[string]bool{}
+	for _, app := range settled.applications {
+		known[app.ID] = true
+	}
 	for i, app := range result.PlanApplications {
 		positions[app.ID] = i
+		if !known[app.ID] && len(app.ProgramIDs) > 0 {
+			result.PlanApplications[i].Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE
+		}
 	}
 	for _, app := range settled.applications {
 		if i, exists := positions[app.ID]; exists {
@@ -406,7 +477,7 @@ func (l *ResponderLoop) recoverySuperseded(ctx context.Context, app RecordedPlan
 
 // Every downstream consumer checks the same durable exact settlement receipt.
 func recoveryApplicationSucceeded(outcome *contracts.OutcomeRecord, app *contracts.PlanApplication, id, revision string) bool {
-	return (app.GetFinalVerificationBasis() == "recovery-settled" || app.GetFinalVerificationBasis() == "observed-transition") && app.GetApplied() && !app.GetDryRun() && !app.GetRolledBack() && app.GetRollbackError() == "" && app.GetError() == "" && app.GetRolloutPending() == nil && app.GetVerificationCompleted() && app.GetVerificationPassed() && finalApplicationVerified(app) && boundPostApplyNoMatch(outcome, app, id, revision)
+	return app.GetSettlementRejectionReason() == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED && (app.GetFinalVerificationBasis() == "recovery-settled" || app.GetFinalVerificationBasis() == "observed-transition") && app.GetApplied() && !app.GetDryRun() && !app.GetRolledBack() && app.GetRollbackError() == "" && app.GetError() == "" && app.GetRolloutPending() == nil && app.GetVerificationCompleted() && app.GetVerificationPassed() && finalApplicationVerified(app) && boundPostApplyNoMatch(outcome, app, id, revision)
 }
 
 // Deleted objects have no final fields. Their exact effect is a recorded
@@ -442,6 +513,24 @@ func (l *ResponderLoop) recoveryPlanFieldsMatch(result PlanApplicationResult, ge
 		}
 	}
 	return len(remaining.PreImages) == 0 || finalPlanFieldsMatch(remaining, getFinal)
+}
+
+// recoveryRolloutRefs retains write/conflict scope while removing only exact
+// UID-bound, confirmed deletions whose current absence was independently read.
+func (l *ResponderLoop) recoveryRolloutRefs(result PlanApplicationResult, refs []sdk.ObjectRef, absent func(sdk.ObjectRef) bool) []sdk.ObjectRef {
+	return slices.DeleteFunc(slices.Clone(refs), func(ref sdk.ObjectRef) bool {
+		for _, image := range result.PreImages {
+			if !sameResource(image.Ref, ref) || image.Object == nil {
+				continue
+			}
+			for _, effect := range result.ObjectEffects {
+				if sameResource(effect.Ref, ref) && effect.Operation == "delete" && effect.State == "applied" && effect.Confirmed && effect.UID != "" && effect.UID == string(image.Object.GetUID()) && absent(ref) {
+					return true
+				}
+			}
+		}
+		return false
+	})
 }
 
 // Recovery bindings are immutable observation facts, never prepared plan IDs.
@@ -511,7 +600,7 @@ func (l *ResponderLoop) recoveryStageEvidence(stages []*contracts.StageReport) [
 // Raw worker API writes are recorded outside tool receipts. Observe the existing
 // storage-edge projection before credit, rather than discovering interference
 // only later during outcome derivation. Incomplete history stays unknown.
-func (l *ResponderLoop) recoveryAPIWrites(ctx context.Context, result IncidentResult, applications []RecordedPlanApplication) ([]RepairActionReceipt, bool) {
+func (l *ResponderLoop) recoveryAPIWrites(ctx context.Context, result IncidentResult, applications []RecordedPlanApplication, through time.Time) ([]RepairActionReceipt, bool) {
 	if l.RecoverySessionRoot == "" || result.ResponderSessionID == "" {
 		return nil, true
 	}
@@ -530,7 +619,7 @@ func (l *ResponderLoop) recoveryAPIWrites(ctx context.Context, result IncidentRe
 	if len(resources) == 0 {
 		return nil, true
 	}
-	observed, err := memory.IncidentAPIRecoveryReceipts(l.RecoverySessionRoot, l.Request.IncidentID, resources, since, time.Now())
+	observed, err := memory.IncidentAPIRecoveryReceipts(l.RecoverySessionRoot, l.Request.IncidentID, resources, since, through)
 	if err != nil {
 		slog.WarnContext(ctx, "application_recovery_history_unavailable", "incident_id", l.Request.IncidentID, "error", err)
 		return nil, false

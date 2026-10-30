@@ -572,6 +572,7 @@
   "sdodev.contracts.v1alpha1.PlanApplication.rollback_error",
   "sdodev.contracts.v1alpha1.PlanApplication.rolled_back",
   "sdodev.contracts.v1alpha1.PlanApplication.rollout_pending",
+  "sdodev.contracts.v1alpha1.PlanApplication.settlement_rejection_reason",
   "sdodev.contracts.v1alpha1.PlanApplication.started_at",
   "sdodev.contracts.v1alpha1.PlanApplication.verification",
   "sdodev.contracts.v1alpha1.PlanApplication.verification_completed",

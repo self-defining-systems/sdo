@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -764,7 +765,7 @@ func TestSettlementAgentApplicationsShareTheRecoveryOwner(t *testing.T) {
 }
 
 func TestSettlementObservesRecordedAPIWritesBeforeDerivation(t *testing.T) {
-	for _, kind := range []string{"watching", "own-write", "later-write", "incomplete", "unpaired", "partial"} {
+	for _, kind := range []string{"watching", "live-watching", "live-own-write", "live-later-write", "live-dropped", "own-write", "later-write", "incomplete", "unpaired", "partial"} {
 		t.Run(kind, func(t *testing.T) {
 			loop, state := pipelineTestLoop(t, false)
 			loop.Executor.Rollouts = &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
@@ -782,7 +783,13 @@ func TestSettlementObservesRecordedAPIWritesBeforeDerivation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				store, err := apihistory.Open(filepath.Join(root, sub, "api-history"), state.Request.IncidentID, apihistory.Limits{})
+				directory := filepath.Join(root, sub, "api-history")
+				lease, err := apihistory.BeginWriter(directory)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { lease.Close() })
+				store, err := apihistory.Open(directory, state.Request.IncidentID, apihistory.Limits{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -790,12 +797,12 @@ func TestSettlementObservesRecordedAPIWritesBeforeDerivation(t *testing.T) {
 				started := app.CompletedAt.Add(time.Nanosecond)
 				finished := started.Add(time.Nanosecond)
 				verb := "get"
-				if kind == "own-write" {
+				if kind == "own-write" || kind == "live-own-write" {
 					verb = "patch"
 					started = app.StartedAt.Add(time.Nanosecond)
 					finished = app.CompletedAt.Add(-time.Nanosecond)
 				}
-				if kind == "later-write" || kind == "unpaired" || kind == "partial" {
+				if kind == "later-write" || kind == "live-later-write" || kind == "unpaired" || kind == "partial" {
 					verb = "patch"
 				}
 				event := apihistory.Event{RequestID: "synthetic-api", Phase: "start", Started: started, Verb: verb, Group: "apps", Version: "v1", Resource: "deployments", Namespace: "app", Name: "api"}
@@ -807,15 +814,44 @@ func TestSettlementObservesRecordedAPIWritesBeforeDerivation(t *testing.T) {
 				if kind != "unpaired" {
 					store.Record(event, nil)
 				}
-				store.Close()
+				if kind == "live-dropped" {
+					store.Gap()
+				}
+				if strings.HasPrefix(kind, "live-") {
+					t.Cleanup(store.Close)
+				} else {
+					store.Close()
+					lease.Close()
+				}
 			}
 			loop.RecoverySessionRoot = root
 			loop.Executor.Rollouts = observedDeploymentRollout{client: loop.Executor.Client.(TypedPlanClient).Client}
-			result, _ := loop.SettleRecoveryApplications(context.Background(), before, state.PriorStages)
-			want := kind == "watching" || kind == "own-write"
+			result, stages := loop.SettleRecoveryApplications(context.Background(), before, state.PriorStages)
+			want := kind == "watching" || kind == "own-write" || kind == "live-watching" || kind == "live-own-write"
 			if got := result.PlanApplications[0].Result.FinalVerificationBasis == "recovery-settled"; got != want {
 				t.Fatalf("history=%s settlement=%v want=%v", kind, got, want)
 			}
+			closure := IncidentClosure{Request: state.Request, Result: &result, VerifiedAt: time.Now(), FinalDetectorStates: []DetectorEvaluation{{DetectorID: loop.Detectors[0].Spec().ID, Status: DetectorEvaluationClear, EvaluatedAt: time.Now()}}, Frozen: true}
+			closure.Request.PriorStages = stages
+			derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, app := range derived.Record.PlanApplications {
+				if want && app.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+					t.Fatalf("positive application rejected: %v", app)
+				}
+				if !want && i == 0 && app.GetSettlementRejectionReason() == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+					t.Fatalf("silent settlement veto: %v", app)
+				}
+				if app.GetSettlementRejectionReason() != result.PlanApplications[i].Result.SettlementRejectionReason {
+					t.Fatal("outcome lost typed reason")
+				}
+			}
+			if wantSuccess := want || kind == "later-write" || kind == "live-later-write"; (derived.Record.Classification == "success") != wantSuccess {
+				t.Fatalf("history=%s classification=%s want success=%v", kind, derived.Record.Classification, want)
+			}
+
 		})
 	}
 }
@@ -904,5 +940,40 @@ func TestSettlementCoverageSurvivesLaterPassAndDispatchPreparation(t *testing.T)
 				})
 			}
 		})
+	}
+}
+
+// Historical scoped verification is evidence even when closure attribution
+// cannot be refreshed. Unknown history must withhold new recovery credit.
+func TestSettlementGuardPreservesProvenObservation(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.PlanApplications[0].Result.VerificationPassed {
+		t.Fatal("producer did not verify application")
+	}
+	before.ResponderSessionID = "11111111-2222-4333-8444-555555555555"
+	loop.RecoverySessionRoot = t.TempDir() // Recording is truly absent.
+	for _, stage := range state.PriorStages {
+		for _, attempt := range stage.Mitigations {
+			attempt.ProgramRevision = "synthetic-stale-revision"
+		}
+	}
+	result, _ := loop.SettleRecoveryApplications(context.Background(), before, state.PriorStages)
+	if !result.PlanApplications[0].Result.VerificationPassed {
+		t.Fatal("unknown history erased the producer's positive observation")
+	}
+	if result.PlanApplications[0].Result.SettlementRejectionReason != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN {
+		t.Fatalf("missing history veto: %+v", result.PlanApplications[0])
+	}
+	for _, receipt := range result.RepairActions {
+		if receipt.Success {
+			t.Fatal("unknown history earned repair credit")
+		}
 	}
 }

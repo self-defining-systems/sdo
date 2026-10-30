@@ -83,27 +83,28 @@ func newPlanPreImage(ref sdk.ObjectRef, object *unstructured.Unstructured) PlanP
 // and the pre-images needed to reverse an applied plan.
 type PlanApplicationResult struct {
 	// MitigationHealth is process-local tool feedback, not closure evidence.
-	MitigationHealth         *MitigationHealth `json:"-"`
-	Plan                     program.Plan
-	Applied                  bool
-	DryRun                   bool
-	PendingAction            *int
-	RollingBack              bool
-	RollbackCompleted        int
-	RolledBack               bool
-	RollbackError            string
-	VerificationPassed       bool
-	VerificationCompleted    bool
-	RecoveryWait             *contracts.RecoveryWait
-	RolloutPending           *contracts.RolloutPending
-	FinalEquivalenceVerified *bool
-	FinalVerificationBasis   string
-	ActionsApplied           []program.Action
-	Patches                  []PlanPatch
-	Duration                 time.Duration
-	PreImages                []PlanPreImage
-	ObjectEffects            []PlanObjectEffect
-	ActionReports            []PlanActionReport
+	MitigationHealth          *MitigationHealth `json:"-"`
+	Plan                      program.Plan
+	Applied                   bool
+	DryRun                    bool
+	PendingAction             *int
+	RollingBack               bool
+	RollbackCompleted         int
+	RolledBack                bool
+	RollbackError             string
+	VerificationPassed        bool
+	VerificationCompleted     bool
+	RolloutPending            *contracts.RolloutPending
+	FinalEquivalenceVerified  *bool
+	FinalVerificationBasis    string
+	SettlementRejectionReason contracts.SettlementRejectionReason
+	RecoveryWait              *contracts.RecoveryWait
+	ActionsApplied            []program.Action
+	Patches                   []PlanPatch
+	Duration                  time.Duration
+	PreImages                 []PlanPreImage
+	ObjectEffects             []PlanObjectEffect
+	ActionReports             []PlanActionReport
 }
 
 type PlanExecutor struct {

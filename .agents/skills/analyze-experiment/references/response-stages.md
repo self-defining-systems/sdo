@@ -150,6 +150,26 @@ not add authored coverage or grant attribution. Action completion uses every
 indexed action report, including successful WaitFor and satisfied EnsureExec,
 not the number of mutations. Rollout-only source residuals and unavailable
 readback are pending; actual configuration residuals remain partial failures.
+
+`plan_applications[].settlement_rejection_reason` records the typed closure
+attribution veto (also copied into stage apply receipts). Unspecified means no
+veto; it is not success by itself. Reasons distinguish missing dependencies or
+snapshots, incomplete execution, rollback, supersession, unknown history,
+revision/binding gaps, pending/failed rollout, source residuals, uncleared
+diagnosis/health and unconfirmed effects. Earlier positive scoped verification
+and field observations remain historical facts when a closure gate rejects;
+the rejection still withholds repair credit and trust. Plan execution completion
+uses the producer's action reports, including successful waits and satisfied
+ensures, rather than counting mutations.
+
+Live API history uses a producer-drained manifest prefix bounded through closure
+(`snapshot_through`), including asynchronous body projections. Writer liveness
+alone does not invalidate that snapshot. Real drops, disabled recording,
+changed generations, unresolved mutations and missing checkpoints remain unknown
+and grant no attribution. Confirmed workload removals retain their causal write
+scope but settle through UID-bound delete evidence and fresh direct absence,
+without asking the absent workload to roll out.
+
 Cross-resource Service admission additionally requires an availability/traffic
 or declared-window role; a Service configuration/selector fault is not a rollout
 symptom just because it selects or names a nearby workload. The final claim

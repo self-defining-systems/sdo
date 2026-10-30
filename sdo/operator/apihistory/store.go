@@ -4,6 +4,7 @@ package apihistory
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -76,6 +77,8 @@ type Manifest struct {
 	Events     uint64    `json:"events"`
 	Bytes      int64     `json:"bytes"`
 	Updated    time.Time `json:"updated"`
+	// SnapshotThrough bounds a drained prefix, including asynchronous projections.
+	SnapshotThrough time.Time `json:"snapshot_through,omitempty"`
 }
 type observation struct {
 	weight int64
@@ -149,6 +152,7 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 	m.Generation = expected
 	m.Epoch++
 	m.Open = true
+	m.SnapshotThrough = time.Time{}
 	f, err := os.OpenFile(filepath.Join(directory, "events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, err
@@ -169,7 +173,7 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 	return s, nil
 }
 
-// Record admits bounded projection work without waiting for parsing or disk.
+// Record admits bounded projection work without synchronous parsing or disk I/O.
 // Raw bytes exist only in at most eight transient workers, never in the recording
 // queue. Projection precedes hashing, queueing and persistence. Callers retain
 // ownership of raw; an admitted worker receives its own bounded copy.
@@ -289,12 +293,46 @@ func (s *Store) run() {
 				s.dropped.Add(1)
 			}
 		case <-tick.C:
-			if err := s.writeManifest(); err != nil {
-				s.dropped.Add(1)
-			}
+			s.checkpoint()
 		}
 	}
 }
+
+// checkpoint publishes a prefix only after every admitted projection and queued
+// observation has drained. New Record calls wait at the admission gate; the
+// timestamp precedes draining, so it never certifies work that is still queued.
+func (s *Store) checkpoint() {
+	s.gate.Lock()
+	through := time.Now().UTC()
+	s.projections.Wait()
+	// Capture admitted envelopes under the gate, then release callers before
+	// doing disk I/O. New observations remain queued behind this snapshot.
+	var batch []observation
+drain:
+	for {
+		select {
+		case item, ok := <-s.queue:
+			if !ok {
+				break drain
+			}
+			s.queuedBytes.Add(-item.weight)
+			batch = append(batch, item)
+		default:
+			break drain
+		}
+	}
+	s.gate.Unlock()
+	for _, item := range batch {
+		if err := s.append(item); err != nil {
+			s.Gap()
+		}
+	}
+	s.manifest.SnapshotThrough = through
+	if err := s.writeManifest(); err != nil {
+		s.Gap()
+	}
+}
+
 func (s *Store) append(item observation) error {
 	if s.manifest.Events >= s.limits.Events {
 		return errors.New("event cap")
@@ -343,7 +381,30 @@ type History struct {
 	directory string
 }
 
-func Read(directory string) (History, error) {
+func Read(directory string) (History, error) { return readPrefix(directory, nil) }
+
+// ReadThrough reads one immutable manifest-bounded prefix covering until. A
+// live writer is safe only with a producer checkpoint; stale generations,
+// disabled recording and actual drops retain their rejection semantics.
+func ReadThrough(ctx context.Context, directory string, until time.Time) (History, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	for {
+		h, err := readPrefix(directory, &until)
+		if err != nil || !h.Manifest.Open || !h.Manifest.SnapshotThrough.Before(until) {
+			return h, err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return h, fmt.Errorf("history checkpoint unavailable through closure: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func readPrefix(directory string, through *time.Time) (History, error) {
 	h := History{directory: directory}
 	// Directory locks remain available on read-only mounts and filesystems. A
 	// live forwarding generation invalidates a previous closed manifest even if
@@ -362,7 +423,7 @@ func Read(directory string) (History, error) {
 	// An unclosed manifest may predate failed appends and failed manifest
 	// updates. Writer liveness disappears on exit, so Open must independently
 	// prevent that stale manifest from certifying a fully recorded generation.
-	if h.Manifest.Open {
+	if h.Manifest.Open && (through == nil || h.Manifest.SnapshotThrough.Before(*through)) {
 		h.Manifest.Complete = false
 	}
 	f, err := os.Open(filepath.Join(directory, "events.jsonl"))
@@ -372,7 +433,7 @@ func Read(directory string) (History, error) {
 	defer f.Close()
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 4096), 64<<10)
-	for scan.Scan() {
+	for (through == nil || uint64(len(h.Events)) < h.Manifest.Events) && scan.Scan() {
 		var e Event
 		if err := json.Unmarshal(scan.Bytes(), &e); err != nil {
 			h.Manifest.Complete = false
@@ -390,7 +451,7 @@ func Read(directory string) (History, error) {
 			}
 		}
 	}
-	if len(unfinished) > 0 {
+	if len(unfinished) > 0 && through == nil {
 		h.Manifest.Complete = false
 	}
 	if err := scan.Err(); err != nil {
@@ -399,7 +460,7 @@ func Read(directory string) (History, error) {
 	if uint64(len(h.Events)) != h.Manifest.Events {
 		h.Manifest.Complete = false
 	}
-	if _, err := os.Stat(filepath.Join(directory, "recording-disabled")); writerOpen || !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(directory, "recording-disabled")); (writerOpen && (through == nil || (!h.Manifest.Open && h.Manifest.SnapshotThrough.Before(*through)))) || !errors.Is(err, os.ErrNotExist) {
 		h.Manifest.Complete = false
 		h.Manifest.Dropped++
 	}
@@ -407,6 +468,9 @@ func Read(directory string) (History, error) {
 	if generationErr != nil || expected != h.Manifest.Generation {
 		h.Manifest.Complete = false
 		h.Manifest.Dropped++
+	}
+	if through != nil && !h.Manifest.Complete && (!h.Manifest.Open || !h.Manifest.SnapshotThrough.Before(*through)) {
+		return h, errors.New("history checkpoint is incomplete")
 	}
 	return h, nil
 }
