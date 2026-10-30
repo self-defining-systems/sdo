@@ -89,6 +89,8 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	w := newSimWorld(t, seed)
+	// Rollout contexts use wall-clock deadlines; keep the simulation epoch in that domain.
+	w.clock.Set(time.Now())
 	// Isolate the requested schedules; broad store/API faults have their own sweep.
 	w.client.ReactionChain = w.client.ReactionChain[2:]
 	w.kube.faults.churnPerPatch = func() int { return 0 }

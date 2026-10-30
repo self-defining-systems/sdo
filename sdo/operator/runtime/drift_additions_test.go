@@ -43,7 +43,7 @@ func TestAddedFieldDriftProducerReachesRepairStage(t *testing.T) {
 			inject(live)
 			snapshot := sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}
 			view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
-			start := time.Unix(10, 0)
+			start := time.Now()
 			config := testControllerConfig()
 			config.Namespace = "app"
 			c, err := NewController(config, nil, staticProvider{snapshot: snapshot}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)

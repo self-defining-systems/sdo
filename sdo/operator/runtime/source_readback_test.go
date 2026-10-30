@@ -105,7 +105,8 @@ func TestSourceReadbackUnavailableRemainsPendingUntilObserved(t *testing.T) {
 			}
 			// The actual final receipt producer feeds the reflection consumer.
 			// Its earlier pending snapshot must not force a working step to change.
-			result, err := incidentResultContract(IncidentResult{PlanApplications: loop.PlanApplications()})
+			settledResult, settledStages := loop.SettleRecoveryApplications(context.Background(), IncidentResult{PlanApplications: loop.ApplicationEvidence()}, state.PriorStages)
+			result, err := incidentResultContract(settledResult)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,7 +114,7 @@ func TestSourceReadbackUnavailableRemainsPendingUntilObserved(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(root, ".sdo/playbooks", p.Spec().ID), 0755); err != nil {
 				t.Fatal(err)
 			}
-			outcome := &contracts.OutcomeRecord{PlanApplications: result.PlanApplications, PriorStages: state.PriorStages}
+			outcome := &contracts.OutcomeRecord{PlanApplications: result.PlanApplications, PriorStages: settledStages}
 			ds := validate.ReflectionRepairDiagnostics(root, outcome, &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "existing step verified after readback recovered"}, nil)
 			if len(ds) > 0 {
 				t.Fatalf("settled repair forced memory churn: %v", ds)

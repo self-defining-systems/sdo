@@ -69,9 +69,10 @@ func TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels(t *testing.T) {
 	loop, state := pipelineTestLoop(t, false)
 	loop.Detectors = append(loop.Detectors, &pipelineLaggingHealthDetector{remaining: 8})
 	start := time.Now()
-	now := start
-	loop.Executor.Rollouts = &settle2DelayedRollout{base: loop.Executor.Rollouts, now: func() time.Time { return now }, ready: start.Add(time.Minute)}
-	stage := &DeterministicResponseStage{ObservationInterval: time.Millisecond, recoveryNow: func() time.Time { return now }, recoveryWait: func(context.Context, time.Duration) error { now = now.Add(15 * time.Second); return nil }}
+	clock := newSimClock()
+	clock.Set(start)
+	loop.Executor.Rollouts = &settle2DelayedRollout{base: loop.Executor.Rollouts, now: clock.Now, ready: start.Add(time.Minute)}
+	stage := &DeterministicResponseStage{ObservationInterval: time.Millisecond, recoveryNow: clock.Now, recoveryWait: func(context.Context, time.Duration) error { clock.Advance(15 * time.Second); return nil }}
 	dispatcher := &settle2ControllerDispatcher{pipelineScenarioDispatcher: pipelineScenarioDispatcher{loop: loop}, stage: stage}
 	config := testControllerConfig()
 	config.Application = state.Request.Application
@@ -105,8 +106,8 @@ func TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitDispatchCompletionQueued(t, controller)
-	if now.Sub(start) != time.Minute {
-		t.Fatalf("shared wait=%s", now.Sub(start))
+	if clock.Now().Sub(start) != time.Minute {
+		t.Fatalf("shared wait=%s", clock.Now().Sub(start))
 	}
 	for i := 60; i < 80; i++ {
 		if err := controller.Step(context.Background(), start.Add(time.Duration(i)*time.Second), nil); err != nil {
