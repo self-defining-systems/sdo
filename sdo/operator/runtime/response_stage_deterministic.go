@@ -121,7 +121,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if budget <= 0 {
 		budget = DefaultStageBudget
 	}
-	remaining := func() time.Duration { return budget - time.Since(started) }
+	remaining := func() time.Duration { return max(0, budget-time.Since(started)) }
 	report := &contracts.StageReport{Stage: stage.Name()}
 	if stage.NewLoop == nil {
 		return report, nil
@@ -708,6 +708,9 @@ func (stage *DeterministicResponseStage) awaitRepairedHealth(ctx context.Context
 			return
 		case <-timer.C:
 		}
+		if observe.Err() != nil {
+			return
+		}
 		response := ToolResponse{}
 		loop.verify(observe, nil, &response, true)
 		updateStageFindings(state, response)
@@ -912,6 +915,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
+	if recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
+		return ctx.Err()
+	}
 	observe, cancel := context.WithDeadline(ctx, progress.RecoveryDeadline)
 	defer cancel()
 	interval := stage.ObservationInterval
@@ -969,6 +975,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			}
 			return err
 		}
+		if observe.Err() != nil || recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
+			return ctx.Err()
+		}
 		response := ToolResponse{}
 		loop.verify(observe, nil, &response, true)
 		updateStageFindings(state, response)
@@ -991,11 +1000,11 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 
 func recoveryTimeLeft(stage *DeterministicResponseStage, deadline time.Time, legacy time.Duration) time.Duration {
 	if deadline.IsZero() {
-		return legacy
+		return max(0, legacy)
 	}
 	now := stage.recoveryNow
 	if now == nil {
 		now = time.Now
 	}
-	return deadline.Sub(now())
+	return max(0, deadline.Sub(now()))
 }

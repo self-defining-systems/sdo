@@ -14,8 +14,8 @@ const (
 	// simVerified: a successful incident whose apply response shows the bound
 	// post-apply diagnosis clear, at the current revision.
 	simVerified simTrustEvent = iota
-	// simUnverified: the program applied, but the incident did not succeed.
-	simUnverified
+	// simIncidentFailed: the exact application was verified, but the incident did not succeed.
+	simIncidentFailed
 	// simInconclusive: the incident succeeded but its tool record has no
 	// post-apply evidence (truncated or missing).
 	simInconclusive
@@ -24,6 +24,8 @@ const (
 	simInterrupted
 	// simInterruptedElsewhere: the same signal bound to another revision.
 	simInterruptedElsewhere
+	// simApplicationFailed: immutable action evidence proves an execution failure.
+	simApplicationFailed
 	// simEdited: a run of the program with no application; at a new revision it
 	// preserves the streak, as does the current revision.
 	simEdited
@@ -46,10 +48,10 @@ func (m *simTrustModel) enter(revision string) {
 
 func (m *simTrustModel) apply(event simTrustEvent, revision, other string) {
 	switch event {
-	case simVerified:
+	case simVerified, simIncidentFailed:
 		m.enter(revision)
 		m.streak++
-	case simUnverified:
+	case simApplicationFailed:
 		m.enter(revision)
 		m.failures[revision]++
 		m.streak = 0
@@ -75,9 +77,13 @@ func simTrustOutcome(t *testing.T, event simTrustEvent, revision, other string) 
 	switch event {
 	case simVerified:
 		return verifiedTrustOutcome(t, id, revision)
-	case simUnverified:
+	case simIncidentFailed:
 		outcome := verifiedTrustOutcome(t, id, revision)
 		outcome.Classification = "failed"
+		return outcome
+	case simApplicationFailed:
+		outcome := verifiedTrustOutcome(t, id, revision)
+		outcome.PlanApplications[0].ActionReports = []*contracts.ActionReport{{FailureReason: "execution_failed"}}
 		return outcome
 	case simInconclusive:
 		outcome := verifiedTrustOutcome(t, id, revision)

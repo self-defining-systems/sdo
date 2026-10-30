@@ -43,17 +43,25 @@ def build(go: dict, python: dict, policy: dict) -> dict:
         for key, item in items.items()
         if any(pattern.search(" ".join([key, *item.get("packages", [])])) for pattern in protected)
     }
+    # Timing/restart contracts must run even when cheap filler fills the bins.
+    # Reserve families, so the next regression needs no hand-maintained name.
+    required_patterns = [re.compile(pattern) for pattern in policy.get("required_patterns", [])]
+    mandatory = {key for key in items if any(pattern.search(key) for pattern in required_patterns)}
     for key in items:
-        items[key]["priority"] = key in priority or key in unmeasured
+        items[key]["priority"] = key in priority or key in unmeasured or key in mandatory
     bins, nightly = costs.pack(
         list(items),
         seconds,
         budget=policy["contract_work_seconds"],
         max_bins=policy["contract_jobs"],
         required=frozenset(unmeasured),
+        mandatory=frozenset(mandatory),
         priority=frozenset(priority),
         priority_seconds=policy.get("protected_share", 0.0) * policy["contract_jobs"] * policy["contract_work_seconds"],
     )
+    deferred_required = mandatory & set(nightly)
+    if deferred_required:
+        raise ValueError(f"required PR contracts exceed fixed budget: {sorted(deferred_required)}")
     assigned = [name for members in bins for name in members] + nightly
     if sorted(assigned) != sorted(items) or len(assigned) != len(set(assigned)):
         raise ValueError("every test must appear exactly once in PR or nightly")

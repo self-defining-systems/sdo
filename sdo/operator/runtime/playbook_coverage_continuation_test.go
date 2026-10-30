@@ -92,7 +92,15 @@ func TestHermeticCoverageContinuationLeavesOnlyUnexplainedFinding(t *testing.T) 
 	if len(coverage.GetMatches()) != 2 || len(coverage.GetUnexplainedFindingFingerprints()) != 1 {
 		t.Fatalf("must offer two matches and one unexplained finding: %+v", coverage)
 	}
-	unexplained := FindingFingerprint(request.Findings[2])
+	unexplained := ""
+	for _, finding := range request.Findings {
+		if finding.PrimaryResource.Name == "third" {
+			unexplained = FindingFingerprint(finding)
+		}
+	}
+	if unexplained == "" {
+		t.Fatal("producer omitted the unexplained third service")
+	}
 	if coverage.UnexplainedFindingFingerprints[0] != unexplained {
 		t.Fatalf("wrong unexplained finding: %+v", coverage)
 	}

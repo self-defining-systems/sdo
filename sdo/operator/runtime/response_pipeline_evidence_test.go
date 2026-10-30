@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -438,31 +439,58 @@ func TestDeterministicResponseStageWaitsAfterRedundantMatchDisappears(t *testing
 	}
 }
 
-// A completed stage checkpoint transfers immutable writes, not a decision to
-// dispatch. Recovery still lets successful repairs' health observations settle.
+// A restart transfers immutable writes and the original observation deadline.
+// Interrupted observation resumes; exhausted observation must reach the agent.
 func TestDeterministicResponseStageRecoveryWaitsWithoutRepeatingWrites(t *testing.T) {
-	loop, state := pipelineTestLoop(t, false)
-	health := &pipelineLaggingHealthDetector{remaining: -1}
-	loop.Detectors = append(loop.Detectors, health)
-	var durable []byte
-	loop.saveToolState = func(_ context.Context, payload []byte) error { durable = append([]byte(nil), payload...); return nil }
-	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationCeiling: time.Millisecond, ObservationInterval: time.Millisecond}
-	if _, err := stage.Run(context.Background(), state); err != nil {
-		t.Fatal(err)
-	}
-	fresh := NewResponderLoop(state.Request, loop.Programs, loop.Provider, loop.Detectors, loop.Executor, 5)
-	fresh.ReadView = loop.ReadView
-	if err := fresh.restoreToolSnapshot(durable); err != nil {
-		t.Fatal(err)
-	}
-	health.remaining = 2
-	recovered := &IncidentState{Request: state.Request, Findings: append([]sdk.Finding(nil), state.Request.Findings...), Coverage: state.Coverage}
-	calls := 0
-	stage = &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return fresh }, ObservationInterval: time.Millisecond}
-	if err := RunResponseStages(context.Background(), recovered, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 0 || len(fresh.PlanApplications()) != 0 || len(fresh.ApplicationEvidence()) != len(loop.ApplicationEvidence()) {
-		t.Fatalf("recovery dispatched or repeated writes: calls=%d applications=%d", calls, len(fresh.PlanApplications()))
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			loop, state := pipelineTestLoop(t, false)
+			health := &pipelineLaggingHealthDetector{remaining: -1}
+			loop.Detectors = append(loop.Detectors, health)
+			var durable []byte
+			interrupted := errors.New("synthetic restart during shared observation")
+			loop.saveToolState = func(_ context.Context, payload []byte) error {
+				durable = append([]byte(nil), payload...)
+				for _, progress := range loop.stageProgress {
+					if !progress.RecoveryDeadline.IsZero() {
+						return interrupted
+					}
+				}
+				return nil
+			}
+			stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationCeiling: time.Second, ObservationInterval: time.Millisecond}
+			if _, err := stage.Run(context.Background(), state); !errors.Is(err, interrupted) {
+				t.Fatalf("did not interrupt shared observation: %v", err)
+			}
+			deadline := loop.stageProgress[stage.Name()].RecoveryDeadline
+			if deadline.IsZero() {
+				t.Fatal("producer did not persist deadline")
+			}
+			fresh := NewResponderLoop(state.Request, loop.Programs, loop.Provider, loop.Detectors, loop.Executor, 5)
+			fresh.ReadView = loop.ReadView
+			if err := fresh.restoreToolSnapshot(durable); err != nil {
+				t.Fatal(err)
+			}
+			health.remaining = 2
+			recovered := &IncidentState{Request: state.Request, Findings: append([]sdk.Finding(nil), state.Request.Findings...), Coverage: state.Coverage}
+			calls := 0
+			stage = &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return fresh }, ObservationInterval: time.Millisecond}
+			if expired {
+				stage.recoveryNow = func() time.Time { return deadline.Add(time.Second) }
+			}
+			if err := RunResponseStages(context.Background(), recovered, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
+				t.Fatal(err)
+			}
+			wantCalls := 0
+			if expired {
+				wantCalls = 1
+			}
+			if calls != wantCalls || len(fresh.PlanApplications()) != 0 || len(fresh.ApplicationEvidence()) != len(loop.ApplicationEvidence()) {
+				t.Fatalf("recovery lost deadline or repeated writes: calls=%d want=%d applications=%d", calls, wantCalls, len(fresh.PlanApplications()))
+			}
+			if !fresh.stageProgress[stage.Name()].RecoveryDeadline.Equal(deadline) {
+				t.Fatal("restart replenished observation deadline")
+			}
+		})
 	}
 }

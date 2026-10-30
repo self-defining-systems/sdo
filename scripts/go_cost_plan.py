@@ -54,13 +54,14 @@ def pack(
     max_bins: int | None = None,
     max_test_seconds: float | None = None,
     required: frozenset[str] = frozenset(),
+    mandatory: frozenset[str] = frozenset(),
     priority: frozenset[str] = frozenset(),
     priority_seconds: float = 0.0,
 ) -> tuple[list[list[str]], list[str]]:
     """First-fit decreasing grows capacity, never a job deadline or placement list.
 
-    With a fixed bin count, `required` names (no recorded cost yet) are admitted
-    first, then the cheapest `priority` names up to `priority_seconds`, then
+    With a fixed bin count, `mandatory` contracts are admitted first, then
+    `required` names (no recorded cost yet), then the cheapest `priority` names up to `priority_seconds`, then
     everything else cheapest first. The share keeps guards from being displaced
     by cheap filler without letting them displace the broad regression set."""
     check_budget([], costs, budget=budget)
@@ -79,12 +80,12 @@ def pack(
         candidates = []
         reserved: set[str] = set()
         spent = 0.0
-        for name in sorted(priority - required, key=lambda n: (costs.get(n, DEFAULT_COST), n)):
+        for name in sorted(priority - required - mandatory, key=lambda n: (costs.get(n, DEFAULT_COST), n)):
             if name in names and spent + costs.get(name, DEFAULT_COST) <= priority_seconds:
                 reserved.add(name)
                 spent += costs.get(name, DEFAULT_COST)
-        rank = dict.fromkeys(required, 0) | dict.fromkeys(reserved, 1)
-        for name in sorted(names, key=lambda n: (rank.get(n, 2), costs.get(n, DEFAULT_COST), n)):
+        rank = dict.fromkeys(reserved, 2) | dict.fromkeys(required, 1) | dict.fromkeys(mandatory, 0)
+        for name in sorted(names, key=lambda n: (rank.get(n, 3), costs.get(n, DEFAULT_COST), n)):
             cost = costs.get(name, DEFAULT_COST)
             if cost > budget or cost > remaining or (max_test_seconds is not None and cost > max_test_seconds):
                 nightly.append(name)

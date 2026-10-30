@@ -24,6 +24,12 @@ import (
 
 type coverageThreeFaultDetector struct{ fastloopDetector }
 
+func (coverageThreeFaultDetector) Spec() sdk.DetectorSpec {
+	spec := (fastloopDetector{}).Spec()
+	spec.Playbooks = []string{"service-targetport-mismatch", "image-pull-failure"}
+	return spec
+}
+
 func (coverageThreeFaultDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
 	findings, err := (fastloopDetector{}).Detect(ctx, view)
 	for i := range findings {

@@ -524,10 +524,12 @@ func TestDeterministicResponseStageRespectsClosedIncidentMutationFence(t *testin
 
 type pipelineDeadlineRollout struct {
 	observed time.Duration
+	calls    int
 	failure  error
 }
 
 func (r *pipelineDeadlineRollout) Wait(ctx context.Context, _ []sdk.ObjectRef) error {
+	r.calls++
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		return errors.New("missing stage rollout deadline")

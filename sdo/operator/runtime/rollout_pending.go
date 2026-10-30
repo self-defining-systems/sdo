@@ -42,10 +42,15 @@ func (e PlanExecutor) waitForRollouts(ctx context.Context, incident IncidentRequ
 		defer cancelDeadline()
 	}
 	var err error
-	if e.PollRollouts && canObserve {
-		err = observer.Observe(waitCtx, refs)
-	} else {
-		err = e.Rollouts.Wait(waitCtx, refs)
+	// Deadline exhaustion is pending evidence, never authority to start another
+	// rollout read. Check at this shared boundary for every caller/interface.
+	err = waitCtx.Err()
+	if err == nil {
+		if e.PollRollouts && canObserve {
+			err = observer.Observe(waitCtx, refs)
+		} else {
+			err = e.Rollouts.Wait(waitCtx, refs)
+		}
 	}
 	if err == nil {
 		return nil, nil

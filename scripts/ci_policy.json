@@ -8,5 +8,9 @@
     "go:runtime:Test(Controller|Recovery|Closure|SourceInventory|Latent|Continuation|NativeLaunch|NativeReflection|CoveredRepeat|Hermetic|Reflection|Responder|Learned|FirstEncounter|Production|Replay|Chaos|Exhaustive|Explorer)",
     "python:.*(reflection|memory|scripted_worker|recorded|eval_guards)"
   ],
-  "protected_share": 0.4
+  "protected_share": 0.4,
+  "required_patterns": [
+    "^go:runtime:TestDeterministicResponseStage",
+    "^go:runtime:TestRolloutBudget"
+  ]
 }

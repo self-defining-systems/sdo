@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"sdo.dev/operator/sdk"
 	"testing"
 	"time"
@@ -126,4 +127,41 @@ func (startupResidualDetector) Spec() sdk.DetectorSpec {
 }
 func (startupResidualDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return []sdk.Finding{{DetectorID: "synthetic-residual", RuleID: "uncovered", Status: sdk.FindingActive, Severity: "critical", Summary: "Synthetic uncovered fault", Evidence: "Synthetic evidence", PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "uncovered"}}}, nil
+}
+
+// Expired caller and incident deadlines must never reach a rollout consumer,
+// whether it supports polling or only the blocking interface.
+func TestRolloutBudgetNeverInvokesConsumerAfterDeadline(t *testing.T) {
+	for _, poll := range []bool{false, true} {
+		for _, supportsObserve := range []bool{false, true} {
+			for _, expiredIncident := range []bool{false, true} {
+				t.Run(fmt.Sprintf("poll=%t/observe=%t/incident=%t", poll, supportsObserve, expiredIncident), func(t *testing.T) {
+					rollout := &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
+					executor := PlanExecutor{Rollouts: rollout, PollRollouts: poll}
+					if supportsObserve {
+						executor.Rollouts = pipelineDeadlineObserver{rollout}
+					}
+					ctx := context.Background()
+					request := IncidentRequest{}
+					if expiredIncident {
+						request.ResponseDeadline = time.Now().Add(-time.Second)
+					} else {
+						var cancel context.CancelFunc
+						ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))
+						defer cancel()
+					}
+					pending, err := executor.waitForRollouts(ctx, request, []sdk.ObjectRef{{Kind: "Deployment", Name: "api", Namespace: "app"}})
+					if pending == nil || err == nil || rollout.calls != 0 {
+						t.Fatalf("expired budget reached consumer or lost pending proof: calls=%d pending=%v err=%v", rollout.calls, pending, err)
+					}
+				})
+			}
+		}
+	}
+}
+
+type pipelineDeadlineObserver struct{ *pipelineDeadlineRollout }
+
+func (r pipelineDeadlineObserver) Observe(ctx context.Context, refs []sdk.ObjectRef) error {
+	return r.Wait(ctx, refs)
 }

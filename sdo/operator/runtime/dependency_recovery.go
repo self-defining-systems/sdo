@@ -356,7 +356,7 @@ func (e PlanExecutor) waitAfterSourceWrites(ctx context.Context, incident Incide
 		if err != nil {
 			if !e.PollRollouts && waitCtx.Err() != nil {
 				if residualErr := e.reportSourceResiduals(ctx, incident, result); residualErr != nil {
-					return nil, errors.Join(waitCtx.Err(), residualErr)
+					return result.RolloutPending, errors.Join(waitCtx.Err(), residualErr)
 				}
 			}
 			if pending != nil {

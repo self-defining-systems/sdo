@@ -15,7 +15,10 @@ time is outside that configured bound.
 - `ci_policy.json` owns the two contract buckets' fixed capacity (180 seconds of
   measured work each, 60 seconds reserved for setup). Inventory growth never adds
   a PR job. `pr_test_plan.py` keeps the broadest cheap regression set within that
-  capacity; every other test is assigned to nightly. The PR/deferred assignment is exhaustive
+  capacity. Required test families in `required_patterns` reserve capacity before
+  cheap filler; if they no longer fit, planning fails instead of silently deferring
+  them. This includes deterministic response timing and restart contracts. Every
+  other test is assigned to nightly. The PR/deferred assignment is exhaustive
   and disjoint, and a generated Markdown job summary lists every deferred test.
   Nightly additionally replays the complete runtime inventory, including the
   runtime tests selected by PR CI.
