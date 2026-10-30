@@ -33,7 +33,7 @@ for module in sdo/operator sdo/operator/runtime; do
     # Normal consumers need production archives and source-bound tools; Go
     # tests execute with -race. Linking normal test binaries only to discard
     # them doubles the cold preparation work.
-    (cd "$root/$module" && go build ./...)
+    (cd "$root/$module" && go build "-p=$GOMAXPROCS" ./...)
   fi
   echo "Prepared $module ($mode) at $(date -u +%FT%TZ)"
 done

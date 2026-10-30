@@ -274,7 +274,7 @@ def test_preparation_compiles_shared_race_test_archive_without_running_tests(tmp
                 for _, args in invocations
             )
         else:
-            assert commands[0] == ["build", "./..."]
+            assert commands[0] == ["build", f"-p={os.environ.get('GOMAXPROCS', '2')}", "./..."]
             assert not any(args[0] == "test" for args in commands)
             if module.endswith("/runtime"):
                 assert ["build", "./prober"] in commands
@@ -385,6 +385,8 @@ def test_generated_packages_share_only_equal_source_archives(tmp_path: Path) -> 
         module.mkdir()
         (module / "go.mod").write_text("module fixture.test/seed\n\ngo 1.26.0\n")
         (module / "seed.go").write_text("package seed\nconst Value = 1\n")
+        if name == "second":
+            env["GOFLAGS"] = env["GOFLAGS"].replace("-p=2", "-p=4")
         output = subprocess.check_output(["go", "list", "-export", "-json", "."], cwd=module, env=env, text=True)
         exports.append(json.loads(output)["Export"])
     assert exports[0] == exports[1], "equal seed source was recompiled after workspace relocation"
@@ -480,6 +482,11 @@ def test_preparation_uses_available_compiler_cpu_without_changing_build_identity
     assert preparation["env"]["GOMAXPROCS"] == "4"
     assert "GOFLAGS" not in preparation["env"]
     assert configuration["env"]["GOFLAGS"] == "-p=2 -trimpath"
+    scheduling = next(
+        step for step in preparation["steps"] if step.get("name") == "Use all preparation CPUs for the race graph"
+    )
+    assert scheduling["if"] == "matrix.mode == 'race'"
+    assert "GOFLAGS=-p=4 -trimpath" in scheduling["run"]
 
 
 def test_static_python_job_cannot_compile_go_and_go_checks_run_on_prepared_race_graph() -> None:

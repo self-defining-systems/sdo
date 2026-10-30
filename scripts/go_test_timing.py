@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -61,7 +60,7 @@ def run_tests(
     started: float,
     cwd: Path = OPERATOR,
     budget_seconds: float | None = None,
-    env: Mapping[str, str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> None:
     """Stream diagnostics; the unchanged Go and hosted job deadlines own failure."""
     shard_budget = SHARD_BUDGET_SECONDS if budget_seconds is None else budget_seconds

@@ -88,6 +88,11 @@ jobs:
         run: |
           uv sync --locked --all-extras
           uv run python scripts/check_ci_budget.py
+      - name: Use all preparation CPUs for the race graph
+        if: matrix.mode == 'race'
+        # Package scheduling does not change Go archive identity. The normal
+        # source-stamped CLI and all consumers retain their original flags.
+        run: echo "GOFLAGS=-p=4 -trimpath" >> "$GITHUB_ENV"
       - name: Compile dependency graphs outside operation timeouts
         id: compile
         # Normal preparation builds dependency archives, not discarded test
