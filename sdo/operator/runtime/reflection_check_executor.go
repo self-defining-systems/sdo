@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
@@ -70,6 +71,9 @@ func reflectionCheckHandler(repository *broker.Broker, sessionRoot, incidentID s
 		defer cancel()
 		report, err := repository.CheckReflection(bounded, incidentID, decision)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(bounded.Err(), context.DeadlineExceeded) {
+				response.MemoryCheckTimedOut = true
+			}
 			response.Error = err.Error()
 			return response
 		}

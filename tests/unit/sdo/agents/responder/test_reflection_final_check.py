@@ -587,3 +587,32 @@ def test_unchanged_compiler_diagnostics_stop_despite_stage_timing_logs(
             idempotency_key="one-dispatch",
         )
     assert len(agent.requests) == 2
+
+
+@pytest.mark.parametrize("backend_type", [CodexSessionBackend, ClaudeSessionBackend])
+def test_broker_deadline_exit_stops_the_final_checker_without_reprompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend_type
+) -> None:
+    import sys
+
+    from sdo.agents.responder.memory_check import MemoryCheckTimeout
+
+    executable = tmp_path / "sdo-operator"
+    executable.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "print('broker memory check: context deadline exceeded', file=sys.stderr)\nsys.exit(124)\n"
+    )
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    provider = "codex" if backend_type is CodexSessionBackend else "claude"
+    agent = ScriptedAgent(
+        lambda _: reply(
+            provider,
+            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    with pytest.raises(MemoryCheckTimeout, match="context deadline exceeded"):
+        backend_type(executor=agent.executor).fresh(worktree=tmp_path, prompt="reflect", idempotency_key="one-dispatch")
+    assert len(agent.requests) == 1

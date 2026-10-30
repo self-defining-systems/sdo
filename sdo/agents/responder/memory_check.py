@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 VALIDATION_TIMEOUT_SECONDS = 300
+VALIDATION_TIMEOUT_EXIT_CODE = 124
 VALIDATION_TIMEOUT_FILE_ENV = "SDO_MEMORY_CHECK_TIMEOUT_FILE"
 
 
@@ -111,4 +112,9 @@ def check_reflection_result(
                 validation_output(stdout),
                 f"memory check timed out after {timeout_seconds:g}s\n{validation_output(stderr)}",
             )
-        return ValidationResult(process.returncode, False, validation_output(stdout), validation_output(stderr))
+        return ValidationResult(
+            process.returncode,
+            process.returncode == VALIDATION_TIMEOUT_EXIT_CODE,
+            validation_output(stdout),
+            validation_output(stderr),
+        )

@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/checktransport"
+	"sdo.dev/operator/operatorcli"
 )
 
 // Real worker RPC client -> real incident-bound server -> real shared broker
@@ -92,5 +95,53 @@ func TestImmutableValidationImageRequiresCompleteDigest(t *testing.T) {
 		if got := immutableValidationImage(test.image); got != test.want {
 			t.Errorf("%q immutable=%v", test.image, got)
 		}
+	}
+}
+
+// A broker deadline must retain its type through the real server, client and
+// CLI. The worker uses the CLI exit status to terminate rather than re-prompt.
+func TestReflectionCheckDeadlineSurvivesTransportAndCLI(t *testing.T) {
+	ctx := context.Background()
+	root := nativeRepository(t)
+	nativeMemoryFixture(t, root)
+	b, err := broker.New(root, t.TempDir(), func(context.Context, string, []string) error { return context.DeadlineExceeded })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.RecordOutcome(ctx, "deadline", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "deadline", Classification: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := b.CreateProposalForPhase(ctx, "deadline", broker.ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(proposal.Path, ".sdo/playbooks/base/README.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, []byte("\nSynthetic refinement.\n")...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"base"}}
+	decisionPath := filepath.Join(t.TempDir(), "decision.json")
+	if err := os.WriteFile(decisionPath, []byte(`{"learning_decision":"updated","proposed_artifact_ids":["base"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(t.TempDir(), "tools")
+	executor := reflectionCheckExecutor{Directory: directory, Handle: reflectionCheckHandler(b, "", "deadline"), Executor: reflectionTaskExecutorFunc(func(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		if _, err := checktransport.Check(ctx, directory, decision); !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("lost broker deadline identity: %v", err)
+		}
+		environment := map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": proposal.BaseCommit, "SDO_INCIDENT_ID": "deadline", "SDO_MEMORY_CHECK_DIR": directory}
+		var stdout, stderr bytes.Buffer
+		code := operatorcli.RunMemory(ctx, []string{"check", "--root", proposal.Path, "--decision", decisionPath}, func(key string) string { return environment[key] }, &stdout, &stderr)
+		if code != 124 || !strings.Contains(stderr.String(), "deadline exceeded") {
+			t.Errorf("deadline not a typed CLI failure: exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		}
+		return &contracts.AgentResult{TaskId: task.GetTaskId()}, nil
+	})}
+	if _, err := executor.Execute(ctx, &contracts.AgentTask{TaskId: "deadline-check"}); err != nil {
+		t.Fatal(err)
 	}
 }

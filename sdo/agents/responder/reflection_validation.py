@@ -22,6 +22,7 @@ from mcp.types import TextContent
 from sdo.agents.context_output import budget_for, save_context
 from sdo.agents.replay import replay_mode
 from sdo.agents.responder.memory_check import (
+    VALIDATION_TIMEOUT_EXIT_CODE,
     VALIDATION_TIMEOUT_SECONDS,
     ValidationResult,
     prior_timeout,
@@ -232,16 +233,14 @@ def validation_server(
     ) -> CheckMemoryReply:
         """Run the complete memory check and wait for final diagnostics (at most 300s).
 
-        Supply the typed decision fields directly; this tool writes the result
-        JSON outside the authored tree. Return the same decision and logical IDs.
-        It first gofmt-formats Go files changed under .sdo/. The reply's next
-        field says what to do: return on a pass, fix diagnostics, or stop on a terminal timeout.
-        Legacy decision_path files are also supported. One call waits for final
-        diagnostics. Responder incident detectors use the same validation; health
-        detectors remain judge-owned. Compile/import/format/provenance checks remain required;
-        Replay policy comes from SDO_REPLAY (on by default). Off skips corpus and replay;
-        RunScript still requires its successful accepted receipt. Replay verdicts
-        are information. The broker owns validation and may reuse its isolated
+        Supply typed decision fields; this tool writes JSON outside authored memory.
+        Return the same decision and logical IDs. It gofmt-formats changed Go under .sdo/.
+        Follow next: return on pass, fix diagnostics, or report terminal timeout without retry.
+        Broker deadlines are terminal too. Legacy decision_path files are supported.
+        One call waits for final diagnostics. Responder incident detectors use the same
+        check; health detectors are judge-owned. Compile/import/format/provenance remain required.
+        SDO_REPLAY defaults on; off skips corpus/replay. RunScript still needs its successful
+        accepted receipt. Replay verdicts are information. Broker acceptance may reuse an isolated
         check only for identical bytes, accepted base, policy and toolchain.
         """
         if learning_decision is not None:
@@ -310,9 +309,16 @@ def validation_server(
             deadline.cancel()
         if communication.done():
             stdout, stderr = communication.result()
-            return ValidationResult(
-                process.returncode or 0, False, validation_output(stdout), validation_output(stderr)
+            result = ValidationResult(
+                process.returncode or 0,
+                process.returncode == VALIDATION_TIMEOUT_EXIT_CODE,
+                validation_output(stdout),
+                validation_output(stderr),
             )
+            if result.timed_out:
+                terminal_timeout = result
+                remember_timeout(result)
+            return result
         stdout, stderr = await stop()
         terminal_timeout = ValidationResult(
             2,

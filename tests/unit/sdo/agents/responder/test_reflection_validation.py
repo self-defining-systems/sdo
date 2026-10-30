@@ -328,7 +328,7 @@ sys.exit(0 if source == "package fixture\\n\\nfunc Diagnose() {\\n\\tx := 1\\n\\
         assert corpus.read_text() == "package inert\nfunc  Ignored() {}\n"
 
 
-@pytest.mark.parametrize(("exit_code", "expected"), [(0, "passed"), (1, "fix each diagnostic")])
+@pytest.mark.parametrize(("exit_code", "expected"), [(0, "passed"), (1, "fix each diagnostic"), (124, "terminal")])
 async def test_check_memory_reply_leads_with_the_next_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int, expected: str
 ) -> None:
@@ -345,6 +345,8 @@ async def test_check_memory_reply_leads_with_the_next_step(
     reply = json.loads(block.text)
     assert next(iter(reply)) == "next", "the instruction leads so a capped reply keeps it"
     assert expected in reply["next"]
+    if exit_code == 124:
+        assert reply["timed_out"]
     if exit_code == 0:
         assert "information" in reply["next"]
         assert '"updated"' in reply["next"]

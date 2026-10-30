@@ -72,8 +72,9 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
-	VerificationStatus VerificationStatus `json:"verification_status,omitempty"`
-	MemoryCheckReport  json.RawMessage    `json:"memory_check_report,omitempty"`
+	VerificationStatus  VerificationStatus `json:"verification_status,omitempty"`
+	MemoryCheckReport   json.RawMessage    `json:"memory_check_report,omitempty"`
+	MemoryCheckTimedOut bool               `json:"memory_check_timed_out,omitempty"`
 
 	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
 	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
