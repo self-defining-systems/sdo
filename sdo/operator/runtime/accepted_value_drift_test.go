@@ -372,7 +372,12 @@ func installSyntheticAdoptedDefaults(t *testing.T, client *fake.Clientset) {
 			return true, nil, err
 		}
 		object := &unstructured.Unstructured{Object: values}
-		defaults := map[string]any{"replicas": int64(1), "strategy": map[string]any{"type": "RollingUpdate"}}
+		// Typed conversion retains an empty strategy object for omitted source.
+		// Default its type independently, as the API does.
+		if strategy, found, _ := unstructured.NestedString(object.Object, "spec", "strategy", "type"); !found || strategy == "" {
+			_ = unstructured.SetNestedField(object.Object, "RollingUpdate", "spec", "strategy", "type")
+		}
+		defaults := map[string]any{"replicas": int64(1)}
 		for key, value := range defaults {
 			if _, found, _ := unstructured.NestedFieldNoCopy(object.Object, "spec", key); !found {
 				_ = unstructured.SetNestedField(object.Object, value, "spec", key)
