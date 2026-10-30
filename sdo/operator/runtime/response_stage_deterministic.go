@@ -16,6 +16,8 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/workloadhealth"
 )
 
@@ -837,6 +839,11 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
+	// Re-entry and legacy receipt reconstruction retain the original response
+	// bound as well as the shared recovery bound.
+	if deadline := state.Request.ResponseDeadline; !deadline.IsZero() && deadline.Before(progress.RecoveryDeadline) {
+		progress.RecoveryDeadline = deadline
+	}
 	observe, cancel := context.WithDeadline(ctx, progress.RecoveryDeadline)
 	defer cancel()
 	interval := stage.ObservationInterval
@@ -893,16 +900,18 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
 			return nil
 		}
-		health := map[string]bool{}
+		health := map[string]sdk.Detector{}
 		for _, detector := range loop.Detectors {
-			health[detector.Spec().ID] = detector.Spec().Class == sdk.DetectorClassHealth
+			if detector.Spec().Class == sdk.DetectorClassHealth {
+				health[detector.Spec().ID] = detector
+			}
 		}
 		for _, finding := range state.Findings {
 			if covered[FindingFingerprint(finding)] {
 				continue
 			}
 			_, settling := effects[FindingFingerprint(finding)]
-			if health[finding.DetectorID] {
+			if health[finding.DetectorID] != nil {
 				for _, reservation := range loop.pendingWrites {
 					if reservation.Superseded {
 						continue
@@ -912,15 +921,15 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 						refs = *reservation.WriteRefs
 					}
 					for _, ref := range refs {
-						settling = settling || coverageFindingRelated(view, finding, program.Bindings{Objects: map[string]sdk.ObjectRef{"pending": ref}})
+						settling = settling || stageFindingDependsOnWrite(view, health[finding.DetectorID], finding, ref)
 					}
 				}
 			}
-			if health[finding.DetectorID] && !settling {
+			if health[finding.DetectorID] != nil && !settling {
 				for _, attempt := range report.Mitigations {
 					if attempt.GetApplyReceipt().GetApplied() && !attempt.GetApplyReceipt().GetRolledBack() {
 						for _, ref := range attempt.TouchedObjects {
-							settling = settling || coverageFindingRelated(view, finding, program.Bindings{Objects: map[string]sdk.ObjectRef{"applied": objectRefState(ref)}})
+							settling = settling || stageFindingDependsOnWrite(view, health[finding.DetectorID], finding, objectRefState(ref))
 						}
 					}
 				}
@@ -964,6 +973,28 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
+}
+
+// A Service can depend on a workload without every Service configuration fault
+// being a rollout symptom. Exact write objects retain their existing scope;
+// cross-object Service admission requires an SDK availability/traffic role or
+// a declared observation window, then the same typed relation join as coverage.
+func stageFindingDependsOnWrite(view sdk.DetectionContext, detector sdk.Detector, finding sdk.Finding, ref sdk.ObjectRef) bool {
+	if sameResource(ref, finding.PrimaryResource) {
+		return true
+	}
+	if finding.PrimaryResource.Kind == "Service" {
+		if finding.RuleID == servicehealth.RuleSelectorMatchesNoPods {
+			return false
+		}
+		_, trafficRole := detector.(traffic.Consumer)
+		_, windowedRole := detector.(sdk.WindowedDetector)
+		endpointRole := finding.RuleID == servicehealth.RuleNoReadyEndpoints || finding.RuleID == servicehealth.RuleServicePortUnreachable
+		if !trafficRole && !windowedRole && !endpointRole {
+			return false
+		}
+	}
+	return coverageFindingRelated(view, finding, program.Bindings{Objects: map[string]sdk.ObjectRef{"write": ref}})
 }
 
 func recoveryTimeLeft(stage *DeterministicResponseStage, deadline time.Time, legacy time.Duration) time.Duration {

@@ -99,6 +99,9 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 		}
 		if !progress.RecoveryDeadline.IsZero() {
 			progress.RecoveryDeadline = progress.RecoveryDeadline.Add(DefaultMitigationRolloutTimeout)
+		} else {
+			// Missing historical timing is not permission for a new wait.
+			progress.RecoveryDeadline = time.Now()
 		}
 	}
 	complete := progress.Complete

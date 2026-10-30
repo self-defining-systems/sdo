@@ -52,6 +52,7 @@ type KubernetesJobDispatcher struct {
 	Outcomes              memory.Reader
 	RequireMemorySnapshot bool
 	LoopFactory           func(IncidentRequest) *ResponderLoop
+	beforeClaim           func()
 }
 
 // PrepareDispatch freezes the worker task before the controller records its
@@ -160,6 +161,13 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 	request.PlaybookCoverage = coverage.Coverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, trust)
 	request.MaxResponseLoops = l.MaxBatches
 	return request
+}
+
+// DispatchWithClaim records invocation only after recovery admission, immediately
+// before a first worker claim or an existing execution is rejoined.
+func (d KubernetesJobDispatcher) DispatchWithClaim(ctx context.Context, request IncidentRequest, claimed func()) (IncidentResult, error) {
+	d.beforeClaim = claimed
+	return d.Dispatch(ctx, request)
 }
 
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
@@ -288,6 +296,9 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		if deterministicStageReport(recovery.PriorStages).GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
 			return automaticClaimResult(recovery)
 		}
+	}
+	if d.beforeClaim != nil {
+		d.beforeClaim()
 	}
 	if d.Standby != nil {
 		executor, err = d.Standby.TryBind(ctx, executor, task)

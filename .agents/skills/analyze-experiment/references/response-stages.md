@@ -150,3 +150,9 @@ not add authored coverage or grant attribution. Action completion uses every
 indexed action report, including successful WaitFor and satisfied EnsureExec,
 not the number of mutations. Rollout-only source residuals and unavailable
 readback are pending; actual configuration residuals remain partial failures.
+Cross-resource Service admission additionally requires an availability/traffic
+or declared-window role; a Service configuration/selector fault is not a rollout
+symptom just because it selects or names a nearby workload. The final claim
+boundary reuses the shared wait decision after preparation; a cleared skip emits
+no responder_dispatched lifecycle event. Published legacy/content-addressed
+requests, executions and workers retain ownership and are rejoined.

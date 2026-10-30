@@ -50,9 +50,14 @@ func TestStageRecoveryRechecksBeforeFirstWorkerPublication(t *testing.T) {
 		}
 		return nil
 	}}
-	result, err := dispatcher.Dispatch(context.Background(), request)
+	lifecycle := &memoryLifecycleSink{}
+	controller := &Controller{dispatcher: dispatcher, lifecycleSink: lifecycle}
+	result, err := (agentLifecycleDispatcher{controller: controller}).Dispatch(context.Background(), request)
 	if err != nil || claims != 0 || result.ResponderSessionID != "" || result.ResolutionPath != "deterministic" {
 		t.Fatalf("stale handoff claimed worker: claims=%d result=%+v err=%v", claims, result, err)
+	}
+	if len(lifecycle.byPhase(PhaseDispatched)) != 0 {
+		t.Fatal("recovered incident emitted a responder dispatch")
 	}
 	if len(result.PlanApplications) != 1 {
 		t.Fatalf("skipped worker lost real saved application: %+v", result)

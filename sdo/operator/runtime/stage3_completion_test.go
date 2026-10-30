@@ -152,3 +152,41 @@ func TestStagePlanCompletionKeepsSourceReadbackSeparate(t *testing.T) {
 		t.Fatal("receipt restore lost execution completion")
 	}
 }
+
+// Nonwriting steps may precede source writes. Mutation count is never an
+// action index: every written source object still needs its direct readback.
+func TestStageSourceReadbackSurvivesNonwritingActionOrder(t *testing.T) {
+	for _, kind := range []string{"wait", "ensure"} {
+		for _, before := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/before=%t", kind, before), func(t *testing.T) {
+				ref := addedFieldsRef()
+				podRef := databaseAction().Target.Pod
+				pod := planObject(podRef, map[string]any{})
+				pod.SetUID("pod")
+				pod.SetResourceVersion("1")
+				client := reconcilingAdmissionClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: addedFieldsLive(), podRef: pod}}, mutate: func(live *unstructured.Unstructured) {
+					_ = unstructured.SetNestedSlice(live.Object, append(addedFieldsContainers(live), map[string]any{"name": "injected", "image": "proxy:1"}), "spec", "template", "spec", "containers")
+				}}
+				var noop program.Action = program.WaitFor{Ref: ref, Path: "/metadata/name", Equals: ref.Name}
+				if kind == "ensure" {
+					observe := program.Command{Pod: podRef, Container: "db", Args: []string{"observe"}}
+					ensure := observe
+					ensure.Args = []string{"ensure"}
+					noop = program.EnsureExec{Observe: observe, Ensure: ensure}
+				}
+				actions := []program.Action{program.ReconcileFromSource{Ref: ref}, noop}
+				index := 0
+				if before {
+					actions = []program.Action{noop, actions[0]}
+					index = 1
+				}
+				executor := PlanExecutor{Client: stage3NoOpClient{PlanObjectClient: client}, Source: planFakeSource{source: addedFieldsSource()}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+				result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: actions}, false)
+				var partial *SourceReconcilePartialError
+				if !errors.As(err, &partial) || result.VerificationPassed || result.ActionReports[index].SourceReconcile == nil || result.ActionReports[index].SourceReconcile.Converged {
+					t.Fatalf("action order skipped source readback: %+v %v", result, err)
+				}
+			})
+		}
+	}
+}
