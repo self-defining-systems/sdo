@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/core"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"
 	"slices"
@@ -117,6 +116,17 @@ func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 }
 
 func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEffect) error {
+	c.observationMu.Lock()
+	defer c.observationMu.Unlock()
+	if err := c.requireAdoptedHealth(ctx); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	valid := c.pendingClosure != nil && c.closureState == contracts.ClosureState_CLOSURE_STATE_PENDING && sameIncidentClosure(*c.pendingClosure, effect.Closure)
+	c.mu.Unlock()
+	if !valid {
+		return fmt.Errorf("closure effect is not pending")
+	}
 	// Receipt replay is bookkeeping for a closure already committed by the
 	// native broker. Adoption can change observation generations, but must not
 	// turn fetching that exact receipt into another repair/closure decision.
@@ -166,8 +176,29 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	// Notes are evidence of this one recheck. Only freezing records them; a
 	// frozen closure's retry rechecks for contradiction and never adds notes.
 	var notes []string
+	var recoveryStates []DetectorEvaluation
 	if needsRecheck && verificationErr == nil {
 		recheck := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
+		for _, observation := range recheck.Observations {
+			if effect.Closure.ClosureStabilityWindow == 0 && observation.Status == DetectorEvaluationClear {
+				continue
+			}
+			c.recordRecoveryObservation(observation.ID, c.clock(), observation.Findings, observation.Status, observation.Error, observation.Reason)
+		}
+		if len(effect.Closure.FinalDetectorStates) > 0 {
+			c.mu.Lock()
+			response := ToolResponse{Command: "verify", Summary: recheck.Reason, DetectorStates: cloneEvaluations(recheck.States)}
+			for _, observation := range recheck.Observations {
+				for _, finding := range observation.Findings {
+					if finding.Status == sdk.FindingActive {
+						response.Findings = append(response.Findings, finding)
+					}
+				}
+			}
+			c.cachedIncidentID = effect.Closure.Request.IncidentID
+			c.cacheVerificationLocked(response)
+			c.mu.Unlock()
+		}
 		notes = append(notes, recheck.DriftNotes...)
 		if !effect.Freeze && recheck.Verdict == closureRecheckIncomplete {
 			// The frozen identity was verified when it froze. "Not yet" after a
@@ -176,7 +207,34 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		}
 		switch recheck.Verdict {
 		case closureRecheckConfirmed:
+			if len(effect.Closure.FinalDetectorStates) > 0 && effect.Closure.ClosureStabilityWindow > 0 {
+				c.mu.Lock()
+				stable := c.recoveryProofForEpochLocked(c.clock(), recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow))
+				c.mu.Unlock()
+				if !stable {
+					cancel()
+					if effect.Freeze && !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) {
+						return c.resumeClosureVerification(ctx, effect)
+					}
+					return c.PersistState(ctx)
+				}
+			}
+			c.mu.Lock()
+			response := ToolResponse{Command: "verify", Healthy: true, Summary: "controller independently verified healthy", DetectorStates: cloneEvaluations(recheck.States)}
+			c.cachedIncidentID = effect.Closure.Request.IncidentID
+			c.cacheVerificationLocked(response)
+			c.mu.Unlock()
+			recoveryStates = recheck.States
 			c.clearClosureRecheckWait()
+		case closureRecheckRecovering:
+			// A live SLO is evidence to observe, not a broker rejection. The
+			// same proof owner now requires a new continuous clear window.
+			c.resetEarlyStability()
+			cancel()
+			if !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) && effect.Freeze {
+				return c.resumeClosureVerification(ctx, effect)
+			}
+			return c.PersistState(ctx)
 		case closureRecheckContradicted:
 			c.clearClosureRecheckWait()
 			verificationErr = errors.New(recheck.Reason)
@@ -267,7 +325,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		return nil
 	}
 	if effect.Freeze {
-		frozen, err := c.freezeClosureLocked(ctx, effect.Identity, notes)
+		frozen, err := c.freezeClosureLocked(ctx, effect.Identity, notes, recoveryStates)
 		if err != nil {
 			c.mu.Unlock()
 			cancel()
@@ -304,8 +362,20 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 // freezeClosureLocked records the recheck's notes on the pending closure,
 // persists it, and returns the frozen closure's broker effect. Callers hold
 // c.mu; it is released while the state is saved.
-func (c *Controller) freezeClosureLocked(ctx context.Context, identity string, notes []string) (ClosureEffect, error) {
-	if _, err := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Freeze, At: c.clock(), EffectID: identity, SourceCheckNotes: notes}); err != nil {
+func (c *Controller) freezeClosureLocked(ctx context.Context, identity string, notes []string, recoveryStates []DetectorEvaluation) (ClosureEffect, error) {
+	event := lifecyclecore.Event{Kind: lifecyclecore.Freeze, At: c.clock(), EffectID: identity, SourceCheckNotes: notes}
+	if c.pendingClosure != nil && c.pendingClosure.ClosureStabilityWindow > 0 && len(recoveryStates) > 0 {
+		proof := *cloneIncidentClosure(c.pendingClosure)
+		proof.VerifiedAt = c.clock()
+		proof.FinalDetectorStates = cloneEvaluations(recoveryStates)
+		proof.HealthClearedAt = c.healthClearedAtLocked(recoveryStates)
+		var err error
+		event.Closure, err = incidentClosureContract(proof)
+		if err != nil {
+			return ClosureEffect{}, err
+		}
+	}
+	if _, err := c.stepClosureLocked(event); err != nil {
 		return ClosureEffect{}, err
 	}
 	if c.pendingClosure == nil || !c.pendingClosure.Frozen {
@@ -353,9 +423,13 @@ const (
 	// finding, unexplained inventory, unrestored source fields, or a detector
 	// the adopted policy no longer has.
 	closureRecheckContradicted
+	// Recovery is still in progress under the incident verification budget.
+	closureRecheckRecovering
 )
 
 type closureRecheck struct {
+	Observations []recoveryObservation
+	States       []DetectorEvaluation
 	// IncompleteStates preserve named blockers in the accepted outcome history.
 	IncompleteStates []DetectorEvaluation
 	Verdict          closureRecheckVerdict
@@ -396,7 +470,9 @@ const closureInventoryLoadBound = 30 * time.Second
 // Every detector is evaluated, so a contradiction dominates an incomplete peer.
 // Source and render state are information only: an unavailable source check
 // waits and is noted, and only an observed difference contradicts.
-func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) closureRecheck {
+func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) (result closureRecheck) {
+	var observations []recoveryObservation
+	defer func() { result.Observations = observations }()
 	confirmed := closureRecheck{Verdict: closureRecheckConfirmed}
 	if len(closure.FinalDetectorStates) == 0 || closure.DispatchError != "" {
 		// Already unverified or without detector states to recheck; the outcome
@@ -431,6 +507,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	}
 	var denied, gone []string
 	evaluated := 0
+	var states []DetectorEvaluation
+	var active []string
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
@@ -444,7 +522,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			return contradicted("closure observation detector %s is unavailable", id)
 		}
 		evaluated++
-		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
+		findings, status, err := readRecoveryDetector(ctx, detector, snapshot)
+		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReason(detector, snapshot)})
 		if err != nil {
 			reason := fmt.Sprintf("closure observation detector %s: %v", id, err)
 			if observerDenied(detector, snapshot, err) {
@@ -455,23 +534,17 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			}
 			continue
 		}
-		for _, finding := range findings {
-			if finding.DetectorID == "" {
-				finding.DetectorID = id
-			}
-			if len(finding.Playbooks) == 0 {
-				finding.Playbooks = detector.Spec().Playbooks
-			}
-			if err := core.ValidateFinding(detector.Spec(), finding); err != nil {
-				return contradicted("closure observation detector %s: %v", id, err)
-			}
-			if finding.Status == sdk.FindingActive {
-				return contradicted("closure observation detector %s is active", id)
-			}
+		states = append(states, DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status})
+		if status == DetectorEvaluationFiring {
+			active = append(active, fmt.Sprintf("closure observation detector %s is active", id))
 		}
+
 		if !detectorConfirmed(detector, snapshot) {
 			wait(detector, fmt.Sprintf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReason(detector, snapshot)))
 		}
+	}
+	if len(active) > 0 {
+		return closureRecheck{Verdict: closureRecheckRecovering, Reason: strings.Join(active, "; "), States: states}
 	}
 	if len(gone) > 0 && evaluated == 0 {
 		return contradicted("closure observation detector %s is unavailable", gone[0])
@@ -489,6 +562,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	if len(sourceNotes) > 0 {
 		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(sourceNotes, "; "), Bound: sourceBound, Skipped: gone, SourceNotes: sourceNotes, SourceOnly: true, DriftNotes: driftNotes}
 	}
+	confirmed.States = states
 	confirmed.Skipped = gone
 	confirmed.DriftNotes = driftNotes
 	return confirmed

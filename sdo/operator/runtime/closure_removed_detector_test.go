@@ -21,7 +21,7 @@ func TestRecheckSkipsDetectorRemovedByAdoptedPolicy(t *testing.T) {
 		wantSkipped   []string
 	}{
 		{name: "clean health confirms", wantVerdict: closureRecheckConfirmed, wantSkipped: []string{"removed"}},
-		{name: "active health contradicts", healthFinding: stateFinding("health"), wantVerdict: closureRecheckContradicted},
+		{name: "active health waits", healthFinding: stateFinding("health"), wantVerdict: closureRecheckRecovering},
 		{name: "nothing left contradicts", dropHealth: true, wantVerdict: closureRecheckContradicted},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

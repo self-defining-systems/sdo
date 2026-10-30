@@ -1355,6 +1355,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			}
 		}
 	}
+	if snapshotErr == nil {
+		c.observeRecoveryHealth(ctx, now, snapshot, *c.currentIncidentRequest)
+	}
 	generation := observationGeneration(snapshot)
 	var rolloutRefs []sdk.ObjectRef
 	var observedResult *IncidentResult
@@ -1395,14 +1398,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		finalStates, healthVerified = nil, false
 	}
 	if early && healthVerified && !c.earlyLastMutationAt.IsZero() {
-		ids := c.healthDetectorIDs
-		if len(ids) == 0 {
-			for _, finding := range c.currentIncidentRequest.Findings {
-				if !strings.HasPrefix(finding.DetectorID, "drift.") {
-					ids = append(ids, finding.DetectorID)
-				}
-			}
-		}
+		ids := c.recoveryDetectorIDs(*c.currentIncidentRequest)
 		finalStates, healthVerified = c.latestEvaluations(ids, c.earlyLastMutationAt, true)
 	}
 	verified := healthVerified && len(source.Rollouts) == 0 && len(source.Effects) == 0
@@ -1751,9 +1747,9 @@ func logIncidentVerified(incidentID string, healthClearedAt *time.Time, responde
 // holds the closure for pending rollouts found by verifyClosureSource; drift is
 // reported there but never decides.
 func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
+	ids := c.recoveryDetectorIDs(*c.currentIncidentRequest)
 	if len(c.healthDetectorIDs) == 0 {
-		// Drift is information: only the non-drift findings decide health.
-		health := []sdk.Finding{}
+		var health []sdk.Finding
 		for _, finding := range c.currentIncidentRequest.Findings {
 			if !strings.HasPrefix(finding.DetectorID, "drift.") {
 				health = append(health, finding)
@@ -1762,23 +1758,14 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 		if c.tracker.HasActiveKeys(findingKeys(health)) {
 			return nil, false
 		}
-		ids := make([]string, 0)
-		seen := make(map[string]struct{})
-		for _, finding := range health {
-			if _, ok := seen[finding.DetectorID]; !ok {
-				seen[finding.DetectorID] = struct{}{}
-				ids = append(ids, finding.DetectorID)
+	} else {
+		for _, id := range ids {
+			if c.tracker.HasActiveDetector(id) {
+				return nil, false
 			}
 		}
-		sort.Strings(ids)
-		return c.latestEvaluations(ids, time.Time{}, true)
 	}
-	for _, detectorID := range c.healthDetectorIDs {
-		if c.tracker.HasActiveDetector(detectorID) {
-			return nil, false
-		}
-	}
-	return c.latestEvaluations(c.healthDetectorIDs, c.recoveryObservationEpochLocked(), true)
+	return c.latestEvaluations(ids, c.recoveryObservationEpochLocked(), true)
 }
 
 // incidentDetectorStates reports the latest evaluation since responder

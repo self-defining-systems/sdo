@@ -21,12 +21,15 @@ func (c *Controller) recoveryObservationEpochLocked() time.Time {
 // Call only after fresh health and every write/rollout prerequisite holds.
 // A restart never reuses an observer's in-memory proof.
 func (c *Controller) recoveryProofLocked(now time.Time, states []DetectorEvaluation, safe bool) bool {
+	return c.recoveryProofForEpochLocked(now, states, safe, c.recoveryObservationEpochLocked())
+}
+
+func (c *Controller) recoveryProofForEpochLocked(now time.Time, states []DetectorEvaluation, safe bool, since time.Time) bool {
 	if !safe {
 		c.closureStableSince = time.Time{}
 		c.recoverySafetyLost = true
 		return false
 	}
-	since := c.recoveryObservationEpochLocked()
 	if c.recoveryObserverStarted.After(since) {
 		since = c.recoveryObserverStarted
 	}

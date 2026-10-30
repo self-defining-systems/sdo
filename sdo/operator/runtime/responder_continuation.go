@@ -471,15 +471,8 @@ func (c *Controller) continuationVerificationLocked(healthVerified bool, source 
 		result.VerificationBlockers = append(result.VerificationBlockers, VerificationBlocker{DetectorID: "controller.recovery-effect", Reason: "awaiting disappearance of repaired workload child " + effect.PrimaryResource.Kind + "/" + effect.PrimaryResource.Name})
 	}
 	ids := append([]string(nil), c.healthDetectorIDs...)
-	if len(ids) == 0 && c.currentIncidentRequest != nil {
-		seen := map[string]bool{}
-		for _, finding := range c.currentIncidentRequest.Findings {
-			// Drift is information, never an observation basis for health.
-			if !seen[finding.DetectorID] && !strings.HasPrefix(finding.DetectorID, "drift.") {
-				ids = append(ids, finding.DetectorID)
-				seen[finding.DetectorID] = true
-			}
-		}
+	if c.currentIncidentRequest != nil {
+		ids = c.recoveryDetectorIDs(*c.currentIncidentRequest)
 	}
 	states, _ := c.latestEvaluations(ids, time.Time{}, false)
 	result.DetectorStates = states

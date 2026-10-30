@@ -391,6 +391,9 @@ func (c *Controller) cacheVerificationLocked(response ToolResponse) {
 // pendingClosureVerifiedLocked reports a closure frozen at verification. An
 // unconfirmed recheck keeps that verification; it only withholds final health.
 func (c *Controller) pendingClosureVerifiedLocked(id string) bool {
+	if c.pendingClosure != nil && !c.pendingClosure.Frozen && c.pendingClosure.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED && c.cachedIncidentID == id && c.cachedVerification != nil && !c.cachedVerification.Healthy {
+		return false
+	}
 	return c.pendingClosure != nil && c.pendingClosure.Request.IncidentID == id &&
 		(len(c.pendingClosure.FinalDetectorStates) > 0 || c.pendingClosure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED)
 }

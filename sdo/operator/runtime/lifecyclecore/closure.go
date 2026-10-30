@@ -46,6 +46,8 @@ const (
 	// once, before its first broker attempt. The frozen closure is the
 	// incident's terminal identity; no later event rewrites its contents.
 	Freeze
+	// Reobserve returns an unpublished closure to its original incident budget.
+	Reobserve
 )
 
 type RetryPolicy struct {
@@ -152,10 +154,23 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 	if (event.Kind == ResponseExpired || event.Kind == OwnerLost) && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
 		return next, nil
 	}
+	if event.Kind == Reobserve {
+		if pending == nil || pending.GetFrozen() || phase != contracts.ClosureState_CLOSURE_STATE_PENDING {
+			return next, nil
+		}
+		next.PendingClosure, next.ClosureReceipt, next.ClosureFailure = nil, nil, nil
+		next.ClosureState = contracts.ClosureState_CLOSURE_STATE_UNSPECIFIED
+		return next, nil
+	}
 	if event.Kind == Freeze {
 		if pending == nil || pending.GetFrozen() || phase != contracts.ClosureState_CLOSURE_STATE_PENDING ||
 			event.EffectID != Identity(pending.GetRequest().GetIncidentId(), pending.GetRequest().GetRepositoryBaseCommit(), FreezeClosure) {
 			return next, nil
+		}
+		if proof := event.Closure; proof != nil && proof.GetRequest().GetIncidentId() == pending.GetRequest().GetIncidentId() {
+			pending.FinalDetectorStates = proto.Clone(proof).(*contracts.IncidentClosure).FinalDetectorStates
+			pending.VerifiedAt = proof.GetVerifiedAt()
+			pending.HealthClearedAt = proof.GetHealthClearedAt()
 		}
 		pending.SourceCheckNotes = append(pending.SourceCheckNotes, event.SourceCheckNotes...)
 		pending.Frozen = true
