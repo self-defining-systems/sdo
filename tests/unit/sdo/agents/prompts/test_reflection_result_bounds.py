@@ -1,5 +1,6 @@
 """Reflection consumes the complete typed responder result, including failed applies."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -16,7 +17,9 @@ from tests.unit.sdo.agents.prompts.cases import ReflectionCapture, live_shaped_r
 @pytest.mark.parametrize("mode", ["resume", "fresh"])
 @pytest.mark.parametrize("retry", [False, True])
 @pytest.mark.parametrize("detail_field", ["application_error", "action_details", "verification_details"])
-def test_reflection_variants_render_unbounded_producer_details(tmp_path, monkeypatch, mode, retry, detail_field):
+def test_reflection_variants_render_unbounded_producer_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, retry: bool, detail_field: str
+) -> None:
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
     live = live_shaped_reflection()
     result = IncidentResult(
@@ -46,6 +49,10 @@ def test_reflection_variants_render_unbounded_producer_details(tmp_path, monkeyp
     else:
         result.verification_evidence.add(name="readback", passed=False, details=detail)
     live.closure.result.CopyFrom(result)
+    live.outcome.repair_actions.clear()
+    live.outcome.repair_actions.extend(result.repair_actions)
+    live.outcome.plan_applications.clear()
+    live.outcome.plan_applications.extend(result.plan_applications)
     brief = incident_brief(live.closure, worktree=Path("/application"))
     assert brief
     capture = ReflectionCapture()
@@ -63,3 +70,5 @@ def test_reflection_variants_render_unbounded_producer_details(tmp_path, monkeyp
     assert capture.prompt
     # Full evidence remains readable, including the bytes beyond the inline budget.
     assert detail in expand_context(brief)
+    if not retry and detail_field != "verification_details":
+        assert json.dumps(detail)[1:-1] in expand_context(capture.prompt)
