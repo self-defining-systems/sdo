@@ -170,7 +170,11 @@ func TestClosureHandoffRechecksDetectorState(t *testing.T) {
 				t.Fatal(err)
 			}
 			state := exportState(t, c)
-			if len(broker.calls()) != 0 || state.ClosureState != contracts.ClosureState_CLOSURE_STATE_FAILED || state.ClosureFailure == nil {
+			want := contracts.ClosureState_CLOSURE_STATE_PENDING
+			if missing {
+				want = contracts.ClosureState_CLOSURE_STATE_FAILED
+			}
+			if len(broker.calls()) != 0 || state.ClosureState != want || (missing && state.ClosureFailure == nil) || (!missing && state.ClosureFailure != nil) {
 				t.Fatalf("obsolete detector success remained eligible: state=%v failure=%v calls=%v", state.ClosureState, state.ClosureFailure, broker.calls())
 			}
 		})

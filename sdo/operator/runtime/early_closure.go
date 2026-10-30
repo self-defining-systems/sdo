@@ -122,13 +122,15 @@ func earlyResultSnapshotLocked(l *ResponderLoop, request IncidentRequest, at tim
 	result.ResponderSessionID = l.menuSession.GetProviderSessionId()
 	result.ProgramToolCalls = append([]ToolCall(nil), l.calls...)
 	result.ProgramRuns = append([]ProgramRun(nil), l.runs...)
-	result.PlanApplications = append([]RecordedPlanApplication(nil), l.applicationsLog...)
+	result.PlanApplications = l.applicationEvidenceLocked()
 	result.ProgramFailureSignals = append([]string(nil), l.failureSignals...)
-	result.RepairActions = ProgramRepairReceipts(result.PlanApplications, nil)
+	// Archived applications have no live preimages; retain their original
+	// persisted receipts rather than reconstructing weaker evidence.
+	result.RepairActions = ProgramRepairReceipts(l.applicationsLog, nil)
 	result.RepairActions = append(result.RepairActions, l.menuRepairs...)
 	result.RepairActions = append(result.RepairActions, l.closureReceipts...)
 	for _, repair := range l.completedRepairs {
-		receipt := RepairActionReceipt{ActionID: repair.Receipt.ActionID, Kind: repair.Receipt.Kind, Target: repair.Receipt.Target, Resources: repair.Receipt.Resources, Summary: repair.Receipt.Summary, Details: repair.Receipt.Details, StartedAt: repair.Receipt.StartedAt, CompletedAt: repair.Receipt.CompletedAt, Success: repair.Receipt.Success, Reversible: repair.Receipt.Reversible, ScriptDigest: repair.Receipt.ScriptDigest, FailureReason: repair.Receipt.FailureReason}
+		receipt := repairActionFromContinuation(repair.Receipt)
 		seen := false
 		for _, prior := range result.RepairActions {
 			seen = seen || prior.ActionID == receipt.ActionID
@@ -391,6 +393,9 @@ func (c *Controller) cacheVerificationLocked(response ToolResponse) {
 // pendingClosureVerifiedLocked reports a closure frozen at verification. An
 // unconfirmed recheck keeps that verification; it only withholds final health.
 func (c *Controller) pendingClosureVerifiedLocked(id string) bool {
+	if c.pendingClosure != nil && !c.pendingClosure.Frozen && c.pendingClosure.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED && c.cachedIncidentID == id && c.cachedVerification != nil && !c.cachedVerification.Healthy {
+		return false
+	}
 	return c.pendingClosure != nil && c.pendingClosure.Request.IncidentID == id &&
 		(len(c.pendingClosure.FinalDetectorStates) > 0 || c.pendingClosure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED)
 }

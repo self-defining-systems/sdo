@@ -281,15 +281,13 @@ func TestClosureCompletesAcrossRepositoryAdvance(t *testing.T) {
 				t.Fatal(err)
 			}
 			if change == "refresh-detectors-health-bad" {
-				// Fresh evidence after adoption contradicts the closure. The
-				// retirement is synchronous, so assert the retired end state
-				// instead of "nothing happened yet": a closure that was handed to
-				// the broker would still be processing here.
-				if _, ok := c.PendingClosureEffect(); ok {
-					t.Fatal("closure still has a broker effect although health is bad after adoption")
+				// Fresh active health after adoption must withhold success.
+				// It remains observable, without a permanent broker failure.
+				if _, ok := c.PendingClosureEffect(); !ok {
+					t.Fatal("active health lost its pending closure observation")
 				}
-				if c.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED || c.closureFailure == nil {
-					t.Fatalf("closure not retired although health is bad after adoption: state %v failure %+v", c.closureState, c.closureFailure)
+				if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.closureFailure != nil {
+					t.Fatalf("active health became terminal instead of awaiting observation: state %v failure %+v", c.closureState, c.closureFailure)
 				}
 				select {
 				case result := <-c.closureResults:

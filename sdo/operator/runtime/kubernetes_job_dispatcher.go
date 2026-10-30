@@ -113,6 +113,9 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 	}
 	if d.LoopFactory != nil {
 		if loop := d.LoopFactory(request); loop != nil {
+			if err := d.reopenWithdrawnRecovery(ctx, request, loop); err != nil {
+				return IncidentRequest{}, err
+			}
 			trust, err := d.programTrust(ctx, request)
 			if err != nil {
 				return IncidentRequest{}, err
@@ -331,11 +334,11 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		result.ProgramToolCalls = loop.ToolCalls()
 		result.ProgramRuns = loop.ProgramRuns()
 		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
-		result.PlanApplications = loop.PlanApplications()
+		result.PlanApplications = loop.ApplicationEvidence()
 		result.RepairActions = loop.ApplicationRepairReceipts(result.RepairActions)
 		if result.Status == IncidentCompleted {
 			loop.CreditEquivalentRepairs(ctx, result.RepairActions)
-			result.PlanApplications = loop.PlanApplications()
+			result.PlanApplications = loop.ApplicationEvidence()
 			result.ProgramToolCalls = loop.ToolCalls()
 			result.ProgramRuns = loop.ProgramRuns()
 			fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
@@ -404,3 +407,37 @@ func (err *ResponderJobFailedError) Error() string {
 }
 
 func IncidentJobName(incidentID string) string { return worker_registry.JobName(incidentID) }
+
+func (d KubernetesJobDispatcher) reopenWithdrawnRecovery(ctx context.Context, request IncidentRequest, loop *ResponderLoop) error {
+	if loop.MutationGate == nil {
+		return nil
+	}
+	verified, err := loop.MutationGate.Verified()
+	if err != nil {
+		return fmt.Errorf("read recovery fence: %w", err)
+	}
+	if verified == nil {
+		return nil
+	}
+	if loop.IncidentStatus == nil || loop.CurrentEvidence == nil {
+		return errors.New("reopening recovery requires the controller's current incident evidence")
+	}
+	current := loop.CurrentEvidence()
+	if loop.IncidentStatus() != nil || current == nil || current.IncidentID != request.IncidentID {
+		return errors.New("recovery remains fenced by the controller")
+	}
+	if d.Client == nil {
+		return errors.New("reopening recovery requires independently observed responder quiescence")
+	}
+	work, err := d.IncidentWork(ctx, request.IncidentID)
+	if err != nil {
+		return fmt.Errorf("observe responder before reopening recovery: %w", err)
+	}
+	if work.Active {
+		return errors.New("responder work must be quiescent before reopening recovery")
+	}
+	if err := loop.MutationGate.Reopen(); err != nil {
+		return fmt.Errorf("reopen withdrawn recovery fence: %w", err)
+	}
+	return nil
+}
