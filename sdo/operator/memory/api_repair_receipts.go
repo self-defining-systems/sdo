@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -152,9 +153,16 @@ func apiRepairReceipts(history apihistory.History, incident string, resources []
 // observations are paired and conclusive. Positive repair receipts alone never
 // prove absence of an intervening write. Open read streams need not finish.
 func IncidentAPIRecoveryReceipts(root, incident string, resources []*contracts.ObjectRef, since, until time.Time) ([]*contracts.RepairActionReceipt, error) {
-	history, err := incidentAPIRepairHistory(root, incident, since, until)
+	sub, err := PrepareIncidentSession(root, "", incident)
 	if err != nil {
 		return nil, err
+	}
+	history, err := apihistory.ReadThrough(context.Background(), filepath.Join(root, sub, "api-history"), until)
+	if err != nil {
+		return nil, err
+	}
+	if history.Manifest.Incident != incident || history.Manifest.Dropped != 0 || uint64(len(history.Events)) != history.Manifest.Events || since.IsZero() || until.Before(since) {
+		return nil, fmt.Errorf("API recovery history is incomplete, stale or outside the incident")
 	}
 	starts, ends := map[string]apihistory.Event{}, map[string]apihistory.Event{}
 	counts := map[string]int{}
