@@ -34,30 +34,25 @@ env:
 
 jobs:
   prepare-go:
-    name: prepare shared Go builds (${{ matrix.mode }})
+    name: prepare shared Go builds (normal)
     env:
-      # Use the public runner's compiler CPU while retaining consumer build flags.
-      GOMAXPROCS: "4"
+      GOMAXPROCS: '4'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [normal, race]
     outputs:
       schema_identity: ${{ steps.schema.outputs.value }}
     steps:
       - name: Select prepared compiler cache
-        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-${{ matrix.mode }}" >> "$GITHUB_ENV"
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: "1.26.8"
+          go-version: 1.26.8
           cache: false
       - name: Restore the normal compiler and module caches
-        if: matrix.mode == 'normal' && inputs.cold != true
+        if: inputs.cold != true
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         id: base-normal
         with:
@@ -69,74 +64,44 @@ jobs:
           restore-keys: |
             ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-
-      - name: Restore the race compiler cache
-        if: matrix.mode == 'race' && inputs.cold != true
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        id: base-race
-        with:
-          path: ${{ runner.temp }}/sdo-go-build-race
-          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
-            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
-          version: "0.9.24"
-          python-version: "3.12"
+          version: 0.9.24
+          python-version: '3.12'
           enable-cache: true
       - name: Enforce standing PR execution limits
         run: |
           uv sync --locked --all-extras
           uv run python scripts/check_ci_budget.py
-      - name: Use all preparation CPUs for the race graph
-        if: matrix.mode == 'race'
-        # Package scheduling does not change Go archive identity. The normal
-        # source-stamped CLI and all consumers retain their original flags.
-        run: echo "GOFLAGS=-p=4 -trimpath" >> "$GITHUB_ENV"
       - name: Compile dependency graphs outside operation timeouts
         id: compile
-        # Normal preparation builds dependency archives, not discarded test
-        # executables. GNU timeout also stops every child compiler on failure.
-        run: timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
-
+        run: timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "normal"
       - name: Check formatting
-        if: matrix.mode == 'normal'
         run: bash scripts/format_code.sh --check
       - name: Check static contracts
-        if: matrix.mode == 'normal'
         run: bash scripts/check_errors.sh --python-only
-
       - name: Prepare Python adapter executables
-        if: matrix.mode == 'normal'
         run: bash scripts/python_go_tools.sh prepare
       - name: Publish prepared Python Go tools
-        if: matrix.mode == 'normal'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: prepared-python-go-tools
           path: .fastloop/python-go-tools.tar
           if-no-files-found: error
           retention-days: 1
-
       - name: Keep only the source-bound test executable
-        if: matrix.mode == 'normal'
         run: |
           current="$(python3 scripts/operator_test_binary.py)"
           test -f "$current"
           find .fastloop/test-bin -maxdepth 1 -type f -name 'sdo-operator-*' ! -samefile "$current" -delete
-
       - name: Bind image schema to the compiled source
-        if: matrix.mode == 'normal'
         id: schema
         run: |
           identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
           echo "value=${identity}" >> "$GITHUB_OUTPUT"
-
       - name: Pack Python sources and tools
-        if: matrix.mode == 'normal'
         run: bash scripts/go_ci_artifacts.sh pack python "${{ runner.temp }}/prepared-normal"
       - name: Transfer only sources and tools to compiler-free Python jobs
-        if: matrix.mode == 'normal'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: prepared-python
@@ -147,7 +112,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Save the durable normal build
-        if: matrix.mode == 'normal' && inputs.cold != true && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        if: inputs.cold != true && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
@@ -155,17 +120,63 @@ jobs:
             ~/go/pkg/mod
             .fastloop/test-bin
           key: ${{ steps.base-normal.outputs.cache-primary-key }}
-
+      - name: Publish this run's normal build
+        id: run-normal
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-normal
+            ~/go/pkg/mod
+            .fastloop/test-bin
+          key: ci-run-v1-normal-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}
+  prepare-go-race:
+    name: prepare shared Go builds (race)
+    env:
+      GOMAXPROCS: '4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-race" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: 1.26.8
+          cache: false
+      - name: Restore the race compiler cache
+        if: inputs.cold != true
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: base-race
+        with:
+          path: ${{ runner.temp }}/sdo-go-build-race
+          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: 0.9.24
+          python-version: '3.12'
+          enable-cache: true
+      - name: Enforce standing PR execution limits
+        run: |
+          uv sync --locked --all-extras
+          uv run python scripts/check_ci_budget.py
+      - name: Use all preparation CPUs for the race graph
+        run: echo "GOFLAGS=-p=4 -trimpath" >> "$GITHUB_ENV"
+      - name: Compile dependency graphs outside operation timeouts
+        id: compile
+        run: timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "race"
       - name: Save the durable race build
-        if: matrix.mode == 'race' && inputs.cold != true && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        if: inputs.cold != true && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ${{ runner.temp }}/sdo-go-build-race
           key: ${{ steps.base-race.outputs.cache-primary-key }}
-
       - name: Check Go static contracts and prepare selected executables
-        if: matrix.mode == 'race'
         run: |
           eval "$(bash scripts/link_cache.sh --shell)"
           # Independent validation and discovery/linking share immutable archives
@@ -186,7 +197,6 @@ jobs:
             du -h "$RUNNER_TEMP/contract-$bin.tar.zst"
           done
       - name: Publish selected contract executables for bin 0
-        if: matrix.mode == 'race'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: prepared-contract-0
@@ -195,7 +205,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Publish selected contract executables for bin 1
-        if: matrix.mode == 'race'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: prepared-contract-1
@@ -203,16 +212,6 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 1
-      - name: Publish this run's normal build
-        if: matrix.mode == 'normal'
-        id: run-normal
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ${{ runner.temp }}/sdo-go-build-normal
-            ~/go/pkg/mod
-            .fastloop/test-bin
-          key: ci-run-v1-normal-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}
 
   python:
     name: ${{ matrix.name }}
@@ -289,7 +288,7 @@ jobs:
 
   contracts:
     name: native contracts (${{ matrix.bin }})
-    needs: prepare-go
+    needs: [prepare-go, prepare-go-race]
     runs-on: ubuntu-latest
     timeout-minutes: 4
     strategy:
@@ -353,7 +352,7 @@ jobs:
 
   required-pr-ci:
     name: Required PR CI
-    needs: [prepare-go, python, contracts]
+    needs: [prepare-go, prepare-go-race, python, contracts]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 1

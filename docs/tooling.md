@@ -35,7 +35,9 @@ prove another role's cost is zero.
 
 Controller recovery integration fixtures use `sdo/operator/runtime/recovery_fixture_test.go`: bind the native cached-proof consumer and drive real detector observations before, just before and at the stability boundary. The PR planner protects Controller, Recovery, Closure, SourceInventory, Latent and Continuation families; synthetic planner displacement controls in `tests/unit/scripts/test_pr_test_plan.py` prevent cheaper filler from hiding them. Standalone detector/report units do not assert controller closure.
 
-Native CI preparation publishes one exact run/revision-scoped normal Go cache
+The two native CI producers are independent named jobs, with the same seven
+executed jobs in total. Python depends only on normal preparation; contracts
+depend on both. Preparation publishes one exact run/revision-scoped normal Go cache
 for nested workspace builds, plus per-bin archives of selected race executables
 and their plan. Contract shards never transfer the race compiler cache or link
 those test binaries. `scripts/prepared_contracts.py` binds binaries to the source,

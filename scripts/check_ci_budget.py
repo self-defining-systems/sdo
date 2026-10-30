@@ -28,9 +28,16 @@ def cardinality(job: dict) -> int:
 
 
 def check(jobs: dict) -> tuple[int, int]:
-    count = sum(cardinality(job) for name, job in jobs.items() if name not in {"prepare-go", "required-pr-ci"})
+    count = sum(
+        cardinality(job)
+        for name, job in jobs.items()
+        if name not in {"prepare-go", "prepare-go-race", "required-pr-ci"}
+    )
     if count > 4:
         raise ValueError(f"{count} PR test jobs exceeds the fixed limit of 4")
+    total = sum(cardinality(job) for job in jobs.values())
+    if total > 7:
+        raise ValueError(f"{total} executed PR jobs exceeds the unchanged limit of 7")
     durations: dict[str, int] = {}
     visiting: set[str] = set()
 

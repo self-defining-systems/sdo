@@ -9,18 +9,18 @@ ROOT = Path(__file__).resolve().parents[4]
 
 def test_fixed_jobs_and_single_required_result():
     jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())["jobs"]
-    assert set(jobs) == {"prepare-go", "python", "contracts", "required-pr-ci"}
+    assert set(jobs) == {"prepare-go", "prepare-go-race", "python", "contracts", "required-pr-ci"}
     assert jobs["contracts"]["strategy"]["matrix"] == {"bin": [0, 1]}
     assert len(jobs["python"]["strategy"]["matrix"]["include"]) == 2
     assert jobs["prepare-go"]["timeout-minutes"] == 5
     assert jobs["required-pr-ci"]["timeout-minutes"] == 1
     assert jobs["required-pr-ci"]["name"] == "Required PR CI"
     assert "contracts" in jobs["required-pr-ci"]["needs"]
-    preparation = jobs["prepare-go"]["steps"]
+    preparation = jobs["prepare-go-race"]["steps"]
     plan = next(step for step in preparation if "scripts/go_cost_plan.py" in step.get("run", ""))
-    assert plan["if"] == "matrix.mode == 'race'"
+    assert "if" not in plan
     assert "--prepared" in plan["run"]
-    assert jobs["contracts"]["needs"] == "prepare-go"
+    assert set(jobs["contracts"]["needs"]) == {"prepare-go", "prepare-go-race"}
     assert "--include-dedicated" in plan["run"]
     assert any("scripts/check_ci_budget.py" in step.get("run", "") for step in preparation)
 

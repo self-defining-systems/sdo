@@ -8,7 +8,8 @@ at four minutes, and the aggregate gate at one minute. The maximum
 executed critical path is ten minutes; runner queue time is outside that bound.
 
 - `check_ci_budget.py` structurally checks the workflow: no computed PR matrices,
-  at most four test jobs, dependency critical path <=600 seconds, and contract
+  at most four test jobs and seven executed jobs total, dependency critical path
+  <=600 seconds, and contract
   work plus setup margin within the job cap. It runs before test fanout and in
   `check_errors.sh`. Its negative controls add a fifth job or extend the path.
 - `ci_policy.json` owns the two contract buckets' fixed capacity (180 seconds of
