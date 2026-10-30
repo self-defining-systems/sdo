@@ -479,8 +479,9 @@ def test_preparation_uses_available_compiler_cpu_without_changing_build_identity
 
 def test_static_python_job_cannot_compile_go_and_go_checks_run_on_prepared_race_graph() -> None:
     jobs = workflow()["jobs"]
-    static = next(step for step in jobs["python"]["steps"] if step.get("name") == "Check static contracts")
+    static = next(step for step in jobs["prepare-go"]["steps"] if step.get("name") == "Check static contracts")
     assert "--python-only" in static["run"]
+    assert static["if"] == "matrix.mode == 'normal'"
     guard = next(step for step in jobs["python"]["steps"] if step.get("name") == "Enforce compiler-free Python jobs")
     assert "scripts/unit-tools" in guard["run"]
     assert "SDO_UNIT_REAL_GO" in guard["run"]
@@ -547,3 +548,13 @@ def test_contract_cache_inputs_match_their_base_producers() -> None:
         producer = next(step for step in jobs["prepare-go"]["steps"] if step.get("id") == f"base-{mode}")
         consumer = next(step for step in jobs["contracts"]["steps"] if step.get("id") == f"base-{mode}")
         assert consumer["with"] == producer["with"]
+
+
+def test_shared_quality_checks_do_not_consume_python_test_deadlines() -> None:
+    jobs = workflow()["jobs"]
+    quality_names = {"Check formatting", "Check static contracts"}
+    assert not any(step.get("name") in quality_names for step in jobs["python"]["steps"])
+    quality = [step for step in jobs["prepare-go"]["steps"] if step.get("name") in quality_names]
+    assert {step["name"] for step in quality} == quality_names
+    assert all(step["if"] == "matrix.mode == 'normal'" for step in quality)
+    assert any("--python-only" in step.get("run", "") for step in quality)

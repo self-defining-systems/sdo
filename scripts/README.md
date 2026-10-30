@@ -41,8 +41,9 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   contract deadline either.
 - `check_errors.sh --go-only` owns Go static contracts (schema/deadline/fixture
   ratchets, generated Go references, parity and purity) and runs on the prepared
-  race graph. `--python-only` owns Python checks and runs behind the compiler
-  guard in Python CI. The default local command retains both sets.
+  race graph. `--python-only` owns Python checks and runs once in normal
+  preparation alongside formatting; the four-minute Python workers spend their
+  deadline on setup and tests, with their compiler guard enabled. The default local command retains both sets.
 - `unit-tools/go` rejects compiler commands in unmarked Python tests, including
   Go invoked by child CLIs. The shared reflection-memory fixture routes all its
   transitive consumers to `go_integration` before marker selection; new compiler
