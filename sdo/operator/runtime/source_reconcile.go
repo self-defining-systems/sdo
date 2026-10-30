@@ -77,14 +77,30 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 		return nil
 	}
 	var partial []*contracts.SourceReconcileResult
+	// Applied actions are a mutation collection, not a positional prefix of a
+	// mixed plan. Successful waits/ensures do not add entries to it.
+	written := map[sdk.ObjectRef]bool{}
+	for _, action := range result.ActionsApplied {
+		if isSourceReconcile(action) {
+			ref, _ := planActionRef(action)
+			written[ref] = true
+		}
+	}
+	writtenSource := func(index int, action program.Action) bool {
+		if !isSourceReconcile(action) || index >= len(result.ActionReports) {
+			return false
+		}
+		ref, _ := planActionRef(action)
+		return written[ref]
+	}
 	unread := 0
 	for index, action := range result.Plan.Actions {
-		if isSourceReconcile(action) && index < len(result.ActionsApplied) && index < len(result.ActionReports) {
+		if writtenSource(index, action) {
 			unread++
 		}
 	}
 	for index, action := range result.Plan.Actions {
-		if !isSourceReconcile(action) || index >= len(result.ActionsApplied) || index >= len(result.ActionReports) {
+		if !writtenSource(index, action) {
 			continue
 		}
 		// Each object's readback gets its share of what remains, so one slow read

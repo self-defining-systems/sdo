@@ -68,12 +68,20 @@ type agentLifecycleDispatcher struct{ controller *Controller }
 
 func (d agentLifecycleDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
 	c := d.controller
-	c.mu.Lock()
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseDispatched, RecordedAt: contractTimestamp(c.clock()), IncidentId: request.IncidentID,
-		Worktree: request.RepositoryWorktree, BaseCommit: request.RepositoryBaseCommit,
-	})
-	c.mu.Unlock()
+	claimed := func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.emitLifecycleLocked(&contracts.LifecycleEvent{
+			Event: PhaseDispatched, RecordedAt: contractTimestamp(c.clock()), IncidentId: request.IncidentID,
+			Worktree: request.RepositoryWorktree, BaseCommit: request.RepositoryBaseCommit,
+		})
+	}
+	if dispatcher, ok := c.dispatcher.(interface {
+		DispatchWithClaim(context.Context, IncidentRequest, func()) (IncidentResult, error)
+	}); ok {
+		return dispatcher.DispatchWithClaim(ctx, request, claimed)
+	}
+	claimed()
 	return c.dispatcher.Dispatch(ctx, request)
 }
 

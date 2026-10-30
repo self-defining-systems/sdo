@@ -20,7 +20,7 @@ var externalControllerFields = map[string]bool{"dispatcher": true, "broker": tru
 
 // externalMethods are dispatcher entry points that are reached through a local
 // variable (a type-asserted interface), so the field check cannot see them.
-var externalMethods = map[string]bool{"ContinueAfterVerification": true, "StopResponder": true, "PrepareDispatch": true, "IncidentWork": true, "Dispatch": true}
+var externalMethods = map[string]bool{"ContinueAfterVerification": true, "StopResponder": true, "PrepareDispatch": true, "IncidentWork": true, "Dispatch": true, "DispatchWithClaim": true}
 
 // heldCallAllowlist lists the calls that run under c.mu today. Each is
 // non-blocking bookkeeping or an observer that does not call back into the

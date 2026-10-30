@@ -169,3 +169,10 @@ changed generations, unresolved mutations and missing checkpoints remain unknown
 and grant no attribution. Confirmed workload removals retain their causal write
 scope but settle through UID-bound delete evidence and fresh direct absence,
 without asking the absent workload to roll out.
+
+Cross-resource Service admission additionally requires an availability/traffic
+or declared-window role; a Service configuration/selector fault is not a rollout
+symptom just because it selects or names a nearby workload. The final claim
+boundary reuses the shared wait decision after preparation; a cleared skip emits
+no responder_dispatched lifecycle event. Published legacy/content-addressed
+requests, executions and workers retain ownership and are rejoined.
