@@ -321,9 +321,7 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(Wait
         report.save(report_path)
 
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-    if environment.dev_mount:
-        os.environ["SDO_DEV_MOUNT"] = "1"
-        os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
+    environment.apply_operator_env(os.environ)
     try:
         initial, report.setup_proof = check_reuse(environment)
         report.save(report_path)
