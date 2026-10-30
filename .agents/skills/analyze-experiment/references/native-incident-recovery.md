@@ -95,3 +95,5 @@ missing/malformed identity yields `session_handoff_invalid`, an unreleased write
 yields `session_handoff_timeout`, and an unavailable provider session yields
 `session_unavailable`. These are terminal failed reflection decisions, with no
 provider resume retry or implicit fresh-session fallback.
+
+Responder tool checkpoints now retain `ApplicationEvidence` as ProtoJSON application facts plus a pending marker alongside `CompletedRepairs`. Controller-only owner chains also persist alongside the display receipt, remaining excluded from responder feedback. Recovered application IDs, program IDs and verification results reach final and early-closure outcomes through the evidence-only `ApplicationEvidence()` projection. `PlanApplications()` remains process-local; restart restores neither live application handles nor rollback authority, and retains the consumed repair budget. Missing application evidence in older checkpoints can leave a program receipt unowned; do not infer hand repair from its `program-plan` kind alone.
