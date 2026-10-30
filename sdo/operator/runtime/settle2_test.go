@@ -3,10 +3,18 @@ package runtime
 import (
 	"context"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes/fake"
+	"path/filepath"
+	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 	"testing"
 	"time"
 )
@@ -220,7 +228,7 @@ func TestSettlementProducerConsumerSweep(t *testing.T) {
 }
 
 func TestSettlementAdverseEvidenceSweep(t *testing.T) {
-	for _, scenario := range []string{"unknown", "truncated", "partial", "rollback", "same-resource", "independent-resource", "inside-apply", "timed-out"} {
+	for _, scenario := range []string{"unknown", "truncated", "partial", "rollback", "same-resource", "independent-resource", "inside-apply", "timed-out", "missing-result"} {
 		t.Run(scenario, func(t *testing.T) {
 			loop, state := pipelineTestLoop(t, false)
 			loop.Executor.Rollouts = &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
@@ -235,6 +243,8 @@ func TestSettlementAdverseEvidenceSweep(t *testing.T) {
 			id := app.ID
 			ref, _ := planActionRef(app.Result.Plan.Actions[0])
 			switch scenario {
+			case "missing-result":
+				before.PlanApplications = nil
 			case "unknown":
 				specs := loop.Programs.List()
 				ds := []program.Diagnoser{}
@@ -276,7 +286,7 @@ func TestSettlementAdverseEvidenceSweep(t *testing.T) {
 					settled = candidate
 				}
 			}
-			want := scenario == "independent-resource" || scenario == "inside-apply" || scenario == "timed-out"
+			want := scenario == "independent-resource" || scenario == "inside-apply" || scenario == "timed-out" || scenario == "missing-result"
 			if got := settled.Result.FinalVerificationBasis == "recovery-settled"; got != want {
 				t.Fatalf("settled=%v want=%v result=%+v stages=%v", got, want, settled, stages)
 			}
@@ -505,5 +515,264 @@ func TestSettlementObservationPreservesWriteInterval(t *testing.T) {
 		if !app.CompletedAt.Equal(times[app.ID]) {
 			t.Fatalf("observation rewrote write interval for %s: %s -> %s", app.ID, times[app.ID], app.CompletedAt)
 		}
+	}
+}
+
+func TestSettlementNonpendingHealthObservationIsNeutral(t *testing.T) {
+	loop, _ := trustedPortLoop(t, false, false, false)
+	bindings := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
+	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: bindings})
+	if planned.Error != "" {
+		t.Fatal(planned.Error)
+	}
+	applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
+	if applied.Error != "" || loop.PlanApplications()[0].Result.VerificationPassed {
+		t.Fatal("fixture must produce a landed unconfirmed repair")
+	}
+	runs := loop.ProgramRuns()
+	fillProgramRevisions(context.Background(), runs, loop.Request.RepositoryWorktree, loop.Request.SourceCommit)
+	typed, err := incidentResultContract(IncidentResult{PlanApplications: loop.ApplicationEvidence(), ProgramRuns: runs, ProgramFailureSignals: loop.FailureSignals()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := &contracts.OutcomeRecord{Classification: "unconfirmed", SourceCommit: loop.Request.SourceCommit, PlanApplications: typed.PlanApplications, ProgramRuns: typed.ProgramRuns, ProgramFailureSignals: typed.ProgramFailureSignals}
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome})["service-targetport-mismatch"]; got.Failures != 0 || got.VerifiedSuccesses != 0 {
+		t.Fatalf("health observation became adverse execution evidence: %+v signals=%v", got, loop.FailureSignals())
+	}
+}
+
+func TestSettlementSavedScriptKeepsObservedTransitionProof(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(9999)}}}})
+	provider := fastloopObjects{client: client}
+	detector := pipelineDetector{}
+	learned := scriptVerifyProgram{}
+	registry, err := program.NewRegistry([]program.Diagnoser{learned}, []program.Mitigator{learned})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := provider.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := detector.Detect(context.Background(), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, commit := acceptedScriptMemory(t, learned.Spec().ID, `kubectl patch service "$SERVICE" --type merge -p "$PATCH"`)
+	request := IncidentRequest{IncidentID: "settle-saved-script", Namespace: "app", RepairPolicy: "recorded-actions", Findings: findings, RepositoryWorktree: root, SourceCommit: commit, ResponseDeadline: time.Now().Add(time.Minute)}
+	loop := NewResponderLoop(request, registry, provider, []sdk.Detector{detector}, PlanExecutor{Client: verifyingScriptClient{TypedPlanClient{Client: client, ScriptImage: "script-tools:fixture"}}, Rollouts: &pipelineDeadlineRollout{failure: context.DeadlineExceeded}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{detector}, Provider: provider}}, 3)
+	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
+	}
+	state := &IncidentState{Request: request, Findings: findings}
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationCeiling: time.Nanosecond}}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop.Executor.Rollouts = generalNoRollouts{}
+	result, stages := loop.SettleRecoveryApplications(context.Background(), before, state.PriorStages)
+	if len(result.PlanApplications) != 1 || result.PlanApplications[0].Result.FinalVerificationBasis != "observed-transition" {
+		t.Fatalf("saved script did not settle: applications=%+v stages=%v", result.PlanApplications, stages)
+	}
+	if result.PlanApplications[0].Result.FinalEquivalenceVerified != nil {
+		t.Fatal("opaque script claimed exact field equivalence")
+	}
+}
+
+func TestSettlementIgnoresConfirmedNoopObservationFields(t *testing.T) {
+	loop, _ := pipelineTestLoopWithServices(t, false, "peer")
+	client := loop.Executor.Client.(TypedPlanClient).Client
+	peer, err := client.CoreV1().Services("app").Get(context.Background(), "peer", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
+	if _, err := client.CoreV1().Services("app").Update(context.Background(), peer, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	first := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	second := first
+	second.Name = "peer"
+	plan := program.Plan{}
+	for _, ref := range []sdk.ObjectRef{first, second} {
+		plan.Actions = append(plan.Actions, program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: program.FromSource(ref, "spec.ports[0].targetPort"), Reason: "restore accepted port"})
+	}
+	result, err := loop.Executor.Apply(context.Background(), loop.Request, plan, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(ref sdk.ObjectRef) *unstructured.Unstructured {
+		object, err := loop.Executor.Client.Get(context.Background(), ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return object
+	}
+	if finalPlanFieldsMatch(result, get) {
+		t.Fatal("fixture must expose the old unchanged-object equivalence rejection")
+	}
+	if !loop.recoveryPlanFieldsMatch(result, get, func(sdk.ObjectRef) bool { return false }) {
+		t.Fatal("confirmed unchanged peer prevented exact repair settlement")
+	}
+	service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.Spec.Ports[0].TargetPort = intstr.FromInt32(9090)
+	if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if loop.recoveryPlanFieldsMatch(result, get, func(sdk.ObjectRef) bool { return false }) {
+		t.Fatal("changed desired fields borrowed an observation-only peer's proof")
+	}
+}
+
+func TestSettlementRolloutSamplePreservesOrdinaryReadbackLatency(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	loop.Executor.Rollouts = settle2SlowObservation{base: loop.Executor.Rollouts}
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, recoveryWait: func(context.Context, time.Duration) error {
+		return fmt.Errorf("ordinary readback was incorrectly timed out before the shared recovery wait")
+	}}
+	report, err := stage.Run(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range report.Mitigations {
+		if attempt.Result != "applied_cleared" {
+			t.Fatalf("ordinary readback latency became unsettled repair: %v", attempt)
+		}
+	}
+}
+
+type settle2SlowObservation struct{ base PlanRollouts }
+
+func (r settle2SlowObservation) Wait(context.Context, []sdk.ObjectRef) error {
+	return fmt.Errorf("a single observation invoked the serial rollout wait")
+}
+func (r settle2SlowObservation) Observe(ctx context.Context, refs []sdk.ObjectRef) error {
+	timer := time.NewTimer(3 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	return r.base.Wait(ctx, refs)
+}
+
+func TestSettlementAgentApplicationsShareTheRecoveryOwner(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		for _, batch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("restart=%v/batch=%v", restart, batch), func(t *testing.T) {
+				loop, state := pipelineTestLoop(t, false)
+				loop.Executor.Rollouts = &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
+				var saved []byte
+				loop.saveToolState = func(_ context.Context, b []byte) error { saved = append([]byte(nil), b...); return nil }
+				var planIDs []string
+				for _, match := range stageCandidates(state) {
+					planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: match.PlaybookId, Bindings: programBindingsState(match.Bindings), FindingFingerprints: match.targets})
+					if planned.Error != "" {
+						t.Fatal(planned.Error)
+					}
+					if batch {
+						planIDs = append(planIDs, planned.PlanID)
+						continue
+					}
+					applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
+					if applied.ApplicationID == "" {
+						t.Fatalf("agent did not write: %+v", applied)
+					}
+				}
+				if batch {
+					applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: planIDs})
+					if applied.ApplicationID == "" {
+						t.Fatalf("agent batch did not write: %+v", applied)
+					}
+				}
+				before := IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: state.Request.IncidentID, Status: IncidentCompleted, ResponderSessionID: "11111111-2222-4333-8444-555555555555", ResolutionPath: "responder", Timing: TimingMetrics{StartedAt: time.Now().Add(-time.Second), CompletedAt: time.Now()}, PlanApplications: loop.ApplicationEvidence(), ProgramRuns: loop.ProgramRuns(), ProgramToolCalls: loop.ToolCalls(), ProgramFailureSignals: loop.FailureSignals()}
+				if restart {
+					restored := NewResponderLoop(loop.Request, loop.Programs, loop.Provider, loop.Detectors, loop.Executor, 5)
+					restored.ReadView = loop.ReadView
+					if err := restored.restoreToolSnapshot(saved); err != nil {
+						t.Fatal(err)
+					}
+					loop = restored
+				}
+				loop.Executor.Rollouts = observedDeploymentRollout{client: loop.Executor.Client.(TypedPlanClient).Client}
+				result, stages := loop.SettleRecoveryApplications(context.Background(), before, nil)
+				closure := IncidentClosure{Request: state.Request, Result: &result, VerifiedAt: time.Now(), FinalDetectorStates: []DetectorEvaluation{{DetectorID: loop.Detectors[0].Spec().ID, Status: DetectorEvaluationClear, EvaluatedAt: time.Now()}}, Frozen: true}
+				closure.Request.PriorStages = stages
+				derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if derived.Record.Classification != "success" || !coveredRepeatCandidate(derived.Record) {
+					t.Fatalf("agent's saved application bypassed settlement: class=%s stages=%v", derived.Record.Classification, stages)
+				}
+				if calls := settlementBrokerWorkers(t, loop, closure); calls != 0 {
+					t.Fatalf("covered agent application dispatched %d learning workers", calls)
+				}
+				if restart && (len(loop.plans) > 0 || len(loop.applications) > 0) {
+					t.Fatal("settlement restored agent execution authority")
+				}
+			})
+		}
+	}
+}
+
+func TestSettlementObservesRecordedAPIWritesBeforeDerivation(t *testing.T) {
+	for _, kind := range []string{"watching", "own-write", "later-write", "incomplete"} {
+		t.Run(kind, func(t *testing.T) {
+			loop, state := pipelineTestLoop(t, false)
+			loop.Executor.Rollouts = &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
+			if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, ObservationCeiling: time.Nanosecond}}); err != nil {
+				t.Fatal(err)
+			}
+			before, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			before.ResponderSessionID = "11111111-2222-4333-8444-555555555555"
+			root := t.TempDir()
+			if kind != "incomplete" {
+				sub, err := memory.PrepareIncidentSession(root, "", state.Request.IncidentID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				store, err := apihistory.Open(filepath.Join(root, sub, "api-history"), state.Request.IncidentID, apihistory.Limits{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				app := loop.applicationsLog[0]
+				started := app.CompletedAt.Add(time.Nanosecond)
+				finished := started.Add(time.Nanosecond)
+				verb := "get"
+				if kind == "own-write" {
+					verb = "patch"
+					started = app.StartedAt.Add(time.Nanosecond)
+					finished = app.CompletedAt.Add(-time.Nanosecond)
+				}
+				if kind == "later-write" {
+					verb = "patch"
+				}
+				event := apihistory.Event{RequestID: "synthetic-api", Phase: "start", Started: started, Verb: verb, Group: "apps", Version: "v1", Resource: "deployments", Namespace: "app", Name: "api"}
+				store.Record(event, nil)
+				event.Phase = "end"
+				event.Finished = finished
+				event.Status = 200
+				store.Record(event, nil)
+				store.Close()
+			}
+			loop.RecoverySessionRoot = root
+			loop.Executor.Rollouts = observedDeploymentRollout{client: loop.Executor.Client.(TypedPlanClient).Client}
+			result, _ := loop.SettleRecoveryApplications(context.Background(), before, state.PriorStages)
+			want := kind == "watching" || kind == "own-write"
+			if got := result.PlanApplications[0].Result.FinalVerificationBasis == "recovery-settled"; got != want {
+				t.Fatalf("history=%s settlement=%v want=%v", kind, got, want)
+			}
+		})
 	}
 }

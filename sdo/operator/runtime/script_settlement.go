@@ -59,7 +59,7 @@ func applicationActionResources(app *contracts.PlanApplication, index int, actio
 
 // finalScriptApplication verifies the recorded invocation's own bindings again
 // on fresh state. It never projects opaque script effects or invents post-state.
-func (l *ResponderLoop) finalScriptApplication(ctx context.Context, app RecordedPlanApplication, view program.ReadView) bool {
+func (l *ResponderLoop) finalScriptApplication(ctx context.Context, app RecordedPlanApplication, view program.ReadView, accepted ...selectedPlan) bool {
 	if !app.Result.Applied || !app.Result.VerificationCompleted || !app.Result.VerificationPassed || app.Result.DryRun || app.RolledBack || app.Error != "" || app.RollbackError != "" || len(app.ProgramIDs) == 0 || l.Programs == nil {
 		return false
 	}
@@ -82,6 +82,13 @@ func (l *ResponderLoop) finalScriptApplication(ctx context.Context, app Recorded
 			return false
 		}
 		bindings := appliedPlanBindings(outcome, wire, id)
+		if len(bindings) == 0 {
+			for _, plan := range accepted {
+				if plan.programID == id && plan.revision != "" && plan.revision == l.programRevision(id) {
+					bindings = append(bindings, plan.bindings)
+				}
+			}
+		}
 		if len(bindings) == 0 {
 			return false
 		}

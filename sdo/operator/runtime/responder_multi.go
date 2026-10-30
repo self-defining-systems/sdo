@@ -223,6 +223,26 @@ func (l *ResponderLoop) reservePending(application string, result PlanApplicatio
 	if err != nil {
 		refs = planCaptureRefs(result.Plan)
 	}
+	exclusive := l.applicationWriteRefs(result)
+	sort.Slice(refs, func(i, j int) bool { return writeObjectKey(refs[i]) < writeObjectKey(refs[j]) })
+	var diagnoser program.Diagnoser
+	revision := ""
+	if programID != "" && l.Programs != nil {
+		diagnoser, _ = l.Programs.Diagnoser(programID)
+		revision = l.programRevision(programID)
+	}
+	if programID != "" && revision != "" && diagnoser != nil && len(l.applicationBindings[application]) == 0 {
+		if l.applicationBindings == nil {
+			l.applicationBindings = map[string][]recoveryBinding{}
+		}
+		l.applicationBindings[application] = []recoveryBinding{{ProgramID: programID, ProgramRevision: revision, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...)}}
+	}
+	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, WriteRefs: exclusive, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: time.Now().UTC()}
+}
+
+// applicationWriteRefs is the shared desired-state scope for reservation and
+// recovery attribution. Requeues and confirmed unchanged writes only observe.
+func (l *ResponderLoop) applicationWriteRefs(result PlanApplicationResult) *[]sdk.ObjectRef {
 	writes := program.Plan{}
 	for _, action := range result.ActionsApplied {
 		// A requeue changes no desired state. Every prerequisite repair may
@@ -265,14 +285,7 @@ func (l *ResponderLoop) reservePending(application string, result PlanApplicatio
 		}
 		exclusive = &writeRefs
 	}
-	sort.Slice(refs, func(i, j int) bool { return writeObjectKey(refs[i]) < writeObjectKey(refs[j]) })
-	var diagnoser program.Diagnoser
-	revision := ""
-	if programID != "" && l.Programs != nil {
-		diagnoser, _ = l.Programs.Diagnoser(programID)
-		revision = l.programRevision(programID)
-	}
-	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, WriteRefs: exclusive, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: time.Now().UTC()}
+	return exclusive
 }
 
 // Reservations are observation state, never restored write or rollback authority.

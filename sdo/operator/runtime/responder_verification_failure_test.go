@@ -100,8 +100,8 @@ func responderRetryOutcome(t *testing.T, loop *ResponderLoop) *contracts.Outcome
 	message, err := incidentResultContract(IncidentResult{
 		IncidentID: loop.Request.IncidentID, Status: IncidentCompleted,
 		ProgramRuns: runs, ProgramToolCalls: loop.ToolCalls(),
-		PlanApplications: loop.PlanApplications(), ProgramFailureSignals: loop.FailureSignals(),
-		RepairActions: ProgramRepairReceipts(loop.PlanApplications(), nil),
+		PlanApplications: loop.ApplicationEvidence(), ProgramFailureSignals: loop.FailureSignals(),
+		RepairActions: ProgramRepairReceipts(loop.ApplicationEvidence(), nil),
 		ConfirmedRootCauses: []ConfirmedRootCause{{
 			Summary: "wrong service target port", Resources: []sdk.ObjectRef{finding.PrimaryResource},
 			Evidence:           []RootCauseEvidence{{Kind: "detector-finding", Source: finding.DetectorID, Observation: finding.Evidence}},

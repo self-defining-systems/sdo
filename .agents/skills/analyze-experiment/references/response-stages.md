@@ -110,3 +110,25 @@ Restart checkpoints retain observation preimages and patches without restoring
 prepared plans or rollback authority. Final receipts and covered work drive
 classification, learning admission and trust. Historical outcomes are immutable;
 missing historical proof grants neither inferred success nor inferred failure.
+
+The same recovery owner observes responder-applied saved programs. Private
+`ApplicationBindings` checkpoints retain accepted revisions, exact bindings,
+finding scope and action ranges before mutation; they restore no plan handles.
+At recovery their observations appear in the existing `agent` stage report.
+Shared batch receipts require every bound scope to settle. Confirmed unchanged
+objects and admission requeues retain ADMIT1's observation-only scope when
+checking desired fields. Confirmed UID-bound deletes require a fresh direct
+NotFound; generic GET errors never prove deletion. Saved scripts retain the
+existing `observed-transition` proof and never claim field equivalence.
+Transient post-apply Match/new-finding observations remain typed diagnoses and
+findings rather than additional failure strings. Historical stored failure
+signals and accepted outcomes remain immutable. `rollout_stalled` is the durable
+reason code for a measured dependency requiring another actor, distinct from an
+observation timeout.
+
+For closures with a responder session, settlement reads the existing recorded-API
+write projection before outcome derivation. A later overlapping raw API write
+prevents attribution; incomplete recorded history is neutral. Known automatic
+writes within their own original interval are not a later responder correction.
+A returned result omitting applications cannot erase complete controller-owned
+checkpoint facts. Missing checkpoint facts still grant no positive credit.

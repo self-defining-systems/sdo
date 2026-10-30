@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"time"
 
@@ -17,8 +18,9 @@ import (
 	"sdo.dev/operator/sdk/workloadhealth"
 )
 
-// DefaultStageBudget bounds observation, never the authority to execute a
-// matched repair. Direct writes remain bounded by the incident context.
+// DefaultStageBudget retains the existing pass/refresh scheduling bound.
+// Shared recovery uses DefaultMitigationRolloutTimeout; direct writes remain
+// bounded by the original incident context.
 const DefaultStageBudget = 45 * time.Second
 
 const stagePlanNotExecutable = "plan_not_executable"
@@ -80,10 +82,10 @@ type DeterministicResponseStage struct {
 	// KeepLoop leaves the loop NewLoop returns open: it belongs to a running
 	// responder, so a later pass must not close its working programs.
 	KeepLoop bool
-	// Budget bounds observation (DefaultStageBudget when unset).
+	// Budget shortens shared observation (DefaultMitigationRolloutTimeout when unset).
 	Budget time.Duration
-	// RolloutTimeout caps each rollout sample; ObservationCeiling shortens
-	// the shared recovery deadline. Observations grant no writes.
+	// RolloutTimeout caps apply convergence I/O, with one rollout sample.
+	// ObservationCeiling shortens shared recovery; neither grants writes.
 	RolloutTimeout      time.Duration
 	ObservationInterval time.Duration
 	ObservationCeiling  time.Duration
@@ -786,16 +788,14 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 	if err := save(false); err != nil {
 		return err
 	}
-	// A sample never consumes a candidate's share of the recovery budget.
-	rolloutTimeout := time.Millisecond
-	if stage.RolloutTimeout > 0 {
-		rolloutTimeout = min(rolloutTimeout, stage.RolloutTimeout)
-	}
+	// PollRollouts performs one rollout sample while preserving the normal
+	// source/direct-readback I/O bound. A tiny rollout budget must not truncate
+	// those reads; no serial recovery wait runs inside this apply.
 	// Apply through the ordinary tool boundary: mutation fences, recorded
 	// writes, immutable receipts and compensation have one owner.
 	var applied ToolResponse
 	if err := withoutResponderLocks(loop, "apply", true, func() {
-		applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: planIDs, stage: true, rolloutTimeout: rolloutTimeout})
+		applied = loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: planIDs, stage: true, rolloutTimeout: stage.RolloutTimeout})
 	}); err != nil {
 		return err
 	}
@@ -863,6 +863,15 @@ func attemptApplication(application RecordedPlanApplication, attempt *contracts.
 	result.ActionsApplied = result.ActionsApplied[low:high]
 	low, high = window(len(result.ActionReports))
 	result.ActionReports = result.ActionReports[low:high]
+	if start != 0 || count != len(application.Result.Plan.Actions) {
+		refs := planCaptureRefs(result.Plan)
+		result.ObjectEffects = nil
+		for _, effect := range application.Result.ObjectEffects {
+			if slices.Contains(refs, effect.Ref) {
+				result.ObjectEffects = append(result.ObjectEffects, effect)
+			}
+		}
+	}
 	application.Result = result
 	return application
 }
@@ -955,7 +964,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return nil
 		}
 		if err := wait(observe, min(interval, left)); err != nil {
-			if ctx.Err() == nil {
+			if observe.Err() != nil && ctx.Err() == nil {
 				return nil
 			}
 			return err

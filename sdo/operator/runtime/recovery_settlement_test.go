@@ -3,6 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 	"reflect"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory/layout"
@@ -22,6 +25,10 @@ func TestRecoverySettlementFeedsNoveltyAdmission(t *testing.T) {
 			rollout := &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
 			if failed {
 				rollout.failure = errors.New("synthetic execution rollout failed")
+				client := loop.Executor.Client.(TypedPlanClient).Client.(*fake.Clientset)
+				client.PrependReactor("patch", "*", func(ktesting.Action) (bool, kruntime.Object, error) {
+					return true, nil, errors.New("synthetic execution write failed")
+				})
 			}
 			loop.Executor.Rollouts = rollout
 			if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{ObservationCeiling: time.Millisecond, NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {

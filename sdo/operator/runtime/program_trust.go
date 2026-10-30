@@ -65,7 +65,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 			if application.GetRolloutPending() != nil && !applicationExecutionFailed(application) {
 				continue
 			}
-			if !application.GetApplied() && len(application.GetActionsApplied()) == 0 {
+			if !application.GetApplied() && len(application.GetActionsApplied()) == 0 && !applicationExecutionFailed(application) {
 				continue
 			}
 			for _, id := range application.GetProgramIds() {
@@ -76,18 +76,6 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 				}
 				state = stateForRevision(id, revision)
 				failed := applicationExecutionFailed(application)
-				for _, signal := range outcome.GetProgramFailureSignals() {
-					// Count durable responder failures after applications, so the
-					// same failure does not also count against a successful retry.
-					if strings.HasPrefix(signal, "application_verification_failure:") {
-						continue
-					}
-					failedID, failedRevision, signalFailure := parseProgramTrustFailureSignal(signal)
-					if strings.HasSuffix(signal, ":"+id) || (signalFailure && failedID == id && (failedRevision == "" || failedRevision == revision)) {
-						failed = true
-						break
-					}
-				}
 				if failed {
 					state.Failures = recordFailure(id, revision)
 					state.VerifiedSuccesses = 0

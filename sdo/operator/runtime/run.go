@@ -680,6 +680,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.DiagnosisDeadline = *diagnosisDeadline
 				if options.NativeBroker != nil {
+					loop.RecoverySessionRoot = options.NativeBroker.SessionRoot
 					if *replay != "off" {
 						loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
 					}

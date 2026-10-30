@@ -29,7 +29,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 				scoped := scriptRepairResources(report)
 				if report.Status == "applied" && application.Result.Applied && report.Script != nil && report.Script.ScriptDigest == program.ScriptDigest(script.Script) && !application.RolledBack && application.RollbackError == "" {
 					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-script-%d", application.ID, index+1), used)
-					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: true})
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result)})
 					for _, ref := range scoped {
 						if !seen[ref] {
 							seen[ref] = true

@@ -1635,7 +1635,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			closure.Result = &merged
 		}
 	}
-	if verified && loop != nil && closure.Result != nil && len(closure.Request.PriorStages) > 0 {
+	if verified && loop != nil && closure.Result != nil {
 		c.mu.Unlock()
 		if early {
 			*closure.Result, closure.Request.PriorStages = loop.settleRecoveryApplicationsLocked(ctx, *closure.Result, closure.Request.PriorStages)

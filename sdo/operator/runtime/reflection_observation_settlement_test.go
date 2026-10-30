@@ -17,7 +17,7 @@ import (
 
 // The real executor and stage produce a confirmed deletion followed by a cache
 // observation failure. The outcome producer then carries independently cleared
-// health into the reflection consumer, without rewriting the application result.
+// health into the reflection consumer, through the shared recovery owner before outcome/learning projection.
 func TestConfirmedLifecycleStageFeedsReflectionSettlement(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -74,7 +74,11 @@ func TestConfirmedLifecycleStageFeedsReflectionSettlement(t *testing.T) {
 		DetectedAt: started, DispatchedAt: started, ResponderCompletedAt: finished, VerifiedAt: finished,
 		FinalDetectorStates: []DetectorEvaluation{{DetectorID: detector.Spec().ID, Status: DetectorEvaluationClear, EvaluatedAt: finished}},
 	}
-	derived, err := (ProtoOutcomeDeriver{}).Derive(ctx, closure, "synthetic-repair", "test", "test")
+	*closure.Result, closure.Request.PriorStages = loop.SettleRecoveryApplications(ctx, *closure.Result, closure.Request.PriorStages)
+	if got := closure.Result.PlanApplications[0].Result.FinalVerificationBasis; got != "recovery-settled" {
+		t.Fatalf("confirmed lifecycle recovery lost application settlement: %q", got)
+	}
+	derived, err := (ProtoOutcomeDeriver{}).Derive(ctx, closure, "", "test", "test")
 	if err != nil {
 		t.Fatal(err)
 	}

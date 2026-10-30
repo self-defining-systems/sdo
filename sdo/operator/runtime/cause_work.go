@@ -30,7 +30,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 			continue
 		}
 		for _, id := range app.GetProgramIds() {
-			failed := (outcome.GetClassification() != "success" && app.GetFinalVerificationBasis() != "recovery-settled") || outcome.RepairCommit != nil || outcome.GetResponseLoopExhausted()
+			failed := (outcome.GetClassification() != "success" && !recoveryApplicationSucceeded(outcome, app, id, revisions[id])) || outcome.RepairCommit != nil || outcome.GetResponseLoopExhausted()
 			for _, signal := range outcome.GetProgramFailureSignals() {
 				if strings.HasSuffix(signal, ":"+id) {
 					failed = true
