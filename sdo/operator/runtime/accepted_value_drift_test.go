@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -37,10 +38,11 @@ var (
 // objects carry the defaults the API server fills in for fields that accepted
 // source leaves out.
 type adoptedValueApp struct {
-	client *fake.Clientset
-	source GitPlanSource
-	commit string
-	view   func(*testing.T) program.ReadView
+	client       *fake.Clientset
+	sourceClient acceptedSourceBridge
+	source       GitPlanSource
+	commit       string
+	view         func(*testing.T) program.ReadView
 	// liveView reads the objects as the controller's informers serve them,
 	// with their managed fields; view reads their corpus capture.
 	liveView func(*testing.T) program.ReadView
@@ -87,6 +89,7 @@ func adoptValueApp(t *testing.T) adoptedValueApp {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "app", Labels: labels}, Spec: deployment.Spec.Template.Spec,
 		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "web", Image: "example/web:1", Ready: true}}}}
 	client := fake.NewSimpleClientset(deployment, service, pod)
+	installSyntheticAdoptedDefaults(t, client)
 	bridge := bridgeFake(t, client)
 	source := GitPlanSource{Repository: repo, ManifestPaths: []string{"kubernetes/deployment.yaml", "kubernetes/service.yaml"}}
 
@@ -102,7 +105,7 @@ func adoptValueApp(t *testing.T) adoptedValueApp {
 	if err := controller.adoptOwnership(context.Background(), time.Unix(11, 0).UTC(), sdktest.Snapshot{NamespaceName: "app"}); err != nil {
 		t.Fatalf("ownership adoption: %v", err)
 	}
-	app := adoptedValueApp{client: client, source: source, commit: commit}
+	app := adoptedValueApp{client: client, sourceClient: bridge, source: source, commit: commit}
 	app.view = func(t *testing.T) program.ReadView {
 		t.Helper()
 		snapshot, err := (fastloopObjects{client: client}).Snapshot(context.Background())
@@ -129,7 +132,7 @@ func adoptValueApp(t *testing.T) adoptedValueApp {
 func (a adoptedValueApp) reconcile(t *testing.T, ref sdk.ObjectRef) {
 	t.Helper()
 	provider := fastloopObjects{client: a.client}
-	executor := PlanExecutor{Client: TypedPlanClient{Client: a.client}, Source: a.source, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{unschedulable{}}, Provider: provider}}
+	executor := PlanExecutor{Client: TypedPlanClient{Client: a.sourceClient}, Source: a.source, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{unschedulable{}}, Provider: provider}}
 	result, err := executor.Apply(context.Background(), IncidentRequest{IncidentID: "value-drift", Namespace: "app", SourceCommit: a.commit, RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}, false)
 	if err != nil || !result.Applied {
 		t.Fatalf("ReconcileFromSource did not apply: %+v %v", result, err)
@@ -356,4 +359,65 @@ func TestAcceptanceRecordKeepsValuesOfConfigurationOnly(t *testing.T) {
 	if err := json.Unmarshal([]byte(encoded), &trimmed); err != nil || len(trimmed.Paths) < 800 {
 		t.Fatalf("large record dropped its paths: %d %v", len(trimmed.Paths), err)
 	}
+}
+
+// installSyntheticAdoptedDefaults models the isolated CREATE contract for these
+// toy fixtures. It defaults only submitted source and never reads the faulted
+// live object or persists the dry-run probe.
+func installSyntheticAdoptedDefaults(t *testing.T, client *fake.Clientset) {
+	t.Helper()
+	client.PrependReactor("create", "deployments", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		values, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(action.(ktesting.CreateAction).GetObject())
+		if err != nil {
+			return true, nil, err
+		}
+		object := &unstructured.Unstructured{Object: values}
+		// Typed conversion retains an empty strategy object for omitted source.
+		// Default its type independently, as the API does.
+		if strategy, found, _ := unstructured.NestedString(object.Object, "spec", "strategy", "type"); !found || strategy == "" {
+			_ = unstructured.SetNestedField(object.Object, "RollingUpdate", "spec", "strategy", "type")
+		}
+		defaults := map[string]any{"replicas": int64(1)}
+		for key, value := range defaults {
+			if _, found, _ := unstructured.NestedFieldNoCopy(object.Object, "spec", key); !found {
+				_ = unstructured.SetNestedField(object.Object, value, "spec", key)
+			}
+		}
+		defaults = map[string]any{"dnsPolicy": "ClusterFirst", "restartPolicy": "Always", "schedulerName": "default-scheduler", "terminationGracePeriodSeconds": int64(30), "enableServiceLinks": true}
+		for key, value := range defaults {
+			if _, found, _ := unstructured.NestedFieldNoCopy(object.Object, "spec", "template", "spec", key); !found {
+				_ = unstructured.SetNestedField(object.Object, value, "spec", "template", "spec", key)
+			}
+		}
+		containers := addedFieldsContainers(object)
+		for _, item := range containers {
+			container := item.(map[string]any)
+			if _, found := container["imagePullPolicy"]; !found {
+				container["imagePullPolicy"] = "IfNotPresent"
+			}
+		}
+		_ = unstructured.SetNestedSlice(object.Object, containers, "spec", "template", "spec", "containers")
+		return true, object, nil
+	})
+	client.PrependReactor("create", "services", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		values, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(action.(ktesting.CreateAction).GetObject())
+		if err != nil {
+			return true, nil, err
+		}
+		object := &unstructured.Unstructured{Object: values}
+		for key, value := range map[string]any{"type": "ClusterIP", "sessionAffinity": "None", "internalTrafficPolicy": "Cluster"} {
+			if _, found, _ := unstructured.NestedFieldNoCopy(object.Object, "spec", key); !found {
+				_ = unstructured.SetNestedField(object.Object, value, "spec", key)
+			}
+		}
+		ports, _, _ := unstructured.NestedSlice(object.Object, "spec", "ports")
+		for _, item := range ports {
+			port := item.(map[string]any)
+			if _, found := port["protocol"]; !found {
+				port["protocol"] = "TCP"
+			}
+		}
+		_ = unstructured.SetNestedSlice(object.Object, ports, "spec", "ports")
+		return true, object, nil
+	})
 }

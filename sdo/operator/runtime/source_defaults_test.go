@@ -211,6 +211,13 @@ func TestAPIDefaultRenderFeedsSourceComparison(t *testing.T) {
 				t.Fatal(err)
 			}
 			syntheticContainerDefaults(live)
+			// A known admission injector is represented by the independent
+			// API render, not a blanket exemption for arbitrary manager names.
+			injectProxy := func(object *unstructured.Unstructured) {
+				containers := append(addedFieldsContainers(object), map[string]any{"name": "injected-proxy", "image": "synthetic-proxy:v1"})
+				_ = unstructured.SetNestedSlice(object.Object, containers, "spec", "template", "spec", "containers")
+			}
+			injectProxy(live)
 			if real {
 				noiseContainer(live)["terminationMessagePath"] = "/different"
 			}
@@ -226,10 +233,18 @@ func TestAPIDefaultRenderFeedsSourceComparison(t *testing.T) {
 				}
 				response := live.DeepCopy()
 				if r.Method == http.MethodPost {
+					var submitted unstructured.Unstructured
+					if err := json.NewDecoder(r.Body).Decode(&submitted); err != nil {
+						t.Error(err)
+					}
+					if submitted.GetAPIVersion() != source.GetAPIVersion() || submitted.GetKind() != source.GetKind() || submitted.GetNamespace() != source.GetNamespace() {
+						t.Errorf("source render lost API identity: %s %s %s", submitted.GetAPIVersion(), submitted.GetKind(), submitted.GetNamespace())
+					}
 					renders++
 					response = source.DeepCopy()
 					response.SetName(source.GetName() + defaultRenderSuffix)
 					syntheticContainerDefaults(response)
+					injectProxy(response)
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(response)
@@ -241,8 +256,16 @@ func TestAPIDefaultRenderFeedsSourceComparison(t *testing.T) {
 			if err != nil || diff.Changed != real || renders != 1 {
 				t.Fatalf("API defaults not used: diff=%+v err=%v renders=%d", diff, err, renders)
 			}
+			event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: source, New: live}, view, time.Now())
+			if real && event != nil && (len(event.Fields) != 1 || event.Fields[0].Path != "spec.template.spec.containers[0].terminationMessagePath") {
+				t.Fatalf("default/injected fields leaked into mixed drift evidence: %+v", event.Fields)
+			}
+			if err != nil || (event != nil) != real {
+				t.Fatalf("default normalization lost at drift admission: event=%+v err=%v", event, err)
+			}
+			rendersBeforePlan := renders
 			defaults, err := (TypedPlanClient{Client: client}).SourceDefaults(context.Background(), addedFieldsRef(), source)
-			if err != nil || defaults == nil || renders != 2 {
+			if err != nil || defaults == nil || renders != rendersBeforePlan+1 {
 				t.Fatalf("plan source default transport: %v %v renders=%d", defaults, err, renders)
 			}
 		})

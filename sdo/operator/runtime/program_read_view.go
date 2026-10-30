@@ -278,21 +278,12 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	}
 	// Declared fields agree; fields added since acceptance decide. Without a
 	// current acceptance record that is unknown, never unchanged.
-	added, err := addedSourceFields(observed, source)
-	if err == nil && len(added) > 0 && v.Client != nil {
-		resource, resolveErr := resolveAcceptedResource(v.Client, ref)
-		if resolveErr != nil {
-			return program.Diff{}, resolveErr
-		}
-		defaults, defaultErr := resource.renderDefaults(ctx, ref, source)
-		if defaultErr != nil {
-			return program.Diff{}, fmt.Errorf("normalize source additions for %s/%s: %w", ref.Kind, ref.Name, defaultErr)
-		}
-		added = defaultNormalizedAdditions(added, observed, source, defaults)
-	}
-	added = v.sourceDriftPaths(added, ref)
-	if err != nil {
+	added, err := v.sourceAdditions(ref, observed, source)
+	if errors.Is(err, ErrAcceptanceRecordUnavailable) {
 		return program.Diff{}, &AcceptanceUnknownError{Ref: ref, Declared: program.Diff{Text: text}}
+	}
+	if err != nil {
+		return program.Diff{}, err
 	}
 	// Name a changed recorded scalar; other additions keep their existing report.
 	if record, ok := currentAcceptanceRecord(observed, source); ok {
@@ -663,4 +654,56 @@ func (v LiveReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstr
 		return source.CaptureObjects(refs)
 	}
 	return sdk.TypedObjects(v.DetectionContext), nil
+}
+
+// sourceAdditions is shared by source comparison and watch admission. It keeps
+// API default rendering at the storage/transport edge; callers without a live
+// client use the same acceptance evidence when replaying snapshots.
+func (v LiveReadView) sourceAdditions(ref sdk.ObjectRef, observed, source *unstructured.Unstructured) ([]string, error) {
+	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
+	defer cancel()
+	added, err := addedSourceFields(observed, source)
+	if err != nil {
+		return nil, err
+	}
+	if len(added) > 0 && v.Client != nil {
+		resource, err := resolveAcceptedResource(v.Client, ref)
+		if err != nil {
+			return nil, err
+		}
+		defaults, err := resource.renderDefaults(ctx, ref, source)
+		if err != nil {
+			return nil, fmt.Errorf("normalize source additions for %s/%s: %w", ref.Kind, ref.Name, err)
+		}
+		added = defaultNormalizedAdditions(added, observed, source, defaults)
+	}
+	return v.sourceDriftPaths(added, ref), nil
+}
+
+// driftSourceAdditions uses the complete accepted manifest, not the comparison
+// projection. HPA-owned replicas, bookkeeping and API identity may be absent
+// from Diff.Sides; that projection cannot identify the acceptance record or be
+// sent to the API for independent default rendering.
+func (v LiveReadView) driftSourceAdditions(ref sdk.ObjectRef, observed *unstructured.Unstructured) ([]string, error) {
+	// Scoped read-only objects have no application acceptance record.
+	if ref.Namespace != v.Namespace() {
+		return nil, nil
+	}
+	revision := v.SourceCommit
+	if v.SourceRevision != nil {
+		revision = v.SourceRevision()
+	}
+	if v.Source == nil || revision == "" {
+		return nil, errors.New("accepted source is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
+	defer cancel()
+	source, err := v.Source.AcceptedManifest(ctx, revision, ref)
+	if err != nil {
+		return nil, err
+	}
+	if source == nil || !samePlanRef(source, ref) {
+		return nil, fmt.Errorf("accepted manifest does not match %s/%s", ref.Kind, ref.Name)
+	}
+	return v.sourceAdditions(ref, observed, source)
 }

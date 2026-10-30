@@ -97,7 +97,7 @@ func safeDriftText(value string) string {
 	return bounded(strings.Join(words, " "))
 }
 
-// Classify admits changed declared SDO fields and reviewed source-absent kinds.
+// Classify admits changed declared SDO fields, post-acceptance additions and reviewed source-absent kinds.
 // Neither admission path judges whether unexplained drift is a fault.
 func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view program.ReadView, now time.Time) (*sdk.DriftEvent, error) {
 	object := change.New
@@ -147,11 +147,13 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 	if change.Adoption {
 		owned = flattenDriftPaths(change.Old)
 	}
-	if len(owned) == 0 {
-		return nil, nil
-	}
 	before := flattenDriftObject(change.Old)
 	after := flattenDriftObject(change.New)
+	// Status/resource-version churn cannot introduce configuration drift. Avoid
+	// source rendering (an API dry run) for these frequent watch updates.
+	if reflect.DeepEqual(before, after) {
+		return nil, nil
+	}
 	paths := make([]string, 0)
 	for path := range before {
 		if !reflect.DeepEqual(before[path], after[path]) && ownsDriftPath(owned, path) {
@@ -163,10 +165,15 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 			paths = append(paths, path)
 		}
 	}
-	if len(paths) == 0 {
+	// A deletion cannot introduce fields. Without changed owned paths there
+	// is nothing left to compare, and the deleted object need not be captured
+	// in the current snapshot. Surviving objects still need addition checks
+	// even when the deployer owns none of their changed paths.
+	if len(paths) == 0 && change.New == nil {
 		return nil, nil
 	}
-	sort.Strings(paths)
+	// Comparison, rather than deployer ownership, owns the additions policy.
+	// A writer can add effect-bearing fields that the deployer never owned.
 	diff, err := declaredSourceDiff(view, ref)
 	if err != nil {
 		return nil, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
@@ -176,8 +183,28 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 	}
 	sourceValues := map[string]any{}
 	if sourceObject, _, err := diff.Sides(); err == nil && sourceObject != nil {
-		sourceValues = flattenDriftObject(&unstructured.Unstructured{Object: sourceObject})
+		source := &unstructured.Unstructured{Object: sourceObject}
+		sourceValues = flattenDriftObject(source)
+		if change.New != nil {
+			added, additionErr := sourceDriftAdditions(view, ref, change.New, source)
+			if additionErr != nil {
+				return nil, additionErr
+			}
+			seen := map[string]bool{}
+			for _, path := range paths {
+				seen[path] = true
+			}
+			for _, path := range added {
+				if !seen[path] && !reflect.DeepEqual(before[path], after[path]) {
+					paths = append(paths, path)
+				}
+			}
+		}
 	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	sort.Strings(paths)
 	manager, operation, managerAt := changedDriftManager(change, paths, "sdo-deployer")
 	event := &sdk.DriftEvent{Ref: ref, Fields: make([]sdk.DriftField, 0, min(len(paths), maxDriftFields)), Source: "differs from accepted manifest", Manager: manager, Operation: operation, ManagerAt: managerAt, ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained}
 	for _, path := range paths[:min(len(paths), maxDriftFields)] {
