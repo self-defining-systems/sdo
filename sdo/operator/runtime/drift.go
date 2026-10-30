@@ -177,12 +177,6 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 	sourceValues := map[string]any{}
 	if sourceObject, _, err := diff.Sides(); err == nil && sourceObject != nil {
 		source := &unstructured.Unstructured{Object: sourceObject}
-		// Diff sides carry comparable configuration, not API identity. Restore
-		// identity before the shared normalizer renders this source at the API.
-		source.SetAPIVersion(ref.APIVersion)
-		source.SetKind(ref.Kind)
-		source.SetNamespace(ref.Namespace)
-		source.SetName(ref.Name)
 		sourceValues = flattenDriftObject(source)
 		if change.New != nil {
 			added, additionErr := sourceDriftAdditions(view, ref, change.New, source)

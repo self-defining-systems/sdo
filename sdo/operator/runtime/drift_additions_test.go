@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
@@ -160,5 +161,21 @@ func TestHealthySeedTopologyAddsNoDriftFindings(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// Filtering the HPA-owned replica from comparison sides must not change the
+// accepted-source identity used to detect unrelated additions on that workload.
+func TestAddedFieldDriftOnAutoscaledWorkload(t *testing.T) {
+	source, old := addedFieldsSource(), addedFieldsLive()
+	live := old.DeepCopy()
+	containers := addedFieldsContainers(live)
+	containers[0].(map[string]any)["resources"] = map[string]any{"limits": map[string]any{"cpu": "100m"}}
+	_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
+	snapshot := sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}, HPAList: []autoscalingv2.HorizontalPodAutoscaler{{ObjectMeta: metav1.ObjectMeta{Name: "autoscaler", Namespace: "app"}, Spec: autoscalingv2.HorizontalPodAutoscalerSpec{ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "search"}}}}}
+	view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+	event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: old, New: live}, view, time.Now())
+	if err != nil || event == nil || len(event.Fields) != 1 || event.Fields[0].Path != "spec.template.spec.containers[0].resources.limits.cpu" {
+		t.Fatalf("HPA hid unrelated addition: %+v %v", event, err)
 	}
 }

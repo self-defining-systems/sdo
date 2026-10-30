@@ -679,3 +679,31 @@ func (v LiveReadView) sourceAdditions(ref sdk.ObjectRef, observed, source *unstr
 	}
 	return v.sourceDriftPaths(added, ref), nil
 }
+
+// driftSourceAdditions uses the complete accepted manifest, not the comparison
+// projection. HPA-owned replicas, bookkeeping and API identity may be absent
+// from Diff.Sides; that projection cannot identify the acceptance record or be
+// sent to the API for independent default rendering.
+func (v LiveReadView) driftSourceAdditions(ref sdk.ObjectRef, observed *unstructured.Unstructured) ([]string, error) {
+	// Scoped read-only objects have no application acceptance record.
+	if ref.Namespace != v.Namespace() {
+		return nil, nil
+	}
+	revision := v.SourceCommit
+	if v.SourceRevision != nil {
+		revision = v.SourceRevision()
+	}
+	if v.Source == nil || revision == "" {
+		return nil, errors.New("accepted source is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
+	defer cancel()
+	source, err := v.Source.AcceptedManifest(ctx, revision, ref)
+	if err != nil {
+		return nil, err
+	}
+	if source == nil || !samePlanRef(source, ref) {
+		return nil, fmt.Errorf("accepted manifest does not match %s/%s", ref.Kind, ref.Name)
+	}
+	return v.sourceAdditions(ref, observed, source)
+}

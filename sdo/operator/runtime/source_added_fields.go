@@ -576,9 +576,9 @@ func sourceDriftAdditions(view program.ReadView, ref sdk.ObjectRef, observed, so
 	var paths []string
 	var err error
 	if normalizer, ok := view.(interface {
-		sourceAdditions(sdk.ObjectRef, *unstructured.Unstructured, *unstructured.Unstructured) ([]string, error)
+		driftSourceAdditions(sdk.ObjectRef, *unstructured.Unstructured) ([]string, error)
 	}); ok {
-		paths, err = normalizer.sourceAdditions(ref, observed, source)
+		paths, err = normalizer.driftSourceAdditions(ref, observed)
 	} else {
 		paths, err = addedSourceFields(observed, source)
 	}
