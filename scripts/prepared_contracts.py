@@ -68,7 +68,7 @@ def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
             ["go", "test", "-race", "-c", "-ldflags=-w", "-o", str(binary.resolve()), package], cwd=module, check=True
         )
         package_dir = Path(
-            subprocess.check_output(["go", "list", "-f", "{{.Dir}}", package], cwd=module, text=True).strip()
+            subprocess.check_output(["go", "list", "-race", "-f", "{{.Dir}}", package], cwd=module, text=True).strip()
         )
         return key, (binary, str(package_dir.relative_to(root)))
 
