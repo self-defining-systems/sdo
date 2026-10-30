@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TypedDict
 
+from go_quality_checks import QUALITY_CHECKS, QualityCheck
 from go_test_timing import run_tests
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +35,7 @@ class PreparedManifest(TypedDict):
     bin: int
     entries: list[PreparedBinary]
     test2json_sha256: str
+    quality_entries: list[PreparedBinary]
 
 
 def digest(path: Path) -> str:
@@ -51,62 +53,99 @@ def packages(data: dict, members: list[str]) -> dict[tuple[str, str], list[str]]
     return selected
 
 
-def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
+def prepare(plan: Path, output: Path, *, root: Path = ROOT, quality_checks: tuple[QualityCheck, ...] = ()) -> None:
     data = json.loads(plan.read_text())
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     output.mkdir(parents=True, exist_ok=True)
+    if any(check.bin < 0 or check.bin >= len(data["bins"]) for check in quality_checks):
+        raise ValueError("mandatory quality bin is outside prepared plan")
     selected = packages(data, [key for members in data["bins"] for key in members])
+    for check in quality_checks:
+        for package in check.packages:
+            selected.setdefault(("operator", package), [])
     objects = output / "objects"
     objects.mkdir(exist_ok=True)
 
-    def compile_package(key: tuple[str, str]) -> tuple[tuple[str, str], tuple[Path, str]]:
-        scope, package = key
-        binary = objects / (hashlib.sha256(f"{scope}:{package}".encode()).hexdigest() + ".test")
+    compiled: dict[tuple[str, str], tuple[Path, str, str]] = {}
+    for scope in sorted({scope for scope, _ in selected}):
         module = root / "sdo/operator" / ("runtime" if scope == "runtime" else "")
-        # go test normally omits DWARF; -c would retain it unless disabled.
-        subprocess.run(
-            ["go", "test", "-race", "-c", "-ldflags=-w", "-o", str(binary.resolve()), package], cwd=module, check=True
+        names = sorted(package for selected_scope, package in selected if selected_scope == scope)
+        # Each Go invocation loads the module graph. Discover all selected
+        # directories once and let Go schedule their links in one build graph.
+        metadata = subprocess.check_output(
+            ["go", "list", "-race", "-f", "{{.ImportPath}}\t{{.Dir}}", *names], cwd=module, text=True
         )
-        package_dir = Path(
-            subprocess.check_output(["go", "list", "-race", "-f", "{{.Dir}}", package], cwd=module, text=True).strip()
-        )
-        return key, (binary, str(package_dir.relative_to(root)))
+        directories = dict(line.split("\t", 1) for line in metadata.splitlines())
+        if set(directories) != set(names):
+            raise ValueError("prepared package directories do not match selected packages")
+        # go test -c names output by the last import-path element. Split only
+        # collisions, so unrelated packages still share one graph load.
+        batches: list[dict[str, str]] = []
+        for package in names:
+            basename = package.rsplit("/", 1)[-1] + ".test"
+            batch = next((batch for batch in batches if basename not in batch), None)
+            if batch is None:
+                batch = {}
+                batches.append(batch)
+            batch[basename] = package
+        for index, batch in enumerate(batches):
+            directory = objects / scope / str(index)
+            directory.mkdir(parents=True)
+            # go test normally omits DWARF; -c retains it unless disabled.
+            subprocess.run(
+                ["go", "test", "-race", "-c", "-ldflags=-w", "-o", str(directory.resolve()), *batch.values()],
+                cwd=module,
+                check=True,
+            )
+            for basename, package in batch.items():
+                binary = directory / basename
+                compiled[scope, package] = (binary, str(Path(directories[package]).relative_to(root)), digest(binary))
 
     tool = objects / "test2json"
     subprocess.run(["go", "build", "-o", str(tool.resolve()), "cmd/test2json"], cwd=root, check=True)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        compiled = dict(pool.map(compile_package, sorted(selected)))
+    tool_digest = digest(tool)
+
+    def publish(destination: Path, scope: str, package: str, names: list[str]) -> PreparedBinary:
+        filename = hashlib.sha256(f"{scope}:{package}".encode()).hexdigest() + ".test"
+        binary = destination / filename
+        if not binary.exists():
+            binary.hardlink_to(compiled[scope, package][0])
+        return {
+            "scope": scope,
+            "package": package,
+            "names": sorted(names),
+            "binary": filename,
+            "sha256": compiled[scope, package][2],
+            "directory": compiled[scope, package][1],
+        }
+
     for index, members in enumerate(data["bins"]):
         directory = output / str(index)
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "test2json").hardlink_to(tool)
-        entries: list[PreparedBinary] = []
-        for (scope, package), names in sorted(packages(data, members).items()):
-            filename = hashlib.sha256(f"{scope}:{package}".encode()).hexdigest() + ".test"
-            binary = directory / filename
-            binary.hardlink_to(compiled[scope, package][0])
-            entries.append(
-                {
-                    "scope": scope,
-                    "package": package,
-                    "names": sorted(names),
-                    "binary": filename,
-                    "sha256": digest(binary),
-                    "directory": compiled[scope, package][1],
-                }
-            )
+
+        entries = [
+            publish(directory, scope, package, names)
+            for (scope, package), names in sorted(packages(data, members).items())
+        ]
+        quality_packages = sorted(
+            {package for check in quality_checks if check.bin == index for package in check.packages}
+        )
         manifest: PreparedManifest = {
             "revision": revision,
             "plan_sha256": digest(plan),
             "bin": index,
             "entries": entries,
-            "test2json_sha256": digest(tool),
+            "test2json_sha256": tool_digest,
+            "quality_entries": [publish(directory, "operator", package, []) for package in quality_packages],
         }
         (directory / "manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
         (directory / "pr-test-plan.json").write_bytes(plan.read_bytes())
 
 
-def execute(plan: Path, index: int, directory: Path, *, root: Path = ROOT) -> None:
+def execute(
+    plan: Path, index: int, directory: Path, *, root: Path = ROOT, quality_checks: tuple[QualityCheck, ...] = ()
+) -> None:
     data = json.loads(plan.read_text())
     manifest: PreparedManifest = json.loads((directory / "manifest.json").read_text())
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
@@ -119,33 +158,53 @@ def execute(plan: Path, index: int, directory: Path, *, root: Path = ROOT) -> No
     tool = directory / "test2json"
     if digest(tool) != manifest["test2json_sha256"]:
         raise ValueError("prepared test2json identity mismatch")
-    commands = []
-    for entry in manifest["entries"]:
+    quality = {entry["package"]: entry for entry in manifest["quality_entries"]}
+    quality_packages = {package for check in quality_checks if check.bin == index for package in check.packages}
+    if (
+        set(quality) != quality_packages
+        or len(quality) != len(manifest["quality_entries"])
+        or any(entry["scope"] != "operator" or entry["names"] for entry in quality.values())
+    ):
+        raise ValueError("prepared mandatory quality inventory mismatch")
+
+    def command(entry: PreparedBinary, selection: str, timeout: str) -> tuple[list[str], Path]:
         binary = directory / entry["binary"]
         if binary.parent != directory or digest(binary) != entry["sha256"]:
             raise ValueError("prepared contract binary identity mismatch")
-        selection = "^(" + "|".join(re.escape(name) for name in entry["names"]) + ")$"
         module = root / entry["directory"]
         if not module.resolve().is_relative_to(root.resolve()) or not module.is_dir():
             raise ValueError("prepared contract package directory is outside the checkout or missing")
-        commands.append(
-            (
-                [
-                    str(tool.resolve()),
-                    "-t",
-                    "-p",
-                    entry["package"],
-                    str(binary.resolve()),
-                    "-test.v=test2json",
-                    "-test.parallel=2",
-                    "-test.count=1",
-                    "-test.paniconexit0",
-                    "-test.timeout=" + ("5m" if entry["scope"] == "runtime" else "4m"),
-                    "-test.run=" + selection,
-                ],
-                module,
-            )
+        return (
+            [
+                str(tool.resolve()),
+                "-t",
+                "-p",
+                entry["package"],
+                str(binary.resolve()),
+                "-test.v=test2json",
+                "-test.parallel=2",
+                "-test.count=1",
+                "-test.paniconexit0",
+                "-test.timeout=" + timeout,
+                "-test.run=" + selection,
+            ],
+            module,
         )
+
+    commands = [
+        command(
+            entry,
+            "^(" + "|".join(re.escape(name) for name in entry["names"]) + ")$",
+            "5m" if entry["scope"] == "runtime" else "4m",
+        )
+        for entry in manifest["entries"]
+    ]
+    commands.extend(
+        command(quality[package], check.pattern, check.timeout)
+        for check in quality_checks
+        if check.bin == index
+        for package in check.packages
+    )
     started = time.monotonic()
 
     def run(command: tuple[list[str], Path]) -> None:
@@ -158,10 +217,11 @@ def execute(plan: Path, index: int, directory: Path, *, root: Path = ROOT) -> No
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--quality-checks", action="store_true")
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    prepare(args.plan, args.output)
+    prepare(args.plan, args.output, quality_checks=QUALITY_CHECKS if args.quality_checks else ())
 
 
 if __name__ == "__main__":

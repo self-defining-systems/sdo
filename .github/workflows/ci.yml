@@ -166,9 +166,46 @@ jobs:
           uv run python scripts/check_ci_budget.py
       - name: Use all preparation CPUs for the race graph
         run: echo "GOFLAGS=-p=4 -trimpath" >> "$GITHUB_ENV"
-      - name: Compile dependency graphs outside operation timeouts
+      - name: Check Go static contracts and prepare selected executables
         id: compile
-        run: timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "race"
+        run: |
+          eval "$(bash scripts/link_cache.sh --shell)"
+          # Start validation as soon as its operator archives exist. Runtime
+          # graph compilation overlaps those checks without compiling the
+          # operator's cold dependency graph twice.
+          export SDO_GO_OPERATOR_READY="$RUNNER_TEMP/operator-ready"
+          export SDO_GO_RUNTIME_READY="$RUNNER_TEMP/runtime-ready"
+          mkfifo "$SDO_GO_OPERATOR_READY" "$SDO_GO_RUNTIME_READY"
+          # Hold the receipts open so an early quality failure cannot block a
+          # compiler writer; the final wait still propagates that failure.
+          exec 3<> "$SDO_GO_OPERATOR_READY" 4<> "$SDO_GO_RUNTIME_READY"
+          (
+            read -r -t 230 ready < "$SDO_GO_OPERATOR_READY"
+            GOFLAGS="$GOFLAGS -race" bash scripts/check_errors.sh --go-only --defer-prepared
+          ) &
+          quality_pid=$!
+          # Python collection and its source checkout do not depend on Go's
+          # archives. Keep that discovery off the cold graph's serial tail.
+          (
+            uv run python scripts/init_test_prereqs.py
+            uv run python scripts/python_cost_plan.py --inventory-only --output .fastloop/test-bin/python-test-plan.json
+          ) &
+          inventory_pid=$!
+          trap 'kill "$quality_pid" "$inventory_pid" 2>/dev/null || true; wait "$quality_pid" 2>/dev/null || true; wait "$inventory_pid" 2>/dev/null || true' EXIT
+          timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "race"
+          wait "$inventory_pid"
+          python3 scripts/go_cost_plan.py --prepared --include-dedicated --inventory-only --output .fastloop/test-bin/go-test-plan.json
+          python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
+          python3 scripts/prepared_contracts.py --quality-checks --plan .fastloop/test-bin/pr-test-plan.json --output "$RUNNER_TEMP/prepared-contracts"
+          for bin in 0 1; do
+            cp "$RUNNER_TEMP/nightly-tests.md" "$RUNNER_TEMP/prepared-contracts/$bin/"
+            tar -I 'zstd -T2 -3' -cf "$RUNNER_TEMP/contract-$bin.tar.zst" -C "$RUNNER_TEMP/prepared-contracts/$bin" .
+            du -h "$RUNNER_TEMP/contract-$bin.tar.zst"
+          done
+          # Compress immutable outputs while quality checks finish, but never
+          # publish a binary until every independent check has succeeded.
+          wait "$quality_pid"
+          trap - EXIT
       - name: Save the durable race build
         if: inputs.cold != true && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
@@ -176,26 +213,6 @@ jobs:
           path: |
             ${{ runner.temp }}/sdo-go-build-race
           key: ${{ steps.base-race.outputs.cache-primary-key }}
-      - name: Check Go static contracts and prepare selected executables
-        run: |
-          eval "$(bash scripts/link_cache.sh --shell)"
-          # Independent validation and discovery/linking share immutable archives
-          # and the linker cache, rather than spending the cold budget serially.
-          GOFLAGS="$GOFLAGS -race" bash scripts/check_errors.sh --go-only &
-          quality_pid=$!
-          trap 'kill "$quality_pid" 2>/dev/null || true; wait "$quality_pid" 2>/dev/null || true' EXIT
-          uv run python scripts/init_test_prereqs.py
-          python3 scripts/go_cost_plan.py --prepared --include-dedicated --inventory-only --output .fastloop/test-bin/go-test-plan.json
-          uv run python scripts/python_cost_plan.py --inventory-only --output .fastloop/test-bin/python-test-plan.json
-          python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
-          python3 scripts/prepared_contracts.py --plan .fastloop/test-bin/pr-test-plan.json --output "$RUNNER_TEMP/prepared-contracts"
-          wait "$quality_pid"
-          trap - EXIT
-          for bin in 0 1; do
-            cp "$RUNNER_TEMP/nightly-tests.md" "$RUNNER_TEMP/prepared-contracts/$bin/"
-            tar -I 'zstd -T2 -3' -cf "$RUNNER_TEMP/contract-$bin.tar.zst" -C "$RUNNER_TEMP/prepared-contracts/$bin" .
-            du -h "$RUNNER_TEMP/contract-$bin.tar.zst"
-          done
       - name: Publish selected contract executables for bin 0
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

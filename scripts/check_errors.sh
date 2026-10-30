@@ -24,7 +24,7 @@ fi
 
 mode="${1:-}"
 case "$mode" in
-    --go-only) exec bash "$SCRIPT_DIR/check_go_errors.sh" ;;
+    --go-only) exec bash "$SCRIPT_DIR/check_go_errors.sh" "${@:2}" ;;
     ""|--fix) bash "$SCRIPT_DIR/check_go_errors.sh" ;;
     --python-only) ;;
     *) echo "unknown check mode: $mode" >&2; exit 2 ;;

@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from go_cost_plan import check_budget, go_command
+from go_quality_checks import QUALITY_CHECKS
 from go_test_timing import run_tests
 from operator_test_binary import build_operator
 from prepared_contracts import execute
@@ -38,13 +39,13 @@ def main() -> None:
             {key: item["seconds"] for key, item in data["items"].items()},
             budget=data["policy"]["contract_work_seconds"],
         )
-    if not members:
+    if not members and not args.prepared:
         print("No tests in this bucket")
         return
     os.environ["SDO_TEST_OPERATOR_BINARY"] = str(build_operator(ROOT / "sdo/operator", ROOT / ".fastloop/test-bin"))
     started = time.monotonic()
     if args.prepared:
-        execute(args.plan, args.bin, args.prepared)
+        execute(args.plan, args.bin, args.prepared, quality_checks=QUALITY_CHECKS)
     else:
         for scope in ("operator", "runtime"):
             names = [
