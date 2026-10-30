@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
+	"log/slog"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
@@ -29,7 +30,14 @@ func (e reflectionCheckExecutor) Execute(ctx context.Context, task *contracts.Ag
 	}
 	serving, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
-	go func() { err := server.Serve(serving); stop(); done <- err }()
+	go func() {
+		err := server.Serve(serving)
+		if err != nil {
+			slog.Error("reflection_memory_check_server_stopped", "error", err)
+		}
+		stop()
+		done <- err
+	}()
 	defer func() {
 		stop()
 		serverErr := <-done
@@ -67,6 +75,11 @@ func reflectionCheckHandler(repository *broker.Broker, sessionRoot, incidentID s
 			}
 			ctx = validate.WithCaptureSource(ctx, capture, incidentID)
 		}
+		started := time.Now()
+		slog.Info("reflection_memory_check_started", "incident_id", incidentID)
+		defer func() {
+			slog.Info("reflection_memory_check_finished", "incident_id", incidentID, "duration", time.Since(started), "error", response.Error)
+		}()
 		bounded, cancel := context.WithTimeout(ctx, 300*time.Second)
 		defer cancel()
 		report, err := repository.CheckReflection(bounded, incidentID, decision)
