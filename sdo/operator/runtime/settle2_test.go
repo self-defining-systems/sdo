@@ -68,10 +68,10 @@ func TestSettlementWatchingResponderSkipsLearningWorker(t *testing.T) {
 // deadline. A logical minute costs milliseconds; no worker/model is involved.
 func TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels(t *testing.T) {
 	loop, state := pipelineTestLoop(t, false)
-	loop.Detectors = append(loop.Detectors, &pipelineLaggingHealthDetector{remaining: 8})
 	start := time.Now()
 	clock := newSimClock()
 	clock.Set(start)
+	loop.Detectors = append(loop.Detectors, settle3TimedHealth{now: clock.Now, ready: start.Add(time.Minute)})
 	loop.Executor.Rollouts = &settle2DelayedRollout{base: loop.Executor.Rollouts, now: clock.Now, ready: start.Add(time.Minute)}
 	stage := &DeterministicResponseStage{ObservationInterval: time.Millisecond, recoveryNow: clock.Now, recoveryWait: func(context.Context, time.Duration) error { clock.Advance(15 * time.Second); return nil }}
 	dispatcher := &settle2ControllerDispatcher{pipelineScenarioDispatcher: pipelineScenarioDispatcher{loop: loop}, stage: stage}
@@ -148,6 +148,21 @@ func TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels(t *testing.T) {
 	default:
 		t.Fatal("independent controller recovery did not close")
 	}
+}
+
+// Logical health recovery depends on elapsed time, never on how often the
+// stage samples it. Sampling cadence may change without changing the fault.
+type settle3TimedHealth struct {
+	now   func() time.Time
+	ready time.Time
+}
+
+func (settle3TimedHealth) Spec() sdk.DetectorSpec { return (&pipelineLaggingHealthDetector{}).Spec() }
+func (d settle3TimedHealth) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	if !d.now().Before(d.ready) {
+		return nil, nil
+	}
+	return (&pipelineLaggingHealthDetector{remaining: -1}).Detect(ctx, view)
 }
 
 type settle2ControllerDispatcher struct {
