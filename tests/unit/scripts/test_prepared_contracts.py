@@ -96,7 +96,11 @@ func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string)
     }
     data["bins"][0].append("batch")
     plan.write_text(json.dumps(data))
-    checks = (prepared.QualityCheck("synthetic", ("synthetic.example/contracts/nested",), "^TestSelected$", 1),)
+    quality_only = module / "qualityonly"
+    quality_only.mkdir()
+    (quality_only / "selected_test.go").write_text((nested / "selected_test.go").read_text())
+    (quality_only / "fixture.txt").write_text("quality-only relative fixture")
+    checks = (prepared.QualityCheck("synthetic", ("synthetic.example/contracts/qualityonly",), "^TestSelected$", 1),)
     commands = []
     original_run = subprocess.run
 
@@ -141,7 +145,7 @@ func FuzzSeed(f *testing.F) { f.Add("seed"); f.Fuzz(func(t *testing.T, s string)
         prepared.execute(plan, 1, output / "1", root=root, quality_checks=checks)
     quality_manifest.write_bytes(original_manifest)
     failing_checks = (
-        prepared.QualityCheck("synthetic", ("synthetic.example/contracts/nested",), "^TestUnselected$", 1),
+        prepared.QualityCheck("synthetic", ("synthetic.example/contracts/qualityonly",), "^TestUnselected$", 1),
     )
     with pytest.raises(subprocess.CalledProcessError):
         prepared.execute(plan, 1, output / "1", root=root, quality_checks=failing_checks)
