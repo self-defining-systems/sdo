@@ -38,7 +38,7 @@ func (b *simDrainBroker) ProcessClosure(ctx context.Context, closure IncidentClo
 func simAdvanceToVerifiedClosure(t *testing.T, w *simWorld) ClosureEffect {
 	t.Helper()
 	for tick := 0; tick < 300; tick++ {
-		w.clock.now = w.clock.now.Add(time.Second)
+		w.clock.Advance(time.Second)
 		w.step()
 		if effect, ok := w.controller.PendingClosureEffect(); ok {
 			return effect
@@ -106,7 +106,7 @@ func TestSimVerifiedClosureDrainFailureAdmitsNextIncident(t *testing.T) {
 				w.await(func() bool { return len(w.controller.closureResults) > 0 })
 			}
 			for tick := 0; tick < 600; tick++ {
-				w.clock.now = w.clock.now.Add(time.Second)
+				w.clock.Advance(time.Second)
 				w.step()
 				w.drain()
 				if failure, ok := w.controller.ClosureFailure(); ok && failure.Permanent {
@@ -136,7 +136,7 @@ func TestSimVerifiedClosureDrainFailureAdmitsNextIncident(t *testing.T) {
 			before := w.responder.calls
 			w.setPort(simServiceName(1), 9999)
 			for tick := 0; tick < 300 && (w.responder.calls == before || !w.idle()); tick++ {
-				w.clock.now = w.clock.now.Add(time.Second)
+				w.clock.Advance(time.Second)
 				w.step()
 				w.drain()
 			}

@@ -81,7 +81,7 @@ func runSimRestartOntoFailingTraffic(t *testing.T, seed uint64) {
 	pendingSeen := 0
 	before := 0
 	for tick := 0; tick < recover+15+int(w.controller.config.ClosureStabilityWindow/time.Second); tick++ {
-		w.clock.now = w.clock.now.Add(time.Second)
+		w.clock.Advance(time.Second)
 		if tick == fail {
 			for i := 0; i < 2; i++ {
 				w.setPort(simServiceName(i), 9999)

@@ -35,9 +35,9 @@ func (b *simSetupBudget) Err() error {
 	return nil
 }
 func (b *simSetupBudget) spend(d time.Duration) {
-	b.clock.now = b.clock.now.Add(d)
-	if !b.clock.now.Before(b.expires) {
-		b.clock.now = b.expires
+	b.clock.Advance(d)
+	if !b.clock.Now().Before(b.expires) {
+		b.clock.Set(b.expires)
 		if b.expired.CompareAndSwap(false, true) {
 			close(b.done)
 		}

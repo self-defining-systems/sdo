@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -238,6 +239,19 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		next.ReflectionPaths = nil
 		next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_INSPECT
 		if next.ReflectionRejected {
+			// Cleanup revokes the rejected proposal, not the terminal evidence.
+			// Consumers need a failed decision even when no correction was
+			// publishable; original worker decisions stay in ReflectionResults.
+			var reasons []string
+			if count := len(next.ReflectionRejections); count > 0 {
+				for _, diagnostic := range next.ReflectionRejections[count-1].GetDiagnostics() {
+					reasons = append(reasons, diagnostic.GetRule()+": "+diagnostic.GetMessage())
+				}
+			}
+			next.ReflectionDecision = &contracts.ReflectionDecision{
+				LearningDecision: "failed",
+				Error:            fmt.Sprintf("reflection validation exhausted after %d rejected attempts: %s", len(next.ReflectionRejections), strings.Join(reasons, "; ")),
+			}
 			next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_DONE
 		}
 	case ReflectionCleaned:

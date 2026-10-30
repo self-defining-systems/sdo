@@ -102,12 +102,22 @@ func (c *Controller) PausedWake() time.Time {
 func (c *Controller) closureRetryWake(next time.Time) time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	failure := c.closureFailure
-	if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || failure == nil || failure.Permanent || failure.NextAttemptAt.IsZero() {
+	if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING {
 		return next
 	}
-	if next.IsZero() || failure.NextAttemptAt.Before(next) {
-		return failure.NextAttemptAt
+	retry := c.closureRecheckRetryAt
+	if failure := c.closureFailure; failure != nil {
+		if failure.Permanent {
+			return next
+		}
+		// Both waits are lower bounds: a future broker backoff wins, while
+		// an expired backoff cannot override a fresh observation wake.
+		if retry.IsZero() || failure.NextAttemptAt.After(retry) {
+			retry = failure.NextAttemptAt
+		}
+	}
+	if !retry.IsZero() && (next.IsZero() || retry.Before(next)) {
+		return retry
 	}
 	return next
 }

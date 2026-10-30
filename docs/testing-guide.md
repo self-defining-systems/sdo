@@ -987,3 +987,12 @@ Full module-cache downloads use `scripts/download_go_modules.sh` with alternate
 module metadata beside the original module. `go mod download all` may add
 checksums; those writes belong to the temporary metadata, so the committed
 Go source identity stays equal in preparation and consumers.
+
+
+The nightly workflow also replays the **full runtime module** with `-race`,
+including tests selected by PR CI. `pr_test_plan.py --nightly` unions the compiled
+runtime inventory with deferred non-runtime contracts, deduplicates it and uses
+the existing measured-cost bins and job caps. This checks the whole package
+without adding PR jobs or another fixed regression list. `workflow_dispatch`
+can run this workflow on a development branch before it reaches the default
+branch; scheduled runs use the default branch.

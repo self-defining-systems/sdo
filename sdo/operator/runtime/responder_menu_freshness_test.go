@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	jsonpatch "github.com/evanphx/json-patch"
-	"k8s.io/client-go/kubernetes/fake"
 	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
 	"testing"
 
@@ -20,7 +19,7 @@ import (
 // entry must not witness the wrong-port write, even when delivery is delayed.
 func TestProductionMenuFixtureRejectsStaleHealthyWriteWitness(t *testing.T) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", UID: "fixture-uid", ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
-	client := productionMenuClient(service)
+	client := productionMenuClient(t, service)
 	informer := cache.NewSharedIndexInformer(&cache.ListWatch{}, &corev1.Service{}, 0, cache.Indexers{})
 	stale := service.DeepCopy()
 	stale.Spec.Ports[0].TargetPort = intstr.FromInt(8080)
@@ -46,27 +45,43 @@ func TestProductionMenuFixtureRejectsStaleHealthyWriteWitness(t *testing.T) {
 
 // Source normalization must project admission defaults without repairing faults.
 func TestProductionMenuFixtureDryRunDoesNotRepairService(t *testing.T) {
-	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
-	client := productionMenuClient(service)
-	projected, err := client.CoreV1().Services("app").Patch(context.Background(), service.Name, types.ApplyPatchType, []byte(`{"apiVersion":"v1","kind":"Service","metadata":{"name":"backend","namespace":"app"},"spec":{"ports":[{"port":80,"targetPort":8080}]}}`), metav1.PatchOptions{DryRun: []string{metav1.DryRunAll}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stored, err := client.CoreV1().Services("app").Get(context.Background(), service.Name, metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if projected.Spec.Ports[0].TargetPort.IntVal != 8080 {
-		t.Fatal("dry-run must return the projected Service")
-	}
-	if stored.Spec.Ports[0].TargetPort.IntVal != 9999 || stored.ResourceVersion != "1" {
-		t.Fatalf("source normalization silently repaired the live fixture: %+v", stored)
+	for _, transport := range []string{"typed", "discovery"} {
+		t.Run(transport, func(t *testing.T) {
+			service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", ResourceVersion: "1"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
+			client := productionMenuClient(t, service)
+			body := []byte(`{"apiVersion":"v1","kind":"Service","metadata":{"name":"backend","namespace":"app"},"spec":{"ports":[{"port":80,"targetPort":8080}]}}`)
+			var projected *corev1.Service
+			var err error
+			if transport == "typed" {
+				projected, err = client.CoreV1().Services("app").Patch(context.Background(), service.Name, types.ApplyPatchType, body, metav1.PatchOptions{DryRun: []string{metav1.DryRunAll}})
+			} else {
+				var data []byte
+				data, err = client.Discovery().RESTClient().Patch(types.ApplyPatchType).AbsPath("/api/v1/namespaces/app/services/backend").Param("dryRun", metav1.DryRunAll).Body(body).Do(context.Background()).Raw()
+				if err == nil {
+					projected = &corev1.Service{}
+					err = json.Unmarshal(data, projected)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored, err := client.CoreV1().Services("app").Get(context.Background(), service.Name, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if projected.Spec.Ports[0].TargetPort.IntVal != 8080 {
+				t.Fatal("dry-run must return the projected Service")
+			}
+			if stored.Spec.Ports[0].TargetPort.IntVal != 9999 || stored.ResourceVersion != "1" {
+				t.Fatalf("source normalization silently repaired the live fixture: %+v", stored)
+			}
+		})
 	}
 }
 
 // client-go v0.30 drops PatchOptions when building fake actions. Preserve the
 // real API's dry-run boundary before that information is lost to the tracker.
-type productionMenuAPI struct{ *fake.Clientset }
+type productionMenuAPI struct{ acceptedSourceBridge }
 
 func (c *productionMenuAPI) CoreV1() coreclient.CoreV1Interface {
 	return productionMenuCore{c.Clientset.CoreV1()}
