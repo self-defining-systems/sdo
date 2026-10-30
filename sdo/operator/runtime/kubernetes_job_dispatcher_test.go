@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -365,13 +366,16 @@ func TestKubernetesJobDispatcherReturnsFailedJob(t *testing.T) {
 	jobName := IncidentJobName(request.IncidentID)
 	job := awaitJob(t, client, jobName)
 	job.Status.Failed = 1
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", Message: "worker exited before session-open"}}
 	if _, err := client.BatchV1().Jobs("demo").UpdateStatus(context.Background(), job, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("mark Job failed: %v", err)
 	}
 	select {
 	case err := <-result:
-		if err == nil {
-			t.Fatal("expected failed Job error")
+		var terminal *ResponderJobFailedError
+		var failure *worker_registry.JobFailedError
+		if !errors.As(err, &terminal) || !errors.As(err, &failure) || !strings.Contains(err.Error(), "worker exited before session-open") {
+			t.Fatalf("terminal dispatch discarded worker failure evidence: %v", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for failed Job result")

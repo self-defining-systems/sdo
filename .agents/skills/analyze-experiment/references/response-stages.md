@@ -86,3 +86,17 @@ values and API errors remain evidence. No receipt fields or schema change.
 Covered-repeat admission and the broker's no-new-evidence check consume this
 settled evidence; successful global health alone never grants a no-change skip.
 The generic-health-first detector-learning gate remains unchanged.
+
+Covered `pod-admission-rejected` Namespace findings take precedence over workload
+repairs, independent of program names or coverage order. Pending application
+checkpoints retain `Refs` for observation and `WriteRefs` for exclusive writes.
+An absent `WriteRefs` uses the legacy conservative scope; an empty list means no
+exclusive writes. Applied no-ops and `RetryAdmission` requeues hold no exclusive
+reservation, so a prerequisite repair can retrigger blocked ReplicaSets. This
+does not establish rollout success or grant rollback authority. Actual desired
+state writes and uncertain writes retain conflict protection.
+
+Terminal responder dispatch errors preserve the worker Job failure as their
+cause, including curated conditions and container termination evidence. Warm
+startup preceding injection excludes Pod-create rejection as the cause of that
+worker's later exit; missing termination evidence cannot identify its cause.

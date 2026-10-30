@@ -326,7 +326,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 			if loop != nil {
 				loop.locked(func() { result.ResponderSessionID = loop.menuSession.GetProviderSessionId() })
 			}
-			return result, &ResponderJobFailedError{JobName: failed.JobName}
+			return result, &ResponderJobFailedError{JobName: failed.JobName, Cause: failed}
 		}
 		return IncidentResult{}, err
 	}
@@ -400,11 +400,19 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 }
 
 // ResponderJobFailedError preserves the controller's terminal dispatch signal.
-type ResponderJobFailedError struct{ JobName string }
+type ResponderJobFailedError struct {
+	JobName string
+	Cause   error
+}
 
 func (err *ResponderJobFailedError) Error() string {
+	if err.Cause != nil {
+		return fmt.Sprintf("responder Job %q failed: %v", err.JobName, err.Cause)
+	}
 	return fmt.Sprintf("responder Job %q failed", err.JobName)
 }
+
+func (err *ResponderJobFailedError) Unwrap() error { return err.Cause }
 
 func IncidentJobName(incidentID string) string { return worker_registry.JobName(incidentID) }
 

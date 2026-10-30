@@ -14,6 +14,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/workloadhealth"
 )
 
 // DefaultStageBudget bounds observation, never the authority to execute a
@@ -463,6 +464,24 @@ func stageCandidates(state *IncidentState) []stageCandidate {
 		bindings := programBindingsState(match.Bindings)
 		matches = append(matches, stageCandidate{PlaybookMatch: match, targets: matchedFindingFingerprints(state.Request.Findings, state.Request.InitialProgramRuns, match.PlaybookId, bindings)})
 	}
+	// Namespace admission is a prerequisite for workload recovery. Prioritize
+	// its covered fixes using the detector contract, never playbook names or
+	// benchmark fault identities. Preserve order among peers.
+	admission := map[string]bool{}
+	for _, finding := range state.Findings {
+		if finding.Status == sdk.FindingActive && finding.RuleID == workloadhealth.RulePodAdmissionRejected && finding.PrimaryResource.Kind == "Namespace" {
+			admission[FindingFingerprint(finding)] = true
+		}
+	}
+	priority := func(match stageCandidate) bool {
+		for _, target := range match.targets {
+			if admission[target] {
+				return true
+			}
+		}
+		return false
+	}
+	sort.SliceStable(matches, func(i, j int) bool { return priority(matches[i]) && !priority(matches[j]) })
 	return matches
 }
 

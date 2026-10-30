@@ -1057,7 +1057,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	response.ActionReports = result.ActionReports
 	completed := time.Now().UTC()
 	if result.RolloutPending != nil {
-		l.reservePending(id, result.Plan, "", "", program.Bindings{}, request.FindingFingerprints)
+		l.reservePending(id, result, "", "", program.Bindings{}, request.FindingFingerprints)
 	}
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
