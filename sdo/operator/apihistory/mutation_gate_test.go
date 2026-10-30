@@ -112,3 +112,55 @@ func TestVerificationFenceEndsTheResponderTurn(t *testing.T) {
 		t.Fatalf("verified incident did not end the turn: %q", got)
 	}
 }
+
+func TestMutationGateReopensWithdrawnProofAfterQuiescence(t *testing.T) {
+	gate, err := PrepareMutationGate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, err := gate.TryObserve()
+	if err != nil || observation == nil {
+		t.Fatal(err)
+	}
+	if err := observation.Fence(time.Unix(42, 0)); err != nil {
+		t.Fatal(err)
+	}
+	observation.Close()
+	if lease, err := gate.Begin(); err == nil {
+		lease.Finish(false)
+		t.Fatal("published proof admitted a mutation")
+	}
+	if err := gate.Reopen(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.Reopen(); err != nil {
+		t.Fatal("replaying reopening was not idempotent")
+	}
+	lease, err := gate.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Finish(false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMutationGateReopenRefusesInflightAndUncertainWrites(t *testing.T) {
+	gate, err := PrepareMutationGate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := gate.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.Reopen(); err == nil {
+		t.Fatal("in-flight mutation allowed reopening")
+	}
+	if err := lease.Finish(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.Reopen(); err == nil {
+		t.Fatal("uncertain write allowed reopening")
+	}
+}

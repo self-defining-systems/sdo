@@ -57,6 +57,7 @@ For offline fake-cluster checks, simulated effects and false positives, read [of
 For menu selections, round reports and recovery receipts, read [mitigation menu receipts](references/mitigation-menu.md).
 For first-mutation capture and evidence-gap semantics, read [capture boundaries](references/capture-boundaries.md).
 For acceptance, ownership and restart analysis, read [native broker and memory](references/native-broker.md).
+For traffic settling between recovery proof and broker closure, read [closure recovery observations](references/closure-recovery.md).
 For incident deadlines and restart recovery, read [native incident recovery](references/native-incident-recovery.md).
 For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md); for cleared lifecycle effects and repair-encoding counts, read [reflection settlement](references/reflection-settlement.md).
 For setup costs and interrupted responder accounting, read [phase-bound usage evidence](references/setup-usage.md).

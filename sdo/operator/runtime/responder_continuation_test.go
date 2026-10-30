@@ -337,11 +337,11 @@ func TestControllerWaitsForFreshClearSamplesInsteadOfRedispatch(t *testing.T) {
 	c.history = []DetectorEvaluation{{DetectorID: "health-objective", EvaluatedAt: now.Add(-time.Second), Status: DetectorEvaluationClear}}
 	c.maybeCloseIncident(context.Background(), now, snapshot)
 	if d.resumed != 0 || !c.responderDone || !c.responderCompletedAt.Equal(now) {
-		t.Fatal("clear but not-yet-fresh health samples caused another worker and reset verification freshness")
+		t.Fatal("fresh initial health observation caused another worker or reset response completion")
 	}
 	// A fresh sample is not itself a stability proof. Drive the real detector
 	// owner across the complete window rather than inventing clear history.
-	assertRecoveryFixtureWindow(t, c, context.Background(), now.Add(time.Second))
+	assertRecoveryFixtureWindow(t, c, context.Background(), now)
 	if d.resumed != 0 || c.IncidentOpen() {
 		t.Fatal("fresh stable health redispatched or failed to close")
 	}

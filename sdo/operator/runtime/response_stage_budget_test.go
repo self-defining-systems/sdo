@@ -2,24 +2,24 @@ package runtime
 
 import (
 	"context"
+	"sdo.dev/operator/sdk"
 	"testing"
 	"time"
 )
 
-// An exhausted stage budget hands every match to the agent with a reason and
-// writes nothing.
-func TestDeterministicResponseStageBudgetExhaustedHandsMatchesToAgent(t *testing.T) {
+// Observation exhaustion cannot suppress accepted covered repairs.
+func TestDeterministicResponseStageBudgetExhaustedAppliesEveryBinding(t *testing.T) {
 	loop, state := pipelineTestLoopWithServices(t, false, "api2")
 	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, Budget: time.Nanosecond}).Run(context.Background(), state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Mitigations) != 3 || len(loop.PlanApplications()) != 0 || len(state.Findings) < 3 {
-		t.Fatalf("budget exhaustion must apply nothing: %v, findings=%d", report, len(state.Findings))
+	if len(report.Mitigations) != 3 || len(loop.PlanApplications()) != 3 || len(state.Findings) != 0 {
+		t.Fatalf("budget exhaustion must still apply every binding: %v, findings=%d", report, len(state.Findings))
 	}
 	for _, attempt := range report.Mitigations {
-		if attempt.Result != "skipped" || attempt.SkipReason != "stage_budget" {
-			t.Fatalf("unapplied match must carry its reason: %v", attempt)
+		if attempt.Result != "applied_cleared" || attempt.SkipReason != "" {
+			t.Fatalf("covered match must have a completed repair: %v", attempt)
 		}
 	}
 }
@@ -43,4 +43,87 @@ func TestDeterministicResponseStageRolloutWaitIsBoundedByBudget(t *testing.T) {
 			t.Fatalf("pending rollout must reach the agent: %v", attempt)
 		}
 	}
+}
+
+// A rollout deliberately remains pending while independent covered bindings
+// are repaired. The blocking interface models old serial rollout polling;
+// production must use its one-sample interface before opening the worker.
+func TestStageMultiBindingScriptedSessionStartup(t *testing.T) {
+	for _, budget := range []time.Duration{time.Nanosecond, time.Second} {
+		t.Run(budget.String(), func(t *testing.T) {
+			loop, state := pipelineTestLoopWithServices(t, false, "api2", "api3", "api4", "api5")
+			rollout := &startupStageRollout{base: loop.Executor.Rollouts}
+			loop.Executor.Rollouts = rollout
+			loop.Detectors = append(loop.Detectors, startupResidualDetector{})
+			session := &startupSessionDispatcher{detected: time.Now()}
+			if err := RunResponseStages(context.Background(), state, []ResponseStage{
+				&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, Budget: budget},
+				AgentResponseStage{Dispatcher: session},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("scripted detection_to_session_open=%s bindings=%d blocking_rollout_calls=%d", session.opened.Sub(session.detected), len(loop.PlanApplications()), rollout.waits)
+			if session.opened.IsZero() || len(loop.PlanApplications()) != 6 || len(session.request.Findings) != 1 || session.request.Findings[0].PrimaryResource.Kind != "Deployment" {
+				t.Fatalf("startup lost covered repairs or remaining work: opened=%v applications=%d findings=%v", session.opened, len(loop.PlanApplications()), session.request.Findings)
+			}
+			if rollout.waits != 0 {
+				t.Fatalf("independent bindings serialized on %d blocking rollout calls", rollout.waits)
+			}
+			for _, attempt := range state.PriorStages[0].Mitigations {
+				if !attempt.GetApplyReceipt().GetApplied() || attempt.SkipReason != "" {
+					t.Fatalf("covered binding was not written: %v", attempt)
+				}
+			}
+		})
+	}
+}
+
+type startupStageRollout struct {
+	base  PlanRollouts
+	waits int
+}
+
+func (r *startupStageRollout) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
+	r.waits++
+	timer := time.NewTimer(20 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	return r.Observe(ctx, refs)
+}
+func (r *startupStageRollout) Observe(ctx context.Context, refs []sdk.ObjectRef) error {
+	for _, ref := range refs {
+		if ref.Kind == "Deployment" {
+			return context.DeadlineExceeded
+		}
+	}
+	return r.base.Wait(ctx, refs)
+}
+
+type startupSessionDispatcher struct {
+	detected, opened time.Time
+	request          IncidentRequest
+}
+
+func (d *startupSessionDispatcher) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
+	d.opened, d.request = time.Now(), request
+	result := completedResult(request.IncidentID)
+	result.ResponderSessionID = "synthetic-stage-startup-session"
+	return result, nil
+}
+
+// An unrelated synthetic fault keeps this a real worker handoff after every
+// covered write, rather than measuring the model-free completion branch.
+type startupResidualDetector struct{}
+
+func (startupResidualDetector) Spec() sdk.DetectorSpec {
+	spec := incidentSpec(podWatch)
+	spec.ID = "synthetic-residual"
+	return spec
+}
+func (startupResidualDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	return []sdk.Finding{{DetectorID: "synthetic-residual", RuleID: "uncovered", Status: sdk.FindingActive, Severity: "critical", Summary: "Synthetic uncovered fault", Evidence: "Synthetic evidence", PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "uncovered"}}}, nil
 }

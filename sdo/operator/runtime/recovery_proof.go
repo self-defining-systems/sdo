@@ -2,6 +2,8 @@ package runtime
 
 import "time"
 
+const recoveryStabilitySummary = "awaiting controller recovery stability proof"
+
 // Narration is not a mutation. Completed responder turns retain the same
 // observation epoch as their writes, so completion cannot start a second clock.
 // A response without a registered mutation observer retains the legacy fresh
@@ -21,12 +23,22 @@ func (c *Controller) recoveryObservationEpochLocked() time.Time {
 // Call only after fresh health and every write/rollout prerequisite holds.
 // A restart never reuses an observer's in-memory proof.
 func (c *Controller) recoveryProofLocked(now time.Time, states []DetectorEvaluation, safe bool) bool {
+	deadline := time.Time{}
+	if c.currentIncidentRequest != nil {
+		deadline = c.currentIncidentRequest.ResponseDeadline
+		if c.responderDone {
+			deadline = c.verificationDeadlineLocked()
+		}
+	}
+	return c.recoveryProofForEpochLocked(now, states, safe, c.recoveryObservationEpochLocked(), deadline)
+}
+
+func (c *Controller) recoveryProofForEpochLocked(now time.Time, states []DetectorEvaluation, safe bool, since, deadline time.Time) bool {
 	if !safe {
 		c.closureStableSince = time.Time{}
 		c.recoverySafetyLost = true
 		return false
 	}
-	since := c.recoveryObservationEpochLocked()
 	if c.recoveryObserverStarted.After(since) {
 		since = c.recoveryObserverStarted
 	}
@@ -52,7 +64,8 @@ func (c *Controller) recoveryProofLocked(now time.Time, states []DetectorEvaluat
 	if since.After(c.closureStableSince) {
 		c.closureStableSince = since
 	}
-	return !now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow))
+	stableAt := c.closureStableSince.Add(c.config.ClosureStabilityWindow)
+	return !now.Before(stableAt) && (deadline.IsZero() || !stableAt.After(deadline))
 }
 
 // Completed receipt timestamps bound the applied write, independently of how
