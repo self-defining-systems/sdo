@@ -61,7 +61,10 @@ def prepare(plan: Path, output: Path, *, root: Path = ROOT) -> None:
         scope, package = key
         binary = objects / (hashlib.sha256(f"{scope}:{package}".encode()).hexdigest() + ".test")
         module = root / "sdo/operator" / ("runtime" if scope == "runtime" else "")
-        subprocess.run(["go", "test", "-race", "-c", "-o", str(binary.resolve()), package], cwd=module, check=True)
+        # go test normally omits DWARF; -c would retain it unless disabled.
+        subprocess.run(
+            ["go", "test", "-race", "-c", "-ldflags=-w", "-o", str(binary.resolve()), package], cwd=module, check=True
+        )
         return key, binary
 
     tool = objects / "test2json"

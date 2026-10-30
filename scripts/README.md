@@ -36,7 +36,7 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   packages. Each contract job downloads its own compressed executable/plan archive
   and the one normal cache needed by generated-workspace tests. It never transfers
   the race compiler cache. Manifests verify source revision, plan, selected names
-  and binary hashes before bounded parallel execution through `go tool test2json`.
+  and binary hashes before bounded parallel execution through the published `test2json` executable.
   A cold dispatch bypasses durable restores and uses its own preparation outputs.
   Compiler-free Python jobs fetch only module sources and tools. Timings go to
   logs and deferred checks to the summary, without contract artifact uploads.
