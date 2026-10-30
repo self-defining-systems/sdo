@@ -11,6 +11,9 @@ import (
 )
 
 func finalApplicationVerified(app *contracts.PlanApplication) bool {
+	if app.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+		return false
+	}
 	if app.GetFinalEquivalenceVerified() {
 		return true
 	}

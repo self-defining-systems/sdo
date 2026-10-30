@@ -173,7 +173,7 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 	return s, nil
 }
 
-// Record admits bounded projection work without waiting for parsing or disk.
+// Record admits bounded projection work without synchronous parsing or disk I/O.
 // Raw bytes exist only in at most eight transient workers, never in the recording
 // queue. Projection precedes hashing, queueing and persistence. Callers retain
 // ownership of raw; an admitted worker receives its own bounded copy.
@@ -303,26 +303,33 @@ func (s *Store) run() {
 // timestamp precedes draining, so it never certifies work that is still queued.
 func (s *Store) checkpoint() {
 	s.gate.Lock()
-	defer s.gate.Unlock()
 	through := time.Now().UTC()
 	s.projections.Wait()
+	// Capture admitted envelopes under the gate, then release callers before
+	// doing disk I/O. New observations remain queued behind this snapshot.
+	var batch []observation
+drain:
 	for {
 		select {
 		case item, ok := <-s.queue:
 			if !ok {
-				return
+				break drain
 			}
 			s.queuedBytes.Add(-item.weight)
-			if err := s.append(item); err != nil {
-				s.Gap()
-			}
+			batch = append(batch, item)
 		default:
-			s.manifest.SnapshotThrough = through
-			if err := s.writeManifest(); err != nil {
-				s.Gap()
-			}
-			return
+			break drain
 		}
+	}
+	s.gate.Unlock()
+	for _, item := range batch {
+		if err := s.append(item); err != nil {
+			s.Gap()
+		}
+	}
+	s.manifest.SnapshotThrough = through
+	if err := s.writeManifest(); err != nil {
+		s.Gap()
 	}
 }
 

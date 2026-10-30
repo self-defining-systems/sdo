@@ -258,6 +258,30 @@ message RolloutBlocker {
   repeated Action release = 4;
 }
 
+// Closure attribution veto, independent of earlier positive execution facts.
+enum SettlementRejectionReason {
+  SETTLEMENT_REJECTION_REASON_UNSPECIFIED = 0;
+  SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE = 1;
+  SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE = 2;
+  SETTLEMENT_REJECTION_REASON_NOT_APPLIED = 3;
+  SETTLEMENT_REJECTION_REASON_DRY_RUN = 4;
+  SETTLEMENT_REJECTION_REASON_ROLLED_BACK = 5;
+  SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION = 6;
+  SETTLEMENT_REJECTION_REASON_SUPERSEDED = 7;
+  SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN = 8;
+  SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED = 9;
+  SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH = 10;
+  SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE = 11;
+  SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN = 12;
+  SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING = 13;
+  SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED = 14;
+  SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL = 15;
+  SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR = 16;
+  SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR = 17;
+  SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED = 18;
+  SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE = 19;
+}
+
 message PlanApplication {
   Plan plan = 1 [(buf.validate.field).required = true];
   bool applied = 2;
@@ -286,6 +310,7 @@ message PlanApplication {
   // recovery-settled proves the exact application/revision/binding after
   // independently cleared targeted health and no superseding causal write.
   string final_verification_basis = 22 [(buf.validate.field).string = {in: ["", "observed-transition", "recovery-settled"]}];
+  SettlementRejectionReason settlement_rejection_reason = 23 [(buf.validate.field).enum.defined_only = true];
 }
 
 message ProgramToolCall {

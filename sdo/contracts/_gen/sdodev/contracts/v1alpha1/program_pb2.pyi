@@ -14,6 +14,49 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class SettlementRejectionReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    SETTLEMENT_REJECTION_REASON_UNSPECIFIED: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_NOT_APPLIED: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_DRY_RUN: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_ROLLED_BACK: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_SUPERSEDED: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED: _ClassVar[SettlementRejectionReason]
+    SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE: _ClassVar[SettlementRejectionReason]
+SETTLEMENT_REJECTION_REASON_UNSPECIFIED: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_NOT_APPLIED: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_DRY_RUN: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_ROLLED_BACK: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_SUPERSEDED: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED: SettlementRejectionReason
+SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE: SettlementRejectionReason
+
 class ProgramSpec(_message.Message):
     __slots__ = ("id", "params")
     ID_FIELD_NUMBER: _ClassVar[int]
@@ -383,7 +426,7 @@ class RolloutBlocker(_message.Message):
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., reason: _Optional[str] = ..., warning_events: _Optional[_Iterable[str]] = ..., release: _Optional[_Iterable[_Union[Action, _Mapping]]] = ...) -> None: ...
 
 class PlanApplication(_message.Message):
-    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects", "action_reports", "rollout_pending", "final_verification_basis")
+    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects", "action_reports", "rollout_pending", "final_verification_basis", "settlement_rejection_reason")
     PLAN_FIELD_NUMBER: _ClassVar[int]
     APPLIED_FIELD_NUMBER: _ClassVar[int]
     DRY_RUN_FIELD_NUMBER: _ClassVar[int]
@@ -404,6 +447,7 @@ class PlanApplication(_message.Message):
     ACTION_REPORTS_FIELD_NUMBER: _ClassVar[int]
     ROLLOUT_PENDING_FIELD_NUMBER: _ClassVar[int]
     FINAL_VERIFICATION_BASIS_FIELD_NUMBER: _ClassVar[int]
+    SETTLEMENT_REJECTION_REASON_FIELD_NUMBER: _ClassVar[int]
     plan: Plan
     applied: bool
     dry_run: bool
@@ -424,7 +468,8 @@ class PlanApplication(_message.Message):
     action_reports: _containers.RepeatedCompositeFieldContainer[ActionReport]
     rollout_pending: RolloutPending
     final_verification_basis: str
-    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ..., rollout_pending: _Optional[_Union[RolloutPending, _Mapping]] = ..., final_verification_basis: _Optional[str] = ...) -> None: ...
+    settlement_rejection_reason: SettlementRejectionReason
+    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ..., rollout_pending: _Optional[_Union[RolloutPending, _Mapping]] = ..., final_verification_basis: _Optional[str] = ..., settlement_rejection_reason: _Optional[_Union[SettlementRejectionReason, str]] = ...) -> None: ...
 
 class ProgramToolCall(_message.Message):
     __slots__ = ("command", "at", "request_json", "response_json", "error", "summary")

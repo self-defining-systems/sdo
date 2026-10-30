@@ -189,7 +189,7 @@ func stageApplicationSettled(stage *contracts.StageMitigation, applications []*c
 			final = app
 		}
 	}
-	if final == nil || !final.GetApplied() || final.GetDryRun() || final.GetRolledBack() || final.GetRollbackError() != "" || final.GetError() != "" || final.GetRolloutPending() != nil || !final.GetVerificationCompleted() || !final.GetVerificationPassed() {
+	if final == nil || final.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED || !final.GetApplied() || final.GetDryRun() || final.GetRolledBack() || final.GetRollbackError() != "" || final.GetError() != "" || final.GetRolloutPending() != nil || !final.GetVerificationCompleted() || !final.GetVerificationPassed() {
 		return false
 	}
 	return slices.Contains(final.GetProgramIds(), stage.GetPlaybookId()) && slices.Equal(final.GetProgramIds(), initial.GetProgramIds()) &&

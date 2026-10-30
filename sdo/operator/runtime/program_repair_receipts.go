@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -29,7 +30,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 				scoped := scriptRepairResources(report)
 				if report.Status == "applied" && application.Result.Applied && report.Script != nil && report.Script.ScriptDigest == program.ScriptDigest(script.Script) && !application.RolledBack && application.RollbackError == "" {
 					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-script-%d", application.ID, index+1), used)
-					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result)})
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: application.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED && application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result)})
 					for _, ref := range scoped {
 						if !seen[ref] {
 							seen[ref] = true
@@ -100,7 +101,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			ActionID: id, Kind: "program-plan", Target: refs[0].Kind + "/" + refs[0].Name, Resources: refs,
 			Summary: summary, Details: details,
 			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
-			Success: application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result) && !application.RolledBack && application.RollbackError == "", Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
+			Success: application.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED && application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result) && !application.RolledBack && application.RollbackError == "", Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
 			Owners: preImageOwners(application.Result.PreImages, refs),
 		})
 	}
