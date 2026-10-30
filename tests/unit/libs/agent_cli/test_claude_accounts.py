@@ -390,3 +390,39 @@ def test_cswap_usage_excludes_weekly_limit_but_not_setup_token_403(tmp_path: Pat
     source.unlink()
     inventory = sync_cswap(store, secret, {"accounts": listing}, lanes=["50"], capacity=2)
     assert inventory["lanes"] == {"50": "a03"}
+
+
+def test_slot_allowlist_never_assigns_or_fails_over_to_an_excluded_registration(tmp_path: Path) -> None:
+    store, secret = tmp_path / "cswap", tmp_path / "secret"
+    (store / "credentials").mkdir(parents=True)
+    accounts = {}
+    for slot in range(1, 5):
+        email = f"synthetic-{slot}@example.invalid"
+        accounts[str(slot)] = {"email": email, "added": f"registration-{slot}"}
+        payload = json.dumps({"claudeAiOauth": {"accessToken": uuid.uuid4().hex}}).encode()
+        (store / "credentials" / f".creds-{slot}-{email}.enc").write_bytes(base64.b64encode(payload))
+    (store / "sequence.json").write_text(json.dumps({"accounts": accounts}))
+    listing = {"accounts": [{"number": str(slot), "usage": None} for slot in range(1, 5)]}
+    sync_cswap(store, secret, listing, lanes=[], capacity=2)
+    assert (secret / "a01.token").exists()
+
+    inventory = sync_cswap(store, secret, listing, lanes=["50", "52", "54", "55"], capacity=2, slots=[2, 3, 4])
+
+    assert inventory["lanes"] == {"50": "a02", "52": "a03", "54": "a04", "55": "a02"}
+    assert sorted(path.name for path in secret.glob("*.token")) == ["a02.token", "a03.token", "a04.token"]
+    stored = json.loads((secret / "accounts.json").read_text())["accounts"]
+    assert [account["alias"] for account in stored] == ["a02", "a03", "a04"]
+    prepare_accounts(secret, tmp_path / "pool", [], capacity=1)
+    env = {
+        "SDO_CLAUDE_ACCOUNTS_DIR": str(secret),
+        "SDO_OPUS_POOL_DIR": str(tmp_path / "pool"),
+        "SDO_CLAUDE_ACCOUNT_MAX_SESSIONS": "1",
+        "SDO_CLAUDE_ACCOUNT_PRIMARY": "a02",
+    }
+    held = [AccountRouter.from_environment(env).acquire() for _ in range(3)]
+    assert sorted(account.alias for account in held) == ["a02", "a03", "a04"]
+    assert AccountRouter.from_environment(env).try_acquire() is None
+    for account in held:
+        account.close()
+    with pytest.raises(ValueError, match="unreadable"):
+        sync_cswap(store, secret, listing, lanes=[], capacity=2, slots=[2, 9])

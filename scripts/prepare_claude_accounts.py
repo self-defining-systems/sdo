@@ -26,6 +26,9 @@ def main() -> None:
     parser.add_argument("--alias", type=Path, action="append", default=[])
     parser.add_argument("--lane", action="append", default=[])
     parser.add_argument("--capacity", type=int, default=2)
+    parser.add_argument(
+        "--slot", type=int, action="append", help="Only these cswap slots are assignable or failover targets"
+    )
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
     if any(path.resolve().is_relative_to(repository) for path in (args.directory, args.pool, *args.alias)):
@@ -36,7 +39,12 @@ def main() -> None:
         parser.exit(1, "cswap inventory failed; output withheld\n")
     try:
         inventory = sync_cswap(
-            args.store, args.directory, json.loads(result.stdout), lanes=args.lane, capacity=args.capacity
+            args.store,
+            args.directory,
+            json.loads(result.stdout),
+            lanes=args.lane,
+            capacity=args.capacity,
+            slots=args.slot,
         )
         prepare_accounts(args.directory, args.pool, args.alias, capacity=args.capacity)
     except (OSError, ValueError, RuntimeError):

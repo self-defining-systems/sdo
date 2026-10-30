@@ -629,6 +629,7 @@ def _sdo_agent(
         reflection_wait_seconds=wait_for(WaitKind.REFLECTION_DRAIN),
         detection_timeout_seconds=args.detection_timeout,
         checkpoint_enabled=not args.no_checkpoints,
+        require_attestation_eligible=environment.pinned_tools,
     )
     if environment.app == "toy":
         from benchmarks.sregym.fastloop.toy_ops import ToyClusterOps
@@ -1000,8 +1001,7 @@ def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue 
             prepare_dev_mount(*mount_args)
         else:
             prepare_dev_mount(*mount_args, environment.parallel_root)
-        os.environ["SDO_DEV_MOUNT"] = "1"
-        os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
+    environment.apply_operator_env(os.environ)
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "fault_descriptions.json").write_text(

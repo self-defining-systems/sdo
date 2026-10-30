@@ -271,6 +271,7 @@ def _agent(
     detection_timeout_seconds: float | None = None,
     reflection_wait_seconds: float = 3600.0,
     clock: Clock | None = None,
+    require_attestation_eligible: bool = False,
 ) -> SdoPersistentAgent:
     repository = tmp_path / "application_workspace"
     repository.mkdir(exist_ok=True)
@@ -297,6 +298,7 @@ def _agent(
         verification_timeout_seconds=600,
         detection_timeout_seconds=detection_timeout_seconds,
         reflection_wait_seconds=reflection_wait_seconds,
+        require_attestation_eligible=require_attestation_eligible,
     )
     context = DeployedLifecycleContext(health_objective="objective", active_resources=[])
 

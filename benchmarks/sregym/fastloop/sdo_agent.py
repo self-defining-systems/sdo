@@ -33,6 +33,7 @@ from benchmarks.sregym.adapter import (
     ReflectionDeadlineError,
     StageInputs,
     WaitKind,
+    control_namespace_for,
     drain_pending_incident,
     pause_for_recovery,
     record_failed_closure,
@@ -47,6 +48,7 @@ from benchmarks.sregym.fastloop.evidence_queue import (
     stash_checkpoint_inputs,
 )
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout, ResolutionGradePoint
+from benchmarks.sregym.fastloop.pinned_tools import assert_attestation_eligible
 from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, RecoveryTrigger, TokenCounts
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
@@ -86,6 +88,8 @@ class SdoAgentSettings:
     reflection_wait_seconds: float = wait_for(WaitKind.REFLECTION_DRAIN)
     detection_timeout_seconds: float | None = None
     checkpoint_enabled: bool = True
+    #: Pinned-tools lanes refuse injection unless the launched controller can reuse attestations.
+    require_attestation_eligible: bool = False
 
     def __post_init__(self) -> None:
         if self.runtime_config.submission_api_base or self.runtime_config.submission_relay_target_base:
@@ -337,6 +341,8 @@ class SdoPersistentAgent:
         windows: list[InjectionWindow] = []
 
         def gated_inject() -> None:
+            if settings.require_attestation_eligible:
+                assert_attestation_eligible(settings.kubeconfig, control_namespace_for(settings.namespace))
             windows.append(inject())
 
         def measure_verified(incident_id: str, detected_at: datetime | None, verified_at: datetime | None) -> None:

@@ -314,8 +314,7 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     if environment.dev_mount is None:
         raise ValueError("toy controller requires a development mount")
-    os.environ["SDO_DEV_MOUNT"] = "1"
-    os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
+    environment.apply_operator_env(os.environ)
     if config is None:
         config = RuntimeConfig(
             repository=environment.workspace,
