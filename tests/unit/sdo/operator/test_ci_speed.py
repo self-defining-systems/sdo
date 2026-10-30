@@ -677,8 +677,16 @@ def test_race_archives_overlap_quality_but_cannot_publish_after_failure(tmp_path
     # read makes a serial-wait regression fail without leaving a child behind.
     fifo = tmp_path / "packed"
     os.mkfifo(fifo)
+    started = tmp_path / "quality-started"
+    os.mkfifo(started)
+    discovered = tmp_path / "discovery-started"
+    os.mkfifo(discovered)
+    # Run the real readiness producer into the real workflow consumer. Only
+    # the compiler boundary is synthetic: runtime compilation waits for the
+    # quality worker to start, so losing overlap fails deterministically.
+    (scripts / "prepare_go_ci.sh").write_bytes((ROOT / "scripts/prepare_go_ci.sh").read_bytes())
     (scripts / "check_errors.sh").write_text(
-        f'#!/bin/bash\nread -r -t 3 marker <> "{fifo}" || exit 99\nexit {quality_status}\n'
+        f'#!/bin/bash\necho started > "{started}"\nread -r -t 3 marker <> "{fifo}" || exit 99\nexit {quality_status}\n'
     )
     (tmp_path / "nightly-tests.md").write_text("synthetic manifest")
     for index in range(2):
@@ -687,12 +695,19 @@ def test_race_archives_overlap_quality_but_cannot_publish_after_failure(tmp_path
     bindir.mkdir()
     for name in ("uv", "python3"):
         path = bindir / name
-        path.write_text("#!/bin/sh\nexit 0\n")
+        path.write_text(f'#!/bin/bash\ncase "$*" in *python_cost_plan.py*) echo discovered > "{discovered}";; esac\n')
         path.chmod(0o755)
+    go = bindir / "go"
+    go.write_text(
+        '#!/bin/bash\ncase "$*" in *go_test_inventory.go*runtime*)\n'
+        f'read -r -t 3 marker <> "{started}" || exit 98\ntouch "{tmp_path}/graph-finished";;\n'
+        f'*go_test_inventory.go*) read -r -t 3 marker <> "{discovered}" || exit 97;;\nesac\n'
+    )
+    go.chmod(0o755)
     # Compression itself is exercised by the real tar/zstd. Signal quality
     # only after the workflow's second du, which follows the second tar.
     du = bindir / "du"
-    du.write_text(f'#!/bin/bash\nif [[ "$*" == *contract-1.tar.zst* ]]; then echo packed > "{fifo}"; fi\n')
+    du.write_text(f'#!/bin/bash\nif [[ "$*" == *contract-1.tar.zst* ]]; then echo packed 1<> "{fifo}"; fi\n')
     du.chmod(0o755)
     result = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", command],
@@ -703,4 +718,5 @@ def test_race_archives_overlap_quality_but_cannot_publish_after_failure(tmp_path
         timeout=10,
     )
     assert result.returncode == quality_status, result.stderr
+    assert (tmp_path / "graph-finished").is_file()
     assert all((tmp_path / f"contract-{index}.tar.zst").is_file() for index in range(2))
