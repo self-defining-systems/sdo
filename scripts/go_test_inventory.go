@@ -1,7 +1,7 @@
 //go:build ignore
 
-// Command go_test_inventory reads Go's generated test tables and vets all
-// packages without compiling generated mains for tests that may be deferred.
+// Command go_test_inventory reads Go's generated test mains after compiling
+// their archives, avoiding a discarded link of every test executable.
 package main
 
 import (
@@ -33,16 +33,15 @@ type event struct {
 }
 
 func inventory(directory string, output io.Writer) error {
-	command := exec.Command("go", "list", "-race", "-test", "-json", "./...")
+	command := exec.Command("go", "list", "-race", "-test", "-export", "-json", "./...")
 	command.Dir = directory
 	command.Stderr = os.Stderr
 	data, err := command.Output()
 	if err != nil {
-		return fmt.Errorf("discover test tables in %s: %w", directory, err)
+		return fmt.Errorf("compile test archives in %s: %w", directory, err)
 	}
-	// go test -list also vets the selected test packages. Preserve its full
-	// compilation/type-checking boundary through vet, without compiling the
-	// unused generated-main archives requested by go list -export.
+	// go test -list also vets the selected test packages. Reuse the exported
+	// archives while preserving that rejection boundary, without any links.
 	// Match go test's high-confidence subset exactly; full go vet adds
 	// unrelated analyzers (such as copylocks) that the old listing did not run.
 	vet := exec.Command("go", "vet", "-race", "-atomic", "-bools", "-buildtag",

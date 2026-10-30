@@ -42,6 +42,6 @@ for nested workspace builds, plus per-bin archives of selected race executables
 and their plan. Contract shards never transfer the race compiler cache or link
 those test binaries. `scripts/prepared_contracts.py` binds binaries to the source,
 plan, selected names and content hashes, then executes them through test2json.
-Inventory reads Go-generated tables and vets every package without compiling unused generated test mains. Preparation batches metadata and selected links by module, splitting only output-name collisions, and hashes each executable once. Python discovery overlaps graph compilation; an operator-ready FIFO starts mandatory Go checks alongside runtime preparation. Every background worker must succeed before publication.
+Preparation batches metadata and selected links by module, splitting only output-name collisions, and hashes each executable once. Python discovery overlaps graph compilation; an operator-ready FIFO starts mandatory Go checks alongside runtime preparation. Every background worker must succeed before publication.
 Its real producer/consumer fixture runs with compilation forbidden; workflow
 negative controls reject misses, fallback keys and extra compiler transfers.
