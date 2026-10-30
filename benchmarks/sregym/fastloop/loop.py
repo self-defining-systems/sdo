@@ -39,6 +39,7 @@ from benchmarks.sregym.fastloop.records import (
 from benchmarks.sregym.faults.description import SuiteCapabilities
 from benchmarks.sregym.protocol.injection import InvalidInjectionError, ensure_incident_follows_injection
 from benchmarks.sregym.protocol.provider_capacity import AccountEvent, ProviderWaitInterval, RateLimitedRun
+from benchmarks.sregym.protocol.recovery import RecoveryError, RecoveryFailureReason
 from libs.agent_cli.errors import rate_limit_failure
 from libs.agent_cli.provider_capacity import OpusPoolAllocation
 
@@ -505,6 +506,7 @@ def _run_one(
     cleanup_passes_verified = 0
     post_closure_waits: list[PostClosureWait] = []
     recovery_error: str | None = None
+    recovery_failures: list[RecoveryFailureReason] = []
     recovered = False
 
     def grade() -> OracleVerdict:
@@ -679,6 +681,8 @@ def _run_one(
             recovery_finished_at = now()
         except Exception as exc:
             logger.exception("fault recovery failed for incident %d", index)
+            if isinstance(exc, RecoveryError):
+                recovery_failures = list(exc.recovery_failures)
             recovery_error = f"fault recovery failed: {_describe(exc)}"
             errors.append(recovery_error)
             recovered = False
@@ -717,6 +721,7 @@ def _run_one(
         recovery_oracle=recovery_oracle,
         recovery_oracle_samples=recovery_oracle_samples,
         recovery_error=recovery_error,
+        recovery_failures=recovery_failures,
         diagnosis_grade=diagnosis_grade,
         oracle_finished_at=oracle_finished_at,
         oracle_incident_id=oracle_point.incident_id if oracle_point else None,

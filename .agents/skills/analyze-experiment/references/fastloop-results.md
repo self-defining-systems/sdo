@@ -205,3 +205,15 @@ manifest digest and verify their CRI config IDs. Total delivery `seconds`
 includes registry setup and transfer; it excludes retention and waiting for
 the host-wide image-delivery lock. Older entries lack this object. A fallback can retain
 partial registry metrics; use `path` and `success` to establish the result.
+
+Recovery failures now also publish `recovery_failures` on incident rows (empty on older rows).
+Each entry has numeric `incident_index` and `component_index` (null when unknown or not
+component-scoped), fixed `step` (`recover`, `refresh`, `health`, `restore`) and fixed `code`
+(`timeout`, `execution_failed`, `exec_failed`, `rollout_failed`, `protocol_invalid`, `unknown`).
+Use these fields for classification; do not parse `recovery_error`. The current harness's
+`error` status maps to `execution_failed`: it does not prove an exec or rollout failure.
+Worker exception text remains excluded from the typed projection and the existing redacted
+recovery message. A late open follow-on incident receives its controller-published full
+closure budget, frozen when the fence observes it; a queued reflection alone retains its
+reflection-attempt cap. A pause-admission race goes through the same bounded fence, without
+another problem injection or grading attempt.

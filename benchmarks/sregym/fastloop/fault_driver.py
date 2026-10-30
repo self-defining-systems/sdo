@@ -18,6 +18,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
 from benchmarks.sregym.fastloop.loop import InjectionWindow
 from benchmarks.sregym.fastloop.records import EvalNote, OracleVerdict
 from benchmarks.sregym.protocol.injection import FaultComponent, InvalidInjectionError, check_injection
+from benchmarks.sregym.protocol.recovery import RecoveryError, RecoveryFailureReason, recovery_failure_reasons
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 SEED_RECOVERY_CONTRACT = "seed-compatible/v1"
 
 
-class FastloopFaultError(RuntimeError):
+class FastloopFaultError(RecoveryError):
     """Raised when a fault cannot be recovered to a healthy application."""
 
 
@@ -55,7 +56,10 @@ def _check_recovery(reply: dict[str, Any]) -> None:
             if type(index) is int and index >= 0 and status in ("error", "timeout"):
                 failures.append(f"component {index}: {status}")
         details = f" ({'; '.join(failures)})" if failures else ""
-        raise FastloopFaultError(f"full recovery failed; warm lane cannot be reused{details}")
+        raise FastloopFaultError(
+            f"full recovery failed; warm lane cannot be reused{details}",
+            recovery_failures=recovery_failure_reasons(reply, "recover"),
+        )
 
 
 def _utc(epoch: object) -> datetime:
@@ -366,7 +370,10 @@ class SregymFaultDriver:
                 or refreshed.get("pending")
                 or refreshed.get("errors")
             ):
-                raise FastloopFaultError("full cleanup client refresh failed; warm lane cannot be reused")
+                raise FastloopFaultError(
+                    "full cleanup client refresh failed; warm lane cannot be reused",
+                    recovery_failures=recovery_failure_reasons(refreshed, "refresh"),
+                )
         deadline = started + self._health_timeout
         health: dict[str, Any] = {}
         unready_rollouts: list[str] = []
@@ -386,7 +393,10 @@ class SregymFaultDriver:
             if self._monotonic() >= deadline:
                 raise FastloopFaultError(
                     f"{self._namespace} is not healthy {self._health_timeout:.0f}s after recovery; "
-                    f"unready: {health.get('unready')}; rollouts: {unready_rollouts}"
+                    f"unready: {health.get('unready')}; rollouts: {unready_rollouts}",
+                    recovery_failures=(
+                        RecoveryFailureReason(step="health", code="rollout_failed" if unready_rollouts else "timeout"),
+                    ),
                 )
             self._sleep(self._health_poll)
 

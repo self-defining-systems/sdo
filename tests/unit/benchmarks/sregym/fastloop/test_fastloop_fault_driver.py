@@ -580,3 +580,87 @@ def test_partial_composite_failure_has_one_reset_owner(recreate: bool) -> None:
     with pytest.raises(FastloopFaultError, match="partial injection"):
         driver.inject_composite(("first", "second"))
     assert ("recover" in [op for op, _ in worker.requests]) is (not recreate)
+
+
+@pytest.mark.parametrize("step", ["recover", "refresh"])
+@pytest.mark.parametrize(("status", "code"), [("error", "execution_failed"), ("timeout", "timeout")])
+def test_recovery_failure_has_safe_typed_reasons(step: str, status: str, code: str) -> None:
+    class Worker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            if op != step:
+                return super().request(op, timeout=timeout, **args)
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"incident": 1, "component_index": 3, "status": status, "error": "SENSITIVE_CANARY"}],
+            }
+
+    with pytest.raises(FastloopFaultError) as caught:
+        _driver(Worker(seed_contract=True)).recover()
+    assert [reason.model_dump() for reason in caught.value.recovery_failures] == [
+        {
+            "incident_index": 1,
+            "component_index": 3,
+            "step": step,
+            "code": code,
+        }
+    ]
+    assert "CANARY" not in str(caught.value)
+    assert "CANARY" not in repr(caught.value.recovery_failures)
+
+
+@pytest.mark.requires_sregym
+def test_real_worker_recovery_failure_reaches_typed_adapter_reason(monkeypatch, request) -> None:
+    """The real worker's exception->lifecycle result flows through the real consumer."""
+    import importlib
+    import sys
+    from pathlib import Path
+    from types import ModuleType, SimpleNamespace
+
+    root = Path(__file__).resolve().parents[5] / "third_party/sregym"
+    original = set(sys.modules)
+
+    def cleanup():
+        for name in set(sys.modules) - original:
+            if name == "sregym" or name.startswith("sregym."):
+                sys.modules.pop(name, None)
+
+    request.addfinalizer(cleanup)
+    for name in ("sregym", "sregym.conductor", "sregym.conductor.problems"):
+        package = ModuleType(name)
+        package.__path__ = [str(root / name.replace(".", "/"))]
+        monkeypatch.setitem(sys.modules, name, package)
+    module = importlib.import_module("sregym.fastloop.worker")
+
+    def recover():
+        raise RuntimeError("PRIVATE_CREDENTIAL_CANARY")
+
+    worker = module.FastloopWorker(
+        problem_factory=lambda _: SimpleNamespace(
+            app=SimpleNamespace(namespace="synthetic"),
+            inject_fault=lambda: None,
+            recover_fault=recover,
+        ),
+        deployer=lambda *_: None,
+        health_probe=lambda _: {"healthy": True},
+        cluster_factory=lambda *_: ("unused", "unused"),
+        cluster_inventory=SimpleNamespace(list_objects=lambda _: frozenset()),
+    )
+
+    class Transport:
+        def request(self, op, *, timeout=0, **args):
+            return worker.handle({"op": op, **args})
+
+    driver = SregymFaultDriver(Transport(), namespace="synthetic")
+    driver.inject("synthetic")
+    with pytest.raises(FastloopFaultError) as caught:
+        driver.recover()
+    assert [reason.model_dump() for reason in caught.value.recovery_failures] == [
+        {
+            "incident_index": 0,
+            "component_index": None,
+            "step": "recover",
+            "code": "execution_failed",
+        }
+    ]
+    assert "CANARY" not in str(caught.value)

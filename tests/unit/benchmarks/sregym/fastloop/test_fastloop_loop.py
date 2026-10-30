@@ -1178,3 +1178,35 @@ def test_recreation_owns_cleanup_even_when_injection_or_agent_fails(tmp_path: Pa
         assert row.recovery_error is None
         assert row.cleanup_skipped_reason == "row_start_tier2"
     assert driver.events == ["inject:p1"]
+
+
+def test_typed_recovery_failure_survives_row_persistence_without_reinjection(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
+    from tests.unit.benchmarks.sregym.fastloop.test_fastloop_fault_driver import FakeWorker
+
+    class Worker(FakeWorker):
+        def request(self, op, **kwargs):
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"incident": 0, "component_index": 3, "status": "timeout", "error": "PRIVATE_CANARY"}],
+            }
+
+    class Driver(FakeDriver):
+        def recover(self) -> float:
+            return SregymFaultDriver(Worker(), namespace="hotel").recover()
+
+    clock = FakeClock()
+    config = replace(_config(tmp_path, 2), continue_on_error=True)
+    records = run_incidents(FakeAgent(clock), Driver(clock), config, monotonic=clock.monotonic)
+    assert len(records) == 1
+    (record,) = load_records(config.results_path)
+    assert [reason.model_dump() for reason in record.recovery_failures] == [
+        {
+            "incident_index": 0,
+            "component_index": 3,
+            "step": "recover",
+            "code": "timeout",
+        }
+    ]
+    assert "CANARY" not in config.results_path.read_text()
