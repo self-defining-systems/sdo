@@ -59,7 +59,13 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 		}
 		failedInApplication := map[string]bool{}
 		creditedInOutcome := map[string]bool{}
+		rejectedInOutcome := map[string]bool{}
 		for _, application := range outcome.GetPlanApplications() {
+			if application.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+				for _, id := range application.GetProgramIds() {
+					rejectedInOutcome[id] = true
+				}
+			}
 			// Pending rollout is neither an independent success nor a failure.
 			// Explicit settlement and failure signals below remain authoritative.
 			if application.GetRolloutPending() != nil && !applicationExecutionFailed(application) {
@@ -111,7 +117,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 			}
 			for _, item := range items {
 				id, revision := item.GetProgramId(), item.GetProgramRevision()
-				if item.GetDisposition() != "covered" || id == "" || revision == "" || revision != revisions[id] || failedInApplication[id] || creditedInOutcome[id] {
+				if item.GetDisposition() != "covered" || id == "" || revision == "" || revision != revisions[id] || failedInApplication[id] || creditedInOutcome[id] || rejectedInOutcome[id] {
 					continue
 				}
 				state := stateForRevision(id, revision)

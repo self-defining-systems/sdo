@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -197,5 +198,53 @@ func TestSettlementMissingControllerEvidenceCannotCreditReturnedApplication(t *t
 		if receipt.Success {
 			t.Fatal("returned application granted attribution without controller facts")
 		}
+	}
+}
+
+// A typed veto is authoritative even if an older projection still carries
+// positive coverage/eligibility. Consumers cannot revive attribution from it.
+func TestSettlementVetoIsAuthoritativeAtEveryCreditConsumer(t *testing.T) {
+	loop, state := pipelineTestLoop(t, false)
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := responsePipelineResult(state, time.Now().Add(-time.Second), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, stages := loop.SettleRecoveryApplications(context.Background(), before, state.PriorStages)
+	closure := IncidentClosure{Request: state.Request, Result: &result, VerifiedAt: time.Now(), FinalDetectorStates: []DetectorEvaluation{{DetectorID: loop.Detectors[0].Spec().ID, Status: DetectorEvaluationClear, EvaluatedAt: time.Now()}}, Frozen: true}
+	closure.Request.PriorStages = stages
+	derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !coveredRepeatCandidate(derived.Record) {
+		t.Fatal("producer did not create covered success")
+	}
+	fixed := map[string]program.Result{}
+	for _, run := range derived.Record.ProgramRuns {
+		fixed[matchedViewKey(run.GetProgramId(), programBindingsState(run.GetBindings()))] = program.NoMatch
+	}
+	derived.Record.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: classifyCauseWork(derived.Record, fixed)}
+
+	for value, name := range contracts.SettlementRejectionReason_name {
+		reason := contracts.SettlementRejectionReason(value)
+		if reason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			outcome := proto.Clone(derived.Record).(*contracts.OutcomeRecord)
+			app := outcome.PlanApplications[0]
+			app.SettlementRejectionReason = reason
+			if finalApplicationVerified(app) || coveredRepeatCandidate(outcome) {
+				t.Fatal("historical observations bypassed settlement veto")
+			}
+			for _, id := range app.ProgramIds {
+				if stats := ProgramTrustStats([]*contracts.OutcomeRecord{outcome})[id]; stats.VerifiedSuccesses != 0 {
+					t.Fatalf("stale covered eligibility revived rejected application: %+v", stats)
+				}
+			}
+		})
 	}
 }

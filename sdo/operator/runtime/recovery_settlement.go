@@ -111,10 +111,6 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLED_BACK)
 					continue
 				}
-				if !PlanActionsComplete(app.Result) {
-					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION)
-					continue
-				}
 				pendingWrite, wasPending := l.pendingWrites[id]
 				if pendingWrite.Superseded {
 					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SUPERSEDED)
@@ -129,6 +125,22 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SUPERSEDED)
 					app.Result.FinalVerificationBasis = ""
 					continue
+				}
+				if !PlanActionsComplete(app.Result) {
+					// Typed source residuals are an observation of a completed
+					// write. Refresh that observation before asking the producer's
+					// strict completion predicate; never reinterpret partial
+					// execution or clear a real action failure here.
+					if recoveryObservationOnly(*app) {
+						if err := executor.observeSourceResiduals(ctx, request, &app.Result); err != nil {
+							reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL)
+							continue
+						}
+					}
+					if !PlanActionsComplete(app.Result) {
+						reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION)
+						continue
+					}
 				}
 				if !recoveryObservationOnly(*app) {
 					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED)
