@@ -3,8 +3,7 @@
 set -euo pipefail
 normal_cache="$1"
 race_cache="$2"
-test -d "$normal_cache"
-test -d "$race_cache"
+mkdir -p "$normal_cache" "$race_cache"
 # Both paths are under runner.temp. Hard links avoid a second large cache copy;
 # existing content-addressed entries stay untouched. Module downloads are owned
 # solely by the normal archive and never participate in this merge.
