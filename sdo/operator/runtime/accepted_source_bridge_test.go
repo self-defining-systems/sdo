@@ -109,10 +109,10 @@ func bridgeFake(t *testing.T, client *fake.Clientset) acceptedSourceBridge {
 			return
 		}
 		invoker := &client.Fake
-		if request.Method == http.MethodPost && request.URL.Query().Get("dryRun") == metav1.DryRunAll {
-			// Keep custom server-default reactors, but run the standard create
-			// against an isolated tracker. Dry-run must retain AlreadyExists
-			// semantics without publishing its probe into live typed lists.
+		if (request.Method == http.MethodPost || request.Method == http.MethodPatch) && request.URL.Query().Get("dryRun") == metav1.DryRunAll {
+			// Keep custom server-default reactors, but isolate every dry-run
+			// write. POST retains AlreadyExists; PATCH projects source values
+			// without repairing the real fixture or changing its watch stream.
 			tracker := ktesting.NewObjectTracker(scheme.Scheme, scheme.Codecs.UniversalDecoder())
 			if existing, err := client.Tracker().Get(gvr, namespace, name); err == nil {
 				if err := tracker.Add(existing); err != nil {
@@ -124,7 +124,7 @@ func bridgeFake(t *testing.T, client *fake.Clientset) acceptedSourceBridge {
 				return
 			}
 			reactions := append([]ktesting.Reactor(nil), client.ReactionChain...)
-			reactions[len(reactions)-1] = &ktesting.SimpleReactor{Verb: "create", Resource: "*", Reaction: ktesting.ObjectReaction(tracker)}
+			reactions[len(reactions)-1] = &ktesting.SimpleReactor{Verb: "*", Resource: "*", Reaction: ktesting.ObjectReaction(tracker)}
 			invoker = &ktesting.Fake{ReactionChain: reactions}
 		}
 		object, err := invoker.Invokes(action, nil)

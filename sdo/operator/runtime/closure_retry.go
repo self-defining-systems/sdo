@@ -110,9 +110,11 @@ func (c *Controller) closureRetryWake(next time.Time) time.Time {
 		if failure.Permanent {
 			return next
 		}
-		// Rejected broker work keeps its backoff; an old observation timer
-		// cannot turn it into an earlier retry.
-		retry = failure.NextAttemptAt
+		// Both waits are lower bounds: a future broker backoff wins, while
+		// an expired backoff cannot override a fresh observation wake.
+		if retry.IsZero() || failure.NextAttemptAt.After(retry) {
+			retry = failure.NextAttemptAt
+		}
 	}
 	if !retry.IsZero() && (next.IsZero() || retry.Before(next)) {
 		return retry
