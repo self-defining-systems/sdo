@@ -231,7 +231,7 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 	if err != nil || len(plan.Actions) != 1 {
 		t.Fatalf("learned playbook did not plan on the repeat: %+v %v", plan, err)
 	}
-	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Source: source, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{unschedulable{}}, Provider: provider}}
+	executor := PlanExecutor{Client: TypedPlanClient{Client: sourceClient}, Source: source, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{unschedulable{}}, Provider: provider}}
 	result, err := executor.Apply(ctx, IncidentRequest{IncidentID: "repeat", Namespace: "app", SourceCommit: locked, RepairPolicy: "recorded-actions"}, plan, false)
 	if err != nil || !result.Applied || !result.VerificationPassed {
 		t.Fatalf("learned plan did not repair the repeat: %+v %v", result, err)

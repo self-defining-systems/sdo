@@ -348,6 +348,9 @@ func fastloopGateClose(t *testing.T, ctx context.Context, controller *Controller
 	dispatcher.results <- result
 	fastloopGateWait(t, 90*time.Second, func() bool { return len(controller.results) > 0 })
 	for _, wait := range []time.Duration{time.Second, time.Second + controller.config.ClosureStabilityWindow} {
+		// Step and the subsequent closure-effect recheck must observe the
+		// same simulated epoch; wall time still precedes this verified window.
+		controller.now = func() time.Time { return at.Add(wait) }
 		if err := controller.Step(ctx, at.Add(wait), nil); err != nil {
 			t.Fatal(err)
 		}
@@ -369,6 +372,9 @@ func fastloopGateProcessClosure(t *testing.T, ctx context.Context, controller *C
 	effect, ok := controller.PendingClosureEffect()
 	if !ok || effect.Closure.Request.IncidentID != incidentID {
 		t.Fatalf("controller did not persist closure for %s", incidentID)
+	}
+	if controller.clock().Before(effect.Closure.VerifiedAt) {
+		t.Fatalf("closure effect clock %s precedes verified observation %s", controller.clock(), effect.Closure.VerifiedAt)
 	}
 	if err := controller.ExecuteClosureEffect(ctx, effect); err != nil {
 		t.Fatal(err)
