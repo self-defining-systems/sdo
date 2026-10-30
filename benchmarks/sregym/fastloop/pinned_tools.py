@@ -15,6 +15,8 @@ import re
 import subprocess
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
@@ -86,7 +88,9 @@ def assert_attestation_eligible(
     command = ["kubectl", "-n", control_namespace, "get", "job", CONTROLLER_JOB, "-o", "json"]
     if kubeconfig:
         command[1:1] = ["--kubeconfig", kubeconfig]
-    completed = (run or subprocess.run)(command, capture_output=True, text=True, check=False, timeout=60)
+    completed = (run or subprocess.run)(
+        command, capture_output=True, text=True, check=False, timeout=wait_for(WaitKind.COMMAND)
+    )
     if completed.returncode != 0:
         raise AttestationIneligibleError((f"controller Job is unreadable: {completed.stderr.strip()}",))
     problems = attestation_problems(json.loads(completed.stdout))
