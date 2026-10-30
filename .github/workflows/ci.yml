@@ -94,12 +94,6 @@ jobs:
         # executables. GNU timeout also stops every child compiler on failure.
         run: timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "${{ matrix.mode }}"
 
-      - name: Check Go static contracts
-        if: matrix.mode == 'race'
-        run: bash scripts/check_errors.sh --go-only
-        env:
-          GOFLAGS: "-p=2 -trimpath -race"
-
       - name: Check formatting
         if: matrix.mode == 'normal'
         run: bash scripts/format_code.sh --check
@@ -165,14 +159,22 @@ jobs:
             ${{ runner.temp }}/sdo-go-build-race
           key: ${{ steps.base-race.outputs.cache-primary-key }}
 
-      - name: Plan and link only selected contract test executables
+      - name: Check Go static contracts and prepare selected executables
         if: matrix.mode == 'race'
         run: |
+          eval "$(bash scripts/link_cache.sh --shell)"
+          # Independent validation and discovery/linking share immutable archives
+          # and the linker cache, rather than spending the cold budget serially.
+          GOFLAGS="$GOFLAGS -race" bash scripts/check_errors.sh --go-only &
+          quality_pid=$!
+          trap 'kill "$quality_pid" 2>/dev/null || true; wait "$quality_pid" 2>/dev/null || true' EXIT
           uv run python scripts/init_test_prereqs.py
           python3 scripts/go_cost_plan.py --prepared --include-dedicated --inventory-only --output .fastloop/test-bin/go-test-plan.json
           uv run python scripts/python_cost_plan.py --inventory-only --output .fastloop/test-bin/python-test-plan.json
           python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
           python3 scripts/prepared_contracts.py --plan .fastloop/test-bin/pr-test-plan.json --output "$RUNNER_TEMP/prepared-contracts"
+          wait "$quality_pid"
+          trap - EXIT
           for bin in 0 1; do
             cp "$RUNNER_TEMP/nightly-tests.md" "$RUNNER_TEMP/prepared-contracts/$bin/"
             tar -I 'zstd -T2 -3' -cf "$RUNNER_TEMP/contract-$bin.tar.zst" -C "$RUNNER_TEMP/prepared-contracts/$bin" .

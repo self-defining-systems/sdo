@@ -491,10 +491,16 @@ def test_static_python_job_cannot_compile_go_and_go_checks_run_on_prepared_race_
     assert "scripts/unit-tools" in guard["run"]
     assert "SDO_UNIT_REAL_GO" in guard["run"]
     assert not any("scripts/link_cache.sh" in step.get("run", "") for step in jobs["python"]["steps"])
-    go_checks = next(step for step in jobs["prepare-go"]["steps"] if step.get("name") == "Check Go static contracts")
+    go_checks = next(
+        step
+        for step in jobs["prepare-go"]["steps"]
+        if step.get("name") == "Check Go static contracts and prepare selected executables"
+    )
     assert go_checks["if"] == "matrix.mode == 'race'"
     assert "--go-only" in go_checks["run"]
-    assert "-race" in go_checks["env"]["GOFLAGS"]
+    assert 'GOFLAGS="$GOFLAGS -race"' in go_checks["run"]
+    assert 'wait "$quality_pid"' in go_checks["run"]
+    assert 'eval "$(bash scripts/link_cache.sh --shell)"' in go_checks["run"]
 
 
 def test_contracts_consume_prepared_inventories_without_rebuilding() -> None:
