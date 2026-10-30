@@ -263,27 +263,33 @@ def _findings_section(closure: IncidentClosure, *, include_detection: bool = Tru
     return "\n".join(lines)
 
 
+def _result_line(name: str, /, **values: object) -> RenderedPrompt:
+    """Every substitution in the auxiliary result section is summarizable data.
+
+    Lists of bounded identities can overflow too. Keep this semantic decision
+    at the section owner so new result fields inherit the same lossless caps.
+    Nested rendered requirements remain enforced by the common renderer.
+    """
+    return render_prompt(
+        "responder", name, part="reflection_brief.instructions", optional_values=tuple(values), **values
+    )
+
+
 def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
-    lines: list[str] = [render_prompt("responder", "result_section_01", part="reflection_brief.instructions")]
+    lines: list[str] = [_result_line("result_section_01")]
     if result is None:
         lines.append(
-            render_prompt(
-                "responder",
+            _result_line(
                 "result_section_02",
-                part="reflection_brief.instructions",
-                optional_values=("dispatch_error",),
                 dispatch_error=dispatch_error or "none",
             )
         )
         return "\n".join(lines)
     lines.append(
-        render_prompt("responder", "result_section_03", part="reflection_brief.instructions", status=result.status)
+        _result_line("result_section_03", status=result.status)
         + (
-            render_prompt(
-                "responder",
+            _result_line(
                 "result_section_04",
-                part="reflection_brief.instructions",
-                optional_values=("error",),
                 error=result.error,
             )
             if result.error
@@ -305,25 +311,19 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
             history = by_program.setdefault(run.program_id, [])
             if not history or history[-1] != verdict:
                 history.append(verdict)
-        lines.append(render_prompt("responder", "result_section_05", part="reflection_brief.instructions"))
+        lines.append(_result_line("result_section_05"))
         lines.extend(
-            render_prompt(
-                "responder",
+            _result_line(
                 "result_section_06",
-                part="reflection_brief.instructions",
                 program_id=program_id,
                 join=" -> ".join(history),
             )
             for program_id, history in list(by_program.items())[:12]
         )
         if len(by_program) > 12:
-            lines.append(
-                render_prompt(
-                    "responder", "result_section_07", part="reflection_brief.instructions", len=len(by_program) - 12
-                )
-            )
+            lines.append(_result_line("result_section_07", len=len(by_program) - 12))
     if result.plan_applications:
-        lines.append(render_prompt("responder", "result_section_08", part="reflection_brief.instructions"))
+        lines.append(_result_line("result_section_08"))
         for application in result.plan_applications[:12]:
             verification = (
                 verdict_names.get(
@@ -334,25 +334,18 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
                 else "not recorded"
             )
             state = "applied" if application.applied else "not applied"
-            programs = ", ".join(application.program_ids) or render_prompt(
-                "responder", "result_section_09", part="reflection_brief.instructions"
-            )
+            programs = ", ".join(application.program_ids) or _result_line("result_section_09")
             lines.append(
-                render_prompt(
-                    "responder",
+                _result_line(
                     "result_section_10",
-                    part="reflection_brief.instructions",
                     application_id=application.application_id or "unnamed",
                     programs=programs,
                     state=state,
                     verification=verification,
                 )
                 + (
-                    render_prompt(
-                        "responder",
+                    _result_line(
                         "result_section_11",
-                        part="reflection_brief.instructions",
-                        optional_values=("clip",),
                         clip=application.error,
                     )
                     if application.error
@@ -361,80 +354,65 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
             )
         if len(result.plan_applications) > 12:
             lines.append(
-                render_prompt(
-                    "responder",
+                _result_line(
                     "result_section_12",
-                    part="reflection_brief.instructions",
                     len=len(result.plan_applications) - 12,
                 )
             )
-    lines.append(render_prompt("responder", "result_section_13", part="reflection_brief.instructions"))
+    lines.append(_result_line("result_section_13"))
     lines.extend(
-        render_prompt(
-            "responder",
+        _result_line(
             "result_section_14",
-            part="reflection_brief.instructions",
-            optional_values=("summary",),
             summary=cause.summary,
             join="; ".join(_ref(ref) for ref in cause.resources),
         )
         for cause in result.confirmed_root_causes
     )
     if not result.confirmed_root_causes:
-        lines.append(render_prompt("responder", "brief_heading_04", part="reflection_brief.instructions"))
-    lines.append(render_prompt("responder", "result_section_15", part="reflection_brief.instructions"))
+        lines.append(_result_line("brief_heading_04"))
+    lines.append(_result_line("result_section_15"))
     lines.extend(
-        render_prompt(
-            "responder",
+        _result_line(
             "result_section_16",
-            part="reflection_brief.instructions",
             value="ok" if action.success else "FAILED",
             kind=action.kind,
             target=action.target,
-            optional_values=("summary", "clip"),
             summary=action.summary,
             clip=action.details,
         )
         for action in result.repair_actions
     )
     if not result.repair_actions:
-        lines.append(render_prompt("responder", "result_section_17", part="reflection_brief.instructions"))
+        lines.append(_result_line("result_section_17"))
     if result.repair_changes:
         lines.append(
-            render_prompt("responder", "result_section_18", part="reflection_brief.instructions")
-            + ", ".join(result.repair_changes)
+            _result_line("result_section_18")
+            + named_prompt("reflection_brief.incident_data", ", ".join(result.repair_changes), required=False)
         )
-    lines.append(render_prompt("responder", "brief_heading_03", part="reflection_brief.instructions"))
+    lines.append(_result_line("brief_heading_03"))
     lines.extend(
-        render_prompt(
-            "responder",
+        _result_line(
             "result_section_19",
-            part="reflection_brief.instructions",
             value="passed" if evidence.passed else "FAILED",
             name=evidence.name,
-            optional_values=("clip",),
             clip=evidence.details,
         )
         for evidence in result.verification_evidence
     )
     if not result.verification_evidence:
-        lines.append(render_prompt("responder", "result_section_20", part="reflection_brief.instructions"))
+        lines.append(_result_line("result_section_20"))
     for playbook in result.applied_playbooks:
         scripts = (
-            render_prompt(
-                "responder",
+            _result_line(
                 "result_section_21",
-                part="reflection_brief.instructions",
                 join=", ".join(playbook.script_names),
             )
             if playbook.script_names
             else ""
         )
         lines.append(
-            render_prompt(
-                "responder",
+            _result_line(
                 "result_section_22",
-                part="reflection_brief.instructions",
                 playbook_id=playbook.playbook_id,
                 scripts=scripts,
             )

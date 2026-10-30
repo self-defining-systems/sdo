@@ -17,7 +17,9 @@ from tests.unit.sdo.agents.prompts.cases import ReflectionCapture, live_shaped_r
 @pytest.mark.parametrize("guidance", ["go", "shell"])
 @pytest.mark.parametrize("mode", ["resume", "fresh"])
 @pytest.mark.parametrize("retry", [False, True])
-@pytest.mark.parametrize("detail_field", ["application_error", "action_details", "verification_details"])
+@pytest.mark.parametrize(
+    "detail_field", ["application_error", "action_details", "verification_details", "program_ids", "repair_changes"]
+)
 def test_reflection_variants_render_unbounded_producer_details(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, guidance: str, mode: str, retry: bool, detail_field: str
 ) -> None:
@@ -39,6 +41,12 @@ def test_reflection_variants_render_unbounded_producer_details(
     detail = "Synthetic failed apply/readback evidence. " * 250
     if detail_field == "application_error":
         result.plan_applications[0].error = detail
+    elif detail_field == "repair_changes":
+        result.repair_changes[:] = [f"synthetic/repair-{index}-" + "x" * 100 + ".yaml" for index in range(100)]
+        detail = ", ".join(result.repair_changes)
+    elif detail_field == "program_ids":
+        result.plan_applications[0].program_ids[:] = [f"synthetic-program-{index}-" + "x" * 100 for index in range(4)]
+        detail = ", ".join(result.plan_applications[0].program_ids)
     elif detail_field == "action_details":
         result.repair_actions.clear()
         recorded_actions.run_and_record(
@@ -72,5 +80,5 @@ def test_reflection_variants_render_unbounded_producer_details(
     assert capture.prompt
     # Full evidence remains readable, including the bytes beyond the inline budget.
     assert detail in expand_context(brief)
-    if not retry and detail_field != "verification_details":
+    if not retry and detail_field in {"application_error", "action_details"}:
         assert json.dumps(detail)[1:-1] in expand_context(capture.prompt)
