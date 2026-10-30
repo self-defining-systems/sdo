@@ -15,6 +15,13 @@ type applicationEvidence struct {
 	Pending bool
 }
 
+// recordedRepairEvidence keeps controller-only ownership out of responder
+// feedback while preserving it across the durable checkpoint boundary.
+type recordedRepairEvidence struct {
+	continuationRepair
+	Owners []ResourceOwners
+}
+
 // responderToolState retains limits and revision-bound outcomes, never prepared
 // plans or mutation/rollback authority. Immutable completed receipts are kept
 // independently of continuation feedback. Legacy execution fields in version 1
@@ -22,7 +29,7 @@ type applicationEvidence struct {
 type responderToolState struct {
 	StageProgress    map[string]responseStageProgress
 	PendingWrites    map[string]pendingMitigation
-	CompletedRepairs []continuationRepair
+	CompletedRepairs []recordedRepairEvidence
 	// ProtoJSON application facts, independent of execution authority.
 	ApplicationEvidence []applicationEvidence
 	Continuation        responderContinuation
@@ -57,7 +64,11 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 		}
 		evidence = append(evidence, applicationEvidence{Receipt: encoded, Pending: application.Pending})
 	}
-	payload, err := json.Marshal(responderToolState{ApplicationEvidence: evidence, StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: l.applicationRepairsLocked(), Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, LoopOpen: l.loopOpen, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
+	var repairs []recordedRepairEvidence
+	for _, repair := range l.applicationRepairsLocked() {
+		repairs = append(repairs, recordedRepairEvidence{continuationRepair: repair, Owners: repair.Receipt.Owners})
+	}
+	payload, err := json.Marshal(responderToolState{ApplicationEvidence: evidence, StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: repairs, Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, LoopOpen: l.loopOpen, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -112,7 +123,12 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	l.stageProgress = state.StageProgress
 	l.restoreTerminalStagePlanErrors()
 	l.pendingWrites = state.PendingWrites
-	l.completedRepairs = state.CompletedRepairs
+	l.completedRepairs = nil
+	for _, stored := range state.CompletedRepairs {
+		repair := stored.continuationRepair
+		repair.Receipt.Owners = stored.Owners
+		l.completedRepairs = append(l.completedRepairs, repair)
+	}
 	l.continuation = state.Continuation
 	l.menuSession = state.MenuSession
 	l.menuReports = state.MenuReports

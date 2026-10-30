@@ -3,8 +3,11 @@ package runtime
 import (
 	"context"
 	"google.golang.org/protobuf/proto"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -202,5 +205,48 @@ func TestPendingApplicationOwnershipSurvivesCheckpoint(t *testing.T) {
 		if receipt.Success {
 			t.Fatal("pending recovered application claimed completed repair")
 		}
+	}
+}
+
+func TestRecoveredProgramOwnersReachEarlyClosure(t *testing.T) {
+	ctx := context.Background()
+	loop, client := trustedPortLoop(t, false, false, true)
+	service, err := client.CoreV1().Services("app").Get(ctx, "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := true
+	service.OwnerReferences = []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "synthetic-owner", UID: "synthetic-owner-uid", Controller: &controller}}
+	if _, err := client.CoreV1().Services("app").Update(ctx, service, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var saved []byte
+	loop.saveToolState = func(_ context.Context, data []byte) error { saved = append([]byte(nil), data...); return nil }
+	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": loop.Request.Findings[0].PrimaryResource}}})
+	applied := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
+	if applied.Error != "" {
+		t.Fatal(applied.Error)
+	}
+	before := loop.ApplicationRepairReceipts(nil)
+	if len(before) != 1 || len(before[0].Owners) != 1 {
+		t.Fatalf("executor did not produce ownership evidence: %+v", before)
+	}
+	fresh, _ := trustedPortLoop(t, false, false, true)
+	if err := fresh.restoreToolSnapshot(saved); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, fresh.ApplicationRepairReceipts(nil)) {
+		t.Fatal("checkpoint dropped original receipt ownership")
+	}
+	feedback, err := continuationFeedback(1, ToolResponse{}, fresh.continuationRepairs(IncidentResult{})...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(feedback), "synthetic-owner") {
+		t.Fatal("controller-only owner chain leaked into responder feedback")
+	}
+	early := earlyResultSnapshot(fresh, fresh.Request, time.Now())
+	if !reflect.DeepEqual(early.RepairActions, fresh.ApplicationRepairReceipts(nil)) {
+		t.Fatalf("early closure lost original receipt ownership: early=%+v final=%+v", early.RepairActions, fresh.ApplicationRepairReceipts(nil))
 	}
 }
