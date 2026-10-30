@@ -86,9 +86,12 @@ type DeterministicResponseStage struct {
 	RolloutTimeout      time.Duration
 	ObservationInterval time.Duration
 	ObservationCeiling  time.Duration
+	recoveryNow         func() time.Time
+	recoveryWait        func(context.Context, time.Duration) error
 }
 
 type responseStageProgress struct {
+	RecoveryDeadline   time.Time
 	Report             *contracts.StageReport
 	Coverage           *contracts.PlaybookCoverage
 	InitialProgramRuns []ProgramRun
@@ -156,7 +159,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	save := func(complete bool) error {
 		retainAdmissionStageFindings(state, report)
 		report.RemainingFindingFingerprints = findingFingerprints(state.Findings)
-		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete}
+		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete, RecoveryDeadline: progress.RecoveryDeadline}
 		return loop.persistToolState(ctx)
 	}
 	// Always reobserve after recovery. A recorded attempt is never replayed,
@@ -190,6 +193,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 		}()
 		if progress.Complete && !state.Refresh {
+			if err := stage.awaitApplications(ctx, loop, state, report, &progress, save); err != nil {
+				return report, err
+			}
 			return report, save(true)
 		}
 	}
@@ -398,6 +404,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		// reason to starve the other matches. Each later match diagnoses fresh
 		// state and goes through the ordinary conflict and mutation fences.
 	}
+	if err := stage.awaitApplications(ctx, loop, state, report, &progress, save); err != nil {
+		return report, err
+	}
 	if err := stage.revertIneffective(ctx, loop, state, report, appliedHere, save); err != nil {
 		return report, err
 	}
@@ -508,6 +517,7 @@ func recordedPlanContract(application RecordedPlanApplication) (*contracts.PlanA
 // Protobuf receipts contain oneofs; encoding/json cannot reconstruct them.
 // This type owns that storage edge so all checkpoints use ProtoJSON.
 type encodedResponseStageProgress struct {
+	RecoveryDeadline   time.Time
 	Report             json.RawMessage
 	Coverage           json.RawMessage
 	InitialProgramRuns []ProgramRun
@@ -515,7 +525,7 @@ type encodedResponseStageProgress struct {
 }
 
 func (progress responseStageProgress) MarshalJSON() ([]byte, error) {
-	encoded := encodedResponseStageProgress{InitialProgramRuns: progress.InitialProgramRuns, Complete: progress.Complete}
+	encoded := encodedResponseStageProgress{RecoveryDeadline: progress.RecoveryDeadline, InitialProgramRuns: progress.InitialProgramRuns, Complete: progress.Complete}
 	if progress.Report != nil {
 		raw, err := protojson.Marshal(progress.Report)
 		if err != nil {
@@ -537,7 +547,7 @@ func (progress *responseStageProgress) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &encoded); err != nil {
 		return err
 	}
-	*progress = responseStageProgress{Complete: encoded.Complete, InitialProgramRuns: encoded.InitialProgramRuns}
+	*progress = responseStageProgress{RecoveryDeadline: encoded.RecoveryDeadline, Complete: encoded.Complete, InitialProgramRuns: encoded.InitialProgramRuns}
 	if len(encoded.Report) > 0 && string(encoded.Report) != "null" {
 		progress.Report = &contracts.StageReport{}
 		if err := protojson.Unmarshal(encoded.Report, progress.Report); err != nil {
@@ -757,12 +767,8 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 	if err := save(false); err != nil {
 		return err
 	}
-	// Bound each single rollout sample by its share of observation time. A
-	// positive floor avoids the executor's zero-means-default timeout.
-	rolloutTimeout := max(time.Nanosecond, remaining()/time.Duration(max(1, candidatesLeft)))
-	if stage.RolloutTimeout > 0 && stage.RolloutTimeout < rolloutTimeout {
-		rolloutTimeout = stage.RolloutTimeout
-	}
+	// A sample never consumes a candidate's share of the recovery budget.
+	rolloutTimeout := time.Millisecond
 	// Apply through the ordinary tool boundary: mutation fences, recorded
 	// writes, immutable receipts and compensation have one owner.
 	var applied ToolResponse
@@ -837,4 +843,97 @@ func attemptApplication(application RecordedPlanApplication, attempt *contracts.
 	result.ActionReports = result.ActionReports[low:high]
 	application.Result = result
 	return application
+}
+
+// All admitted writes precede one shared recovery wait. Observation cannot
+// select another write or replenish apply authority. Deadline survives restart.
+func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, progress *responseStageProgress, save func(bool) error) error {
+	now := stage.recoveryNow
+	if now == nil {
+		now = time.Now
+	}
+	wait := stage.recoveryWait
+	if wait == nil {
+		wait = func(ctx context.Context, d time.Duration) error {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+				return nil
+			}
+		}
+	}
+	if progress.RecoveryDeadline.IsZero() {
+		budget := DefaultMitigationRolloutTimeout
+		if stage.Budget > 0 {
+			budget = min(budget, stage.Budget)
+		}
+		if stage.RolloutTimeout > 0 {
+			budget = min(budget, stage.RolloutTimeout)
+		}
+		if stage.ObservationCeiling > 0 {
+			budget = min(budget, stage.ObservationCeiling)
+		}
+		progress.RecoveryDeadline = now().Add(budget)
+		if deadline := state.Request.ResponseDeadline; !deadline.IsZero() && deadline.Before(progress.RecoveryDeadline) {
+			progress.RecoveryDeadline = deadline
+		}
+		if err := save(false); err != nil {
+			return err
+		}
+	}
+	interval := stage.ObservationInterval
+	if interval <= 0 {
+		interval = 250 * time.Millisecond
+	}
+	for {
+		pending := false
+		covered := map[string]bool{}
+		for _, attempt := range report.Mitigations {
+			for _, fp := range append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...) {
+				covered[fp] = true
+			}
+			switch attempt.Result {
+			case "rollout_pending_at_handoff":
+				pending = true
+			case "applied_cleared", "skipped":
+			default:
+				return nil // Real failure or a verified dependency needs another actor.
+			}
+		}
+		if !pending {
+			return nil
+		}
+		for _, finding := range state.Findings {
+			if !covered[FindingFingerprint(finding)] {
+				return nil
+			}
+		}
+		left := progress.RecoveryDeadline.Sub(now())
+		if left <= 0 {
+			return nil
+		}
+		if err := wait(ctx, min(interval, left)); err != nil {
+			return err
+		}
+		response := ToolResponse{}
+		loop.verify(ctx, nil, &response, true)
+		updateStageFindings(state, response)
+		_, stages := loop.settleRecoveryApplicationsLocked(ctx, IncidentResult{PlanApplications: loop.applicationEvidenceLocked()}, []*contracts.StageReport{report})
+		if len(stages) > 0 {
+			proto.Reset(report)
+			proto.Merge(report, stages[0])
+		}
+		// Scoped settlement retires only the targets with bound recovery proof.
+		for _, attempt := range report.Mitigations {
+			if attempt.Result == "applied_cleared" {
+				clearVerifiedStageTargets(state, attempt, attempt.ClearedFindingFingerprints, response)
+			}
+		}
+		if err := save(false); err != nil {
+			return err
+		}
+	}
 }

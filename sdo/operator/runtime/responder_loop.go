@@ -164,7 +164,6 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	recoverySettlement *recoveryApplicationSettlement
 	scriptRefusals     map[string]error
 
 	stageProgress map[string]responseStageProgress

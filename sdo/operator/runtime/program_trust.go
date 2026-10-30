@@ -75,7 +75,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 					revision = outcome.GetSourceCommit()
 				}
 				state = stateForRevision(id, revision)
-				failed := outcome.GetClassification() != "success" || application.GetDryRun() || application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH
+				failed := applicationExecutionFailed(application)
 				for _, signal := range outcome.GetProgramFailureSignals() {
 					// Count durable responder failures after applications, so the
 					// same failure does not also count against a successful retry.
@@ -93,6 +93,10 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
 				}
+                if !failed && application.GetFinalVerificationBasis() == "recovery-settled" && application.GetFinalEquivalenceVerified() && boundPostApplyNoMatch(outcome, application, id, revision) && !creditedInOutcome[id] {
+                    state.VerifiedSuccesses++
+                    creditedInOutcome[id] = true
+                }
 				stats[id] = state
 			}
 		}
@@ -287,4 +291,23 @@ func parseTrustFailureSignal(signal, prefix string) (id, revision string, ok boo
 		return "", "", false
 	}
 	return id, revision, true
+}
+
+// Observation, health and incident summaries cannot prove an execution failure.
+// Only immutable adverse execution facts (or an exact false match) do so.
+func applicationExecutionFailed(app *contracts.PlanApplication) bool {
+	if app.GetDryRun() {
+		return false
+	}
+	if app.GetRolledBack() || app.GetRollbackError() != "" {
+		return true
+	}
+	for _, report := range app.GetActionReports() {
+		if report.GetFailureReason() != "" && report.GetFailureReason() != "source_residual" && report.GetFailureReason() != "outcome_unknown" {
+			return true
+		}
+	}
+	// Legacy receipts without typed reports retain explicit execution errors;
+	// a completed health sample alone is never adverse write evidence.
+	return len(app.GetActionReports()) == 0 && app.GetError() != ""
 }

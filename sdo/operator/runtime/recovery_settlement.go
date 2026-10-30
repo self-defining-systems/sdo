@@ -23,9 +23,6 @@ func (l *ResponderLoop) SettleRecoveryApplications(ctx context.Context, result I
 }
 
 func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, result IncidentResult, stages []*contracts.StageReport) (IncidentResult, []*contracts.StageReport) {
-	if l.recoverySettlement != nil {
-		return projectRecoverySettlement(result, l.recoverySettlement), cloneStageReports(l.recoverySettlement.stages)
-	}
 	stages = cloneStageReports(stages)
 	if l.Programs == nil || l.Executor.Client == nil || l.Executor.Rollouts == nil {
 		return result, stages
@@ -53,18 +50,19 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 		objects[ref] = object
 		return object
 	}
+	applications := l.applicationEvidenceLocked()
 	for _, stage := range stages {
 		for _, attempt := range stage.Mitigations {
 			id := attempt.GetApplyReceipt().GetApplicationId()
-			for index := range l.applicationsLog {
-				app := &l.applicationsLog[index]
+			for index := range applications {
+				app := &applications[index]
 				if app.ID != id || !app.Result.Applied || app.Result.DryRun || app.RolledBack || app.Result.RolledBack || app.RollbackError != "" || app.Result.RollbackError != "" || len(app.Result.ActionsApplied) != len(app.Result.Plan.Actions) || hasAppliedScript(app.Result.Plan.Actions) {
 					continue
 				}
 				// Execution errors are history, not a transient observation. Only pending
 				// rollout/readback or measured source residuals can be superseded by proof.
 				pendingWrite, wasPending := l.pendingWrites[id]
-				if pendingWrite.Superseded || !recoveryObservationOnly(*app, wasPending) {
+				if pendingWrite.Superseded || recoverySuperseded(*app, result, applications) || !recoveryObservationOnly(*app, wasPending) {
 					continue
 				}
 				if attempt.ProgramRevision == "" || attempt.ProgramRevision != l.programRevision(attempt.PlaybookId) {
@@ -107,6 +105,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				attempt.Error = app.Error
 				if rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch && exact {
 					app.Result.VerificationPassed = true
+                    app.Result.FinalVerificationBasis = "recovery-settled"
 					app.Result.RolloutPending = nil
 					app.Error = ""
 					app.Pending = false
@@ -128,8 +127,17 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 	}
 
 	stageResult, _ := responsePipelineResult(&IncidentState{Request: l.Request, PriorStages: stages}, result.Timing.StartedAt, result.Timing.CompletedAt)
-	settled := &recoveryApplicationSettlement{causes: stageResult.ConfirmedRootCauses, stages: stages, applications: append([]RecordedPlanApplication(nil), l.applicationsLog...), runs: append([]ProgramRun(nil), l.runs[initialRuns:]...)}
-	l.recoverySettlement = settled
+	settled := &recoveryApplicationSettlement{causes: stageResult.ConfirmedRootCauses, stages: stages, applications: applications, runs: append([]ProgramRun(nil), l.runs[initialRuns:]...)}
+	// Update observation facts only. Restored receipts never become prepared
+	// plans or rollback handles. The final closure persists this projection.
+	l.archivedApplications = applications
+	for i := range l.applicationsLog {
+		for _, app := range applications {
+			if app.ID == l.applicationsLog[i].ID {
+				l.applicationsLog[i] = app
+			}
+		}
+	}
 	return projectRecoverySettlement(result, settled), stages
 }
 
@@ -169,9 +177,6 @@ func projectRecoverySettlement(result IncidentResult, settled *recoveryApplicati
 // Typed action/readback evidence distinguishes an unsettled observation from
 // an execution failure. Error text is presentation and grants no credit.
 func recoveryObservationOnly(app RecordedPlanApplication, wasPending bool) bool {
-	if app.Error == "" {
-		return true
-	}
 	if len(app.Result.ActionReports) != len(app.Result.Plan.Actions) {
 		return false
 	}
@@ -186,5 +191,49 @@ func recoveryObservationOnly(app RecordedPlanApplication, wasPending bool) bool 
 		}
 		observation = observation || sourcePartial
 	}
-	return observation
+	return observation || app.Error == ""
+}
+
+// Reject overlapping later corrective effects, not independent causes or
+// diagnostic helper writes. Unknown ordering is deliberately not positive proof.
+func recoverySuperseded(app RecordedPlanApplication, result IncidentResult, applications []RecordedPlanApplication) bool {
+	if app.StartedAt.IsZero() || app.CompletedAt.IsZero() {
+		return true
+	}
+	generated := map[string]bool{}
+	for _, receipt := range ProgramRepairReceipts(applications, nil) {
+		generated[receipt.ActionID] = true
+	}
+	own := ProgramRepairReceipts([]RecordedPlanApplication{app}, nil)
+	overlaps := func(refs []sdk.ObjectRef) bool {
+		for _, receipt := range own {
+			for _, target := range receipt.Resources {
+				for _, ref := range refs {
+					if ref.Kind == "*" || sameResource(target, ref) {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
+	for _, other := range applications {
+		if other.ID == app.ID || (!other.Result.Applied && len(other.Result.ActionsApplied) == 0) {
+			continue
+		}
+		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{other}, nil) {
+			if overlaps(receipt.Resources) && (other.StartedAt.IsZero() || !other.StartedAt.Before(app.StartedAt)) {
+				return true
+			}
+		}
+	}
+	for _, receipt := range result.RepairActions {
+		if generated[receipt.ActionID] {
+			continue
+		}
+		if overlaps(receipt.Resources) && (receipt.StartedAt.IsZero() || !receipt.StartedAt.Before(app.StartedAt)) {
+			return true
+		}
+	}
+	return false
 }

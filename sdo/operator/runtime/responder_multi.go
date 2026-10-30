@@ -489,7 +489,12 @@ func (l *ResponderLoop) pendingConflictExcept(ctx context.Context, refs []sdk.Ob
 	}
 	for application, pending := range l.pendingWrites {
 		if pending.Released && (attempt == "" || pending.AttemptID != attempt) {
-			pending.Superseded = true
+			for _, ref := range refs {
+				if ref.Kind == "*" || l.pendingOverlaps(ref, pending) {
+					pending.Superseded = true
+					break
+				}
+			}
 			l.pendingWrites[application] = pending
 		}
 	}
