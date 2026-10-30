@@ -165,13 +165,37 @@ jobs:
             ${{ runner.temp }}/sdo-go-build-race
           key: ${{ steps.base-race.outputs.cache-primary-key }}
 
-      # Publish after all preparation checks, including race vet and inventories.
-      # Keys cannot collide with older/partial graphs or a different source revision.
-      - name: Stage race inventories
+      - name: Plan and link only selected contract test executables
         if: matrix.mode == 'race'
         run: |
-          mkdir -p .fastloop/race-inventory
-          cp .fastloop/test-bin/inventory-*.json .fastloop/race-inventory/
+          uv run python scripts/init_test_prereqs.py
+          python3 scripts/go_cost_plan.py --prepared --include-dedicated --inventory-only --output .fastloop/test-bin/go-test-plan.json
+          uv run python scripts/python_cost_plan.py --inventory-only --output .fastloop/test-bin/python-test-plan.json
+          python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
+          python3 scripts/prepared_contracts.py --plan .fastloop/test-bin/pr-test-plan.json --output "$RUNNER_TEMP/prepared-contracts"
+          for bin in 0 1; do
+            cp "$RUNNER_TEMP/nightly-tests.md" "$RUNNER_TEMP/prepared-contracts/$bin/"
+            tar -I 'zstd -T2 -3' -cf "$RUNNER_TEMP/contract-$bin.tar.zst" -C "$RUNNER_TEMP/prepared-contracts/$bin" .
+            du -h "$RUNNER_TEMP/contract-$bin.tar.zst"
+          done
+      - name: Publish selected contract executables for bin 0
+        if: matrix.mode == 'race'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-contract-0
+          path: ${{ runner.temp }}/contract-0.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Publish selected contract executables for bin 1
+        if: matrix.mode == 'race'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-contract-1
+          path: ${{ runner.temp }}/contract-1.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
       - name: Publish this run's normal build
         if: matrix.mode == 'normal'
         id: run-normal
@@ -182,15 +206,6 @@ jobs:
             ~/go/pkg/mod
             .fastloop/test-bin
           key: ci-run-v1-normal-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}
-      - name: Publish this run's race build
-        if: matrix.mode == 'race'
-        id: run-race
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ${{ runner.temp }}/sdo-go-build-race
-            .fastloop/race-inventory
-          key: ci-run-v1-race-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}
 
   python:
     name: ${{ matrix.name }}
@@ -284,7 +299,7 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: false
-      - name: Restore this run's exact prepared Go caches concurrently
+      - name: Restore this run's one normal Go cache
         uses: ./.github/actions/restore-go-caches
         with:
           caches: |
@@ -293,17 +308,18 @@ jobs:
                 "path": "${{ runner.temp }}/sdo-go-build-normal\n~/go/pkg/mod\n.fastloop/test-bin\n",
                 "key": "ci-run-v1-normal-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}",
                 "required": true
-              },
-              {
-                "path": "${{ runner.temp }}/sdo-go-build-race\n.fastloop/race-inventory\n",
-                "key": "ci-run-v1-race-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}",
-                "required": true
               }
             ]
-      - name: Combine prepared compiler entries without replacing existing files
+      - name: Restore only this shard's selected race executables and plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: prepared-contract-${{ matrix.bin }}
+          path: ${{ runner.temp }}/contract-download
+      - name: Unpack selected race executables
         run: |
-          bash scripts/merge_go_ci_caches.sh '${{ runner.temp }}/sdo-go-build-normal' '${{ runner.temp }}/sdo-go-build-race'
-          cp .fastloop/race-inventory/*.json .fastloop/test-bin/
+          mkdir -p "$RUNNER_TEMP/prepared-contracts"
+          tar -I zstd -xf "$RUNNER_TEMP/contract-download/contract-${{ matrix.bin }}.tar.zst" -C "$RUNNER_TEMP/prepared-contracts"
+          cp "$RUNNER_TEMP/prepared-contracts/nightly-tests.md" "$RUNNER_TEMP/nightly-tests.md"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
           version: "0.9.24"
@@ -312,15 +328,8 @@ jobs:
       - run: uv sync --locked --all-extras
       - name: Share linked binaries between tests
         run: bash scripts/link_cache.sh >> "$GITHUB_ENV"
-      - name: Build the same fixed-capacity plan on both runners
-        run: |
-          uv run python scripts/check_ci_budget.py
-          python3 scripts/go_cost_plan.py --prepared --include-dedicated --inventory-only --output .fastloop/test-bin/go-test-plan.json
-          uv run python scripts/init_test_prereqs.py
-          uv run python scripts/python_cost_plan.py --inventory-only --output .fastloop/test-bin/python-test-plan.json
-          python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
       - name: Run the fixed regression set
-        run: uv run --extra test python scripts/run_ci_contracts.py --plan .fastloop/test-bin/pr-test-plan.json --bin '${{ matrix.bin }}'
+        run: uv run --extra test python scripts/run_ci_contracts.py --plan "$RUNNER_TEMP/prepared-contracts/pr-test-plan.json" --prepared "$RUNNER_TEMP/prepared-contracts" --bin '${{ matrix.bin }}'
         env:
           GOPROXY: "off"
           GOSUMDB: "off"

@@ -21,7 +21,7 @@ executed critical path is ten minutes; runner queue time is outside that bound.
   -export -race` and retains vet checks, avoiding discarded test-executable links.
   Preparation owns inventories, the source-bound CLI and offline module metadata.
   `.github/actions/restore-go-caches` requires both disjoint run/revision keys and
-  restores them concurrently using the pinned standard Actions cache client.
+  restores the required normal graph using the pinned standard Actions cache client.
   A real Go fixture checks parity with `go test -race -list`, including build tags,
   external tests, examples and fuzz targets. The portable graph warms only
   `runtime/prober`, the generated traffic binary's dependency, rather than the
@@ -31,12 +31,13 @@ executed critical path is ten minutes; runner queue time is outside that bound.
 - `go_ci_artifacts.sh` packs module/tool roots into
   same-run artifacts and restores executable permissions on consumers. Only pushes
   to main or vic-lsh/dev/sdo-improve save durable shared Go caches. Every run also
-  publishes its prepared normal/race graphs under exact run/revision keys, including
-  the race inventories. Contract jobs depend on both preparations, require these
-  exact keys with no fallback, merge immutable compiler entries and use the
-  prepared Go inventories. They never compile the dependency graph on a miss:
-  missing publication fails explicitly. A cold dispatch bypasses only durable
-  restores; it must consume the newly prepared graphs exactly as a warm run does.
+  publishes its normal graph under an exact run/revision key. Race preparation
+  derives the fixed plan once and `prepared_contracts.py` links only selected test
+  packages. Each contract job downloads its own compressed executable/plan archive
+  and the one normal cache needed by generated-workspace tests. It never transfers
+  the race compiler cache. Manifests verify source revision, plan, selected names
+  and binary hashes before bounded parallel execution through `go tool test2json`.
+  A cold dispatch bypasses durable restores and uses its own preparation outputs.
   Compiler-free Python jobs fetch only module sources and tools. Timings go to
   logs and deferred checks to the summary, without contract artifact uploads.
 - `check_errors.sh --go-only` owns Go static contracts (schema/deadline/fixture

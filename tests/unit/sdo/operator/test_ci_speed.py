@@ -469,7 +469,7 @@ def test_all_integration_contracts_use_fixed_shared_capacity() -> None:
     jobs = workflow()["jobs"]
     integration = jobs["contracts"]
     assert integration["strategy"]["matrix"]["bin"] == [0, 1]
-    assert any("python_cost_plan.py --inventory-only" in step.get("run", "") for step in integration["steps"])
+    assert any("python_cost_plan.py --inventory-only" in step.get("run", "") for step in jobs["prepare-go"]["steps"])
     assert set(jobs) == {"prepare-go", "python", "contracts", "required-pr-ci"}
     assert integration["timeout-minutes"] == 4
 
@@ -502,9 +502,11 @@ def test_contracts_consume_prepared_inventories_without_rebuilding() -> None:
     assert contracts["needs"] == "prepare-go"
     commands = "\n".join(step.get("run", "") for step in contracts["steps"])
     assert "prepare_go_ci.sh" not in commands
-    assert "cp .fastloop/race-inventory/*.json .fastloop/test-bin/" in commands
-    assert "go_cost_plan.py --prepared" in commands
-    assert "python_cost_plan.py --inventory-only" in commands
+    assert "--prepared" in commands
+    preparation = "\n".join(step.get("run", "") for step in workflow()["jobs"]["prepare-go"]["steps"])
+    assert "go_cost_plan.py --prepared" in preparation
+    assert "python_cost_plan.py --inventory-only" in preparation
+    assert "scripts/prepared_contracts.py" in preparation
 
 
 def assert_native_jobs_use_local_builds(configuration: dict) -> None:
@@ -514,6 +516,7 @@ def assert_native_jobs_use_local_builds(configuration: dict) -> None:
             continue
         assert not any(
             step.get("uses", "").startswith(("actions/download-artifact@", "actions/upload-artifact@"))
+            and step.get("with", {}).get("name") != "prepared-contract-${{ matrix.bin }}"
             for step in job["steps"]
         ), f"{name}: native tests must build locally from prepared Go caches; artifact transfers consume their deadline"
 
@@ -584,7 +587,8 @@ def assert_contracts_use_exact_preparation(configuration: dict) -> None:
         )
     )
     publishers = [step for step in jobs["prepare-go"]["steps"] if step.get("id", "").startswith("run-")]
-    assert len(publishers) == len(consumers) == 2
+    assert len(publishers) == len(consumers) == 1
+    assert "sdo-go-build-race" not in consumers[0]["path"]
     for consumer in consumers:
         assert consumer["required"] is True
         assert not consumer.get("restore-keys")

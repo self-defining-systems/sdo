@@ -17,8 +17,8 @@ def test_fixed_jobs_and_single_required_result():
     assert jobs["required-pr-ci"]["name"] == "Required PR CI"
     assert "contracts" in jobs["required-pr-ci"]["needs"]
     preparation = jobs["prepare-go"]["steps"]
-    plan = next(step for step in jobs["contracts"]["steps"] if "scripts/go_cost_plan.py" in step.get("run", ""))
-    assert "if" not in plan
+    plan = next(step for step in preparation if "scripts/go_cost_plan.py" in step.get("run", ""))
+    assert plan["if"] == "matrix.mode == 'race'"
     assert "--prepared" in plan["run"]
     assert jobs["contracts"]["needs"] == "prepare-go"
     assert "--include-dedicated" in plan["run"]
