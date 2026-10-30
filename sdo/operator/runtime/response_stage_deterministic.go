@@ -16,10 +16,8 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-// DefaultStageBudget is the one owner of the automatic stage's time: the
-// checks, sequential applies with their rollout waits, and the post-repair
-// observation share it. Matches the stage could not apply or verify inside it
-// go to the agent in the stage report (skip reason "stage_budget").
+// DefaultStageBudget bounds observation, never the authority to execute a
+// matched repair. Direct writes remain bounded by the incident context.
 const DefaultStageBudget = 45 * time.Second
 
 const stagePlanNotExecutable = "plan_not_executable"
@@ -81,7 +79,7 @@ type DeterministicResponseStage struct {
 	// KeepLoop leaves the loop NewLoop returns open: it belongs to a running
 	// responder, so a later pass must not close its working programs.
 	KeepLoop bool
-	// Budget is the stage's total time (DefaultStageBudget when unset).
+	// Budget bounds observation (DefaultStageBudget when unset).
 	Budget time.Duration
 	// RolloutTimeout and ObservationCeiling can only shorten what the budget
 	// leaves for the rollout wait and the post-repair observation.
@@ -286,12 +284,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
 			if err := skip(stageIneffective); err != nil {
-				return report, err
-			}
-			continue
-		}
-		if remaining() <= 0 {
-			if err := skip("stage_budget"); err != nil {
 				return report, err
 			}
 			continue
@@ -751,14 +743,9 @@ type stagePlanned struct {
 	planID   string
 }
 
-// applyMatch runs one binding through the ordinary executor lifecycle before
-// the next candidate may diagnose or plan. There is no merged stage batch.
+// applyMatch retains each binding's own receipt and compensation boundary.
+// Its single rollout sample lets the other matches run while recovery progresses.
 func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *ResponderLoop, state *IncidentState, item stagePlanned, remaining func() time.Duration, candidatesLeft int, save func(bool) error) error {
-	if remaining() <= 0 {
-		item.attempt.Result, item.attempt.SkipReason = "skipped", "stage_budget"
-		recordStageFindingProgress(item.attempt, item.match.targets, state.Findings)
-		return save(false)
-	}
 	plan := loop.plans[item.planID]
 	item.attempt.PlanId = item.planID
 	item.attempt.PlanActionCount = int32(len(plan.plan.Actions))
@@ -770,9 +757,9 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 	if err := save(false); err != nil {
 		return err
 	}
-	// Reserve a share for each remaining match. A rollout may depend on a
-	// later repair, so waiting for it cannot consume that repair's whole turn.
-	rolloutTimeout := remaining() / time.Duration(max(1, candidatesLeft))
+	// Bound each single rollout sample by its share of observation time. A
+	// positive floor avoids the executor's zero-means-default timeout.
+	rolloutTimeout := max(time.Nanosecond, remaining()/time.Duration(max(1, candidatesLeft)))
 	if stage.RolloutTimeout > 0 && stage.RolloutTimeout < rolloutTimeout {
 		rolloutTimeout = stage.RolloutTimeout
 	}
