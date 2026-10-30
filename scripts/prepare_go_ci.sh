@@ -36,6 +36,14 @@ for module in sdo/operator sdo/operator/runtime; do
     (cd "$root/$module" && go build "-p=$GOMAXPROCS" ./...)
   fi
   echo "Prepared $module ($mode) at $(date -u +%FT%TZ)"
+  if [[ "$mode" == race && "$module" == sdo/operator && -n "${SDO_GO_OPERATOR_READY:-}" ]]; then
+    # A FIFO receipt lets the CI owner start operator quality checks while
+    # this same bounded preparation command compiles the runtime graph.
+    printf 'ready\n' > "$SDO_GO_OPERATOR_READY"
+  fi
+  if [[ "$mode" == race && "$module" == sdo/operator/runtime && -n "${SDO_GO_RUNTIME_READY:-}" ]]; then
+    printf 'ready\n' > "$SDO_GO_RUNTIME_READY"
+  fi
 done
 if [[ "$mode" == normal ]]; then
   # Python static analysis vets benchmark mains against the same source graph.

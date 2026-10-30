@@ -69,3 +69,17 @@ func Example_withoutOutput() {}
         capture_output=True,
     )
     assert invalid.returncode != 0
+
+    # Vet's type checker accepts some invalid compiler directives. Discovery
+    # must retain compiler validation for every test package, even deferred
+    # tests; selected execution alone cannot enforce this boundary.
+    (tmp_path / "invalid_test.go").unlink()
+    (tmp_path / "compiler_test.go").write_text("package inventory\n//go:noescape\nfunc invalidCompilerDirective() {}\n")
+    invalid = subprocess.run(
+        ["go", "run", str(ROOT / "scripts/go_test_inventory.go"), str(tmp_path)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert invalid.returncode != 0
+    assert "can only use //go:noescape" in invalid.stderr

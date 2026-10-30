@@ -42,5 +42,14 @@ for nested workspace builds, plus per-bin archives of selected race executables
 and their plan. Contract shards never transfer the race compiler cache or link
 those test binaries. `scripts/prepared_contracts.py` binds binaries to the source,
 plan, selected names and content hashes, then executes them through test2json.
+Preparation batches metadata and selected links by module, splitting only output-name collisions, and hashes each executable once. Python discovery overlaps graph compilation; an operator-ready FIFO starts mandatory Go checks alongside runtime preparation. Every background worker must succeed before publication.
 Its real producer/consumer fixture runs with compilation forbidden; workflow
 negative controls reject misses, fallback keys and extra compiler transfers.
+
+`scripts/go_quality_checks.py` owns the mandatory operator quality test selections
+and their original 20-second limits. Local static checks execute that inventory;
+CI prepares the same race binaries and assigns the tests to its two existing
+native jobs. Prepared manifests must contain every assigned quality package,
+even when the regression planner selects none of its tests. Missing quality
+entries fail closed before execution. Compiler validation remains independent
+of vet: the inventory fixture rejects compiler-only directive errors too.
