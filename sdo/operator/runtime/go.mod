@@ -3,6 +3,7 @@ module sdo.dev/operator/runtime
 go 1.26.0
 
 require (
+	github.com/robfig/cron/v3 v3.0.1 // indirect
 	buf.build/go/protovalidate v1.4.0
 	github.com/prometheus/common v0.55.0
 	google.golang.org/protobuf v1.36.12

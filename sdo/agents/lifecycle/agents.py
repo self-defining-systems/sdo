@@ -335,13 +335,21 @@ Run `sdo-operator memory ls` to inspect existing memory and `sdo-operator memory
 Fix every named diagnostic and rerun until it exits zero within your turn budget. The environment is already
 set to SDO_ACTOR=health_judge and SDO_PHASE=initial with the accepted SDO_BASE_COMMIT; never override it.
 The Go broker repeats the same validation independently. Its explicit bootstrap step installs the generic
-service-endpoints, workload-health, service-reachability and traffic-* detectors (the last from the authored workloads);
+service-endpoints, workload-health, service-reachability, cluster-wiring, workload-controllers,
+warning-events, node-health, resource-saturation, runtime-crashes and traffic-* detectors
+(the last from the authored workloads);
 do not author those packages. service-endpoints already reports Services without ready endpoints.
 service-reachability already reports Service ports that refuse connections while their pods are Ready.
 workload-health already reports failed, Unknown, stuck Pending or unschedulable pods; crash-looping,
 image-pull, config-error, OOMKilled, errored, waiting, restarting or unready containers; stuck init
 containers; and Deployments below their desired availability or past their progress deadline.
-Do not re-implement those generic pod and Deployment state checks in health-objective; spend it on
+cluster-wiring checks Service selectors and declared target ports, template dependencies and keys, PVC binding,
+Ingress backends, total NetworkPolicy isolation and in-namespace ExternalName targets. workload-controllers
+checks StatefulSet/DaemonSet availability and stuck revisions, failed Jobs and overdue CronJobs. warning-events
+checks persistent recent mount, scheduling, backoff, probe, eviction and OOM warnings. node-health checks
+application nodes for readiness and pressure. resource-saturation checks memory limits and PVC bytes/inodes
+including forecasts. runtime-crashes checks newly appearing narrow runtime crash signatures with previous logs.
+Do not re-implement these generic checks in health-objective or separate detectors; spend your turn on
 application-specific evidence of the human objective.
 For covered_resources, copy every resource required by the objective exactly from the deployer handoff, preserving
 each kind, name, source-manifest namespace, source path, and complete dependencies list; never invent an object that
