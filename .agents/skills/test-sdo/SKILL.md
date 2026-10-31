@@ -39,7 +39,8 @@ In a brief, state the change's risk classes, the tiers required before handoff, 
 3. Name the root cause with `file:line` before changing code.
 4. Write the cheapest failing test that reproduces it, at Tier 0 or 1 when possible. Build it from the live evidence shape, for example a fixture under `sdo/operator/runtime/testdata/`.
 5. Fix, run the tiers from the bottom up, then retry the failing tier.
-6. A bug a lower tier missed means a test gap: add the test before climbing again. Record which tier caught each bug; if expensive tiers keep catching cheap bugs, make the lower tiers more representative instead of running the expensive ones more often.
+6. A bug a lower tier missed means a test gap: add the test before climbing again. If the deterministic
+   simulation cannot express the bug at all, follow [align-simulation](../align-simulation/SKILL.md). Record which tier caught each bug; if expensive tiers keep catching cheap bugs, make the lower tiers more representative instead of running the expensive ones more often.
 
 ## Rules
 
