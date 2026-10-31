@@ -175,3 +175,55 @@ func TestLinkDetectorReportsUnloadableWindow(t *testing.T) {
 		t.Fatalf("expected the load error")
 	}
 }
+
+func TestLinkProtocolValidation(t *testing.T) {
+	for _, tc := range []struct {
+		options string
+		valid   bool
+	}{
+		{``, true}, {`,"protocol":"tcp"`, true}, {`,"protocol":"http"`, true},
+		{`,"protocol":"grpc","grpc":{"tls":true}`, true},
+		{`,"protocol":"redis"`, true}, {`,"protocol":"mongodb"`, true}, {`,"protocol":"memcached"`, true}, {`,"protocol":"postgres"`, true}, {`,"protocol":"mysql"`, true},
+		{`,"protocol":"https"`, false}, {`,"protocol":"tcp","http":{}`, false}, {`,"grpc":{}`, false},
+		{`,"protocol":"http","http":{"path":"relative"}`, false},
+		{`,"protocol":"http","http":{"path":"//other"}`, false},
+		{`,"protocol":"http","http":{"statusMin":500,"statusMax":200}`, false},
+		{`,"protocol":"http","http":{"statusMax":600}`, false},
+		{`,"protocol":"http","http":{"unknown":1}`, false},
+		{`,"protocol":"http","http":{"path":"/ready","statusMin":200,"statusMax":299}`, true},
+	} {
+		doc := `{"apiVersion":"sdo.dev/v1alpha1","kind":"TrafficWorkload","name":"links","purpose":"link-probe","links":[{"from":"a","to":"b","port":80` + tc.options + `}]}`
+		w, err := traffic.ParseWorkloadJSON([]byte(doc))
+		if (err == nil) != tc.valid {
+			t.Errorf("%s: %v", tc.options, err)
+		}
+		if err == nil && w.Links[0].Protocol == traffic.LinkProtocolHTTP && tc.options == `,"protocol":"http"` {
+			o := w.Links[0].HTTP
+			if o == nil || o.Path != "/" || o.StatusMin != 100 || o.StatusMax != 499 {
+				t.Fatalf("defaults: %+v", o)
+			}
+		}
+	}
+}
+
+func TestLinkProtocolFindingEvidence(t *testing.T) {
+	w := linkWorkload(t, "")
+	w.Links[0].Protocol = traffic.LinkProtocolGRPC
+	samples := make([]traffic.LinkSample, w.Failures)
+	for i := range samples {
+		samples[i] = traffic.LinkSample{At: observedAt, Duration: time.Millisecond, Class: traffic.LinkFailureNotServing, Status: "health=2", Excerpt: "not serving"}
+	}
+	findings := detectLinks(t, linkWindow(w, samples, true))
+	if len(findings) != 1 {
+		t.Fatal(findings)
+	}
+	f := findings[0]
+	for _, text := range []string{"grpc", "not_serving", "health=2", "not serving", "1ms"} {
+		if !strings.Contains(f.Evidence, text) {
+			t.Fatalf("missing %q: %s", text, f.Evidence)
+		}
+	}
+	if f.Metadata["protocol"] != "grpc" {
+		t.Fatal(f.Metadata)
+	}
+}

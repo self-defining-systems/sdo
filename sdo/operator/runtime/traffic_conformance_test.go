@@ -70,6 +70,16 @@ func TestTrafficProtoSchemaModelsGoWorkloadJSON(t *testing.T) {
 		},
 	}
 
+	for _, protocol := range []traffic.LinkProtocol{traffic.LinkProtocolHTTP, traffic.LinkProtocolGRPC, traffic.LinkProtocolRedis, traffic.LinkProtocolMemcached, traffic.LinkProtocolMongoDB, traffic.LinkProtocolPostgres, traffic.LinkProtocolMySQL} {
+		w := workloads["link-probe"]
+		l := traffic.Link{From: "frontend", To: "search", Port: 8082, Protocol: protocol}
+		if protocol == traffic.LinkProtocolGRPC {
+			l.GRPC = &traffic.LinkGRPCOptions{TLS: true}
+		}
+		w.Links = []traffic.Link{l}
+		workloads["link-"+string(protocol)] = w
+	}
+
 	for name, workload := range workloads {
 		t.Run(name, func(t *testing.T) {
 			valid := mustValidWorkload(t, workload)
@@ -167,6 +177,21 @@ func TestTrafficProtoValidateLinkProbeInvariants(t *testing.T) {
 		mutate func(*contractsv1alpha1.TrafficWorkload)
 	}{
 		{"self loop", func(w *contractsv1alpha1.TrafficWorkload) { w.Links[0].To = w.Links[0].From }},
+
+		{"http options on tcp", func(w *contractsv1alpha1.TrafficWorkload) {
+			w.Links[0].Http = &contractsv1alpha1.TrafficLinkHTTPOptions{}
+		}},
+		{"grpc options on tcp", func(w *contractsv1alpha1.TrafficWorkload) {
+			w.Links[0].Grpc = &contractsv1alpha1.TrafficLinkGRPCOptions{}
+		}},
+		{"http relative path", func(w *contractsv1alpha1.TrafficWorkload) {
+			w.Links[0].Protocol = "http"
+			w.Links[0].Http = &contractsv1alpha1.TrafficLinkHTTPOptions{Path: "relative"}
+		}},
+		{"http wrong range", func(w *contractsv1alpha1.TrafficWorkload) {
+			w.Links[0].Protocol = "http"
+			w.Links[0].Http = &contractsv1alpha1.TrafficLinkHTTPOptions{StatusMin: 500, StatusMax: 200}
+		}},
 		{"bad protocol", func(w *contractsv1alpha1.TrafficWorkload) { w.Links[0].Protocol = "udp" }},
 		{"port out of range", func(w *contractsv1alpha1.TrafficWorkload) { w.Links[0].Port = 0 }},
 		{"no links", func(w *contractsv1alpha1.TrafficWorkload) { w.Links = nil }},

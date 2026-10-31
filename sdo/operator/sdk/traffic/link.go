@@ -17,8 +17,8 @@ import (
 // dependency can no longer be made, because connectivity rules are evaluated
 // only when a connection is opened. A link probe therefore dials each declared
 // service-to-service edge afresh, at every interval, from a pod of its own,
-// and reports the edge after several consecutive failures. It knows nothing
-// about why a dial fails and nothing about any application.
+// and reports the edge after several consecutive failures. Protocol handshakes
+// prove the listener can serve without application credentials or queries.
 
 const (
 	// LinkRuleIDPrefix prefixes the rule ID of each link finding
@@ -42,15 +42,61 @@ const (
 // LinkProtocol is how an edge is probed.
 type LinkProtocol string
 
-// LinkProtocolTCP completes a TCP handshake to the target Service and port.
-const LinkProtocolTCP LinkProtocol = "tcp"
+// Link protocols select the credential-free handshake sent on a fresh connection.
+const (
+	LinkProtocolTCP       LinkProtocol = "tcp"
+	LinkProtocolHTTP      LinkProtocol = "http"
+	LinkProtocolGRPC      LinkProtocol = "grpc"
+	LinkProtocolRedis     LinkProtocol = "redis"
+	LinkProtocolMemcached LinkProtocol = "memcached"
+	LinkProtocolMongoDB   LinkProtocol = "mongodb"
+	LinkProtocolPostgres  LinkProtocol = "postgres"
+	LinkProtocolMySQL     LinkProtocol = "mysql"
+)
+
+// LinkHTTPOptions configures a GET; status bounds are inclusive (default 100..499).
+type LinkHTTPOptions struct {
+	Path      string `json:"path,omitempty"`
+	StatusMin int    `json:"statusMin,omitempty"`
+	StatusMax int    `json:"statusMax,omitempty"`
+}
+
+// LinkGRPCOptions enables TLS with system roots and target hostname verification.
+type LinkGRPCOptions struct {
+	TLS bool `json:"tls,omitempty"`
+}
+
+// EffectiveProtocol preserves the TCP default for older observations.
+func (l Link) EffectiveProtocol() LinkProtocol {
+	if l.Protocol == "" {
+		return LinkProtocolTCP
+	}
+	return l.Protocol
+}
+
+// LinkFailureClass identifies a deterministic failure category.
+type LinkFailureClass string
+
+const (
+	LinkFailureRefused    LinkFailureClass = "refused"
+	LinkFailureTimeout    LinkFailureClass = "timeout"
+	LinkFailureReset      LinkFailureClass = "reset"
+	LinkFailureProtocol   LinkFailureClass = "protocol_error"
+	LinkFailureNotServing LinkFailureClass = "not_serving"
+	LinkFailureTransport  LinkFailureClass = "transport_error"
+)
+
+// MaxLinkExcerpt bounds response and error text stored in samples.
+const MaxLinkExcerpt = 256
 
 // Link is one declared dependency edge: From calls To on Port.
 type Link struct {
-	From     string       `json:"from"`
-	To       string       `json:"to"`
-	Port     int          `json:"port"`
-	Protocol LinkProtocol `json:"protocol,omitempty"`
+	From     string           `json:"from"`
+	To       string           `json:"to"`
+	Port     int              `json:"port"`
+	Protocol LinkProtocol     `json:"protocol,omitempty"`
+	HTTP     *LinkHTTPOptions `json:"http,omitempty"`
+	GRPC     *LinkGRPCOptions `json:"grpc,omitempty"`
 }
 
 // ID names the edge.
@@ -69,18 +115,39 @@ func (l Link) validate(workload string) error {
 	if l.Port < 1 || l.Port > 65535 {
 		return fmt.Errorf("traffic workload %s: link %s port %d is out of range", workload, l, l.Port)
 	}
-	if l.Protocol != "" && l.Protocol != LinkProtocolTCP {
-		return fmt.Errorf("traffic workload %s: link %s protocol must be %q", workload, l, LinkProtocolTCP)
+	switch l.EffectiveProtocol() {
+	case LinkProtocolTCP, LinkProtocolHTTP, LinkProtocolGRPC, LinkProtocolRedis, LinkProtocolMemcached, LinkProtocolMongoDB, LinkProtocolPostgres, LinkProtocolMySQL:
+	default:
+		return fmt.Errorf("traffic workload %s: link %s: unknown protocol %q (expected tcp, http, grpc, redis, memcached, mongodb, postgres or mysql)", workload, l, l.Protocol)
 	}
+	if l.HTTP != nil {
+		if l.EffectiveProtocol() != LinkProtocolHTTP {
+			return fmt.Errorf("link %s: http options require protocol http", l)
+		}
+		o := l.HTTP
+		if !strings.HasPrefix(o.Path, "/") || strings.ContainsAny(o.Path, "\r\n") || strings.HasPrefix(o.Path, "//") {
+			return fmt.Errorf("link %s: http path must be an absolute request path", l)
+		}
+		if o.StatusMin < 100 || o.StatusMax > 599 || o.StatusMax < o.StatusMin {
+			return fmt.Errorf("link %s: http status range must be within 100..599 and ordered", l)
+		}
+	}
+	if l.GRPC != nil && l.EffectiveProtocol() != LinkProtocolGRPC {
+		return fmt.Errorf("link %s: grpc options require protocol grpc", l)
+	}
+
 	return nil
 }
 
-// LinkSample is one fresh dial of a link.
+// LinkSample is one fresh connection and protocol handshake of a link.
 type LinkSample struct {
-	At       time.Time     `json:"at"`
-	Duration time.Duration `json:"durationNs"`
-	OK       bool          `json:"ok"`
-	Error    string        `json:"error,omitempty"`
+	At       time.Time        `json:"at"`
+	Duration time.Duration    `json:"durationNs"`
+	OK       bool             `json:"ok"`
+	Error    string           `json:"error,omitempty"`
+	Class    LinkFailureClass `json:"class,omitempty"`
+	Status   string           `json:"status,omitempty"`
+	Excerpt  string           `json:"excerpt,omitempty"`
 }
 
 // LinkObservations are one link's recent samples, oldest first.
@@ -195,14 +262,14 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observe
 	link := observed.Link
 	messages := make([]string, 0, 3)
 	for _, sample := range run[max(0, len(run)-3):] {
-		messages = append(messages, fmt.Sprintf("[%s] %s (%s)",
-			sample.At.UTC().Format(time.RFC3339), sample.Error, sample.Duration.Round(time.Millisecond)))
+		messages = append(messages, fmt.Sprintf("[%s] class=%s status=%s %s excerpt=%q (%s)",
+			sample.At.UTC().Format(time.RFC3339), sample.Class, sample.Status, sample.Error, sample.Excerpt, sample.Duration.Round(time.Millisecond)))
 	}
 	evidence := fmt.Sprintf(
-		"link %s: the last %d fresh TCP dials of Service %s port %d from the prober pod all failed over %s "+
+		"link %s: the last %d fresh %s probes of Service %s port %d from the prober pod all failed over %s "+
 			"(workload %s; interval %s, timeout %s), after the link had connected before. Existing long-lived "+
 			"connections from %s to %s may still work, so user-facing probes can stay green. Recent failures: %s.",
-		link, len(run), link.To, link.Port, run[len(run)-1].At.Sub(run[0].At).Round(time.Millisecond),
+		link, len(run), link.EffectiveProtocol(), link.To, link.Port, run[len(run)-1].At.Sub(run[0].At).Round(time.Millisecond),
 		window.Workload.Name, window.Workload.Interval.Duration(), window.Workload.Timeout.Duration(),
 		link.From, link.To, strings.Join(messages, "; "),
 	)
@@ -219,6 +286,11 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observe
 		Playbooks:        append([]string(nil), spec.Playbooks...),
 		Metadata: map[string]any{
 			"workload": window.Workload.Name, "from": link.From, "to": link.To, "port": link.Port,
+			"protocol":             string(link.EffectiveProtocol()),
+			"last_class":           string(run[len(run)-1].Class),
+			"last_status":          run[len(run)-1].Status,
+			"last_excerpt":         run[len(run)-1].Excerpt,
+			"last_latency_ns":      int64(run[len(run)-1].Duration),
 			"consecutive_failures": len(run), "last_error": run[len(run)-1].Error,
 		},
 	}, true

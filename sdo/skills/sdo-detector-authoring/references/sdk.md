@@ -568,6 +568,7 @@ const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
 const DefaultHealthMinDuration = 9 * time.Second
+const MaxLinkExcerpt = 256
 const RuleIDPrefix = "scenario-slo."
 var RequiredFaultClasses = []FaultClass{ ... }
 var Watch = sdk.WatchKind{ ... }
@@ -599,9 +600,13 @@ type HTTPEndpoint struct{ ... }
     func POST(path string, query Params) *HTTPEndpoint
     func PUT(path string, query Params) *HTTPEndpoint
 type Link struct{ ... }
+type LinkFailureClass string
+    const LinkFailureRefused LinkFailureClass = "refused" ...
+type LinkGRPCOptions struct{ ... }
+type LinkHTTPOptions struct{ ... }
 type LinkObservations struct{ ... }
 type LinkProtocol string
-    const LinkProtocolTCP LinkProtocol = "tcp"
+    const LinkProtocolTCP LinkProtocol = "tcp" ...
 type LinkSample struct{ ... }
     func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool)
 type Outcome string

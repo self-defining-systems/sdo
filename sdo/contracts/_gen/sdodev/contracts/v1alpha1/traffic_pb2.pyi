@@ -36,15 +36,35 @@ class TrafficWorkloadScenario(_message.Message):
     def __init__(self, id: _Optional[str] = ..., weight: _Optional[int] = ..., slo: _Optional[_Union[TrafficSLO, _Mapping]] = ...) -> None: ...
 
 class TrafficLink(_message.Message):
-    __slots__ = ("to", "port", "protocol")
+    __slots__ = ("to", "port", "protocol", "http", "grpc")
     FROM_FIELD_NUMBER: _ClassVar[int]
     TO_FIELD_NUMBER: _ClassVar[int]
     PORT_FIELD_NUMBER: _ClassVar[int]
     PROTOCOL_FIELD_NUMBER: _ClassVar[int]
+    HTTP_FIELD_NUMBER: _ClassVar[int]
+    GRPC_FIELD_NUMBER: _ClassVar[int]
     to: str
     port: int
     protocol: str
-    def __init__(self, to: _Optional[str] = ..., port: _Optional[int] = ..., protocol: _Optional[str] = ..., **kwargs) -> None: ...
+    http: TrafficLinkHTTPOptions
+    grpc: TrafficLinkGRPCOptions
+    def __init__(self, to: _Optional[str] = ..., port: _Optional[int] = ..., protocol: _Optional[str] = ..., http: _Optional[_Union[TrafficLinkHTTPOptions, _Mapping]] = ..., grpc: _Optional[_Union[TrafficLinkGRPCOptions, _Mapping]] = ..., **kwargs) -> None: ...
+
+class TrafficLinkHTTPOptions(_message.Message):
+    __slots__ = ("path", "status_min", "status_max")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    STATUS_MIN_FIELD_NUMBER: _ClassVar[int]
+    STATUS_MAX_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    status_min: int
+    status_max: int
+    def __init__(self, path: _Optional[str] = ..., status_min: _Optional[int] = ..., status_max: _Optional[int] = ...) -> None: ...
+
+class TrafficLinkGRPCOptions(_message.Message):
+    __slots__ = ("tls",)
+    TLS_FIELD_NUMBER: _ClassVar[int]
+    tls: bool
+    def __init__(self, tls: _Optional[bool] = ...) -> None: ...
 
 class TrafficWorkload(_message.Message):
     __slots__ = ("api_version", "kind", "name", "description", "purpose", "arrival", "rate_per_second", "duration", "timeout", "iteration_timeout", "seed", "slo", "scenarios", "links", "interval", "failures")
