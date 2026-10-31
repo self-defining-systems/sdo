@@ -34,7 +34,8 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
    detector or a line under `Not monitored` saying why it cannot be observed; lack of time is not a reason.
 4. User journeys come first. Every user-facing route gets a scenario that checks the response body. Every write
    route gets a journey that writes synthetic data, reads it back and cleans up. A read-only scenario set for an
-   application with write paths is incomplete.
+   application with write paths is incomplete. A write that leaves anything behind (a new row, a counter, used
+   capacity) is not idempotent: it runs in a bounded journey workload, never in the continuous health workload.
 5. Set firing, severity and thresholds as [methods](references/methods.md) describes.
 6. Test each detector: a case that fires, near misses that stay quiet, and a healthy case, with resource names
    different from any you saw.
