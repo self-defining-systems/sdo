@@ -572,6 +572,12 @@ kubectl --kubeconfig "$KUBECONFIG" -n sdo-toy-sdo create configmap sdo-agent-scr
   kubectl --kubeconfig "$KUBECONFIG" apply -f -
 uv run python -m benchmarks.sregym.agent_script registrations \
   --out /absolute/script-registrations --image sdo-agent-script:test
+# Existing controllers load registrations at startup. Publish and reset the lane
+# before run, so a reused controller cannot silently retain legacy workers.
+kubectl --kubeconfig "$KUBECONFIG" -n sdo-toy-sdo create configmap sdo-agent-registrations \
+  --from-file=/absolute/script-registrations --dry-run=client -o yaml | \
+  kubectl --kubeconfig "$KUBECONFIG" apply -f -
+uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN" --dev-mount
 uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo \
   --agent-registrations /absolute/script-registrations \
   --stream tests/fixtures/sregym/fastloop/toy_latent_repeat.json \

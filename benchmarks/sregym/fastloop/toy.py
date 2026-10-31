@@ -317,7 +317,7 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
         capture_output=True,
     )
     publish_agent_registrations(
-        ROOT / "benchmarks/sregym/adapter/scripted_registrations",
+        config.agent_registrations or ROOT / "benchmarks/sregym/adapter/scripted_registrations",
         install.control_namespace,
         environment.kubeconfig,
         environment.images.responder,
