@@ -253,6 +253,8 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
     tools = root.parent / "tools"
     for name in ("requests", "responses"):
         (tools / name).mkdir(parents=True)
+    unpublished = tools / "requests/.unpublished.json"
+    unpublished.write_text(json.dumps({"command": "apply", "plan_ids": ["synthetic-repair"]}))
     monkeypatch.setenv("SDO_TOOLS_DIR", str(tools))
     monkeypatch.setenv("SDO_AGENT_SCRIPT_INCIDENT", incident)
     bin_dir = Path(os.environ["PATH"].split(":")[0])
@@ -314,6 +316,8 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
             try:
                 while not stop.is_set():
                     for request in (tools / "requests").glob("*.json"):
+                        if request.name.startswith("."):
+                            continue
                         assert json.loads(request.read_text()) == {"command": "apply", "plan_ids": ["synthetic-repair"]}
                         patch = urllib.request.Request(
                             url,
@@ -336,6 +340,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                 parse_json(json.dumps(request_payload), IncidentRequest()), provider="codex", model="unused"
             )
             assert completed.status == "completed"
+            assert unpublished.exists(), "the synthetic controller must ignore atomic request staging files"
             assert api.objects[("services", "api")]["spec"]["ports"][0]["targetPort"] == 80
             reflected = CodexSessionBackend(model="unused").resume(
                 session_id=completed.responder_session_id,
