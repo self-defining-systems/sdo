@@ -484,3 +484,30 @@ those results with the source tree. It never replaces live generated files;
 Python imports and Go compilers can run concurrently with the gate. The synthetic
 `test_proto_drift_check_generates_outside_the_source_tree` regression exercises a
 mismatching generator and requires the live source to remain unchanged.
+
+### PR CI budget
+
+PRs and merge groups run three jobs: `checks and Python`, `Go tests`, and
+`Required PR CI`. The aggregate requires both validation jobs to succeed;
+skips and cancellation fail closed. Static checks overlap Python tests within
+one job. `check_errors.sh` already includes types, architecture and proto;
+CI does not repeat those as separate jobs. Go modules use one compiler/module
+cache and normal package parallelism, with `-trimpath` allowing compiler entries
+to survive generated-workspace path changes. No prepared-cache job or shard
+matrix sits on the critical path. Both validation jobs have five-minute limits.
+
+`Nightly CI` runs daily and through `workflow_dispatch`. Its Actions conclusion
+reports failures. It retains the following extended checks:
+
+| Nightly check | Why it is off the PR path | PR replacement |
+| --- | --- | --- |
+| All four controller/validator/responder/benchmark image builds, entry-point smoke and answer-key file inspection | Docker/tool installation and layer export dominated the previous image job | Python Dockerfile scope and image-delivery contracts; Go compilation |
+| Go race instrumentation across all seven modules | Separate instrumented compiler graph and slower execution | All ordinary Go tests without race instrumentation |
+| `TestReplay*` recorded incidents | Extended recorded regression tier | Ordinary controller, outcome and receipt contract tests |
+| `TestChaos*`, `TestExhaustive*`, `TestExplorer*` | Extended interleaving/state-space campaigns | Ordinary deterministic controller tests |
+| Six 30-second fuzz mutation campaigns | Fixed mutation time adds minutes | Every checked-in fuzz seed executes in ordinary `go test` |
+
+No generated-program compilation or broker acceptance tests are removed from
+PRs. Run `bash scripts/test_go_ci.sh` locally for the PR Go suite, or add
+`nightly` for the full race suite. Both emit `go test -json` timing evidence;
+Python CI logs include `--durations=30`. Keep full run logs outside the repo.
