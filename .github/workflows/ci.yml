@@ -34,7 +34,7 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: false
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cache/go-build
@@ -78,6 +78,15 @@ jobs:
           cat /tmp/checks.log
           exit "$status"
 
+      - name: Save shared Go cache on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+
   tests:
     name: Go tests
     runs-on: ubuntu-latest
@@ -90,7 +99,7 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: false
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cache/go-build
@@ -107,6 +116,15 @@ jobs:
       - run: uv sync --locked --all-extras
       - name: All Go modules (one shared compiler and module cache)
         run: bash scripts/test_go_ci.sh
+
+      - name: Save shared Go cache on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   required-pr-ci:
     name: Required PR CI
