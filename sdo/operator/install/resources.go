@@ -239,6 +239,9 @@ func Resources(c Config) (Plan, error) {
 		rule("coordination.k8s.io", []string{"leases"}, "get", "create", "update", "patch"),
 		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "delete"),
 		rule("batch", []string{"cronjobs"}, "get", "list", "watch"),
+		// The routing/traffic prober still owns a NetworkPolicy independently
+		// of broker validation. Keep its lifecycle grants and informer reads.
+		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "list", "watch", "create", "update", "delete"),
 		rule("networking.k8s.io", []string{"ingresses"}, "get", "list", "watch"),
 	}
 	clusterName := "sdo-cluster-" + control

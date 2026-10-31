@@ -826,3 +826,33 @@ func TestControllerSecretGrantsOnlyAllowMetadataListWatch(t *testing.T) {
 		}
 	}
 }
+
+func TestControllerRetainsNetworkPolicyObservationAndProberGrants(t *testing.T) {
+	for _, split := range []bool{false, true} {
+		config := testConfig()
+		if !split {
+			config.ControlNamespace = config.Namespace
+		}
+		plan, err := Resources(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roles := append(append([]*rbacv1.Role{}, plan.ControlRoles...), plan.AppRoles...)
+		for _, role := range roles {
+			if role.Name != "sdo-controller" {
+				continue
+			}
+			for _, verb := range []string{"get", "list", "watch"} {
+				if !roleAllows(role, "networkpolicies", verb) {
+					t.Fatalf("split=%v namespace=%s controller lacks NetworkPolicy %s", split, role.Namespace, verb)
+				}
+			}
+			for _, verb := range []string{"create", "update", "delete"} {
+				want := role.Namespace == config.controlNamespace()
+				if roleAllows(role, "networkpolicies", verb) != want {
+					t.Fatalf("split=%v namespace=%s prober NetworkPolicy %s grant, want %v", split, role.Namespace, verb, want)
+				}
+			}
+		}
+	}
+}
