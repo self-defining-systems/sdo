@@ -355,6 +355,7 @@ func (x *ImageBuild) GetDockerfilePath() string {
 // The independent health judge authors diagnostics after source is accepted.
 type HealthJudgeRequest struct {
 	state                       protoimpl.MessageState `protogen:"open.v1"`
+	MetricsSource               *MetricsSource         `protobuf:"bytes,12,opt,name=metrics_source,json=metricsSource,proto3" json:"metrics_source,omitempty"`
 	Application                 string                 `protobuf:"bytes,1,opt,name=application,proto3" json:"application,omitempty"`
 	Namespace                   string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	HealthObjective             string                 `protobuf:"bytes,3,opt,name=health_objective,json=healthObjective,proto3" json:"health_objective,omitempty"`
@@ -400,6 +401,13 @@ func (x *HealthJudgeRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use HealthJudgeRequest.ProtoReflect.Descriptor instead.
 func (*HealthJudgeRequest) Descriptor() ([]byte, []int) {
 	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *HealthJudgeRequest) GetMetricsSource() *MetricsSource {
+	if x != nil {
+		return x.MetricsSource
+	}
+	return nil
 }
 
 func (x *HealthJudgeRequest) GetApplication() string {
@@ -658,8 +666,9 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"ImageBuild\x12\x14\n" +
 	"\x05image\x18\x01 \x01(\tR\x05image\x12!\n" +
 	"\fcontext_path\x18\x02 \x01(\tR\vcontextPath\x12'\n" +
-	"\x0fdockerfile_path\x18\x03 \x01(\tR\x0edockerfilePath\"\x9c\x06\n" +
-	"\x12HealthJudgeRequest\x12 \n" +
+	"\x0fdockerfile_path\x18\x03 \x01(\tR\x0edockerfilePath\"\xed\x06\n" +
+	"\x12HealthJudgeRequest\x12O\n" +
+	"\x0emetrics_source\x18\f \x01(\v2(.sdodev.contracts.v1alpha1.MetricsSourceR\rmetricsSource\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
 	"\x10health_objective\x18\x03 \x01(\tR\x0fhealthObjective\x124\n" +
@@ -710,21 +719,23 @@ var file_sdodev_contracts_v1alpha1_lifecycle_proto_goTypes = []any{
 	(*SourceResource)(nil),              // 6: sdodev.contracts.v1alpha1.SourceResource
 	(*HealthJudgeResult)(nil),           // 7: sdodev.contracts.v1alpha1.HealthJudgeResult
 	(*anypb.Any)(nil),                   // 8: google.protobuf.Any
-	(*MemoryDiagnostic)(nil),            // 9: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*OperationalArtifactProposal)(nil), // 10: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*MetricsSource)(nil),               // 9: sdodev.contracts.v1alpha1.MetricsSource
+	(*MemoryDiagnostic)(nil),            // 10: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*OperationalArtifactProposal)(nil), // 11: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_lifecycle_proto_depIdxs = []int32{
 	2,  // 0: sdodev.contracts.v1alpha1.SourceDeploymentResult.plan:type_name -> sdodev.contracts.v1alpha1.DeploymentPlan
 	8,  // 1: sdodev.contracts.v1alpha1.DeploymentPlan.strategy_config:type_name -> google.protobuf.Any
 	4,  // 2: sdodev.contracts.v1alpha1.RawManifestStrategy.image_builds:type_name -> sdodev.contracts.v1alpha1.ImageBuild
-	6,  // 3: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
-	9,  // 4: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	10, // 5: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	6,  // [6:6] is the sub-list for method output_type
-	6,  // [6:6] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	9,  // 3: sdodev.contracts.v1alpha1.HealthJudgeRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
+	6,  // 4: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
+	10, // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	11, // 6: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	7,  // [7:7] is the sub-list for method output_type
+	7,  // [7:7] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_lifecycle_proto_init() }
