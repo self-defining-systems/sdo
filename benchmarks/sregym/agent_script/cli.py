@@ -58,6 +58,9 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
     if task_path.is_file():
         request = json.loads(task_path.read_text(encoding="utf-8")).get("request", {})
         incident = request.get("incident_id", request.get("incidentId", incident))
+        if role == "reflector":
+            outcome = request.get("outcome", {})
+            incident = outcome.get("incident_id", outcome.get("incidentId", incident))
     if not request and "Incident request:\n" in prompt:
         request = json.loads(prompt.split("Incident request:\n", 1)[1])
         incident = request.get("incident_id")

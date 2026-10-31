@@ -30,6 +30,8 @@ class Tool(Model):
     exit_code: int = 0
     contains: str | None = None
 
+    timeout: float = Field(default=60.0, gt=0, le=300)
+
     @field_validator("argv")
     @classmethod
     def tool_only(cls, value: list[str]) -> list[str]:

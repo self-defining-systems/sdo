@@ -71,7 +71,11 @@ def execute(
             action = Command(kind="command", command=command)
         elif isinstance(step, Tool):
             action = Command(
-                kind="command", command=shlex.join(step.argv), exit_code=step.exit_code, contains=step.contains
+                kind="command",
+                command=shlex.join(step.argv),
+                exit_code=step.exit_code,
+                contains=step.contains,
+                timeout=step.timeout,
             )
         else:
             action = step

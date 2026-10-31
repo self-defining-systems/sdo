@@ -502,7 +502,9 @@ turns:
 A `command` step has a shell `command`, expected `exit_code` (default 0), optional
 `contains` assertion, `timeout` (up to 300 seconds), and bounded polling through
 `attempts` and `interval`. `tool` takes an argv list beginning with `sdo` or
-`sdo-operator`; shell metacharacters remain literal arguments. `write` takes a
+`sdo-operator`; shell metacharacters remain literal arguments. It also accepts a
+`timeout` (default 60 seconds, up to 300), so full memory checks can keep their
+original validation deadline. `write` takes a
 relative `path`, UTF-8 `text`, and optional `executable`; `delete` takes a path;
 `wait` takes `seconds` (at most 60). An `exit` step takes a nonzero `code`
 (1–255) and ends the stand-in without a result, for crash/retry scenarios. The
@@ -620,3 +622,25 @@ native verifier still decides whether this diagnosis and mitigation earn credit.
 Structured references embedded within text are rejected. Substituted file paths
 are validated again. Quote inserted scalar values appropriately in shell commands;
 use typed `tool` argv entries to avoid shell interpretation.
+
+
+Captured repair reflection can be prepared as an ordinary version 1 script,
+without editing the accepted checkout during generation:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+uv run python -m benchmarks.sregym.fastloop.reflection_script \
+  --task /absolute/agent-task.json --capture /absolute/corpus \
+  --out /absolute/results/reflection-script.json
+SDO_AGENT_SCRIPT=/absolute/results/reflection-script.json \
+  uv run python -m benchmarks.sregym.agent_script launch -- \
+  python -m sdo.agents.responder.reflection_worker
+```
+
+The generated script preserves original captured bytes, incident provenance and
+same-kind peer bindings, writes program/corpus files through audited steps, and
+runs the shared memory validator. Reflection selects its incident-specific turn
+from `request.outcome.incident_id`. This generator is preparatory: fastloop's
+legacy worker registrations have not yet been replaced. See the
+[retirement inventory](scripted-worker-retirement.md) for remaining behaviors
+and callers.
