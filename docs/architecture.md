@@ -315,3 +315,10 @@ Source-absent drift admission also covers reviewed foreign NetworkPolicy creates
 | Historical bounded operator, shell health checks, trajectory recorder, UI, prompt stack, standalone fault injection | Excluded from production scope. |
 
 This map does not claim model quality, deployment success across all applications, incident-repair success, or experimental improvement. Those require recorded live runs with exact configuration and evidence.
+
+The benchmark-only `benchmarks/sregym/agent_script/` package replaces the Codex
+CLI beneath registered production workers for deterministic tests across all
+roles. Its JSON/YAML steps emit the normal provider command events; the workers,
+shared memory checker and Go broker retain their existing ownership. Scripts
+and recording conversion never grant publication authority. See the
+[testing guide](testing-guide.md#hand-authored-agent-scripts-no-model).

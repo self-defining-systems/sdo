@@ -461,3 +461,131 @@ immediately on mismatch, including binaries without a stamp. This cache has no
 prefix fallback. Go's separate compiler/module caches remain content-addressed
 and can be shared across source revisions. To check an existing binary, run
 `uv run python scripts/operator_test_binary.py --check /absolute/path/to/sdo-operator`.
+
+## Hand-authored agent scripts (no model)
+
+`benchmarks.sregym.agent_script` replaces the Codex executable beneath the real
+workers. It accepts version 1 JSON or YAML, validates unknown fields and unsafe
+file paths before executing anything, and emits Codex JSON events so structured
+results and command auditing still use the normal provider parser. No production
+module imports the stand-in. Roles are `deployer`, `architecture`, `health-judge`,
+`responder`, and `reflector`; each result is the JSON object requested by that
+role's model-turn schema (not the outer protobuf AgentResult).
+
+```yaml
+version: 1
+turns:
+  - role: reflector
+    index: 0
+    # incident: example-incident  # omit to match any incident
+    steps:
+      - kind: write
+        path: .sdo/playbooks/example/README.md
+        text: |
+          ---
+          schema_version: 1
+          owner: responder
+          fault_class: example
+          originating_incident: example-incident
+          ---
+          Restore <AFFECTED_RESOURCE>.
+      - kind: tool
+        argv: [sdo-operator, memory, check]
+    result:
+      summary: Authored example playbook
+      learning_decision: updated
+      no_change_reason: null
+      playbook_ids: [example]
+      sdk_gaps: []
+```
+
+A `command` step has a shell `command`, expected `exit_code` (default 0), optional
+`contains` assertion, `timeout` (up to 300 seconds), and bounded polling through
+`attempts` and `interval`. `tool` takes an argv list beginning with `sdo` or
+`sdo-operator`; shell metacharacters remain literal arguments. `write` takes a
+relative `path`, UTF-8 `text`, and optional `executable`; `delete` takes a path;
+`wait` takes `seconds` (at most 60). All executed commands appear in the audit
+stream, including file edits and unsuccessful assertions. Bubblewrap must be
+installed and user namespaces enabled: commands see a read-only host and may
+write only the checkout and the responder tool exchange directory. As with real
+workspace-write turns, a typed `sdo-operator memory check` runs outside that
+sandbox. The broker remains the publication authority.
+
+Turn indices start at zero **per role, incident and checkout**. Explicit incident
+selectors take precedence over unspecified ones. Resumed responder turns and
+reflection may use the same session ID. An exhausted script fails rather than
+falling back to a model. Use a private `SDO_AGENT_SCRIPT_STATE` directory per
+worker; `launch` creates one automatically. Results are literal and commands are
+rerun: no recorded output is substituted for live evidence.
+
+Before every Go or uv command on the shared host, source the cached environment:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+uv run python -m benchmarks.sregym.agent_script validate /absolute/script.yaml
+uv run python -m benchmarks.sregym.agent_script convert --role responder \
+  --out /absolute/editable-script.json /absolute/model_io/request-digest/*.json
+```
+
+Conversion reads successful Codex `model_recording` JSON files, orders them by
+`turn_index`, extracts completed shell commands and the final structured JSON,
+and rejects missing answers and failed recordings. Review paths and commands
+before reuse; original absolute paths remain explicit and editable. For a turn
+with Codex file-change events, supply `--file-edits /absolute/checkpoints/.../file_edits.json`;
+the captured final UTF-8 writes/deletes are appended to the last turn. Without
+those bytes conversion rejects file-change events rather than dropping edits.
+Read-only turns cannot write the checkout; workspace-write turns also block
+direct Go execution, matching the provider rules.
+
+Tier 1 uses a local script and the ordinary typed worker task. Point KUBECONFIG at
+the fake API used by the hermetic tests, and supply the normal worker task/result
+configuration. The launcher installs a temporary `codex` wrapper and synthetic
+login, selects the Codex provider, and executes the production worker:
+
+```bash
+SDO_AGENT_SCRIPT=/absolute/script.yaml \
+  uv run python -m benchmarks.sregym.agent_script launch -- \
+  python -m sdo.agents.health_judge.worker
+uv run --extra test pytest -q -p no:tach tests/unit/benchmarks/sregym/test_agent_script.py
+(cd sdo/operator && go test ./broker -run '^TestAgentScriptJudgeMemoryCheckAndBroker$' -count=1)
+bash scripts/test_fastloop_hermetic.sh
+```
+
+The broker example authors a health detector, traffic generator/workload and
+health-objective playbook through the actual judge worker, calls the real memory
+checker, and publishes through the native broker. The generic parser tests cover
+all roles, turn selection, resumed reflection, assertions and checkout escape.
+
+Tier 2 uses the same script via `sdo-agent-script` ConfigMap (`script.json` key;
+JSON or YAML contents). Build the benchmark image from an existing worker image
+and generate registration manifests wrapping all four production worker entry
+points. On an existing disposable toy lane:
+
+```bash
+docker build -f benchmarks/sregym/agent_script/Dockerfile \
+  --build-arg BASE=sdo-responder:v0.1.0 -t sdo-agent-script:test .
+kind load docker-image sdo-agent-script:test --name "$CLUSTER"
+kubectl --kubeconfig "$KUBECONFIG" -n sdo-toy-sdo create configmap sdo-agent-script \
+  --from-file=script.json=/absolute/script.yaml --dry-run=client -o yaml | \
+  kubectl --kubeconfig "$KUBECONFIG" apply -f -
+uv run python -m benchmarks.sregym.agent_script registrations \
+  --out /absolute/script-registrations --image sdo-agent-script:test
+uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo \
+  --agent-registrations /absolute/script-registrations \
+  --stream tests/fixtures/sregym/fastloop/toy_latent_repeat.json \
+  --reflection-session fresh --diagnosis-grading off --no-checkpoints
+```
+
+The launcher reads the ConfigMap once at worker startup. Override its name with
+`SDO_AGENT_SCRIPT_CONFIGMAP`, or use `SDO_AGENT_SCRIPT` for a mounted file. Existing
+assurance executables also accept `SDO_AGENT_SCRIPT`; the legacy Directive menus
+remain for scenarios that have not yet been migrated.
+
+For IDs assigned at runtime, string values in the selected turn support literal
+`{{incident_id}}`, `{{checkout}}`, `{{objective_digest}}` and
+`{{request.field_name}}` substitutions (scalar fields of the mounted typed task,
+using snake_case). For example set the responder result's `incident_id` to
+`"{{incident_id}}"` and a judge result's `source_commit` to
+`"{{request.accepted_source_commit}}"`. Unknown placeholders fail before actions;
+expanded paths are validated again. This is literal substitution, with no code
+execution; quote inserted values appropriately inside shell commands.

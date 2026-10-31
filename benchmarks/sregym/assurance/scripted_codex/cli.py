@@ -101,6 +101,10 @@ def _binding(store: Store, incident_id: str) -> Binding:
 
 
 def run(argv: list[str], *, stdin: str, store: Store | None = None) -> int:
+    if os.environ.get("SDO_AGENT_SCRIPT"):
+        from benchmarks.sregym.agent_script.cli import codex
+
+        return codex(argv, stdin=stdin)
     if not argv or argv[0] in {"--help", "-h", "help"}:
         print(HELP)
         return 0

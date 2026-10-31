@@ -326,3 +326,17 @@ replacement were separate. The scripted worker image must
 include main's generated-contract dependencies, including `protovalidate`;
 source mounts do not add missing Python packages. Raw evidence is outside Git
 at `results/toy-cluster-evidence/`.
+
+## Editable agent turns
+
+For arbitrary deterministic behavior beneath the real worker, use the versioned
+JSON/YAML [agent script format](../../../../docs/testing-guide.md#hand-authored-agent-scripts-no-model).
+It supports all four roles (plus source architecture), commands, SDO tools,
+checkout file edits, bounded output assertions, and literal structured results.
+`agent_script convert` turns successful Codex model-I/O recordings into editable
+scripts. `agent_script registrations --out /absolute/registrations --image IMAGE`
+wraps the production workers; pass that directory with `--agent-registrations`.
+The same script is read from a local `SDO_AGENT_SCRIPT` file in Tier 1 and the
+`sdo-agent-script` ConfigMap's `script.json` key in Tier 2. The testing guide
+contains complete commands and the Bubblewrap prerequisite. Keep run scripts and
+generated registrations outside Git; committed tests construct synthetic data.
