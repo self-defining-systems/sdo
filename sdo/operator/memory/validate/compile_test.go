@@ -30,10 +30,6 @@ func TestCompileAcceptsDetectorsThatBuildVetAndPass(t *testing.T) {
 }
 
 func TestCompileReportsTheFailingStage(t *testing.T) {
-	// Exercise production's filename-bearing diagnostics. CI trims ordinary
-	// builds for cache reuse; cached vet facts can retain another workspace's
-	// relative paths under trimpath, which is not the production configuration.
-	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -trimpath=false")
 	for _, test := range []struct {
 		name   string
 		rule   string
@@ -54,6 +50,20 @@ func TestCompileReportsTheFailingStage(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			root := compileTree(t)
+			if test.name == "vet" {
+				// This contract asserts fresh source positions, not cached vet
+				// stderr from an identical fixture in an older temp directory.
+				// Keep dependencies cacheable while making this source unique.
+				path := filepath.Join(root, detectorSource)
+				source, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				source = append(source, []byte("\n// diagnostic fixture: "+root+"\n")...)
+				if err := os.WriteFile(path, source, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			test.mutate(t, root)
 			diagnostics := diagnose(t, compileRequest(root))
 			if got := ruleSet(diagnostics); !same(got, []string{test.rule}) {
