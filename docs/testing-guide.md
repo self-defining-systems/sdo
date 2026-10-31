@@ -507,7 +507,14 @@ reports failures. It retains the following extended checks:
 | `TestChaos*`, `TestExhaustive*`, `TestExplorer*` | Extended interleaving/state-space campaigns | Ordinary deterministic controller tests |
 | Six 30-second fuzz mutation campaigns | Fixed mutation time adds minutes | Every checked-in fuzz seed executes in ordinary `go test` |
 
-No generated-program compilation or broker acceptance tests are removed from
-PRs. Run `bash scripts/test_go_ci.sh` locally for the PR Go suite, or add
+The exact repeated end-to-end compile tests moved to nightly are listed in
+`scripts/ci_nightly_go_tests.txt`. They cover assurance seed compilation,
+CLI/broker parity across every fixture, duplicate CLI clean-tree/JSON and
+scaffold compilations, toy-seed and isolated program validation, and repeated
+builder program/prober/baseline builds. The assurance-seed test alone took
+303 seconds locally. PRs retain `TestBuildWorkspaceCompilesApplicationDetectors`,
+compiler rejection tests, validator rule tests, broker ownership/acceptance
+contracts, CLI error/JSON diagnostics and SDK program unit tests. Nightly runs
+the unfiltered suite with race instrumentation. Run `bash scripts/test_go_ci.sh` locally for the PR Go suite, or add
 `nightly` for the full race suite. Both emit `go test -json` timing evidence;
 Python CI logs include `--durations=30`. Keep full run logs outside the repo.

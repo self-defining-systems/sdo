@@ -32,7 +32,8 @@ def test_pr_ci_has_at_most_three_jobs_without_matrix_or_path_skips() -> None:
 def test_extended_checks_have_scheduled_and_manual_coverage() -> None:
     config = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
     triggers = config.get("on", config.get(True, {}))
-    assert "schedule" in triggers and "workflow_dispatch" in triggers
+    assert "schedule" in triggers
+    assert "workflow_dispatch" in triggers
     assert "images" in config["jobs"]
     commands = "\n".join(step.get("run", "") for step in config["jobs"]["extended"]["steps"])
     assert "scripts/test_go_ci.sh nightly" in commands
