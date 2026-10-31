@@ -833,6 +833,7 @@ Tests that need processes or real sockets must be integration-tagged. Use the
 [fidelity ledger](simulation-fidelity.md) to distinguish modeled edges from real
 cluster coverage; the memory-host and full controller driver remain follow-up work.
 
+
 ## Go deterministic simulation policy
 
 The Go codebase (operator modules and benchmark Go) uses deterministic tests by

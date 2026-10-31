@@ -187,7 +187,7 @@ func contains(values []string, want string) bool {
 	return false
 }
 
-func TestMetricsURLIsForwardedAcrossOperateAndControllerJobsOnlyWhenSet(t *testing.T) {
+func TestMetricsURLIsForwardedAcrossOperateAndControllerJobs(t *testing.T) {
 	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
 	operate, err := install.OperateJob(cfg, "healthy", "operation-1", 1)
 	if err != nil {
@@ -198,8 +198,8 @@ func TestMetricsURLIsForwardedAcrossOperateAndControllerJobsOnlyWhenSet(t *testi
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{operate.Spec.Template.Spec.Containers[0].Args, plan.Job.Spec.Template.Spec.Containers[0].Args} {
-		if contains(args, "--metrics-url") {
-			t.Fatalf("the default install must not mention metrics: %v", args)
+		if !contains(args, "--metrics-url") {
+			t.Fatalf("the default install must configure metrics: %v", args)
 		}
 	}
 	cfg.MetricsURL = "http://prometheus.monitoring:9090"

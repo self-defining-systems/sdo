@@ -136,7 +136,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			}
 		}
 		trimReflectionClosure(closed)
-		request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics}
+		request := &contracts.ReflectionRequest{MetricsSource: closed.GetRequest().GetMetricsSource(), Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics}
 		if w.Catalog != nil {
 			snapshot, err := w.Catalog.Snapshot(ctx)
 			if err != nil {

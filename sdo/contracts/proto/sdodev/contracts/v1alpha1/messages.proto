@@ -229,7 +229,16 @@ message OperationalArtifactProposal {
 }
 
 // IncidentRequest is the snapshot the controller dispatches to the responder.
+// Explicit publishing capabilities; an empty query_url means no configured source.
+message MetricsSource {
+  string query_url = 1;
+  bool annotated_pod_scraping = 2;
+  // Full OTLP HTTP metrics URL, not a gRPC endpoint.
+  string otlp_metrics_url = 3;
+}
+
 message IncidentRequest {
+  MetricsSource metrics_source = 26;
   string schema_version = 1 [(buf.validate.field).string.const = "sdo.dev/v1alpha1"];
   string application = 2 [(buf.validate.field).string.min_len = 1];
   string namespace = 3 [(buf.validate.field).string.min_len = 1];

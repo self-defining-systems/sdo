@@ -69,6 +69,8 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	}
 	// The generic metrics detectors are installed only where a metrics source
 	// is configured; the judge's own check and the broker must agree.
+	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
+	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
 	buildBackend := deployment.KubernetesBuildBackend{
 		Client: client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
@@ -105,6 +107,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Workers: workers, Readiness: readiness,
 		Verifier: deployment.IndependentHealthVerifier{
 			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: readiness,
+			Probe: deployment.AcceptedDetectorProbe{MetricsURL: config.Install.MetricsURL},
 		}, Installer: installer,
 	}
 	return coordinator.Run(ctx, config.Lifecycle)

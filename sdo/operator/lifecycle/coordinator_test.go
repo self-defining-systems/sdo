@@ -264,7 +264,7 @@ func testCoordinator(t *testing.T) (Coordinator, *fakeBroker, *fakeExecutor, *[]
 
 func TestCoordinatorPublishesEachRoleBeforeIndependentVerification(t *testing.T) {
 	c, b, e, events := testCoordinator(t)
-	result, err := c.Run(context.Background(), Config{OperationID: "init-1", Application: "demo", Namespace: "demo", HealthObjective: "stay healthy", RegistryHost: "registry.demo.svc:5000", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 2})
+	result, err := c.Run(context.Background(), Config{OperationID: "init-1", Application: "demo", Namespace: "demo", HealthObjective: "stay healthy", MetricsSource: &contracts.MetricsSource{QueryUrl: "http://metrics", AnnotatedPodScraping: true, OtlpMetricsUrl: "http://metrics/api/v1/otlp/v1/metrics"}, RegistryHost: "registry.demo.svc:5000", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,6 +294,9 @@ func TestCoordinatorPublishesEachRoleBeforeIndependentVerification(t *testing.T)
 	judgeRequest := &contracts.HealthJudgeRequest{}
 	if err := e.tasks[1].GetRequest().UnmarshalTo(judgeRequest); err != nil {
 		t.Fatal(err)
+	}
+	if judgeRequest.GetMetricsSource().GetQueryUrl() != "http://metrics" || !judgeRequest.GetMetricsSource().GetAnnotatedPodScraping() {
+		t.Fatal("judge lost metrics capabilities")
 	}
 	if judgeRequest.GetAcceptedSourceCommit() != result.SourceCommit || len(judgeRequest.GetSourceResources()) != 1 || judgeRequest.GetSourceResources()[0].GetSource() != "deploy.yaml" {
 		t.Fatalf("judge did not receive accepted source facts: %+v", judgeRequest)

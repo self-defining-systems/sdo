@@ -181,7 +181,7 @@ func stateChangesContract(state *StateChanges) *contracts.StateChanges {
 }
 
 func incidentRequestContract(request IncidentRequest) (*contracts.IncidentRequest, error) {
-	result := &contracts.IncidentRequest{
+	result := &contracts.IncidentRequest{MetricsSource: request.MetricsSource,
 		SchemaVersion: request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
 		IncidentId: request.IncidentID, Findings: make([]*contracts.Finding, 0, len(request.Findings)),
 		DetectorHistory: evaluationsContract(request.DetectorHistory), SurfacedPlaybooks: make([]*contracts.SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)),
@@ -503,7 +503,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 	if message == nil {
 		return nil
 	}
-	result := &IncidentRequest{
+	result := &IncidentRequest{MetricsSource: message.GetMetricsSource(),
 		SchemaVersion: message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
 		IncidentID: message.GetIncidentId(), Findings: findingsState(message.GetFindings()),
 		DetectorHistory:   evaluationsState(message.GetDetectorHistory()),

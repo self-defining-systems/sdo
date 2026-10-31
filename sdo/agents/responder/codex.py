@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
+from sdo.agents.metrics_context import metrics_context
 from sdo.agents.provider import resolve_agent
 from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
@@ -754,7 +755,9 @@ def _prompt_request(request: IncidentRequest) -> dict[str, object]:
 def _responder_prompt(request: IncidentRequest) -> str:
     if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
-    extra_instructions = os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip()
+    extra_instructions = (
+        metrics_context(request.metrics_source) + "\n" + os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip()
+    )
     additional_context = (
         f"\nAdditional environment-specific instructions:\n{extra_instructions}\n" if extra_instructions else ""
     )

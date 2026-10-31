@@ -5,6 +5,7 @@ import "testing"
 func TestUsageProxyGrants(t *testing.T) {
 	for _, split := range []bool{false, true} {
 		cfg := testConfig()
+		cfg.DisableObservability = true // This test isolates the controller node-reader grant.
 		if !split {
 			cfg.ControlNamespace = cfg.Namespace
 		}
