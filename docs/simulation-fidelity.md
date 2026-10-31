@@ -6,14 +6,23 @@ describes how gaps are found and closed; every closed or accepted gap updates th
 
 ## Modeled
 
-The simulated API server (`sdo/operator/runtime/sim_kube_test.go`) models:
+The simulated API server (`sdo/operator/runtime/sim`) models:
 
 - server-side defaulting, quantity normalization and resourceVersion preconditions on patches;
 - status-only resourceVersion churn between a caller's read and its patch;
 - a patch that commits and then returns a transport error (outcome unknown to the caller);
 - informer caches that keep serving the pre-write object for a seeded number of reads;
-- a virtual clock whose sleeps advance time without blocking;
-- one seeded RNG per run, consumed in call order, so a failing seed replays (`SDO_SIM_SEED`).
+- a `testing/synctest` bubble: controller timers, injected clocks and sleeps share virtual time;
+- one seeded RNG per run, consumed in call order, so a failing seed replays (`SDO_SIM_SEED`);
+- all snapshot resource kinds, namespace isolation and defensive ordered object reads;
+- explicitly scheduled pod backoff/recovery, aggregated BackOff events and deployment readiness lag;
+- raw kubelet summary/cAdvisor samples and timestamped current/previous container logs through an
+  in-memory HTTP RoundTripper, consumed by the real snapshot, usage and logs collectors;
+- terminated-container tail retention through the production logs observer;
+- HTTP, gRPC health, Redis, Memcached, MongoDB, Postgres and MySQL handshakes over `net.Pipe`;
+- scripted API errors, commit-then-timeout, stale cache reads, dropped cache updates until relist,
+  delayed/failing kubelet/log/probe reads and per-edge partitions;
+- registered invariant hooks and a 45-second host-time seed-sweep budget.
 
 The pure lifecycle core (`runtime/lifecyclecore`) is covered by exhaustive explorers of closure and
 reflection under bounded API faults, restarts and worker attempts (see `docs/lifecycle-state-machine.md`).
@@ -24,11 +33,17 @@ These are open gaps the simulation harness work closes; until then, cover them w
 tests or kind runs.
 
 - the real controller driver end to end (deferred slices of the lifecycle plan);
-- pod lifecycle and rollout progression timing; readiness lag;
-- kubelet resource usage, container logs and terminated-container tails;
-- service-to-service protocol endpoints and network partitions;
 - the memory-host subprocess, its swap, crash and restart;
 - NetworkPolicy enforcement and DNS.
+
+The harness is a serial edge/event model, not a complete Kubernetes implementation. Pod transitions
+and deployment completion are explicitly scheduled; it does not automatically spawn ReplicaSets,
+schedule pods, pull images or run workloads. Kubelet measurements/log bytes are scenario inputs,
+not a resource-consumption model. The cache models missed updates/relist, not client-go watch streams.
+The HTTP transport currently supports snapshot lists, kubelet proxy and log reads; plan mutations use
+`Kube` directly. Protocol peers implement the credential-free link probe handshakes, not databases or
+service application logic. No kind conformance run was performed for this extraction; claims above
+are bounded by the synthetic conformance tests.
 
 ## Accepted bounds
 
@@ -39,3 +54,5 @@ that covers it.
 
 | Date | Source run | Class | Gap | Status | Simulation change and conformance test |
 | --- | --- | --- | --- | --- | --- |
+
+| 2026-10-31 | Synthetic shared-world conformance | Missing behavior / timing / fault | Shared pod, input and protocol edges | Modeled within bounds above | `TestCrashLoopRecovery`, `TestSimRealDetectionInputs`, `TestFaultSchedule`, `TestHermeticProtocolDialer` |
