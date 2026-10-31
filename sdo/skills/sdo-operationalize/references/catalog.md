@@ -13,6 +13,10 @@ Each item says what to check, which source fact it comes from, and the input tha
 - **Usage**: kubelet container and volume usage (`sdo.dev/operator/sdk/usage`): CPU, memory working set and RSS
   with requests and limits, optional CPU throttling, and PVC capacity, use and inodes, over a rolling window of
   recent samples. No observability stack needed; collected only while a detector watches `usage.Watch`.
+- **Logs**: bounded container-log pattern counts (`sdo.dev/operator/sdk/logs`): RE2 patterns per query, matched
+  and total line counts per container per cycle, a few short excerpts, truncation flags, and optionally the tail
+  of the previous terminated container. At most 64 KiB per container per cycle; collected only while a detector
+  watches `logs.Watch`.
 - **Metrics**: PromQL threshold rules (`sdo.dev/operator/sdk/metrics`). Only when the task says a metrics source
   is configured, and only over series whose exporter you can find in the source.
 
@@ -106,7 +110,18 @@ scenarios, workloads and links.
 - Absence: a series that the healthy application always reports disappears, for example a scrape target going
   down. Write the query so absence yields a value, as with `absent()`.
 
-## 7. Logs, change windows, traces
+## 7. Logs (Logs, warn)
 
-Not expressible yet: no detector input reads logs, compares golden signals before and after a change, or reads
-traces. Error strings found in the source still belong in playbooks as diagnosis hints.
+- Known-bad lines: patterns built from the error strings the source logs (`log.Error`, `panic`, fatal paths)
+  and generic ones (stack traces, connection refused, deadline exceeded, out of memory). Fire on
+  `logs.Appeared`, so a line that also appears while healthy never pages.
+- Error rate: `logs.Rate` of error-level lines above the healthy rate. Truncated evidence makes the rate a lower
+  bound, so it can still fire but never clears on it.
+- Silence: `logs.Silent` for a workload that logs steadily while healthy (for example a request log) and goes
+  quiet while Running.
+- Crash reason: set `Previous` on a query so a restarted container's last lines appear in the evidence.
+- Keep patterns specific: one regex per failure the source names, not one per log line.
+
+## 8. Change windows and traces
+
+Not expressible yet: no detector input compares golden signals before and after a change, or reads traces.

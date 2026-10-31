@@ -24,6 +24,7 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
    - data stores and queues the code uses;
    - config files and the keys the code reads, with their formats;
    - records the application seeds at startup;
+   - error strings the code logs, and log lines the healthy application always emits;
    - metrics the code exports, and whether the source deploys a Prometheus;
    - caller timeouts and deadlines.
 2. List what already runs, so you do not duplicate it: `sdo-operator memory ls --kind detector`, and the
@@ -52,8 +53,8 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
   or another severity in separate health detectors with their own IDs, each listed in your result.
 - Evidence is the agent's only view of the alert. Put the observed value, the expected value, the source of the
   expectation and how it was computed in `Finding.Evidence`.
-- Cheapest input first: snapshot reads are free; traffic costs requests; usage and metrics cost one read per
-  cycle. Never probe
+- Cheapest input first: snapshot reads are free; traffic costs requests; usage, logs and metrics cost one read
+  per cycle. Never probe
   faster than the judge task's traffic limits.
 - Derive every expectation from observed relations or from the source, never from one deployment's names or
   values. A check must stay true after a legitimate redeploy.
@@ -62,7 +63,7 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
 ## After an incident (reflection)
 
 - A fault that only a journey check caught, with no cause check naming it: add an incident detector for its
-  mechanism from catalog layers 2-6. The next occurrence is then caught earlier and localized.
+  mechanism from catalog layers 2-7. The next occurrence is then caught earlier and localized.
 - A detector that fired while nothing was wrong: tighten it with the outcome's evidence. It must still fire on
   its captured cases and stay quiet on recorded healthy baselines.
 - Responders own incident detectors and the health judge owns health detectors. The `sdo-detector-authoring`
