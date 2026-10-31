@@ -62,15 +62,20 @@ jobs:
       - name: Install pinned proto tools
         if: steps.proto-tools.outputs.cache-hit != 'true'
         run: |
-          go install github.com/bufbuild/buf/cmd/buf@v1.73.0
+          curl --fail --location --retry 3 https://github.com/bufbuild/buf/releases/download/v1.73.0/buf-Linux-x86_64 -o /tmp/buf
+          install -m 755 /tmp/buf "$(go env GOPATH)/bin/buf"
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
       # check_errors already includes types, architecture, proto and Go mains.
-      - name: Formatting and static contracts
+      - name: Static contracts and Python unit tests
         run: |
           bash scripts/format_code.sh --check
-          bash scripts/check_errors.sh
-      - name: Python unit tests and timing evidence
-        run: bash scripts/test_python.sh --durations=30
+          bash scripts/check_errors.sh > /tmp/checks.log 2>&1 &
+          checks=$!
+          status=0
+          bash scripts/test_python.sh --durations=30 || status=1
+          wait "$checks" || status=1
+          cat /tmp/checks.log
+          exit "$status"
 
   tests:
     name: Go tests
