@@ -119,3 +119,14 @@ Each core accepts plain events and returns decisions/effects. Other subsystems
 send events through its driver. Internal visibility prevents outsiders importing
 the edge; depguard must also prevent the core importing its own edge. Other
 subsystem extractions are follow-up work, not part of this task.
+
+## Onboarding
+
+The optional human goal is free text and remains human-owned. Go verifies the source
+plan and publishes accepted source, then writes a deterministic architecture inventory
+from its manifests. No architecture agent is dispatched. A fresh health judge authors
+ordinary health detectors, synthetic traffic and the default health-objective playbook.
+There is no fixed detector ID/Spec, goal digest, coverage echo or adversarial refinement
+round. The shared memory check gates publication. Bounded validation corrections and
+transport retries remain separate from authoring. Independent live health verification
+precedes controller installation.

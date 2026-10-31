@@ -447,7 +447,7 @@ def _inlined_health_objective(request: IncidentRequest) -> str:
     return ""
 
 
-#: arch.md is inlined only when it is at most this long; otherwise it stays a path. Deployer-owned and
+#: arch.md is inlined only when it is at most this long; otherwise it stays a path. Go-generated and
 #: read-only for the responder, so it is capped like the warm playbook text rather than goal.md's tighter
 #: bound. Without this, every incident (cold and warm) pays a separate shell round-trip to read it.
 _ARCH_INLINE_MAX_CHARS = 8_000

@@ -281,7 +281,7 @@ func TestInitialBootstrapUsesSequentialOwnedProposals(t *testing.T) {
 		{"bootstrap-source", Deployer, map[string]string{
 			"app.txt": "deployed source\n",
 		}},
-		{"bootstrap-architecture", Deployer, map[string]string{
+		{"bootstrap-architecture", Upkeep, map[string]string{
 			".sdo/arch.md": "---\nschema_version: 1\ngenerated_at_commit: SOURCE_COMMIT\napplication: test\n---\nArchitecture\n",
 		}},
 		{"bootstrap-health", HealthJudge, map[string]string{

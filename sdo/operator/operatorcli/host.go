@@ -84,8 +84,8 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if flags.NArg() != 0 {
 		return HostConfig{}, fmt.Errorf("unexpected host arguments: %v", flags.Args())
 	}
-	if (*goalFile != "") == (*objective != "") {
-		return HostConfig{}, errors.New("host requires exactly one of --health-objective/--goal or --goal-file")
+	if *goalFile != "" && *objective != "" {
+		return HostConfig{}, errors.New("host accepts at most one of --health-objective/--goal or --goal-file")
 	}
 	if *goalFile != "" {
 		if !filepath.IsAbs(*goalFile) {
@@ -102,7 +102,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	}
 	for name, value := range map[string]string{
 		"repository": *repository, "namespace": *namespace, "application": *application,
-		"health objective": *objective, "operation ID": *operationID,
+		"operation ID":     *operationID,
 		"controller image": *controllerImage, "responder image": *responderImage,
 		"validator image": *validatorImage, "BuildKit image": *buildkitImage,
 		"repository PVC": *repositoryPVC, "agent credentials Secret": *credentialsSecret,

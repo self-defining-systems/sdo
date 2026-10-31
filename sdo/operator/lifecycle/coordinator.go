@@ -4,7 +4,6 @@ package lifecycle
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"slices"
@@ -40,7 +39,7 @@ type ProposalBroker interface {
 type ArtifactWriter interface {
 	WriteGoal(checkout, application, objective string) error
 	WriteSchema(checkout string) error
-	WriteArchitecture(checkout, application, acceptedSourceCommit, fingerprint, summary string) error
+	WriteArchitecture(checkout, application, acceptedSourceCommit, summary string) error
 	ReadArchitecture(checkout string) (string, error)
 }
 
@@ -97,7 +96,7 @@ type Coordinator struct {
 type Config struct {
 	OperationID, Application, Namespace, HealthObjective string
 	RegistryHost                                         string
-	DeployerAgentID, ArchitectureAgentID, JudgeAgentID   string
+	DeployerAgentID, JudgeAgentID                        string
 	MaxAttempts                                          int
 }
 
@@ -111,13 +110,15 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 		return Result{}, err
 	}
 	var result Result
-	goal, err := c.bootstrap(ctx, cfg.OperationID+"-goal", broker.Human, func(checkout string) error {
-		return c.Bootstrap.WriteGoal(checkout, cfg.Application, cfg.HealthObjective)
-	})
-	if err != nil {
-		return result, fmt.Errorf("publish human goal: %w", err)
+	if strings.TrimSpace(cfg.HealthObjective) != "" {
+		goal, err := c.bootstrap(ctx, cfg.OperationID+"-goal", broker.Human, func(checkout string) error {
+			return c.Bootstrap.WriteGoal(checkout, cfg.Application, cfg.HealthObjective)
+		})
+		if err != nil {
+			return result, fmt.Errorf("publish human goal: %w", err)
+		}
+		result.GoalCommit = goal.Commit
 	}
-	result.GoalCommit = goal.Commit
 	schema, err := c.bootstrap(ctx, cfg.OperationID+"-schema", broker.Upkeep, c.Bootstrap.WriteSchema)
 	if err != nil {
 		return result, fmt.Errorf("publish operator schema: %w", err)
@@ -137,7 +138,7 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 		result.SourceCommit = sourceReceipt.Commit
 		architectureID := fmt.Sprintf("%s-architecture-%d", cfg.OperationID, attempt)
-		architectureReceipt, architectureReady, nextFeedback, err := c.architecture(ctx, architectureID, cfg, attempt, sourceReceipt.Commit, feedback)
+		architectureReceipt, architectureReady, nextFeedback, err := c.architecture(ctx, architectureID, cfg, sourceReceipt.Commit)
 		if err != nil {
 			return result, fmt.Errorf("architecture attempt %d: %w", attempt, err)
 		}
@@ -197,15 +198,14 @@ func (c Coordinator) validate(cfg Config) error {
 	if c.Broker == nil || c.Bootstrap == nil || c.Registry == nil || c.Workers == nil || c.Readiness == nil || c.Verifier == nil || c.Installer == nil {
 		return errors.New("broker, artifact store, registry, workers, source readiness, health verifier, and installer are required")
 	}
-	if cfg.OperationID == "" || cfg.Application == "" || cfg.Namespace == "" || strings.TrimSpace(cfg.HealthObjective) == "" || cfg.MaxAttempts < 1 {
-		return errors.New("operation ID, application, namespace, objective, and positive max attempts are required")
+	if cfg.OperationID == "" || cfg.Application == "" || cfg.Namespace == "" || cfg.MaxAttempts < 1 {
+		return errors.New("operation ID, application, namespace and positive max attempts are required")
 	}
 	for _, choice := range []struct {
 		id      string
 		request proto.Message
 	}{
 		{cfg.DeployerAgentID, &contracts.SourceDeploymentRequest{}},
-		{cfg.ArchitectureAgentID, &contracts.ArchitectureRequest{}},
 		{cfg.JudgeAgentID, &contracts.HealthJudgeRequest{}},
 	} {
 		if _, _, err := c.target(choice.id, choice.request); err != nil {
@@ -352,7 +352,7 @@ func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
 	return DeploymentReceipt{ProposalTreeDigest: evidence.ProposalTreeDigest, ObservedRevision: evidence.ObservedRevision, StrategyID: evidence.StrategyID, Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), ManifestPaths: append([]string(nil), evidence.ManifestPaths...), Ready: evidence.Ready}
 }
 
-func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, feedback string) (broker.Receipt, bool, string, error) {
+func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, sourceCommit string) (broker.Receipt, bool, string, error) {
 	if prior, ok, err := c.Broker.AcceptedCommit(ctx, id, broker.InitialPhase); err != nil {
 		return broker.Receipt{}, false, "", err
 	} else if ok {
@@ -373,30 +373,10 @@ func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, at
 	if err != nil {
 		return broker.Receipt{}, false, "", fmt.Errorf("read accepted source inventory for architecture: %w", err)
 	}
-	if len(facts.Fingerprint) != 64 {
-		return broker.Receipt{}, false, "", errors.New("accepted source inventory omitted topology fingerprint")
-	}
-	request := &contracts.ArchitectureRequest{Application: cfg.Application, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), SourceResources: facts.Resources, SourceTopologyFingerprint: facts.Fingerprint}
-	task, err := c.newTask(id, cfg.ArchitectureAgentID, proposal, request)
-	if err != nil {
+	if err := c.Bootstrap.WriteArchitecture(proposal.Path, cfg.Application, sourceCommit, memory.ArchitectureInventory(facts)); err != nil {
 		return broker.Receipt{}, false, "", err
 	}
-	response := &contracts.ArchitectureResult{}
-	if err := c.execute(ctx, task, response); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		if ctx.Err() != nil {
-			return broker.Receipt{}, false, "", ctx.Err()
-		}
-		return broker.Receipt{}, false, err.Error(), nil
-	}
-	if response.GetSourceCommit() != sourceCommit || strings.TrimSpace(response.GetSummaryMarkdown()) == "" || response.GetTopologyFingerprint() != facts.Fingerprint || response.GetAgentSessionId() == "" {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, false, "architecture worker returned incomplete or stale source evidence", nil
-	}
-	if err := c.Bootstrap.WriteArchitecture(proposal.Path, cfg.Application, sourceCommit, response.GetTopologyFingerprint(), response.GetSummaryMarkdown()); err != nil {
-		return broker.Receipt{}, false, "", err
-	}
-	receipt, err := c.Broker.Publish(ctx, id, broker.Deployer, broker.InitialPhase)
+	receipt, err := c.Broker.Publish(ctx, id, broker.Upkeep, broker.InitialPhase)
 	if err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, false, "broker rejected architecture: " + err.Error(), nil
@@ -478,10 +458,7 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 	if err != nil {
 		return broker.Receipt{}, false, "", nil, fmt.Errorf("read accepted source inventory: %w", err)
 	}
-	if len(facts.Fingerprint) != 64 {
-		return broker.Receipt{}, false, "", nil, errors.New("accepted source inventory omitted topology fingerprint")
-	}
-	request := &contracts.HealthJudgeRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), ArchitectureSummaryMarkdown: architectureSummary, SourceResources: facts.Resources, SourceTopologyFingerprint: facts.Fingerprint, ValidationAttempt: validationAttempt, PreviousDiagnostics: previous}
+	request := &contracts.HealthJudgeRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), ArchitectureSummaryMarkdown: architectureSummary, SourceResources: facts.Resources, ValidationAttempt: validationAttempt, PreviousDiagnostics: previous}
 	taskID := id
 	if validationAttempt > 1 {
 		// A retry is a new task: its Job and request must not collide with the
@@ -506,9 +483,9 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 		}
 		return fail(err.Error())
 	}
-	expectedDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimSpace(cfg.HealthObjective))))
+
 	if !response.GetAuthored() || len(response.GetDetectorIds()) == 0 ||
-		strings.TrimSpace(response.GetAgentSessionId()) == "" || response.GetObjectiveDigest() != expectedDigest {
+		strings.TrimSpace(response.GetAgentSessionId()) == "" {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return fail("health judge did not author detectors: " + response.GetSummary())
 	}

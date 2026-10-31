@@ -13,8 +13,8 @@ read it freely. You may write it only through an authoring flow your task names 
 
 | Artifact | Meaning | Written by |
 |---|---|---|
-| goal | the human health objective | the human |
-| architecture | how the application is built and deployed | the deployer |
+| goal | optional human-owned free text | the human |
+| architecture | deterministic manifest resources, selectors, images and declared dependencies | Go manifest inventory |
 | playbooks | how to diagnose and repair a class of fault, with optional scripts or deterministic Go programs, shared helpers and captured corpus | the responder (reflection); the health judge only for the health-objective playbook |
 | diagnostics | deterministic Go detectors (health and incident) and synthetic-traffic files | health detectors: the health judge; incident detectors: the responder (reflection) |
 | outcomes | what happened in each incident | the controller only; never edit |

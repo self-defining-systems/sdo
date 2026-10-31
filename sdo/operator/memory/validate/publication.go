@@ -266,7 +266,7 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 				return nil, err
 			}
 			touchesMemory = registered
-			for _, name := range []string{layout.GoalFile, layout.ArchitectureFile} {
+			for _, name := range []string{layout.ArchitectureFile} {
 				if _, err := os.Stat(filepath.Join(r.Root, name)); errors.Is(err, os.ErrNotExist) {
 					touchesMemory = false
 				} else if err != nil {

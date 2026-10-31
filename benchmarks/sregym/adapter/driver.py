@@ -484,6 +484,7 @@ def _deployed_lifecycle_context(
             name = config_map.get("name")
             if isinstance(name, str) and name and config_map.get("optional") is not True:
                 active_keys.add(("ConfigMap", name))
+    # Optional human goal context is useful in benchmark runs; it binds no detector digest.
     return DeployedLifecycleContext(
         health_objective=health_objective,
         active_resources=[ActiveTopologyResourceDTO(kind=kind, name=name) for kind, name in sorted(active_keys)],
@@ -668,7 +669,7 @@ def _launch_native_lifecycle(
         )
     if _has_accepted_lifecycle(repository):
         # A seeded workspace already carries an independently accepted lifecycle (goal, architecture, health
-        # detectors): install the controller over it instead of running the deployer and health judge again.
+        # detectors): install the controller over it instead of running source deployment and the health judge again.
         if args.agent_registrations:
             _publish_agent_registrations(
                 Path(args.agent_registrations),

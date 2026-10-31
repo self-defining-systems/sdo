@@ -17,9 +17,15 @@ A benchmark result can establish the harness verdict. It cannot by itself establ
 
 ## Lifecycle provenance
 
-Path: `.sdo/lifecycle-provenance.yaml`
+Current native lifecycle receipts retain goal (when supplied), schema, accepted source,
+Go-generated architecture inventory and judge commits. The judge result carries authored,
+summary, agent_session_id and logical detector_ids. Drafts carry failure_patterns and detector_ids.
+The removed objective_digest field is reserved on the wire. No model architecture session,
+round, covered_resources, source-commit echo or topology fingerprint is required.
 
-Expected sections:
+Historical path: `.sdo/lifecycle-provenance.yaml`
+
+Historical sections (not requirements for current runs):
 
 - `deployer`: session ID, source commit, topology fingerprint, resource inventory, and architecture summary. The model returns only the commit, fingerprint, and summary; the controller attaches the resource inventory deterministically from tracked manifests, so the inventory is a controller fact rather than model output.
 - `active_topology` (when supplied by the deployment adapter): sorted kind/name references for the deployed source variant and required non-optional ConfigMap dependencies.
@@ -27,7 +33,9 @@ Expected sections:
 - `health_judge_rounds`: ordered structured attempts with distinct session IDs, round numbers, objective digest, covered resources, source, and tests.
 - `validation` (when the validator exposes an immutable identity): the diagnostics-tree digest, immutable validator identity, and `sdo.lifecycle-validation/v1` attestation schema. An exact match permits validation reuse without recompilation; a missing or mismatched field requires fresh isolated validation.
 
-Correlate the deployer source commit with Git and `arch.md`. Correlate the objective digest with the exact text in `goal.md`. When `active_topology` is present, verify that `covered_resources` contains no inactive source variants. A reused lifecycle is credible only when current source topology, active topology, and detector validation still match.
+For current runs, correlate the accepted source commit with Git and Go's manifest inventory in `arch.md`.
+The goal is optional free text; do not require objective digests, coverage echoes or adversarial rounds.
+Historical records may retain those fields. A reused lifecycle requires current source and detector validation.
 
 ## Detailed evidence by workflow step
 

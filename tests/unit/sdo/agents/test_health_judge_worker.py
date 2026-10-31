@@ -1,4 +1,3 @@
-import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -36,7 +35,6 @@ def judge_task(tmp_path: Path, architecture: str = "# Architecture\nFacts.") -> 
         health_objective="stay healthy",
         accepted_source_commit="accepted-source",
         architecture_summary_markdown=architecture,
-        source_topology_fingerprint="a" * 64,
         source_resources=[SourceResource(kind="Deployment", name="api", namespace="demo", source="app.yaml")],
         attempt=1,
     )
@@ -65,7 +63,6 @@ def test_judge_worker_preserves_direct_edit_proposal_identity(tmp_path: Path) ->
             authored=True,
             summary="authored",
             agent_session_id="judge-1",
-            objective_digest="digest",
             detector_ids=["health-objective"],
         )
 
@@ -94,22 +91,8 @@ def test_judge_worker_requires_typed_architecture_before_agent_execution(tmp_pat
         run_judge_task(judge_task(tmp_path, ""), "result", Publisher())
 
 
-def test_native_judge_rejects_draft_with_wrong_objective_digest() -> None:
-    artifact = SimpleNamespace(objective_digest="0" * 64)
-    with pytest.raises(ValueError, match="objective digest"):
-        _validate_judge_draft(artifact, health_objective="stay healthy", source_commit="source")
-
-
-def test_judge_rejects_missing_go_prepared_source_inventory(tmp_path: Path) -> None:
-    task_path = judge_task(tmp_path)
-    task = parse_json(task_path.read_text(), AgentTask())
-    request = HealthJudgeRequest()
-    assert task.request.Unpack(request)
-    request.source_topology_fingerprint = ""
-    task.request.Pack(request)
-    task_path.write_text(to_canonical_json(task))
-    with pytest.raises(ValueError, match="source inventory"):
-        run_judge_task(task_path, "result", Publisher())
+def test_native_judge_accepts_ordinary_detector_metadata() -> None:
+    _validate_judge_draft(SimpleNamespace(failure_patterns=["bad config"], detector_ids=["app-config"]))
 
 
 @pytest.mark.parametrize("retry", [False, True])
@@ -125,10 +108,6 @@ def test_judge_authors_final_files_in_writable_session(
         request.validation_attempt = 2
         request.previous_diagnostics.add(rule="detector.manifest", path="m.yaml", line=2, message="bad", hint="fix")
     output = {
-        "round": 1,
-        "objective_digest": hashlib.sha256(b"stay healthy").hexdigest(),
-        "source_commit": "accepted-source",
-        "covered_resources": [],
         "failure_patterns": ["unavailable"],
         "detector_ids": ["health-objective"],
     }
@@ -155,8 +134,7 @@ def test_judge_authors_final_files_in_writable_session(
     assert "sdo-operator memory check" in prompt
     assert "SDO_ACTOR=health_judge" in prompt
     assert "SDO_PHASE=initial" in prompt
-    assert "a" * 64 in prompt
-    assert '"source": "app.yaml"' in prompt
+    assert "app.yaml" in prompt
     if retry:
         assert "[detector.manifest] m.yaml:2: bad (hint: fix)" in prompt
     assert (
@@ -165,10 +143,6 @@ def test_judge_authors_final_files_in_writable_session(
         .endswith("// authored bytes\n")
     )
     assert set(HealthJudgeDraft.model_fields) == {
-        "round",
-        "objective_digest",
-        "source_commit",
-        "covered_resources",
         "failure_patterns",
         "detector_ids",
     }

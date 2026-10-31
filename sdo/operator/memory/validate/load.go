@@ -295,7 +295,12 @@ func (s *run) visit(rel, abs string) error {
 		} else {
 			s.schema = version
 		}
-	case layout.KindGoal, layout.KindArchitecture:
+	case layout.KindGoal:
+		if !strings.HasPrefix(string(data), "---\n") {
+			break
+		}
+		fallthrough
+	case layout.KindArchitecture:
 		if doc := s.parseDocument(file); doc != nil {
 			if kind == layout.KindGoal {
 				s.goal = doc

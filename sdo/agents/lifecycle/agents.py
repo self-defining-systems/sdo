@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,26 +20,6 @@ if TYPE_CHECKING:
     from agentshim import CommandExecutor
 
 
-#: The health-objective detector watches every Kubernetes kind the detector SDK's
-#: snapshot exposes except high-churn Events, in this order. The set follows the SDK,
-#: not any fault class, so a judge can check any object the snapshot offers.
-HEALTH_OBJECTIVE_WATCHES: tuple[tuple[str, str], ...] = (
-    ("v1", "Pod"),
-    ("v1", "ConfigMap"),
-    ("v1", "Service"),
-    ("apps/v1", "Deployment"),
-    ("apps/v1", "ReplicaSet"),
-    ("networking.k8s.io/v1", "NetworkPolicy"),
-    ("v1", "Endpoints"),
-    ("discovery.k8s.io/v1", "EndpointSlice"),
-)
-
-#: Kinds whose source-backed objects count as health-judge coverage provenance: the
-#: application configuration kinds the deployment adapter observes as active topology.
-#: Coverage is controller-canonicalized metadata; it selects no check.
-COVERED_RESOURCE_KINDS: frozenset[str] = frozenset({"ConfigMap", "Deployment", "NetworkPolicy", "Service"})
-
-
 class LifecycleAgentError(RuntimeError):
     """Raised when a lifecycle agent cannot produce a valid structured handoff."""
 
@@ -56,49 +34,9 @@ class TopologyResourceDTO(BaseModel):
     dependencies: list[str]
 
 
-class ActiveTopologyResourceDTO(BaseModel):
-    """A resource selected by the deployment backend for the active variant."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-
-
-class DeployerDraft(BaseModel):
-    """Structured deployer output.
-
-    The resource inventory is deliberately absent: it is a deterministic controller
-    fact derived from tracked manifests, so the controller attaches it instead of
-    asking the model to transcribe it.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    source_commit: str = Field(min_length=1)
-    topology_fingerprint: str = Field(min_length=64, max_length=64)
-    architecture_summary_markdown: str = Field(min_length=20)
-
-
-class DeployerHandoff(DeployerDraft):
-    """A deployer draft attributed to the fresh agent session that produced it."""
-
-    session_id: str = Field(min_length=1)
-
-
-class DeployerAssessment(DeployerHandoff):
-    """A published deployer handoff with the controller-derived resource inventory."""
-
-    resources: list[TopologyResourceDTO]
-
-
 class HealthJudgeDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    round: int = Field(ge=1)
-    objective_digest: str = Field(min_length=64, max_length=64)
-    source_commit: str = Field(min_length=1)
-    covered_resources: list[TopologyResourceDTO]
     failure_patterns: list[str] = Field(min_length=1)
     detector_ids: list[str] = Field(min_length=1)
 
@@ -106,9 +44,6 @@ class HealthJudgeDraft(BaseModel):
 class HealthJudgeArtifact(HealthJudgeDraft):
     session_id: str = Field(min_length=1)
 
-
-_WATCH_LIST = ", ".join(f"{api_version} {kind}" for api_version, kind in HEALTH_OBJECTIVE_WATCHES)
-_COVERED_KINDS = ", ".join(sorted(COVERED_RESOURCE_KINDS))
 
 #: Health-judge instructions for direct synthetic traffic edits.
 TRAFFIC_AUTHORING = """Synthetic traffic (health-judge owned). For an application that serves HTTP, also author
@@ -155,7 +90,7 @@ when the same scenarios recover. Every scenario must therefore succeed against t
    workloads/links.yaml: apiVersion sdo.dev/v1alpha1, kind TrafficWorkload, name `links`,
    purpose `link-probe`, and `links: [{from: <calling Service>, to: <called Service>, port: <the port the called
    Service exposes>, protocol: <how the caller talks to it>}]`. Both names must be source-backed Services in the
-   deployer handoff and the port the one the caller really uses, taken from the source, not guessed. Include the
+   manifest inventory and the port the one the caller really uses, taken from the source, not guessed. Include the
    application's own data stores; do not declare links to services the application does not run itself. Choose the
    protocol the caller uses: http (optional http.path and http.statusMin/statusMax), grpc (health check; grpc.tls
    when required), redis, memcached, mongodb, postgres or mysql; use tcp only when none fits. These probes prove the
@@ -178,25 +113,15 @@ alerts detector itself when a source is configured."""
 
 
 class LifecycleAgentBackend(Protocol):
-    def run_deployer(
-        self,
-        *,
-        repository: Path,
-        application: str,
-        correction_feedback: str | None,
-    ) -> DeployerHandoff: ...
-
     def run_health_judge(
         self,
         *,
         repository: Path,
         application: str,
         health_objective: str,
-        deployer: DeployerAssessment,
-        round_index: int,
-        previous: HealthJudgeArtifact | None,
+        architecture: str,
+        resources: list[TopologyResourceDTO],
         correction_feedback: str | None,
-        active_resources: list[ActiveTopologyResourceDTO] | None = None,
     ) -> HealthJudgeArtifact: ...
 
 
@@ -220,76 +145,24 @@ class CodexLifecycleBackend:
         self.timeout_seconds = timeout_seconds
         self.executor = executor
 
-    def run_deployer(
-        self,
-        *,
-        repository: Path,
-        application: str,
-        correction_feedback: str | None,
-    ) -> DeployerHandoff:
-        feedback = correction_feedback or "No prior attempt; inspect the source from first principles."
-        prompt = f"""You are the SDO deployer for application {application!r}.
-
-This is a fresh, independent, read-only session. Inspect the Git repository and its tracked deployment artifacts.
-Return a complete source-grounded architecture summary that names every source-backed component, its selectors and
-dependencies, configuration inputs, images, and build/deployment relationships. In architecture_summary_markdown,
-mention every resource name from the trusted controller feedback verbatim, including low-level data stores and
-observability resources; do not collapse named resources into categories. Do not edit any file and do not infer
-resources absent from tracked source. The response has no resource inventory field: the controller attaches the
-deterministic inventory from tracked manifests itself. The controller will independently compare your source commit,
-topology fingerprint, and summary coverage with deterministic repository inspection.
-
-Ground the assessment in the current application checkout and the supplied SDO references. Never inspect
-sibling experiments, benchmark results, hidden fault labels, or external oracles.
-
-Correction feedback from the prior fresh attempt:
-{feedback}
-"""
-        draft, session_id = self._execute(repository, prompt, DeployerDraft)
-        return DeployerHandoff(**draft.model_dump(), session_id=session_id)
-
     def run_health_judge(
         self,
         *,
         repository: Path,
         application: str,
         health_objective: str,
-        deployer: DeployerAssessment,
-        round_index: int,
-        previous: HealthJudgeArtifact | None,
+        architecture: str,
+        resources: list[TopologyResourceDTO],
         correction_feedback: str | None,
-        active_resources: list[ActiveTopologyResourceDTO] | None = None,
     ) -> HealthJudgeArtifact:
-        objective_digest = hashlib.sha256(health_objective.strip().encode()).hexdigest()
-        previous_payload = previous.model_dump_json(indent=2) if previous else "null"
-        active_payload = (
-            json.dumps([resource.model_dump(mode="json") for resource in active_resources], indent=2)
-            if active_resources is not None
-            else "null"
-        )
-        feedback = correction_feedback or "No validator feedback is available for the first round."
-        prompt = f"""You are the independent SDO health judge for application {application!r}, authoring round
-{round_index} of a bounded three-round adversarial refinement. This is a fresh session with write access to
-the proposal checkout and no conversation state. Continuity comes only from the structured deployer handoff
-and prior detector metadata below.
-
-Human-owned health objective:
-{health_objective}
-
-Authoritative objective SHA-256: {objective_digest}
-Copy this exact value into objective_digest and the detector's healthObjectiveDigest constant; do not recompute it.
-
-Published deployer assessment:
-{deployer.model_dump_json(indent=2)}
-
-Controller-observed active topology (null when no deployment observation is available):
-{active_payload}
-
-Prior judge artifact (null on round one):
-{previous_payload}
-
-Validation feedback:
-{feedback}
+        feedback = correction_feedback or "No validator feedback."
+        prompt = f"""You are the independent SDO health judge for application {application!r}.
+This is one fresh authoring session in an isolated proposal checkout.
+Optional human-owned goal: {health_objective or "No goal supplied; infer application health from source."}
+Go-generated manifest inventory:
+{architecture}
+Resources: {[resource.model_dump() for resource in resources]}
+Validation feedback: {feedback}
 
 Author deterministic Go detector code and deterministic Go tests using only sdo.dev/operator/sdk's
 DetectionContext snapshot methods and Kubernetes API types already available to SDO diagnostics. The application
@@ -301,35 +174,23 @@ synthetic traffic the application needs.
 Ground the assessment in the current application checkout and the supplied SDO references. Never inspect
 sibling experiments, benchmark results, hidden fault labels, or external oracles.
 
-The detector must compile as package objective, export New() sdk.Detector,
-encode the SHA-256 digest of the exact human objective in a healthObjectiveDigest constant, and detect only
-objective-specific observable failure conditions. Its tests must include matching and near-miss cases. On later
-rounds, identify failure patterns missed by the prior code and revise it rather than merely describing them.
-Every Go func declaration must be package-level; Go does not permit named helper functions inside test functions.
-Close every composite literal, control-flow block, and function before starting the next declaration. Mentally parse
-both complete files before returning them, paying special attention to the line immediately before each `func`.
-
-The detector's Spec() is a fixed controller contract, not a design choice. Return exactly ID "health-objective",
-Class sdk.DetectorClassHealth, Owner sdk.DetectorOwnerHealthJudge, Interval 30*time.Second; watches for every
-Kubernetes kind the snapshot exposes except Events ({_WATCH_LIST}); persistence Firing 2 and Clearing 2;
-batching Severity sdk.SeverityCritical and Debounce 500*time.Millisecond; playbooks
-[]string{{"health-objective"}}; no originating incident; and OriginatingCommit
-"lifecycle-bootstrap". Do not substitute incident/responder ownership or another ID.
+Author ordinary health detectors with logical IDs of your choosing. Each exports New() sdk.Detector,
+uses package-level Go functions, and has matching and near-miss tests. Choose watches, intervals,
+persistence and batching appropriate to the source-specific check. Use normal manifests matching Spec().
+There is no required detector ID, package, goal digest, provenance echo, or refinement round.
 
 Never read environment variables, benchmark results, SREGym data, verdict files, hidden fault labels, or any external
 oracle. Never call an LLM at detector runtime. Edit the final health detector manifest, detector.go and
 detector_test.go directly under
-`.sdo/diagnostics/detectors/health/health-objective/` in this checkout. Author the complete
+`.sdo/diagnostics/detectors/health/<id>/` in this checkout. Author the complete
 `.sdo/playbooks/health-objective/README.md` with front matter: schema_version: 1, owner: responder,
 fault_class: health-objective-failure, originating_incident: lifecycle-bootstrap, then repair guidance using
 logical artifact IDs and parameter placeholders such as <AFFECTED_RESOURCE>. Update the playbook index
 `.sdo/playbooks/README.md` to list the playbooks. Preserve existing incident detectors and all other playbooks,
 human goal, architecture, outcomes, schema-version and diagnostics go.mod. Health manifests use apiVersion:
 sdo.dev/v1alpha1, kind: DetectorManifest, sdkVersion: v0.1, constructor: New, class: health,
-owner: health_judge, and the Spec values above (possiblePlaybooks: [health-objective]).
+owner: health_judge, and normal Spec values (possiblePlaybooks: [health-objective] is the default).
 Never put physical operational-memory paths in authored Go or narrative; use logical IDs there.
-Set round exactly to {round_index}; set source_commit to the deployer's commit; cover only resources present
-in the deployer handoff; and copy the authoritative objective SHA-256 above exactly.
 Return metadata and logical detector_ids only; the checkout carries all artifact contents.
 Run `sdo-operator memory ls` to inspect existing memory and `sdo-operator memory check` after editing.
 Fix every named diagnostic and rerun until it exits zero within your turn budget. The environment is already
@@ -351,16 +212,9 @@ application nodes for readiness and pressure. resource-saturation checks memory 
 including forecasts. runtime-crashes checks newly appearing narrow runtime crash signatures with previous logs.
 Do not re-implement these generic checks in health-objective or separate detectors; spend your turn on
 application-specific evidence of the human objective.
-For covered_resources, copy every resource required by the objective exactly from the deployer handoff, preserving
-each kind, name, source-manifest namespace, source path, and complete dependencies list; never invent an object that
-is absent from the handoff, and do not substitute the configured runtime namespace into this provenance field. For a
-global objective, or when the controller-observed active topology is non-null, the controller canonicalizes this
-provenance itself from the trusted inventory ({_COVERED_KINDS} objects, restricted to active ones), so coverage is
-metadata and does not choose your checks.
-
 Choose the checks from the human objective, the application's source and its own topology, not from a catalogue of
 fault types.
-Derive what a check depends on from the objects observed at detection time (the relationships the deployer assessment
+Derive what a check depends on from the objects observed at detection time (the relationships the manifest inventory
 and the active topology record) rather than hard-coding object names, so each check stays valid when objects are
 recreated, and include matching and near-miss tests for every check.
 
@@ -382,10 +236,10 @@ It compiles and tests the complete candidate, including the health detector and 
         self,
         repository: Path,
         prompt: str,
-        output_type: type[DeployerDraft] | type[HealthJudgeDraft],
+        output_type: type[HealthJudgeDraft],
         *,
         sandbox: AccessMode = "read-only",
-    ) -> tuple[DeployerDraft | HealthJudgeDraft, str]:
+    ) -> tuple[HealthJudgeDraft, str]:
         role = f"{self.provider.capitalize()} lifecycle session"
         try:
             turn = run_structured_turn(

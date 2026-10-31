@@ -2,16 +2,16 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
-	"go/format"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/artifacts"
@@ -20,7 +20,6 @@ import (
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
-	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
@@ -53,11 +52,11 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 		Workers: workers, Readiness: strategies,
 		Verifier: deployment.IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: "..", Readiness: strategies, Probe: nativePathProbe{}}, Installer: installer,
 	}
-	result, err := coordinator.Run(ctx, lifecycle.Config{OperationID: "native-bootstrap", Application: "demo", Namespace: "demo", HealthObjective: "The application stays healthy.", DeployerAgentID: "sdo-deployer", JudgeAgentID: "sdo-health-judge", MaxAttempts: 1})
+	result, err := coordinator.Run(ctx, lifecycle.Config{OperationID: "native-bootstrap", Application: "demo", Namespace: "demo", HealthObjective: "The application stays healthy.", DeployerAgentID: "sdo-source-deployment", JudgeAgentID: "sdo-health-judge", MaxAttempts: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(workers.tasks, ",") != "source-deployment,source-architecture,health-judgment-direct-v1" {
+	if strings.Join(workers.tasks, ",") != "source-deployment,health-judgment-direct-v1" {
 		t.Fatalf("registered workers did not run in role order: %v", workers.tasks)
 	}
 	if backend.applies != 1 || backend.observes < 2 {
@@ -121,7 +120,7 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 	if len(prior) != 1 || prior[0].IncidentID != "native-incident" {
 		t.Fatalf("runtime could not read broker outcome: %+v", prior)
 	}
-	if len(workers.tasks) != 4 || workers.tasks[3] != reflectionTaskType(t) {
+	if len(workers.tasks) != 3 || workers.tasks[2] != reflectionTaskType(t) {
 		t.Fatalf("verified success did not dispatch registered typed reflection: %v", workers.tasks)
 	}
 	if err := native.AcknowledgeClosure(ctx, receipt); err != nil {
@@ -167,12 +166,6 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 			return nil, packErr
 		}
 		response, err = anypb.New(&contracts.SourceDeploymentResult{Proposed: true, Summary: "source prepared", AgentSessionId: "source-session", Plan: &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: config}})
-	case nativeArchitectureTask():
-		request := &contracts.ArchitectureRequest{}
-		if err = task.GetRequest().UnmarshalTo(request); err != nil {
-			return nil, err
-		}
-		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded demo.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
 	case nativeHealthJudgeTask():
 		request := &contracts.HealthJudgeRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
@@ -181,37 +174,34 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 		if request.GetArchitectureSummaryMarkdown() == "" {
 			return nil, fmt.Errorf("judge did not receive accepted architecture")
 		}
-		manifest := layout.DetectorManifest{
-			APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion,
-			ID: "health-objective", Constructor: "New", Class: "health", Owner: "health_judge",
-			Watches:  []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Endpoints"}, {APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}},
-			Interval: "30s", Persistence: layout.Persistence{Firing: 2, Clearing: 2},
-			Batching:          layout.Batching{Severity: "critical", Debounce: "500ms"},
-			PossiblePlaybooks: []string{"health-objective"}, OriginatingCommit: "lifecycle-bootstrap",
+		repoRoot, err := filepath.Abs("../../..")
+		if err != nil {
+			return nil, err
 		}
-		if err := layout.WriteDetector(checkout, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: []layout.File{{Name: "detector.go", Content: formattedNativePathSource(w.t, `package objective
+		taskPath := filepath.Join(w.t.TempDir(), "task.json")
+		resultPath := filepath.Join(w.t.TempDir(), "result.json")
+		data, err := protojson.Marshal(task)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(taskPath, data, 0600); err != nil {
+			return nil, err
+		}
+		cmd := exec.Command("python3", "-m", "benchmarks.sregym.agent_script", taskPath, resultPath)
+		cmd.Dir = repoRoot
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("scripted judge: %w: %s", err, output)
+		}
+		data, err = os.ReadFile(resultPath)
+		if err != nil {
+			return nil, err
+		}
+		scripted := &contracts.AgentResult{}
+		if err := protojson.Unmarshal(data, scripted); err != nil {
+			return nil, err
+		}
+		return scripted, nil
 
-import (
- "time"
- "sdo.dev/operator/sdk"
- "sdo.dev/operator/sdk/servicehealth"
-)
-
-func New() sdk.Detector { return servicehealth.NewReadyEndpointsDetector(sdk.DetectorSpec{ID:"health-objective", Class:sdk.DetectorClassHealth, Owner:sdk.DetectorOwnerHealthJudge, Watches:servicehealth.EndpointWatches(), Interval:30*time.Second, Persistence:sdk.PersistencePolicy{Firing:2,Clearing:2}, Batching:sdk.BatchingPolicy{Severity:sdk.SeverityCritical,Debounce:500*time.Millisecond}, Playbooks:[]string{"health-objective"}, OriginatingCommit:"lifecycle-bootstrap"}) }
-`)}}}); err != nil {
-			return nil, err
-		}
-		playbooks := filepath.Join(checkout, layout.PlaybooksDir)
-		if err := os.MkdirAll(filepath.Join(playbooks, "health-objective"), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(filepath.Join(playbooks, "health-objective", "README.md"), []byte("---\nschema_version: 1\nowner: responder\nfault_class: health-objective-failure\noriginating_incident: lifecycle-bootstrap\n---\n# Repair <AFFECTED_RESOURCE>\n"), 0o644); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(filepath.Join(playbooks, "README.md"), []byte("# Playbooks\n\n- [health-objective](health-objective/README.md)\n"), 0o644); err != nil {
-			return nil, err
-		}
-		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "health checks authored", AgentSessionId: "judge-session", ObjectiveDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(request.GetHealthObjective()))), DetectorIds: []string{"health-objective"}})
 	case reflectionTaskType(w.t):
 		request := &contracts.ReflectionRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
@@ -289,9 +279,8 @@ func (i *nativePathInstaller) Install(_ context.Context, commit, namespace strin
 
 // The task types are whatever the built-in manifests declare for each request
 // message; the test restates none of them.
-func nativeSourceTask() string       { return manifestTaskType(&contracts.SourceDeploymentRequest{}) }
-func nativeArchitectureTask() string { return manifestTaskType(&contracts.ArchitectureRequest{}) }
-func nativeHealthJudgeTask() string  { return manifestTaskType(&contracts.HealthJudgeRequest{}) }
+func nativeSourceTask() string      { return manifestTaskType(&contracts.SourceDeploymentRequest{}) }
+func nativeHealthJudgeTask() string { return manifestTaskType(&contracts.HealthJudgeRequest{}) }
 
 func manifestTaskType(request proto.Message) string {
 	registry, err := worker_registry.LoadDirectory(registrytest.Directory())
@@ -307,13 +296,4 @@ func manifestTaskType(request proto.Message) string {
 		panic(err)
 	}
 	return task
-}
-
-func formattedNativePathSource(t *testing.T, source string) []byte {
-	t.Helper()
-	formatted, err := format.Source([]byte(source))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return formatted
 }

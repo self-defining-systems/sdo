@@ -352,160 +352,6 @@ func (x *ImageBuild) GetDockerfilePath() string {
 	return ""
 }
 
-// Architecture is generated only after the source proposal is accepted, so
-// its provenance can cite the broker's canonical source commit.
-type ArchitectureRequest struct {
-	state                     protoimpl.MessageState `protogen:"open.v1"`
-	Application               string                 `protobuf:"bytes,1,opt,name=application,proto3" json:"application,omitempty"`
-	AcceptedSourceCommit      string                 `protobuf:"bytes,2,opt,name=accepted_source_commit,json=acceptedSourceCommit,proto3" json:"accepted_source_commit,omitempty"`
-	CorrectionFeedback        string                 `protobuf:"bytes,3,opt,name=correction_feedback,json=correctionFeedback,proto3" json:"correction_feedback,omitempty"`
-	Attempt                   uint32                 `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	SourceResources           []*SourceResource      `protobuf:"bytes,5,rep,name=source_resources,json=sourceResources,proto3" json:"source_resources,omitempty"`
-	SourceTopologyFingerprint string                 `protobuf:"bytes,6,opt,name=source_topology_fingerprint,json=sourceTopologyFingerprint,proto3" json:"source_topology_fingerprint,omitempty"`
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
-}
-
-func (x *ArchitectureRequest) Reset() {
-	*x = ArchitectureRequest{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ArchitectureRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ArchitectureRequest) ProtoMessage() {}
-
-func (x *ArchitectureRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ArchitectureRequest.ProtoReflect.Descriptor instead.
-func (*ArchitectureRequest) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *ArchitectureRequest) GetApplication() string {
-	if x != nil {
-		return x.Application
-	}
-	return ""
-}
-
-func (x *ArchitectureRequest) GetAcceptedSourceCommit() string {
-	if x != nil {
-		return x.AcceptedSourceCommit
-	}
-	return ""
-}
-
-func (x *ArchitectureRequest) GetCorrectionFeedback() string {
-	if x != nil {
-		return x.CorrectionFeedback
-	}
-	return ""
-}
-
-func (x *ArchitectureRequest) GetAttempt() uint32 {
-	if x != nil {
-		return x.Attempt
-	}
-	return 0
-}
-
-func (x *ArchitectureRequest) GetSourceResources() []*SourceResource {
-	if x != nil {
-		return x.SourceResources
-	}
-	return nil
-}
-
-func (x *ArchitectureRequest) GetSourceTopologyFingerprint() string {
-	if x != nil {
-		return x.SourceTopologyFingerprint
-	}
-	return ""
-}
-
-type ArchitectureResult struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	SummaryMarkdown     string                 `protobuf:"bytes,1,opt,name=summary_markdown,json=summaryMarkdown,proto3" json:"summary_markdown,omitempty"`
-	TopologyFingerprint string                 `protobuf:"bytes,2,opt,name=topology_fingerprint,json=topologyFingerprint,proto3" json:"topology_fingerprint,omitempty"`
-	SourceCommit        string                 `protobuf:"bytes,3,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
-	AgentSessionId      string                 `protobuf:"bytes,4,opt,name=agent_session_id,json=agentSessionId,proto3" json:"agent_session_id,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
-}
-
-func (x *ArchitectureResult) Reset() {
-	*x = ArchitectureResult{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ArchitectureResult) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ArchitectureResult) ProtoMessage() {}
-
-func (x *ArchitectureResult) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ArchitectureResult.ProtoReflect.Descriptor instead.
-func (*ArchitectureResult) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *ArchitectureResult) GetSummaryMarkdown() string {
-	if x != nil {
-		return x.SummaryMarkdown
-	}
-	return ""
-}
-
-func (x *ArchitectureResult) GetTopologyFingerprint() string {
-	if x != nil {
-		return x.TopologyFingerprint
-	}
-	return ""
-}
-
-func (x *ArchitectureResult) GetSourceCommit() string {
-	if x != nil {
-		return x.SourceCommit
-	}
-	return ""
-}
-
-func (x *ArchitectureResult) GetAgentSessionId() string {
-	if x != nil {
-		return x.AgentSessionId
-	}
-	return ""
-}
-
 // The independent health judge authors diagnostics after source is accepted.
 type HealthJudgeRequest struct {
 	state                       protoimpl.MessageState `protogen:"open.v1"`
@@ -517,7 +363,6 @@ type HealthJudgeRequest struct {
 	Attempt                     uint32                 `protobuf:"varint,6,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	ArchitectureSummaryMarkdown string                 `protobuf:"bytes,7,opt,name=architecture_summary_markdown,json=architectureSummaryMarkdown,proto3" json:"architecture_summary_markdown,omitempty"`
 	SourceResources             []*SourceResource      `protobuf:"bytes,8,rep,name=source_resources,json=sourceResources,proto3" json:"source_resources,omitempty"`
-	SourceTopologyFingerprint   string                 `protobuf:"bytes,9,opt,name=source_topology_fingerprint,json=sourceTopologyFingerprint,proto3" json:"source_topology_fingerprint,omitempty"`
 	// Go-owned retry feedback for the diagnostics proposal: validation_attempt is
 	// 1 for the first dispatch; later attempts carry the broker's rejection
 	// diagnostics. Distinct from attempt, which counts whole deployment attempts.
@@ -529,7 +374,7 @@ type HealthJudgeRequest struct {
 
 func (x *HealthJudgeRequest) Reset() {
 	*x = HealthJudgeRequest{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -541,7 +386,7 @@ func (x *HealthJudgeRequest) String() string {
 func (*HealthJudgeRequest) ProtoMessage() {}
 
 func (x *HealthJudgeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -554,7 +399,7 @@ func (x *HealthJudgeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthJudgeRequest.ProtoReflect.Descriptor instead.
 func (*HealthJudgeRequest) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{7}
+	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *HealthJudgeRequest) GetApplication() string {
@@ -613,13 +458,6 @@ func (x *HealthJudgeRequest) GetSourceResources() []*SourceResource {
 	return nil
 }
 
-func (x *HealthJudgeRequest) GetSourceTopologyFingerprint() string {
-	if x != nil {
-		return x.SourceTopologyFingerprint
-	}
-	return ""
-}
-
 func (x *HealthJudgeRequest) GetValidationAttempt() uint32 {
 	if x != nil {
 		return x.ValidationAttempt
@@ -648,7 +486,7 @@ type SourceResource struct {
 
 func (x *SourceResource) Reset() {
 	*x = SourceResource{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -660,7 +498,7 @@ func (x *SourceResource) String() string {
 func (*SourceResource) ProtoMessage() {}
 
 func (x *SourceResource) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -673,7 +511,7 @@ func (x *SourceResource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourceResource.ProtoReflect.Descriptor instead.
 func (*SourceResource) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{8}
+	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *SourceResource) GetKind() string {
@@ -712,12 +550,11 @@ func (x *SourceResource) GetDependencies() []string {
 }
 
 type HealthJudgeResult struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Authored        bool                   `protobuf:"varint,1,opt,name=authored,proto3" json:"authored,omitempty"`
-	Summary         string                 `protobuf:"bytes,2,opt,name=summary,proto3" json:"summary,omitempty"`
-	AgentSessionId  string                 `protobuf:"bytes,3,opt,name=agent_session_id,json=agentSessionId,proto3" json:"agent_session_id,omitempty"`
-	ObjectiveDigest string                 `protobuf:"bytes,4,opt,name=objective_digest,json=objectiveDigest,proto3" json:"objective_digest,omitempty"`
-	DetectorIds     []string               `protobuf:"bytes,5,rep,name=detector_ids,json=detectorIds,proto3" json:"detector_ids,omitempty"`
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Authored       bool                   `protobuf:"varint,1,opt,name=authored,proto3" json:"authored,omitempty"`
+	Summary        string                 `protobuf:"bytes,2,opt,name=summary,proto3" json:"summary,omitempty"`
+	AgentSessionId string                 `protobuf:"bytes,3,opt,name=agent_session_id,json=agentSessionId,proto3" json:"agent_session_id,omitempty"`
+	DetectorIds    []string               `protobuf:"bytes,5,rep,name=detector_ids,json=detectorIds,proto3" json:"detector_ids,omitempty"`
 	// Wire compatibility only; direct-edit judges must leave this absent.
 	//
 	// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/lifecycle.proto.
@@ -728,7 +565,7 @@ type HealthJudgeResult struct {
 
 func (x *HealthJudgeResult) Reset() {
 	*x = HealthJudgeResult{}
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -740,7 +577,7 @@ func (x *HealthJudgeResult) String() string {
 func (*HealthJudgeResult) ProtoMessage() {}
 
 func (x *HealthJudgeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -753,7 +590,7 @@ func (x *HealthJudgeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthJudgeResult.ProtoReflect.Descriptor instead.
 func (*HealthJudgeResult) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{9}
+	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *HealthJudgeResult) GetAuthored() bool {
@@ -773,13 +610,6 @@ func (x *HealthJudgeResult) GetSummary() string {
 func (x *HealthJudgeResult) GetAgentSessionId() string {
 	if x != nil {
 		return x.AgentSessionId
-	}
-	return ""
-}
-
-func (x *HealthJudgeResult) GetObjectiveDigest() string {
-	if x != nil {
-		return x.ObjectiveDigest
 	}
 	return ""
 }
@@ -828,19 +658,7 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"ImageBuild\x12\x14\n" +
 	"\x05image\x18\x01 \x01(\tR\x05image\x12!\n" +
 	"\fcontext_path\x18\x02 \x01(\tR\vcontextPath\x12'\n" +
-	"\x0fdockerfile_path\x18\x03 \x01(\tR\x0edockerfilePath\"\xce\x02\n" +
-	"\x13ArchitectureRequest\x12 \n" +
-	"\vapplication\x18\x01 \x01(\tR\vapplication\x124\n" +
-	"\x16accepted_source_commit\x18\x02 \x01(\tR\x14acceptedSourceCommit\x12/\n" +
-	"\x13correction_feedback\x18\x03 \x01(\tR\x12correctionFeedback\x12\x18\n" +
-	"\aattempt\x18\x04 \x01(\rR\aattempt\x12T\n" +
-	"\x10source_resources\x18\x05 \x03(\v2).sdodev.contracts.v1alpha1.SourceResourceR\x0fsourceResources\x12>\n" +
-	"\x1bsource_topology_fingerprint\x18\x06 \x01(\tR\x19sourceTopologyFingerprint\"\xc1\x01\n" +
-	"\x12ArchitectureResult\x12)\n" +
-	"\x10summary_markdown\x18\x01 \x01(\tR\x0fsummaryMarkdown\x121\n" +
-	"\x14topology_fingerprint\x18\x02 \x01(\tR\x13topologyFingerprint\x12#\n" +
-	"\rsource_commit\x18\x03 \x01(\tR\fsourceCommit\x12(\n" +
-	"\x10agent_session_id\x18\x04 \x01(\tR\x0eagentSessionId\"\xb9\x06\n" +
+	"\x0fdockerfile_path\x18\x03 \x01(\tR\x0edockerfilePath\"\x9c\x06\n" +
 	"\x12HealthJudgeRequest\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
@@ -849,25 +667,24 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\x13correction_feedback\x18\x05 \x01(\tR\x12correctionFeedback\x12\x18\n" +
 	"\aattempt\x18\x06 \x01(\rR\aattempt\x12B\n" +
 	"\x1darchitecture_summary_markdown\x18\a \x01(\tR\x1barchitectureSummaryMarkdown\x12T\n" +
-	"\x10source_resources\x18\b \x03(\v2).sdodev.contracts.v1alpha1.SourceResourceR\x0fsourceResources\x12>\n" +
-	"\x1bsource_topology_fingerprint\x18\t \x01(\tR\x19sourceTopologyFingerprint\x12-\n" +
+	"\x10source_resources\x18\b \x03(\v2).sdodev.contracts.v1alpha1.SourceResourceR\x0fsourceResources\x12-\n" +
 	"\x12validation_attempt\x18\n" +
 	" \x01(\rR\x11validationAttempt\x12^\n" +
 	"\x14previous_diagnostics\x18\v \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics:\xcd\x01\xbaH\xc9\x01\x1a\xc6\x01\n" +
-	".health_judge_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)\"\x92\x01\n" +
+	".health_judge_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\t\x10\n" +
+	"R\x1bsource_topology_fingerprint\"\x92\x01\n" +
 	"\x0eSourceResource\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\tR\tnamespace\x12\x16\n" +
 	"\x06source\x18\x04 \x01(\tR\x06source\x12\"\n" +
-	"\fdependencies\x18\x05 \x03(\tR\fdependencies\"\xce\x02\n" +
+	"\fdependencies\x18\x05 \x03(\tR\fdependencies\"\xbb\x02\n" +
 	"\x11HealthJudgeResult\x12\x1a\n" +
 	"\bauthored\x18\x01 \x01(\bR\bauthored\x12\x18\n" +
 	"\asummary\x18\x02 \x01(\tR\asummary\x12(\n" +
-	"\x10agent_session_id\x18\x03 \x01(\tR\x0eagentSessionId\x12)\n" +
-	"\x10objective_digest\x18\x04 \x01(\tR\x0fobjectiveDigest\x12E\n" +
+	"\x10agent_session_id\x18\x03 \x01(\tR\x0eagentSessionId\x12E\n" +
 	"\fdetector_ids\x18\x05 \x03(\tB\"\xbaH\x1f\x92\x01\x1c\"\x1ar\x182\x16^[a-z0-9][a-z0-9_.-]*$R\vdetectorIds\x12g\n" +
-	"\x11artifact_proposal\x18\x06 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalB\x02\x18\x01R\x10artifactProposalB\x81\x02\n" +
+	"\x11artifact_proposal\x18\x06 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalB\x02\x18\x01R\x10artifactProposalJ\x04\b\x04\x10\x05R\x10objective_digestB\x81\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x0eLifecycleProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -882,35 +699,32 @@ func file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP() []byte {
 	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_sdodev_contracts_v1alpha1_lifecycle_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_sdodev_contracts_v1alpha1_lifecycle_proto_goTypes = []any{
 	(*SourceDeploymentRequest)(nil),     // 0: sdodev.contracts.v1alpha1.SourceDeploymentRequest
 	(*SourceDeploymentResult)(nil),      // 1: sdodev.contracts.v1alpha1.SourceDeploymentResult
 	(*DeploymentPlan)(nil),              // 2: sdodev.contracts.v1alpha1.DeploymentPlan
 	(*RawManifestStrategy)(nil),         // 3: sdodev.contracts.v1alpha1.RawManifestStrategy
 	(*ImageBuild)(nil),                  // 4: sdodev.contracts.v1alpha1.ImageBuild
-	(*ArchitectureRequest)(nil),         // 5: sdodev.contracts.v1alpha1.ArchitectureRequest
-	(*ArchitectureResult)(nil),          // 6: sdodev.contracts.v1alpha1.ArchitectureResult
-	(*HealthJudgeRequest)(nil),          // 7: sdodev.contracts.v1alpha1.HealthJudgeRequest
-	(*SourceResource)(nil),              // 8: sdodev.contracts.v1alpha1.SourceResource
-	(*HealthJudgeResult)(nil),           // 9: sdodev.contracts.v1alpha1.HealthJudgeResult
-	(*anypb.Any)(nil),                   // 10: google.protobuf.Any
-	(*MemoryDiagnostic)(nil),            // 11: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*OperationalArtifactProposal)(nil), // 12: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*HealthJudgeRequest)(nil),          // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest
+	(*SourceResource)(nil),              // 6: sdodev.contracts.v1alpha1.SourceResource
+	(*HealthJudgeResult)(nil),           // 7: sdodev.contracts.v1alpha1.HealthJudgeResult
+	(*anypb.Any)(nil),                   // 8: google.protobuf.Any
+	(*MemoryDiagnostic)(nil),            // 9: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*OperationalArtifactProposal)(nil), // 10: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_lifecycle_proto_depIdxs = []int32{
 	2,  // 0: sdodev.contracts.v1alpha1.SourceDeploymentResult.plan:type_name -> sdodev.contracts.v1alpha1.DeploymentPlan
-	10, // 1: sdodev.contracts.v1alpha1.DeploymentPlan.strategy_config:type_name -> google.protobuf.Any
+	8,  // 1: sdodev.contracts.v1alpha1.DeploymentPlan.strategy_config:type_name -> google.protobuf.Any
 	4,  // 2: sdodev.contracts.v1alpha1.RawManifestStrategy.image_builds:type_name -> sdodev.contracts.v1alpha1.ImageBuild
-	8,  // 3: sdodev.contracts.v1alpha1.ArchitectureRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
-	8,  // 4: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
-	11, // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	12, // 6: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	7,  // [7:7] is the sub-list for method output_type
-	7,  // [7:7] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	6,  // 3: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
+	9,  // 4: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	10, // 5: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	6,  // [6:6] is the sub-list for method output_type
+	6,  // [6:6] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_lifecycle_proto_init() }
@@ -926,7 +740,7 @@ func file_sdodev_contracts_v1alpha1_lifecycle_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

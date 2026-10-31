@@ -45,7 +45,7 @@ func TestBootstrapStoreWritesOnlyRoleOwnedArtifacts(t *testing.T) {
 func TestArchitectureCitesAcceptedSourceCommit(t *testing.T) {
 	checkout := t.TempDir()
 	store := BootstrapStore{}
-	if err := store.WriteArchitecture(checkout, "demo", "accepted-source-sha", "fingerprint", "# Architecture\nSource facts."); err != nil {
+	if err := store.WriteArchitecture(checkout, "demo", "accepted-source-sha", "# Architecture\nSource facts."); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(checkout, ".sdo", "arch.md"))
@@ -63,10 +63,10 @@ func TestArchitectureCitesAcceptedSourceCommit(t *testing.T) {
 func TestArchitectureTaskNeverExposesPhysicalMemoryPaths(t *testing.T) {
 	checkout := t.TempDir()
 	store := BootstrapStore{}
-	if err := store.WriteArchitecture(checkout, "demo", "accepted-source-sha", "fingerprint", "Read .sdo/diagnostics/manifest.yaml"); err == nil {
+	if err := store.WriteArchitecture(checkout, "demo", "accepted-source-sha", "Read .sdo/diagnostics/manifest.yaml"); err == nil {
 		t.Fatal("architecture write accepted a physical operational-memory path")
 	}
-	if err := store.WriteArchitecture(checkout, "demo", "accepted-source-sha", "fingerprint", "# Architecture\nNo path"); err != nil {
+	if err := store.WriteArchitecture(checkout, "demo", "accepted-source-sha", "# Architecture\nNo path"); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(checkout, ".sdo", "arch.md")

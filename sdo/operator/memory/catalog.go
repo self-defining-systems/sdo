@@ -77,7 +77,7 @@ func (s *JSONStore) Snapshot(ctx context.Context) (*contracts.OperationalMemoryS
 const MaxSnapshotBytes = 512 * 1024
 
 var ErrSnapshotBudget = errors.New("operational memory snapshot exceeds worker task budget")
-var ErrSnapshotIncomplete = errors.New("operational memory needs a goal, an architecture, and detectors")
+var ErrSnapshotIncomplete = errors.New("operational memory needs an architecture and detectors")
 
 // CandidateSnapshot projects authored files exactly as dispatch does, without
 // requiring an accepted clean checkout. Acceptance uses the same size witness.
@@ -86,12 +86,15 @@ func CandidateSnapshot(root, acceptedCommit string) (*contracts.OperationalMemor
 	if err != nil {
 		return nil, err
 	}
-	if tree.Goal == nil || tree.Architecture == nil || len(tree.Detectors) == 0 {
+	if tree.Architecture == nil || len(tree.Detectors) == 0 {
 		return nil, ErrSnapshotIncomplete
 	}
-	goal, err := layout.LogicalText(tree.Goal.Source)
-	if err != nil {
-		return nil, err
+	goal := ""
+	if tree.Goal != nil {
+		goal, err = layout.LogicalText(tree.Goal.Source)
+		if err != nil {
+			return nil, err
+		}
 	}
 	architecture, err := layout.LogicalText(tree.Architecture.Source)
 	if err != nil {

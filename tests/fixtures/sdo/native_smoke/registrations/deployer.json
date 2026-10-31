@@ -6,11 +6,6 @@
       "task_type": "source-deployment",
       "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.SourceDeploymentRequest",
       "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.SourceDeploymentResult"
-    },
-    {
-      "task_type": "source-architecture",
-      "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureRequest",
-      "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureResult"
     }
   ],
   "kubernetes_job": {

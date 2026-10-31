@@ -30,7 +30,7 @@ def recording_registrations(results_dir: Path, image: str) -> Path:
     directory = results_dir / "recording_registrations"
     directory.mkdir(parents=True, exist_ok=True)
     recording_stages = {"responder": "responder", "reflector": "reflection"}
-    for role in ("deployer", "health-judge", "responder", "reflector"):
+    for role in ("source-deployment", "health-judge", "responder", "reflector"):
         registration = json.loads((_REGISTRATIONS / f"{role}.json").read_text(encoding="utf-8"))
         registration["kubernetes_job"]["image"] = image
         if role in recording_stages:

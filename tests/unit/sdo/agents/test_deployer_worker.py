@@ -2,11 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from sdo.agents.deployer.worker import _workload_id, propose_source, run_architecture_task, run_deployment_task
+from sdo.agents.source_deployment.worker import _workload_id, propose_source, run_deployment_task
 from sdo.contracts.proto import (
     AgentTask,
-    ArchitectureRequest,
-    ArchitectureResult,
     DeploymentPlan,
     ProposalWorkspace,
     RawManifestStrategy,
@@ -93,7 +91,7 @@ def test_deployer_receives_trusted_registry_and_rejects_other_image_host(
             session_id="session-1",
         )
 
-    monkeypatch.setattr("sdo.agents.deployer.worker.run_structured_turn", turn)
+    monkeypatch.setattr("sdo.agents.source_deployment.worker.run_structured_turn", turn)
     request = SourceDeploymentRequest(
         application="demo",
         namespace="demo",
@@ -119,35 +117,3 @@ def test_deployment_worker_rejects_wrong_payload_type(tmp_path: Path) -> None:
     path.write_text(to_canonical_json(task), encoding="utf-8")
     with pytest.raises(ValueError, match="wrong type"):
         run_deployment_task(path, "result", Publisher())
-
-
-def test_architecture_worker_cites_accepted_source_commit(tmp_path: Path) -> None:
-    request = ArchitectureRequest(application="demo", accepted_source_commit="accepted-source", attempt=1)
-    task = AgentTask(
-        schema_version="sdo.dev/v1alpha1",
-        task_id="initial-arch-1",
-        agent_id="custom-deployer",
-        task_type="source-architecture",
-        workspace=ProposalWorkspace(
-            proposal_id="proposal-arch", checkout_path=str(tmp_path), base_commit="accepted-source"
-        ),
-    )
-    task.request.Pack(request)
-    path = tmp_path / "architecture-task.json"
-    path.write_text(to_canonical_json(task), encoding="utf-8")
-    publisher = Publisher()
-
-    def execute(received: ArchitectureRequest, checkout: Path) -> ArchitectureResult:
-        assert received.accepted_source_commit == "accepted-source"
-        assert checkout == tmp_path
-        return ArchitectureResult(
-            source_commit="accepted-source",
-            topology_fingerprint="a" * 64,
-            summary_markdown="# Architecture\nSource-grounded facts.",
-            agent_session_id="architecture-session",
-        )
-
-    result = run_architecture_task(path, "result", publisher, execute=execute)
-    typed = ArchitectureResult()
-    assert result.response.Unpack(typed)
-    assert typed.source_commit == "accepted-source"
