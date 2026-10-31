@@ -81,6 +81,50 @@ func TestControllerObservationCorrelatesVerifiedAndAcknowledgedIncidents(t *test
 	}
 }
 
+func TestControllerObservationDoesNotVerifyFailedOrUnrequestedIncident(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		requested string
+		pending   string
+		ack       string
+		failed    bool
+		want      string
+	}{
+		{name: "retained failed closure", requested: "current", pending: "old", failed: true},
+		{name: "unrelated pending closure", requested: "current", pending: "old"},
+		{name: "failed requested closure without failure metadata", requested: "current", pending: "current", failed: true},
+		{name: "discovery excludes failed closure", pending: "old", failed: true},
+		{name: "unrelated acknowledged incident", requested: "current", ack: "old"},
+		{name: "matching pending closure", requested: "current", pending: "current", want: "current"},
+		{name: "matching acknowledged incident", requested: "current", ack: "current", want: "current"},
+		{name: "discovery allows new pending closure", pending: "new", want: "new"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Synthetic identities and timestamps model retained terminal evidence;
+			// this fixture contains no captured application or runtime state.
+			state := &c.ControllerState{IncidentOpen: true, IncidentRequest: &c.IncidentRequest{IncidentId: "current"}, LastAcknowledgedIncidentId: tc.ack}
+			if tc.pending != "" {
+				state.PendingClosure = &c.IncidentClosure{Request: &c.IncidentRequest{IncidentId: tc.pending}, VerifiedAt: timestamppb.New(time.Unix(1000, 0))}
+			}
+			if tc.failed {
+				state.ClosureState = c.ClosureState_CLOSURE_STATE_FAILED
+			}
+			request := &c.ControllerObservationRequest{State: state, IncidentId: tc.requested}
+			before := proto.Clone(request)
+			got := ObserveController(observationJSON(t, request))
+			if got.GetVerifiedIncidentId() != tc.want {
+				t.Fatalf("verified %q for requested %q: %v", got.GetVerifiedIncidentId(), tc.requested, got)
+			}
+			if tc.want == "" && got.GetVerifiedClosure() != nil {
+				t.Fatal("unrelated closure attached to observation", got)
+			}
+			if !proto.Equal(request, before) {
+				t.Fatal("read observation mutated lifecycle state")
+			}
+		})
+	}
+}
+
 func TestControllerObservationOrdersReviewAfterVerifiedHealth(t *testing.T) {
 	req := observationRequest()
 	req.State.DetectorReviewRequired = true
@@ -120,6 +164,9 @@ func FuzzControllerObservationBoundary(f *testing.F) {
 			}
 			if got.GetVerifiedIncidentId() != "" && slices.Contains(req.GetKnownIncidentIds(), got.GetVerifiedIncidentId()) {
 				t.Fatal("known incident rediscovered", got)
+			}
+			if id := got.GetVerifiedIncidentId(); id != "" && ((req.GetIncidentId() != "" && id != req.GetIncidentId()) || req.GetState().GetClosureState() == c.ClosureState_CLOSURE_STATE_FAILED) {
+				t.Fatal("failed or unrelated incident verified", got)
 			}
 		}
 		if next := ObserveController(observationJSON(t, observationRequest())); next.GetVerifiedIncidentId() != "two" {
