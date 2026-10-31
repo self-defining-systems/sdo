@@ -79,3 +79,18 @@ incident that taught the pattern.
 - A responder keeps the provenance (`originatingIncident`, `originatingCommit`) of an existing detector. Enforced
   by: `ownership.provenance-rewrite`.
 - Detector files are changed only in the phase and by the actor the task names. Enforced by: `ownership.denied`.
+
+## Go-installed generic health detectors
+
+Do not author `service-endpoints`, `workload-health`, `service-reachability`, `cluster-wiring`,
+`workload-controllers`, `warning-events`, `node-health`, `resource-saturation`, or `runtime-crashes`.
+The shared memory check installs these constructors from the SDK. Wiring checks selectors,
+protocol-specific declared targets, required template references/keys, PVC binding, Ingress backends,
+total NetworkPolicy isolation and local ExternalName aliases. Other controller kinds, persistent
+warning events and application-node health also require no application-source expectations.
+Saturation covers memory and PVC bytes/inodes (90% or short forecasts); CPU throttling is opt-in
+because collecting cAdvisor counters adds a kubelet request and substantial parsing allocation.
+Runtime-crash patterns cover Go panic/fatal, Python traceback, Java OOM/thread exceptions and
+segmentation faults; `logs.Appeared` supplies transition persistence (firing 1, clearing 2).
+Cause detectors batch at warn so cause findings open incidents. Workload unavailability is critical.
+Use source-specific detectors for config parsing, named peers, journeys, domain logs and metrics.

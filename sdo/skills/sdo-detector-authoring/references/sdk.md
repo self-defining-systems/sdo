@@ -543,6 +543,52 @@ func (p Policy) Validate() error
 ```
 
 ```text
+package generichealth // import "sdo.dev/operator/sdk/generichealth"
+
+Package generichealth implements relation-based, application-independent health
+checks. Snapshot decisions use the observation clock, never wall time. Cause
+findings warn; workload unavailability is critical. Missing optional inputs are
+errors.
+
+CONSTANTS
+
+const ProgressWindow = 10 * time.Minute
+    ProgressWindow allows ordinary controller convergence before reporting
+    faults.
+
+
+FUNCTIONS
+
+func NewCrashes(s sdk.DetectorSpec) sdk.Detector
+    NewCrashes reports newly appearing runtime crash signatures, not generic
+    error lines.
+
+func NewNodes(s sdk.DetectorSpec) sdk.Detector
+    NewNodes checks only nodes hosting application pods.
+
+func NewSaturation(s sdk.DetectorSpec, throttling bool) sdk.Detector
+    NewSaturation monitors memory and PVC capacity. Throttling requests
+    one extra cAdvisor read per node per cycle; the bootstrap selects this
+    explicitly.
+
+func NewWarnings(s sdk.DetectorSpec) sdk.Detector
+    NewWarnings checks persistent recent warning events on extant application
+    objects.
+
+func NewWiring(s sdk.DetectorSpec) sdk.Detector
+    NewWiring checks selectors, ports, references, storage, ingress and DNS
+    aliases.
+
+func NewWorkloads(s sdk.DetectorSpec) sdk.Detector
+    NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs.
+
+func Watches(kind string) []sdk.WatchKind
+    Watches returns all inputs used by the named detector, shared by
+    installation.
+
+```
+
+```text
 package traffic // import "sdo.dev/operator/sdk/traffic"
 
 Package traffic is SDO's app-agnostic synthetic-traffic health machinery.

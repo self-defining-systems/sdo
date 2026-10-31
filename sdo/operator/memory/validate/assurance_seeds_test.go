@@ -61,8 +61,8 @@ func seedCases(t *testing.T) []seedCase {
 // compile layer that builds and tests the diagnostics module and its traffic
 // prober). Human and deployer documents form the base commit; the judge-owned
 // diagnostics and playbooks are the proposed change. A seed must also already
-// contain the installer's generic health packages byte for byte, because a
-// seeded workspace is compiled into the controller without a judge round.
+// preserve any existing generic packages byte for byte. Newly installed Go policies
+// are constructed in the temporary checkout rather than copied into app fixtures.
 func TestAssuranceSeedsPassHealthJudgeCheck(t *testing.T) {
 	operatorRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -86,6 +86,12 @@ func TestAssuranceSeedsPassHealthJudgeCheck(t *testing.T) {
 			moveTree(t, filepath.Join(judged, layout.DiagnosticsGoModFile), filepath.Join(root, layout.DiagnosticsGoModFile))
 			commit(t, root, "human goal, deployer architecture, and diagnostics module")
 			copyTree(t, judged, root)
+			// The bootstrap owns additive generic policy installation. Keep new
+			// generated packages out of the checked-in application seed data.
+			// PrepareHealth still rejects edits to any existing policy bytes.
+			if err := memory.PrepareHealth(root); err != nil {
+				t.Fatal(err)
+			}
 			before := snapshotTree(t, root)
 
 			diagnostics, err := Check(context.Background(), Request{
