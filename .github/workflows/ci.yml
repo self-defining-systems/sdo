@@ -176,6 +176,15 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: false
+      # Agent-script stand-in turns sandbox their commands with bubblewrap, as
+      # real workspace-write turns are confined. Ubuntu 24.04 runners restrict
+      # unprivileged user namespaces through AppArmor; lift that for bwrap.
+      - name: Install bubblewrap for agent-script tests
+        if: matrix.name == 'unit tests'
+        run: |
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --ro-bind / / --dev /dev --proc /proc true
       - name: Check out the SREGym harness
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
