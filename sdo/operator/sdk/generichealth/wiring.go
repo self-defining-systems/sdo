@@ -88,6 +88,10 @@ func protocol(p core.Protocol) core.Protocol {
 	return p
 }
 func portDeclared(p core.Pod, port core.ServicePort) bool {
+	// Numeric target ports route directly; containerPort declarations are optional.
+	if port.TargetPort.Type == intstr.Int {
+		return true
+	}
 	for _, c := range p.Spec.Containers {
 		for _, cp := range c.Ports {
 			if protocol(cp.Protocol) != protocol(port.Protocol) {
@@ -96,13 +100,7 @@ func portDeclared(p core.Pod, port core.ServicePort) bool {
 			if port.TargetPort.Type == intstr.String && cp.Name == port.TargetPort.StrVal {
 				return true
 			}
-			n := port.TargetPort.IntVal
-			if n == 0 {
-				n = port.Port
-			}
-			if port.TargetPort.Type == intstr.Int && cp.ContainerPort == n {
-				return true
-			}
+
 		}
 	}
 	return false

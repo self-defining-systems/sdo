@@ -1,12 +1,16 @@
 package generichealth_test
 
 import (
+	"context"
 	apps "k8s.io/api/apps/v1"
 	core "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/generichealth"
 	"sdo.dev/operator/sdk/sdktest"
+	"testing"
 	"time"
 )
 
@@ -32,9 +36,11 @@ func wiringCases() []wiringCase {
 			p.OwnerReferences[0].Name = "unit-y"
 			s.PodList = append(s.PodList, p)
 		}, func(s *sdktest.Snapshot) { s.PodList[1].OwnerReferences[0].Name = "unit-x" }},
-		{"numeric port", "service-target-port", func(s *sdktest.Snapshot) { s.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(9090) }, func(s *sdktest.Snapshot) { s.DeploymentList[0].Generation = 2 }},
 		{"named port", "service-target-port", func(s *sdktest.Snapshot) { s.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromString("absent") }, func(s *sdktest.Snapshot) { s.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromString("web") }},
-		{"protocol", "service-target-port", func(s *sdktest.Snapshot) { s.ServiceList[0].Spec.Ports[0].Protocol = core.ProtocolUDP }, func(s *sdktest.Snapshot) { s.PodList[0].Spec.Containers[0].Ports[0].Protocol = core.ProtocolUDP }},
+		{"protocol", "service-target-port", func(s *sdktest.Snapshot) {
+			s.ServiceList[0].Spec.Ports[0].Protocol = core.ProtocolUDP
+			s.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromString("web")
+		}, func(s *sdktest.Snapshot) { s.PodList[0].Spec.Containers[0].Ports[0].Protocol = core.ProtocolUDP }},
 		{"configmap", "template-missing-reference", func(s *sdktest.Snapshot) { s.ConfigMapList = nil }, func(s *sdktest.Snapshot) {
 			s.DeploymentList[0].Spec.Template.Spec.Containers[0].EnvFrom[0].ConfigMapRef.Optional = ptr(true)
 		}},
@@ -74,5 +80,21 @@ func wiringCases() []wiringCase {
 		{"deny egress", "network-deny-all-egress", func(s *sdktest.Snapshot) {
 			s.NetworkPolicyList = []netv1.NetworkPolicy{{ObjectMeta: s.DeploymentList[0].ObjectMeta, Spec: netv1.NetworkPolicySpec{PolicyTypes: []netv1.PolicyType{netv1.PolicyTypeEgress}}}}
 		}, func(s *sdktest.Snapshot) { s.NetworkPolicyList[0].Spec.Egress = []netv1.NetworkPolicyEgressRule{{}} }},
+	}
+}
+
+// A synthetic media-frontend shape: nginx listens on 8080 without declaring
+// containerPort. Kubernetes routes numeric target ports directly.
+func TestMediaFrontendNumericTargetPortNeedsNoDeclaration(t *testing.T) {
+	for _, target := range []intstr.IntOrString{intstr.FromInt32(8080), intstr.FromInt32(0)} {
+		s := healthy()
+		s.ServiceList[0].Name = "media-frontend"
+		s.ServiceList[0].Spec.Ports[0].Port = 8080
+		s.ServiceList[0].Spec.Ports[0].TargetPort = target
+		s.PodList[0].Spec.Containers[0].Ports = nil
+		fs, err := generichealth.NewWiring(sdk.DetectorSpec{ID: "wiring"}).Detect(context.Background(), s)
+		if err != nil || len(fs) != 0 {
+			t.Fatalf("numeric target %v: findings=%+v err=%v", target, fs, err)
+		}
 	}
 }
