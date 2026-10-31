@@ -291,3 +291,6 @@ func (v *checkedReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error) {
 	v.check(err)
 	return result, err
 }
+
+// UnderlyingReadView preserves evidence sinks across the fail-closed wrapper.
+func (v *checkedReadView) UnderlyingReadView() ReadView { return v.ReadView }

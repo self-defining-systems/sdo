@@ -37,6 +37,7 @@ patterns=()
 cd "$root"
 # Nested builder tests must select their own isolated modules.
 go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}"
+go test -exec 'env GOWORK=off' -tags integration -json -run "^TestBuildMemoryHostUsesStagedMemory$" -timeout=3m ./sdo/operator/builder
 if [[ "${1:-pr}" == nightly ]]; then
     go test -exec 'env GOWORK=off' -json -race -run '^TestChaos|^TestExhaustive|^TestExplorer' -timeout=5m ./sdo/operator/runtime/...
 fi

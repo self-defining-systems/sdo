@@ -41,3 +41,10 @@ The filename is a hash, not an incident ID. For a historical checkout containing
 Program-run `can_mitigate` records whether the compiled registry has a mitigator; `false` means diagnosis-only, and an absent field on older evidence means unknown. It does not establish trust, plan validity or replay support. Responder prompts omit NoMatch runs and report `omitted_no_match_program_runs`; durable requests, outcomes and captures retain the full runs.
 
 Controller restart state externalizes verbose incident request/result/closure evidence above 32 KiB to immutable canonical ProtoJSON under `<repository-mount-path>/.sdo-runtime/controller-evidence/<sha256>.json`. The ConfigMap annotation `sdo.dev/state-evidence-sha256` binds those bytes to the state revision. The restart document omits initial program runs, result program runs/tool calls and frozen task bytes, including their pending-closure copies. Read the archive for full evidence when inspecting state offline; the storage edge hydrates it before closure/outcome/receipt derivation. Missing or corrupt archives fail closed. Archives are written and synced before the ConfigMap CAS and retained across ambiguous writes and proposal cleanup. Outcomes and strict receipts retain their existing complete evidence contracts; this is a restart-storage split, not a truncation of program history.
+
+
+With experimental `--memory-host`, host-owned primitive reads return typed
+receipts that enter the existing controller program evidence/corpus sink.
+They have the same PrimitiveCall interpretation as local reads. A host error is
+not detector clearance or a successful program run. Slice 1 has no accepted-commit
+hot-swap evidence; do not infer activation or unchanged controller PID from it.

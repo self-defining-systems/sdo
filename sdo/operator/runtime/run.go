@@ -26,6 +26,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -182,6 +183,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"maximum follow-up responders for health findings that stay active after a response; zero disables follow-ups",
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
+	memoryHost := flags.Bool("memory-host", false, "run detectors and programs in a memory host child")
+	memoryHostBinary := flags.String("memory-host-binary", "", "validated host binary")
+	memoryHostDigest := flags.String("memory-host-digest", "", "validated host digest")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
@@ -270,6 +274,27 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	timeScale, err := developmentTimeScale()
 	if err != nil {
 		return err
+	}
+	if *memoryHost {
+		child, err := hostio.Launch(hostio.LaunchConfig{Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		if err != nil {
+			return err
+		}
+		defer child.Close()
+		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		ready, err := child.Ready(readyCtx)
+		cancel()
+		if err != nil {
+			return err
+		}
+		if ready.GetMemoryCommit() != launchConfig.GetControllerRevision() || ready.GetBinaryDigest() != *memoryHostDigest {
+			return errors.New("memory host identity mismatch")
+		}
+		remote, err := NewRemoteMemory(ready, child, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+		if err != nil {
+			return err
+		}
+		detectors, options.Programs = remote.Detectors, remote.Programs
 	}
 	detectors = scaleDetectors(detectors, timeScale)
 	*diagnosisSettleDelay = scaledDuration(*diagnosisSettleDelay, timeScale)

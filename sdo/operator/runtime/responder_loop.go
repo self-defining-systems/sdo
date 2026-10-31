@@ -538,6 +538,9 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 			_ = memory.AppendCapturedRecording(l.CorpusSessionRoot, l.Request.IncidentID, phase, call)
 		}}, nil
 	}
+	if _, remote := l.Programs.(*remoteProgramRegistry); remote {
+		return &sdktest.RecordingReadView{ReadView: view}, nil
+	}
 	return view, nil
 }
 

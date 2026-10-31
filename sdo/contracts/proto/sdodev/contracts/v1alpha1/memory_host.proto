@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package sdodev.contracts.v1alpha1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/common.proto";
+import "sdodev/contracts/v1alpha1/messages.proto";
+import "sdodev/contracts/v1alpha1/program.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// MemoryHost is transport-independent. The initial launcher uses a Unix socket;
+// a later sidecar can implement the same service without changing callers.
+service MemoryHostService {
+  rpc Ready(ReadyRequest) returns (ReadyResponse);
+  rpc Mirror(stream MirrorRequest) returns (MirrorResponse);
+  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
+  rpc Diagnose(DiagnoseRequest) returns (DiagnoseResponse);
+  rpc Mitigate(MitigateRequest) returns (MitigateResponse);
+}
+
+message ReadyRequest {}
+message ReadyResponse {
+  string memory_commit = 1;
+  string binary_digest = 2;
+  uint64 mirror_sequence = 3;
+  bool mirror_complete = 4;
+  repeated MemoryDetectorRegistration detectors = 5;
+  repeated ProgramSpec programs = 6;
+  repeated string mitigator_ids = 7;
+}
+
+message MemoryDetectorRegistration {
+  string id = 1;
+  // SDK registration metadata, including watches and optional input queries.
+  google.protobuf.Struct specification = 2;
+}
+
+// Reset and all initial objects precede a complete marker. Subsequent frames
+// contain only informer deltas. Sequence numbers are contiguous within a host.
+message MirrorRequest {
+  uint64 sequence = 1;
+  bool reset_mirror = 2;
+  string namespace = 3;
+  repeated MemoryObject upserts = 4;
+  repeated ObjectRef deletes = 5;
+  bool complete = 6;
+}
+message MemoryObject {
+  ObjectRef ref = 1;
+  // Kubernetes JSON; Secrets contain SDK metadata only, never Secret data.
+  google.protobuf.Struct object = 2;
+}
+message MirrorResponse { uint64 sequence = 1; }
+
+message MemoryObservation {
+  // Slice 1 frozen SDK snapshot; mirror fan-out replaces this in slice 2.
+  google.protobuf.Struct snapshot = 8;
+  google.protobuf.Timestamp observed_at = 1;
+  // Frozen SDK input windows. Absent input remains unavailable, never empty.
+  map<string, google.protobuf.Struct> traffic = 2;
+  google.protobuf.Struct reachability = 3;
+  map<string, google.protobuf.Struct> metrics = 4;
+  google.protobuf.Struct alerts = 5;
+  google.protobuf.Struct usage = 6;
+  map<string, google.protobuf.Struct> logs = 7;
+}
+message EvaluateRequest {
+  repeated string detector_ids = 1;
+  uint64 mirror_sequence = 2;
+  MemoryObservation observation = 3;
+}
+message MemoryDetectorResult {
+  string detector_id = 1;
+  repeated Finding findings = 2;
+  string error = 3;
+}
+message EvaluateResponse { repeated MemoryDetectorResult results = 1; }
+
+// Read receipts are produced by the host and keyed by the requested primitive.
+// Programs cannot acquire a cluster writer through this protocol.
+message MemoryReadReceipt {
+  string operation = 1;
+  reserved 2;
+  google.protobuf.Value arguments = 3;
+  google.protobuf.Value result = 4;
+  string error = 5;
+}
+message MemoryProgramInput {
+  string program_id = 1;
+  repeated Binding bindings = 2;
+  uint64 mirror_sequence = 3;
+  MemoryObservation observation = 4;
+  repeated MemoryReadReceipt reads = 5;
+}
+message DiagnoseRequest { MemoryProgramInput input = 1; }
+message DiagnoseResponse {
+  Verdict verdict = 1;
+  string error = 2;
+  repeated MemoryReadReceipt reads = 3;
+}
+message MitigateRequest { MemoryProgramInput input = 1; }
+message MitigateResponse {
+  Plan plan = 1;
+  string error = 2;
+  repeated MemoryReadReceipt reads = 3;
+}

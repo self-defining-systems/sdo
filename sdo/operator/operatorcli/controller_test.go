@@ -12,6 +12,13 @@ func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	launch := config.Controller
+	if launch.GetMemoryHost() {
+		t.Fatal("memory host must default off")
+	}
+	hosted, _, hostErr := ParseControllerLaunch(append(append([]string(nil), args...), "--memory-host"))
+	if hostErr != nil || !hosted.Controller.GetMemoryHost() {
+		t.Fatal("memory host flag lost", hostErr)
+	}
 	configured, _, configErr := ParseControllerLaunch(append(append([]string(nil), args...), "--program-min-duration", "3s"))
 	if configErr != nil || configured.Controller.GetProgramMinDuration().AsDuration().Seconds() != 3 {
 		t.Fatalf("program persistence did not reach the typed launch: %v", configErr)

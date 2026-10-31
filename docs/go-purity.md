@@ -55,6 +55,7 @@ The exact production edge-package list is:
 - `sdo/operator/runtime/internal/lifecycleio`: Kubernetes lifecycle driver.
 - `sdo/operator/runtime/prober`: protocol dial adapter.
 - `sdo/operator/runtime/prometheus`: Prometheus HTTP adapter.
+- `sdo/operator/memoryhost/hostio`: memory-host process launcher, Unix socket server/client and read-only network adapter.
 - `sdo/operator/toolchain`: Go compiler process adapter.
 - `sdo/operator/devmount`: development mount process adapter.
 - `sdo/operator/runtime/sim`: the deterministic simulation world. Its clock reads are the synctest bubble's
