@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +30,10 @@ func TestCompileAcceptsDetectorsThatBuildVetAndPass(t *testing.T) {
 }
 
 func TestCompileReportsTheFailingStage(t *testing.T) {
+	// Exercise production's filename-bearing diagnostics. CI trims ordinary
+	// builds for cache reuse; cached vet facts can retain another workspace's
+	// relative paths under trimpath, which is not the production configuration.
+	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -trimpath=false")
 	for _, test := range []struct {
 		name   string
 		rule   string
