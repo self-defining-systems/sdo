@@ -82,6 +82,7 @@ async def test_validation_tool_timeout_returns_failure_and_stops_children(
 ) -> None:
     # The deadline fires only once a real grandchild is connected. EOF proves
     # the process-group kill closed its socket, without a post-kill sleep.
+    wait_for = asyncio.wait_for
     connected = asyncio.Event()
     connections: list[tuple[asyncio.StreamReader, asyncio.StreamWriter]] = []
 
@@ -103,13 +104,13 @@ child.wait()
         )
 
         async def expire_when_ready(awaitable: object, timeout: float) -> None:
-            async with asyncio.timeout(30):  # deadlock watchdog, not the behavior under test
-                await connected.wait()
+            # Capture the real waiter before injecting the deadline boundary.
+            await wait_for(connected.wait(), 30)
             raise TimeoutError
 
         monkeypatch.setattr(asyncio, "wait_for", expire_when_ready)
         server = validation_server(tmp_path)
-        result = await server.call_tool("check_memory", {"decision_path": "decision.json"})
+        result = await wait_for(server.call_tool("check_memory", {"decision_path": "decision.json"}), 30)
         # FastMCP returns both text and structured content for dataclass results.
         assert isinstance(result, tuple)
         structured = result[1]
@@ -118,8 +119,7 @@ child.wait()
         assert "checking replay" in structured["stdout"]
         reader, writer = connections[0]
         try:
-            async with asyncio.timeout(30):
-                assert await reader.read() == b""
+            assert await wait_for(reader.read(), 30) == b""
         finally:
             writer.close()
             await writer.wait_closed()
