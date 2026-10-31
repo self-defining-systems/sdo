@@ -22,6 +22,8 @@ The simulated API server (`sdo/operator/runtime/sim`) models:
 - HTTP, gRPC health, Redis, Memcached, MongoDB, Postgres and MySQL handshakes over `net.Pipe`;
 - scripted API errors, commit-then-timeout, stale cache reads, dropped cache updates until relist,
   delayed/failing kubelet/log/probe reads and per-edge partitions;
+- memory-host Evaluate/Diagnose/Mitigate over in-memory gRPC (bufconn), frozen
+  snapshot/input parity, host disconnect errors and host-owned log receipts using the same simulated API;
 - registered invariant hooks and a 45-second host-time seed-sweep budget.
 
 The pure lifecycle core (`runtime/lifecyclecore`) is covered by exhaustive explorers of closure and
@@ -33,7 +35,7 @@ These are open gaps the simulation harness work closes; until then, cover them w
 tests or kind runs.
 
 - the real controller driver end to end (deferred slices of the lifecycle plan);
-- the memory-host subprocess, its swap, crash and restart;
+- operating-system memory-host process launch, resource limits and activation swap;
 - NetworkPolicy enforcement and DNS.
 
 The harness is a serial edge/event model, not a complete Kubernetes implementation. Pod transitions
@@ -56,3 +58,11 @@ that covers it.
 | --- | --- | --- | --- | --- | --- |
 
 | 2026-10-31 | Synthetic shared-world conformance | Missing behavior / timing / fault | Shared pod, input and protocol edges | Modeled within bounds above | `TestCrashLoopRecovery`, `TestSimRealDetectionInputs`, `TestFaultSchedule`, `TestHermeticProtocolDialer` |
+
+| 2026-10-31 | Synthetic memory-host slice 1 | Transport / evidence | Detector and program execution outside the controller | Modeled at RPC boundary | `TestSimMemoryHostParityAndCrash`, `TestRemoteMemoryPreservesInputsAndCorpusReceipts`; same world, bufconn, host-owned log reads and typed receipt replay |
+
+The memory-host tests do not model OS process isolation, Unix socket permissions,
+memory limits or accepted-commit activation. Staged compilation is checked by
+the integration-tagged `TestBuildMemoryHostUsesStagedMemory` in PR CI. The first
+slice sends full frozen snapshots per request; informer mirror fan-out and the
+two-commit no-controller-restart scenario remain slice 2 work.

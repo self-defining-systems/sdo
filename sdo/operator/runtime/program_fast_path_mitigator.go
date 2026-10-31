@@ -139,3 +139,6 @@ func (v mitigationReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff
 	}
 	return v.live.DiffAgainstBaseline(ref)
 }
+
+// UnderlyingReadView preserves the subprocess receipt sink through isolation.
+func (v mitigationReadView) UnderlyingReadView() program.ReadView { return v.live }

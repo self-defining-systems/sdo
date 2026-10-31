@@ -354,3 +354,41 @@ CPU throttling is supported by the SDK constructor but disabled in bootstrap: a 
 rendering and transport time. Enabling it also makes missing CFS counters fail the usage cycle;
 without representative live cost and availability evidence it stays opt-in. Containers without
 limits never produce memory or CPU saturation findings.
+
+## Memory host (experimental first slice)
+
+The controller launch flag `--memory-host` is default off. Off retains the existing
+local detector and program path. On starts one bounded memory-host child and
+registers remote SDK adapters from its Ready response. Accepted detector and
+program constructors run only in the child. Evaluate, Diagnose and Mitigate use
+the typed `MemoryHostService` over gRPC on a private Unix socket. Each call carries
+a frozen SDK snapshot and optional input windows; errors and disconnects remain
+detector/program errors, never clearance or an authorized empty plan.
+
+`builder.Workspace.BuildMemoryHost` builds the host from the same staged
+diagnostics, playbooks and shared library used by `validate.Check`. Validation
+builds that executable too. The controller alone executes plans. The host owns
+bounded namespace-scoped log reads and GET/HEAD/TCP probes and returns typed
+primitive receipts; the controller records those through its existing program
+evidence and corpus sinks. Source/baseline diff reads currently fail closed.
+No mutation client or controller callback is exposed to programs.
+
+| Component | First-slice responsibility |
+| --- | --- |
+| `memoryhost/` | Protocol server, registrations, deterministic snapshot execution, receipts and manager leases |
+| `memoryhost/hostio/` | Declared nondeterminism edge: child launch/reaping, memory bound, Unix transport and read-only live reads |
+| `runtime/memory_host.go` | Remote SDK detector/program adapters, input transport and evidence forwarding |
+| `builder/memory_host.go` | Staged host build; digest binds the launched executable |
+
+The artifact ownership matrix is unchanged: the host reads accepted diagnostics
+and playbooks and authors no durable artifact; the controller and broker retain
+outcome and publication authority. These packages are production scope and have
+no benchmark imports.
+
+This slice activates only the initial accepted revision. Mirror fan-out,
+accepted-commit activation, scheduler reconfiguration and replacement of legacy
+rollout acknowledgment are slice 2; until then the experimental flag does not
+provide live memory refresh. Slice 2 must retain the controller process across
+memory changes and prove a two-commit update without restart. Traffic remains in
+the current prober until slice 3, which moves the traffic engine into the host,
+flips the default and deletes controller compilation and the prober pod.

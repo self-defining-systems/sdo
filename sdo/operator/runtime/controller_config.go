@@ -97,6 +97,9 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	if config.GetMaxResponseLoops() > 0 {
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
 	}
+	boolFlag("--memory-host", config.GetMemoryHost())
+	str("--memory-host-binary", config.GetMemoryHostBinary())
+	str("--memory-host-digest", config.GetMemoryHostDigest())
 	boolFlag("--program-fast-path", config.GetProgramFastPath())
 	if config.GetProgramTrustThreshold() > 0 {
 		args = append(args, "--program-trust-threshold", strconv.Itoa(int(config.GetProgramTrustThreshold())))

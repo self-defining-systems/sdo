@@ -46,6 +46,7 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 		return err
 	}
 	buildConfig := config.Build
+	buildConfig.MemoryHost = config.Controller.MemoryHost
 	buildConfig.DiagnosticsRoot = projected.Directory
 	workspace, err := BuildWorkspace(ctx, buildConfig)
 	if err != nil {
@@ -69,6 +70,15 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 	provenance, err := buildProvenance(projected, binary)
 	if err != nil {
 		return err
+	}
+	if config.Controller.MemoryHost {
+		artifact, err := workspace.BuildMemoryHost(ctx)
+		if err != nil {
+			return err
+		}
+		config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
+		config.Controller.MemoryHostBinary = artifact.Path
+		config.Controller.MemoryHostDigest = artifact.Digest
 	}
 	data, err := controllerConfigJSON(config, prober, provenance)
 	if err != nil {

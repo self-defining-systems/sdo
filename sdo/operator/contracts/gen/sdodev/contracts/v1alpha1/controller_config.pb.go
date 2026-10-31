@@ -36,7 +36,10 @@ const (
 )
 
 type ControllerConfig struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	MemoryHost       bool                   `protobuf:"varint,74,opt,name=memory_host,json=memoryHost,proto3" json:"memory_host,omitempty"`
+	MemoryHostBinary string                 `protobuf:"bytes,75,opt,name=memory_host_binary,json=memoryHostBinary,proto3" json:"memory_host_binary,omitempty"`
+	MemoryHostDigest string                 `protobuf:"bytes,76,opt,name=memory_host_digest,json=memoryHostDigest,proto3" json:"memory_host_digest,omitempty"`
 	// Observation and identity.
 	Namespace        string `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	ControlNamespace string `protobuf:"bytes,2,opt,name=control_namespace,json=controlNamespace,proto3" json:"control_namespace,omitempty"`
@@ -170,6 +173,27 @@ func (x *ControllerConfig) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ControllerConfig.ProtoReflect.Descriptor instead.
 func (*ControllerConfig) Descriptor() ([]byte, []int) {
 	return file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ControllerConfig) GetMemoryHost() bool {
+	if x != nil {
+		return x.MemoryHost
+	}
+	return false
+}
+
+func (x *ControllerConfig) GetMemoryHostBinary() string {
+	if x != nil {
+		return x.MemoryHostBinary
+	}
+	return ""
+}
+
+func (x *ControllerConfig) GetMemoryHostDigest() string {
+	if x != nil {
+		return x.MemoryHostDigest
+	}
+	return ""
 }
 
 func (x *ControllerConfig) GetNamespace() string {
@@ -640,8 +664,12 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xe0\x1d\n" +
-	"\x10ControllerConfig\x12%\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xdd\x1e\n" +
+	"\x10ControllerConfig\x12\x1f\n" +
+	"\vmemory_host\x18J \x01(\bR\n" +
+	"memoryHost\x12,\n" +
+	"\x12memory_host_binary\x18K \x01(\tR\x10memoryHostBinary\x12,\n" +
+	"\x12memory_host_digest\x18L \x01(\tR\x10memoryHostDigest\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
 	"\bapp_root\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aappRoot\x12 \n" +

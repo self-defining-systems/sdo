@@ -21,6 +21,7 @@ type Config struct {
 	DiagnosticsRoot string
 	OperatorRoot    string
 	HealthyBaseline string
+	MemoryHost      bool // Compile a stable driver with no accepted-memory imports.
 }
 
 type Workspace struct {
@@ -61,6 +62,9 @@ func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error
 // full detector acceptance gate.
 // A rejected stage is reported as a *StageError.
 func (workspace *Workspace) Check(ctx context.Context) error {
+	if err := workspace.prepareMemoryHost(); err != nil {
+		return err
+	}
 	_, err := workspace.validate(ctx, true)
 	return err
 }
@@ -72,12 +76,16 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 	if err := seedGoBuildCache(ctx); err != nil {
 		return "", err
 	}
-	binary := filepath.Join(workspace.Directory, "sdo-controller")
+	target, name := "./cmd/controller", "sdo-controller"
+	if vet {
+		target, name = "./cmd/memory-host", "sdo-memory-host"
+	}
+	binary := filepath.Join(workspace.Directory, name)
 	stages := [][]string{{"mod", "tidy"}}
 	if vet {
 		stages = append(stages, []string{"build", "-buildvcs=false", "./..."}, []string{"vet", "./..."})
 	}
-	stages = append(stages, []string{"test", "./..."}, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
+	stages = append(stages, []string{"test", "./..."}, []string{"build", "-buildvcs=false", "-o", binary, target})
 	for _, args := range stages {
 		if err := workspace.runGo(ctx, args...); err != nil {
 			return "", err
@@ -220,6 +228,9 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 		}
 	}
 	main := fmt.Sprintf("package main\n\nimport (\n\t\"log\"\n\t\"sdo.dev/operator/runtime\"\n\t%q\n)\n\nfunc main() { programs, err := generated.Programs(); if err != nil { log.Fatal(err) }; runtime.RunWithPrograms(generated.All(), programs) }\n", module+"/generated")
+	if config.MemoryHost {
+		main = "package main\nimport \"sdo.dev/operator/runtime\"\nfunc main(){runtime.RunWithPrograms(nil,nil)}\n"
+	}
 	if err := os.WriteFile(filepath.Join(directory, "cmd", "controller", "main.go"), []byte(main), 0o644); err != nil {
 		return nil, err
 	}

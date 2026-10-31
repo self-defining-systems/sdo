@@ -309,3 +309,26 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 	}
 	return recorder.Calls, nil
 }
+
+// SnapshotCalls copies recorded evidence while timed-out readers may still finish.
+func (v *RecordingReadView) SnapshotCalls() []PrimitiveCall {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]PrimitiveCall(nil), v.Calls...)
+}
+
+// RecordExternalCalls feeds subprocess receipts through the same evidence sink
+// used for local primitive reads. It performs no live reads.
+func (v *RecordingReadView) RecordExternalCalls(calls []PrimitiveCall) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.Calls = append(v.Calls, calls...)
+	if v.OnRecord != nil {
+		for _, call := range calls {
+			v.OnRecord(call)
+		}
+	}
+}
+
+// UnderlyingReadView preserves frozen optional inputs across recording.
+func (v *RecordingReadView) UnderlyingReadView() program.ReadView { return v.ReadView }

@@ -53,6 +53,9 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		MaxFollowUps:               3,
 		MaxResponseLoops:           4,
 		ProgramFastPath:            true,
+		MemoryHost:                 true,
+		MemoryHostBinary:           "/tmp/sdo-memory-host",
+		MemoryHostDigest:           "sha256:test",
 		ProgramTrustThreshold:      3,
 		ProgramMinDuration:         durationpb.New(3000000000),
 		FollowUpCooldown:           durationpb.New(30000000000), // 30s

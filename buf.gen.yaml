@@ -7,6 +7,9 @@ plugins:
   - local: protoc-gen-go
     out: sdo/operator/contracts/gen
     opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: sdo/operator/contracts/gen
+    opt: paths=source_relative
   # Python types for sdo/contracts. The remote buf plugins are pinned to v33.4
   # so the generated gencode matches the protobuf runtime (6.33.4) locked in
   # uv.lock; the unpinned (latest) plugin emits newer gencode that the pinned

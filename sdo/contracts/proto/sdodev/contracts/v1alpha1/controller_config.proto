@@ -19,6 +19,9 @@ import "google/protobuf/duration.proto";
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 message ControllerConfig {
+  bool memory_host = 74;
+  string memory_host_binary = 75;
+  string memory_host_digest = 76;
   // Observation and identity.
   string namespace = 1 [(buf.validate.field).string.min_len = 1];
   string control_namespace = 2;

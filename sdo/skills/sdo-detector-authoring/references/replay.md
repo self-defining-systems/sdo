@@ -139,6 +139,17 @@ func (v *RecordingReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) 
 
 func (v *RecordingReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
 
+func (v *RecordingReadView) RecordExternalCalls(calls []PrimitiveCall)
+    RecordExternalCalls feeds subprocess receipts through the same evidence sink
+    used for local primitive reads. It performs no live reads.
+
+func (v *RecordingReadView) SnapshotCalls() []PrimitiveCall
+    SnapshotCalls copies recorded evidence while timed-out readers may still
+    finish.
+
+func (v *RecordingReadView) UnderlyingReadView() program.ReadView
+    UnderlyingReadView preserves frozen optional inputs across recording.
+
 type ReplayReadView struct {
 	Snapshot
 	Calls []PrimitiveCall

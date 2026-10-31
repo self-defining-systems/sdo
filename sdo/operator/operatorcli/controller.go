@@ -66,6 +66,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	memoryHost := flags.Bool("memory-host", false, "run accepted detectors and programs in the memory host")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	driftTokensPerHour := registerDriftTokenBudget(flags)
@@ -134,7 +135,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ToolchainImage:   *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
 		ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL, MetricsPublishUrl: *metricsPublishURL,
-		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
+		MemoryHost: *memoryHost, ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
 		DriftTokensPerHour: *driftTokensPerHour,
 		ProgramMinDuration: durationpb.New(*programMinDuration),
 	}
