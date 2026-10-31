@@ -304,16 +304,12 @@ For wire compatibility first deprecate old proto fields/messages and reject
 their use on the direct-edit capability; remove/reserve them only at a
 versioned contract transition with regenerated bindings and buf checks.
 
-Upkeep first runs existing v1/v2-to-v3 layout/ID migration, then a versioned
-program/corpus migration: retain authored bytes and original provenance,
-regenerate indexes, import archived Go captures and hash-bound references.
-Never invent provenance for old inline corpus. Mark unverifiable legacy data
-explicitly: it stays readable and in regression replay, but cannot support
-new learning/trust without recapture. Affected updates fail a shared evidence
-diagnostic. Dispatch preflight must provision all required archived inputs;
-pruning sessions cannot remove the sole copy of accepted replay evidence.
-Pin worker/validator capability and schema together; drain old tasks before
-switching and retain old accepted commits for rollback.
+Current implementation supersedes the migration proposal: repositories must
+already use the current schema and per-incident outcome documents. Upkeep
+initializes fresh repositories only. Unsupported schemas fail fast with the
+found and required versions; there is no layout, corpus or outcome migration
+path. Existing evidence must meet the same provenance and replay gates as new
+evidence.
 
 ## Alternatives
 
@@ -357,7 +353,6 @@ Prefixes below are relative to `sdo/operator/` unless stated otherwise.
 | 13 | `operatorcli/{memory,validate}.go`, `broker/{validation,subprocess_validator}.go`: both call full Check; extend parity tests | 90m | Real no-flag command vs publish, every gate and receipt |
 | 14 | `runtime/registered_reflection.go`, `sdo/agents/responder/reflection*.py`, `worker.proto`: direct edits/result slot | 90m | Fake worker edits, green update, no-change/gap and #19 retry |
 | 15 | `lifecycle/coordinator.go`, `artifacts/bootstrap.go`, `sdo/agents/health_judge/worker.py`, `lifecycle.proto`: judge direct edits | 90m | Initial/refinement ownership, independent health evidence |
-| 16 | `memory/layout/migrate.go`, `operatorcli/migrate_memory.go`: versioned repository migration | 90m | Legacy replay, absent archives, idempotence and rollback |
 | 17 | Delete materializer/draft/propose paths and tests; regenerate contracts; update `sdo/skills/` | 90m | No active legacy references, buf compatibility, skill examples |
 | 18 | `broker/parity_test.go`, runtime integration fixtures, `docs/architecture.md`, `.agents/skills/analyze-experiment/references/` | 90m | Scenario matrix, full Go/Python suites, format/error checks |
 

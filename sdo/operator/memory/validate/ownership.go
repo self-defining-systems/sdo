@@ -36,7 +36,7 @@ func healthObjectiveOnly(kind layout.Kind, id string) bool {
 
 // grants is the whole ownership policy, kind by actor by phase.
 //
-// Phases: the human goal, Upkeep schema, deployer source and architecture,
+// Phases: the human goal, Upkeep schema and architecture, trusted source deployment,
 // and health-judge bootstrap stages are InitialPhase. Responders change
 // operational memory only in ReflectionPhase, after an independently verified
 // outcome, and source only in ProposalPhase. No actor edits memory in
@@ -53,8 +53,7 @@ var grants = []grant{
 
 	{actor: Human, phase: InitialPhase, kinds: []layout.Kind{layout.KindGoal}},
 	{actor: Upkeep, phase: InitialPhase, kinds: []layout.Kind{
-		layout.KindArchitecture, layout.KindSchemaVersion, layout.KindDiagnosticsModule, layout.KindLegacyDetectorManifest,
-		layout.KindHealthDetectorManifest, layout.KindIncidentDetectorManifest, layout.KindHealthDetectorSource, layout.KindIncidentDetectorSource,
+		layout.KindArchitecture, layout.KindSchemaVersion, layout.KindDiagnosticsModule,
 	}},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindHealthDetectorManifest, layout.KindHealthDetectorSource}},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindTrafficGenerator, layout.KindTrafficWorkload}, only: notIncidentTraffic},
@@ -152,8 +151,7 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) {
 		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests"})
 	}
-
-	needsBase := (actor == Upkeep && changesDetectors(s.changed)) || ((actor == Responder || actor == HealthJudge) && manifests)
+	needsBase := (actor == Responder || actor == HealthJudge) && manifests
 	if !needsBase {
 		return nil
 	}
@@ -162,9 +160,6 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 		return err
 	}
 	defer os.RemoveAll(base)
-	if actor == Upkeep {
-		return s.upkeepMigration(base)
-	}
 	return s.detectorOwnership(base)
 }
 
@@ -189,52 +184,6 @@ func (s *run) candidateManifests() map[string]*detector {
 		}
 	}
 	return byPath
-}
-
-// upkeepMigration lets Upkeep touch detectors only as part of a schema
-// migration: the same change must stamp the new schema version, and the
-// accepted detector registrations must survive it unchanged, modulo the
-// normalization of playbook references to logical IDs.
-func (s *run) upkeepMigration(base string) error {
-	fail := func(message string) {
-		s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: layout.DetectorsDir, Message: message})
-	}
-	if !containsPath(s.changed, layout.SchemaVersionFile) {
-		fail("upkeep may change detectors only together with a schema-version migration")
-		return nil
-	}
-	_, legacyErr := os.Stat(filepath.Join(base, layout.LegacyDetectorManifestFile))
-	if legacyErr != nil {
-		// Detectors stay where they are, so their Go source may change only by
-		// the playbook-reference rewrite that migration performs.
-		for _, det := range s.sortedDetectors() {
-			for _, file := range det.files {
-				if !strings.HasSuffix(file.path, ".go") {
-					continue
-				}
-				accepted, err := os.ReadFile(filepath.Join(base, filepath.FromSlash(file.path)))
-				if err != nil || string(file.content) != layout.RewritePlaybookReferences(string(accepted)) {
-					s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: file.path, Message: "migration may change detector source only by rewriting playbook paths to logical IDs"})
-				}
-			}
-		}
-	}
-	legacy, err := layout.AcceptedDetectors(base)
-	if err != nil {
-		return fmt.Errorf("baseline manifest: %w", err)
-	}
-	after := s.candidateManifests()
-	if len(legacy) != len(after) {
-		fail(fmt.Sprintf("migration changed the detector count from %d to %d", len(legacy), len(after)))
-		return nil
-	}
-	for _, prior := range legacy {
-		current, ok := after[layout.DetectorManifestPath(prior.DetectorClass(), prior.ID)]
-		if !ok || (current.manifest != nil && !reflect.DeepEqual(prior, *current.manifest)) {
-			fail(fmt.Sprintf("migration changed detector %s", prior.ID))
-		}
-	}
-	return nil
 }
 
 // detectorOwnership compares the candidate's registrations with the accepted

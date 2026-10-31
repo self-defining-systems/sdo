@@ -43,7 +43,7 @@ func TestOwnershipChecksEveryRegistrationWithDuplicateID(t *testing.T) {
 				edit(t, root, cacheManifest, "originatingIncident: inc-1", "originatingIncident: inc-9")
 			},
 			want: []Diagnostic{
-				{Rule: RuleOwnershipDenied, Path: ".sdo/diagnostics/detectors/health/cache/manifest.yaml", Message: "actor responder may not change health-detector-manifest files in the reflection phase", Hint: "changeable by health_judge in the initial phase or upkeep in the initial phase"},
+				{Rule: RuleOwnershipDenied, Path: ".sdo/diagnostics/detectors/health/cache/manifest.yaml", Message: "actor responder may not change health-detector-manifest files in the reflection phase", Hint: "changeable by health_judge in the initial phase"},
 				{Rule: RuleProtectedDetector, Path: ".sdo/diagnostics/detectors/health/cache/manifest.yaml", Message: "actor responder added protected health detector cache"},
 				{Rule: RuleProvenanceRewrite, Path: cacheManifest, Message: "responder rewrote detector cache provenance"},
 			},
@@ -56,7 +56,7 @@ func TestOwnershipChecksEveryRegistrationWithDuplicateID(t *testing.T) {
 				edit(t, root, healthManifest, "interval: 30s", "interval: 20s")
 			},
 			want: []Diagnostic{
-				{Rule: RuleOwnershipDenied, Path: ".sdo/diagnostics/detectors/incidents/health/manifest.yaml", Message: "actor health_judge may not change incident-detector-manifest files in the initial phase", Hint: "changeable by responder in the reflection phase or upkeep in the initial phase"},
+				{Rule: RuleOwnershipDenied, Path: ".sdo/diagnostics/detectors/incidents/health/manifest.yaml", Message: "actor health_judge may not change incident-detector-manifest files in the initial phase", Hint: "changeable by responder in the reflection phase"},
 				{Rule: RuleProtectedDetector, Path: ".sdo/diagnostics/detectors/incidents/health/manifest.yaml", Message: "actor health_judge added protected incident detector health"},
 			},
 		},

@@ -33,9 +33,8 @@ def _role(schema: dict[str, Any]) -> str:
     properties = schema.get("properties", {})
     for key, role in (
         ("learning_decision", "reflector"),
-        ("objective_digest", "health-judge"),
-        ("architecture_summary_markdown", "architecture"),
-        ("proposed", "deployer"),
+        ("detector_ids", "health-judge"),
+        ("proposed", "source-deployment"),
         ("confirmed_root_causes", "responder"),
     ):
         if key in properties:
@@ -141,7 +140,7 @@ def launch(command: list[str]) -> int:
 def registrations(destination: Path, image: str) -> None:
     source = Path(__file__).resolve().parents[3] / "sdo/agents/registrations"
     destination.mkdir(parents=True, exist_ok=True)
-    for role in ("deployer", "health-judge", "responder", "reflector"):
+    for role in ("source-deployment", "health-judge", "responder", "reflector"):
         value = json.loads((source / f"{role}.json").read_text())
         job = value["kubernetes_job"]
         job["image"] = image
@@ -160,7 +159,7 @@ def main() -> int:
         sub = parser.add_subparsers(dest="operation", required=True)
         convert = sub.add_parser("convert")
         convert.add_argument(
-            "--role", required=True, choices=["deployer", "architecture", "health-judge", "responder", "reflector"]
+            "--role", required=True, choices=["source-deployment", "health-judge", "responder", "reflector"]
         )
         convert.add_argument("--out", type=Path, required=True)
         convert.add_argument("--file-edits", type=Path)

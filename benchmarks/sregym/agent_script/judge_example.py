@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import subprocess
 import sys
@@ -29,9 +27,6 @@ def main() -> int:
     base = subprocess.run(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
     ).stdout.strip()
-    plan = json.loads(script.read_text())
-    plan["turns"][0]["result"]["objective_digest"] = hashlib.sha256(b"stay healthy").hexdigest()
-    script.write_text(json.dumps(plan))
     with tempfile.TemporaryDirectory(prefix="sdo-script-judge-") as temporary:
         task = AgentTask(
             schema_version="sdo.dev/v1alpha1",
@@ -47,7 +42,6 @@ def main() -> int:
                 health_objective="stay healthy",
                 accepted_source_commit=base,
                 architecture_summary_markdown="Synthetic application for judge authoring.",
-                source_topology_fingerprint="a" * 64,
                 attempt=1,
             )
         )

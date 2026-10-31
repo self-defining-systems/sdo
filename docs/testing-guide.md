@@ -251,14 +251,14 @@ Live Codex or Kubernetes tests may require explicit markers, credentials, images
 
 ### Lifecycle separation
 
-Use backend test doubles to prove that source deployment, deployer assessment, and each health-judge round receive only their declared inputs. Verify fresh session identifiers, bounded correction feedback, source commit attribution, and independent acceptance.
+Use backend test doubles to prove that source deployment and each health-judge attempt receive only their declared inputs. Verify fresh session identifiers, bounded correction feedback, source commit attribution, and independent acceptance.
 
 ### Operational-memory ownership
 
 Create temporary Git repositories with `.sdo/` fixtures. Test:
 
-- human ownership of `goal.md`;
-- deployer ownership and topology freshness of `arch.md`;
+- optional human-owned free text in `goal.md`;
+- Go upkeep ownership and deterministic manifest inventory in `arch.md`;
 - responder-only updates under `playbooks/` and incident detectors;
 - judge ownership of health detectors;
 - append-only controller outcomes;
@@ -480,7 +480,7 @@ and can be shared across source revisions. To check an existing binary, run
 workers. It accepts version 1 JSON or YAML, validates unknown fields and unsafe
 file paths before executing anything, and emits Codex JSON events so structured
 results and command auditing still use the normal provider parser. No production
-module imports the stand-in. Roles are `deployer`, `architecture`, `health-judge`,
+module imports the stand-in. Roles are `source-deployment`, `health-judge`,
 `responder`, and `reflector`; each result is the JSON object requested by that
 role's model-turn schema (not the outer protobuf AgentResult).
 
@@ -632,7 +632,7 @@ Supported references are:
 - `{{steps.0.started_at}}` / `{{steps.0.completed_at}}`: measured boundaries of a
   preceding step, or any existing step in the result. Forward references fail
   validation. Use these for action timing rather than literal timestamps.
-- `{{incident_id}}`, `{{checkout}}`, `{{objective_digest}}` and
+- `{{incident_id}}`, `{{checkout}}`, and
   `{{request.field_name}}` for scalar typed request fields, using snake_case.
 - `{{request.findings.0.primary_resource}}` and its `.api_version`, `.kind`,
   `.namespace`, `.name` fields; finding `.detector_id`, `.rule_id`, `.status`,

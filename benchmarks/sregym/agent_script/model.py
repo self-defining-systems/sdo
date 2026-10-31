@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .template import validate_references, validate_step_references
 
-Role = Literal["deployer", "architecture", "health-judge", "responder", "reflector"]
+Role = Literal["source-deployment", "health-judge", "responder", "reflector"]
 
 
 class Model(BaseModel):

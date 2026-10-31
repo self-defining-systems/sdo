@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"sdo.dev/operator/sdk/traffic"
@@ -291,17 +292,25 @@ func TestScheduleFollowsWeightsDeterministically(t *testing.T) {
 }
 
 func TestRunHonoursTheRateAndBoundedDuration(t *testing.T) {
-	app := &recorder{}
-	w := workload(t, "verify", traffic.PurposeVerifyBurst, traffic.WorkloadScenario{ID: "search"})
-	w.RatePerSecond, w.Duration = 20, traffic.Duration(500*time.Millisecond)
-	e := engine(t, w, traffic.Catalog{search()}, serve(t, app))
-	var emitted atomic.Int64
-	started := time.Now()
-	next, skipped := e.Run(context.Background(), 0, func(string, traffic.Sample) { emitted.Add(1) })
-	elapsed := time.Since(started)
-	if elapsed > 2*time.Second || next < 8 || next > 12 || skipped != 0 || emitted.Load() != int64(next) {
-		t.Fatalf("20/s for 500ms: next=%d skipped=%d emitted=%d elapsed=%s", next, skipped, emitted.Load(), elapsed)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		w := workload(t, "verify", traffic.PurposeVerifyBurst, traffic.WorkloadScenario{ID: "search"})
+		w.RatePerSecond, w.Duration = 20, traffic.Duration(500*time.Millisecond)
+		// Scheduling is independent of HTTP latency and host CPU availability.
+		// Failed requests still emit samples, so use an immediate transport error.
+		e, err := traffic.NewEngine(w, traffic.Catalog{search()}, stubDoer{err: errors.New("synthetic refusal")},
+			func(traffic.Target) string { return "http://synthetic" }, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var emitted atomic.Int64
+		started := time.Now()
+		next, skipped := e.Run(context.Background(), 0, func(string, traffic.Sample) { emitted.Add(1) })
+		elapsed := time.Since(started)
+		// The final arrival and duration deadline can become ready together.
+		if elapsed != 500*time.Millisecond || next < 10 || next > 11 || skipped != 0 || emitted.Load() != int64(next) {
+			t.Fatalf("20/s for 500ms: next=%d skipped=%d emitted=%d elapsed=%s", next, skipped, emitted.Load(), elapsed)
+		}
+	})
 }
 
 func TestWorkloadValidationRejectsUnsafeProfiles(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"sdo.dev/operator/artifacts"
@@ -30,7 +31,7 @@ func TestToySeedPassesBrokerMemoryValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if changed := gitIn(t, root, "status", "--porcelain"); changed != "" {
-		t.Fatalf("toy seed requires startup schema migration: %s", changed)
+		t.Fatalf("toy seed requires schema initialization: %s", changed)
 	}
 	diagnostics, err := validate.Validate(context.Background(), validate.Request{
 		Root: root, Layers: validate.Structural | validate.Semantic | validate.Compile,
@@ -42,4 +43,13 @@ func TestToySeedPassesBrokerMemoryValidation(t *testing.T) {
 	if err := validate.Err(diagnostics); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
 }

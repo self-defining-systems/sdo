@@ -84,9 +84,8 @@ def scripted_cli(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("role", "key"),
     [
-        ("deployer", "proposed"),
-        ("architecture", "architecture_summary_markdown"),
-        ("health-judge", "objective_digest"),
+        ("source-deployment", "proposed"),
+        ("health-judge", "detector_ids"),
         ("responder", "confirmed_root_causes"),
         ("reflector", "learning_decision"),
     ],

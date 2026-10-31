@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -60,7 +61,7 @@ func ReadTree(root string) (*Tree, error) {
 		return nil, err
 	}
 	if version != CurrentSchemaVersion {
-		return nil, fmt.Errorf("unsupported operational memory schema-version %d; need %d (run the Upkeep migration)", version, CurrentSchemaVersion)
+		return nil, fmt.Errorf("unsupported operational memory schema version %d; required %d", version, CurrentSchemaVersion)
 	}
 	c := newCollector()
 	c.tree.SchemaVersion = version
@@ -345,4 +346,19 @@ func readRegular(p, rel string) ([]byte, error) {
 		return nil, fmt.Errorf("memory artifact %s exceeds %d KiB", rel, MaxArtifactBytes/1024)
 	}
 	return os.ReadFile(p)
+}
+
+func readSchemaVersion(root string) (int, error) {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(SchemaVersionFile)))
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	version, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("invalid schema-version %q", strings.TrimSpace(string(data)))
+	}
+	return version, nil
 }

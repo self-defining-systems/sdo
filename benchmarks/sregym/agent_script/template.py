@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -12,7 +11,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from sdo.contracts import (
-    ArchitectureRequest,
     HealthJudgeRequest,
     IncidentRequest,
     ReflectionRequest,
@@ -31,7 +29,7 @@ NESTED = re.compile(
 )
 SCALARS = {
     field.name
-    for cls in (ArchitectureRequest, HealthJudgeRequest, IncidentRequest, ReflectionRequest, SourceDeploymentRequest)
+    for cls in (HealthJudgeRequest, IncidentRequest, ReflectionRequest, SourceDeploymentRequest)
     for field in cls.DESCRIPTOR.fields
     if field.message_type is None and not field.is_repeated
 }
@@ -42,7 +40,7 @@ def validate_references(value: Any) -> None:
         for match in TOKEN.finditer(value):
             name = match[1]
             if not (
-                name in {"now", "turn.started_at", "checkout", "incident_id", "objective_digest", "request"}
+                name in {"now", "turn.started_at", "checkout", "incident_id", "request"}
                 or re.fullmatch(r"steps\.[0-9]+\.(?:started_at|completed_at|output(?:\.[a-zA-Z0-9_]+)*)", name)
                 or NESTED.fullmatch(name)
                 or name.startswith("request.")
@@ -139,9 +137,6 @@ class TemplateContext:
         incident = normalized.get("incident_id", incident)
         if incident is not None:
             self.values["incident_id"] = incident
-        objective = normalized.get("health_objective")
-        if objective is not None:
-            self.values["objective_digest"] = hashlib.sha256(objective.strip().encode()).hexdigest()
 
     def expand(self, value: Any, *, now: str) -> Any:
         return expand(value, {**self.values, "now": now})

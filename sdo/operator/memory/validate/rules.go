@@ -65,7 +65,6 @@ const (
 	RuleResponderFiring       = "ownership.responder-firing"
 	RuleInitialHealthOnly     = "ownership.initial-health-only"
 	RuleInitialNeedsDetectors = "ownership.initial-needs-detectors"
-	RuleUpkeepMigration       = "ownership.upkeep-migration"
 
 	// Explicit Go health-bootstrap preparation.
 	RuleGenericHealth = "bootstrap.generic-health"

@@ -64,12 +64,10 @@ func Scenarios() traffic.Catalog { return traffic.Catalog{{ID: "api", Descriptio
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v: %s", err, output)
 	}
-	steps = append(steps, map[string]any{"kind": "tool", "argv": []string{"sdo-operator", "memory", "check"}})
+	steps = append(steps, map[string]any{"kind": "tool", "argv": []string{"sdo-operator", "memory", "check"}, "timeout": 300.0})
 	plan := map[string]any{"version": 1, "turns": []any{map[string]any{"role": "health-judge", "steps": steps, "result": map[string]any{
-		"round": 1, "objective_digest": "f65dbb891dca43a5e77c53610a6f57bdc8ad2269f726cecd62e31142a0c9f5b1", "source_commit": proposal.BaseCommit,
-		"covered_resources": []any{}, "failure_patterns": []string{"synthetic failure"}, "detector_ids": []string{"health-objective"},
+		"failure_patterns": []string{"synthetic failure"}, "detector_ids": []string{"health-objective"},
 	}}}}
-	// The fixture runner fills the objective digest from its synthetic request.
 	data, _ := json.Marshal(plan)
 	script := filepath.Join(t.TempDir(), "script.json")
 	if err := os.WriteFile(script, data, 0o600); err != nil {

@@ -65,14 +65,3 @@ func TestControllerLaunchRequiresDedicatedToolchainImage(t *testing.T) {
 		t.Fatal("dedicated compiler image did not reach typed controller launch")
 	}
 }
-
-func TestMemoryMigrationRejectsMissingCompilerBeforeCredentials(t *testing.T) {
-	config, _, err := ParseControllerLaunch([]string{"controller", "--toolchain-image", "controller:test", "--app", "/workspace/app", "--namespace", "app", "--responder-image", "responder:slim", "--repository-pvc", "repo", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.Controller.ToolchainImage = ""
-	if _, err := openMigrationBroker(config.Controller); err == nil || !strings.Contains(err.Error(), "--toolchain-image") {
-		t.Fatalf("missing compiler reached migration: %v", err)
-	}
-}

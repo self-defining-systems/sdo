@@ -77,10 +77,7 @@ func UnmarshalLenient(data []byte, message proto.Message) error {
 	return Validate(message)
 }
 
-// DecodeLenientUnvalidated drops unknown fields like UnmarshalLenient but does
-// not validate. It exists for the one caller that must migrate a retired
-// representation into a valid message before validating it (legacy outcome
-// import); every other decoder uses Unmarshal or UnmarshalLenient.
+// DecodeLenientUnvalidated decodes telemetry without enforcing required fields.
 func DecodeLenientUnvalidated(data []byte, message proto.Message) error {
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(data, message); err != nil {
 		return fmt.Errorf("decode %s: %w", name(message), err)

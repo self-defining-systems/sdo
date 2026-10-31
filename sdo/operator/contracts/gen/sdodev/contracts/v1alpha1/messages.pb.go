@@ -14,8 +14,7 @@
 //
 // Wire convention: protojson, snake_case
 // field names, enums carried as their lowercase domain strings (constrained by
-// protovalidate, not proto enums, so the existing .sdo/outcomes.jsonl records
-// and strict receipts stay readable). Semantic invariants are expressed in
+// protovalidate, not proto enums). Semantic invariants are expressed in
 // protovalidate CEL where possible; the UsageMetrics cache-read alias
 // *normalization* is a mutation CEL cannot perform and stays a thin hand step
 // at the seam (see sdo/contracts/proto.py).

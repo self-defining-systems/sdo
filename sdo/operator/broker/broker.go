@@ -379,9 +379,6 @@ func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, record *c
 		}
 		defer cleanup()
 		store := memory.NewJSONStore(stage)
-		if err := store.ImportLegacy(ctx); err != nil {
-			return err
-		}
 		outcome, err := store.Put(ctx, record)
 		if err != nil {
 			return err

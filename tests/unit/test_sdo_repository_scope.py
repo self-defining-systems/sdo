@@ -62,7 +62,7 @@ def test_python_implementation_uses_the_canonical_sdo_namespace() -> None:
     required_packages = (
         "sdo/agents/lifecycle",
         "sdo/agents/responder",
-        "sdo/agents/deployer",
+        "sdo/agents/source_deployment",
         "sdo/agents/health_judge",
         "sdo/contracts",
     )

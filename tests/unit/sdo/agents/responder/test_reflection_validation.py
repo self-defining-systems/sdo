@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from agentshim.testing import installed_mcp_servers
@@ -16,8 +18,6 @@ from sdo.agents.responder.reflection import ClaudeSessionBackend, CodexSessionBa
 from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from agentshim import CommandRequest
     from agentshim.testing import FakeRun
 
@@ -80,23 +80,54 @@ sys.exit(1)
 async def test_validation_tool_timeout_returns_failure_and_stops_children(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    marker = tmp_path / "child-finished"
-    child_code = f"import time; from pathlib import Path; time.sleep(0.8); Path({str(marker)!r}).touch()"
+    from sdo.agents.responder.reflection_validation import validation_server
+
+    ready = tmp_path / "child-ready"
+    child_code = (
+        f"import os, time; from pathlib import Path; Path({str(ready)!r}).write_text(str(os.getpid())); time.sleep(60)"
+    )
     _validator(
         tmp_path,
         f"""import subprocess, sys, time
-subprocess.Popen([sys.executable, "-c", {child_code!r}])
 print("checking replay", flush=True)
-time.sleep(20)
+subprocess.Popen([sys.executable, "-c", {child_code!r}])
+time.sleep(60)
 """,
         monkeypatch,
     )
-    result = await _call(tmp_path, timeout=0.1)
+    create_process = asyncio.create_subprocess_exec
+
+    async def start_ready_validator(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        process = await create_process(*args, **kwargs)
+        # Start the short validation deadline only after the real descendant
+        # exists. Interpreter startup under host load is not under test.
+        try:
+            async with asyncio.timeout(30):
+                while not ready.exists():
+                    await asyncio.sleep(0.01)
+        except BaseException:
+            os.killpg(process.pid, signal.SIGKILL)
+            await process.communicate()
+            raise
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", start_ready_validator)
+    server = validation_server(tmp_path, timeout_seconds=0.1)
+    _, result = await server.call_tool("check_memory", {"decision_path": "decision.json"})
     assert result["timed_out"]
     assert result["exit_code"] != 0
     assert "checking replay" in result["stdout"]
-    await asyncio.sleep(1)
-    assert not marker.exists()
+    # A killed orphan may remain a zombie until the host reaps it. Either
+    # absence or zombie state proves it cannot continue validation work.
+    status = Path(f"/proc/{ready.read_text()}/stat")
+    async with asyncio.timeout(10):
+        while True:
+            try:
+                if status.read_text().split(") ", 1)[1].split()[0] == "Z":
+                    break
+            except FileNotFoundError:
+                break
+            await asyncio.sleep(0.01)
 
 
 @pytest.mark.parametrize(
