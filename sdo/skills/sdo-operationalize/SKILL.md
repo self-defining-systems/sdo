@@ -52,7 +52,8 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
   or another severity in separate health detectors with their own IDs, each listed in your result.
 - Evidence is the agent's only view of the alert. Put the observed value, the expected value, the source of the
   expectation and how it was computed in `Finding.Evidence`.
-- Cheapest input first: snapshot reads are free, traffic costs requests, metrics cost queries. Never probe
+- Cheapest input first: snapshot reads are free; traffic costs requests; usage and metrics cost one read per
+  cycle. Never probe
   faster than the judge task's traffic limits.
 - Derive every expectation from observed relations or from the source, never from one deployment's names or
   values. A check must stay true after a legitimate redeploy.

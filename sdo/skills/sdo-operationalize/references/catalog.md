@@ -6,6 +6,9 @@ Each item says what to check, which source fact it comes from, and the input tha
   Endpoints, EndpointSlice, NetworkPolicy, Event). Event-driven and free.
 - **Traffic**: synthetic HTTP scenarios and workloads (`sdo.dev/operator/sdk/traffic`), a few requests per second.
 - **Links**: fresh TCP dials between Services, declared in the `links` workload.
+- **Usage**: kubelet container and volume usage (`sdo.dev/operator/sdk/usage`): CPU, memory working set and RSS
+  with requests and limits, optional CPU throttling, and PVC capacity, use and inodes, over a rolling window of
+  recent samples. No observability stack needed; collected only while a detector watches `usage.Watch`.
 - **Metrics**: PromQL threshold rules (`sdo.dev/operator/sdk/metrics`). Only when the task says a metrics source
   is configured, and only over series whose exporter you can find in the source.
 
@@ -64,16 +67,18 @@ The SDK reference in `sdo-detector-authoring` has the exact types.
   HorizontalPodAutoscaler, Ingress, Secret and Node state. Use Metrics over kube-state-metrics series when a
   source exports them; otherwise record a blind spot.
 
-## 4. Saturation and capacity (Metrics, warn)
+## 4. Saturation and capacity (Usage, warn)
 
-Use only when the source or controller configuration shows cAdvisor, kubelet or kube-state-metrics series.
-
-- CPU throttling: throttled periods over total periods above about 0.25.
-- Memory: working set above about 0.9 of the limit, or a linear forecast reaching the limit within an hour.
-- Volumes: a linear forecast of available bytes reaching zero within a few hours.
-- Kubernetes objects the snapshot lacks: CronJob last success too old, failed Jobs, an autoscaler at its
-  maximum replicas, PVCs not Bound.
-- Without such series, record saturation as a blind spot.
+- CPU throttling: `usage.ThrottledFraction` above about 0.25. Declare `usage.Requirements{Throttling: true}`; it
+  costs one extra kubelet read per node per cycle.
+- Memory: `usage.RatioToLimit` of the working set above about 0.9, or `usage.TimeToThreshold` reaching the limit
+  within an hour (a leak).
+- Volumes: available bytes or inodes forecast to reach zero within a few hours.
+- A container without a limit has no ratio: compare against its request or its siblings instead, and say so in
+  the evidence.
+- Build findings with `usage.ThresholdFinding` so the observed value, limit, window and forecast are in Evidence.
+- Kubernetes objects the snapshot lacks (CronJob success, failed Jobs, autoscaler at maximum): Metrics over
+  kube-state-metrics series when a source exports them; otherwise record a blind spot.
 
 ## 5. Data stores and queues
 
