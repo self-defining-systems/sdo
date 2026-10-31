@@ -560,8 +560,8 @@ const ProgressWindow = 10 * time.Minute
 FUNCTIONS
 
 func NewCrashes(s sdk.DetectorSpec) sdk.Detector
-    NewCrashes reports newly appearing runtime crash signatures, not generic
-    error lines.
+    NewCrashes reports failed-container crash tails and newly appearing runtime
+    signatures in surviving containers, never generic error lines.
 
 func NewNodes(s sdk.DetectorSpec) sdk.Detector
     NewNodes checks only nodes hosting application pods.
@@ -1166,9 +1166,11 @@ type Query struct {
 	ID       string
 	Patterns []Pattern
 	Previous bool
+	// Terminations requests tails retained across incarnation window resets.
+	Terminations bool
 }
-    Query declares patterns and optionally the previous terminated container
-    tail.
+    Query declares patterns, optional previous logs and completed-container
+    tails.
 
 func Queries(ds []sdk.Detector) ([]Query, error)
     Queries merges identical query IDs and rejects conflicting definitions.
@@ -1195,11 +1197,23 @@ func ResultFrom(ctx sdk.DetectionContext, id string) (Result, bool)
 type Source interface{ LogResult(string) (Result, bool) }
     Source supplies frozen query results.
 
+type Termination struct {
+	RestartCount int32
+	FinishedAt   time.Time
+	ExitCode     int32
+	Tail         Cycle
+}
+    Termination is a bounded tail captured once for a completed container.
+    RestartCount identifies the exited incarnation, not its successor.
+
 type Window struct {
 	Namespace, Pod, UID, Container string
 	RestartCount                   int32
 	Cycles                         []Cycle
+	Terminations                   []Termination
 }
-    Window holds chronological observations for a single container incarnation.
+    Window holds current-incarnation cycles and at most WindowCycles completed
+    container tails retained across restarts. Removed pods discard their
+    history.
 
 ```

@@ -125,13 +125,14 @@ func (e *evaluation) capacity(rule string, r sdk.ObjectRef, value float64, limit
 
 type crashes struct{ spec sdk.DetectorSpec }
 
-// NewCrashes reports newly appearing runtime crash signatures, not generic error lines.
+// NewCrashes reports failed-container crash tails and newly appearing runtime
+// signatures in surviving containers, never generic error lines.
 func NewCrashes(s sdk.DetectorSpec) sdk.Detector { return crashes{s} }
 func (d crashes) Spec() sdk.DetectorSpec         { return d.spec }
 
 // LogQueries requests previous-container evidence as well as bounded current logs.
 func (d crashes) LogQueries() []logs.Query {
-	return []logs.Query{{ID: "generic-crashes", Previous: true, Patterns: []logs.Pattern{
+	return []logs.Query{{ID: "generic-crashes", Previous: true, Terminations: true, Patterns: []logs.Pattern{
 		{ID: "go-panic", RE2: `^panic:`}, {ID: "go-fatal", RE2: `^fatal error:`}, {ID: "python-traceback", RE2: `^Traceback \(most recent call last\):`}, {ID: "java-oom", RE2: `\bjava\.lang\.OutOfMemoryError\b`}, {ID: "java-thread", RE2: `^Exception in thread "`}, {ID: "segfault", RE2: `(?i)\bsegmentation fault\b`},
 		// Evidence only: never used as a firing signature.
 		{ID: "previous-tail", RE2: `.+`},
@@ -147,6 +148,22 @@ func (d crashes) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Find
 		if w.Namespace != ctx.Namespace() {
 			continue
 		}
+		for _, t := range w.Terminations {
+			if t.ExitCode == 0 || t.Tail.Error != "" {
+				continue
+			}
+			for _, p := range d.LogQueries()[0].Patterns {
+				if p.ID == "previous-tail" || t.Tail.Matches[p.ID].Count == 0 {
+					continue
+				}
+				e.emit("log-"+p.ID, sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: w.Namespace, Name: w.Pod}, fmt.Sprintf("container=%s restarts=%d exit=%d finished=%s pattern=%s tail=%+v", w.Container, t.RestartCount, t.ExitCode, t.FinishedAt, p.RE2, t.Tail), false)
+				e.findings[len(e.findings)-1].Fingerprint += fmt.Sprintf("/%s/%s/%d", w.UID, w.Container, t.RestartCount)
+				break // One finding per completed crash, even with multiple signatures.
+			}
+		}
+		if len(w.Cycles) == 0 || !w.Cycles[len(w.Cycles)-1].Running {
+			continue
+		}
 		for _, p := range d.LogQueries()[0].Patterns {
 			if p.ID == "previous-tail" {
 				continue
@@ -159,7 +176,7 @@ func (d crashes) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Find
 					}
 				}
 				e.emit("log-"+p.ID, sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: w.Namespace, Name: w.Pod}, fmt.Sprintf("container=%s restarts=%d pattern=%s evidence=%+v previous-container=%s", w.Container, w.RestartCount, p.RE2, ev, previous), false)
-				e.findings[len(e.findings)-1].Fingerprint += "/" + w.Container
+				e.findings[len(e.findings)-1].Fingerprint += fmt.Sprintf("/%s/%s/%d", w.UID, w.Container, w.RestartCount)
 			}
 		}
 	}

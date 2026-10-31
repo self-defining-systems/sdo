@@ -30,13 +30,14 @@ type LogsObserverOptions struct{ Clock func() time.Time }
 // More than 256 containers fails closed. Collection is idle
 // unless a loaded detector implements logs.Consumer.
 type LogsObserver struct {
-	mu       sync.Mutex
-	queries  []logs.Query
-	patterns map[string]*regexp.Regexp
-	previous bool
-	clock    func() time.Time
-	read     func(context.Context, string, string, *corev1.PodLogOptions) (io.ReadCloser, error)
-	states   map[string]*logState
+	mu           sync.Mutex
+	queries      []logs.Query
+	patterns     map[string]*regexp.Regexp
+	previous     bool
+	terminations bool
+	clock        func() time.Time
+	read         func(context.Context, string, string, *corev1.PodLogOptions) (io.ReadCloser, error)
+	states       map[string]*logState
 }
 type logState struct {
 	window       logs.Window
@@ -60,6 +61,7 @@ func NewLogsObserver(client kubernetes.Interface, ds []sdk.Detector, opt LogsObs
 	o := &LogsObserver{queries: qs, patterns: map[string]*regexp.Regexp{}, clock: opt.Clock, states: map[string]*logState{}}
 	for _, q := range qs {
 		o.previous = o.previous || q.Previous
+		o.terminations = o.terminations || q.Terminations
 		for _, p := range q.Patterns {
 			o.patterns[p.RE2] = regexp.MustCompile(p.RE2)
 		}
@@ -98,6 +100,10 @@ func cloneLogResult(r logs.Result) logs.Result {
 	r.Windows = append([]logs.Window(nil), r.Windows...)
 	for i := range r.Windows {
 		w := &r.Windows[i]
+		w.Terminations = append([]logs.Termination(nil), w.Terminations...)
+		for j := range w.Terminations {
+			w.Terminations[j].Tail = cloneLogCycle(w.Terminations[j].Tail)
+		}
 		w.Cycles = append([]logs.Cycle(nil), w.Cycles...)
 		for j := range w.Cycles {
 			w.Cycles[j] = cloneLogCycle(w.Cycles[j])
@@ -168,10 +174,15 @@ func (o *LogsObserver) collect(ctx context.Context, base sdk.DetectionContext) m
 					status = s
 				}
 			}
-			key := string(pod.UID) + "/" + name + fmt.Sprint("/", status.RestartCount)
+			key := string(pod.UID) + "/" + name
 			state := o.states[key]
 			if state == nil {
 				state = &logState{window: logs.Window{Namespace: pod.Namespace, Pod: pod.Name, UID: string(pod.UID), Container: name, RestartCount: status.RestartCount}, last: at.Add(-time.Minute)}
+			}
+			if state.window.RestartCount != status.RestartCount {
+				state.window.RestartCount = status.RestartCount
+				state.window.Cycles = nil
+				state.last, state.equal, state.previousRead = at.Add(-time.Minute), 0, false
 			}
 			start := state.last
 			if n := len(state.window.Cycles); n > 0 {
@@ -179,15 +190,66 @@ func (o *LogsObserver) collect(ctx context.Context, base sdk.DetectionContext) m
 			}
 			budget := int64(logs.LimitBytes)
 			var previous *logs.Cycle
-			if o.previous && status.RestartCount > 0 && !state.previousRead {
-				prevState := &logState{}
-				p, used := o.fetch(ctx, pod.Namespace, pod.Name, name, true, prevState, at, budget/2)
+			// Termination tails have no incremental cursor: the decisive line may
+			// predate our initial observation or the reset of the current window.
+			for _, prev := range []bool{true, false} {
+				if !o.terminations {
+					break
+				}
+				term := status.State.Terminated
+				incarnation := status.RestartCount
+				if prev {
+					term = status.LastTerminationState.Terminated
+					// LastTerminationState refers to the preceding incarnation.
+					if incarnation > 0 {
+						incarnation--
+					}
+				}
+				if term == nil {
+					continue
+				}
+				found := -1
+				for i, t := range state.window.Terminations {
+					if t.FinishedAt.Equal(term.FinishedAt.Time) && t.RestartCount == incarnation {
+						found = i
+						break
+					}
+				}
+				if found < 0 || state.window.Terminations[found].Tail.Error != "" {
+					tail, used := o.fetch(ctx, pod.Namespace, pod.Name, name, prev, true, &logState{}, at, budget/2)
+					budget -= used
+					observation := logs.Termination{RestartCount: incarnation, FinishedAt: term.FinishedAt.Time, ExitCode: term.ExitCode, Tail: tail}
+					if found < 0 {
+						state.window.Terminations = append(state.window.Terminations, observation)
+						found = len(state.window.Terminations) - 1
+					} else {
+						state.window.Terminations[found] = observation
+					}
+				}
+				if prev && o.previous && !state.previousRead {
+					p := state.window.Terminations[found].Tail
+					// Failed tails remain in Terminations for this evaluation and retry;
+					// do not poison every later cycle with the failed previous evidence.
+					if p.Error == "" {
+						previous = &p
+					}
+					state.previousRead = p.Error == ""
+				}
+			}
+			if len(state.window.Terminations) > logs.WindowCycles {
+				state.window.Terminations = state.window.Terminations[len(state.window.Terminations)-logs.WindowCycles:]
+			}
+			if o.previous && status.RestartCount > 0 && !state.previousRead && (!o.terminations || status.LastTerminationState.Terminated == nil) {
+				p, used := o.fetch(ctx, pod.Namespace, pod.Name, name, true, true, &logState{}, at, budget/2)
 				previous = &p
 				budget -= used
-				// An unavailable previous source is retried, never silently made healthy.
 				state.previousRead = p.Error == ""
 			}
-			c, _ := o.fetch(ctx, pod.Namespace, pod.Name, name, false, state, at, budget)
+			c := logs.Cycle{End: at, Matches: map[string]logs.Match{}}
+			// Waiting/never-started containers have no current log source.
+			if status.State.Running != nil {
+				c, _ = o.fetch(ctx, pod.Namespace, pod.Name, name, false, false, state, at, budget)
+			}
 			c.Start = start
 			c.Running = status.State.Running != nil
 			c.Previous = previous
@@ -198,6 +260,13 @@ func (o *LogsObserver) collect(ctx context.Context, base sdk.DetectionContext) m
 			next[key] = state
 			for _, q := range o.queries {
 				w := state.window
+				w.Terminations = append([]logs.Termination(nil), state.window.Terminations...)
+				for i, t := range w.Terminations {
+					w.Terminations[i].Tail = projectLogCycle(t.Tail, q)
+				}
+				if !q.Terminations {
+					w.Terminations = nil
+				}
 				w.Cycles = make([]logs.Cycle, len(state.window.Cycles))
 				for i, c := range state.window.Cycles {
 					w.Cycles[i] = projectLogCycle(c, q)
@@ -226,14 +295,14 @@ func projectLogCycle(c logs.Cycle, q logs.Query) logs.Cycle {
 	}
 	return c
 }
-func (o *LogsObserver) fetch(ctx context.Context, ns, pod, container string, previous bool, state *logState, at time.Time, budget int64) (logs.Cycle, int64) {
+func (o *LogsObserver) fetch(ctx context.Context, ns, pod, container string, previous, tail bool, state *logState, at time.Time, budget int64) (logs.Cycle, int64) {
 	c := logs.Cycle{End: at, Matches: map[string]logs.Match{}}
 	opt := &corev1.PodLogOptions{Container: container, Previous: previous, Timestamps: true, LimitBytes: &budget}
-	if previous {
+	if tail {
 		tail := int64(1000)
 		opt.TailLines = &tail
 	}
-	if !previous {
+	if !tail {
 		opt.SinceTime = &metav1.Time{Time: state.last.Truncate(time.Second)}
 	}
 	request, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -271,7 +340,7 @@ func (o *LogsObserver) fetch(ctx context.Context, ns, pod, container string, pre
 			c.Error = "malformed timestamped container log"
 			return c, int64(len(data))
 		}
-		if !previous {
+		if !tail {
 			if ts.Before(oldLast) {
 				continue
 			}

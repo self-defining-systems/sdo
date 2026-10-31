@@ -36,11 +36,13 @@ type Pattern struct {
 	RE2 string
 }
 
-// Query declares patterns and optionally the previous terminated container tail.
+// Query declares patterns, optional previous logs and completed-container tails.
 type Query struct {
 	ID       string
 	Patterns []Pattern
 	Previous bool
+	// Terminations requests tails retained across incarnation window resets.
+	Terminations bool
 }
 
 // Consumer declares a detector's log inputs.
@@ -145,11 +147,22 @@ type Cycle struct {
 	Error      string
 }
 
-// Window holds chronological observations for a single container incarnation.
+// Termination is a bounded tail captured once for a completed container.
+// RestartCount identifies the exited incarnation, not its successor.
+type Termination struct {
+	RestartCount int32
+	FinishedAt   time.Time
+	ExitCode     int32
+	Tail         Cycle
+}
+
+// Window holds current-incarnation cycles and at most WindowCycles completed
+// container tails retained across restarts. Removed pods discard their history.
 type Window struct {
 	Namespace, Pod, UID, Container string
 	RestartCount                   int32
 	Cycles                         []Cycle
+	Terminations                   []Termination
 }
 
 // Result is a query's frozen windows; Error is neither health nor a finding.
@@ -182,6 +195,11 @@ func Require(ctx sdk.DetectionContext, id string) (Result, error) {
 		return r, fmt.Errorf("log query %q: %s", id, r.Error)
 	}
 	for _, w := range r.Windows {
+		for _, t := range w.Terminations {
+			if t.Tail.Error != "" {
+				return r, fmt.Errorf("log query %q terminated container %s/%s: %s", id, w.Pod, w.Container, t.Tail.Error)
+			}
+		}
 		for _, c := range w.Cycles {
 			if c.Error != "" {
 				return r, fmt.Errorf("log query %q container %s/%s: %s", id, w.Pod, w.Container, c.Error)

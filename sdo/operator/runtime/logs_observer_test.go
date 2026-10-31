@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"sdo.dev/operator/sdk/generichealth"
 	"strings"
 	"testing"
 	"time"
@@ -103,7 +105,7 @@ func TestLogsSourceFailureAndBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app", UID: "u"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}}}}}
+	base := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app", UID: "u"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "c", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}}}}}
 	p := LogsSnapshotProvider{Base: staticProvider{snapshot: base}, Observer: o}
 	ctx, err := p.Snapshot(context.Background())
 	if err != nil {
@@ -151,7 +153,7 @@ func TestLogsFakeClientUsesBoundedLogSubresource(t *testing.T) {
 	if len(client.Actions()) != 0 {
 		t.Fatal("constructor performed I/O")
 	}
-	base := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app", UID: "u"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}}}}}
+	base := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app", UID: "u"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "c", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}}}}}
 	p := LogsSnapshotProvider{Base: staticProvider{snapshot: base}, Observer: o}
 	ctx, err := p.Snapshot(context.Background())
 	if err != nil {
@@ -173,5 +175,140 @@ func TestLogsFakeClientUsesBoundedLogSubresource(t *testing.T) {
 	opt := action.GetValue().(*corev1.PodLogOptions)
 	if opt.LimitBytes == nil || *opt.LimitBytes != logs.LimitBytes || opt.SinceTime == nil || !opt.Timestamps {
 		t.Fatalf("%+v", opt)
+	}
+}
+
+// Both exits used to lose the decisive line at the log-window boundary.
+func TestCrashTerminationLifecycle(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		t.Run(fmt.Sprint("restart=", restart), func(t *testing.T) {
+			at := time.Unix(100, 0)
+			d := generichealth.NewCrashes(sdk.DetectorSpec{})
+			o, err := NewLogsObserver(nil, []sdk.Detector{d}, LogsObserverOptions{Clock: func() time.Time { return at }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			status := corev1.ContainerStatus{Name: "c", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}
+			base := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app", UID: "uid"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "c", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}}}}}
+			calls := 0
+			o.read = func(_ context.Context, _, _ string, opt *corev1.PodLogOptions) (io.ReadCloser, error) {
+				calls++
+				if at.Unix() == 100 {
+					return io.NopCloser(strings.NewReader("1970-01-01T00:01:40Z healthy\n")), nil
+				}
+				if !opt.Previous && opt.SinceTime != nil {
+					return io.NopCloser(strings.NewReader("")), nil
+				}
+				if opt.SinceTime != nil || opt.TailLines == nil {
+					t.Errorf("termination must read bounded tail: %+v", opt)
+				}
+				return io.NopCloser(strings.NewReader("1970-01-01T00:01:41Z panic: synthetic\n")), nil
+			}
+			check := func(want int) []sdk.Finding {
+				base.PodList[0].Status.ContainerStatuses = []corev1.ContainerStatus{status}
+				snapshot, err := (LogsSnapshotProvider{Base: staticProvider{snapshot: base}, Observer: o}).Snapshot(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				findings, err := d.Detect(context.Background(), snapshot)
+				if err != nil || len(findings) != want {
+					t.Fatalf("findings=%+v err=%v want=%d", findings, err, want)
+				}
+				return findings
+			}
+			check(0)
+			at = at.Add(2 * time.Second)
+			term := &corev1.ContainerStateTerminated{ExitCode: 2, FinishedAt: metav1.NewTime(at.Add(-time.Second))}
+			status.State = corev1.ContainerState{Terminated: term}
+			if restart {
+				status.RestartCount = 1
+				status.State = corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+				status.LastTerminationState.Terminated = term
+			}
+			first := check(1)
+			before := calls
+			at = at.Add(time.Second)
+			again := check(1)
+			if !restart && calls != before {
+				t.Fatal("terminal tail reread")
+			}
+			if first[0].Fingerprint != again[0].Fingerprint {
+				t.Fatal("crash identity changed")
+			}
+			if !strings.Contains(first[0].Fingerprint, "uid/c/0") {
+				t.Fatalf("missing crash identity: %s", first[0].Fingerprint)
+			}
+			if !restart {
+				// Moving a judged terminal state into lastState must not re-read/re-key it.
+				status.RestartCount = 1
+				status.LastTerminationState.Terminated = term
+				status.State = corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+				at = at.Add(time.Second)
+				moved := check(1)
+				if moved[0].Fingerprint != first[0].Fingerprint {
+					t.Fatal("same crash re-keyed after restart")
+				}
+				term2 := *term
+				// Kubernetes timestamps can give two rapid exits the same finish time.
+				term2.FinishedAt = term.FinishedAt
+				status.State = corev1.ContainerState{Terminated: &term2}
+				at = at.Add(time.Second)
+				second := check(2)
+				if second[0].Fingerprint == second[1].Fingerprint {
+					t.Fatal("distinct crashes merged")
+				}
+			}
+
+		})
+	}
+}
+
+func TestLogsNeverStartedIsAbsent(t *testing.T) {
+	d := generichealth.NewCrashes(sdk.DetectorSpec{})
+	o, _ := NewLogsObserver(nil, []sdk.Detector{d}, LogsObserverOptions{})
+	o.read = func(context.Context, string, string, *corev1.PodLogOptions) (io.ReadCloser, error) {
+		t.Fatal("read never-started container")
+		return nil, nil
+	}
+	base := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "c", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}}}}}}
+	snapshot, _ := (LogsSnapshotProvider{Base: staticProvider{snapshot: base}, Observer: o}).Snapshot(context.Background())
+	if fs, err := d.Detect(context.Background(), snapshot); err != nil || len(fs) != 0 {
+		t.Fatalf("%+v %v", fs, err)
+	}
+}
+
+func TestTerminationTailRetryAndFrozen(t *testing.T) {
+	d := generichealth.NewCrashes(sdk.DetectorSpec{})
+	o, _ := NewLogsObserver(nil, []sdk.Detector{d}, LogsObserverOptions{})
+	calls := 0
+	o.read = func(_ context.Context, _, _ string, opt *corev1.PodLogOptions) (io.ReadCloser, error) {
+		calls++
+		if calls == 1 {
+			return nil, fmt.Errorf("synthetic kubelet outage")
+		}
+		if !opt.Previous || opt.SinceTime != nil {
+			t.Fatalf("wrong termination source: %+v", opt)
+		}
+		return io.NopCloser(strings.NewReader("1970-01-01T00:00:01Z panic: old crash\n")), nil
+	}
+	base := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app", UID: "uid"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "c", RestartCount: 1, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}, LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 2, FinishedAt: metav1.NewTime(time.Unix(1, 0))}}}}}}}}
+	provider := LogsSnapshotProvider{Base: staticProvider{snapshot: base}, Observer: o}
+	snapshot, _ := provider.Snapshot(context.Background())
+	if _, err := d.Detect(context.Background(), snapshot); err == nil {
+		t.Fatal("source failure became healthy")
+	}
+	snapshot, _ = provider.Snapshot(context.Background())
+	fs, err := d.Detect(context.Background(), snapshot)
+	if err != nil || len(fs) != 1 {
+		t.Fatalf("retry lost crash: %+v %v", fs, err)
+	}
+	result, _ := logs.ResultFrom(snapshot, "generic-crashes")
+	result.Windows[0].Terminations[0].Tail.Matches["go-panic"] = logs.Match{}
+	if fs, err := d.Detect(context.Background(), snapshot); err != nil || len(fs) != 1 {
+		t.Fatal("termination evidence aliases snapshot")
+	}
+	snapshot, _ = provider.Snapshot(context.Background())
+	if _, err := d.Detect(context.Background(), snapshot); err != nil || calls != 2 {
+		t.Fatalf("successful tail reread: calls=%d err=%v", calls, err)
 	}
 }
