@@ -788,3 +788,26 @@ and tests took 192 s / 217 s (cancelled). The generated-worker cases above
 now run in the existing nightly integration step with bubblewrap installed.
 The PR selection guard requires every ignored Python integration file to appear
 in nightly, and keeps the cheap reflection/responder contracts on PRs.
+
+## Go deterministic simulation policy
+
+The Go codebase (operator modules and benchmark Go) uses deterministic tests by
+default. New `_test.go` files must use injected clocks, seeded RNGs, `net.Pipe`,
+in-memory gRPC, or `testing/synctest`, rather than wall clocks, real processes or
+real sockets. The [Go nondeterminism ratchet](go-purity.md#codebase-nondeterminism-ratchet)
+describes the APIs, exact production edges, limitations and shrink-only inventory.
+
+```bash
+bash scripts/check_go_determinism.sh
+# After fixing existing violations; cannot add allowances:
+bash scripts/check_go_determinism.sh --update
+```
+
+Real compiler/CLI/kind tests belong behind `//go:build integration`, with an
+explicit `go test -tags integration` invocation in the CI job that owns them.
+The initial ratchet rollout does **not** retag existing tests or change suite
+selection: all existing real-compile, CLI, socket and kind violations remain on
+the allowlist, so no coverage silently disappears. Before retagging a legacy
+file, change the relevant CI invocation to retain its coverage. Tests newly
+marked integration must likewise run in the owning integration job; tagging is
+not a way to remove tests from CI. PR jobs retain their five-minute deadlines.
