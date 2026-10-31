@@ -511,7 +511,8 @@ The exact repeated end-to-end compile tests moved to nightly are listed in
 `scripts/ci_nightly_go_tests.txt`. They cover assurance seed compilation,
 CLI/broker parity across every fixture, duplicate CLI clean-tree/JSON and
 scaffold compilations, toy-seed and isolated program validation, and repeated
-builder program/prober/baseline builds. The assurance-seed test alone took
+builder program/prober/baseline builds, plus compile-through-controller fastloop,
+foreign-policy repeat and direct-files CLI/broker integration. The assurance-seed test alone took
 303 seconds locally. PRs retain `TestBuildWorkspaceCompilesApplicationDetectors`,
 compiler rejection tests, validator rule tests, broker ownership/acceptance
 contracts, CLI error/JSON diagnostics and SDK program unit tests. Nightly runs

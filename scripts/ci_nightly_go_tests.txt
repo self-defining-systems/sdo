@@ -14,3 +14,8 @@ TestProgramAcceptsRecordedSyntheticNoMatchCase
 TestBuildWorkspaceCompilesIsolatedTrafficProber
 TestBuildWorkspaceRunsOptInHealthyBaseline
 TestBuildWorkspaceAcceptsOpaqueDiagnosticsProjection
+# Compile-through-controller integration, covered by ordinary admission,
+# broker, program reuse and near-miss contracts on PRs.
+TestHermeticFastloopRealGoGate
+TestHermeticForeignNetworkPolicyInvariantRepeat
+TestReflectionDirectFilesCLIAndBroker
