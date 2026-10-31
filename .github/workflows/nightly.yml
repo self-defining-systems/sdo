@@ -1,0 +1,146 @@
+name: Nightly CI
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Full integration parity checks use production compiler source locations.
+# PR-only trimpath caching can reuse vet output from an older isolated path.
+jobs:
+  extended:
+    name: race, replay, chaos and fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: Recorded reflection and scripted worker end-to-end compilation
+        if: always()
+        run: |
+          uv run pytest -n 2 --durations=30 \
+            tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
+            tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py
+      - name: Complete race suite including replay and chaos
+        run: bash scripts/test_go_ci.sh nightly
+      - name: Bounded fuzz campaigns (seed cases also run on every PR)
+        run: |
+          (cd sdo/operator/sdk && timeout 300s go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=30s -parallel=2 -timeout=2m .)
+          (cd sdo/operator/sdk && timeout 300s go test -run '^$' -fuzz '^FuzzObjectRefTypedRoundTrip$' -fuzztime=30s -parallel=2 -timeout=2m .)
+          (cd sdo/operator && timeout 300s go test -run '^$' -fuzz '^FuzzStateChangeRefMatchesObservedLabel$' -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation)
+          (cd sdo/operator && timeout 300s go test -run '^$' -fuzz '^FuzzControllerObservationBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation)
+          (cd benchmarks/sregym/protocol/native_receipt_go && timeout 300s go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .)
+          (cd benchmarks/sregym/protocol/submission_go && timeout 300s go test -run '^$' -fuzz '^FuzzSubmissionPhaseBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .)
+
+  images:
+    name: controller images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # A mutable PR merge ref can change after a retarget; test this event.
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Cache image schema-identity build
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-${{ hashFiles('**/go.sum') }}-
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: Select affected images and compute schema identity
+        id: image-inputs
+        env:
+          CONTROLLER: true
+          VALIDATOR: true
+          RESPONDER: true
+          BENCHMARK: true
+        run: |
+          images=()
+          for image in controller validator responder benchmark; do
+            variable="${image^^}"
+            if [ "${!variable}" = "true" ]; then
+              images+=("${image}")
+            fi
+          done
+          echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
+          (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
+          identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
+          echo "SDO_VALIDATOR_SCHEMA_IDENTITY=${identity}" >> "${GITHUB_ENV}"
+      - name: Build affected images with persistent layers
+        uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
+        with:
+          source: .
+          files: scripts/sdo-images.hcl
+          targets: ${{ steps.image-inputs.outputs.targets }}
+          load: true
+          set: |
+            controller.cache-from=type=gha,scope=sdo-controller
+            controller.cache-to=type=gha,scope=sdo-controller,mode=max
+            validator.cache-from=type=gha,scope=sdo-validator
+            validator.cache-to=type=gha,scope=sdo-validator,mode=max
+            responder.cache-from=type=gha,scope=sdo-responder
+            responder.cache-to=type=gha,scope=sdo-responder,mode=max
+            benchmark.cache-from=type=gha,scope=sdo-benchmark
+            benchmark.cache-to=type=gha,scope=sdo-benchmark,mode=max
+      - name: Smoke and probe every affected image
+        env:
+          SDO_IMAGES: ${{ steps.image-inputs.outputs.images }}
+          SDO_SKIP_IMAGE_BUILD: "1"
+          SDO_IMAGE_PREFLIGHT: "1"
+        run: ./scripts/build_sdo_images.sh
+      - name: Confirm the responder image carries no SREGym answer key
+        # Belt-and-braces over tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py,
+        # which checks the Dockerfile COPY lines statically: this lists the files an
+        # actually built image carries, so a leak would fail here even if some other
+        # build step (a base image, a stray COPY --from) reintroduced one.
+        run: |
+          files="$(docker run --rm --entrypoint find sdo-sregym-responder:v0.1.0 /opt/sdo/benchmarks -type f)"
+          echo "${files}"
+          # The benchmark worker carries these recording utilities, which contain
+          # no fault catalog or oracle data. All other fastloop paths stay forbidden.
+          recording_modules='(__init__|model_recording|file_edits|recording_worker)'
+          recording_paths="^/opt/sdo/benchmarks/sregym/fastloop/(${recording_modules}\.py|__pycache__/${recording_modules}\.cpython-[0-9]+(\.opt-[0-9]+)?\.pyc)$"
+          leaked="$(echo "${files}" | grep -E '/(experiments|assurance|fastloop|analysis|runner|agents)/|/docs/|/tests/' | grep -Ev "${recording_paths}" || true)"
+          if [ -n "${leaked}" ]; then
+            echo "answer-key paths present in sdo-sregym-responder:v0.1.0:" >&2
+            echo "${leaked}" >&2
+            exit 1
+          fi
+

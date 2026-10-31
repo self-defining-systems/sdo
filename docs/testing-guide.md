@@ -305,22 +305,19 @@ Native receipt decisions have a hermetic Go suite in
 `benchmarks/sregym/protocol/native_receipt_go`. Its fixtures are hand-authored
 generated messages. Run `go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$'
 -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .` there to attack malformed wire values,
-round-trip acceptance, and rejection followed by a valid incident. The existing
-controller CI matrix includes this module and the bounded fuzz run. Python
+round-trip acceptance, and rejection followed by a valid incident. PR CI includes this module and its fuzz seeds; Nightly CI runs the bounded fuzz campaign. Python
 receipt tests exercise the real checker; transport-error tests mock subprocesses.
 Submission phase tests live in `protocol/submission_go` (benchmark module) and
 `tests/unit/benchmarks/sregym/adapter/test_submission.py`. The Go fuzz target
 `FuzzSubmissionPhaseBoundary` checks that a POST requires matching observed phase,
 that completion polls never post, and that malformed facts yield typed failures.
-Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; the existing
-controller CI matrix runs the same bounded target. Image scope tests verify
+Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the same bounded target, with its seeds retained on PRs. Image scope tests verify
 separate Go compilation and binary-only copying into the benchmark worker.
 Read-only controller observations are tested in `outcome_derivation` and
 `operatorcli/controller_observation_test.go`. `FuzzControllerObservationBoundary`
 checks malformed snapshots, closed lifecycle enums, incident correlation and a
 rejected snapshot followed by a good one. Run it with `-fuzztime=30s
--fuzzminimizetime=1s -parallel=2 -timeout=2m`; the operator CI leg runs the bounded
-target. Fake controller bookkeeping stays outside the generated snapshot shape.
+-fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the bounded target, with its seeds retained on PRs. Fake controller bookkeeping stays outside the generated snapshot shape.
 
 ## Abort and quiescence
 
@@ -484,3 +481,42 @@ those results with the source tree. It never replaces live generated files;
 Python imports and Go compilers can run concurrently with the gate. The synthetic
 `test_proto_drift_check_generates_outside_the_source_tree` regression exercises a
 mismatching generator and requires the live source to remain unchanged.
+
+### PR CI budget
+
+PRs and merge groups run three jobs: `checks and Python`, `Go tests`, and
+`Required PR CI`. The aggregate requires both validation jobs to succeed;
+skips and cancellation fail closed. Static checks overlap Python tests within
+one job. `check_errors.sh` already includes types, architecture and proto;
+CI does not repeat those as separate jobs. Go modules use one temporary workspace and one `go test` invocation to schedule
+packages across all modules, one compiler/module cache and normal package parallelism, with `-trimpath` allowing compiler entries
+to survive generated-workspace path changes. No prepared-cache job or shard
+matrix sits on the critical path. Both validation jobs have five-minute limits.
+
+`Nightly CI` runs daily and through `workflow_dispatch`. Its Actions conclusion
+reports failures. It retains the following extended checks:
+
+| Nightly check | Why it is off the PR path | PR replacement |
+| --- | --- | --- |
+| All four controller/validator/responder/benchmark image builds, entry-point smoke and answer-key file inspection | Docker/tool installation and layer export dominated the previous image job | Python Dockerfile scope and image-delivery contracts; Go compilation |
+| Go race instrumentation across all seven modules | Separate instrumented compiler graph and slower execution | All ordinary Go tests without race instrumentation |
+| `TestReplay*` recorded incidents | Extended recorded regression tier | Ordinary controller, outcome and receipt contract tests |
+| `TestChaos*`, `TestExhaustive*`, `TestExplorer*` | Extended interleaving/state-space campaigns | Ordinary deterministic controller tests |
+| Six 30-second fuzz mutation campaigns | Fixed mutation time adds minutes | Every checked-in fuzz seed executes in ordinary `go test` |
+
+The exact repeated end-to-end compile tests moved to nightly are listed in
+`scripts/ci_nightly_go_tests.txt`. They cover assurance seed compilation,
+CLI/broker parity across every fixture, duplicate CLI clean-tree/JSON and
+scaffold compilations, toy-seed and isolated program validation, and repeated
+builder program/prober/baseline builds, plus compile-through-controller fastloop,
+foreign-policy repeat and direct-files/learned-program CLI/broker integration. The assurance-seed test alone took
+303 seconds locally. PRs retain `TestBuildWorkspaceCompilesApplicationDetectors`,
+compiler rejection tests, validator rule tests, broker ownership/acceptance
+contracts, CLI error/JSON diagnostics and SDK program unit tests. Nightly runs
+the unfiltered suite with race instrumentation. Python's
+`test_recorded_reflection_stage.py` and `test_scripted_worker_contract.py` also
+run nightly: their real CLI/broker and generated-program builds took 66–117
+seconds per case locally. Ordinary Python reflection, worker transport,
+recording, provenance and Go broker contracts remain on PRs. Run `bash scripts/test_go_ci.sh` locally for the PR Go suite, or add
+`nightly` for the full race suite. Both emit `go test -json` timing evidence;
+Python CI logs include `--durations=30`. Keep full run logs outside the repo.

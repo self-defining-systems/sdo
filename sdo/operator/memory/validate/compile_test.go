@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,6 +50,20 @@ func TestCompileReportsTheFailingStage(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			root := compileTree(t)
+			if test.name == "vet" {
+				// This contract asserts fresh source positions, not cached vet
+				// stderr from an identical fixture in an older temp directory.
+				// Keep dependencies cacheable while making this source unique.
+				path := filepath.Join(root, detectorSource)
+				source, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				source = append(source, []byte("\n// diagnostic fixture: "+root+"\n")...)
+				if err := os.WriteFile(path, source, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			test.mutate(t, root)
 			diagnostics := diagnose(t, compileRequest(root))
 			if got := ruleSet(diagnostics); !same(got, []string{test.rule}) {
