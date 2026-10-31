@@ -182,7 +182,12 @@ def test_go_job_saves_its_own_cache_without_racing_python_checks() -> None:
     assert keys["checks"] != keys["tests"], "immutable caches must retain generated Go test builds"
     restores = [s for s in jobs["tests"]["steps"] if s.get("uses", "").startswith("actions/cache/restore@")]
     assert restores[0]["with"]["key"] == keys["tests"]
-    assert restores[0]["with"]["restore-keys"].splitlines()[0].startswith("ci-tests-")
+    fallbacks = restores[0]["with"]["restore-keys"].splitlines()
+    assert fallbacks[0].startswith("ci-tests-")
+    # go.sum discovery can change during a job (e.g. submodule initialization).
+    # Content-addressed compiler entries remain safe across dependency changes.
+    assert "ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-" in fallbacks
+    assert "ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-" in fallbacks
 
 
 @pytest.mark.parametrize("mode", ["pr", "nightly"])

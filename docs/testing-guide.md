@@ -746,7 +746,10 @@ to survive generated-workspace path changes. No prepared-cache job or shard
 matrix sits on the critical path. The Go job saves to its own `ci-tests-v2`
 cache namespace on main: Actions caches are immutable, so sharing a save key with
 Python checks let the first finisher discard the other job's generated builds.
-Both restore the older shared cache as a fallback. Real compiler tests use the
+The Go job also restores current-toolchain caches across dependency-hash changes;
+Go validates compiler entries by content. Hash discovery can change after
+submodule initialization, so an exact-hash-only fallback repeatedly restored
+an obsolete cache on #664. Real compiler tests use the
 `integration` tag in the same invocation (PR and nightly), including the separate
 `builder/compiletest` package so the compile smoke overlaps builder validation.
 The independent foreign-policy near-miss compiler test also runs in parallel. Both validation jobs have five-minute limits.
