@@ -34,8 +34,22 @@ scenarios, workloads and links.
 - `traffic-health` and `traffic-links`: generated from the workloads you author.
 - `metrics-alerts`: firing Prometheus alerts in the application namespace, when a metrics source is configured.
   This includes alert rules the application ships, once its Prometheus loads them.
+- `cluster-wiring`: Service selectors matching no pods or several workloads, named target ports no container
+  declares, missing pod-template references and keys (ConfigMap, Secret, PVC, ServiceAccount), unbound PVCs,
+  missing Ingress backends, NetworkPolicies isolating all ingress or egress of pods behind a Service, and
+  ExternalName Services pointing at missing in-namespace Services.
+- `workload-controllers`: StatefulSets and DaemonSets below desired ready or stuck on an old revision, failed
+  Jobs, overdue CronJobs.
+- `warning-events`: lasting mount, scheduling, back-off, probe, eviction and OOM warnings on application objects.
+- `node-health`: nodes running application pods that are NotReady or under memory, disk or PID pressure.
+- `resource-saturation`: memory working set above 90% of its limit, PVC bytes or inodes above 90% or forecast
+  to run out (CPU throttling only when enabled).
+- `runtime-crashes`: Go panics, Python tracebacks, Java fatal errors and segfaults in a crashed or running
+  container's logs, with its last lines as evidence.
 - Controller drift: live fields that differ from the accepted source, and foreign changes. These open their own
   incidents.
+
+Spend your detectors on what only the source can tell: the layers below list those.
 
 ## 1. User journeys (Traffic, critical)
 
@@ -59,43 +73,29 @@ scenarios, workloads and links.
 - Not expressible yet: request-level calls to gRPC, Thrift or other non-HTTP APIs, and UDP. A grpc link proves
   the server answers gRPC, not that a method works.
 
-## 3. Declared versus actual in Kubernetes (Snapshot, warn)
+## 3. Declared versus actual from the source (Snapshot, warn)
 
-- **Selector:** a Service selector matches no pods, or matches pods owned by more than one Deployment.
-- **Ports:** a Service `targetPort` (numeric or named) is not a container port of the pods it selects. An
-  EndpointSlice port disagrees with its Service port.
-- **References:** a pod template references a ConfigMap, Secret, key, PVC or ServiceAccount that does not
-  exist. Use `sdk.PodTemplateReferences` on every workload kind; skip references marked optional. Secret keys are
-  in the metadata; values never are.
+The generic wiring, workload, event, node and saturation checks above already cover Kubernetes structure.
+Add what needs the application's own source:
+
 - **ConfigMap content:** a key the code reads is missing, or does not parse in the format the loader expects
   (JSON, YAML, number, duration, host:port). Check structure, never literal values.
 - **Named peers:** an env, arg or config value that names another Service and port points to a Service that
   does not exist, or that does not expose that port. Resolve names against the snapshot at detection time.
-- **NetworkPolicy:** a policy that selects an application pod denies ingress from a caller that the
-  references above show talks to it. Also flag a policy that denies all ingress to pods behind a Service.
-- **Warning events:** probe failures, back-off, failed mounts, failed scheduling, evictions and OOM kills on
-  application objects, above the healthy rate (normally zero). Use `RecentEventsFor`.
+- **NetworkPolicy against real callers:** a policy that selects an application pod denies ingress from a
+  caller the source shows talks to it. The generic check only catches policies that deny everything.
 - **Replica outliers:** one pod's restart count, readiness or event count differs sharply from its siblings
   under the same owner.
-- **Other workloads:** `workload-health` judges Deployments and pods only. For StatefulSets and DaemonSets, check
-  ready replicas against desired, and a rollout stuck on an old revision. For Jobs, check failures. For CronJobs,
-  check that the last successful run is not older than about two schedule periods.
-- **Storage:** a PVC that is not Bound, or pods pending on an unbound claim.
-- **Scaling and disruption:** an autoscaler at its maximum while its target is saturated; a disruption budget
-  with zero allowed disruptions for longer than a rollout.
-- **Ingress:** a rule whose backend Service or port does not exist.
-- **Nodes:** a node running application pods is NotReady or reports memory, disk or PID pressure.
+- **Scaling and disruption the app depends on:** an autoscaler at its maximum while its target is saturated; a
+  disruption budget with zero allowed disruptions for longer than a rollout.
 
-## 4. Saturation and capacity (Usage, warn)
+## 4. Capacity the application declares (Usage, Metrics, warn)
 
-- CPU throttling: `usage.ThrottledFraction` above about 0.25. Declare `usage.Requirements{Throttling: true}`; it
-  costs one extra kubelet read per node per cycle.
-- Memory: `usage.RatioToLimit` of the working set above about 0.9, or `usage.TimeToThreshold` reaching the limit
-  within an hour (a leak).
-- Volumes: available bytes or inodes forecast to reach zero within a few hours.
-- A container without a limit has no ratio: compare against its request or its siblings instead, and say so in
-  the evidence.
-- Build findings with `usage.ThresholdFinding` so the observed value, limit, window and forecast are in Evidence.
+`resource-saturation` already judges memory and volumes against Kubernetes limits. Add limits the source
+declares: worker pools, connection pools, queue capacities or cache sizes, from exported metrics or usage, and
+CPU throttling for latency-sensitive services when the source shows tight CPU limits
+(`usage.Requirements{Throttling: true}`). Build findings with `usage.ThresholdFinding` or the metrics threshold
+detector so the observed value, limit and window are in Evidence.
 
 ## 5. Data stores and queues
 
@@ -115,14 +115,13 @@ scenarios, workloads and links.
 
 ## 7. Logs (Logs, warn)
 
-- Known-bad lines: patterns built from the error strings the source logs (`log.Error`, `panic`, fatal paths)
-  and generic ones (stack traces, connection refused, deadline exceeded, out of memory). Fire on
-  `logs.Appeared`, so a line that also appears while healthy never pages.
+- Known-bad lines: patterns built from the error strings the source logs (`log.Error` calls and fatal paths).
+  `runtime-crashes` already covers generic panics, tracebacks and segfaults. Fire on `logs.Appeared`, so a line
+  that also appears while healthy never pages.
 - Error rate: `logs.Rate` of error-level lines above the healthy rate. With truncated evidence the rate is a
   lower bound: a high value still counts, a low one proves nothing.
 - Silence: `logs.Silent` for a workload that logs steadily while healthy (for example a request log) and goes
   quiet while Running.
-- Crash reason: set `Previous` on a query so a restarted container's last lines appear in the evidence.
 - Keep patterns specific: one regex per failure the source names, not one per log line.
 
 ## 8. Change windows and traces
