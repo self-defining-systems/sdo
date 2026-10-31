@@ -168,6 +168,8 @@ func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 		"sdo-detector-authoring/references/rules.md", "sdo-detector-authoring/assets/restart-loop/detector.go",
 		"sdo-playbook-authoring/SKILL.md", "sdo-playbook-authoring/references/rules.md",
 		"sdo-playbook-authoring/assets/restart-loop/README.md",
+		"sdo-operationalize/SKILL.md", "sdo-operationalize/references/catalog.md",
+		"sdo-operationalize/references/methods.md",
 	} {
 		if _, err := os.Stat(filepath.Join(skillsRoot, filepath.FromSlash(rel))); err != nil {
 			missing = append(missing, rel)

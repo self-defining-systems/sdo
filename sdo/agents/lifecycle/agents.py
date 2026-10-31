@@ -290,8 +290,8 @@ Author deterministic Go detector code and deterministic Go tests using only sdo.
 DetectionContext snapshot methods and Kubernetes API types already available to SDO diagnostics. The application
 checkout is intentionally not expected to contain the controller SDK. The trusted SDK reference is
 references/sdk.md of the `sdo-detector-authoring` skill (read it from the skill directory, which is the one place
-outside this checkout you may read). This session cannot edit files, so ignore the skill's file-editing workflow
-and return the source in the structured fields.
+outside this checkout you may read). Use the `sdo-operationalize` skill to decide which health detectors and
+synthetic traffic the application needs.
 
 Ground the assessment in the current application checkout and the supplied SDO references. Never inspect
 sibling experiments, benchmark results, hidden fault labels, or external oracles.
@@ -345,7 +345,8 @@ global objective, or when the controller-observed active topology is non-null, t
 provenance itself from the trusted inventory ({_COVERED_KINDS} objects, restricted to active ones), so coverage is
 metadata and does not choose your checks.
 
-Choose the checks from the human objective and the application's own topology, not from a catalogue of fault types.
+Choose the checks from the human objective, the application's source and its own topology, not from a catalogue of
+fault types.
 Derive what a check depends on from the objects observed at detection time (the relationships the deployer assessment
 and the active topology record) rather than hard-coding object names, so each check stays valid when objects are
 recreated, and include matching and near-miss tests for every check.

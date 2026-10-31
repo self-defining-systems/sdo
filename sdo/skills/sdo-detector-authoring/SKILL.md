@@ -8,7 +8,7 @@ description: Use when authoring or changing an SDO detector - a deterministic Go
 A detector is deterministic Go that reads a Kubernetes snapshot and returns findings. It never calls an LLM, reads
 the environment, the clock, or the network, and never looks at benchmark data or verdicts. Measure ages with
 `sdk.ObservationTime(ctx)`, never `time.Now()`. Read the `sdo-memory` skill first for artifact IDs and the
-`memory` commands.
+`memory` commands. To decide which detectors an application needs, use the `sdo-operationalize` skill.
 
 ## Workflow
 

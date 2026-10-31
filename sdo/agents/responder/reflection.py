@@ -183,7 +183,7 @@ def _logical_learning_request(
     return (
         "The controller verified this incident and committed its outcome. "
         "Read the supplied logical memory snapshot, source code, and installed sdo-memory, "
-        "sdo-detector-authoring and sdo-playbook-authoring skills. Edit the final files directly "
+        "sdo-detector-authoring, sdo-playbook-authoring and sdo-operationalize skills. Edit the final files directly "
         "in the operational memory directory `.sdo/` of this isolated checkout. "
         "Source edits are not part of reflection; outcomes, goal and architecture are protected. "
         "Preserve accepted provenance. Use logical IDs in narrative and authored Go, never physical memory paths. "
