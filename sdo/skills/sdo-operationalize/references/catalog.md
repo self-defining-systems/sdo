@@ -115,8 +115,8 @@ scenarios, workloads and links.
 - Known-bad lines: patterns built from the error strings the source logs (`log.Error`, `panic`, fatal paths)
   and generic ones (stack traces, connection refused, deadline exceeded, out of memory). Fire on
   `logs.Appeared`, so a line that also appears while healthy never pages.
-- Error rate: `logs.Rate` of error-level lines above the healthy rate. Truncated evidence makes the rate a lower
-  bound, so it can still fire but never clears on it.
+- Error rate: `logs.Rate` of error-level lines above the healthy rate. With truncated evidence the rate is a
+  lower bound: a high value still counts, a low one proves nothing.
 - Silence: `logs.Silent` for a workload that logs steadily while healthy (for example a request log) and goes
   quiet while Running.
 - Crash reason: set `Previous` on a query so a restarted container's last lines appear in the evidence.
