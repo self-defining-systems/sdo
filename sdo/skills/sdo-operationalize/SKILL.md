@@ -65,7 +65,7 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
 ## After an incident (reflection)
 
 - A fault that only a journey check caught, with no cause check naming it: add an incident detector for its
-  mechanism from catalog layers 2-7. The next occurrence is then caught earlier and localized.
+  mechanism from catalog layers 1-7, never one the Go-installed checks already cover. The next occurrence is then caught earlier and localized.
 - A detector that fired while nothing was wrong: tighten it with the outcome's evidence. It must still fire on
   its captured cases and stay quiet on recorded healthy baselines.
 - Responders own incident detectors and the health judge owns health detectors. The `sdo-detector-authoring`
