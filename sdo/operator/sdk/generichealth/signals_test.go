@@ -75,7 +75,7 @@ func TestCrashes(t *testing.T) {
 			t.Run(p.ID+"/"+state, func(t *testing.T) {
 				s := healthy()
 				a := logs.Cycle{Matches: map[string]logs.Match{}}
-				b := logs.Cycle{Matches: map[string]logs.Match{p.ID: {Count: 1, Excerpts: []string{positives[i]}}}, Previous: &logs.Cycle{Matches: map[string]logs.Match{p.ID: {Count: 1, Excerpts: []string{"previous crash"}}}}}
+				b := logs.Cycle{Running: true, Matches: map[string]logs.Match{p.ID: {Count: 1, Excerpts: []string{positives[i]}}}, Previous: &logs.Cycle{Matches: map[string]logs.Match{p.ID: {Count: 1, Excerpts: []string{"previous crash"}}}}}
 				if state == "healthy" {
 					b.Matches = nil
 				}
@@ -119,5 +119,46 @@ func TestMemoryWarmupDoesNotForecastExhaustion(t *testing.T) {
 		if err != nil || len(findings) != 0 {
 			t.Fatalf("reclaimable memory below pressure threshold must not forecast failure: findings=%+v err=%v", findings, err)
 		}
+	}
+}
+
+func TestTerminationCrashDecisions(t *testing.T) {
+	for _, exit := range []int32{0, 2} {
+		for _, matched := range []bool{false, true} {
+			s := healthy()
+			tail := logs.Cycle{Matches: map[string]logs.Match{}}
+			if matched {
+				tail.Matches["go-panic"] = logs.Match{Count: 1}
+				tail.Matches["go-fatal"] = logs.Match{Count: 1}
+			}
+			s.Logs = map[string]logs.Result{"generic-crashes": {Windows: []logs.Window{{Namespace: s.NamespaceName, Pod: "p", UID: "uid", Container: "c", Terminations: []logs.Termination{{RestartCount: 3, ExitCode: exit, Tail: tail}}}}}}
+			fs, err := generichealth.NewCrashes(sdk.DetectorSpec{}).Detect(context.Background(), s)
+			want := 0
+			if exit != 0 && matched {
+				want = 1
+			}
+			if err != nil || len(fs) != want {
+				t.Fatalf("exit=%d matched=%v: %+v %v", exit, matched, fs, err)
+			}
+		}
+	}
+}
+
+func TestSurvivingCrashAndTerminationShareIdentity(t *testing.T) {
+	s := healthy()
+	tail := logs.Cycle{Running: true, Matches: map[string]logs.Match{"go-panic": {Count: 1}}}
+	w := logs.Window{Namespace: s.NamespaceName, Pod: "p", UID: "uid", Container: "c", RestartCount: 3, Cycles: []logs.Cycle{{}, tail}}
+	d := generichealth.NewCrashes(sdk.DetectorSpec{})
+	s.Logs = map[string]logs.Result{"generic-crashes": {Windows: []logs.Window{w}}}
+	before, err := d.Detect(context.Background(), s)
+	if err != nil || len(before) != 1 {
+		t.Fatal(before, err)
+	}
+	w.Cycles = nil
+	w.Terminations = []logs.Termination{{RestartCount: 3, ExitCode: 2, Tail: tail}}
+	s.Logs = map[string]logs.Result{"generic-crashes": {Windows: []logs.Window{w}}}
+	after, err := d.Detect(context.Background(), s)
+	if err != nil || len(after) != 1 || before[0].Fingerprint != after[0].Fingerprint {
+		t.Fatalf("crash re-keyed on exit: %+v %+v %v", before, after, err)
 	}
 }
