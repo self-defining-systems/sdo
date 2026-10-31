@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -49,6 +50,7 @@ type Config struct {
 	MaxFollowUps, FollowUpCooldownSeconds, MaxResponseLoops int
 	HealthyBaseline                                         bool
 	MetricsURL                                              string
+	DisableObservability                                    bool
 	TimeoutSeconds, VerificationTimeoutSeconds              int
 	ControllerDurationSeconds                               int
 	ExitAfterClosure                                        bool
@@ -66,6 +68,9 @@ type Config struct {
 }
 
 type Plan struct {
+	Prometheus                   *appsv1.Deployment
+	PrometheusConfig             *corev1.ConfigMap
+	PrometheusService            *corev1.Service
 	ClusterRoles                 []*rbacv1.ClusterRole
 	ClusterBindings              []*rbacv1.ClusterRoleBinding
 	Namespace                    *corev1.Namespace
@@ -289,6 +294,9 @@ func Resources(c Config) (Plan, error) {
 	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder"} {
 		plan.ControlBindings = append(plan.ControlBindings, binding(control, name, name, control))
 	}
+	if !c.DisableObservability {
+		addObservability(&plan, c)
+	}
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if c.AcceptedCommit != "" {
@@ -413,8 +421,11 @@ func controllerJob(c Config) *batchv1.Job {
 	if c.HealthyBaseline {
 		args = append(args, "--healthy-baseline")
 	}
-	if c.MetricsURL != "" {
-		args = append(args, "--metrics-url", c.MetricsURL)
+	if !c.DisableObservability {
+		args = append(args, "--metrics-publish-url", fmt.Sprintf("http://%s.%s.svc:9090", PrometheusName, c.controlNamespace()))
+	}
+	if c.EffectiveMetricsURL() != "" {
+		args = append(args, "--metrics-url", c.EffectiveMetricsURL())
 	}
 	if c.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-directory", c.registrationDirectory())

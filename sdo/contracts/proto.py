@@ -104,6 +104,7 @@ StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
 ObservedStateChange = messages_pb2.ObservedStateChange
 FollowUpContext = messages_pb2.FollowUpContext
+MetricsSource = messages_pb2.MetricsSource
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
 ConfirmedRootCause = messages_pb2.ConfirmedRootCause
@@ -226,6 +227,7 @@ __all__ = [
     "validate",
     "FollowUpContext",
     "IncidentClosure",
+    "MetricsSource",
     "IncidentRequest",
     "IncidentResult",
     "LateFindingsPull",

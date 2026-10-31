@@ -62,6 +62,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
+	metricsPublishURL := flags.String("metrics-publish-url", "", "SDO Prometheus publishing base URL")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
@@ -132,7 +133,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ExitAfterClosure: *exitAfterClosure,
 		ToolchainImage:   *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
-		ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
+		ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL, MetricsPublishUrl: *metricsPublishURL,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
 		DriftTokensPerHour: *driftTokensPerHour,
 		ProgramMinDuration: durationpb.New(*programMinDuration),

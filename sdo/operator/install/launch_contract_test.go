@@ -40,6 +40,7 @@ func TestInstallerOperateOptionalArgumentsRoundTripToController(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantInstall := cfg
+	wantInstall.MetricsURL = cfg.EffectiveMetricsURL()
 	// These belong to host preparation or the operate process, rather than the
 	// controller installation returned by the operate parser.
 	wantInstall.AcceptedCommit = ""

@@ -52,6 +52,7 @@ type PriorOutcomeEvidence struct {
 }
 
 type IncidentRequest struct {
+	MetricsSource        *contracts.MetricsSource
 	SchemaVersion        string
 	Application          string
 	Namespace            string

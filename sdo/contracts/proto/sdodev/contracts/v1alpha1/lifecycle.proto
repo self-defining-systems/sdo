@@ -49,6 +49,7 @@ message ImageBuild {
 
 // The independent health judge authors diagnostics after source is accepted.
 message HealthJudgeRequest {
+  MetricsSource metrics_source = 12;
   option (buf.validate.message).cel = {
     id: "health_judge_request.diagnostics_only_on_retry"
     message: "previous_diagnostics are carried exactly by a retry (validation_attempt > 1)"

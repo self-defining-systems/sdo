@@ -95,6 +95,7 @@ def run_reflection_task(
     history = list(request.prior_outcomes)
     closure = IncidentClosure()
     closure.CopyFrom(request.closure)
+    closure.request.metrics_source.CopyFrom(request.metrics_source)
     if closure.HasField("result") and not closure.result.program_runs:
         # The request carries the responder's program runs once, in the outcome derived from them.
         closure.result.program_runs.extend(outcome.program_runs)

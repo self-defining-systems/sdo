@@ -25,7 +25,7 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
    - config files and the keys the code reads, with their formats;
    - records the application seeds at startup;
    - error strings the code logs, and log lines the healthy application always emits;
-   - metrics the code exports, and whether the source deploys a Prometheus;
+   - metrics the code exports, and the publishing capabilities in task.metrics_source;
    - caller timeouts and deadlines.
 2. List what already runs, so you do not duplicate it: `sdo-operator memory ls --kind detector`, and the
    Go-installed checks under "Already covered" in the [detector catalog](references/catalog.md).
@@ -70,3 +70,14 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
   its captured cases and stay quiet on recorded healthy baselines.
 - Responders own incident detectors and the health judge owns health detectors. The `sdo-detector-authoring`
   rules enforce this.
+
+## Application instrumentation
+
+When a health objective or incident cannot be localized with existing inputs, add instrumentation to the
+application's own source through the normal source-repair path. Export request and error counters, latency
+histograms and queue depth; keep labels bounded. Reflection records the need for a source repair rather than
+editing source itself. Use the task's typed `metrics_source`: annotate pod templates with
+`prometheus.io/scrape: "true"`, `prometheus.io/port` and `prometheus.io/path` when annotated scraping is enabled,
+or publish OTLP HTTP metrics to its full `otlp_metrics_url`. Do not infer publishing support from a query URL.
+Write source-grounded PromQL rules with `sdo.dev/operator/sdk/metrics`, declare `metrics.Watch`, and use
+`metrics.NewThresholdDetector`; the controller queries and freezes results, and detectors never perform I/O.

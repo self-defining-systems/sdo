@@ -131,6 +131,8 @@ message ControllerConfig {
   // report an error instead of health. The token file holds an optional bearer
   // token and requires metrics_url.
   string metrics_url = 70;
+  // SDO-owned publishing base, independent of an overridden query URL.
+  string metrics_publish_url = 73;
   string metrics_token_file = 71;
 
   // Trusted controller image supplying Go to compiler-free workers and validators.

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
@@ -34,6 +35,9 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 		return nil
 	}
 	copy := *request
+	if request.MetricsSource != nil {
+		copy.MetricsSource = proto.Clone(request.MetricsSource).(*contracts.MetricsSource)
+	}
 	// Lists stay lists when empty: the responder's and the broker's schemas
 	// reject null (a cold incident surfaces no playbook and no outcome).
 	copy.Findings = append(make([]sdk.Finding, 0, len(request.Findings)), request.Findings...)

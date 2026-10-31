@@ -18,7 +18,8 @@ Each item says what to check, which source fact it comes from, and the input tha
   of the previous terminated container. At most 64 KiB per container per cycle; collected only while a detector
   watches `logs.Watch`.
 - **Metrics**: PromQL threshold rules (`sdo.dev/operator/sdk/metrics`). Only when the task says a metrics source
-  is configured, and only over series whose exporter you can find in the source.
+  is configured; the SDO stack is installed by default when the task says so. Use only series whose exporter
+  you can find in source, and the task’s explicit annotation or OTLP publishing capabilities.
 
 The `sdo-detector-authoring` skill has the exact types: its SDK reference, and its traffic reference for
 scenarios, workloads and links.

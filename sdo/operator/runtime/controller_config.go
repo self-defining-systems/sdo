@@ -132,6 +132,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--prober-image", config.GetProberImage())
 	str("--prober-url", config.GetProberUrl())
 	str("--metrics-url", config.GetMetricsUrl())
+	str("--metrics-publish-url", config.GetMetricsPublishUrl())
 	str("--metrics-token-file", config.GetMetricsTokenFile())
 	optBool("--clean-responder-helpers", config.CleanResponderHelpers)
 	optBool("--state-baseline", config.StateBaseline)

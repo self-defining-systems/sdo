@@ -356,8 +356,19 @@ class OperationalArtifactProposal(_message.Message):
     delete_playbook_ids: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, detectors: _Optional[_Iterable[_Union[ProposedDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[ProposedPlaybook, _Mapping]]] = ..., traffic_generators: _Optional[_Iterable[_Union[ProposedTrafficGenerator, _Mapping]]] = ..., traffic_workloads: _Optional[_Iterable[_Union[_traffic_pb2.TrafficWorkload, _Mapping]]] = ..., delete_detector_ids: _Optional[_Iterable[str]] = ..., delete_playbook_ids: _Optional[_Iterable[str]] = ...) -> None: ...
 
+class MetricsSource(_message.Message):
+    __slots__ = ("query_url", "annotated_pod_scraping", "otlp_metrics_url")
+    QUERY_URL_FIELD_NUMBER: _ClassVar[int]
+    ANNOTATED_POD_SCRAPING_FIELD_NUMBER: _ClassVar[int]
+    OTLP_METRICS_URL_FIELD_NUMBER: _ClassVar[int]
+    query_url: str
+    annotated_pod_scraping: bool
+    otlp_metrics_url: str
+    def __init__(self, query_url: _Optional[str] = ..., annotated_pod_scraping: _Optional[bool] = ..., otlp_metrics_url: _Optional[str] = ...) -> None: ...
+
 class IncidentRequest(_message.Message):
-    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "follow_up", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "fast_path_summary", "prepared_agent_task")
+    __slots__ = ("metrics_source", "schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "follow_up", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "fast_path_summary", "prepared_agent_task")
+    METRICS_SOURCE_FIELD_NUMBER: _ClassVar[int]
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -381,6 +392,7 @@ class IncidentRequest(_message.Message):
     DRIFT_EVENTS_FIELD_NUMBER: _ClassVar[int]
     FAST_PATH_SUMMARY_FIELD_NUMBER: _ClassVar[int]
     PREPARED_AGENT_TASK_FIELD_NUMBER: _ClassVar[int]
+    metrics_source: MetricsSource
     schema_version: str
     application: str
     namespace: str
@@ -404,7 +416,7 @@ class IncidentRequest(_message.Message):
     drift_events: _containers.RepeatedCompositeFieldContainer[DriftEvent]
     fast_path_summary: str
     prepared_agent_task: str
-    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., follow_up: _Optional[_Union[FollowUpContext, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., fast_path_summary: _Optional[str] = ..., prepared_agent_task: _Optional[str] = ...) -> None: ...
+    def __init__(self, metrics_source: _Optional[_Union[MetricsSource, _Mapping]] = ..., schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., follow_up: _Optional[_Union[FollowUpContext, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., fast_path_summary: _Optional[str] = ..., prepared_agent_task: _Optional[str] = ...) -> None: ...
 
 class RootCauseEvidence(_message.Message):
     __slots__ = ("kind", "source", "observation")
