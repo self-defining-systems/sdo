@@ -470,6 +470,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
 	}
+	snapshotProvider = withUsage(snapshotProvider, detectors, bootstrapProvider.Client, nil)
 	snapshotProvider, metricsObserver, err := withMetrics(snapshotProvider, detectors, *metricsURL, *metricsTokenFile, false)
 	if err != nil {
 		return err
@@ -1272,6 +1273,7 @@ func evaluateOnce(
 			return fmt.Errorf("create Kubernetes snapshot provider: %w", err)
 		}
 		provider = kubernetesProvider
+		provider = withUsage(provider, detectors, kubernetesProvider.Client, nil)
 	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {

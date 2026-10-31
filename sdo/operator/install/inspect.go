@@ -128,6 +128,9 @@ func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConf
 	if err != nil {
 		return fmt.Errorf("plan application grants: %w", err)
 	}
+	if err := i.ensureUsageGrants(ctx, plan); err != nil {
+		return err
+	}
 	for _, role := range plan.AppRoles {
 		if err := i.upsertRole(ctx, role); err != nil {
 			return err

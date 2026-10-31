@@ -14,9 +14,12 @@ import (
 
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/sdk/usage"
 )
 
 type Snapshot struct {
+	// Usage holds a synthetic resource usage window.
+	Usage *usage.Result `json:"-"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName        string                                  `json:"-"`
 	NamespaceName     string                                  `json:"namespace"`
@@ -260,4 +263,12 @@ func lessObject(leftNamespace string, leftName string, rightNamespace string, ri
 		return leftNamespace < rightNamespace
 	}
 	return leftName < rightName
+}
+
+// UsageResult implements usage.Source with isolated synthetic windows.
+func (s Snapshot) UsageResult() (usage.Result, bool) {
+	if s.Usage == nil {
+		return usage.Result{}, false
+	}
+	return usage.Clone(*s.Usage), true
 }

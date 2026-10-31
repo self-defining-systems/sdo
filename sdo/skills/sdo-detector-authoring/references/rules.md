@@ -31,7 +31,7 @@ diagnostic; look it up here.
   `v1 ConfigMap`, `v1 Endpoints`, `v1 Event`, `v1 Pod`, `v1 Service`, and the synthetic-traffic watch
   `sdo.dev/v1alpha1 SyntheticTraffic` (health detectors over traffic workloads only), and the controller-emitted
   `sdo.dev/v1alpha1 ServiceReachability` (detectors over Service reachability dials). Watches are unique and
-  non-empty. Enforced by: `manifest.invalid`, `detector.compile`.
+  non-empty. The synthetic `sdo.dev/v1alpha1 ResourceUsage` watch exposes kubelet usage windows. Enforced by: `manifest.invalid`, `detector.compile`.
 Advice, not validator-checked: watch every kind whose snapshot accessor the detector calls; the controller
 evaluates a detector when a watched kind changes.
 

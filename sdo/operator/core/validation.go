@@ -10,6 +10,7 @@ import (
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/sdk/usage"
 )
 
 // logicalPlaybookID is the grammar of a playbook reference in a detector spec
@@ -39,15 +40,16 @@ func ValidateDetectors(detectors []sdk.Detector) error {
 }
 
 var supportedWatches = map[string]struct{}{
-	"apps/v1/Deployment":                 {},
-	"apps/v1/ReplicaSet":                 {},
-	"discovery.k8s.io/v1/EndpointSlice":  {},
-	"networking.k8s.io/v1/NetworkPolicy": {},
-	"v1/ConfigMap":                       {},
-	"v1/Endpoints":                       {},
-	"v1/Event":                           {},
-	"v1/Pod":                             {},
-	"v1/Service":                         {},
+	usage.Watch.APIVersion + "/" + usage.Watch.Kind: {},
+	"apps/v1/Deployment":                            {},
+	"apps/v1/ReplicaSet":                            {},
+	"discovery.k8s.io/v1/EndpointSlice":             {},
+	"networking.k8s.io/v1/NetworkPolicy":            {},
+	"v1/ConfigMap":                                  {},
+	"v1/Endpoints":                                  {},
+	"v1/Event":                                      {},
+	"v1/Pod":                                        {},
+	"v1/Service":                                    {},
 	// Emitted by the controller runtime's synthetic-traffic prober rather
 	// than by a Kubernetes informer.
 	traffic.Watch.APIVersion + "/" + traffic.Watch.Kind: {},

@@ -160,6 +160,8 @@ func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (pr
 func (v *ReplayReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
 
 type Snapshot struct {
+	// Usage holds a synthetic resource usage window.
+	Usage *usage.Result `json:"-"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName        string                                  `json:"-"`
 	NamespaceName     string                                  `json:"namespace"`
@@ -238,5 +240,8 @@ func (s Snapshot) StatefulSets() []appsv1.StatefulSet
 
 func (s Snapshot) TrafficWindow(workload string) (traffic.Window, bool)
     TrafficWindow implements traffic.Source.
+
+func (s Snapshot) UsageResult() (usage.Result, bool)
+    UsageResult implements usage.Source with isolated synthetic windows.
 
 ```
