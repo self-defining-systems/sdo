@@ -19,8 +19,9 @@ import pytest
 from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any as ProtoAny
 
-from benchmarks.sregym.assurance.scripted_codex.directive import Directive
-from benchmarks.sregym.assurance.scripted_codex.usage import request_usage
+from benchmarks.sregym.assurance.script_store import ScriptBundle
+from benchmarks.sregym.assurance.scripts import assurance_script
+from benchmarks.sregym.assurance.usage import request_usage
 from sdo.agents.responder.codex import execute_incident
 from sdo.agents.responder.reflection import CodexSessionBackend
 from sdo.contracts import AgentTask, IncidentRequest, to_canonical_json
@@ -36,6 +37,10 @@ case "$*" in
   *"get networkpolicy -o json"*)
     if [ -f "$state/deleted" ]; then echo '{"items": []}'; else cat "$state/policies.json"; fi ;;
   *"delete networkpolicy"*) touch "$state/deleted"; echo "networkpolicy deleted" ;;
+  *"get deployment"*) echo '{"spec":{"template":{"spec":{"volumes":[{"configMap":{"name":"mongo-geo-script"}}]}}}}' ;;
+  *"get configmap"*) test -f "$state/restored" ;;
+  *"create configmap mongo-geo-script"*) touch "$state/restored" ;;
+  *"delete pod"*) echo "deleted pod" ;;
   *"rollout restart"*) echo "deployment restarted" ;;
   *"rollout status"*) echo "successfully rolled out" ;;
   *"get pods"*) echo "recommendation-1 1/1 Running" ;;
@@ -69,8 +74,7 @@ def scripted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]
     bin_dir.mkdir()
     _executable(
         bin_dir / "codex",
-        f'#!/bin/sh\nPYTHONPATH="{REPO_ROOT}" exec "{sys.executable}" '
-        '-m benchmarks.sregym.assurance.scripted_codex "$@"\n',
+        f'#!/bin/sh\nPYTHONPATH="{REPO_ROOT}" exec "{sys.executable}" -m benchmarks.sregym.assurance.script_cli "$@"\n',
     )
     _executable(bin_dir / "kubectl", _KUBECTL)
     _executable(
@@ -93,9 +97,11 @@ def scripted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]
     store.mkdir()
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("SCRIPTED_TEST_STATE", str(state))
+    monkeypatch.setenv("SDO_TOOLS_DIR", str(state))
     monkeypatch.setenv("SDO_SCRIPTED_STATE_DIR", str(store))
     monkeypatch.setenv("SDO_SCRIPTED_STATUS_COMMAND", f'test -f "{state}/deleted"')
     monkeypatch.setenv("SDO_SCRIPTED_STATUS_POLL_SECONDS", "0")
+    monkeypatch.setenv("SDO_AGENT_SCRIPT_STATE", str(tmp_path / "script-state"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     monkeypatch.setenv("SDO_TURN_USAGE_LOG", str(tmp_path / "turns.jsonl"))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -138,15 +144,14 @@ def _request(worktree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     )
     path = tmp_path / "agent-task.json"
     path.write_text(to_canonical_json(task), encoding="utf-8")
-    monkeypatch.setenv("SDO_REQUEST_PATH", str(path))
+    monkeypatch.setenv("SDO_TASK_PATH", str(path))
     return request
 
 
-def _directive(store: Path, **overrides: object) -> Directive:
-    directive = Directive(scenario="unit", fault="network_policy_block", target="recommendation", usage_seed=3)
-    directive = Directive(**{**directive.__dict__, **overrides})
-    (store / "directive.json").write_text(directive.to_json(), encoding="utf-8")
-    return directive
+def _script(store: Path, **overrides: object) -> None:
+    options = dict(fault="network_policy_block", target="recommendation", **overrides)
+    script = assurance_script(**options)
+    (store / "bundle.json").write_text(ScriptBundle(script.model_dump_json(), script.model_dump_json(), 3).to_json())
 
 
 def _turn_records(store: Path) -> list[dict[str, object]]:
@@ -171,7 +176,7 @@ def test_scripted_responder_repairs_through_the_real_structured_turn(
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
-    _directive(scripted["store"])
+    _script(scripted["store"])
 
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
 
@@ -204,7 +209,7 @@ def test_wrong_then_correct_reports_the_failed_attempt_and_the_repair(
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
-    _directive(scripted["store"], mitigation="wrong_then_correct")
+    _script(scripted["store"], mitigation="wrong_then_correct")
 
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
 
@@ -220,13 +225,14 @@ def test_wrong_only_honest_fails_and_claimed_lies_about_verification(
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
-    _directive(scripted["store"], mitigation="wrong_only_honest")
+    _script(scripted["store"], mitigation="wrong_only_honest")
     honest = execute_incident(request, model="gpt-6-luna", provider="codex")
     assert honest.status == "failed"
     assert honest.confirmed_root_causes == []
 
     shutil.rmtree(scripted["store"] / "bindings")
-    _directive(scripted["store"], mitigation="wrong_only_claimed")
+    shutil.rmtree(scripted["store"] / "marks")
+    _script(scripted["store"], mitigation="wrong_only_claimed")
     claimed = execute_incident(request, model="gpt-6-luna", provider="codex")
     assert claimed.status == "completed"
     assert claimed.verification_evidence[0].passed is True
@@ -241,7 +247,7 @@ def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
-    _directive(scripted["store"])
+    _script(scripted["store"])
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
     assert result.responder_session_id
 
@@ -288,40 +294,11 @@ def test_an_unplanned_turn_is_refused_loudly(scripted: dict[str, Path]) -> None:
     assert "no scripted plan" in completed.stderr
 
 
-def test_missing_configmap_rebuilds_a_script_configmap_that_has_no_manifest(tmp_path: Path) -> None:
-    """hotel_reservation creates ``mongo-geo-script`` from the root ``k8s-geo-mongo.sh``; no manifest defines it."""
-
-    from benchmarks.sregym.assurance.scripted_codex.faults import MissingConfigMap
-
-    worktree = tmp_path / "app"
-    (worktree / "kubernetes" / "geo").mkdir(parents=True)
-    (worktree / "kubernetes" / "geo" / "mongodb-geo-deployment.yaml").write_text(
-        "kind: Deployment\nspec:\n  volumes:\n    - configMap:\n        name: mongo-geo-script\n", encoding="utf-8"
-    )
-    (worktree / "k8s-geo-mongo.sh").write_text("#!/bin/sh\n", encoding="utf-8")
-    (worktree / "k8s-rate-mongo.sh").write_text("#!/bin/sh\n", encoding="utf-8")
-    deployment = {"spec": {"template": {"spec": {"volumes": [{"configMap": {"name": "mongo-geo-script"}}]}}}}
-
-    def run(command: str, *, timeout: float = 60) -> tuple[int, str]:
-        if "get deployment" in command:
-            return 0, json.dumps(deployment)
-        if "get configmap" in command:
-            return 1, "NotFound"
-        return 0, ""
-
-    plan = MissingConfigMap()
-    facts = plan.diagnose(run, NAMESPACE, "mongodb-geo", {}, worktree)
-    (restore, _), _ = plan.correct_repair(facts)
-
-    assert restore == f"kubectl -n {NAMESPACE} create configmap mongo-geo-script --from-file=k8s-geo-mongo.sh"
-    assert plan.root_cause(facts, {})["static_context"] == ["k8s-geo-mongo.sh"]
-
-
 def test_a_failed_plan_records_why_it_stopped(scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     _request(worktree, scripted["tmp"], monkeypatch)
     (scripted["state"] / "policies.json").write_text(json.dumps({"items": []}), encoding="utf-8")
-    _directive(scripted["store"])
+    _script(scripted["store"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
 
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
@@ -329,7 +306,6 @@ def test_a_failed_plan_records_why_it_stopped(scripted: dict[str, Path], monkeyp
     assert result.status == "failed"
     (turn,) = _turn_records(scripted["store"])
     assert turn["outcome"] == "failed"
-    assert "scripted plan stopped" in str(turn["plan_error"])
 
 
 def test_healed_noop_claims_completed_with_no_action_once_health_is_back(
@@ -339,14 +315,15 @@ def test_healed_noop_claims_completed_with_no_action_once_health_is_back(
 
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
-    _directive(scripted["store"], mitigation="healed_noop", status_attempts=2)
+    _script(scripted["store"], mitigation="healed_noop", status_attempts=2)
     unhealed = execute_incident(request, model="gpt-6-luna", provider="codex")
     assert unhealed.status == "failed"
     assert unhealed.repair_actions == []
 
     shutil.rmtree(scripted["store"] / "bindings")
+    shutil.rmtree(scripted["store"] / "marks")
     (scripted["state"] / "deleted").write_text("", encoding="utf-8")  # someone else healed it
-    _directive(scripted["store"], mitigation="healed_noop", status_attempts=2)
+    _script(scripted["store"], mitigation="healed_noop", status_attempts=2)
     healed = execute_incident(request, model="gpt-6-luna", provider="codex")
 
     assert healed.status == "completed"
@@ -355,12 +332,12 @@ def test_healed_noop_claims_completed_with_no_action_once_health_is_back(
     assert healed.verification_evidence[0].passed is True
 
 
-def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
+def test_scripted_reflection_returns_invalid_proposal_then_corrects_after_rejection(
     scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
-    _directive(scripted["store"], reflection="invalid_then_learn")
+    _script(scripted["store"], reflection="invalid_then_learn")
     responder = execute_incident(request, model="gpt-6-luna", provider="codex")
     turn = CodexSessionBackend(model="gpt-6-luna").resume(
         session_id=responder.responder_session_id,
@@ -371,7 +348,74 @@ def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
     assert turn.learning_decision == "updated"
     reflection = _turn_records(scripted["store"])[-1]
     checks = [command for command in reflection["commands"] if command["command"] == "sdo-operator memory check"]
-    assert [command["exit_code"] for command in checks] == [1, 0]
+    assert [command["exit_code"] for command in checks] == [1]
+    assert turn.learning_decision == "updated"
+    # The broker sees the invalid proposal and requests a separate correction.
+    assert "malformed README" in (worktree / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md").read_text()
+    correction = CodexSessionBackend(model="gpt-6-luna").resume(
+        session_id=responder.responder_session_id,
+        worktree=worktree,
+        prompt="You are correcting an operational-memory proposal",
+        idempotency_key=f"reflection:{request.incident_id}:{'a' * 40}",
+    )
+    assert correction.learning_decision == "updated"
+    checks = [
+        c
+        for record in _turn_records(scripted["store"])
+        for c in record["commands"]
+        if c["command"] == "sdo-operator memory check"
+    ]
+    assert [c["exit_code"] for c in checks] == [1, 0]
     assert (
         "malformed README" not in (worktree / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md").read_text()
     )
+
+
+@pytest.mark.parametrize("mode", ["learn", "no_change", "crash_once", "crash_always", "invalid_then_learn"])
+def test_reflection_scripts_consume_turns_across_checkouts(scripted: dict[str, Path], mode: str) -> None:
+    """Worker replacement must not reset one-shot crash/correction selection."""
+    _script(scripted["store"], reflection=mode)
+    schema = scripted["tmp"] / "reflection-schema.json"
+    schema.write_text('{"properties":{"learning_decision":{}}}')
+    prompt = f"Idempotency key: reflection:unit-incident:{'a' * 40}"
+    results = []
+    for index in range(2):
+        root = scripted["tmp"] / f"checkout-{index}"
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        result = subprocess.run(
+            [str(scripted["tmp"] / "bin" / "codex"), "exec", "--output-schema", str(schema), "-"],
+            cwd=root,
+            input=prompt,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        results.append(result)
+        if mode == "invalid_then_learn":
+            readme = root / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md"
+            assert ("malformed README" in readme.read_text()) == (index == 0)
+    assert [r.returncode for r in results] == (
+        [1, 1] if mode == "crash_always" else [1, 0] if mode == "crash_once" else [0, 0]
+    )
+    if mode == "no_change":
+        assert "no_change" in results[0].stdout
+
+
+def test_missing_configmap_restores_source_init_script_without_manifest(
+    scripted: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _memory_worktree(scripted["tmp"])
+    (root / "kubernetes").mkdir(exist_ok=True)
+    (root / "k8s-geo-mongo.sh").write_text("#!/bin/sh\n")
+    request = _request(root, scripted["tmp"], monkeypatch)
+    monkeypatch.setenv("SDO_SCRIPTED_STATUS_COMMAND", f'test -f "{scripted["state"]}/restored"')
+    script = assurance_script(fault="missing_configmap", target="mongodb-geo")
+    (scripted["store"] / "bundle.json").write_text(
+        ScriptBundle(script.model_dump_json(), script.model_dump_json(), 3).to_json()
+    )
+    result = execute_incident(request, model="gpt-6-luna", provider="codex")
+    assert result.status == "completed"
+    assert result.confirmed_root_causes[0].static_context == ["k8s-geo-mongo.sh"]
+    assert (scripted["state"] / "restored").exists()

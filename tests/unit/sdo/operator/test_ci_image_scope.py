@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[4]
         ("fastloop/__pycache__/fault_tracker.cpython-312.pyc", False),
         ("fastloop/scripted_program/diagnose.go", False),
         ("experiments/assurance/composites.toml", False),
-        ("assurance/scripted_codex/faults.py", False),
+        ("assurance/faults.py", False),
         ("analysis/incident_cost.py", False),
         ("runner/incident_stream.py", False),
         ("agents/answer.py", False),

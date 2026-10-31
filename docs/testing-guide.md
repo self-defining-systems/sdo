@@ -585,9 +585,26 @@ uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo
 ```
 
 The launcher reads the ConfigMap once at worker startup. Override its name with
-`SDO_AGENT_SCRIPT_CONFIGMAP`, or use `SDO_AGENT_SCRIPT` for a mounted file. Existing
-assurance executables also accept `SDO_AGENT_SCRIPT`; the legacy Directive menus
-remain for scenarios that have not yet been migrated.
+`SDO_AGENT_SCRIPT_CONFIGMAP`, or use `SDO_AGENT_SCRIPT` for a mounted file. Assurance scenarios compile to the same version 1 contract through
+`benchmarks.sregym.assurance.scripts.assurance_script`. The harness publishes
+`script.json` plus a `warm.json` variant and a usage seed in `sdo-agent-script`.
+The assurance CLI wrapper binds that bundle to the incident before executing
+steps, records audited commands and deterministic synthetic token usage, and
+selects the warm variant only when the real responder prompt surfaces validated
+memory. It contains no fault or behavior menus.
+
+The compiler supports both deny-all NetworkPolicy and missing ConfigMap faults.
+`correct` diagnoses, repairs and polls live health; `wrong_then_correct` first
+records an unsuccessful restart; `wrong_only_honest` reports failure;
+`wrong_only_claimed` attributes a claimed success to the restart; `healed_noop`
+only polls health and returns no action. Reflection `learn` writes final memory
+and checks it, `no_change` returns an explicit reason, `crash_once` exits on its
+first turn, and `crash_always` exits on every allowed turn. `invalid_then_learn`
+returns a malformed first proposal for broker rejection and writes valid files
+on the correction turn. Turn consumption persists across worker restarts and
+isolated checkouts. Scripts retain pre-repair and pre-result chaos windows.
+Qualification and composite oracles remain no-agent fault-driver checks; they
+contain no Directive dependency and do not execute agent scripts.
 
 Script string values reserve `{{lowercase_reference}}` for substitutions. No
 expressions, filters or code evaluation are supported. Unknown references fail

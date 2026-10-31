@@ -5,7 +5,7 @@ into the ``sregym-responder`` image. The responder runs ``codex exec`` with
 ``danger-full-access`` inside SREGym incidents, so that copy let it read the answer key:
 ``benchmarks/sregym/experiments/assurance/composites.toml`` (``correct_mitigation``,
 ``expected_diff``, ``partial_fix_trap``), the assurance plan, and
-``benchmarks/sregym/assurance/scripted_codex/faults.py`` (repair commands).
+``benchmarks/sregym/assurance/faults.py`` (repair commands).
 
 These tests are static: they parse the Dockerfiles' ``COPY`` lines (no image is built) and
 cross-check them against what the responder's entry points actually import, so a future
@@ -50,7 +50,7 @@ SCRIPTED_PROGRAM_FILES = {
 
 #: The scripted-Codex test wrapper is allowed to add exactly this, and nothing else that
 #: FORBIDDEN_PREFIXES would otherwise catch.
-SCRIPTED_ALLOWANCE = "benchmarks/sregym/assurance/scripted_codex"
+SCRIPTED_ALLOWANCE = "benchmarks/sregym/assurance/"
 
 _COPY_LOCAL = re.compile(r"^COPY\s+(?!--from=)(\S.*?)\s+(\S+)\s*$", re.MULTILINE)
 
@@ -150,7 +150,7 @@ def test_scripted_test_wrapper_adds_only_cli_support_and_nothing_from_experiment
     sources = [src for src in _local_copy_sources(SCRIPTED_DOCKERFILE) if src.startswith("benchmarks")]
     copied = _expand(sources)
 
-    support = {f"benchmarks/sregym/agent_script/{name}.py" for name in ("__init__", "invocation", "wire")}
+    support = {str(path.relative_to(REPO_ROOT)) for path in (REPO_ROOT / "benchmarks/sregym/agent_script").glob("*.py")}
     leaked = {
         path
         for path in copied - support

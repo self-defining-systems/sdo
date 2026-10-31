@@ -1,35 +1,13 @@
 # ruff: noqa: E501 - Go, shell and Markdown templates keep their natural line lengths.
-"""The scripted responder's fault catalog: how each fault class is diagnosed, repaired and learned.
-
-Every plan works only from what a real responder could see: the incident
-request, the application worktree and live ``kubectl`` output. The directive
-names the fault class and its target workload; the object names a repair
-needs (the NetworkPolicy, the missing ConfigMap and its manifest) are found
-from live state, and the plan fails loudly when live state does not show the
-fault.
-
-Stdlib-only: this runs inside the controller and responder images.
-"""
+"""Source templates compiled into assurance agent scripts and learned memory."""
 
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from typing import Any
 
 SERVICE_LABEL = "io.kompose.service"
-
-
-class PlanError(RuntimeError):
-    """Live state does not show the fault the directive names."""
-
-
-class Runner(Protocol):
-    def __call__(self, command: str, *, timeout: float = ...) -> tuple[int, str]: ...
 
 
 @dataclass(frozen=True)
@@ -50,13 +28,6 @@ class Facts:
     target: str
     objects: dict[str, str] = field(default_factory=dict)
     observations: tuple[tuple[str, str], ...] = ()
-
-
-def _json(output: str) -> Any:
-    try:
-        return json.loads(output)
-    except json.JSONDecodeError as exc:
-        raise PlanError(f"kubectl returned non-JSON output: {output[:200]!r}") from exc
 
 
 def _object_ref(api_version: str, kind: str, namespace: str, name: str) -> dict[str, str]:
@@ -105,29 +76,6 @@ def _finding_evidence(request: dict[str, Any]) -> list[dict[str, str]]:
     return evidence
 
 
-class FaultPlan(Protocol):
-    name: str
-    playbook_id: str
-
-    def diagnose(self, run: Runner, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts: ...
-
-    def wrong_repair(self, facts: Facts) -> tuple[str, str]: ...
-
-    def correct_repair(self, facts: Facts) -> list[tuple[str, str]]: ...
-
-    def root_cause(self, facts: Facts, request: dict[str, Any]) -> dict[str, Any]: ...
-
-    def claimed_root_cause(self, facts: Facts, request: dict[str, Any]) -> dict[str, Any]: ...
-
-    def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles: ...
-
-    def claimed_memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles: ...
-
-    def warm_facts(self, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts: ...
-
-    def warm_commands(self, facts: Facts) -> tuple[str, str, str]: ...
-
-
 def _restart(namespace: str, target: str) -> tuple[str, str]:
     return (
         f"kubectl -n {namespace} rollout restart deployment/{target} && "
@@ -159,47 +107,12 @@ class NetworkPolicyBlock:
     package = "deny_all_networkpolicy_isolation"
     playbook_id = "deny-all-networkpolicy-isolation"
 
-    def diagnose(self, run: Runner, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts:
-        del worktree
-        code, pods = run(f"kubectl -n {namespace} get pods -l {SERVICE_LABEL}={target} -o wide")
-        code, output = run(f"kubectl -n {namespace} get networkpolicy -o json")
-        if code != 0:
-            raise PlanError(f"cannot list NetworkPolicies: {output[:300]}")
-        policies = [
-            item
-            for item in _json(output).get("items", [])
-            if _isolates(item)
-            and item.get("spec", {}).get("podSelector", {}).get("matchLabels", {}).get(SERVICE_LABEL) == target
-        ]
-        if not policies:
-            raise PlanError(f"no NetworkPolicy isolates {target} in {namespace}")
-        name = str(policies[0]["metadata"]["name"])
-        return Facts(
-            namespace=namespace,
-            target=target,
-            objects={"policy": name},
-            observations=(
-                (
-                    f"kubectl -n {namespace} get networkpolicy -o json",
-                    f"NetworkPolicy {name} denies all ingress and egress of {target}",
-                ),
-                (
-                    f"kubectl -n {namespace} get pods -l {SERVICE_LABEL}={target} -o wide",
-                    pods.strip()[:300] or "pods listed",
-                ),
-            ),
-        )
-
     #: The wrong fix restarts the isolated service's caller. Restarting the isolated
     #: service itself would crash-loop it past the fault's recovery window.
     wrong_workload = "frontend"
 
     def wrong_repair(self, facts: Facts) -> tuple[str, str]:
         return _restart(facts.namespace, self.wrong_workload)
-
-    def correct_repair(self, facts: Facts) -> list[tuple[str, str]]:
-        policy = facts.objects["policy"]
-        return [(f"kubectl -n {facts.namespace} delete networkpolicy {policy}", f"deleted NetworkPolicy {policy}")]
 
     def root_cause(self, facts: Facts, request: dict[str, Any]) -> dict[str, Any]:
         policy = facts.objects["policy"]
@@ -230,24 +143,6 @@ class NetworkPolicyBlock:
     def claimed_root_cause(self, facts: Facts, request: dict[str, Any]) -> dict[str, Any]:
         return _claimed_cause(facts, request, self.wrong_workload)
 
-    def warm_facts(self, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts:
-        del worktree
-        for finding in active_findings(request):
-            primary = finding.get("primary_resource") or {}
-            if finding.get("detector_id") == self.detector_id and primary.get("kind") == "NetworkPolicy":
-                return Facts(namespace=namespace, target=target, objects={"policy": str(primary.get("name"))})
-        # The learned detector may lag the health detectors: the playbook's script finds the policy itself.
-        return Facts(namespace=namespace, target=target, objects={"policy": f"deny-all-{target}"})
-
-    def warm_commands(self, facts: Facts) -> tuple[str, str, str]:
-        policy = facts.objects["policy"]
-        absent = f"! kubectl -n {facts.namespace} get networkpolicy {policy} -o name"
-        return (
-            absent,
-            f"kubectl -n {facts.namespace} delete networkpolicy {policy}",
-            f"{absent} && python3 -m sdo.agents.responder.status_cli",
-        )
-
     def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
         return _memory_files(
             detector_id=self.detector_id,
@@ -270,61 +165,14 @@ class NetworkPolicyBlock:
         return _claimed_files(incident_id=incident_id, outcome_commit=outcome_commit)
 
 
-def _isolates(policy: dict[str, Any]) -> bool:
-    spec = policy.get("spec") or {}
-    types = set(spec.get("policyTypes") or [])
-    return {"Ingress", "Egress"} <= types and not spec.get("ingress") and not spec.get("egress")
-
-
 class MissingConfigMap:
     name = "missing_configmap"
     detector_id = "required-configmap-missing"
     package = "required_configmap_missing"
     playbook_id = "required-configmap-missing"
 
-    def diagnose(self, run: Runner, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts:
-        run(f"kubectl -n {namespace} get pods -l {SERVICE_LABEL}={target} -o wide")
-        code, output = run(f"kubectl -n {namespace} get deployment {target} -o json")
-        if code != 0:
-            raise PlanError(f"cannot read deployment {target}: {output[:300]}")
-        volumes = _json(output).get("spec", {}).get("template", {}).get("spec", {}).get("volumes") or []
-        names = [str(v["configMap"]["name"]) for v in volumes if isinstance(v, dict) and v.get("configMap")]
-        missing = None
-        for name in names:
-            code, _ = run(f"kubectl -n {namespace} get configmap {name} -o name")
-            if code != 0:
-                missing = name
-                break
-        if missing is None:
-            raise PlanError(f"every ConfigMap {target} mounts exists ({names})")
-        source, restore = _configmap_source(worktree, namespace, missing)
-        run(f"grep -rlE 'name: {missing}|k8s-.*-mongo.sh' kubernetes/ .")
-        return Facts(
-            namespace=namespace,
-            target=target,
-            objects={"configmap": missing, "manifest": source, "restore": restore},
-            observations=(
-                (
-                    f"kubectl -n {namespace} get configmap {missing} -o name",
-                    f"ConfigMap {missing} mounted by {target} is NotFound",
-                ),
-            ),
-        )
-
     def wrong_repair(self, facts: Facts) -> tuple[str, str]:
         return _restart(facts.namespace, facts.target)
-
-    def correct_repair(self, facts: Facts) -> list[tuple[str, str]]:
-        ns, target = facts.namespace, facts.target
-        configmap, manifest = facts.objects["configmap"], facts.objects["manifest"]
-        return [
-            (facts.objects["restore"], f"restored ConfigMap {configmap} from {manifest}"),
-            (
-                f"kubectl -n {ns} delete pod -l {SERVICE_LABEL}={target} --wait=false && "
-                f"kubectl -n {ns} rollout status deployment/{target} --timeout=180s",
-                f"replaced the {target} pods stuck on the missing mount",
-            ),
-        ]
 
     def root_cause(self, facts: Facts, request: dict[str, Any]) -> dict[str, Any]:
         configmap = facts.objects["configmap"]
@@ -354,24 +202,6 @@ class MissingConfigMap:
     def claimed_root_cause(self, facts: Facts, request: dict[str, Any]) -> dict[str, Any]:
         return _claimed_cause(facts, request)
 
-    def warm_facts(self, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts:
-        configmap = ""
-        for finding in active_findings(request):
-            if finding.get("detector_id") != self.detector_id:
-                continue
-            for related in finding.get("related_resources") or []:
-                if isinstance(related, dict) and related.get("kind") == "ConfigMap":
-                    configmap = str(related.get("name"))
-        return Facts(namespace=namespace, target=target, objects={"configmap": configmap})
-
-    def warm_commands(self, facts: Facts) -> tuple[str, str, str]:
-        configmap = facts.objects.get("configmap") or "-"
-        return (
-            f"kubectl -n {facts.namespace} get configmap {configmap} -o name",
-            f"kubectl -n {facts.namespace} create configmap {configmap} --from-file=k8s-geo-mongo.sh",
-            f"kubectl -n {facts.namespace} get configmap {configmap} -o name && python3 -m sdo.agents.responder.status_cli",
-        )
-
     def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
         return _memory_files(
             detector_id=self.detector_id,
@@ -394,28 +224,10 @@ class MissingConfigMap:
         return _claimed_files(incident_id=incident_id, outcome_commit=outcome_commit)
 
 
-def _configmap_source(worktree: Path, namespace: str, name: str) -> tuple[str, str]:
-    """The source file that defines ConfigMap ``name`` and the command that restores it from that file.
-
-    A manifest under ``kubernetes/`` wins; otherwise hotel_reservation builds ``mongo-<svc>-script``
-    from the root ``k8s-<svc>-mongo.sh`` init script.
-    """
-
-    pattern = re.compile(rf"^\s*name:\s*['\"]?{re.escape(name)}['\"]?\s*$", re.MULTILINE)
-    root = worktree / "kubernetes"
-    for path in sorted(root.rglob("*.y*ml")) if root.is_dir() else []:
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if re.search(r"^kind:\s*ConfigMap\s*$", text, re.MULTILINE) and pattern.search(text):
-            manifest = path.relative_to(worktree).as_posix()
-            return manifest, f"kubectl -n {namespace} apply -f {manifest}"
-    script = re.fullmatch(r"mongo-([a-z0-9-]+)-script", name)
-    if script and (worktree / f"k8s-{script.group(1)}-mongo.sh").is_file():
-        source = f"k8s-{script.group(1)}-mongo.sh"
-        return source, f"kubectl -n {namespace} create configmap {name} --from-file={source}"
-    raise PlanError(f"no manifest under kubernetes/ or init script defines ConfigMap {name}")
-
-
-PLANS: dict[str, FaultPlan] = {"network_policy_block": NetworkPolicyBlock(), "missing_configmap": MissingConfigMap()}
+PLANS: dict[str, NetworkPolicyBlock | MissingConfigMap] = {
+    "network_policy_block": NetworkPolicyBlock(),
+    "missing_configmap": MissingConfigMap(),
+}
 
 
 # --- Operational-memory templates -------------------------------------------------------------------------

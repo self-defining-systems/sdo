@@ -1,7 +1,7 @@
 """Deterministic synthetic token usage.
 
 Every model response of a scripted turn gets usage computed from the
-directive's seed, the turn kind and the response index, so a run's expected
+case's seed, the turn kind and the response index, so a run's expected
 totals are known exactly and each incident and turn kind is distinguishable
 (a double-counted or dropped turn shows up as a mismatch, never as noise).
 

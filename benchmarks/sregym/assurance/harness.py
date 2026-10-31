@@ -1,7 +1,7 @@
 """Run scripted scenarios through the fast loop and check every incident's evidence.
 
 The harness wraps the fast loop's :class:`SdoPersistentAgent`: before each
-injection it writes the incident's directive into the controller namespace,
+injection it writes the incident's script into the controller namespace,
 optionally runs a chaos action, and after learning it checks the incident's
 evidence (receipt, run record, broker ledger, operational memory, the scripted
 CLI's turn ledger) against the scenario's expectations. One assurance record
@@ -33,12 +33,7 @@ from benchmarks.sregym.adapter import (
     kubectl,
 )
 from benchmarks.sregym.assurance.chaos import ChaosContext, ChaosThread
-from benchmarks.sregym.assurance.scripted_codex.directive import (
-    DIRECTIVE_CONFIGMAP,
-    DIRECTIVE_KEY,
-    SCRIPTED_LABEL,
-    TURN_KEY,
-)
+from benchmarks.sregym.assurance.script_store import SCRIPTED_LABEL, TURN_KEY
 from benchmarks.sregym.memory_cli import (
     artifact_ids,
     listing_arguments,
@@ -102,16 +97,16 @@ class AssuranceRecord:
         return json.dumps(payload, sort_keys=True, default=str)
 
 
-def write_directive(control_namespace: str, directive_json: str) -> None:
+def write_script(control_namespace: str, script_json: str, warm_json: str, seed: int) -> None:
     document = {
         "apiVersion": "v1",
         "kind": "ConfigMap",
         "metadata": {
-            "name": DIRECTIVE_CONFIGMAP,
+            "name": "sdo-agent-script",
             "namespace": control_namespace,
-            "labels": {SCRIPTED_LABEL: "directive"},
+            "labels": {SCRIPTED_LABEL: "script"},
         },
-        "data": {DIRECTIVE_KEY: directive_json},
+        "data": {"script.json": script_json, "warm.json": warm_json, "usage_seed": str(seed)},
     }
     kubectl(["apply", "-f", "-"], namespace=control_namespace, input_text=json.dumps(document))
 
@@ -270,14 +265,16 @@ class ScriptedAgent:
         if spec.problem_id != problem_id:
             raise AssuranceError(f"incident {index}: loop problem {problem_id!r} is not the spec's {spec.problem_id!r}")
         record = AssuranceRecord(
-            index=index, scenario=spec.directive.scenario, problem_id=problem_id, incident_id=None, chaos=spec.chaos
+            index=index, scenario=spec.scenario, problem_id=problem_id, incident_id=None, chaos=spec.chaos
         )
         self._records[index] = record
         chaos: ChaosThread | None = None
 
         def scripted_inject() -> InjectionWindow:
             nonlocal chaos
-            write_directive(self._control, spec.directive.to_json())
+            write_script(
+                self._control, spec.script.model_dump_json(), spec.warm_script.model_dump_json(), spec.usage_seed
+            )
             window = inject()
             if spec.chaos:
                 chaos = ChaosThread(
@@ -680,10 +677,10 @@ class ScriptedAgent:
         if ledger is None:
             return [Check("broker-ledger", False, f"no broker ledger for {incident_id}")]
         request = ((ledger.get("closure") or {}).get("request")) or {}
-        allowed = _FAULT_OBJECTS[spec.directive.fault]
+        allowed = _FAULT_OBJECTS[spec.fault]
         changes = _state_change_names(request)
         foreign = [name for name in changes if not name.startswith(allowed)]
-        own = _FAULT_DETECTORS[spec.directive.fault]
+        own = _FAULT_DETECTORS[spec.fault]
         other_detectors = sorted(
             {
                 str(finding.get("detector_id"))

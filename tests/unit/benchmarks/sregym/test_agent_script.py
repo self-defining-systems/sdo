@@ -204,7 +204,7 @@ def test_responder_turns_and_reflection_resume_share_session(scripted_cli):
     assert reflection.session_id == first.session_id
 
 
-def test_assurance_cli_accepts_shared_script(scripted_cli):
+def test_agent_script_module_cli_accepts_script(scripted_cli):
     import subprocess
     import sys
 
@@ -216,7 +216,8 @@ def test_assurance_cli_accepts_shared_script(scripted_cli):
         [
             sys.executable,
             "-m",
-            "benchmarks.sregym.assurance.scripted_codex",
+            "benchmarks.sregym.agent_script",
+            "codex",
             "exec",
             "--output-schema",
             str(schema),

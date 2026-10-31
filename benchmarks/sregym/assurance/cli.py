@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCRIPTED_IMAGE_LABEL = "sdo.dev/scripted-codex"
+SCRIPTED_IMAGE_LABEL = "sdo.dev/agent-script"
 
 
 def scripted_images(tag: str) -> Images:
@@ -49,9 +49,9 @@ def scripted_images(tag: str) -> Images:
 
 
 def require_scripted(images: Images) -> None:
-    """Refuse to run unless the controller and responder images carry the scripted CLI instead of a model CLI."""
+    """Refuse to run unless the responder image carries the scripted CLI instead of a model CLI."""
 
-    for image in (images.controller, images.responder):
+    for image in (images.responder,):
         completed = subprocess.run(
             ["docker", "image", "inspect", image, "--format", f'{{{{index .Config.Labels "{SCRIPTED_IMAGE_LABEL}"}}}}'],
             capture_output=True,
@@ -59,7 +59,7 @@ def require_scripted(images: Images) -> None:
             check=False,
         )
         if completed.returncode != 0 or completed.stdout.strip() != "true":
-            raise AssuranceError(f"{image} is not a scripted-codex image; build it with build_images.sh")
+            raise AssuranceError(f"{image} is not an agent-script image; build it with build_images.sh")
 
 
 def load_images(cluster: str, images: Images, *, record_path: Path | None = None) -> None:

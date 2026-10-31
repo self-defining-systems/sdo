@@ -29,7 +29,8 @@ else
     docker tag "${image}:${base_tag}" "${image}:${tag}-base"
   done
 fi
-for image in sdo-controller sdo-sregym-responder; do
+docker tag "sdo-controller:${tag}-base" "sdo-controller:${tag}"
+for image in sdo-sregym-responder; do
   docker build --quiet \
     --file "${repo_root}/benchmarks/sregym/assurance/Dockerfile.scripted" \
     --build-arg "BASE=${image}:${tag}-base" \
@@ -38,4 +39,4 @@ for image in sdo-controller sdo-sregym-responder; do
 done
 # The scripted CLI answers agentshim's probe, and no real model CLI is left.
 docker run --rm --user 65532:65532 "sdo-sregym-responder:${tag}" codex --help >/dev/null
-docker run --rm --user 65532:65532 "sdo-controller:${tag}" sh -c '! command -v claude && codex --version'
+docker run --rm --user 65532:65532 "sdo-sregym-responder:${tag}" sh -c '! command -v claude && codex --version'

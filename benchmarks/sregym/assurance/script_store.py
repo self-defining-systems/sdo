@@ -1,4 +1,4 @@
-"""Where the scripted Codex CLI reads its directive and records its turns.
+"""Where the scripted Codex CLI reads its script and records its turns.
 
 In a pod the store is the controller namespace, reached with the pod's service
 account (the responder may get and create ConfigMaps there; the controller
@@ -16,26 +16,42 @@ import os
 import ssl
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from .directive import (
-    BINDING_KEY,
-    DIRECTIVE_CONFIGMAP,
-    DIRECTIVE_KEY,
-    SCRIPTED_LABEL,
-    TURN_KEY,
-    Binding,
-    Directive,
-    DirectiveError,
-)
+SCRIPTED_LABEL = "sdo.dev/agent-script"
+TURN_KEY = "turn.json"
+
+
+@dataclass(frozen=True)
+class ScriptBundle:
+    cold: str
+    warm: str
+    seed: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.cold, str) or not isinstance(self.warm, str):
+            raise TypeError("script bundle contents must be strings")
+        if not isinstance(self.seed, int) or isinstance(self.seed, bool):
+            raise TypeError("usage seed must be an integer")
+        if self.seed < 0:
+            raise ValueError("usage seed must not be negative")
+
+    def to_json(self) -> str:
+        return json.dumps({"cold": self.cold, "warm": self.warm, "seed": self.seed})
+
+    @classmethod
+    def from_json(cls, text: str) -> ScriptBundle:
+        return cls(**json.loads(text))
+
 
 SERVICE_ACCOUNT_ROOT = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 STATE_DIR_ENV = "SDO_SCRIPTED_STATE_DIR"
 
 
 class StoreError(RuntimeError):
-    """The directive or turn store could not be read or written."""
+    """The script or turn store could not be read or written."""
 
 
 def binding_name(incident_id: str) -> str:
@@ -47,11 +63,11 @@ def turn_name(turn_id: str) -> str:
 
 
 class Store(Protocol):
-    def directive(self) -> Directive: ...
+    def script(self) -> ScriptBundle: ...
 
-    def binding(self, incident_id: str) -> Binding | None: ...
+    def binding(self, incident_id: str) -> ScriptBundle | None: ...
 
-    def bind(self, binding: Binding) -> Binding: ...
+    def bind(self, incident_id: str, binding: ScriptBundle) -> ScriptBundle: ...
 
     def record_turn(self, turn_id: str, record: dict[str, object]) -> None: ...
 
@@ -65,26 +81,24 @@ def marker_name(marker: str) -> str:
 
 
 class DirectoryStore:
-    """A directory with ``directive.json``, ``bindings/`` and ``turns/``."""
+    """A directory with ``bundle.json``, ``bindings/`` and ``turns/``."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
 
-    def directive(self) -> Directive:
-        path = self.root / DIRECTIVE_KEY
-        if not path.is_file():
-            raise StoreError(f"no scripted directive at {path}")
-        return Directive.from_json(path.read_text(encoding="utf-8"))
+    def script(self) -> ScriptBundle:
+        data = json.loads((self.root / "bundle.json").read_text())
+        return ScriptBundle(**data)
 
-    def binding(self, incident_id: str) -> Binding | None:
+    def binding(self, incident_id: str) -> ScriptBundle | None:
         path = self.root / "bindings" / f"{binding_name(incident_id)}.json"
-        return Binding.from_json(path.read_text(encoding="utf-8")) if path.is_file() else None
+        return ScriptBundle.from_json(path.read_text(encoding="utf-8")) if path.is_file() else None
 
-    def bind(self, binding: Binding) -> Binding:
-        existing = self.binding(binding.incident_id)
+    def bind(self, incident_id: str, binding: ScriptBundle) -> ScriptBundle:
+        existing = self.binding(incident_id)
         if existing is not None:
             return existing
-        path = self.root / "bindings" / f"{binding_name(binding.incident_id)}.json"
+        path = self.root / "bindings" / f"{binding_name(incident_id)}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(binding.to_json(), encoding="utf-8")
         return binding
@@ -179,26 +193,27 @@ class ConfigMapStore:
             raise StoreError(f"configmap has no {key!r}")
         return value
 
-    def directive(self) -> Directive:
-        configmap = self._get(DIRECTIVE_CONFIGMAP)
+    def script(self) -> ScriptBundle:
+        configmap = self._get("sdo-agent-script")
         if configmap is None:
-            raise StoreError(f"no scripted directive: configmap {self.namespace}/{DIRECTIVE_CONFIGMAP} is missing")
-        try:
-            return Directive.from_json(self._data(configmap, DIRECTIVE_KEY))
-        except DirectiveError as exc:
-            raise StoreError(f"invalid scripted directive: {exc}") from exc
+            raise StoreError("missing sdo-agent-script ConfigMap")
+        return ScriptBundle(
+            self._data(configmap, "script.json"),
+            self._data(configmap, "warm.json"),
+            int(self._data(configmap, "usage_seed")),
+        )
 
-    def binding(self, incident_id: str) -> Binding | None:
+    def binding(self, incident_id: str) -> ScriptBundle | None:
         configmap = self._get(binding_name(incident_id))
-        return None if configmap is None else Binding.from_json(self._data(configmap, BINDING_KEY))
+        return None if configmap is None else ScriptBundle.from_json(self._data(configmap, "binding.json"))
 
-    def bind(self, binding: Binding) -> Binding:
+    def bind(self, incident_id: str, binding: ScriptBundle) -> ScriptBundle:
         labels = {SCRIPTED_LABEL: "binding"}
-        if self._create(binding_name(binding.incident_id), BINDING_KEY, binding.to_json(), labels):
+        if self._create(binding_name(incident_id), "binding.json", binding.to_json(), labels):
             return binding
-        existing = self.binding(binding.incident_id)
+        existing = self.binding(incident_id)
         if existing is None:
-            raise StoreError(f"binding for {binding.incident_id!r} vanished after a conflict")
+            raise StoreError(f"binding for {incident_id!r} vanished after a conflict")
         return existing
 
     def record_turn(self, turn_id: str, record: dict[str, object]) -> None:

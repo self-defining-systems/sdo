@@ -1,11 +1,14 @@
-"""Named scripted scenarios: incident sequences with their directives, chaos and expected outcomes."""
+"""Named scripted scenarios: incident sequences with their scripts, chaos and expected outcomes."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from benchmarks.sregym.assurance.scripted_codex.directive import Directive
+from benchmarks.sregym.assurance.scripts import assurance_script
+
+if TYPE_CHECKING:
+    from benchmarks.sregym.agent_script.model import AgentScript
 
 NP = "network_policy_block"
 MCM_GEO = "missing_configmap_hotel_reservation"
@@ -39,7 +42,12 @@ class Expectation:
 @dataclass(frozen=True)
 class IncidentSpec:
     problem_id: str
-    directive: Directive
+    scenario: str
+    fault: str
+    target: str
+    script: AgentScript
+    warm_script: AgentScript
+    usage_seed: int = 0
     expect: Expectation = Expectation()
     #: Chaos action to run during the incident (see ``benchmarks.sregym.assurance.chaos``).
     chaos: str | None = None
@@ -60,12 +68,17 @@ def incident(
     *,
     expect: Expectation | None = None,
     chaos: str | None = None,
-    **directive: object,
+    **options: object,
 ) -> IncidentSpec:
     fault, target = _TARGETS[problem_id]
     return IncidentSpec(
         problem_id=problem_id,
-        directive=Directive(scenario=scenario, fault=fault, target=target, usage_seed=seed, **directive),  # type: ignore[arg-type]
+        scenario=scenario,
+        fault=fault,
+        target=target,
+        usage_seed=seed,
+        script=assurance_script(fault=fault, target=target, **options),  # type: ignore[arg-type]
+        warm_script=assurance_script(fault=fault, target=target, warm=True, **options),  # type: ignore[arg-type]
         expect=expect or Expectation(),
         chaos=chaos,
     )
