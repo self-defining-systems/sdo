@@ -93,7 +93,7 @@ def reflection_script(
         steps.append(Write(kind="write", path=str(path.relative_to(worktree)), text=text))
 
     def tool(argv: list[str], **_: Any) -> None:
-        steps.append(Tool(kind="tool", argv=argv, timeout=180.0))
+        steps.append(Tool(kind="tool", argv=argv, timeout=300.0 if argv[1:3] == ["memory", "check"] else 180.0))
 
     def finish(**result: Any) -> AgentScript:
         result.setdefault("no_change_reason", None)

@@ -46,6 +46,7 @@ def test_reflection_script_preserves_capture_provenance(tmp_path: Path) -> None:
     assert turn.result["playbook_ids"] == ["service-targetport-mismatch"]
     assert isinstance(turn.steps[-2], Tool)
     assert turn.steps[-2].argv[:3] == ["sdo-operator", "memory", "check"]
+    assert turn.steps[-2].timeout == 300.0
     assert "service-targetport-mismatch/README.md" in writes[".sdo/playbooks/README.md"]
     assert not (tmp_path / ".sdo").exists(), "generation must have no checkout side effects"
 
