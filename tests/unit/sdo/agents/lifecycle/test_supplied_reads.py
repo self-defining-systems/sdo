@@ -39,7 +39,9 @@ def test_lifecycle_accepts_provided_resource_reads(
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])
-def test_external_read_does_not_bypass_handoff_validation(tmp_path: Path, provider: str) -> None:
+def test_external_read_does_not_bypass_handoff_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str
+) -> None:
     from sdo.agents.lifecycle.agents import LifecycleAgentError
 
     agent = ScriptedAgent(
@@ -51,7 +53,7 @@ def test_external_read_does_not_bypass_handoff_validation(tmp_path: Path, provid
         )
     )
     backend_type = CodexLifecycleBackend if provider == "codex" else ClaudeLifecycleBackend
-    with pytest.raises(LifecycleAgentError, match="invalid structured"):
+    with fake_codex_login(monkeypatch), pytest.raises(LifecycleAgentError, match="invalid structured"):
         backend_type(executor=agent.executor).run_health_judge(
             repository=tmp_path,
             application="synthetic",
