@@ -83,7 +83,8 @@ refuses new ones. `-bootstrap` on the Go command prints a proposed inventory for
 inspection only. The check compares the working list to the committed merge-base
 with `origin/main` (override with `SDO_DETERMINISM_BASE` for offline tooling), so
 regenerating or committing an expanded list cannot bless new exceptions. The
-first rollout bootstraps only when that base predates the allowlist. CI fetches
+first rollout pins the first committed inventory when that base predates the
+allowlist; later rollout commits cannot enlarge it either. CI fetches
 history for this comparison. Stale entries fail too. New baseline exceptions
 require changing the policy, not regeneration.
 
