@@ -644,3 +644,31 @@ from `request.outcome.incident_id`. This generator is preparatory: fastloop's
 legacy worker registrations have not yet been replaced. See the
 [retirement inventory](scripted-worker-retirement.md) for remaining behaviors
 and callers.
+
+The responder half can also be generated without checkout side effects:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+uv run python -m benchmarks.sregym.fastloop.responder_script \
+  --task /absolute/agent-task.json --out /absolute/results/responder-script.json
+SDO_AGENT_SCRIPT=/absolute/results/responder-script.json \
+  uv run python -m benchmarks.sregym.agent_script launch -- \
+  python -m sdo.agents.responder.worker
+```
+
+Generate separately for each typed incident task. Four ordinary command steps
+perform live planning, drift investigation/repair, fallback repair and verification
+with attribution. Source reads and tool calls happen during execution, not during
+generation. The checkout comes from the executing worker. Action and verification
+timestamps come from the live clock. Transient state uses `SDO_TOOLS_DIR` and is
+removed on success; a failed turn may leave its incident-scoped state for diagnosis.
+Caller registrations still use the legacy worker until the next migration step.
+
+A command may set `capture_json: true` to parse its successful stdout as one JSON
+value. Subsequent steps and the result can reference `{{steps.0.output}}` or nested
+fields such as `{{steps.0.output.status}}`. Whole-value references retain JSON types;
+invalid JSON, missing fields and forward references fail. Output must contain only
+JSON; diagnostics belong on stderr. This is live output, never recorded evidence.
+
+`command.input_json` sends a JSON value on stdin. Use `input_json: "{{request}}"`
+to pass the complete live task safely without interpolating it into shell syntax.

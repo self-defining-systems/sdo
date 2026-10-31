@@ -149,3 +149,17 @@ def test_scripted_responder_consumes_real_go_tool_responses(tmp_path: Path, monk
     assert len(plans) == 2
     assert scripted_worker._tool("apply", *plans)["healthy"] is True
     assert scripted_worker._tool("verify")["healthy"] is True
+
+    # Retain the legacy path as the differential oracle until caller retirement.
+    from sdo.contracts import IncidentRequest
+    from tests.unit.benchmarks.sregym.fastloop.test_responder_script import generated_call
+
+    request = IncidentRequest(incident_id="go-transport", namespace="demo", repository_worktree=str(tmp_path))
+    expected = scripted_worker.scripted_responder(request)
+    actual = generated_call(request, tmp_path, monkeypatch)
+    expected.ClearField("timing")
+    actual.ClearField("timing")
+    for result in (expected, actual):
+        for evidence in result.verification_evidence:
+            evidence.ClearField("observed_at")
+    assert actual == expected

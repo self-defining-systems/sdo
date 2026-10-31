@@ -1,7 +1,9 @@
 """Execute actions and emit every command through the real Codex wire parser."""
 
 import base64
+import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -42,6 +44,9 @@ def execute(
     for index in range(len(turn.steps)):
         for field in ("started_at", "completed_at"):
             probe[f"steps.{index}.{field}"] = probe["now"]
+    # Live output references are checked when consumed, after their producer ran.
+    for name in re.findall(r"\{\{(steps\.[0-9]+\.output(?:\.[a-zA-Z0-9_]+)*)\}\}", str(turn.model_dump())):
+        probe[name] = None
     expand(turn.model_dump(), probe)
     adapter = TypeAdapter(Step)
     for index, raw_step in enumerate(turn.steps):
@@ -79,6 +84,7 @@ def execute(
             )
         else:
             action = step
+        stdout = ""
         for attempt in range(action.attempts):
             item = stream.command_started(action.command)
             # Read-only host with only the checkout writable. No model executable is invoked.
@@ -114,11 +120,19 @@ def execute(
                 argv = step.argv
             try:
                 result = subprocess.run(
-                    argv, cwd=root, capture_output=True, text=True, timeout=action.timeout, check=False
+                    argv,
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=action.timeout,
+                    check=False,
+                    input=json.dumps(action.input_json) if action.input_json is not None else None,
                 )
                 code, output = result.returncode, result.stdout + result.stderr
+                stdout = result.stdout
             except subprocess.TimeoutExpired:
                 code, output = 124, "script command timed out"
+                stdout = ""
             stream.command_completed(item, action.command, output, code)
             if code == action.exit_code and (action.contains is None or action.contains in output):
                 break
@@ -126,5 +140,18 @@ def execute(
                 raise ValueError(f"script assertion failed: {action.command}: exit {code}, output {output[:2000]}")
             time.sleep(action.interval)
 
+        if action.capture_json:
+            captured = json.loads(stdout)
+
+            def flatten(prefix: str, value: Any) -> None:
+                context.values[prefix] = value
+                if isinstance(value, dict):
+                    for key, item in value.items():
+                        flatten(f"{prefix}.{key}", item)
+                elif isinstance(value, list):
+                    for offset, item in enumerate(value):
+                        flatten(f"{prefix}.{offset}", item)
+
+            flatten(f"steps.{index}.output", captured)
         context.values[f"steps.{index}.completed_at"] = context.clock()
     return context.expand(turn.result, now=context.clock())

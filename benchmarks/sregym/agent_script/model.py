@@ -17,6 +17,8 @@ class Model(BaseModel):
 class Command(Model):
     kind: Literal["command"]
     command: str = Field(min_length=1)
+    capture_json: bool = False
+    input_json: dict[str, Any] | str | None = None
     exit_code: int = 0
     contains: str | None = None
     timeout: float = Field(default=60.0, gt=0, le=300)
