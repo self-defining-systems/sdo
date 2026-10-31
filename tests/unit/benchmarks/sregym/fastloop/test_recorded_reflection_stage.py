@@ -8,23 +8,20 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
 from agentshim.testing import FakeExecutor
 
 from benchmarks.sregym.fastloop.file_edits import record_file_edits
-from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
+from benchmarks.sregym.fastloop.model_recording import ModelRecorder
 from benchmarks.sregym.fastloop.replay import CheckpointStore
-from benchmarks.sregym.fastloop.replay_worker import replay_live_worker
+from benchmarks.sregym.fastloop.replay_worker import replay_script_worker
 from sdo.agents.responder import CodexSessionBackend, SessionReflector, run_reflection_task
 from sdo.contracts import AgentTask, ReflectionRequest, to_canonical_json
 from tests.structured_turns import reply
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
-
-if TYPE_CHECKING:
-    import pytest
 
 ROOT = Path(__file__).resolve().parents[5]
 
@@ -113,7 +110,7 @@ func main() {
             path.write_bytes(data)
         return next(runs)
 
-    executor = RecordingExecutor(model_dir, request_json=wire, record=True, live=FakeExecutor(author))
+    executor = ModelRecorder(model_dir, request_json=wire, live=FakeExecutor(author))
 
     class Publisher:
         payload = ""
@@ -175,8 +172,9 @@ def readme_files(*, physical: bool = False) -> dict[str, bytes]:
     }
 
 
+@pytest.mark.parametrize("explicit_script", [False, True])
 def test_recorded_reflection_frontmatter_reaches_real_broker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], explicit_script: bool
 ) -> None:
     monkeypatch.delenv("SDO_TURN_USAGE_LOG", raising=False)
     store, source = reflection_recording(tmp_path, [frontmatter_output()])
@@ -184,7 +182,21 @@ def test_recorded_reflection_frontmatter_reaches_real_broker(
     from benchmarks.sregym.fastloop.cli import main
 
     (tmp_path / "fastloop.json").write_text(json.dumps({"workspace": str(source)}))
-    assert main(["replay", "--run-dir", str(store.root.parent), "--incident", "0", "--stage", "reflection"]) == 0
+    options = []
+    if explicit_script:
+        from benchmarks.sregym.agent_script.converter import convert_recording
+        from benchmarks.sregym.fastloop.file_edits import encode_file_edits
+
+        edits = tmp_path / "edits.json"
+        edits.write_bytes(encode_file_edits(store.load(0, "reflection").file_edits or ()))
+        paths = list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))
+        script = tmp_path / "explicit-script.json"
+        script.write_text(convert_recording(paths, role="reflector", file_edits=edits).model_dump_json())
+        shutil.rmtree(paths[0].parent.parent)
+        options = ["--script", str(script)]
+    assert (
+        main(["replay", "--run-dir", str(store.root.parent), "--incident", "0", "--stage", "reflection", *options]) == 0
+    )
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "completed"
     assert result["proposals"][0]["status"] == "accepted", result["proposals"]
@@ -199,7 +211,7 @@ def test_recorded_reflection_replays_repeated_correction_dispatches(tmp_path: Pa
         store, source = reflection_recording(
             tmp_path / str(attempt), [frontmatter_output()], files=readme_files(physical=attempt < 2)
         )
-        result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+        result = replay_script_worker(store, 0, "reflection", source=source)
         statuses.append(result["proposals"][0]["status"])
         if attempt < 2:
             assert "text.physical-path" in result["proposals"][0]["error"]
@@ -212,7 +224,7 @@ def test_recorded_reflection_reports_all_rejections(tmp_path: Path) -> None:
         store, source = reflection_recording(
             tmp_path / str(attempt), [frontmatter_output()], files=readme_files(physical=True)
         )
-        result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+        result = replay_script_worker(store, 0, "reflection", source=source)
         assert result["status"] == "failed"
         assert len(result["proposals"]) == 1
         assert result["proposals"][0]["status"] == "rejected"
@@ -254,5 +266,5 @@ def test_recorded_program_replay_validates_capture_provenance_and_generalization
     }.items():
         files[f".sdo/corpus/replayed-targetport/{name}"] = data
     store, source = reflection_recording(tmp_path, [frontmatter_output()], captures=captures, files=files)
-    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    result = replay_script_worker(store, 0, "reflection", source=source)
     assert result["proposals"][0]["status"] == "accepted", result

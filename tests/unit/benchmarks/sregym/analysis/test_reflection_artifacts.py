@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from benchmarks.sregym.analysis.reflection_replay import find_ledger, memory_delta
+from benchmarks.sregym.analysis.reflection_artifacts import find_ledger, memory_delta
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -330,7 +330,9 @@ The benchmark-only `benchmarks/sregym/agent_script/` package replaces the Codex
 CLI beneath registered production workers for deterministic tests across all
 roles. Its JSON/YAML steps emit the normal provider command events; the workers,
 shared memory checker and Go broker retain their existing ownership. Scripts
-and recording conversion never grant publication authority. See the
+and recording conversion never grant publication authority. Agent scripts are the only
+benchmark worker replay path; the live recorder only captures evidence. Artifact
+ownership and production interfaces are unchanged. See the
 [testing guide](testing-guide.md#hand-authored-agent-scripts-no-model).
 Generic health bootstrap also installs `cluster-wiring`, `workload-controllers`, `warning-events`,
 `node-health`, `resource-saturation` and `runtime-crashes`. Cause findings and batching use warn;

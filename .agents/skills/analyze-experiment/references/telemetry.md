@@ -52,3 +52,10 @@ that threshold must not forecast exhaustion: heap warm-up and garbage collection
 make RAM reclaimable. PVC bytes and inode capacity retain their bounded-window
 exhaustion forecasts. A forecast-only memory finding in an older run can therefore
 be a policy false alarm even when the arithmetic slope is positive.
+
+## Runtime artifact export and retention
+
+The resolution's `stage_end_runtime_artifacts.export_seconds` times controller-log
+and runtime-artifact exports. Both are cumulative, so export cost grows with the
+incident index. The source session directory is retained for seven days after
+durable acknowledgment, with daily pruning.

@@ -1107,12 +1107,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--run-dir", type=Path, required=True, help="one fastloop results run directory")
     replay.add_argument("--incident", type=int, required=True)
     replay.add_argument("--stage", choices=("reflection", "responder", "broker"), required=True)
-    replay.add_argument(
-        "--agent",
-        choices=("scripted", "live"),
-        help="default: recorded model turns for reflection, scripted worker for responder",
-    )
-    replay.add_argument("--live-on-cache-miss", action="store_true")
+    replay.add_argument("--script", type=Path, help="explicit agent script instead of the exported dispatch script")
     replay.set_defaults(handler=_replay)
 
     summary = commands.add_parser("summary", help="summarize incidents.jsonl files or run directories")
@@ -1137,27 +1132,12 @@ def _replay(args: argparse.Namespace) -> int:
         None,
     )
     source = Path(json.loads(environment.read_text(encoding="utf-8"))["workspace"]) if environment else run_dir
-    agent = args.agent or ("live" if args.stage == "reflection" else "scripted")
     if args.stage == "broker":
         result = replay_broker(store, args.incident, source=source, operator_root=REPO_ROOT / "sdo" / "operator")
-    elif args.stage == "responder" and agent == "scripted":
-        from benchmarks.sregym.fastloop.replay_worker import replay_generated_responder
-
-        result = replay_generated_responder(store, args.incident, source=source)
-    elif args.stage == "reflection" and agent == "scripted":
-        from benchmarks.sregym.fastloop.replay_worker import replay_generated_reflection
-
-        result = replay_generated_reflection(
-            store, args.incident, source=source, operator_root=REPO_ROOT / "sdo" / "operator"
-        )
-    elif args.stage in {"responder", "reflection"} and agent == "live":
-        from benchmarks.sregym.fastloop.replay_worker import replay_live_worker
-
-        result = replay_live_worker(
-            store, args.incident, args.stage, source=source, live_on_cache_miss=args.live_on_cache_miss
-        )
     else:
-        raise RuntimeError(f"{args.stage} replay requires a worker execution harness")
+        from benchmarks.sregym.fastloop.replay_worker import replay_script_worker
+
+        result = replay_script_worker(store, args.incident, args.stage, source=source, script=args.script)
     print(json.dumps({"incident": args.incident, "stage": args.stage, **result}, sort_keys=True))
     return 0
 

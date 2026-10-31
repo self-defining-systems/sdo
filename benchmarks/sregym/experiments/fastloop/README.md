@@ -208,36 +208,29 @@ uv run python -m benchmarks.sregym.fastloop replay \
   --run-dir /path/to/fastloop/results/<run-id> --incident 0 --stage broker
 ```
 
-`reflection` feeds recorded Codex outputs through the current reflection agent and restores the recorded direct file edits,
-including corrections recorded as separate Go dispatches, then runs the shared complete
-memory validator, captured-corpus provenance checks and real broker publication.
-Each dispatch reports its logical artifact IDs, acceptance and temporary commit,
-or the exact rejection. An unrecorded correction stops replay as `incomplete`;
-no output is invented. All Git writes happen in temporary clones. No cluster,
-Docker or live model is needed. The source repository must retain the accepted
-outcome commit named by the checkpoint.
+Responder and reflection replay run the real workers with the agent-script Codex
+stand-in. Export converts live model I/O into `checkpoints/<request-digest>/script.json`
+beside the exact task/result ProtoJSON. Use `--script <path>` to run an explicitly
+converted or edited script through the same stage harness. Archived model I/O is converted in a temporary
+directory on demand; the archived run stays untouched. Commands execute again against
+captured Kubernetes state; captured command output is never substituted for execution.
+Reflection file edits become script write/delete steps before worker validation and
+real Go broker publication. Publication runs only in temporary clones of the source
+repository, which must retain the checkpoint's accepted commit.
 
-`responder` defaults to the generated agent script beneath the production worker against captured open and fixed
-snapshots. Select `--agent live` to use its recorded Codex turns. Select
-`--agent scripted` explicitly for a scripted reflection. `broker` validates an
-existing reflection result without re-executing the agent. Worker replay also
-reports whether the current typed result matches the recorded result.
+`broker` validates the saved worker result and file edits directly without running an
+agent. Missing scripts, missing turns, unsupported recordings, or command assertions
+fail explicitly. Archived task/result envelopes must satisfy the current strict
+contracts; conversion of model I/O does not migrate retired request fields. There is
+no model fallback or alternate replay registration.
+Task/result equality and broker acceptance/rejection are reported separately: generated
+session identifiers and timing can differ even when the broker verdict agrees.
 
-The default Codex registrations persist exact task/result ProtoJSON under each
-exported session's `checkpoints/<request-digest>/`, independently of ConfigMaps. Completed reflection dispatches also record `file_edits.json`: version 1 contains paths, exact base64 file bytes (null for deletion), and executable modes. Bundles are bounded to 48 MiB encoded and stored by digest in the stage checkpoint. Replay applies those edits to an isolated checkout, then invokes the real Go broker and shared complete memory check. Proposal-only recordings fail with an explicit error; no proposal shim remains.
-This includes failed reflection results and ordinary drift responder sessions. The run-level
-stage checkpoint selects the latest dispatch; the exported session checkpoints
-retain all dispatches. Model I/O lives in `model_io/<request-digest>/`, keyed by
-prompt digest and occurrence so identical correction prompts cannot overwrite
-earlier outputs. New recordings include `turn_index`: reflection replays those
-outputs in order even after prompt edits, reporting changed prompt hashes in
-`prompt_changes`. Older recordings require matching prompt hashes. Missing turns
-fail without a model call. `--live-on-cache-miss` explicitly permits a live
-fallback; omit it for Tier 3. The recorder saves no command environment or auth
-files, and the runtime export retains its credential and cache exclusions.
-
-Explicit `--agent-registrations`, including the scripted registrations above,
-keep their own worker commands.
+Live registrations use a write-only `ModelRecorder`; model I/O, prompts, rollouts and
+outcomes remain analysis evidence. Explicit registrations retain their own commands.
+The recorder saves no command environment or auth files. Keep run directories private
+and outside this repository. Hand-authored scripts use the same stand-in; see the
+[testing guide](../../../../docs/testing-guide.md#hand-authored-agent-scripts-no-model).
 
 # Tier 2a: toy real cluster
 

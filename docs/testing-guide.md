@@ -224,13 +224,13 @@ uv run pytest -q tests/unit/benchmarks/sregym/fastloop/test_replay.py \
 
 For a captured run, `uv run python -m benchmarks.sregym.fastloop replay
 --run-dir <results/run-id> --incident 0 --stage broker` reruns the current Go
-memory edge and broker in a temporary repository. Reflection replay feeds
-recorded model turns through the current agent and recorded direct file edits and the real
-corpus-provenance and broker validation, reporting each dispatch's commit or rejection. Responder replay defaults to generated scripts beneath its production worker;
-`--agent live` uses recorded Codex turns. Use `--agent scripted` for an explicitly
-scripted reflection. A missing turn fails without a model call unless
-`--live-on-cache-miss` is selected. Replay does not contact a cluster. See the
-fastloop README for checkpoint layout and commands.
+memory edge and broker in a temporary repository. Responder and reflection stages
+run the real workers through the agent-script stand-in. Live recordings are converted
+to scripts during export; archived recordings are converted in temporary storage.
+Commands execute against captured state, and file edits run before validation.
+Missing turns fail without a model call. There is one replay path and no live fallback.
+Prompt and rollout readers remain analysis tools, including `reflection_prompt_replay`;
+they do not execute agents. See the fastloop README for layout and commands.
 
 Use `scripts/run_tests.sh` for the repository-wide suite.
 

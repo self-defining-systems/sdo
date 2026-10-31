@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from benchmarks.sregym.fastloop.file_edits import MAX_FILE_EDITS_BYTES, encode_file_edits, record_file_edits
-from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
+from benchmarks.sregym.fastloop.model_recording import ModelRecorder
 from sdo.agents.responder import (
     AGENT_SKILLS,
     CodexSessionBackend,
@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     task_path = Path(os.environ.get("SDO_TASK_PATH", "/sdo/request/agent-task.json"))
     wire = task_path.read_text(encoding="utf-8")
     scratch = Path(os.environ.get("SDO_SESSION_SCRATCH", "/sdo/session/scratch"))
-    recording = RecordingExecutor(scratch.parent / "model_io", request_json=wire, record=True)
+    recording = ModelRecorder(scratch.parent / "model_io", request_json=wire)
     role = "reflector" if args[0] == "reflection" else "responder"
     prepare_codex_home(skills=AGENT_SKILLS[role])
     prepare_claude_home(skills=AGENT_SKILLS[role])

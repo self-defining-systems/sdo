@@ -57,3 +57,5 @@ For fastloop timing, trust and learned findings, read [fastloop results](referen
 Before reconstructing a timeline, read [telemetry and trajectories](references/telemetry.md).
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
 also read [drift and toy failures](references/drift-failures.md).
+
+For offline worker replay use `fastloop replay --run-dir <results/run> --incident N --stage responder|reflection|broker`: agent scripts are the only execution path, with no live fallback. Prompts, rollouts, tool calls and outcomes remain readable analysis evidence. See [the testing guide](../../../docs/testing-guide.md).

@@ -192,6 +192,19 @@ def capture_checkpoints(
         edits_path = path.with_name("file_edits.json")
         if edits_path.is_file():
             edits_by_request[hashlib.sha256(wire.encode()).hexdigest()] = decode_file_edits(edits_path.read_bytes())
+        from benchmarks.sregym.agent_script.converter import convert_recording
+
+        model_dir = path.parents[2] / "model_io" / path.parent.name
+        recordings = list(model_dir.glob("*.json"))
+        if recordings:
+            stage = _task_stage(parse_json(wire, AgentTask()).task_type)
+            if stage:
+                plan = convert_recording(
+                    recordings,
+                    role="reflector" if stage == "reflection" else "responder",
+                    file_edits=edits_path if edits_path.is_file() else None,
+                )
+                _write(path.with_name("script.json"), plan.model_dump_json().encode())
         data = {"agent-task.json": wire}
         result_path = path.with_name("result.json")
         if result_path.is_file():
