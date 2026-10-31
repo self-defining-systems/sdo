@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOFLAGS: "-trimpath"
+
 jobs:
   extended:
     name: race, replay, chaos and fuzz

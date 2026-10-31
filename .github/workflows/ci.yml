@@ -17,6 +17,9 @@ concurrency:
 
 env:
   SDO_PYTEST_WORKERS: "2"
+  # Generated workspaces have different absolute paths; trimpath permits reuse
+  # of identical SDK/runtime compilation across those isolated checkouts.
+  GOFLAGS: "-trimpath"
 
 jobs:
   checks:
