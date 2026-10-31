@@ -52,7 +52,6 @@ def test_required_ci_still_accounts_for_every_job() -> None:
     ("images", "expected"),
     [
         ("controller", {"sdo-controller"}),
-        ("validator", {"sdo-detector-validator"}),
         ("responder", {"sdo-responder"}),
         ("benchmark", {"sdo-sregym-responder"}),
         ("responder benchmark", {"sdo-responder", "sdo-sregym-responder"}),
@@ -156,3 +155,18 @@ def test_native_artifact_guard_rejects_every_artifact_name(command: str, artifac
     }
     with pytest.raises(AssertionError, match="native tests must build locally"):
         assert_native_jobs_use_local_builds(configuration)
+
+
+def test_nightly_compile_integrations_keep_fast_pr_contracts() -> None:
+    pr_commands = "\n".join(step.get("run", "") for step in workflow()["jobs"]["checks"]["steps"])
+    nightly = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
+    nightly_commands = "\n".join(step.get("run", "") for step in nightly["jobs"]["extended"]["steps"])
+    moved = "tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py"
+    assert f"--ignore={moved}" in pr_commands
+    for path in re.findall(r"--ignore=([^\s]+)", pr_commands):
+        assert (ROOT / path).is_file()
+        assert path in shlex.split(nightly_commands)
+    for filename in ("test_reflection_script.py", "test_responder_script.py"):
+        path = f"tests/unit/benchmarks/sregym/fastloop/{filename}"
+        assert (ROOT / path).is_file()
+        assert f"--ignore={path}" not in pr_commands

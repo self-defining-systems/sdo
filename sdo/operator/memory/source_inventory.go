@@ -3,8 +3,6 @@ package memory
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os/exec"
@@ -21,8 +19,7 @@ import (
 // SourceFacts are a bounded, logical projection of an accepted source commit.
 // Only this storage edge knows which tracked paths contain operational memory.
 type SourceFacts struct {
-	Fingerprint string
-	Resources   []*contracts.SourceResource
+	Resources []*contracts.SourceResource
 }
 
 var fullCommitID = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -39,7 +36,6 @@ func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (Sour
 	if len(listing) > 4<<20 {
 		return SourceFacts{}, fmt.Errorf("accepted source tree listing exceeds limit")
 	}
-	hash := sha256.New()
 	resources := []*contracts.SourceResource{}
 	var total int64
 	for _, entry := range bytes.Split(listing, []byte{0}) {
@@ -70,10 +66,6 @@ func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (Sour
 		if total > 64<<20 {
 			return SourceFacts{}, fmt.Errorf("accepted source inventory exceeds 64 MiB")
 		}
-		_, _ = hash.Write(pathBytes)
-		_, _ = hash.Write([]byte{0})
-		_, _ = hash.Write(content)
-		_, _ = hash.Write([]byte{0})
 		if !strings.HasSuffix(strings.ToLower(path), ".yaml") && !strings.HasSuffix(strings.ToLower(path), ".yml") {
 			continue
 		}
@@ -103,7 +95,7 @@ func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (Sour
 	slices.SortFunc(resources, func(a, b *contracts.SourceResource) int {
 		return strings.Compare(a.Namespace+"\x00"+a.Kind+"\x00"+a.Name+"\x00"+a.Source, b.Namespace+"\x00"+b.Kind+"\x00"+b.Name+"\x00"+b.Source)
 	})
-	return SourceFacts{Fingerprint: hex.EncodeToString(hash.Sum(nil)), Resources: resources}, nil
+	return SourceFacts{Resources: resources}, nil
 }
 
 func mapValue(value any) map[string]any {
@@ -114,7 +106,11 @@ func mapValue(value any) map[string]any {
 func sourceDependencies(doc map[string]any) []string {
 	set := map[string]struct{}{}
 	spec := mapValue(doc["spec"])
-	for key, value := range mapValue(spec["selector"]) {
+	selector := mapValue(spec["selector"])
+	if labels := mapValue(selector["matchLabels"]); labels != nil {
+		selector = labels
+	}
+	for key, value := range selector {
 		if v, ok := value.(string); ok {
 			set["selector:"+key+"="+v] = struct{}{}
 		}
@@ -126,6 +122,12 @@ func sourceDependencies(doc map[string]any) []string {
 		}
 	}
 	pod := mapValue(template["spec"])
+	if doc["kind"] == "Pod" {
+		pod = spec
+	}
+	if doc["kind"] == "CronJob" {
+		pod = mapValue(mapValue(mapValue(mapValue(spec["jobTemplate"])["spec"])["template"])["spec"])
+	}
 	if account, ok := pod["serviceAccountName"].(string); ok && account != "" {
 		set["ServiceAccount/"+account] = struct{}{}
 	}
@@ -159,4 +161,18 @@ func sourceDependencies(doc map[string]any) []string {
 	}
 	slices.Sort(result)
 	return result
+}
+
+// ArchitectureInventory renders only manifest-declared facts, in stable inventory order.
+// Readers needing application semantics inspect the referenced source directly.
+func ArchitectureInventory(facts SourceFacts) string {
+	var text strings.Builder
+	text.WriteString("# Manifest inventory\n\nApplication semantics must be read from source.\n")
+	for _, resource := range facts.Resources {
+		fmt.Fprintf(&text, "\n- %s/%s/%s (source: %s)\n", resource.Kind, resource.Namespace, resource.Name, resource.Source)
+		for _, dependency := range resource.Dependencies {
+			fmt.Fprintf(&text, "  - %s\n", dependency)
+		}
+	}
+	return text.String()
 }

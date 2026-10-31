@@ -284,16 +284,15 @@ def test_replay_cli_selects_one_stage_without_loading_environment(
     assert "no_change" in capsys.readouterr().out
 
 
-def test_scripted_responder_replay_uses_captured_kubernetes_objects(
+def test_respond_replay_uses_captured_kubernetes_objects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from google.protobuf import json_format
     from google.protobuf.any_pb2 import Any as ProtoAny
 
-    from benchmarks.sregym.adapter import scripted_worker
-    from benchmarks.sregym.fastloop.cli import main
     from benchmarks.sregym.fastloop.replay_worker import CapturedKubernetesAPI
     from sdo.agents.responder.worker import run_worker_task
+    from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
     source = tmp_path / "source"
     (source / "kubernetes").mkdir(parents=True)
@@ -365,8 +364,8 @@ def test_scripted_responder_replay_uses_captured_kubernetes_objects(
         ).encode(),
     }
     api = CapturedKubernetesAPI(captures)
-    monkeypatch.setattr(scripted_worker, "_command", api.command)
-    monkeypatch.setattr(scripted_worker, "_tool", api.tool)
+    monkeypatch.setattr(scripts, "_command", api.command)
+    monkeypatch.setattr(scripts, "_tool", api.tool)
     task_path = tmp_path / "task.json"
     task_path.write_text(to_canonical_json(task), encoding="utf-8")
 
@@ -377,20 +376,28 @@ def test_scripted_responder_replay_uses_captured_kubernetes_objects(
             self.payload = payload
 
     publisher = Publisher()
-    run_worker_task(task_path, "result", publisher, executor=scripted_worker.scripted_responder)
+    run_worker_task(task_path, "result", publisher, executor=scripts.respond)
     CheckpointStore(run_dir).save(
         0, "responder", request=to_canonical_json(task), result=publisher.payload, captures=captures
     )
 
-    assert main(["replay", "--run-dir", str(run_dir), "--incident", "0", "--stage", "responder"]) == 0
+    from benchmarks.sregym.fastloop.replay_worker import replay_generated_responder
+
+    print(json.dumps(replay_generated_responder(CheckpointStore(run_dir), 0, source=source)))
     output = json.loads(capsys.readouterr().out)
     assert output["identical"] is True, "\n".join(output["difference"])
+    from benchmarks.sregym.fastloop.replay_worker import replay_script_worker
+    from benchmarks.sregym.fastloop.responder_script import responder_script
+
+    script = tmp_path / "responder-script.json"
+    script.write_text(responder_script(typed).model_dump_json())
+    replayed = replay_script_worker(CheckpointStore(run_dir), 0, "responder", source=source, script=script)
+    assert replayed["status"] == "completed", replayed
 
 
 def test_scripted_reflection_replay_runs_worker_again(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from google.protobuf.any_pb2 import Any as ProtoAny
 
-    from benchmarks.sregym.fastloop.cli import main
     from sdo.agents.responder.reflection_worker import run_reflection_task
     from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
     from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
@@ -442,18 +449,26 @@ def test_scripted_reflection_replay_runs_worker_again(tmp_path: Path, capsys: py
         def publish_payload(self, _name: str, _key: str, payload: str) -> None:
             self.payload = payload
 
-    from benchmarks.sregym.adapter.scripted_worker import ScriptedReflector
+    from tests.unit.benchmarks.sregym.fastloop.script_harness import Reflector
 
     publisher = Publisher()
-    run_reflection_task(task_path, "result", publisher, reflector=ScriptedReflector())
+    run_reflection_task(task_path, "result", publisher, reflector=Reflector())
     run_dir = tmp_path / "results" / "run"
     run_dir.mkdir(parents=True)
     (tmp_path / "fastloop.json").write_text(json.dumps({"workspace": str(source)}), encoding="utf-8")
     CheckpointStore(run_dir).save(0, "reflection", request=to_canonical_json(task), result=publisher.payload)
 
-    assert (
-        main(["replay", "--run-dir", str(run_dir), "--incident", "0", "--stage", "reflection", "--agent", "scripted"])
-        == 0
+    from benchmarks.sregym.fastloop.replay_worker import replay_generated_reflection
+
+    print(
+        json.dumps(
+            replay_generated_reflection(
+                CheckpointStore(run_dir),
+                0,
+                source=source,
+                operator_root=Path(__file__).resolve().parents[5] / "sdo/operator",
+            )
+        )
     )
     output = json.loads(capsys.readouterr().out)
     assert output["identical"] is True, "\n".join(output["difference"])
@@ -504,3 +519,37 @@ def test_capture_keeps_current_incident_protojson_strict(tmp_path: Path, payload
     ]
     with pytest.raises(CheckpointError, match="invalid exported"):
         capture_checkpoints(CheckpointStore(tmp_path), 0, "incident-1", tmp_path / "incident", maps)
+
+
+def test_capture_exports_script_actions_from_live_recording(tmp_path: Path) -> None:
+    from benchmarks.sregym.agent_script.cli import load
+
+    request, result = _task_and_result()
+    session = tmp_path / "incident/sdo_runtime/sessions/id"
+    exported = session / "checkpoints/digest"
+    exported.mkdir(parents=True)
+    (exported / "request.json").write_text(request)
+    (exported / "result.json").write_text(result)
+    recording = session / "model_io/digest/turn.json"
+    recording.parent.mkdir(parents=True)
+    recording.write_text(
+        json.dumps(
+            {
+                "turn_index": 0,
+                "returncode": 0,
+                "events": [
+                    [
+                        "stdout",
+                        json.dumps(
+                            {
+                                "type": "item.completed",
+                                "item": {"type": "agent_message", "text": json.dumps({"summary": "synthetic"})},
+                            }
+                        ),
+                    ]
+                ],
+            }
+        )
+    )
+    capture_checkpoints(CheckpointStore(tmp_path), 0, "incident-1", tmp_path / "incident", [])
+    assert load(exported / "script.json").select("responder", "incident-1", 0).result == {"summary": "synthetic"}

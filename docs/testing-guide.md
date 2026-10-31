@@ -98,6 +98,18 @@ deployed commit are covered. A later Service targetPort change must produce unex
 coverage checks retain Service adoption and responder admission when another
 workload cannot render, with the render gap recorded for retry; application
 source changes must never reuse the old deployment images.
+The gate also runs `TestHermeticNewDetectorInputs`: the real controller and
+informer cache read the shared fastloop HTTP fake, collect per-node kubelet
+summary/cAdvisor data, and consume real MongoDB handshake results through an
+injected wire peer. A healthy baseline is quiet; StatefulSet readiness, memory
+forecast and MongoDB protocol failures open one incident with numerical and
+protocol evidence, and recovered inputs close it. Its test log includes wall
+time through fixture cleanup. `TestHermeticProtocolDialer` checks healthy,
+refused and malformed replies for all seven protocols. Fake API contract tests
+cover list/watch for every added kind and Secret redaction on creation and
+patch. The fake's subresource dispatch leaves room for independent pod log
+support without implementing the logs input.
+
 The gate needs Go and `uv`, but no cluster or container runtime.
 
 ### Tier 2a: toy real cluster
@@ -212,13 +224,13 @@ uv run pytest -q tests/unit/benchmarks/sregym/fastloop/test_replay.py \
 
 For a captured run, `uv run python -m benchmarks.sregym.fastloop replay
 --run-dir <results/run-id> --incident 0 --stage broker` reruns the current Go
-memory edge and broker in a temporary repository. Reflection replay feeds
-recorded model turns through the current agent and recorded direct file edits and the real
-corpus-provenance and broker validation, reporting each dispatch's commit or rejection. Responder replay defaults to its scripted worker;
-`--agent live` uses recorded Codex turns. Use `--agent scripted` for an explicitly
-scripted reflection. A missing turn fails without a model call unless
-`--live-on-cache-miss` is selected. Replay does not contact a cluster. See the
-fastloop README for checkpoint layout and commands.
+memory edge and broker in a temporary repository. Responder and reflection stages
+run the real workers through the agent-script stand-in. Live recordings are converted
+to scripts during export; archived recordings are converted in temporary storage.
+Commands execute against captured state, and file edits run before validation.
+Missing turns fail without a model call. There is one replay path and no live fallback.
+Prompt and rollout readers remain analysis tools, including `reflection_prompt_replay`;
+they do not execute agents. See the fastloop README for layout and commands.
 
 Use `scripts/run_tests.sh` for the repository-wide suite.
 
@@ -239,14 +251,14 @@ Live Codex or Kubernetes tests may require explicit markers, credentials, images
 
 ### Lifecycle separation
 
-Use backend test doubles to prove that source deployment, deployer assessment, and each health-judge round receive only their declared inputs. Verify fresh session identifiers, bounded correction feedback, source commit attribution, and independent acceptance.
+Use backend test doubles to prove that source deployment and each health-judge attempt receive only their declared inputs. Verify fresh session identifiers, bounded correction feedback, source commit attribution, and independent acceptance.
 
 ### Operational-memory ownership
 
 Create temporary Git repositories with `.sdo/` fixtures. Test:
 
-- human ownership of `goal.md`;
-- deployer ownership and topology freshness of `arch.md`;
+- optional human-owned free text in `goal.md`;
+- Go upkeep ownership and deterministic manifest inventory in `arch.md`;
 - responder-only updates under `playbooks/` and incident detectors;
 - judge ownership of health detectors;
 - append-only controller outcomes;
@@ -459,6 +471,246 @@ prefix fallback. Go's separate compiler/module caches remain content-addressed
 and can be shared across source revisions. To check an existing binary, run
 `uv run python scripts/operator_test_binary.py --check /absolute/path/to/sdo-operator`.
 
+## Hand-authored agent scripts (no model)
+
+`benchmarks.sregym.agent_script` replaces the Codex executable beneath the real
+workers. It accepts version 1 JSON or YAML, validates unknown fields and unsafe
+file paths before executing anything, and emits Codex JSON events so structured
+results and command auditing still use the normal provider parser. No production
+module imports the stand-in. Roles are `source-deployment`, `health-judge`,
+`responder`, and `reflector`; each result is the JSON object requested by that
+role's model-turn schema (not the outer protobuf AgentResult).
+
+```yaml
+version: 1
+turns:
+  - role: reflector
+    index: 0
+    # incident: example-incident  # omit to match any incident
+    steps:
+      - kind: write
+        path: .sdo/playbooks/example/README.md
+        text: |
+          ---
+          schema_version: 1
+          owner: responder
+          fault_class: example
+          originating_incident: example-incident
+          ---
+          Restore <AFFECTED_RESOURCE>.
+      - kind: tool
+        argv: [sdo-operator, memory, check]
+    result:
+      summary: Authored example playbook
+      learning_decision: updated
+      no_change_reason: null
+      playbook_ids: [example]
+      sdk_gaps: []
+```
+
+A `command` step has a shell `command`, expected `exit_code` (default 0), optional
+`contains` assertion, `timeout` (up to 300 seconds), and bounded polling through
+`attempts` and `interval`. `tool` takes an argv list beginning with `sdo` or
+`sdo-operator`; shell metacharacters remain literal arguments. It also accepts a
+`timeout` (default 60 seconds, up to 300), so full memory checks can keep their
+original validation deadline. `write` takes a
+relative `path`, UTF-8 `text`, and optional `executable`; `delete` takes a path;
+`wait` takes `seconds` (at most 60). An `exit` step takes a nonzero `code`
+(1–255) and ends the stand-in without a result, for crash/retry scenarios. The
+turn is consumed before execution, so a later invocation selects the next turn.
+All executed commands appear in the audit stream, including file edits and unsuccessful assertions. Bubblewrap must be
+installed and user namespaces enabled: commands see a read-only host and may
+write only the checkout and the responder tool exchange directory. As with real
+workspace-write turns, a typed `sdo-operator memory check` runs outside that
+sandbox. The broker remains the publication authority.
+
+Turn indices start at zero **per role, incident and checkout**. Explicit incident
+selectors take precedence over unspecified ones. Resumed responder turns and
+reflection may use the same session ID. An exhausted script fails rather than
+falling back to a model. Use a private `SDO_AGENT_SCRIPT_STATE` directory per
+worker; `launch` creates one automatically. Results are literal and commands are
+rerun: no recorded output is substituted for live evidence.
+
+Before every Go or uv command on the shared host, source the cached environment:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+uv run python -m benchmarks.sregym.agent_script validate /absolute/script.yaml
+uv run python -m benchmarks.sregym.agent_script convert --role responder \
+  --out /absolute/editable-script.json /absolute/model_io/request-digest/*.json
+```
+
+Conversion reads successful Codex `model_recording` JSON files, orders them by
+`turn_index`, extracts completed shell commands and the final structured JSON,
+and rejects missing answers and failed recordings. Review paths and commands
+before reuse; original absolute paths remain explicit and editable. For a turn
+with Codex file-change events, supply `--file-edits /absolute/checkpoints/.../file_edits.json`;
+the captured final UTF-8 writes/deletes are appended to the last turn. Without
+those bytes conversion rejects file-change events rather than dropping edits.
+Read-only turns cannot write the checkout; workspace-write turns also block
+direct Go execution, matching the provider rules.
+
+Tier 1 uses a local script and the ordinary typed worker task. Point KUBECONFIG at
+the fake API used by the hermetic tests, and supply the normal worker task/result
+configuration. The launcher installs a temporary `codex` wrapper and synthetic
+login, selects the Codex provider, and executes the production worker:
+
+```bash
+SDO_AGENT_SCRIPT=/absolute/script.yaml \
+  uv run python -m benchmarks.sregym.agent_script launch -- \
+  python -m sdo.agents.health_judge.worker
+uv run --extra test pytest -q -p no:tach tests/unit/benchmarks/sregym/test_agent_script.py
+(cd sdo/operator && go test ./broker -run '^TestAgentScriptJudgeMemoryCheckAndBroker$' -count=1)
+bash scripts/test_fastloop_hermetic.sh
+```
+
+The broker example authors a health detector, traffic generator/workload and
+health-objective playbook through the actual judge worker, calls the real memory
+checker, and publishes through the native broker. The generic parser tests cover
+all roles, turn selection, resumed reflection, assertions and checkout escape.
+
+Tier 2 uses the same script via `sdo-agent-script` ConfigMap (`script.json` key;
+JSON or YAML contents). Build the benchmark image from an existing worker image
+and generate registration manifests wrapping all four production worker entry
+points. On an existing disposable toy lane:
+
+```bash
+docker build -f benchmarks/sregym/agent_script/Dockerfile \
+  --build-arg BASE=sdo-responder:v0.1.0 -t sdo-agent-script:test .
+kind load docker-image sdo-agent-script:test --name "$CLUSTER"
+kubectl --kubeconfig "$KUBECONFIG" -n sdo-toy-sdo create configmap sdo-agent-script \
+  --from-file=script.json=/absolute/script.yaml --dry-run=client -o yaml | \
+  kubectl --kubeconfig "$KUBECONFIG" apply -f -
+uv run python -m benchmarks.sregym.agent_script registrations \
+  --out /absolute/script-registrations --image sdo-agent-script:test
+# Existing controllers load registrations at startup. Publish and reset the lane
+# before run, so a reused controller cannot silently retain legacy workers.
+kubectl --kubeconfig "$KUBECONFIG" -n sdo-toy-sdo create configmap sdo-agent-registrations \
+  --from-file=/absolute/script-registrations --dry-run=client -o yaml | \
+  kubectl --kubeconfig "$KUBECONFIG" apply -f -
+uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN" --dev-mount
+uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo \
+  --agent-registrations /absolute/script-registrations \
+  --stream tests/fixtures/sregym/fastloop/toy_latent_repeat.json \
+  --reflection-session fresh --diagnosis-grading off --no-checkpoints
+```
+
+The launcher reads the ConfigMap once at worker startup. Override its name with
+`SDO_AGENT_SCRIPT_CONFIGMAP`, or use `SDO_AGENT_SCRIPT` for a mounted file. Assurance scenarios compile to the same version 1 contract through
+`benchmarks.sregym.assurance.scripts.assurance_script`. The harness publishes
+`script.json` plus a `warm.json` variant and a usage seed in `sdo-agent-script`.
+The assurance CLI wrapper binds that bundle to the incident before executing
+steps, records audited commands and deterministic synthetic token usage, and
+selects the warm variant only when the real responder prompt surfaces validated
+memory. It contains no fault or behavior menus.
+
+The compiler supports both deny-all NetworkPolicy and missing ConfigMap faults.
+`correct` diagnoses, repairs and polls live health; `wrong_then_correct` first
+records an unsuccessful restart; `wrong_only_honest` reports failure;
+`wrong_only_claimed` attributes a claimed success to the restart; `healed_noop`
+only polls health and returns no action. Reflection `learn` writes final memory
+and checks it, `no_change` returns an explicit reason, `crash_once` exits on its
+first turn, and `crash_always` exits on every allowed turn. `invalid_then_learn`
+returns a malformed first proposal for broker rejection and writes valid files
+on the correction turn. Turn consumption persists across worker restarts and
+isolated checkouts. Scripts retain pre-repair and pre-result chaos windows.
+Qualification and composite oracles remain no-agent fault-driver checks; they
+contain no Directive dependency and do not execute agent scripts.
+
+Script string values reserve `{{lowercase_reference}}` for substitutions. No
+expressions, filters or code evaluation are supported. Unknown references fail
+script validation; references missing from the selected task fail before actions.
+Go composite literals such as `{{APIVersion: "v1"}}` remain literal source.
+
+Supported references are:
+
+- `{{now}}`: worker UTC clock sampled at the start of this step (or when publishing
+  the result). `{{turn.started_at}}` retains the turn's start time.
+- `{{steps.0.started_at}}` / `{{steps.0.completed_at}}`: measured boundaries of a
+  preceding step, or any existing step in the result. Forward references fail
+  validation. Use these for action timing rather than literal timestamps.
+- `{{incident_id}}`, `{{checkout}}`, and
+  `{{request.field_name}}` for scalar typed request fields, using snake_case.
+- `{{request.findings.0.primary_resource}}` and its `.api_version`, `.kind`,
+  `.namespace`, `.name` fields; finding `.detector_id`, `.rule_id`, `.status`,
+  `.severity`, `.summary`, `.evidence`, `.fingerprint`, `.playbook_ids.0`;
+  `.parameter_bindings` or `.parameter_bindings.target_resource` and its resource
+  fields. Binding names retain their original spelling.
+- `{{request.surfaced_playbooks.0.playbook_id}}` and its `.parameter_bindings`
+  (with the same binding/resource access as findings).
+
+A reference occupying the entire value preserves its JSON type, so a responder
+can use `resources: ["{{request.findings.0.primary_resource}}"]` and
+`explained_detectors: ["{{request.findings.0.detector_id}}"]` in a root cause,
+with `kind: detector-finding`, `source: "{{request.findings.0.detector_id}}"`
+and `observation: "{{request.findings.0.evidence}}"` as evidence. The normal
+native verifier still decides whether this diagnosis and mitigation earn credit.
+Structured references embedded within text are rejected. Substituted file paths
+are validated again. Quote inserted scalar values appropriately in shell commands;
+use typed `tool` argv entries to avoid shell interpretation.
+
+
+Captured repair reflection can be prepared as an ordinary version 1 script,
+without editing the accepted checkout during generation:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+uv run python -m benchmarks.sregym.fastloop.reflection_script \
+  --task /absolute/agent-task.json --capture /absolute/corpus \
+  --out /absolute/results/reflection-script.json
+SDO_AGENT_SCRIPT=/absolute/results/reflection-script.json \
+  uv run python -m benchmarks.sregym.agent_script launch -- \
+  python -m sdo.agents.responder.reflection_worker
+```
+
+The generated script preserves original captured bytes, incident provenance and
+same-kind peer bindings, writes program/corpus files through audited steps, and
+runs the shared memory validator. Reflection selects its incident-specific turn
+from `request.outcome.incident_id`. Fastloop's generated registrations launch these scripts beneath the real
+production workers. See the [worker guide](scripted-worker-retirement.md)
+for task generation, writable exchange state and replay.
+
+The responder half can also be generated without checkout side effects:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+uv run python -m benchmarks.sregym.fastloop.responder_script \
+  --task /absolute/agent-task.json --out /absolute/results/responder-script.json
+SDO_AGENT_SCRIPT=/absolute/results/responder-script.json \
+  uv run python -m benchmarks.sregym.agent_script launch -- \
+  python -m sdo.agents.responder.worker
+```
+
+Generate separately for each typed incident task. Four ordinary command steps
+perform live planning, drift investigation/repair, fallback repair and verification
+with attribution. Source reads and tool calls happen during execution, not during
+generation. The checkout comes from the executing worker. Action and verification
+timestamps come from the live clock. Transient state uses `SDO_TOOLS_DIR` and is
+removed on success; a failed turn may leave its incident-scoped state for diagnosis.
+
+A command may set `capture_json: true` to parse its successful stdout as one JSON
+value. Subsequent steps and the result can reference `{{steps.0.output}}` or nested
+fields such as `{{steps.0.output.status}}`. Whole-value references retain JSON types;
+invalid JSON, missing fields and forward references fail. Output must contain only
+JSON; diagnostics belong on stderr. This is live output, never recorded evidence.
+
+`command.input_json` sends a JSON value on stdin. Use `input_json: "{{request}}"`
+to pass the complete live task safely without interpolating it into shell syntax.
+
+Fastloop toy lanes select `benchmarks/sregym/fastloop/agent_registrations` by
+default. Their `generated_worker` launcher reads each typed task and generates
+its responder or reflection script separately, then wraps the corresponding
+production worker with the agent-script CLI. Scratch state uses the writable
+tool request exchange; the accepted checkout is changed only by script steps.
+Replay uses these generators with captured command transport. Custom registrations
+remain subject to the live-run time-scale guard.
+
+Broker compilation uses the running controller executable in a bounded subprocess.
+`go test ./broker -run TestValidationSubprocessLimits` checks deadline and aggregate
+process-group memory failures as infrastructure errors (exit 2). The CLI/broker
+parity suite exercises this production subprocess transport. No validator image
+or schema fingerprint is required; worker Jobs retain controller toolchain mounts.
+
 Unit tests must synchronize on observable readiness or drive injected clocks.
 `test_unit_tests_synchronize_without_wall_clock_sleeps` in the architecture gate
 rejects `time.sleep` and `asyncio.sleep`, including imported aliases. Its only
@@ -502,6 +754,9 @@ reports failures. It retains the following extended checks:
 | Go race instrumentation across all seven modules | Separate instrumented compiler graph and slower execution | All ordinary Go tests without race instrumentation |
 | `TestReplay*` recorded incidents | Extended recorded regression tier | Ordinary controller, outcome and receipt contract tests |
 | `TestChaos*`, `TestExhaustive*`, `TestExplorer*` | Extended interleaving/state-space campaigns | Ordinary deterministic controller tests |
+| `test_scripted_reflector_writes_program_that_passes_real_memory_check[ordinary-repair]` | Repeated real memory-check/program compilation: 55.00 s on PR #657 | `test_reflection_script.py` capture provenance, no-change and timeout contracts; Go validator/broker acceptance tests |
+| `test_scripted_reflector_writes_program_that_passes_real_memory_check[verified-drift-repair]` | Same compilation for the drift variant: 5.02 s after warming | `test_reflection_script_preserves_capture_provenance` and drift responder-script contracts |
+| `test_respond_consumes_real_go_tool_responses` | Launches a Go integration test from Python: 11.73 s; Go CI already runs `TestHermeticResponderProgramReuseThroughRealToolTransport` | That same Go integration plus `test_responder_script.py` generated result/tool parsing contracts |
 | Six 30-second fuzz mutation campaigns | Fixed mutation time adds minutes | Every checked-in fuzz seed executes in ordinary `go test` |
 
 The exact repeated end-to-end compile tests moved to nightly are listed in
@@ -514,9 +769,22 @@ foreign-policy repeat and direct-files/learned-program CLI/broker integration. T
 compiler rejection tests, validator rule tests, broker ownership/acceptance
 contracts, CLI error/JSON diagnostics and SDK program unit tests. Nightly runs
 the unfiltered suite with race instrumentation. Python's
-`test_recorded_reflection_stage.py` and `test_scripted_worker_contract.py` also
-run nightly: their real CLI/broker and generated-program builds took 66–117
-seconds per case locally. Ordinary Python reflection, worker transport,
+`test_recorded_reflection_stage.py` also runs nightly: its real CLI/broker
+and generated-program builds took 66–117 seconds per case locally. The removed
+`test_scripted_worker_contract.py` was superseded by
+`test_generated_worker_contract.py`; the three moved cases are listed above. Ordinary Python reflection, worker transport,
 recording, provenance and Go broker contracts remain on PRs. Run `bash scripts/test_go_ci.sh` locally for the PR Go suite, or add
 `nightly` for the full race suite. Both emit `go test -json` timing evidence;
 Python CI logs include `--durations=30`. Keep full run logs outside the repo.
+
+
+PR #657 timing investigation (Actions runs 41243599469 and 41243997276):
+checks/Python took 241 s on the PR and 314 s before merge-group cancellation.
+The Python suite took 190 s on the PR; the merge group was cancelled before
+printing its durations table. Go cache restoration grew from 14 s to 69 s
+(670 MB); uv sync took 2 s, pinned proto installation 8 s on a miss / 0 s on a
+hit, and bubblewrap installation 5–7 s. Formatting plus overlapped static checks
+and tests took 192 s / 217 s (cancelled). The generated-worker cases above
+now run in the existing nightly integration step with bubblewrap installed.
+The PR selection guard requires every ignored Python integration file to appear
+in nightly, and keeps the cheap reflection/responder contracts on PRs.

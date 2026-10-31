@@ -113,7 +113,7 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string) ([]Diagnost
 	if len(paths) == 0 && !(r.Phase == ReflectionPhase && r.Decision != nil && (r.Decision.GetLearningDecision() == "no_change" || r.Decision.GetLearningDecision() == "sdk_gap")) {
 		add(RuleEmptyDiff, "proposal has no changed files", "return no_change instead of publishing")
 	}
-	// Upkeep carries schema migrations; the independent health judge may
+	// Upkeep initializes schema metadata; the independent health judge may
 	// refine health diagnostics after their first accepted registration.
 	if r.Phase == InitialPhase && r.Actor != Upkeep && r.Actor != HealthJudge {
 		base, err := exportBase(ctx, r.Root, r.Base)
@@ -266,7 +266,7 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 				return nil, err
 			}
 			touchesMemory = registered
-			for _, name := range []string{layout.GoalFile, layout.ArchitectureFile} {
+			for _, name := range []string{layout.ArchitectureFile} {
 				if _, err := os.Stat(filepath.Join(r.Root, name)); errors.Is(err, os.ErrNotExist) {
 					touchesMemory = false
 				} else if err != nil {

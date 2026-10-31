@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 )
 
 type Kind string
@@ -58,6 +59,7 @@ type Mitigator interface {
 }
 
 type ReadView interface {
+	inputs.Sources
 	sdk.DetectionContext
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)

@@ -14,7 +14,7 @@ import (
 func optionalLaunchConfig() install.Config {
 	return install.Config{
 		Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo",
-		ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test",
+		ControllerImage: "controller:test", ResponderImage: "responder:test",
 		RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "test-model", AgentProvider: "claude",
 		AcceptedCommit: strings.Repeat("a", 40), NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		TimeoutSeconds: 180, VerificationTimeoutSeconds: 45, RepairPolicy: "recorded-actions",
@@ -108,7 +108,6 @@ func assertControllerLaunchRoundTrip(t *testing.T, cfg install.Config, launch *c
 		"responder image":         {launch.GetResponderImage(), cfg.ResponderImage},
 		"toolchain image":         {launch.GetToolchainImage(), cfg.ControllerImage},
 		"prober image":            {launch.GetProberImage(), cfg.ControllerImage},
-		"validator image":         {launch.GetValidatorImage(), cfg.ValidatorImage},
 		"repository PVC":          {launch.GetRepositoryPvc(), cfg.RepositoryPVC},
 		"repository mount":        {launch.GetRepositoryMountPath(), "/workspace"},
 		"worktree root":           {launch.GetBrokerWorktreeRoot(), "/workspace/worktrees"},

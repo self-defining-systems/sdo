@@ -54,3 +54,5 @@ In a brief, state the change's risk classes, the tiers required before handoff, 
 - When builds or tests are slow, check disk and network filesystem wait before CPU, and keep build caches on local disk.
 - Leave no generated protobuf files deleted after a failed generation.
 - Wait on a process with `pgrep -f "name[.]ext"`, and run the waiter as a script file. A shell whose own command line contains the literal `name.ext` matches itself and never exits.
+
+For offline worker replay use `fastloop replay --run-dir <results/run> --incident N --stage responder|reflection|broker`: agent scripts are the only execution path, with no live fallback. Prompts, rollouts, tool calls and outcomes remain readable analysis evidence. See [the testing guide](../../../docs/testing-guide.md).

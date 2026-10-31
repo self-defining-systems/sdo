@@ -101,15 +101,15 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.BuildKitImage == "" || cfg.RegistryPushSecret == "" {
 		return nil, errors.New("native operate requires BuildKit image and dedicated registry push Secret")
 	}
-	if strings.TrimSpace(healthObjective) == "" || strings.TrimSpace(operationID) == "" || maxAttempts <= 0 {
-		return nil, errors.New("operate requires objective, operation ID, and positive max attempts")
+	if strings.TrimSpace(operationID) == "" || maxAttempts <= 0 {
+		return nil, errors.New("operate requires operation ID and positive max attempts")
 	}
 	args := []string{
 		"operate", "--app", "/workspace/application", "--namespace", cfg.Namespace,
 		"--control-namespace", cfg.controlNamespace(), "--application", cfg.Application,
 		"--health-objective", healthObjective, "--operation-id", operationID,
 		"--max-attempts", fmt.Sprint(maxAttempts), "--controller-image", cfg.ControllerImage,
-		"--responder-image", cfg.ResponderImage, "--validator-image", cfg.ValidatorImage,
+		"--responder-image", cfg.ResponderImage,
 		"--repository-pvc", cfg.RepositoryPVC, "--repository-mount-path", "/workspace",
 		"--credentials-secret", cfg.CredentialsSecret, "--model", cfg.Model,
 		"--agent-provider", provider(cfg), "--worktree-root", "/workspace/worktrees",

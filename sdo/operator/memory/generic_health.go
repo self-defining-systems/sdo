@@ -15,6 +15,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/generichealth"
 	"sdo.dev/operator/sdk/servicehealth"
 )
 
@@ -40,11 +41,6 @@ func PrepareHealth(root string) error {
 // and broker acceptance. It installs policy detectors from final workload
 // files; it never translates or repairs the judge's authored artifacts.
 func PrepareHealthWith(root string, options HealthOptions) error {
-	if _, err := os.Stat(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, "health-objective"))); os.IsNotExist(err) {
-		return fmt.Errorf("health judge omitted health-objective detector")
-	} else if err != nil {
-		return err
-	}
 	endpoint := genericManifest("service-endpoints", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Endpoints"}, {APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}})
 	if err := writeGenericDetector(root, endpoint, endpointSource()); err != nil {
 		return err
@@ -54,6 +50,24 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 	}
 	if err := writeGenericDetector(root, genericManifest("service-reachability", "10s", reachabilityWatches()), reachabilitySource()); err != nil {
 		return err
+	}
+	for _, policy := range []struct{ id, kind, constructor string }{
+		{"cluster-wiring", "wiring", "NewWiring"}, {"workload-controllers", "workloads", "NewWorkloads"},
+		{"warning-events", "warnings", "NewWarnings"}, {"node-health", "nodes", "NewNodes"},
+		{"resource-saturation", "saturation", "NewSaturation"}, {"runtime-crashes", "crashes", "NewCrashes"},
+	} {
+		watches := []layout.Watch{}
+		for _, w := range generichealth.Watches(policy.kind) {
+			watches = append(watches, layout.Watch{APIVersion: w.APIVersion, Kind: w.Kind})
+		}
+		manifest := genericManifest(policy.id, "30s", watches)
+		manifest.Batching.Severity = "warn"
+		if policy.kind == "crashes" {
+			manifest.Persistence.Firing = 1
+		}
+		if err := writeGenericDetector(root, manifest, extendedSource(policy.id, policy.kind, policy.constructor)); err != nil {
+			return err
+		}
 	}
 	if options.Metrics {
 		alerts := genericManifest(MetricsAlertsDetectorID, "30s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "Metrics"}})
@@ -304,4 +318,31 @@ func New() sdk.Detector {
 	}, metrics.LabelMapping{})
 }
 `, genericSpecWithSeverity(MetricsAlertsDetectorID, "Warning"))
+}
+
+// extendedSource shares the SDK's watch declarations with the installed manifest.
+func extendedSource(id, kind, constructor string) string {
+	extra := ""
+	spec := genericSpecWithSeverity(id, "Warning")
+	if kind == "saturation" {
+		extra = ", false"
+	}
+	// Appeared is a transition, so requiring two consecutive evaluations loses it.
+	// The log helper already requires a complete quiet cycle followed by a match.
+	if kind == "crashes" {
+		spec = strings.Replace(spec, "Firing: 2", "Firing: 1", 1)
+	}
+	return fmt.Sprintf(`package synthetic
+import (
+ "time"
+ "sdo.dev/operator/sdk"
+ "sdo.dev/operator/sdk/generichealth"
+)
+func New() sdk.Detector {
+ return generichealth.%s(sdk.DetectorSpec{
+ %s
+ Watches: generichealth.Watches(%q), Interval: 30*time.Second,
+ }%s)
+}
+`, constructor, spec, kind, extra)
 }

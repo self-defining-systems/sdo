@@ -268,7 +268,7 @@ func (s *run) visit(rel, abs string) error {
 		s.add(Structural, d)
 		return nil
 	}
-	if kind == layout.KindOutcome || kind == layout.KindLegacyOutcomes {
+	if kind == layout.KindOutcome {
 		return nil
 	}
 	info, err := os.Lstat(abs)
@@ -295,7 +295,12 @@ func (s *run) visit(rel, abs string) error {
 		} else {
 			s.schema = version
 		}
-	case layout.KindGoal, layout.KindArchitecture:
+	case layout.KindGoal:
+		if !strings.HasPrefix(string(data), "---\n") {
+			break
+		}
+		fallthrough
+	case layout.KindArchitecture:
 		if doc := s.parseDocument(file); doc != nil {
 			if kind == layout.KindGoal {
 				s.goal = doc
@@ -417,7 +422,7 @@ func (s *run) checkSchema() {
 	complete := s.complete()
 	switch {
 	case s.schemaPresent && s.schema != layout.CurrentSchemaVersion && s.schema != -1:
-		s.add(Structural, Diagnostic{Rule: RuleSchemaVersion, Path: layout.SchemaVersionFile, Line: 1, Message: fmt.Sprintf("schema-version is %d; this validator requires %d", s.schema, layout.CurrentSchemaVersion), Hint: "run the Upkeep schema migration"})
+		s.add(Structural, Diagnostic{Rule: RuleSchemaVersion, Path: layout.SchemaVersionFile, Line: 1, Message: fmt.Sprintf("schema-version is %d; this validator requires %d", s.schema, layout.CurrentSchemaVersion)})
 	case !s.schemaPresent && complete:
 		s.add(Structural, Diagnostic{Rule: RuleSchemaVersion, Path: layout.SchemaVersionFile, Message: "schema-version is missing", Hint: fmt.Sprintf("create the file containing %d", layout.CurrentSchemaVersion)})
 	}

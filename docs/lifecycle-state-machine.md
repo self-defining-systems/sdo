@@ -67,7 +67,7 @@ non-determinism, lost results and failure that blocks the next incident. The clo
 a five-minute process timeout.
 
 Publication remains one trusted broker effect containing gofmt, independent
-validator Jobs and commit. The explorer does not prove that effect's internal
+bounded validation subprocesses and commit. The explorer does not prove that effect's internal
 ordering; broker validation/transport tests cover it. This preserves the broker
 boundary for the later extraction in the table below. Incident-response ordering
 and real-driver seeded simulation (slices 3–4) are explicitly deferred by the user
@@ -109,8 +109,8 @@ enforcement remains follow-up work.
 
 | Subsystem | Pure core to extract | Private edge under that subsystem's `internal/...` |
 |---|---|---|
-| Broker | Ownership, commit eligibility, rejection/correction transitions and accepted-revision decisions | Git/worktree mutation, locks, validator Jobs and durable commit receipts |
-| Memory | Logical artifact projection, schema validation, snapshot selection and content identities | Repository reads, physical layout, outcome persistence and migration |
+| Broker | Ownership, commit eligibility, rejection/correction transitions and accepted-revision decisions | Git/worktree mutation, locks, bounded validation subprocesses and durable commit receipts |
+| Memory | Logical artifact projection, schema validation, snapshot selection and content identities | Repository reads, physical layout, outcome persistence |
 | Late findings | Report selection, digest/correlation rules and pull-budget transitions | HTTP transport, snapshot observation and report persistence |
 | Runtime controller | Scheduling, batching, incident/closure transitions and deadline calculation | Kubernetes caches/Jobs/ConfigMaps, timers, telemetry, leader election; lifecycle persistence is already `runtime/internal/lifecycleio` |
 | Program learning / fast path | Trust credit, revision binding, match eligibility, one-attempt and verification transitions | Live snapshots, action application/rollback, capture replay and attempt-marker storage |
@@ -119,3 +119,14 @@ Each core accepts plain events and returns decisions/effects. Other subsystems
 send events through its driver. Internal visibility prevents outsiders importing
 the edge; depguard must also prevent the core importing its own edge. Other
 subsystem extractions are follow-up work, not part of this task.
+
+## Onboarding
+
+The optional human goal is free text and remains human-owned. Go verifies the source
+plan and publishes accepted source, then writes a deterministic architecture inventory
+from its manifests. No architecture agent is dispatched. A fresh health judge authors
+ordinary health detectors, synthetic traffic and the default health-objective playbook.
+There is no fixed detector ID/Spec, goal digest, coverage echo or adversarial refinement
+round. The shared memory check gates publication. Bounded validation corrections and
+transport retries remain separate from authoring. Independent live health verification
+precedes controller installation.

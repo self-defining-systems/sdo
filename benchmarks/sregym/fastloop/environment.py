@@ -17,7 +17,6 @@ class Images(BaseModel):
 
     controller: str = "sdo-controller:fastloop"
     responder: str = "sdo-sregym-responder:fastloop"
-    validator: str = "sdo-detector-validator:fastloop"
 
 
 class FastloopEnvironment(BaseModel):

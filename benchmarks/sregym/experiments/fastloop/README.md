@@ -79,13 +79,13 @@ Only the controller image stores Go and the offline dependency/build caches.
 The installer passes that image as the required `--toolchain-image` setting,
 independently of `--prober-image`. Direct controller launches must set it too;
 missing configuration fails before building, migration or Kubernetes access.
-Worker and validator init containers use that image to populate a private
+Worker init containers use that image to populate a private
 emptyDir, mounted read-only into compiler-free runtime containers. The init
 container has no candidate or provider-credential mounts. Compilation, vet,
 replay and network isolation remain required. Scripted images omit model CLIs
 from their ancestry. Bake shares OS and dependency stages; never flatten images.
 
-Use an existing set of SDO controller, responder, and validator images for the
+Use an existing set of SDO controller and responder images for the
 first `up`. The worktree is mounted into every kind node at `/opt/sdo-dev`; the
 Pods use its Python packages and a host-built `sdo-operator` at
 `.fastloop/sdo-operator`. The host build uses the warm Go cache. `reset` reuses
@@ -109,7 +109,7 @@ uv run python -m benchmarks.sregym.fastloop run \
 
 `--time-scale` defaults to 1. Live LLM runs, including smokes, use 1.
 Values below 1 are refused before runtime setup unless SDO uses the repository's
-`benchmarks/sregym/adapter/scripted_registrations` (explicitly selected, or the
+`benchmarks/sregym/fastloop/agent_registrations` (explicitly selected, or the
 toy lane default). Custom registrations are conservatively treated as live.
 This keeps live verification and responder deadlines from being shortened.
 For scripted-agent runs it scales controller detector intervals, finding
@@ -139,10 +139,10 @@ use fault-only recovery and mark `cleanup_skipped_reason` in each incident row.
 
 # Scripted SDO loop (kind, no LLM)
 
-Level 1 exercises both scripted worker entry points with a fake Kubernetes API:
+Level 1 exercises both generated agent scripts with a fake Kubernetes API:
 
 ```bash
-uv run pytest -q -p no:tach tests/unit/benchmarks/sregym/fastloop/test_scripted_worker.py tests/unit/benchmarks/sregym/fastloop/test_scripted_image_build.py
+uv run pytest -q -p no:tach tests/unit/benchmarks/sregym/fastloop/test_generated_worker.py tests/unit/benchmarks/sregym/fastloop/test_scripted_image_build.py
 ```
 
 The test copies the accepted hotel seed when it is available at the experiment
@@ -162,11 +162,10 @@ SDO_IMAGE_TAG=scripted-fastloop SDO_SCRIPTED_WORKER=1 bash scripts/build_sdo_ima
 uv run python -m benchmarks.sregym.fastloop up \
   --run-dir "$SDO_SCRIPTED_RUN" --seed "$SDO_SCRIPTED_SEED" \
   --controller-image sdo-controller:scripted-fastloop \
-  --responder-image sdo-sregym-responder:scripted-fastloop \
-  --validator-image sdo-detector-validator:scripted-fastloop
+  --responder-image sdo-sregym-responder:scripted-fastloop
 uv run python -m benchmarks.sregym.fastloop run \
   --run-dir "$SDO_SCRIPTED_RUN" --agent sdo \
-  --agent-registrations benchmarks/sregym/adapter/scripted_registrations \
+  --agent-registrations benchmarks/sregym/fastloop/agent_registrations \
   --stream tests/fixtures/sregym/fastloop/pbprog_repeat.json \
   --diagnosis-grading off --reflection-session fresh --timeout 300
 ```
@@ -208,43 +207,36 @@ uv run python -m benchmarks.sregym.fastloop replay \
   --run-dir /path/to/fastloop/results/<run-id> --incident 0 --stage broker
 ```
 
-`reflection` feeds recorded Codex outputs through the current reflection agent and restores the recorded direct file edits,
-including corrections recorded as separate Go dispatches, then runs the shared complete
-memory validator, captured-corpus provenance checks and real broker publication.
-Each dispatch reports its logical artifact IDs, acceptance and temporary commit,
-or the exact rejection. An unrecorded correction stops replay as `incomplete`;
-no output is invented. All Git writes happen in temporary clones. No cluster,
-Docker or live model is needed. The source repository must retain the accepted
-outcome commit named by the checkpoint.
+Responder and reflection replay run the real workers with the agent-script Codex
+stand-in. Export converts live model I/O into `checkpoints/<request-digest>/script.json`
+beside the exact task/result ProtoJSON. Use `--script <path>` to run an explicitly
+converted or edited script through the same stage harness. Archived model I/O is converted in a temporary
+directory on demand; the archived run stays untouched. Commands execute again against
+captured Kubernetes state; captured command output is never substituted for execution.
+Reflection file edits become script write/delete steps before worker validation and
+real Go broker publication. Publication runs only in temporary clones of the source
+repository, which must retain the checkpoint's accepted commit.
 
-`responder` defaults to the scripted worker against captured open and fixed
-snapshots. Select `--agent live` to use its recorded Codex turns. Select
-`--agent scripted` explicitly for a scripted reflection. `broker` validates an
-existing reflection result without re-executing the agent. Worker replay also
-reports whether the current typed result matches the recorded result.
+`broker` validates the saved worker result and file edits directly without running an
+agent. Missing scripts, missing turns, unsupported recordings, or command assertions
+fail explicitly. Archived task/result envelopes must satisfy the current strict
+contracts; conversion of model I/O does not migrate retired request fields. There is
+no model fallback or alternate replay registration.
+Task/result equality and broker acceptance/rejection are reported separately: generated
+session identifiers and timing can differ even when the broker verdict agrees.
 
-The default Codex registrations persist exact task/result ProtoJSON under each
-exported session's `checkpoints/<request-digest>/`, independently of ConfigMaps. Completed reflection dispatches also record `file_edits.json`: version 1 contains paths, exact base64 file bytes (null for deletion), and executable modes. Bundles are bounded to 48 MiB encoded and stored by digest in the stage checkpoint. Replay applies those edits to an isolated checkout, then invokes the real Go broker and shared complete memory check. Proposal-only recordings fail with an explicit error; no proposal shim remains.
-This includes failed reflection results and ordinary drift responder sessions. The run-level
-stage checkpoint selects the latest dispatch; the exported session checkpoints
-retain all dispatches. Model I/O lives in `model_io/<request-digest>/`, keyed by
-prompt digest and occurrence so identical correction prompts cannot overwrite
-earlier outputs. New recordings include `turn_index`: reflection replays those
-outputs in order even after prompt edits, reporting changed prompt hashes in
-`prompt_changes`. Older recordings require matching prompt hashes. Missing turns
-fail without a model call. `--live-on-cache-miss` explicitly permits a live
-fallback; omit it for Tier 3. The recorder saves no command environment or auth
-files, and the runtime export retains its credential and cache exclusions.
-
-Explicit `--agent-registrations`, including the scripted registrations above,
-keep their own worker commands.
+Live registrations use a write-only `ModelRecorder`; model I/O, prompts, rollouts and
+outcomes remain analysis evidence. Explicit registrations retain their own commands.
+The recorder saves no command environment or auth files. Keep run directories private
+and outside this repository. Hand-authored scripts use the same stand-in; see the
+[testing guide](../../../../docs/testing-guide.md#hand-authored-agent-scripts-no-model).
 
 # Tier 2a: toy real cluster
 
 The reusable [toy application](../../../../apps/toy/README.md) has three tiny HTTP
 services, real Deployments, local readiness probes and a frontend-to-backend
 journey. It does not import or populate `third_party/sregym`. Pinned Calico
-provides NetworkPolicy enforcement, required by the production validator canary.
+provides NetworkPolicy enforcement, required by the application network-policy incidents.
 See the [decision and alternatives](../../../../docs/toy-cluster-design.md).
 
 Prepare matching runtime images once (or use already built image tags):
@@ -273,8 +265,7 @@ uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN"
 The cluster name uses `--cluster-prefix` plus `--worker-id`; creation refuses to adopt an existing
 cluster without its environment record. The source mount is mandatory internally
 and defaults to this worktree. `run` and `reset` rebuild the host operator, so code
-changes need no runtime image rebuild. Scripted responder, reflector and drift
-investigator registrations are the toy default. No model calls are needed.
+changes need no runtime image rebuild. Generated responder and reflector registrations are the toy default. No model calls are needed.
 
 After that stream has accepted the program, run `toy_sweep.json` with
 `--timeout 900` and the same other run flags. It models a healthy imported Service
@@ -326,3 +317,17 @@ replacement were separate. The scripted worker image must
 include main's generated-contract dependencies, including `protovalidate`;
 source mounts do not add missing Python packages. Raw evidence is outside Git
 at `results/toy-cluster-evidence/`.
+
+## Editable agent turns
+
+For arbitrary deterministic behavior beneath the real worker, use the versioned
+JSON/YAML [agent script format](../../../../docs/testing-guide.md#hand-authored-agent-scripts-no-model).
+It supports all four roles (plus source architecture), commands, SDO tools,
+checkout file edits, bounded output assertions, and literal structured results.
+`agent_script convert` turns successful Codex model-I/O recordings into editable
+scripts. `agent_script registrations --out /absolute/registrations --image IMAGE`
+wraps the production workers; pass that directory with `--agent-registrations`.
+The same script is read from a local `SDO_AGENT_SCRIPT` file in Tier 1 and the
+`sdo-agent-script` ConfigMap's `script.json` key in Tier 2. The testing guide
+contains complete commands and the Bubblewrap prerequisite. Keep run scripts and
+generated registrations outside Git; committed tests construct synthetic data.

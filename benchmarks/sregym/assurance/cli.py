@@ -37,21 +37,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCRIPTED_IMAGE_LABEL = "sdo.dev/scripted-codex"
+SCRIPTED_IMAGE_LABEL = "sdo.dev/agent-script"
 
 
 def scripted_images(tag: str) -> Images:
     return Images(
         controller=f"sdo-controller:{tag}",
         responder=f"sdo-sregym-responder:{tag}",
-        validator=f"sdo-detector-validator:{tag}",
     )
 
 
 def require_scripted(images: Images) -> None:
-    """Refuse to run unless the controller and responder images carry the scripted CLI instead of a model CLI."""
+    """Refuse to run unless the responder image carries the scripted CLI instead of a model CLI."""
 
-    for image in (images.controller, images.responder):
+    for image in (images.responder,):
         completed = subprocess.run(
             ["docker", "image", "inspect", image, "--format", f'{{{{index .Config.Labels "{SCRIPTED_IMAGE_LABEL}"}}}}'],
             capture_output=True,
@@ -59,13 +58,13 @@ def require_scripted(images: Images) -> None:
             check=False,
         )
         if completed.returncode != 0 or completed.stdout.strip() != "true":
-            raise AssuranceError(f"{image} is not a scripted-codex image; build it with build_images.sh")
+            raise AssuranceError(f"{image} is not an agent-script image; build it with build_images.sh")
 
 
 def load_images(cluster: str, images: Images, *, record_path: Path | None = None) -> None:
     from benchmarks.sregym.fastloop.toy_images import load_images as deliver
 
-    deliver(cluster, [images.controller, images.responder, images.validator], record_path=record_path)
+    deliver(cluster, [images.controller, images.responder], record_path=record_path)
 
 
 def reset_to_seed(environment: FastloopEnvironment) -> str:
@@ -139,7 +138,6 @@ def _run(args: argparse.Namespace) -> int:
         application=environment.application,
         controller_image=images.controller,
         responder_image=images.responder,
-        validator_image=images.validator,
         repository_pvc="sdo-application-repository",
         credentials_secret="sdo-agent-credentials",
         model="gpt-6-luna",

@@ -54,7 +54,6 @@ docker build --load \
 (cd "${repo_root}" && uv run python -m benchmarks.sregym.fastloop.image_delivery --cluster "${cluster_name}" --run-dir "${workspace}" \
   "sdo-controller:${image_tag}" \
   "sdo-responder:${image_tag}" \
-  "sdo-detector-validator:${image_tag}" \
   sdo-worker:native-smoke)
 
 kubectl create namespace "${control_namespace}"
@@ -86,7 +85,6 @@ timeout 1200s "${workspace}/sdo-operator" host \
   --max-attempts 1 \
   --controller-image "sdo-controller:${image_tag}" \
   --responder-image "sdo-responder:${image_tag}" \
-  --validator-image "sdo-detector-validator:${image_tag}" \
   --buildkit-image "${buildkit_image}" \
   --repository-pvc sdo-application-repository \
   --credentials-secret sdo-agent-credentials \

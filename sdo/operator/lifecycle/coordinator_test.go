@@ -2,7 +2,6 @@ package lifecycle
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -123,7 +122,7 @@ func (f fakeBootstrap) WriteSchema(_ string) error {
 	*f.events = append(*f.events, "write-schema")
 	return nil
 }
-func (f fakeBootstrap) WriteArchitecture(_ string, application, sourceCommit, fingerprint, summary string) error {
+func (f fakeBootstrap) WriteArchitecture(_ string, application, sourceCommit, summary string) error {
 	*f.events = append(*f.events, "write-architecture:"+sourceCommit)
 	return nil
 }
@@ -134,7 +133,7 @@ func (f fakeBootstrap) ReadArchitecture(_ string) (string, error) {
 type fakeExecutor struct {
 	tasks               []*contracts.AgentTask
 	deployFailures      int
-	archFailures        int
+	judgeFailures       int
 	retiredJudgePayload bool
 	judgeJobFailures    int
 }
@@ -151,17 +150,11 @@ func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*c
 			return nil, packErr
 		}
 		response, err = anypb.New(&contracts.SourceDeploymentResult{Proposed: proposed, Summary: "prepared", AgentSessionId: "session", Plan: &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: raw}})
-	case architectureTask:
-		if f.archFailures > 0 {
-			f.archFailures--
-			return nil, errors.New("architecture worker interrupted")
-		}
-		request := &contracts.ArchitectureRequest{}
-		if err := task.GetRequest().UnmarshalTo(request); err != nil {
-			return nil, err
-		}
-		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded layout.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
 	case healthJudgeTask:
+		if f.judgeFailures > 0 {
+			f.judgeFailures--
+			return nil, errors.New("judge interrupted")
+		}
 		if f.judgeJobFailures > 0 {
 			f.judgeJobFailures--
 			return nil, &worker_registry.JobFailedError{JobName: worker_registry.JobName(task.GetTaskId())}
@@ -170,7 +163,7 @@ func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*c
 		if err := task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err
 		}
-		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "authored", AgentSessionId: "judge-session", ObjectiveDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(request.GetHealthObjective()))), DetectorIds: []string{"health-objective"}})
+		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "authored", AgentSessionId: "judge-session", DetectorIds: []string{"health-objective"}})
 		if f.retiredJudgePayload {
 			result := &contracts.HealthJudgeResult{}
 			if err := response.UnmarshalTo(result); err != nil {
@@ -242,7 +235,6 @@ func testCoordinator(t *testing.T) (Coordinator, *fakeBroker, *fakeExecutor, *[]
 	capabilities := map[string][]*contracts.AgentCapability{}
 	for _, item := range []struct{ id, task, request, result string }{
 		{"source-agent", sourceDeploymentTask, "SourceDeploymentRequest", "SourceDeploymentResult"},
-		{"source-agent", architectureTask, "ArchitectureRequest", "ArchitectureResult"},
 		{"judge-agent", healthJudgeTask, "HealthJudgeRequest", "HealthJudgeResult"},
 	} {
 		capabilities[item.id] = append(capabilities[item.id], &contracts.AgentCapability{TaskType: item.task, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1." + item.request, ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1." + item.result})
@@ -265,7 +257,7 @@ func testCoordinator(t *testing.T) (Coordinator, *fakeBroker, *fakeExecutor, *[]
 		if !strings.HasPrefix(checkout, "/workspace/proposals/") || accepted != "commit-"+proposalID {
 			return memory.SourceFacts{}, errors.New("inventory was not bound to accepted source")
 		}
-		return memory.SourceFacts{Fingerprint: strings.Repeat("f", 64), Resources: []*contracts.SourceResource{{Kind: "Deployment", Name: "demo", Namespace: "demo", Source: "deploy.yaml"}}}, nil
+		return memory.SourceFacts{Resources: []*contracts.SourceResource{{Kind: "Deployment", Name: "demo", Namespace: "demo", Source: "deploy.yaml"}}}, nil
 	}}
 	return c, b, e, &events
 }
@@ -279,7 +271,7 @@ func TestCoordinatorPublishesEachRoleBeforeIndependentVerification(t *testing.T)
 	if result.SourceCommit != "commit-init-1-source-1" || result.ArchitectureCommit != "commit-init-1-architecture-1" || result.JudgeCommit != "commit-init-1-judge-1" {
 		t.Fatalf("unexpected accepted commits: %#v", result)
 	}
-	want := []string{"publish:init-1-goal:human", "publish:init-1-schema:upkeep", "publish:init-1-source-1:deployer", "publish:init-1-architecture-1:deployer", "publish:init-1-judge-1:health_judge"}
+	want := []string{"publish:init-1-goal:human", "publish:init-1-schema:upkeep", "publish:init-1-source-1:deployer", "publish:init-1-architecture-1:upkeep", "publish:init-1-judge-1:health_judge"}
 	var got []string
 	for _, event := range b.events {
 		if len(event) >= 8 && event[:8] == "publish:" {
@@ -289,7 +281,7 @@ func TestCoordinatorPublishesEachRoleBeforeIndependentVerification(t *testing.T)
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("wrong broker sequence: got %v, want %v", got, want)
 	}
-	if len(e.tasks) != 3 || e.tasks[0].GetTaskType() != sourceDeploymentTask || e.tasks[1].GetTaskType() != architectureTask || e.tasks[2].GetTaskType() != healthJudgeTask {
+	if len(e.tasks) != 2 || e.tasks[0].GetTaskType() != sourceDeploymentTask || e.tasks[1].GetTaskType() != healthJudgeTask {
 		t.Fatalf("wrong worker sequence: %#v", e.tasks)
 	}
 	if e.tasks[0].GetWorkspace().GetCheckoutPath() != "/workspace/proposals/init-1-source-1" {
@@ -299,18 +291,11 @@ func TestCoordinatorPublishesEachRoleBeforeIndependentVerification(t *testing.T)
 	if err := e.tasks[0].GetRequest().UnmarshalTo(deployerRequest); err != nil || deployerRequest.GetRegistryHost() != "registry.demo.svc:5000" {
 		t.Fatalf("worker did not receive trusted registry host: %+v %v", deployerRequest, err)
 	}
-	architectureRequest := &contracts.ArchitectureRequest{}
-	if err := e.tasks[1].GetRequest().UnmarshalTo(architectureRequest); err != nil {
-		t.Fatal(err)
-	}
-	if architectureRequest.GetAcceptedSourceCommit() != result.SourceCommit || architectureRequest.GetSourceTopologyFingerprint() != strings.Repeat("f", 64) || len(architectureRequest.GetSourceResources()) != 1 || architectureRequest.GetSourceResources()[0].GetSource() != "deploy.yaml" {
-		t.Fatalf("architecture worker did not receive accepted source facts: %+v", architectureRequest)
-	}
 	judgeRequest := &contracts.HealthJudgeRequest{}
-	if err := e.tasks[2].GetRequest().UnmarshalTo(judgeRequest); err != nil {
+	if err := e.tasks[1].GetRequest().UnmarshalTo(judgeRequest); err != nil {
 		t.Fatal(err)
 	}
-	if judgeRequest.GetAcceptedSourceCommit() != result.SourceCommit || judgeRequest.GetSourceTopologyFingerprint() != strings.Repeat("f", 64) || len(judgeRequest.GetSourceResources()) != 1 || judgeRequest.GetSourceResources()[0].GetSource() != "deploy.yaml" {
+	if judgeRequest.GetAcceptedSourceCommit() != result.SourceCommit || len(judgeRequest.GetSourceResources()) != 1 || judgeRequest.GetSourceResources()[0].GetSource() != "deploy.yaml" {
 		t.Fatalf("judge did not receive accepted source facts: %+v", judgeRequest)
 	}
 	if fmt.Sprint(*events) != fmt.Sprint([]string{"write-goal:demo", "write-schema", "readiness:/workspace/proposals/init-1-source-1", "write-architecture:commit-init-1-source-1", "verify:commit-init-1-judge-1", "install:commit-init-1-judge-1"}) {
@@ -360,30 +345,12 @@ func TestCoordinatorReusesUnchangedBootstrapArtifacts(t *testing.T) {
 	}
 }
 
-func TestCoordinatorMigratesMemoryAsUpkeepOnly(t *testing.T) {
-	c, b, _, _ := testCoordinator(t)
-	receipt, err := c.MigrateMemory(context.Background(), "migrate-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if receipt.Commit != "commit-migrate-1-schema" {
-		t.Fatalf("receipt = %+v", receipt)
-	}
-	want := []string{"create:migrate-1-schema", "publish:migrate-1-schema:upkeep"}
-	if strings.Join(b.events, ",") != strings.Join(want, ",") {
-		t.Fatalf("events = %v, want only the Upkeep schema step", b.events)
-	}
-	if _, err := (Coordinator{}).MigrateMemory(context.Background(), "migrate-1"); err == nil {
-		t.Fatal("migration ran without a broker")
-	}
-}
-
 func TestCoordinatorResumesAfterAcceptedSourceWithoutRepublishingIt(t *testing.T) {
 	c, b, executor, _ := testCoordinator(t)
-	executor.archFailures = 1
+	executor.judgeFailures = 1
 	cfg := Config{OperationID: "init-1", Application: "demo", Namespace: "demo", HealthObjective: "healthy", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 1}
 	if _, err := c.Run(context.Background(), cfg); err == nil {
-		t.Fatal("expected first architecture worker interruption")
+		t.Fatal("expected first judge worker interruption")
 	}
 	if _, err := c.Run(context.Background(), cfg); err != nil {
 		t.Fatalf("resume: %v", err)
@@ -402,7 +369,7 @@ func TestCoordinatorResumesAfterAcceptedSourceWithoutRepublishingIt(t *testing.T
 func TestCoordinatorRecoversStagedSourceEvidenceAfterPublishCrash(t *testing.T) {
 	c, b, executor, events := testCoordinator(t)
 	b.pendingFinalization = true
-	executor.archFailures = 1
+	executor.judgeFailures = 1
 	cfg := Config{OperationID: "init-crash", Application: "demo", Namespace: "demo", HealthObjective: "healthy", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 1}
 	if _, err := c.Run(context.Background(), cfg); err == nil {
 		t.Fatal("expected interruption after accepted source")
@@ -423,7 +390,7 @@ func TestCoordinatorRecoversStagedSourceEvidenceAfterPublishCrash(t *testing.T) 
 
 func TestCoordinatorRejectsChangedDeploymentOnResume(t *testing.T) {
 	c, _, executor, events := testCoordinator(t)
-	executor.archFailures = 1
+	executor.judgeFailures = 1
 	cfg := Config{OperationID: "init-drift", Application: "demo", Namespace: "demo", HealthObjective: "healthy", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 1}
 	if _, err := c.Run(context.Background(), cfg); err == nil {
 		t.Fatal("expected interruption")
@@ -457,7 +424,7 @@ func TestCoordinatorRejectsUnknownWorkerBeforeCreatingProposals(t *testing.T) {
 func TestCoordinatorRejectsMismatchedRoleTypesBeforeCreatingProposals(t *testing.T) {
 	c, b, _, _ := testCoordinator(t)
 	wrong, err := worker_registry.New(
-		&contracts.AgentRegistration{SchemaVersion: worker_registry.SchemaVersion, AgentId: "source-agent", Capabilities: []*contracts.AgentCapability{{TaskType: sourceDeploymentTask, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult"}, {TaskType: architectureTask, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureResult"}}, Launch: &contracts.AgentRegistration_LocalProcess{LocalProcess: &contracts.LocalProcessLaunch{Command: []string{"worker"}}}},
+		&contracts.AgentRegistration{SchemaVersion: worker_registry.SchemaVersion, AgentId: "source-agent", Capabilities: []*contracts.AgentCapability{{TaskType: sourceDeploymentTask, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult"}}, Launch: &contracts.AgentRegistration_LocalProcess{LocalProcess: &contracts.LocalProcessLaunch{Command: []string{"worker"}}}},
 		&contracts.AgentRegistration{SchemaVersion: worker_registry.SchemaVersion, AgentId: "judge-agent", Capabilities: []*contracts.AgentCapability{{TaskType: healthJudgeTask, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeResult"}}, Launch: &contracts.AgentRegistration_LocalProcess{LocalProcess: &contracts.LocalProcessLaunch{Command: []string{"worker"}}}},
 	)
 	if err != nil {
@@ -501,7 +468,6 @@ func TestCoordinatorRejectsWrongWorkerResultBeforeBrokerPublish(t *testing.T) {
 // message; the tests restate none of them.
 var (
 	sourceDeploymentTask = manifestTaskType(&contracts.SourceDeploymentRequest{})
-	architectureTask     = manifestTaskType(&contracts.ArchitectureRequest{})
 	healthJudgeTask      = manifestTaskType(&contracts.HealthJudgeRequest{})
 )
 
@@ -606,5 +572,16 @@ func TestCoordinatorRejectsRetiredJudgePayloadBeforePublishing(t *testing.T) {
 		if event == "publish:retired-judge-1:health_judge" {
 			t.Fatal("published retired judge payload")
 		}
+	}
+}
+
+func TestCoordinatorOnboardsWithoutGoalOrArchitectureWorker(t *testing.T) {
+	c, _, workers, _ := testCoordinator(t)
+	result, err := c.Run(context.Background(), Config{OperationID: "no-goal", Application: "demo", Namespace: "demo", MaxAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GoalCommit != "" || result.ArchitectureCommit == "" || len(workers.tasks) != 2 {
+		t.Fatalf("unexpected lifecycle: %+v tasks=%d", result, len(workers.tasks))
 	}
 }

@@ -17,7 +17,7 @@ def test_compiler_cache_lives_only_in_controller_image() -> None:
     assert "SDO_GO_CACHE_SEED=/go/build-cache" in runtime
 
 
-def test_scripted_worker_build_uses_runtime_target_and_tag(tmp_path: Path) -> None:
+def test_scripts_build_uses_runtime_target_and_tag(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "docker-calls"
@@ -44,7 +44,7 @@ def test_scripted_worker_build_uses_runtime_target_and_tag(tmp_path: Path) -> No
     assert result.returncode == 0, result.stderr
     builds = [line for line in calls.read_text().splitlines() if line.startswith("buildx bake ")]
     assert len(builds) == 1
-    assert "--file scripts/sdo-images.hcl --load controller validator responder benchmark" in builds[0]
+    assert "--file scripts/sdo-images.hcl --load controller responder benchmark" in builds[0]
     graph = (ROOT / "scripts/sdo-images.hcl").read_text()
     assert "target = SDO_WORKER_TARGET" in graph
     assert 'scripted-base = "target:scripted-runtime"' in graph

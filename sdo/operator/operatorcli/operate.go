@@ -44,7 +44,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
-	validatorImage := flags.String("validator-image", "", "isolated validator image")
 	buildkitImage := flags.String("buildkit-image", "", "isolated source image builder")
 	registryPushSecret := flags.String("registry-push-secret", "", "image registry credentials Secret")
 	registryHost := flags.String("registry-host", "", "trusted source image registry host[:port]")
@@ -86,9 +85,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	}
 	for key, value := range map[string]string{
 		"application checkout": *app, "operator root": *operatorRoot, "namespace": *namespace,
-		"application": *application, "health objective": *objective, "operation ID": *operationID,
+		"application": *application, "operation ID": *operationID,
 		"controller image": *controllerImage, "responder image": *responderImage,
-		"validator image": *validatorImage, "repository PVC": *repositoryPVC,
+		"repository PVC": *repositoryPVC,
 		"BuildKit image": *buildkitImage, "registry push Secret": *registryPushSecret,
 		"repository mount": *repositoryMount, "credentials Secret": *credentialsSecret,
 		"model": *model, "agent provider": *provider, "worktree root": *worktreeRoot,
@@ -162,7 +161,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 		Install: install.Config{
 			Namespace: *namespace, ControlNamespace: control, Application: *application,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
-			ValidatorImage: *validatorImage, RepositoryPVC: *repositoryPVC,
+			RepositoryPVC:     *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,

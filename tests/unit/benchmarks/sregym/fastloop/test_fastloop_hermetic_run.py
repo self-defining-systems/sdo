@@ -20,7 +20,7 @@ from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any as ProtoAny
 
 from benchmarks.sregym import adapter
-from benchmarks.sregym.adapter import driver, scripted_worker
+from benchmarks.sregym.adapter import driver
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
 from benchmarks.sregym.adapter.persistent import PersistentState
 from benchmarks.sregym.fastloop import cli, composite, fault_tracker
@@ -32,6 +32,7 @@ from benchmarks.sregym.fastloop.records import load_records
 from sdo.contracts import AgentResult, AgentTask, IncidentRequest, IncidentResult, to_canonical_json
 from tests.proto_messages import from_dict
 from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
+from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
 if TYPE_CHECKING:
     import pytest
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURE_SEED = ROOT / "tests/fixtures/sdo/scripted_seed"
 STREAM = ROOT / "tests/fixtures/sregym/fastloop/pbprog_explicit.json"
-REGISTRATIONS = ROOT / "benchmarks/sregym/adapter/scripted_registrations"
+REGISTRATIONS = ROOT / "benchmarks/sregym/fastloop/agent_registrations"
 NAMESPACE = "hotel-reservation"
 COMPONENTS = ("reservation", "rate", "geo", "search")
 SWEEP_MAIN = """
@@ -237,7 +238,10 @@ class Controller(FakeOps):
     def install(self, config: Any) -> bool:
         self.registrations.append(config.agent_registrations)
         assert config.agent_registrations == REGISTRATIONS
-        for role, command in (("responder", "responder"), ("reflector", "reflection")):
+        for role, command in (
+            ("responder", "sdo.agents.responder.worker"),
+            ("reflector", "sdo.agents.responder.reflection_worker"),
+        ):
             registration = json.loads((REGISTRATIONS / f"{role}.json").read_text())
             assert registration["kubernetes_job"]["command"][-1] == command
         return super().install(config)
@@ -285,7 +289,7 @@ class Controller(FakeOps):
             changes.append({"kind": kind, "name": name, "change": "modified", "fields": fields})
         raw["state_changes"] = {"baseline_at": now(), "observed_at": now(), "changes": changes}
         request = from_dict(IncidentRequest, raw)
-        result = scripted_worker.scripted_responder(request)
+        result = scripts.respond(request)
         assert result.status == "completed"
         if incident == "incident-1":
             image = self.app.objects["Deployment", "rate"]["spec"]["template"]["spec"]["containers"][0]["image"]
@@ -315,13 +319,13 @@ class Controller(FakeOps):
 
     def _finish_reflection(self, control: str, incident: str) -> None:
         if incident == "incident-1":
-            turn = scripted_worker.ScriptedReflector().resume(
+            turn = scripts.Reflector().resume(
                 worktree=self.app.workspace,
                 incident_id=incident,
                 closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
             )
-            assert turn.playbook_ids == [scripted_worker.PROGRAM_ID]
-            directory = self.app.workspace / ".sdo/playbooks" / scripted_worker.PROGRAM_ID
+            assert turn.playbook_ids == [scripts.PROGRAM_ID]
+            directory = self.app.workspace / ".sdo/playbooks" / scripts.PROGRAM_ID
             corpus = next((self.app.workspace / ".sdo/corpus").iterdir())
             labels = json.loads((corpus / "labels.json").read_text())
             assert labels["provenance"]["open_at"] == "pre-apply"
@@ -375,7 +379,7 @@ class Controller(FakeOps):
                 self.sweep_result = json.loads(completed.stdout)
                 runs = [
                     {
-                        "program_id": scripted_worker.PROGRAM_ID,
+                        "program_id": scripts.PROGRAM_ID,
                         "bindings": {"service": {"kind": "Service", "namespace": NAMESPACE, "name": "geo"}},
                         "verdict": {"result": self.sweep_result["result"]},
                     }
@@ -384,7 +388,7 @@ class Controller(FakeOps):
                 return {"program_runs": runs}
             return {"program_runs": []}
         if args[0] == "plan":
-            assert args[1] == scripted_worker.PROGRAM_ID
+            assert args[1] == scripts.PROGRAM_ID
             assert self.sweep_result is not None
             assert self.sweep_result["path"] == "spec.ports[0].targetPort"
             return {"plan_id": "targetport-plan"}
@@ -413,7 +417,7 @@ class Controller(FakeOps):
             return ""
         if argv[1:3] == ["program", "scaffold"]:
             target = Path(argv[argv.index("--out") + 1])
-            target.mkdir()
+            target.mkdir(parents=True)
             (target / "diagnose_test.go").write_text("package targetport\n")
             return ""
         assert argv[1:3] == ["memory", "check"]
@@ -547,10 +551,10 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
             for problem in ids
         },
     )
-    monkeypatch.setattr(scripted_worker, "PROGRAM_SOURCE", ROOT / "benchmarks/sregym/fastloop/scripted_program")
-    monkeypatch.setattr(scripted_worker, "_command", controller.command)
-    monkeypatch.setattr(scripted_worker, "_tool", controller.tool)
-    monkeypatch.setattr(scripted_worker.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(scripts, "PROGRAM_SOURCE", ROOT / "benchmarks/sregym/fastloop/scripted_program")
+    monkeypatch.setattr(scripts, "_command", controller.command)
+    monkeypatch.setattr(scripts, "_tool", controller.tool)
+    monkeypatch.setattr(scripts.time, "sleep", lambda _seconds: None)
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(controller.capture))
 
     assert (

@@ -1,5 +1,5 @@
 // Package validate is the single validator for operational memory. The commit
-// broker, the Kubernetes validation Job, and agent self-checks all call
+// broker, the bounded controller subprocess, and agent self-checks all call
 // Validate, so a candidate is accepted or rejected for the same reasons
 // everywhere.
 //

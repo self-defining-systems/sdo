@@ -93,9 +93,9 @@ def test_no_skills_leaves_the_home_without_a_skills_directory(tmp_path: Path) ->
     ("agent", "skills"),
     [
         ("responder", {"sdo-memory"}),
-        ("reflector", {"sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring"}),
-        ("health-judge", {"sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring"}),
-        ("deployer", {"sdo-memory"}),
+        ("reflector", {"sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"}),
+        ("health-judge", {"sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"}),
+        ("source_deployment", {"sdo-memory"}),
     ],
 )
 def test_each_agent_worker_declares_the_skills_it_installs(agent: str, skills: set[str]) -> None:

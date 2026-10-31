@@ -6,20 +6,23 @@ import difflib
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 from google.protobuf import json_format
 
-from benchmarks.sregym.adapter import scripted_worker
+from benchmarks.sregym.agent_script.cli import script_environment
+from benchmarks.sregym.agent_script.converter import convert_recording
 from benchmarks.sregym.fastloop.fake_kube import FakeKubernetesAPIServer
-from benchmarks.sregym.fastloop.file_edits import apply_file_edits, record_file_edits
-from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
+from benchmarks.sregym.fastloop.file_edits import encode_file_edits, record_file_edits
+from benchmarks.sregym.fastloop.reflection_script import reflection_script
 from benchmarks.sregym.fastloop.replay import CheckpointError, CheckpointStore, StageCheckpoint, replay_broker_result
+from benchmarks.sregym.fastloop.replay_transport import captured_commands
+from benchmarks.sregym.fastloop.responder_script import responder_script
 from sdo.agents.responder import (
     CodexSessionBackend,
     SessionReflector,
@@ -134,7 +137,7 @@ def _relevant(item: dict[str, Any] | None, kind: str) -> Any:
     return [(container["name"], container["image"]) for container in item["spec"]["template"]["spec"]["containers"]]
 
 
-def replay_scripted_responder(store: CheckpointStore, incident: int, *, source: Path) -> dict[str, Any]:
+def replay_generated_responder(store: CheckpointStore, incident: int, *, source: Path) -> dict[str, Any]:
     checkpoint = store.load(incident, "responder")
     task = parse_json(checkpoint.request, AgentTask())
     typed = IncidentRequest()
@@ -151,10 +154,32 @@ def replay_scripted_responder(store: CheckpointStore, incident: int, *, source: 
         task_path = Path(temporary) / "request.json"
         task_path.write_text(to_canonical_json(task), encoding="utf-8")
         publisher = _Publisher()
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(scripted_worker, "_command", api.command))
-            stack.enter_context(patch.object(scripted_worker, "_tool", api.tool))
-            result = run_worker_task(task_path, "replay-result", publisher, executor=scripted_worker.scripted_responder)
+        script_path = Path(temporary) / "script.json"
+        script_path.write_text(responder_script(typed).model_dump_json())
+        tools = Path(temporary) / "tools"
+        tools.mkdir()
+
+        def command(argv):
+            return json.dumps(api.tool(*argv[1:])) if argv[0] == "sdo" else api.command(argv)
+
+        with captured_commands(Path(temporary), command) as env, patch.dict(os.environ, env):
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "SDO_AGENT_SCRIPT": str(script_path),
+                        "SDO_TASK_PATH": str(task_path),
+                        "SDO_TOOLS_DIR": str(tools),
+                    },
+                ),
+                script_environment() as worker_env,
+            ):
+                with patch.dict(os.environ, worker_env):
+
+                    def execute(request):
+                        return execute_incident(request, provider="codex", model="gpt-6-luna")
+
+                    result = run_worker_task(task_path, "replay-result", publisher, executor=execute)
         if publisher.payload is None:
             raise CheckpointError("scripted responder did not publish a result")
     expected = parse_json(checkpoint.result, AgentResult()) if checkpoint.result is not None else None
@@ -163,6 +188,8 @@ def replay_scripted_responder(store: CheckpointStore, incident: int, *, source: 
     for value in (actual, recorded):
         if isinstance(value, dict):
             value.pop("timing", None)
+            value.pop("usage", None)
+            value.pop("responder_session_id", None)
             for repair in value.get("repair_actions", []):
                 repair.pop("started_at", None)
                 repair.pop("completed_at", None)
@@ -185,7 +212,7 @@ def replay_scripted_responder(store: CheckpointStore, incident: int, *, source: 
     }
 
 
-def replay_scripted_reflection(
+def replay_generated_reflection(
     store: CheckpointStore, incident: int, *, source: Path, operator_root: Path
 ) -> dict[str, Any]:
     checkpoint = store.load(incident, "reflection")
@@ -236,15 +263,37 @@ def replay_scripted_reflection(
                 raise CheckpointError(f"reflection command failed: {completed.stderr.strip()[-4096:]}")
             return completed.stdout
 
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(scripted_worker, "_command", command))
-            stack.enter_context(
-                patch.object(scripted_worker, "PROGRAM_SOURCE", Path(__file__).with_name("scripted_program"))
+        tools = root / "tools"
+        tools.mkdir()
+        script_path = root / "script.json"
+        with patch.dict(os.environ, {"SDO_TOOLS_DIR": str(tools)}):
+            script_path.write_text(
+                reflection_script(
+                    worktree=checkout, incident_id=typed.outcome.incident_id, closure=typed.closure, capture=captures
+                ).model_dump_json()
             )
-            stack.enter_context(patch.dict(os.environ, {"SDO_CAPTURED_CORPUS_DIR": str(captures)}))
-            result = run_reflection_task(
-                task_path, "replay-result", publisher, reflector=scripted_worker.ScriptedReflector()
-            )
+        with captured_commands(root, command) as env, patch.dict(os.environ, env):
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "SDO_AGENT_SCRIPT": str(script_path),
+                        "SDO_TASK_PATH": str(task_path),
+                        "SDO_TOOLS_DIR": str(tools),
+                        "SDO_CAPTURED_CORPUS_DIR": str(captures),
+                    },
+                ),
+                script_environment() as worker_env,
+            ):
+                with patch.dict(os.environ, worker_env):
+                    result = run_reflection_task(
+                        task_path,
+                        "replay-result",
+                        publisher,
+                        reflector=SessionReflector(
+                            CodexSessionBackend(model="gpt-6-luna"), guidance=typed.guidance or "baseline"
+                        ),
+                    )
         if publisher.payload is None:
             raise CheckpointError("scripted reflection did not publish a result")
         edits = record_file_edits(checkout, typed.outcome_commit)
@@ -284,22 +333,22 @@ def _clone_at(source: Path, destination: Path, commit: str) -> None:
             raise CheckpointError(f"prepare accepted replay source: {completed.stderr.strip()[-4096:]}")
 
 
-def replay_live_worker(
+def replay_script_worker(
     store: CheckpointStore,
     incident: int,
     stage: str,
     *,
     source: Path,
-    live_on_cache_miss: bool,
     operator_root: Path | None = None,
+    script: Path | None = None,
 ) -> dict[str, Any]:
     checkpoint = store.load(incident, stage)
     operator_root = operator_root or Path(__file__).resolve().parents[3] / "sdo/operator"
     proposals: list[dict[str, Any]] = []
     task = parse_json(checkpoint.request, AgentTask())
     if stage not in {"responder", "reflection"}:
-        raise CheckpointError(f"no live worker contract for stage {stage!r}")
-    with tempfile.TemporaryDirectory(prefix="sdo-fastloop-live-") as temporary:
+        raise CheckpointError(f"no worker script contract for stage {stage!r}")
+    with tempfile.TemporaryDirectory(prefix="sdo-fastloop-script-") as temporary:
         root = Path(temporary)
         checkout = root / "accepted"
         original_checkout = task.workspace.checkout_path
@@ -325,28 +374,131 @@ def replay_live_worker(
         task_path.write_text(to_canonical_json(task), encoding="utf-8")
         session = hashlib.sha256(session_id.encode()).hexdigest()[:32]
         incident_dirs = list(store.root.parent.glob(f"{incident:03d}_*"))
-        if len(incident_dirs) != 1:
+        if len(incident_dirs) != 1 and script is None:
             raise CheckpointError(f"expected one incident artifact directory for {incident:03d}")
-        model_dir = incident_dirs[0] / "sdo_runtime" / "sessions" / session / "model_io"
-        recording = RecordingExecutor(
-            model_dir,
-            request_json=checkpoint.request,
-            live_on_miss=live_on_cache_miss,
-            prompt_replacements={str(checkout): original_checkout},
-            ordered=stage == "reflection",
+        model_dir = (incident_dirs[0] if incident_dirs else root) / "sdo_runtime" / "sessions" / session / "model_io"
+        paths = list((model_dir / hashlib.sha256(checkpoint.request.encode()).hexdigest()).glob("*.json"))
+        edits_path = root / "file_edits.json"
+        if checkpoint.file_edits is not None:
+            edits_path.write_bytes(encode_file_edits(checkpoint.file_edits))
+        exported = (
+            model_dir.parent / "checkpoints" / hashlib.sha256(checkpoint.request.encode()).hexdigest() / "script.json"
         )
+        script_path = root / "script.json"
+        if script is not None:
+            script_path.write_text(script.read_text().replace(original_checkout, str(checkout)))
+        elif exported.is_file():
+            script_path.write_text(exported.read_text().replace(original_checkout, str(checkout)))
+        else:
+            if not paths:
+                raise CheckpointError("missing agent script and model recordings; no model fallback")
+            plan = convert_recording(
+                paths,
+                role="reflector" if stage == "reflection" else "responder",
+                file_edits=edits_path if edits_path.exists() else None,
+            )
+            script_path.write_text(plan.model_dump_json().replace(original_checkout, str(checkout)))
+        # Relocate recorded worker paths into this isolated replay session.
+        relocated = script_path.read_text()
+        for old, new in {
+            "/sdo/session/tools": str(root / "tools"),
+            "/sdo/session/corpus": str(root / "corpus"),
+            "/opt/sdo/sdo/operator": str(operator_root),
+        }.items():
+            relocated = relocated.replace(old, new)
+        script_path.write_text(relocated)
         opened = (
             checkpoint.captures.get("open@pre-apply.json")
             or checkpoint.captures.get("open@settle.json")
             or checkpoint.captures.get("open@detect.json")
         )
-        snapshot = json.loads(opened) if opened is not None else {"namespace": namespace}
+        snapshot = json.loads(opened) if opened is not None else {}
+        snapshot.setdefault("namespace", namespace)
         publisher = _Publisher()
         captures = root / "corpus"
         captures.mkdir()
         for name, data in checkpoint.captures.items():
             (captures / name).write_bytes(data)
+        api = CapturedKubernetesAPI(checkpoint.captures) if stage == "responder" else None
+        if api is not None:
+            api.runs = json_format.MessageToDict(typed, preserving_proto_field_name=True).get(
+                "initial_program_runs", []
+            )
+        kubectl = shutil.which("kubectl")
+        binary = root / "sdo-operator"
+
+        def sync_captured_objects() -> None:
+            if api is not None:
+                for (kind, _), obj in api.objects.items():
+                    server.set_object(
+                        "services" if kind == "Service" else "deployments",
+                        dict(obj, kind=kind, apiVersion="v1" if kind == "Service" else "apps/v1"),
+                    )
+
+        def command(argv: list[str]) -> str:
+            if argv[0] == "sdo" and api is not None:
+                value = api.tool(*argv[1:])
+                sync_captured_objects()
+                return json.dumps(value)
+            if argv[0] == "kubectl":
+                if api is not None:
+                    try:
+                        value = api.command(argv)
+                        sync_captured_objects()
+                        return value
+                    except CheckpointError:
+                        pass
+                if kubectl is None:
+                    raise CheckpointError("kubectl is required for captured Kubernetes reads")
+                argv = [kubectl, *argv[1:]]
+            elif argv[0] == "sdo-operator":
+                if not binary.is_file():
+                    built = subprocess.run(
+                        ["go", "build", "-o", str(binary), "./cmd/sdo-operator"],
+                        cwd=operator_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                        check=False,
+                    )
+                    if built.returncode:
+                        raise CheckpointError(f"build replay operator: {built.stderr[-4096:]}")
+                argv = [str(binary), *argv[1:]]
+            else:
+                raise CheckpointError(f"uncaptured worker command: {argv[:3]}")
+            completed = subprocess.run(
+                argv,
+                cwd=checkout,
+                env={**os.environ, "SDO_OPERATOR_ROOT": str(operator_root)},
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+            if completed.returncode:
+                raise CheckpointError(f"replay command failed: {completed.stderr[-4096:]}")
+            if api is not None and kubectl is not None and argv[0] == kubectl:
+                api.objects = {
+                    (obj["kind"], obj["metadata"]["name"]): obj
+                    for obj in server.objects.values()
+                    if obj.get("kind") in {"Service", "Deployment"}
+                }
+            return completed.stdout
+
+        (root / "tools").mkdir()
         with (
+            captured_commands(root, command) as tool_env,
+            patch.dict(os.environ, tool_env),
+            patch.dict(
+                os.environ,
+                {
+                    "SDO_AGENT_SCRIPT": str(script_path),
+                    "SDO_TASK_PATH": str(task_path),
+                    "SDO_TOOLS_DIR": str(root / "tools"),
+                },
+            ),
+            script_environment() as script_env,
+            patch.dict(os.environ, script_env),
             FakeKubernetesAPIServer(snapshot) as server,
             patch.dict(
                 os.environ,
@@ -362,29 +514,22 @@ def replay_live_worker(
                     task_path,
                     "replay-result",
                     publisher,
-                    executor=lambda request: execute_incident(
-                        request, model="gpt-6-luna", provider="codex", executor=recording
-                    ),
+                    executor=lambda request: execute_incident(request, model="gpt-6-luna", provider="codex"),
                 )
             else:
                 if not isinstance(typed, ReflectionRequest):
                     raise CheckpointError("reflection checkpoint requires a reflection request")
                 guidance = typed.guidance or "baseline"
-                reflector = SessionReflector(
-                    CodexSessionBackend(model="gpt-6-luna", executor=recording), guidance=guidance
-                )
+                reflector = SessionReflector(CodexSessionBackend(model="gpt-6-luna"), guidance=guidance)
                 result = run_reflection_task(task_path, "replay-result", publisher, reflector=reflector)
         if publisher.payload is None:
-            raise CheckpointError("live worker did not publish a result")
+            raise CheckpointError("script worker did not publish a result")
         if stage == "reflection" and result.status == "completed":
             response = ReflectionResult()
             if not result.response.Unpack(response):
                 raise CheckpointError("reflection worker returned the wrong result type")
             if response.HasField("artifact_proposal"):
                 raise CheckpointError("proposal-only reflection recordings are unsupported; record direct file edits")
-            if checkpoint.file_edits is None:
-                raise CheckpointError("reflection recording has no direct file edits; record a new dispatch")
-            apply_file_edits(checkout, checkpoint.file_edits)
             edits = record_file_edits(checkout, commit)
             verdict = replay_broker_result(
                 StageCheckpoint(checkpoint.request, publisher.payload, captures=checkpoint.captures, file_edits=edits),
@@ -411,5 +556,4 @@ def replay_live_worker(
         "difference": difference[:80],
         "result": json.loads(publisher.payload),
         "proposals": proposals,
-        "prompt_changes": recording.prompt_changes,
     }

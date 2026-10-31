@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"sdo.dev/operator/memory/layout"
 )
@@ -30,22 +29,27 @@ func ReadArchitecture(checkout string) (string, error) {
 }
 
 func WriteGoal(checkout, application, objective string) error {
-	if checkout == "" || strings.TrimSpace(application) == "" || strings.TrimSpace(objective) == "" {
-		return fmt.Errorf("checkout, application, and health objective are required")
+	if checkout == "" || strings.TrimSpace(application) == "" {
+		return fmt.Errorf("checkout and application are required")
 	}
 	body := fmt.Sprintf("---\nschema_version: 1\nowner: human\napplication: %s\n---\n# Health objective\n\n%s\n", strconv.Quote(application), strings.TrimSpace(objective))
 	return writeBootstrapFile(checkout, layout.GoalFile, body)
 }
 
-// WriteSchema stamps the current operational-memory schema. On a repository at
-// an older schema it also migrates the layout, so the Upkeep actor commits one
-// self-consistent change.
+// WriteSchema initializes the current operational-memory schema for a fresh repository.
 func WriteSchema(checkout string) error {
 	if checkout == "" {
 		return fmt.Errorf("checkout is required")
 	}
-	if _, err := layout.Migrate(checkout); err != nil {
-		return fmt.Errorf("migrate operational memory: %w", err)
+	if _, err := os.Stat(filepath.Join(checkout, layout.SchemaVersionFile)); err == nil {
+		if _, err := layout.ReadTree(checkout); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := writeBootstrapFile(checkout, layout.SchemaVersionFile, strconv.Itoa(layout.CurrentSchemaVersion)+"\n"); err != nil {
+		return err
 	}
 	module := filepath.Join(checkout, layout.DiagnosticsGoModFile)
 	if err := os.MkdirAll(filepath.Dir(module), 0o755); err != nil {
@@ -57,17 +61,17 @@ func WriteSchema(checkout string) error {
 	return nil
 }
 
-func WriteArchitecture(checkout, application, acceptedSourceCommit, fingerprint, summary string) error {
-	for _, value := range []string{checkout, application, acceptedSourceCommit, fingerprint, summary} {
+func WriteArchitecture(checkout, application, acceptedSourceCommit, summary string) error {
+	for _, value := range []string{checkout, application, acceptedSourceCommit, summary} {
 		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("architecture requires checkout, application, accepted source, fingerprint, and summary")
+			return fmt.Errorf("architecture requires checkout, application, accepted source and inventory")
 		}
 	}
 	if layout.ContainsPhysicalPath(strings.ToLower(summary)) {
 		return fmt.Errorf("architecture summary contains a physical operational-memory path")
 	}
-	content := fmt.Sprintf("---\nschema_version: 1\ngenerated_at_commit: %s\ngenerated_at: %s\napplication: %s\ntopology_fingerprint: %s\n---\n%s\n",
-		acceptedSourceCommit, time.Now().UTC().Format(time.RFC3339Nano), strconv.Quote(application), fingerprint, strings.TrimSpace(summary))
+	content := fmt.Sprintf("---\nschema_version: 1\ngenerated_at_commit: %s\napplication: %s\n---\n%s\n",
+		acceptedSourceCommit, strconv.Quote(application), strings.TrimSpace(summary))
 	return writeBootstrapFile(checkout, layout.ArchitectureFile, content)
 }
 

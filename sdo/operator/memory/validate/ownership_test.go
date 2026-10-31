@@ -155,16 +155,12 @@ func TestOwnershipTable(t *testing.T) {
 		{"deployer cannot edit source later", Deployer, ProposalPhase, func(t *testing.T, r string) {
 			write(t, r, "app.txt", "deployed\n")
 		}, denied},
-		{"deployer architecture must stand alone", Deployer, InitialPhase, func(t *testing.T, r string) {
-			write(t, r, layout.ArchitectureFile, "---\nschema_version: 1\ngenerated_at_commit: x\n---\nx\n")
-			write(t, r, "app.txt", "deployed\n")
-		}, []string{RuleArchitectureAlone}},
 		{"deployer cannot edit detectors", Deployer, InitialPhase, func(t *testing.T, r string) {
 			write(t, r, healthDetector, "package objective\n\n// x\n")
 		}, denied},
-		{"upkeep cannot change detectors outside a migration", Upkeep, InitialPhase, func(t *testing.T, r string) {
+		{"upkeep cannot change detectors", Upkeep, InitialPhase, func(t *testing.T, r string) {
 			write(t, r, cacheDetector, "package cache\n\n// x\n")
-		}, []string{RuleUpkeepMigration}},
+		}, []string{RuleOwnershipDenied}},
 		{"upkeep stamps schema alone", Upkeep, InitialPhase, func(t *testing.T, r string) {
 			write(t, r, layout.SchemaVersionFile, "3\n")
 			write(t, r, layout.DiagnosticsGoModFile, "module m\n")
@@ -207,95 +203,6 @@ func TestInitialHealthJudgeMayAddOnlyHealthDetectorsToEmptyMemory(t *testing.T) 
 	}
 }
 
-const legacyIndex = `apiVersion: sdo.dev/v1alpha1
-kind: DetectorManifest
-sdkVersion: v0.1
-detectors:
-  - id: health
-    package: ./detectors/health/objective
-    constructor: New
-    class: health
-    owner: health_judge
-    watches:
-      - apiVersion: v1
-        kind: Pod
-    interval: 30s
-    persistence: {firing: 1, clearing: 1}
-    batching: {severity: critical, debounce: 500ms}
-    possiblePlaybooks:
-      - base
-    originatingCommit: initial
-`
-
-func legacyRepository(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
-	for rel, content := range map[string]string{
-		".sdo/schema-version":            "1\n",
-		".sdo/goal.md":                   "---\nschema_version: 1\nowner: human\n---\nGoal\n",
-		".sdo/arch.md":                   "---\nschema_version: 1\n---\nArch\n",
-		".sdo/playbooks/README.md":       "# Playbooks\n\n- [base](base/README.md)\n",
-		".sdo/playbooks/base/README.md":  "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: i\n---\n<RESOURCE_NAME>\n",
-		".sdo/diagnostics/manifest.yaml": legacyIndex,
-		".sdo/diagnostics/detectors/health/objective/detector.go": "package objective\n",
-	} {
-		write(t, root, rel, content)
-	}
-	commit(t, root, "legacy memory")
-	return root
-}
-
-func TestUpkeepMayMigrateLegacyDetectorsButNotRewriteThem(t *testing.T) {
-	request := func(root string) Request {
-		return Request{Root: root, Base: "HEAD", Actor: Upkeep, Phase: InitialPhase, Layers: Ownership}
-	}
-	root := legacyRepository(t)
-	if _, err := layout.Migrate(root); err != nil {
-		t.Fatal(err)
-	}
-	if got := diagnose(t, request(root)); len(got) != 0 {
-		t.Fatalf("faithful migration rejected: %v", got)
-	}
-	edit(t, root, healthManifest, "interval: 30s", "interval: 5s")
-	if got := ruleSet(diagnose(t, request(root))); !same(got, []string{RuleUpkeepMigration}) {
-		t.Fatalf("rewriting migration: rules = %v", got)
-	}
-	// A schema stamp does not license edits to accepted detector source.
-	current := goodTree(t)
-	commit(t, current, "base")
-	write(t, current, cacheDetector, "package cache\n\n// x\n")
-	write(t, current, layout.SchemaVersionFile, "3\n\n")
-	if got := ruleSet(diagnose(t, request(current))); !same(got, []string{RuleUpkeepMigration}) {
-		t.Fatalf("detector source edit during a schema stamp: rules = %v", got)
-	}
-}
-
-func TestInitialArchitectureMustCiteTheAcceptedSourceCommit(t *testing.T) {
-	root := t.TempDir()
-	write(t, root, ".sdo/goal.md", "---\nschema_version: 1\nowner: human\n---\nGoal\n")
-	commit(t, root, "human goal")
-	write(t, root, "app.txt", "deployed\n")
-	gitIn(t, root, "add", "-A")
-	gitIn(t, root, "commit", "-q", "-m", "sdo: validated\n\nSDO-Actor: deployer\nSDO-Phase: initial\nSDO-Validation: passed")
-	source := gitIn(t, root, "rev-parse", "HEAD")
-	request := Request{Root: root, Base: "HEAD", Actor: Deployer, Phase: InitialPhase, Layers: Semantic}
-
-	write(t, root, layout.ArchitectureFile, "---\nschema_version: 1\ngenerated_at_commit: "+source+"\n---\nArch\n")
-	if got := diagnose(t, request); len(got) != 0 {
-		t.Fatalf("architecture citing the accepted source was rejected: %v", got)
-	}
-	write(t, root, layout.ArchitectureFile, "---\nschema_version: 1\ngenerated_at_commit: deadbeef\n---\nArch\n")
-	if got := ruleSet(diagnose(t, request)); !same(got, []string{RuleArchitectureCommit}) {
-		t.Fatalf("wrong commit: rules = %v", got)
-	}
-
-	// A base that is not a deployer source commit cannot anchor architecture.
-	gitIn(t, root, "checkout", "-q", "--detach", "HEAD~1")
-	if got := ruleSet(diagnose(t, request)); !same(got, []string{RuleArchitectureBaseline}) {
-		t.Fatalf("unaccepted base: rules = %v", got)
-	}
-}
-
 func TestChangedPathsReportsTheActualDiff(t *testing.T) {
 	root := goodTree(t)
 	commit(t, root, "base")
@@ -313,9 +220,9 @@ func TestChangedPathsReportsTheActualDiff(t *testing.T) {
 }
 
 func TestEveryKindIsOwnedByEveryoneOrNoAgent(t *testing.T) {
-	// Outcomes, lifecycle provenance, and the retired outcome stream belong to
+	// Outcomes and lifecycle provenance belong to
 	// the controller: no actor may change them in any phase.
-	for _, kind := range []layout.Kind{layout.KindOutcome, layout.KindLifecycleProvenance, layout.KindLegacyOutcomes} {
+	for _, kind := range []layout.Kind{layout.KindOutcome, layout.KindLifecycleProvenance} {
 		for _, actor := range []Actor{Human, Deployer, HealthJudge, Responder, Upkeep} {
 			for _, phase := range []Phase{ProposalPhase, ReflectionPhase, InitialPhase, OutcomePhase} {
 				if allowed(actor, phase, kind, "") {
@@ -343,7 +250,7 @@ func TestOwnershipFollowsMemoryKindAndActor(t *testing.T) {
 		{incident, HealthJudge, InitialPhase, false},
 		{layout.LegacyDetectorManifestFile, Responder, ReflectionPhase, false},
 		{layout.LegacyDetectorManifestFile, HealthJudge, InitialPhase, false},
-		{layout.LegacyDetectorManifestFile, Upkeep, InitialPhase, true},
+		{layout.LegacyDetectorManifestFile, Upkeep, InitialPhase, false},
 		{layout.DetectorDir(layout.ClassIncident, "i") + "/detector.go", Responder, ReflectionPhase, true},
 		{layout.DetectorDir(layout.ClassHealth, "h") + "/detector.go", Responder, ReflectionPhase, false},
 		{".sdo/diagnostics/traffic/workloads/incident-x.yaml", Responder, ReflectionPhase, true},

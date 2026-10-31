@@ -28,7 +28,7 @@ historical claims against the incident's detector, action and outcome evidence.
 
 ## Operational memory layout (schema version 3)
 
-Detectors are registered by per-detector manifests at `.sdo/diagnostics/detectors/<health|incidents>/<id>/manifest.yaml` (the directory name is the detector ID). The former single `.sdo/diagnostics/manifest.yaml` index exists only in schema version 1 repositories; Upkeep migrates it. Schema version 3 also stores playbook references (`possiblePlaybooks`, detector `Playbooks`) as logical IDs; version 2 repositories used `.sdo/playbooks/<id>/README.md` paths. Readers must enumerate detector manifests instead of parsing one index.
+Detectors are registered by per-detector manifests at `.sdo/diagnostics/detectors/<health|incidents>/<id>/manifest.yaml` (the directory name is the detector ID). Schema version 3 stores playbook references (`possiblePlaybooks`, detector `Playbooks`) as logical IDs. Other schema versions fail fast; no format migration or retired outcome-stream import is provided. Readers must enumerate detector manifests instead of parsing one index.
 
 Program and drift integration: controller state and broker ledgers use generated ProtoJSON. State carries ownership adoption, ordinary batching, retained incident drift and `drift_admission` retry accounting. There is no active investigator worker, task/result protocol or verdict ConfigMap. Synthetic IDs are `drift.<program>` and `drift.unexplained`. Empty repeated fields may be omitted. Removed config tags 59–61 and state tag 32 are reserved; use coordinated worker/controller images after draining. Schema version 3 classifies program Go sources, shared libraries and corpus through `memory/layout`; policy/replay tests are centralized under `memory/validate`.
 
@@ -129,3 +129,5 @@ unrelated repairs in the outcome do not suppress credit. Every planned resource
 needs a successful receipt, exact observed plan equivalence, and independent
 outcome success. Match-to-NoMatch alone earns nothing. Summaries distinguish verification and mutation. Each program earns at most one
 success per outcome; failed live fast paths roll back and block revision trust.
+
+Validator-image identity is retired from current native receipts. Controller and responder image identities remain; historical `validator_image` fields do not establish current acceptance. Broker compilation executes the current controller binary in a bounded subprocess.

@@ -6,7 +6,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,10 +18,25 @@ _RESOURCES = {
         "pods": ("Pod", "pods"),
         "endpoints": ("Endpoints", "endpoints"),
         "events": ("Event", "events"),
+        "persistentvolumeclaims": ("PersistentVolumeClaim", "persistentVolumeClaims"),
+        "serviceaccounts": ("ServiceAccount", "serviceAccounts"),
+        "nodes": ("Node", "nodes"),
+        "secrets": ("Secret", "secrets"),
     },
-    "apps/v1": {"deployments": ("Deployment", "deployments"), "replicasets": ("ReplicaSet", "replicaSets")},
+    "apps/v1": {
+        "deployments": ("Deployment", "deployments"),
+        "replicasets": ("ReplicaSet", "replicaSets"),
+        "statefulsets": ("StatefulSet", "statefulSets"),
+        "daemonsets": ("DaemonSet", "daemonSets"),
+    },
     "discovery.k8s.io/v1": {"endpointslices": ("EndpointSlice", "endpointSlices")},
-    "networking.k8s.io/v1": {"networkpolicies": ("NetworkPolicy", "networkPolicies")},
+    "networking.k8s.io/v1": {
+        "networkpolicies": ("NetworkPolicy", "networkPolicies"),
+        "ingresses": ("Ingress", "ingresses"),
+    },
+    "batch/v1": {"jobs": ("Job", "jobs"), "cronjobs": ("CronJob", "cronJobs")},
+    "autoscaling/v2": {"horizontalpodautoscalers": ("HorizontalPodAutoscaler", "horizontalPodAutoscalers")},
+    "policy/v1": {"poddisruptionbudgets": ("PodDisruptionBudget", "podDisruptionBudgets")},
 }
 
 
@@ -31,29 +46,49 @@ class FakeKubernetesAPIServer:
         if not isinstance(self.namespace, str) or not self.namespace:
             raise ValueError("captured snapshot requires a namespace")
         self.objects: dict[tuple[str, str], dict[str, Any]] = {}
+        self._condition = threading.Condition(threading.RLock())
+        self._revision = 0
+        self._events: list[tuple[int, str, dict[str, Any]]] = []
+        self._kubelet: dict[str, tuple[dict[str, Any], str]] = {}
         for api_version, group in _RESOURCES.items():
             for plural, (kind, collection) in group.items():
                 for item in snapshot.get(collection) or []:
-                    value = json.loads(json.dumps(item))
-                    value["apiVersion"] = api_version
-                    value["kind"] = kind
-                    self.objects[(plural, value["metadata"]["name"])] = value
+                    self.set_object(plural, dict(item, apiVersion=api_version, kind=kind))
         server = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
                 return
 
-            def reply(self, status: int, value: dict[str, Any]) -> None:
-                data = json.dumps(value).encode()
+            def reply(self, status: int, value: dict[str, Any] | str) -> None:
+                data = value.encode() if isinstance(value, str) else json.dumps(value).encode()
                 self.send_response(status)
-                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Type", "text/plain" if isinstance(value, str) else "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
 
             def do_GET(self) -> None:
-                status, value = server.read(urlsplit(self.path).path)
+                parsed = urlsplit(self.path)
+                query = parse_qs(parsed.query)
+                if query.get("watch") == ["true"]:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    revision = int(query.get("resourceVersion", ["0"])[0])
+                    plural = parsed.path.rsplit("/", 1)[-1]
+                    # Bounded long poll; the informer reconnects with the last revision.
+                    with server._condition:
+                        events = server._watch_events(plural, revision)
+                        if not events:
+                            server._condition.wait_for(
+                                lambda: bool(server._watch_events(plural, revision)), timeout=1.0
+                            )
+                            events = server._watch_events(plural, revision)
+                    for event in events:
+                        self.wfile.write(json.dumps(event).encode() + b"\n")
+                    return
+                status, value = server.read(parsed.path)
                 self.reply(status, value)
 
             def do_PATCH(self) -> None:
@@ -93,7 +128,54 @@ class FakeKubernetesAPIServer:
         path.chmod(0o600)
         return path
 
-    def read(self, path: str) -> tuple[int, dict[str, Any]]:
+    def set_object(self, plural: str, value: dict[str, Any]) -> None:
+        """Publish a copied object and an informer event; Secret values are discarded."""
+        value = json.loads(json.dumps(value))
+        if plural == "secrets":
+            if "metadata" not in value:
+                value = {
+                    "metadata": {key: value[key] for key in ("name", "namespace", "labels") if key in value},
+                    "type": value.get("type", "Opaque"),
+                    "data": dict.fromkeys(value.get("dataKeys", []), ""),
+                }
+            metadata = value["metadata"]
+            value = {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "type": value.get("type", "Opaque"),
+                "metadata": {key: metadata[key] for key in ("name", "namespace", "labels") if key in metadata},
+                "data": dict.fromkeys(sorted(set(value.get("data", {})) | set(value.get("stringData", {}))), ""),
+            }
+        with self._condition:
+            key = (plural, value["metadata"]["name"])
+            event_type = "MODIFIED" if key in self.objects else "ADDED"
+            self._revision += 1
+            value["metadata"]["resourceVersion"] = str(self._revision)
+            self.objects[key] = value
+            self._events.append((self._revision, plural, {"type": event_type, "object": value}))
+            self._events = self._events[-256:]
+            self._condition.notify_all()
+
+    def _watch_events(self, plural: str, revision: int) -> list[dict[str, Any]]:
+        return [event for rev, resource, event in self._events if resource == plural and rev > revision]
+
+    def set_kubelet(self, node: str, summary: dict[str, Any], cadvisor: str = "") -> None:
+        with self._condition:
+            self._kubelet[node] = (json.loads(json.dumps(summary)), cadvisor)
+
+    def read(self, path: str) -> tuple[int, Any]:
+        with self._condition:
+            return self._read(path)
+
+    def _read(self, path: str) -> tuple[int, Any]:
+        # Subresource seam: pods/<name>/log can be added here independently.
+        parts = path.split("/")
+        if len(parts) >= 7 and parts[1:4] == ["api", "v1", "nodes"] and parts[5] == "proxy":
+            data = self._kubelet.get(parts[4])
+            endpoint = "/".join(parts[6:])
+            if data is not None and endpoint in {"stats/summary", "metrics/cadvisor"}:
+                return 200, data[0] if endpoint == "stats/summary" else data[1]
+            return 404, {"kind": "Status", "message": "uncaptured kubelet endpoint"}
         if path == "/version":
             return 200, {"major": "1", "minor": "30", "gitVersion": "v1.30.0"}
         if path == "/api":
@@ -122,7 +204,7 @@ class FakeKubernetesAPIServer:
                         {
                             "name": plural,
                             "singularName": kind.lower(),
-                            "namespaced": True,
+                            "namespaced": kind != "Node",
                             "kind": kind,
                             "verbs": ["get", "list", "watch", "patch", "update"],
                         }
@@ -130,6 +212,8 @@ class FakeKubernetesAPIServer:
                     ],
                 }
             parts = path.removeprefix(prefix + "/").split("/") if path.startswith(prefix + "/") else []
+            if parts and parts[0] == "nodes" and api_version == "v1":
+                parts = ["namespaces", self.namespace, *parts]
             if (
                 len(parts) not in {3, 4}
                 or parts[0] != "namespaces"
@@ -145,7 +229,7 @@ class FakeKubernetesAPIServer:
             return 200, {
                 "apiVersion": api_version,
                 "kind": kind + "List",
-                "metadata": {},
+                "metadata": {"resourceVersion": str(self._revision)},
                 "items": [value for (resource, _), value in self.objects.items() if resource == plural],
             }
         return 404, {"kind": "Status", "message": "uncaptured Kubernetes API path"}
@@ -162,5 +246,9 @@ class FakeKubernetesAPIServer:
                 else:
                     target[key] = item
 
-        merge(current, value)
-        return 200, current
+        with self._condition:
+            current = json.loads(json.dumps(current))
+            merge(current, value)
+            plural = path.split("/")[-2]
+            self.set_object(plural, current)
+            return 200, self.objects[(plural, current["metadata"]["name"])]

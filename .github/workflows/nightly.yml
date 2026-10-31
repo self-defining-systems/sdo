@@ -38,12 +38,17 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
+      - name: Install bubblewrap for agent-script tests
+        run: |
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --ro-bind / / --dev /dev --proc /proc true
       - name: Recorded reflection and scripted worker end-to-end compilation
         if: always()
         run: |
           uv run pytest -n 2 --durations=30 \
             tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
-            tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py
+            tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py
       - name: Complete race suite including replay and chaos
         run: bash scripts/test_go_ci.sh nightly
       - name: Bounded fuzz campaigns (seed cases also run on every PR)
@@ -67,7 +72,7 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: false
-      - name: Cache image schema-identity build
+      - name: Cache Go builds for image preflight
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
@@ -84,16 +89,15 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
-      - name: Select affected images and compute schema identity
+      - name: Select affected images
         id: image-inputs
         env:
           CONTROLLER: true
-          VALIDATOR: true
           RESPONDER: true
           BENCHMARK: true
         run: |
           images=()
-          for image in controller validator responder benchmark; do
+          for image in controller responder benchmark; do
             variable="${image^^}"
             if [ "${!variable}" = "true" ]; then
               images+=("${image}")
@@ -101,8 +105,6 @@ jobs:
           done
           echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
           (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
-          identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
-          echo "SDO_VALIDATOR_SCHEMA_IDENTITY=${identity}" >> "${GITHUB_ENV}"
       - name: Build affected images with persistent layers
         uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
         with:
@@ -113,8 +115,6 @@ jobs:
           set: |
             controller.cache-from=type=gha,scope=sdo-controller
             controller.cache-to=type=gha,scope=sdo-controller,mode=max
-            validator.cache-from=type=gha,scope=sdo-validator
-            validator.cache-to=type=gha,scope=sdo-validator,mode=max
             responder.cache-from=type=gha,scope=sdo-responder
             responder.cache-to=type=gha,scope=sdo-responder,mode=max
             benchmark.cache-from=type=gha,scope=sdo-benchmark

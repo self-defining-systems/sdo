@@ -39,7 +39,6 @@ const (
 	PlaybookFileName       = "README.md"
 	PlaybookScriptsDir     = "scripts"
 	OutcomesDir            = Dir + "/outcomes"
-	LegacyOutcomesFile     = Dir + "/outcomes.jsonl"
 	ApplicationGenerator   = "application"
 	IncidentGenerator      = "incident"
 	IncidentWorkloadPrefix = "incident-"
@@ -77,7 +76,6 @@ const (
 	KindPlaybook                 Kind = "playbook"
 	KindPlaybookScript           Kind = "playbook-script"
 	KindOutcome                  Kind = "outcome"
-	KindLegacyOutcomes           Kind = "legacy-outcomes"
 )
 
 // IsDetectorManifest reports whether the kind is a per-detector manifest.
@@ -189,8 +187,6 @@ func Classify(p string) (Kind, string, bool) {
 		return only(parts, KindArchitecture)
 	case "lifecycle-provenance.yaml":
 		return only(parts, KindLifecycleProvenance)
-	case "outcomes.jsonl":
-		return only(parts, KindLegacyOutcomes)
 	case "outcomes":
 		if len(parts) == 2 {
 			if match := outcomeFile.FindStringSubmatch(parts[1]); match != nil {

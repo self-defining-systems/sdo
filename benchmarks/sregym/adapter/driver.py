@@ -254,10 +254,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--responder-image",
         default=config.get("responder_image", "sdo-sregym-responder:v0.1.0"),
     )
-    parser.add_argument(
-        "--validator-image",
-        default=config.get("validator_image", "sdo-detector-validator:v0.1.0"),
-    )
     parser.add_argument("--repository-pvc", default=config.get("repository_pvc", "sdo-application-repository"))
     parser.add_argument("--credentials-secret", default=config.get("credentials_secret", "sdo-codex-credentials"))
     parser.add_argument("--registry-push-secret", default=config.get("registry_push_secret", "sdo-registry-push"))
@@ -484,6 +480,7 @@ def _deployed_lifecycle_context(
             name = config_map.get("name")
             if isinstance(name, str) and name and config_map.get("optional") is not True:
                 active_keys.add(("ConfigMap", name))
+    # Optional human goal context is useful in benchmark runs; it binds no detector digest.
     return DeployedLifecycleContext(
         health_objective=health_objective,
         active_resources=[ActiveTopologyResourceDTO(kind=kind, name=name) for kind, name in sorted(active_keys)],
@@ -623,7 +620,6 @@ def _launch_native_lifecycle(
         application=application,
         controller_image=args.controller_image,
         responder_image=args.responder_image,
-        validator_image=args.validator_image,
         repository_pvc=args.repository_pvc,
         credentials_secret=args.credentials_secret,
         model=args.model,
@@ -668,14 +664,14 @@ def _launch_native_lifecycle(
         )
     if _has_accepted_lifecycle(repository):
         # A seeded workspace already carries an independently accepted lifecycle (goal, architecture, health
-        # detectors): install the controller over it instead of running the deployer and health judge again.
+        # detectors): install the controller over it instead of running source deployment and the health judge again.
         if args.agent_registrations:
             _publish_agent_registrations(
                 Path(args.agent_registrations),
                 control_namespace,
                 kubeconfig,
                 install.responder_image,
-                {install.controller_image, install.responder_image, install.validator_image},
+                {install.controller_image, install.responder_image},
             )
         receipt = install_existing(install)
         # Bounded nonpersistent installs already wait for completion, so their Job is no longer active.
@@ -731,7 +727,6 @@ def _native_install_for_run(
         application=application,
         controller_image=args.controller_image,
         responder_image=args.responder_image,
-        validator_image=args.validator_image,
         repository_pvc=args.repository_pvc,
         credentials_secret=args.credentials_secret,
         model=args.model,
@@ -925,7 +920,6 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         application=application,
         controller_image=args.controller_image,
         responder_image=args.responder_image,
-        validator_image=args.validator_image,
         repository_pvc=args.repository_pvc,
         credentials_secret=args.credentials_secret,
         model=args.model,

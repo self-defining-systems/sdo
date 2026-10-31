@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -53,15 +52,12 @@ func (s *run) semantic(ctx context.Context) error {
 			return err
 		}
 	}
-	return s.architectureCommit(ctx)
+	return nil
 }
 
 func (s *run) completeness() {
 	if !s.complete() {
 		return
-	}
-	if s.goal == nil && !s.hasFile(layout.GoalFile) {
-		s.add(Semantic, Diagnostic{Rule: RuleGoalMissing, Path: layout.GoalFile, Message: "goal.md is missing", Hint: "the human goal document is required"})
 	}
 	if s.arch == nil && !s.hasFile(layout.ArchitectureFile) {
 		s.add(Semantic, Diagnostic{Rule: RuleArchitectureMissing, Path: layout.ArchitectureFile, Message: "arch.md is missing"})
@@ -298,58 +294,6 @@ func (s *run) readFile(rel string) (textFile, bool) {
 		}
 	}
 	return textFile{}, false
-}
-
-// architectureCommit enforces that a deployer's initial architecture cites the
-// broker-accepted source commit it was derived from, which is the base.
-func (s *run) architectureCommit(ctx context.Context) error {
-	if s.req.Actor != Deployer || s.req.Phase != InitialPhase || s.req.Base == "" || s.arch == nil || !containsPath(s.changed, layout.ArchitectureFile) {
-		return nil
-	}
-	fail := func(rule, message, hint string) {
-		s.add(Semantic, Diagnostic{Rule: rule, Path: layout.ArchitectureFile, Message: message, Hint: hint})
-	}
-	sourceCommit, err := gitText(ctx, s.req.Root, "rev-parse", s.req.Base+"^{commit}")
-	if err != nil {
-		return err
-	}
-	message, err := gitText(ctx, s.req.Root, "log", "-1", "--format=%B", sourceCommit)
-	if err != nil {
-		return err
-	}
-	wrapped := "\n" + message + "\n"
-	if !strings.Contains(wrapped, "\nSDO-Actor: deployer\n") || !strings.Contains(wrapped, "\nSDO-Phase: initial\n") {
-		fail(RuleArchitectureBaseline, "initial architecture must follow a broker-accepted deployer source commit", "propose the architecture only after the source proposal is accepted")
-		return nil
-	}
-	changed, err := gitText(ctx, s.req.Root, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sourceCommit)
-	if err != nil {
-		return err
-	}
-	hasSource := false
-	for _, p := range strings.Split(changed, "\n") {
-		if p != "" && !layout.IsMemoryPath(p) {
-			hasSource = true
-			break
-		}
-	}
-	if !hasSource {
-		fail(RuleArchitectureBaseline, "initial architecture has no accepted deployer source commit", "")
-		return nil
-	}
-	parts := strings.SplitN(s.arch.doc.Source, "---\n", 3)
-	var metadata struct {
-		GeneratedAtCommit string `yaml:"generated_at_commit"`
-	}
-	if len(parts) == 3 {
-		if err := yaml.Unmarshal([]byte(parts[1]), &metadata); err != nil {
-			return nil
-		}
-	}
-	if metadata.GeneratedAtCommit != sourceCommit {
-		fail(RuleArchitectureCommit, fmt.Sprintf("generated_at_commit must cite the accepted source commit %s", sourceCommit), "set generated_at_commit in the front matter")
-	}
-	return nil
 }
 
 func containsPath(paths []string, target string) bool {

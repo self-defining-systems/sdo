@@ -59,7 +59,6 @@ def _receipt(ledger: dict[str, object] | None = None) -> dict[str, object]:
         control_namespace="demo-sdo",
         controller_image="controller:go",
         responder_image="responder:python",
-        validator_image="validator:go",
         controller_pod_uid="pod-uid",
         responder_job_evidence=[
             {"incident_id": "incident-1", "job_name": "sdo-incident-1-hash", "job_uid": "worker-uid", "succeeded": True}
@@ -121,7 +120,6 @@ def test_native_receipt_accepts_verified_fast_path_without_responder_job() -> No
         control_namespace="demo-sdo",
         controller_image="controller:go",
         responder_image="responder:python",
-        validator_image="validator:go",
         controller_pod_uid="pod-uid",
         responder_job_evidence=[],
     )

@@ -102,13 +102,11 @@ def up(args: Any) -> int:
         from benchmarks.sregym.fastloop.cli import node_images_match
         from benchmarks.sregym.fastloop.toy_images import load_images
 
-        desired = Images(
-            controller=args.controller_image, responder=args.responder_image, validator=args.validator_image
-        )
+        desired = Images(controller=args.controller_image, responder=args.responder_image)
         if env.images != desired or not node_images_match(env.cluster, desired):
             load_images(
                 env.cluster,
-                [desired.controller, desired.responder, desired.validator],
+                [desired.controller, desired.responder],
                 record_path=run_dir / "image_delivery.jsonl",
             )
             env = FastloopEnvironment.load(run_dir)
@@ -159,12 +157,12 @@ def up(args: Any) -> int:
         check=True,
     )
     created = time.monotonic()
-    images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
+    images = Images(controller=args.controller_image, responder=args.responder_image)
     from benchmarks.sregym.fastloop.toy_images import load_images
 
     load_images(
         cluster,
-        [image, images.controller, images.responder, images.validator, *CALICO_IMAGES],
+        [image, images.controller, images.responder, *CALICO_IMAGES],
         record_path=run_dir / "image_delivery.jsonl",
     )
     images_loaded = time.monotonic()
@@ -284,7 +282,6 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
             controller_namespace=environment.namespace + "-sdo",
             controller_image=environment.images.controller,
             responder_image=environment.images.responder,
-            validator_image=environment.images.validator,
             repository_pvc="sdo-application-repository",
             credentials_secret="sdo-agent-credentials",
             model="gpt-6-luna",
@@ -317,11 +314,11 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
         capture_output=True,
     )
     publish_agent_registrations(
-        ROOT / "benchmarks/sregym/adapter/scripted_registrations",
+        config.agent_registrations or ROOT / "benchmarks/sregym/fastloop/agent_registrations",
         install.control_namespace,
         environment.kubeconfig,
         environment.images.responder,
-        {environment.images.controller, environment.images.responder, environment.images.validator},
+        {environment.images.controller, environment.images.responder},
     )
     receipt = install_existing(install)
     wait_for_baseline(environment, receipt.accepted_commit)

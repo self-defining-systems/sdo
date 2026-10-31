@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/sdk/inputs"
 	"strings"
 	"testing"
 	"time"
@@ -106,7 +107,7 @@ func testAcceptedSourceAfterMemoryCommit(t *testing.T, withTree bool) {
 				t.Fatal("render changed deployed revision annotations")
 			}
 		}
-		view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{*deployed}, ServiceList: []corev1.Service{*service}}, Source: source, SourceCommit: commit}
+		view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{*deployed}, ServiceList: []corev1.Service{*service}}), Source: source, SourceCommit: commit}
 		if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
 			t.Fatalf("unchanged deployment reset=%v: %+v %v", reset, diff, err)
 		}
@@ -149,7 +150,7 @@ func TestAcceptedSourceRenderFailureIsObjectScoped(t *testing.T) {
 	}
 	service.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
 	ref.Kind, ref.APIVersion, ref.Name = "Service", "v1", "api"
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*service}}, Source: source, SourceCommit: commit}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*service}}), Source: source, SourceCommit: commit}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || !diff.Changed {
 		t.Fatalf("lost routing evidence during workload gap: %+v %v", diff, err)
 	}

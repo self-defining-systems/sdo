@@ -19,10 +19,10 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
@@ -95,7 +95,7 @@ const (
 )
 
 // TestCLIAndBrokerAgreeOnAcceptance exercises every layer through the real CLI
-// and the broker pipeline, including the validation Job's actual runner body.
+// and the broker pipeline, including the bounded subprocess runner.
 // Any caller-only diagnostic or omitted layer changes these verdicts/rules.
 func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "sdo-operator")
@@ -110,10 +110,6 @@ func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
 
 	baseline := t.TempDir()
 	put(t, baseline, "healthy.json", `{"namespace":"demo","services":[],"pods":[]}`, 0644)
-	schema, err := builder.SchemaIdentity(operatorRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	type parityCase struct {
 		name            string
@@ -218,7 +214,6 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 		"manifest-parse":                validate.RuleManifestParse,
 		"manifest-invalid":              validate.RuleManifestInvalid,
 		"manifest-location":             validate.RuleManifestLocation,
-		"goal-missing":                  validate.RuleGoalMissing,
 		"architecture-missing":          validate.RuleArchitectureMissing,
 		"goal-owner":                    validate.RuleGoalOwner,
 		"manifest-missing":              validate.RuleManifestMissing,
@@ -263,9 +258,9 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 		{name: "protected health registration", actor: validate.Responder, phase: validate.ReflectionPhase, edit: func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/diagnostics/detectors/health/health/manifest.yaml", "interval: 30s", "interval: 20s")
 		}, want: []string{validate.RuleOwnershipDenied, validate.RuleProtectedDetector}},
-		{name: "upkeep requires migration", actor: validate.Upkeep, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
+		{name: "upkeep cannot change detectors", actor: validate.Upkeep, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", "package detector", "package detector\n// changed")
-		}, want: []string{validate.RuleUpkeepMigration}},
+		}, want: []string{validate.RuleOwnershipDenied}},
 		{name: "unknown phase", actor: validate.Responder, phase: "unknown", edit: func(t *testing.T, r string) {
 			put(t, r, "app.txt", "change\n", 0o644)
 		}, want: []string{validate.RuleUnknownPhase}},
@@ -295,26 +290,6 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", strings.Replace(incidentManifest, "%s", "base", 1), 0o644)
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", parityDetector(t, "dns"), 0o644)
 		}, want: []string{validate.RuleInitialHealthOnly}, allowAdditional: true},
-		{name: "architecture accepted source", actor: validate.Deployer, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
-			replaceParityText(t, r, ".sdo/arch.md", "generated_at_commit:", "generated_at_commit: deadbeef #")
-		}, want: []string{validate.RuleArchitectureBaseline}},
-		{name: "architecture source binding", actor: validate.Deployer, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
-			put(t, r, "app.txt", "deployed\n", 0o644)
-			runGit(t, r, "add", "-A")
-			runGit(t, r, "commit", "-qm", "source\n\nSDO-Actor: deployer\nSDO-Phase: initial")
-			replaceParityText(t, r, ".sdo/arch.md", "generated_at_commit:", "generated_at_commit: deadbeef #")
-		}, want: []string{validate.RuleArchitectureCommit}},
-		{name: "architecture alone", actor: validate.Deployer, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
-			put(t, r, "app.txt", "changed\n", 0o644)
-			runGit(t, r, "add", "-A")
-			runGit(t, r, "commit", "-qm", "source\n\nSDO-Actor: deployer\nSDO-Phase: initial")
-			head, err := exec.Command("git", "-C", r, "rev-parse", "HEAD").Output()
-			if err != nil {
-				t.Fatal(err)
-			}
-			put(t, r, ".sdo/arch.md", "---\nschema_version: 1\ngenerated_at_commit: "+strings.TrimSpace(string(head))+"\n---\nArchitecture\n", 0o644)
-			put(t, r, "app.txt", "changed again\n", 0o644)
-		}, want: []string{validate.RuleArchitectureAlone}},
 	}...)
 	cases = append(cases, []parityCase{
 		{"direct program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
@@ -559,7 +534,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			if out, err := exec.Command("git", "clone", "--quiet", "--no-local", root, accepted).CombinedOutput(); err != nil {
 				t.Fatalf("clone accepted: %v %s", err, out)
 			}
-			repository, err := broker.New(accepted, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema, baseline: baseline}))
+			repository, err := broker.New(accepted, t.TempDir(), (broker.SubprocessValidator{Binary: binary, OperatorRoot: operatorRoot, HealthyBaseline: baseline}).Validator())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -642,6 +617,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 					t.Fatalf("CLI accepted effect without typed skip note: %+v", report)
 				}
 			}
+			validationStart := time.Now()
 			var publishErr error
 			var receipt broker.Receipt
 			if test.phase == validate.ReflectionPhase && test.actor == validate.Responder {
@@ -649,6 +625,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			} else {
 				receipt, publishErr = repository.Publish(context.Background(), "incident", test.actor, test.phase)
 			}
+			t.Logf("broker validation wall time: %s", time.Since(validationStart))
 			err = publishErr
 			head, headErr := exec.Command("git", "-C", accepted, "rev-parse", "HEAD").Output()
 			if headErr != nil {
@@ -819,35 +796,6 @@ func replaceParityText(t *testing.T, root, rel, before, after string) {
 // subprocessParityJob replaces only cluster scheduling/isolation, which are
 // outside acceptance rules. Publication stages the real tree and invokes the
 // shipped validator binary, including healthy replay and its report transport.
-type subprocessParityJob struct{ binary, operatorRoot, schema, baseline string }
-
-func (j subprocessParityJob) Validate(ctx context.Context, r broker.ValidationJobRequest) (broker.ValidationJobReceipt, error) {
-	args := []string{"validate", "--app", r.CandidateRoot, "--operator-root", j.operatorRoot, "--expect-schema", j.schema}
-	needed, err := validate.BaselineGateRequired(r.CandidateRoot, r.ChangedPaths)
-	if err != nil {
-		return broker.ValidationJobReceipt{}, err
-	}
-	if needed {
-		args = append(args, "--healthy-baseline", j.baseline)
-	}
-	cmd := exec.CommandContext(ctx, j.binary, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-	diagnostics, err := validate.ParseReport(stdout.String())
-	if err != nil {
-		return broker.ValidationJobReceipt{}, fmt.Errorf("validator subprocess: %v: %v: %s", runErr, err, stderr.String())
-	}
-	if err := validate.Err(diagnostics); err != nil {
-		return broker.ValidationJobReceipt{}, err
-	}
-	if runErr != nil {
-		return broker.ValidationJobReceipt{}, runErr
-	}
-	return broker.ValidationJobReceipt{CandidateTree: r.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true, ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true}, nil
-}
-
 func copyParityChange(t *testing.T, source, target, name string) {
 	t.Helper()
 	from, to := filepath.Join(source, name), filepath.Join(target, name)

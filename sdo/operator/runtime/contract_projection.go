@@ -301,9 +301,6 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		})
 	}
 	for _, reference := range result.ProposedArtifactIDs {
-		if reference == layout.LegacyOutcomesFile {
-			continue
-		}
 		id, err := layout.ArtifactID(reference)
 		if err != nil {
 			return nil, err

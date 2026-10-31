@@ -78,7 +78,6 @@ def native_production_receipt(
     control_namespace: str,
     controller_image: str,
     responder_image: str,
-    validator_image: str,
     controller_pod_uid: str,
     responder_job_evidence: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -92,7 +91,6 @@ def native_production_receipt(
         controller_workload="batch/v1 Job/sdo-controller-run",
         controller_image=controller_image,
         responder_image=responder_image,
-        validator_image=validator_image,
         controller_pod_uid=controller_pod_uid,
     )
     receipt.recorded_at.FromDatetime(datetime.now(timezone.utc))

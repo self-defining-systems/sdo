@@ -104,8 +104,6 @@ type ControllerConfig struct {
 	// A native launch must also use proposal-only worker mounts; these fields
 	// are checked together before the controller acquires its lease.
 	BrokerMode       string `protobuf:"bytes,46,opt,name=broker_mode,json=brokerMode,proto3" json:"broker_mode,omitempty"`
-	ValidatorImage   string `protobuf:"bytes,47,opt,name=validator_image,json=validatorImage,proto3" json:"validator_image,omitempty"`
-	SchemaIdentity   string `protobuf:"bytes,48,opt,name=schema_identity,json=schemaIdentity,proto3" json:"schema_identity,omitempty"`
 	ResponderBackend string `protobuf:"bytes,49,opt,name=responder_backend,json=responderBackend,proto3" json:"responder_backend,omitempty"`
 	ResponderModel   string `protobuf:"bytes,50,opt,name=responder_model,json=responderModel,proto3" json:"responder_model,omitempty"`
 	WorkerMountMode  string `protobuf:"bytes,51,opt,name=worker_mount_mode,json=workerMountMode,proto3" json:"worker_mount_mode,omitempty"`
@@ -482,20 +480,6 @@ func (x *ControllerConfig) GetBrokerMode() string {
 	return ""
 }
 
-func (x *ControllerConfig) GetValidatorImage() string {
-	if x != nil {
-		return x.ValidatorImage
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetSchemaIdentity() string {
-	if x != nil {
-		return x.SchemaIdentity
-	}
-	return ""
-}
-
 func (x *ControllerConfig) GetResponderBackend() string {
 	if x != nil {
 		return x.ResponderBackend
@@ -647,7 +631,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xd4\x1d\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xb0\x1d\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -699,9 +683,7 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x1acontroller_artifact_digest\x18, \x01(\tR\x18controllerArtifactDigest\x12/\n" +
 	"\x13controller_revision\x18- \x01(\tR\x12controllerRevision\x12\x1f\n" +
 	"\vbroker_mode\x18. \x01(\tR\n" +
-	"brokerMode\x12'\n" +
-	"\x0fvalidator_image\x18/ \x01(\tR\x0evalidatorImage\x12'\n" +
-	"\x0fschema_identity\x180 \x01(\tR\x0eschemaIdentity\x12+\n" +
+	"brokerMode\x12+\n" +
 	"\x11responder_backend\x181 \x01(\tR\x10responderBackend\x12'\n" +
 	"\x0fresponder_model\x182 \x01(\tR\x0eresponderModel\x12*\n" +
 	"\x11worker_mount_mode\x183 \x01(\tR\x0fworkerMountMode\x12E\n" +
@@ -727,7 +709,7 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x0ftoolchain_image\x18H \x01(\tR\x0etoolchainImageB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
-	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>R\x06brokerR\vbroker_argsR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourB\x88\x02\n" +
+	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b/\x100J\x04\b0\x101J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>R\x06brokerR\vbroker_argsR\x0fvalidator_imageR\x0fschema_identityR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourB\x88\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x15ControllerConfigProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

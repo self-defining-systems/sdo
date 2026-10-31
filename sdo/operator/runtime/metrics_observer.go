@@ -8,13 +8,9 @@ import (
 	"sync"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
-	policyv1 "k8s.io/api/policy/v1"
-
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/metrics"
-	"sdo.dev/operator/sdk/traffic"
 )
 
 // DefaultMetricsQueryTimeout bounds each metric query, and the alerts read,
@@ -239,56 +235,19 @@ func (p MetricsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	if err != nil || p.Observer == nil {
 		return base, err
 	}
-	return metricsContext{DetectionContext: base, frozen: p.Observer.freeze(ctx)}, nil
+	frozen := p.Observer.freeze(ctx)
+	return inputs.New(base).WithMetrics(frozen).WithAlerts(frozen), nil
 }
 
-// metricsContext wraps a snapshot with the cycle's frozen metrics. It keeps
-// the wrapped snapshot's other optional views visible, so wrapping never
-// hides what capture and replay read.
-type metricsContext struct {
-	sdk.DetectionContext
-	frozen *frozenMetrics
+func (f *frozenMetrics) MetricResult(id string) (metrics.Result, bool) {
+	f.load()
+	r, ok := f.results[id]
+	return r, ok
 }
-
-func (c metricsContext) MetricResult(id string) (metrics.Result, bool) {
-	c.frozen.load()
-	result, ok := c.frozen.results[id]
-	return result, ok
-}
-
-func (c metricsContext) AlertsResult() (metrics.AlertsResult, bool) {
-	c.frozen.load()
-	if c.frozen.alerts == nil {
+func (f *frozenMetrics) AlertsResult() (metrics.AlertsResult, bool) {
+	f.load()
+	if f.alerts == nil {
 		return metrics.AlertsResult{}, false
 	}
-	return *c.frozen.alerts, true
-}
-
-func (c metricsContext) TrafficWindow(workload string) (traffic.Window, bool) {
-	return traffic.WindowFrom(c.DetectionContext, workload)
-}
-
-func (c metricsContext) StatefulSets() []appsv1.StatefulSet {
-	if view, ok := c.DetectionContext.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
-		return view.StatefulSets()
-	}
-	return nil
-}
-
-func (c metricsContext) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler {
-	if view, ok := c.DetectionContext.(interface {
-		HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
-	}); ok {
-		return view.HorizontalPodAutoscalers()
-	}
-	return nil
-}
-
-func (c metricsContext) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
-	if view, ok := c.DetectionContext.(interface {
-		PodDisruptionBudgets() []policyv1.PodDisruptionBudget
-	}); ok {
-		return view.PodDisruptionBudgets()
-	}
-	return nil
+	return *f.alerts, true
 }

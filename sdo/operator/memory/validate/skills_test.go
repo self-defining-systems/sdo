@@ -19,18 +19,13 @@ var skillsRoot = filepath.Join("..", "..", "..", "skills")
 
 // internalRules are validator rules no agent skill teaches, each with the reason.
 var internalRules = map[string]string{
-	RuleLegacyManifest:       "Upkeep migrates schema versions; authoring agents never see a legacy manifest",
-	RuleSchemaVersion:        "the schema-version file is controller metadata, changed only by Upkeep",
-	RuleGoalMissing:          "the human goal is installed before any agent runs",
-	RuleArchitectureMissing:  "the deployer's architecture stage is not an authoring skill flow",
-	RuleGoalOwner:            "goal.md is human-owned and no skill flow edits it",
-	RuleArchitectureCommit:   "architecture belongs to the deployer lifecycle stage",
-	RuleArchitectureBaseline: "architecture belongs to the deployer lifecycle stage",
-	RuleUnknownActor:         "the controller supplies the actor; an agent cannot choose it",
-	RuleUnknownPhase:         "the controller supplies the phase; an agent cannot choose it",
-	RuleUnsafePath:           "a path-traversal guard against malformed diffs, not an authoring decision",
-	RuleUpkeepMigration:      "only the Upkeep actor migrates schema versions",
-	RuleArchitectureAlone:    "architecture belongs to the deployer lifecycle stage",
+	RuleLegacyManifest:      "only the current schema is supported; authoring agents never see a legacy manifest",
+	RuleSchemaVersion:       "the schema-version file is controller metadata, changed only by Upkeep",
+	RuleArchitectureMissing: "Go generates the manifest inventory; no authoring skill edits it",
+	RuleGoalOwner:           "goal.md is human-owned and no skill flow edits it",
+	RuleUnknownActor:        "the controller supplies the actor; an agent cannot choose it",
+	RuleUnknownPhase:        "the controller supplies the phase; an agent cannot choose it",
+	RuleUnsafePath:          "a path-traversal guard against malformed diffs, not an authoring decision",
 }
 
 // ruleIDs returns every rule constant declared in rules.go.
@@ -165,9 +160,12 @@ func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 	for _, rel := range []string{
 		"sdo-memory/SKILL.md", "sdo-memory/references/rules.md",
 		"sdo-detector-authoring/SKILL.md", "sdo-detector-authoring/references/sdk.md",
+		"sdo-detector-authoring/references/traffic.md",
 		"sdo-detector-authoring/references/rules.md", "sdo-detector-authoring/assets/restart-loop/detector.go",
 		"sdo-playbook-authoring/SKILL.md", "sdo-playbook-authoring/references/rules.md",
 		"sdo-playbook-authoring/assets/restart-loop/README.md",
+		"sdo-operationalize/SKILL.md", "sdo-operationalize/references/catalog.md",
+		"sdo-operationalize/references/methods.md",
 	} {
 		if _, err := os.Stat(filepath.Join(skillsRoot, filepath.FromSlash(rel))); err != nil {
 			missing = append(missing, rel)

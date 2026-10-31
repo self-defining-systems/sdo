@@ -14,8 +14,6 @@ import (
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-
-	"sdo.dev/operator/memory"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -281,7 +279,7 @@ func TestInitialBootstrapUsesSequentialOwnedProposals(t *testing.T) {
 		{"bootstrap-source", Deployer, map[string]string{
 			"app.txt": "deployed source\n",
 		}},
-		{"bootstrap-architecture", Deployer, map[string]string{
+		{"bootstrap-architecture", Upkeep, map[string]string{
 			".sdo/arch.md": "---\nschema_version: 1\ngenerated_at_commit: SOURCE_COMMIT\napplication: test\n---\nArchitecture\n",
 		}},
 		{"bootstrap-health", HealthJudge, map[string]string{
@@ -579,66 +577,6 @@ func TestBrokerRecordsOutcomeOnlyOnce(t *testing.T) {
 	}
 	if _, err := b.RecordOutcome(context.Background(), "inc-3", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "inc-3", Classification: "failed"}); err == nil {
 		t.Fatal("conflicting outcome accepted")
-	}
-}
-
-func TestLegacyOutcomeMigrationPublishesAtomicallyAfterInterruptedAttempt(t *testing.T) {
-	ctx := context.Background()
-	target := repository(t)
-	legacy := filepath.Join(target, ".sdo", "outcomes.jsonl")
-	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	first := `{"schema_version":1,"incident_id":"old","classification":"success"}`
-	conflict := `{"schema_version":1,"incident_id":"old","classification":"failed"}`
-	if err := os.WriteFile(legacy, []byte(first+"\n"+conflict+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git(t, target, "add", ".sdo/outcomes.jsonl")
-	git(t, target, "commit", "-qm", "legacy outcomes")
-	b, err := New(target, filepath.Join(t.TempDir(), "workspaces"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before := git(t, target, "rev-parse", "HEAD")
-	document := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "new", Classification: "success"}
-	if _, err := b.RecordOutcome(ctx, "new", document); err == nil {
-		t.Fatal("conflicting migration accepted")
-	}
-	if got := git(t, target, "rev-parse", "HEAD"); got != before {
-		t.Fatalf("interrupted migration changed accepted HEAD: %s", got)
-	}
-	if _, err := os.Stat(legacy); err != nil {
-		t.Fatalf("legacy stream disappeared before acceptance: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(target, ".sdo", "outcomes")); !os.IsNotExist(err) {
-		t.Fatalf("partial migration leaked into accepted checkout: %v", err)
-	}
-	second := `{"schema_version":1,"incident_id":"other","classification":"failed"}`
-	if err := os.WriteFile(legacy, []byte(first+"\n"+second+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git(t, target, "add", ".sdo/outcomes.jsonl")
-	git(t, target, "commit", "-qm", "repair legacy stream")
-	receipt, err := b.RecordOutcome(ctx, "new", document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("legacy stream survived accepted migration: %v", err)
-	}
-	store := memory.NewJSONStore(target)
-	all, err := store.List(ctx)
-	if err != nil || len(all) != 3 {
-		t.Fatalf("accepted migration lost outcomes: %+v, %v", all, err)
-	}
-	changes := git(t, target, "show", "--format=", "--name-status", receipt.Commit)
-	if !strings.Contains(changes, "D\t.sdo/outcomes.jsonl") || strings.Count(changes, ".sdo/outcomes/") != 3 {
-		t.Fatalf("migration was not one accepted commit: %s", changes)
-	}
-	again, err := b.RecordOutcome(ctx, "new", document)
-	if err != nil || again.Commit != receipt.Commit {
-		t.Fatalf("migration retry was not idempotent: %+v, %v", again, err)
 	}
 }
 

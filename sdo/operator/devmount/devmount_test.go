@@ -40,7 +40,7 @@ func TestApplyMountsLiveBenchmarkModulesWithoutAnswerKeys(t *testing.T) {
 			if mount.MountPath == "/opt/sdo/benchmarks/sregym/fastloop/model_recording.py" {
 				count++
 			}
-			if mount.MountPath == "/opt/sdo/benchmarks/sregym/adapter/scripted_worker.py" {
+			if mount.MountPath == "/opt/sdo/benchmarks/sregym/fastloop/generated_worker.py" {
 				count++
 			}
 		}

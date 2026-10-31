@@ -59,13 +59,11 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if control == "" {
 		control = config.Lifecycle.Namespace
 	}
-	validation := broker.KubernetesValidationJobClient{
-		ToolchainImage: config.Install.ControllerImage,
-		Client:         client, Namespace: control, Image: config.Install.ValidatorImage,
-		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
-		SchemaIdentity: sdkSchemaIdentity, HealthyBaseline: config.Install.HealthyBaseline,
+	validation := broker.SubprocessValidator{}
+	if config.Install.HealthyBaseline {
+		validation.HealthyBaseline = filepath.Join(config.RepositoryMount, ".sdo-baseline/healthy")
 	}
-	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, broker.JobValidator(validation))
+	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, validation.Validator())
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}

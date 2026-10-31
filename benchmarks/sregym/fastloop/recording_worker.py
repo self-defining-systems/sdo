@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from benchmarks.sregym.fastloop.file_edits import MAX_FILE_EDITS_BYTES, encode_file_edits, record_file_edits
-from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
+from benchmarks.sregym.fastloop.model_recording import ModelRecorder
 from sdo.agents.responder import (
     AGENT_SKILLS,
     CodexSessionBackend,
@@ -30,7 +30,7 @@ def recording_registrations(results_dir: Path, image: str) -> Path:
     directory = results_dir / "recording_registrations"
     directory.mkdir(parents=True, exist_ok=True)
     recording_stages = {"responder": "responder", "reflector": "reflection"}
-    for role in ("deployer", "health-judge", "responder", "reflector"):
+    for role in ("source-deployment", "health-judge", "responder", "reflector"):
         registration = json.loads((_REGISTRATIONS / f"{role}.json").read_text(encoding="utf-8"))
         registration["kubernetes_job"]["image"] = image
         if role in recording_stages:
@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     task_path = Path(os.environ.get("SDO_TASK_PATH", "/sdo/request/agent-task.json"))
     wire = task_path.read_text(encoding="utf-8")
     scratch = Path(os.environ.get("SDO_SESSION_SCRATCH", "/sdo/session/scratch"))
-    recording = RecordingExecutor(scratch.parent / "model_io", request_json=wire, record=True)
+    recording = ModelRecorder(scratch.parent / "model_io", request_json=wire)
     role = "reflector" if args[0] == "reflection" else "responder"
     prepare_codex_home(skills=AGENT_SKILLS[role])
     prepare_claude_home(skills=AGENT_SKILLS[role])

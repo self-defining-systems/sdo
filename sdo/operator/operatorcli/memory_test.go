@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
-	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
@@ -306,7 +305,11 @@ func TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RunValidate(context.Background(), builder.Config{ApplicationRoot: root, OperatorRoot: operatorRoot}); err != nil {
+	ds, err := validate.CompileCandidate(context.Background(), validate.Request{Root: root, OperatorRoot: operatorRoot, Layers: validate.Compile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validate.Err(ds); err != nil {
 		t.Fatal(err)
 	}
 }

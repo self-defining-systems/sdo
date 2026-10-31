@@ -18,7 +18,7 @@ func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
 	config := &contracts.ControllerConfig{
 		ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "linked", AppRoot: root, Namespace: "default",
 		BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository",
-		ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model",
+		ResponderBackend: "codex", ResponderModel: "model",
 	}
 	if _, _, err := nativeBrokerFromLaunch(context.Background(), config, fake.NewSimpleClientset()); err == nil {
 		t.Fatal("linked worker mount accepted for native broker")
@@ -106,7 +106,7 @@ func TestNativeLaunchRejectsUnknownProvider(t *testing.T) {
 	config := &contracts.ControllerConfig{
 		ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: root, Namespace: "default",
 		BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository",
-		ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "gemini", ResponderModel: "model",
+		ResponderBackend: "gemini", ResponderModel: "model",
 	}
 	if _, _, err := nativeBrokerFromLaunch(context.Background(), config, fake.NewSimpleClientset()); err == nil {
 		t.Fatal("unknown provider accepted by native launch")
@@ -161,7 +161,7 @@ func TestNativeStartupRejectsMissingToolchainBeforeKubernetes(t *testing.T) {
 	config := &contracts.ControllerConfig{
 		BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: "/workspace/app", Namespace: "default",
 		BrokerWorktreeRoot: "/workspace/worktrees", RepositoryMountPath: "/workspace", RepositoryPvc: "repository",
-		ValidatorImage: "validator:slim", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model",
+		ResponderBackend: "codex", ResponderModel: "model",
 		ProberImage: "traffic-only:test",
 	}
 	client := fake.NewSimpleClientset()

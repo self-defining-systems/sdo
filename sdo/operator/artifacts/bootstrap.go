@@ -17,6 +17,6 @@ func (BootstrapStore) WriteSchema(checkout string) error {
 	return memory.WriteSchema(checkout)
 }
 
-func (BootstrapStore) WriteArchitecture(checkout, application, acceptedSourceCommit, fingerprint, summary string) error {
-	return memory.WriteArchitecture(checkout, application, acceptedSourceCommit, fingerprint, summary)
+func (BootstrapStore) WriteArchitecture(checkout, application, acceptedSourceCommit, summary string) error {
+	return memory.WriteArchitecture(checkout, application, acceptedSourceCommit, summary)
 }

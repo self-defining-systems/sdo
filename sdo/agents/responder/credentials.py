@@ -16,9 +16,9 @@ SKILLS_ROOT = Path(__file__).resolve().parents[2] / "skills"
 AGENT_SKILLS = MappingProxyType(
     {
         "responder": ("sdo-memory",),
-        "reflector": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring"),
-        "health-judge": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring"),
-        "deployer": ("sdo-memory",),
+        "reflector": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"),
+        "health-judge": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"),
+        "source_deployment": ("sdo-memory",),
     }
 )
 

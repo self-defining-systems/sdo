@@ -47,7 +47,6 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "compiled operator image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
-	validatorImage := flags.String("validator-image", "", "isolated validator image")
 	buildkitImage := flags.String("buildkit-image", "", "digest-pinned image builder")
 	repositoryPVC := flags.String("repository-pvc", "", "shared accepted repository PVC")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
@@ -84,8 +83,8 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if flags.NArg() != 0 {
 		return HostConfig{}, fmt.Errorf("unexpected host arguments: %v", flags.Args())
 	}
-	if (*goalFile != "") == (*objective != "") {
-		return HostConfig{}, errors.New("host requires exactly one of --health-objective/--goal or --goal-file")
+	if *goalFile != "" && *objective != "" {
+		return HostConfig{}, errors.New("host accepts at most one of --health-objective/--goal or --goal-file")
 	}
 	if *goalFile != "" {
 		if !filepath.IsAbs(*goalFile) {
@@ -102,9 +101,9 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	}
 	for name, value := range map[string]string{
 		"repository": *repository, "namespace": *namespace, "application": *application,
-		"health objective": *objective, "operation ID": *operationID,
+		"operation ID":     *operationID,
 		"controller image": *controllerImage, "responder image": *responderImage,
-		"validator image": *validatorImage, "BuildKit image": *buildkitImage,
+		"BuildKit image": *buildkitImage,
 		"repository PVC": *repositoryPVC, "agent credentials Secret": *credentialsSecret,
 		"registry push Secret": *registrySecret, "model": *model,
 	} {
@@ -150,7 +149,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	config := install.Config{
 		Namespace: *namespace, ControlNamespace: *control, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
-		ValidatorImage: *validatorImage, BuildKitImage: *buildkitImage,
+		BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
 		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider,
 		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL,

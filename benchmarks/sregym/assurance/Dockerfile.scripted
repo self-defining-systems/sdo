@@ -11,10 +11,13 @@ FROM ${BASE}
 RUN npm uninstall --global @openai/codex @anthropic-ai/claude-code >/dev/null 2>&1; \
     rm -f /usr/local/bin/codex /usr/local/bin/claude \
     && ! command -v claude
-COPY benchmarks/sregym/assurance/scripted_codex /opt/sdo-scripted/scripted_codex
-RUN printf '#!/bin/sh\nPYTHONPATH=/opt/sdo-scripted:/opt/sdo exec python3 -m scripted_codex "$@"\n' \
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+COPY benchmarks/sregym/agent_script/__init__.py benchmarks/sregym/agent_script/__main__.py benchmarks/sregym/agent_script/cli.py benchmarks/sregym/agent_script/converter.py benchmarks/sregym/agent_script/invocation.py benchmarks/sregym/agent_script/judge_example.py benchmarks/sregym/agent_script/model.py benchmarks/sregym/agent_script/runner.py benchmarks/sregym/agent_script/template.py benchmarks/sregym/agent_script/wire.py /opt/sdo/benchmarks/sregym/agent_script/
+COPY benchmarks/sregym/assurance/__init__.py benchmarks/sregym/assurance/script_cli.py benchmarks/sregym/assurance/script_store.py benchmarks/sregym/assurance/usage.py /opt/sdo/benchmarks/sregym/assurance/
+RUN printf '#!/bin/sh\nPYTHONPATH=/opt/sdo exec python3 -m benchmarks.sregym.assurance.script_cli "$@"\n' \
       > /usr/local/bin/codex \
     && chmod 0755 /usr/local/bin/codex \
-    && chmod -R a+rX /opt/sdo-scripted \
     && codex --help >/dev/null
-LABEL sdo.dev/scripted-codex="true"
+LABEL sdo.dev/agent-script="true"

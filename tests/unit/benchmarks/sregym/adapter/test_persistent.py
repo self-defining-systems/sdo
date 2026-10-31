@@ -392,7 +392,6 @@ def test_runtime_config_round_trips_all_options_through_payload_and_state(tmp_pa
         credentials_secret="credentials",
         model="gpt-test",
         timeout_seconds=61,
-        validator_image="validator:test",
         verification_timeout_seconds=121,
         wait_for_completion=True,
         repair_policy="recorded-actions",
@@ -886,7 +885,6 @@ class NativeReceiptOps(FakeOps):
             control_namespace=config.control_namespace,
             controller_image=config.controller_image,
             responder_image=config.responder_image,
-            validator_image=config.validator_image,
             controller_pod_uid="uid-1",
             responder_job_evidence=[
                 {"incident_id": incident_id, "job_name": "responder-1", "job_uid": "worker-1", "succeeded": True}

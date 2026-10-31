@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,9 +78,10 @@ func TestReadTreeParsesEveryKind(t *testing.T) {
 
 func TestReadTreeRejectsUnsafeOrUnsupportedMemory(t *testing.T) {
 	for name, mutate := range map[string]func(root string){
-		"old schema":      func(root string) { writeFile(t, root, ".sdo/schema-version", "1\n") },
-		"legacy manifest": func(root string) { writeFile(t, root, ".sdo/diagnostics/manifest.yaml", "detectors: []\n") },
-		"unknown file":    func(root string) { writeFile(t, root, ".sdo/stray.txt", "x") },
+		"retired outcome stream": func(root string) { writeFile(t, root, ".sdo/outcomes.jsonl", "{}\n") },
+		"old schema":             func(root string) { writeFile(t, root, ".sdo/schema-version", "1\n") },
+		"legacy manifest":        func(root string) { writeFile(t, root, ".sdo/diagnostics/manifest.yaml", "detectors: []\n") },
+		"unknown file":           func(root string) { writeFile(t, root, ".sdo/stray.txt", "x") },
 		"id mismatch": func(root string) {
 			writeFile(t, root, ".sdo/diagnostics/detectors/health/other/manifest.yaml", "id: d-health\n")
 		},
@@ -168,5 +170,20 @@ func TestParseDocument(t *testing.T) {
 		if _, err := ParseDocument([]byte(bad)); err == nil {
 			t.Errorf("ParseDocument(%q) succeeded", bad)
 		}
+	}
+}
+
+func TestReadTreeRejectsUnsupportedSchemaBeforeReadingArtifacts(t *testing.T) {
+	for _, version := range []int{0, 1, 2, 4} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, SchemaVersionFile, fmt.Sprint(version))
+			writeFile(t, root, GoalFile, "malformed")
+			_, err := ReadTree(root)
+			want := fmt.Sprintf("unsupported operational memory schema version %d; required %d", version, CurrentSchemaVersion)
+			if err == nil || err.Error() != want {
+				t.Fatalf("error = %v; want %s", err, want)
+			}
+		})
 	}
 }

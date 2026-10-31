@@ -339,7 +339,6 @@ model = "gpt-6-luna"
 timeout_sec = 3600
 controller_image = "sdo-controller:stream1"
 responder_image = "sdo-sregym-responder:stream1"
-validator_image = "sdo-detector-validator:stream1"
 credentials_secret = "sdo-agent-credentials"
 persistent_controller = true
 """

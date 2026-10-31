@@ -2,10 +2,9 @@
 // to the benchmark extension, including with a docker-container builder.
 variable "SDO_IMAGE_TAG" { default = "v0.1.0" }
 variable "SDO_WORKER_TARGET" { default = "sregym-responder" }
-variable "SDO_VALIDATOR_SCHEMA_IDENTITY" { default = "unknown" }
 
 group "default" {
-  targets = ["controller", "validator", "responder", "benchmark"]
+  targets = ["controller", "responder", "benchmark"]
 }
 
 target "controller" {
@@ -15,13 +14,6 @@ target "controller" {
   tags = ["sdo-controller:${SDO_IMAGE_TAG}"]
 }
 
-target "validator" {
-  context = "."
-  dockerfile = "sdo/operator/Dockerfile.runtime"
-  target = "validator"
-  args = { SDO_VALIDATOR_SCHEMA_IDENTITY = SDO_VALIDATOR_SCHEMA_IDENTITY }
-  tags = ["sdo-detector-validator:${SDO_IMAGE_TAG}"]
-}
 
 target "responder" {
   context = "."

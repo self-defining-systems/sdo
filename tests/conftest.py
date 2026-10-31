@@ -20,6 +20,22 @@ def operator_binary() -> Path:
     return build_operator(repository / "sdo/operator", repository / ".fastloop/test-bin")
 
 
+@pytest.fixture(autouse=True)
+def _no_host_codex_login(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Hide the developer's Codex login and API keys from unit tests.
+
+    A test that silently used ``~/.codex/auth.json`` passed on a logged-in host
+    and failed on CI. Tests that need a login use ``fake_codex_login``; opt-in
+    live-agent tests keep the real credentials.
+    """
+
+    if os.environ.get("SDO_RUN_LIVE_AGENTS"):
+        return
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path_factory.getbasetemp() / "no-host-codex-login"))
+    for name in ("CODEX_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _warm_shared_go_caches() -> Iterator[None]:
     """Point the real-compile detector-sandbox tests at a warm, shared Go cache.

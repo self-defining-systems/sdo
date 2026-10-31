@@ -3,6 +3,7 @@ module sdo.dev/operator
 go 1.26.0
 
 require (
+	github.com/robfig/cron/v3 v3.0.1 // indirect
 	google.golang.org/protobuf v1.36.12
 	sdo.dev/operator/contracts v0.0.0
 )

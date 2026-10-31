@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/sdk"
 )
 
 const (
@@ -109,7 +110,7 @@ func (m DetectorManifest) Validate() error {
 	}
 	watches := map[Watch]bool{}
 	for _, watch := range m.Watches {
-		if watch.APIVersion == "" || watch.Kind == "" {
+		if !sdk.IsSupportedWatchKind(sdk.WatchKind{APIVersion: watch.APIVersion, Kind: watch.Kind}) {
 			return fmt.Errorf("detector %s has invalid watch", m.ID)
 		}
 		if watches[watch] {
@@ -213,4 +214,16 @@ func ParseDocument(data []byte) (Document, error) {
 		return Document{}, errors.New("body must not be empty")
 	}
 	return Document{Meta: meta, Body: parts[2], Source: string(data)}, nil
+}
+
+// supportedWatch is the manifest-side counterpart of core detector validation.
+func supportedWatch(w Watch) bool {
+	switch w.APIVersion + "/" + w.Kind {
+	case "v1/ConfigMap", "v1/Endpoints", "v1/Event", "v1/Pod", "v1/Service",
+		"apps/v1/Deployment", "apps/v1/ReplicaSet", "discovery.k8s.io/v1/EndpointSlice",
+		"networking.k8s.io/v1/NetworkPolicy", "sdo.dev/v1alpha1/SyntheticTraffic",
+		"sdo.dev/v1alpha1/ServiceReachability", "sdo.dev/v1alpha1/Metrics", "sdo.dev/v1alpha1/ResourceUsage":
+		return true
+	}
+	return false
 }

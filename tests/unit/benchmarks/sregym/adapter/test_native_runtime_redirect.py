@@ -20,7 +20,6 @@ def _config(tmp_path: Path) -> runtime.RuntimeConfig:
         application="demo",
         controller_image="controller:go",
         responder_image="worker:python",
-        validator_image="validator:go",
         repository_pvc="repository",
         credentials_secret="agent-credentials",
         model="gpt-6-luna",

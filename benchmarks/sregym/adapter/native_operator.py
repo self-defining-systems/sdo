@@ -40,7 +40,6 @@ class NativeInstallConfig:
     application: str
     controller_image: str
     responder_image: str
-    validator_image: str
     repository_pvc: str
     credentials_secret: str
     model: str
@@ -77,7 +76,6 @@ class NativeInstallConfig:
             "application",
             "controller_image",
             "responder_image",
-            "validator_image",
             "repository_pvc",
             "credentials_secret",
             "model",
@@ -125,8 +123,6 @@ class NativeInstallConfig:
             self.controller_image,
             "--responder-image",
             self.responder_image,
-            "--validator-image",
-            self.validator_image,
             "--repository-pvc",
             self.repository_pvc,
             "--credentials-secret",
@@ -160,8 +156,8 @@ class NativeHostConfig:
     agent_registrations: Path | None = None
 
     def __post_init__(self) -> None:
-        if not self.health_objective.strip() or not self.operation_id.strip():
-            raise ValueError("host launch requires health objective and operation ID")
+        if not self.operation_id.strip():
+            raise ValueError("host launch requires operation ID")
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be positive")
         if not _IMAGE_DIGEST.search(self.buildkit_image):
@@ -420,7 +416,6 @@ def collect_native_receipt(
         control_namespace=config.control_namespace,
         controller_image=config.controller_image,
         responder_image=config.responder_image,
-        validator_image=config.validator_image,
         controller_pod_uid=controller_uid,
         responder_job_evidence=responder_job_evidence,
     )
@@ -552,7 +547,10 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     value = _run("host", args, timeout=config.max_attempts * config.install.response_timeout_seconds + 900)
     if value.get("installed") is not True or value.get("operation_id") != config.operation_id:
         raise NativeOperatorError("Go host returned an invalid operation receipt")
-    for field in ("goal_commit", "schema_commit", "source_commit", "architecture_commit", "judge_commit"):
+    fields = ["schema_commit", "source_commit", "architecture_commit", "judge_commit"]
+    if config.health_objective.strip() or value.get("goal_commit"):
+        fields.append("goal_commit")
+    for field in fields:
         if not isinstance(value.get(field), str) or not re.fullmatch(r"[0-9a-f]{40}", value[field]):
             raise NativeOperatorError(f"Go host receipt lacks {field}")
     return value

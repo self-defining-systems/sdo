@@ -92,8 +92,7 @@ func TestBuiltInAgentManifestsRegisterIndependentCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, choice := range []struct{ id, task string }{
-		{"sdo-deployer", "source-deployment"},
-		{"sdo-deployer", "source-architecture"},
+		{"sdo-source-deployment", "source-deployment"},
 		{"sdo-health-judge", "health-judgment-direct-v1"},
 		{"sdo-responder", "incident-response"},
 		{"sdo-reflector", "outcome-reflection-direct-v1"},

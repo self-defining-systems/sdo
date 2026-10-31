@@ -74,7 +74,7 @@ def test_non_controller_targets_share_the_compiler_free_base():
             stages[current] = (match[1], [])
         elif current:
             stages[current][1].append(line)
-    for target in ("responder", "validator", "scripted-runtime"):
+    for target in ("responder", "scripted-runtime"):
         stage = target
         lineage = []
         while stage in stages:

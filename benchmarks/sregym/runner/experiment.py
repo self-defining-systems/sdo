@@ -107,7 +107,6 @@ class RunnerEnv:
     preserve_infrastructure: bool = False
     submit_done_returns_feedback: bool = False
     defer_diagnosis_grading: bool = False
-    lifecycle_validation_cache: bool = False
     source_build_cache: bool = False
     fast_namespace_teardown: bool = False
     cleanup_defer_timeout_seconds: int = 0
@@ -234,7 +233,6 @@ def load_experiment_config(path: Path) -> ExperimentConfig:
         preserve_infrastructure=bool(env_raw.get("preserve_infrastructure", False)),
         submit_done_returns_feedback=bool(env_raw.get("submit_done_returns_feedback", False)),
         defer_diagnosis_grading=bool(env_raw.get("defer_diagnosis_grading", False)),
-        lifecycle_validation_cache=bool(env_raw.get("lifecycle_validation_cache", False)),
         source_build_cache=bool(env_raw.get("source_build_cache", False)),
         fast_namespace_teardown=bool(env_raw.get("fast_namespace_teardown", False)),
         cleanup_defer_timeout_seconds=int(env_raw.get("cleanup_defer_timeout_seconds", 0)),
@@ -303,8 +301,6 @@ def resolve_config(
         env_updates["preserve_infrastructure"] = _parse_bool_env(env_overrides["SREGYM_PRESERVE_INFRASTRUCTURE"])
     if "SREGYM_DEFER_DIAGNOSIS_GRADING" in env_overrides:
         env_updates["defer_diagnosis_grading"] = _parse_bool_env(env_overrides["SREGYM_DEFER_DIAGNOSIS_GRADING"])
-    if "SDO_LIFECYCLE_VALIDATION_CACHE" in env_overrides:
-        env_updates["lifecycle_validation_cache"] = _parse_bool_env(env_overrides["SDO_LIFECYCLE_VALIDATION_CACHE"])
     if "SREGYM_SOURCE_BUILD_CACHE" in env_overrides:
         env_updates["source_build_cache"] = _parse_bool_env(env_overrides["SREGYM_SOURCE_BUILD_CACHE"])
     if "SREGYM_FAST_NAMESPACE_TEARDOWN" in env_overrides:
@@ -514,10 +510,6 @@ def config_to_env(config: ExperimentConfig, project_root: Path, exp_dir: Path | 
         env["SREGYM_PRESERVE_INFRASTRUCTURE"] = "1"
     if config.env.defer_diagnosis_grading:
         env["SREGYM_DEFER_DIAGNOSIS_GRADING"] = "1"
-    if config.env.lifecycle_validation_cache:
-        # Shared by every pipeline of this checkout; entries are keyed by the
-        # validator image identity and the diagnostics digest.
-        env["SDO_LIFECYCLE_VALIDATION_CACHE_DIR"] = str(project_root / ".sdo-runtime" / "lifecycle-validation-cache")
     if config.env.source_build_cache:
         env["SREGYM_SOURCE_BUILD_CACHE"] = "1"
     if config.env.fast_namespace_teardown:
@@ -555,20 +547,15 @@ def config_to_env(config: ExperimentConfig, project_root: Path, exp_dir: Path | 
             env[ALLOW_EXEC_ENV] = "1"
     if config.agent == "sdo_codex":
         sdo_cfg = config.agent_config.get("sdo_codex") or {}
-        validator_image = str(sdo_cfg.get("validator_image", "sdo-detector-validator:v0.1.0"))
         env["SREGYM_KIND_REQUIRED_IMAGES"] = json.dumps(
             [
                 str(sdo_cfg.get("controller_image", "sdo-controller:v0.1.0")),
                 str(sdo_cfg.get("responder_image", "sdo-responder:v0.1.0")),
-                validator_image,
             ]
         )
-        # Production validator Jobs execute untrusted detector code behind a
-        # deny-all NetworkPolicy. A CNI that merely accepts NetworkPolicy
-        # objects without enforcing them is not a production-equivalent test
-        # environment, so SDO workers require a real enforcement preflight.
+        # Network policy remains needed for application fault scenarios.
         env["SREGYM_KIND_REQUIRE_NETWORK_POLICY"] = "1"
-        env["SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE"] = validator_image
+        env["SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE"] = str(sdo_cfg.get("controller_image", "sdo-controller:v0.1.0"))
         if persistent_controller_enabled(config):
             env["SREGYM_PRESERVE_NAMESPACE_LABEL"] = PERSISTENT_CONTROLLER_NAMESPACE_LABEL
 
@@ -635,7 +622,6 @@ def _serialize_config(config: ExperimentConfig) -> str:
     lines.append(f"preserve_infrastructure = {_toml_value(config.env.preserve_infrastructure)}")
     lines.append(f"submit_done_returns_feedback = {_toml_value(config.env.submit_done_returns_feedback)}")
     lines.append(f"defer_diagnosis_grading = {_toml_value(config.env.defer_diagnosis_grading)}")
-    lines.append(f"lifecycle_validation_cache = {_toml_value(config.env.lifecycle_validation_cache)}")
     lines.append(f"source_build_cache = {_toml_value(config.env.source_build_cache)}")
     lines.append(f"fast_namespace_teardown = {_toml_value(config.env.fast_namespace_teardown)}")
     lines.append(f"cleanup_defer_timeout_seconds = {_toml_value(config.env.cleanup_defer_timeout_seconds)}")

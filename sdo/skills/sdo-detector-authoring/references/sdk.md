@@ -19,6 +19,10 @@ func FormatObjectRef(ref ObjectRef) (string, error)
     retained explicitly, so parsing the formatted value preserves every
     ObjectRef field.
 
+func IsSupportedWatchKind(watch WatchKind) bool
+    IsSupportedWatchKind reports whether a watch names a snapshot or controller
+    input. Kubernetes kinds require their exact served API version.
+
 func ObservationTime(ctx DetectionContext) time.Time
     ObservationTime returns the time a detection context describes. Detectors
     that judge an age ("Pending longer than a minute", "restarted within five
@@ -61,6 +65,18 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
     reference wins.
 
 type DetectionContext interface {
+	StatefulSets() []appsv1.StatefulSet
+	DaemonSets() []appsv1.DaemonSet
+	Jobs() []batchv1.Job
+	CronJobs() []batchv1.CronJob
+	PersistentVolumeClaims() []corev1.PersistentVolumeClaim
+	ServiceAccounts() []corev1.ServiceAccount
+	HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	Ingresses() []networkingv1.Ingress
+	Nodes() []corev1.Node
+	Secrets() []SecretMetadata
+
 	Namespace() string
 	ConfigMaps() []corev1.ConfigMap
 	Services() []corev1.Service
@@ -231,6 +247,41 @@ type PersistencePolicy struct {
 	// while a persistent fault still fires once both conditions hold.
 	MinDuration time.Duration
 }
+
+type PodTemplateReference struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	Key      string `json:"key,omitempty"`
+	Optional bool   `json:"optional"`
+}
+    PodTemplateReference identifies a consumed ConfigMap, Secret, PVC or
+    ServiceAccount. Key is empty for whole-object references. Required wins for
+    duplicate references.
+
+func PodTemplateReferences(template corev1.PodTemplateSpec) []PodTemplateReference
+    PodTemplateReferences returns sorted distinct dependencies of any workload
+    pod template, including projected volumes, init/ephemeral containers and
+    image pulls. Pass CronJob.Spec.JobTemplate.Spec.Template for CronJobs.
+    An empty service account name means Kubernetes' default ServiceAccount.
+
+type SecretMetadata struct {
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	Type      corev1.SecretType `json:"type"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	DataKeys  []string          `json:"dataKeys"`
+}
+    SecretMetadata exposes only identity, type, labels and data key names.
+    It cannot hold Secret values.
+
+func SecretMetadataFrom(secret corev1.Secret) SecretMetadata
+    SecretMetadataFrom discards values, annotations and all other Secret fields.
+
+func (s SecretMetadata) DeepCopy() *SecretMetadata
+    DeepCopy returns an independent copy of the metadata.
+
+func (s SecretMetadata) ObjectMeta() metav1.ObjectMeta
+    ObjectMeta returns the safe Kubernetes identity for read-view projections.
 
 type WatchKind struct {
 	APIVersion string
@@ -492,6 +543,52 @@ func (p Policy) Validate() error
 ```
 
 ```text
+package generichealth // import "sdo.dev/operator/sdk/generichealth"
+
+Package generichealth implements relation-based, application-independent health
+checks. Snapshot decisions use the observation clock, never wall time. Cause
+findings warn; workload unavailability is critical. Missing optional inputs are
+errors.
+
+CONSTANTS
+
+const ProgressWindow = 10 * time.Minute
+    ProgressWindow allows ordinary controller convergence before reporting
+    faults.
+
+
+FUNCTIONS
+
+func NewCrashes(s sdk.DetectorSpec) sdk.Detector
+    NewCrashes reports failed-container crash tails and newly appearing runtime
+    signatures in surviving containers, never generic error lines.
+
+func NewNodes(s sdk.DetectorSpec) sdk.Detector
+    NewNodes checks only nodes hosting application pods.
+
+func NewSaturation(s sdk.DetectorSpec, throttling bool) sdk.Detector
+    NewSaturation monitors memory and PVC capacity. Throttling requests
+    one extra cAdvisor read per node per cycle; the bootstrap selects this
+    explicitly.
+
+func NewWarnings(s sdk.DetectorSpec) sdk.Detector
+    NewWarnings checks persistent recent warning events on extant application
+    objects.
+
+func NewWiring(s sdk.DetectorSpec) sdk.Detector
+    NewWiring checks selectors, ports, references, storage, ingress and DNS
+    aliases.
+
+func NewWorkloads(s sdk.DetectorSpec) sdk.Detector
+    NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs.
+
+func Watches(kind string) []sdk.WatchKind
+    Watches returns all inputs used by the named detector, shared by
+    installation.
+
+```
+
+```text
 package traffic // import "sdo.dev/operator/sdk/traffic"
 
 Package traffic is SDO's app-agnostic synthetic-traffic health machinery.
@@ -517,6 +614,7 @@ const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
 const DefaultHealthMinDuration = 9 * time.Second
+const MaxLinkExcerpt = 256
 const RuleIDPrefix = "scenario-slo."
 var RequiredFaultClasses = []FaultClass{ ... }
 var Watch = sdk.WatchKind{ ... }
@@ -548,9 +646,13 @@ type HTTPEndpoint struct{ ... }
     func POST(path string, query Params) *HTTPEndpoint
     func PUT(path string, query Params) *HTTPEndpoint
 type Link struct{ ... }
+type LinkFailureClass string
+    const LinkFailureRefused LinkFailureClass = "refused" ...
+type LinkGRPCOptions struct{ ... }
+type LinkHTTPOptions struct{ ... }
 type LinkObservations struct{ ... }
 type LinkProtocol string
-    const LinkProtocolTCP LinkProtocol = "tcp"
+    const LinkProtocolTCP LinkProtocol = "tcp" ...
 type LinkSample struct{ ... }
     func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool)
 type Outcome string
@@ -850,5 +952,268 @@ type Validator interface {
 }
     Validator is implemented by metrics detectors that can check their own
     configuration, so a mistake surfaces in tests rather than at runtime.
+
+```
+
+```text
+package usage // import "sdo.dev/operator/sdk/usage"
+
+Package usage exposes frozen kubelet resource observations to deterministic
+detectors.
+
+CONSTANTS
+
+const MaxSamples = 40
+    MaxSamples bounds each identity's rolling history.
+
+
+VARIABLES
+
+var Watch = sdk.WatchKind{APIVersion: "sdo.dev/v1alpha1", Kind: "ResourceUsage"}
+    Watch schedules resource-usage detectors without an informer.
+
+
+FUNCTIONS
+
+func Evidence(observed float64, limit *float64, window time.Duration, forecast *time.Duration) string
+    Evidence formats the measurements underlying a helper-derived finding.
+    Nil limit or forecast is explicitly unavailable, rather than zero.
+
+func RatioToLimit(value float64, limit *float64) (float64, bool)
+    RatioToLimit reports an explicit absence for missing, zero or invalid
+    limits.
+
+func ThresholdFinding(ruleID string, resource sdk.ObjectRef, severity sdk.FindingSeverity, observed float64, limit *float64, window time.Duration, forecast *time.Duration) sdk.Finding
+    ThresholdFinding constructs a finding with complete numerical helper
+    evidence. The caller chooses the rule, resource and severity, and decides
+    when it fires.
+
+func ThrottledFraction(samples []Sample) (float64, bool)
+    ThrottledFraction computes counter deltas, excluding intervals across
+    resets. Callers must provide samples with available counters, from one
+    identity.
+
+func TimeToThreshold(points []Point, threshold float64) (time.Duration, bool)
+    TimeToThreshold fits least squares against seconds since the first point.
+    False means insufficient or non-increasing data; zero means already reached.
+
+
+TYPES
+
+type Consumer interface{ UsageRequirements() Requirements }
+    Consumer declares resource usage consumption. Throttling opts into cAdvisor
+    reads.
+
+type ContainerWindow struct {
+	Identity Identity
+	Samples  []Sample
+}
+    ContainerWindow is an oldest-first history for one running container.
+
+type Identity struct {
+	PodUID, Pod, Container string
+	StartedAt              time.Time
+}
+    Identity separates pod replacements and container restarts. An empty
+    Container names the pod-level ephemeral-storage observation (including
+    shared volumes).
+
+type Point struct {
+	At    time.Time
+	Value float64
+}
+    Point is one timestamped scalar used by a forecast.
+
+type Requirements struct{ Throttling bool }
+    Requirements selects optional expensive inputs.
+
+type Result struct {
+	ObservedAt time.Time
+	Containers []ContainerWindow
+	Volumes    []VolumeWindow
+	Error      string
+}
+    Result freezes an observation cycle. Error means unavailable, never healthy.
+
+func Clone(r Result) Result
+    Clone isolates mutable slices and optional values from detector mutation.
+
+func From(ctx sdk.DetectionContext) (Result, error)
+    From reads a defensive copy and returns source failures as detector errors.
+
+type Sample struct {
+	At                                                  time.Time
+	CPUCores, WorkingSetBytes, RSSBytes, EphemeralBytes *float64
+	CPURequest, CPULimit, MemoryRequest, MemoryLimit    *float64
+	EphemeralRequest, EphemeralLimit                    *float64
+	Periods, ThrottledPeriods                           float64
+	ThrottlingAvailable                                 bool
+}
+    Sample contains optional observations (nil means unreported), in cores and
+    bytes.
+
+type Source interface{ UsageResult() (Result, bool) }
+    Source is implemented by runtime snapshots and sdktest.Snapshot.
+
+type VolumeSample struct {
+	At                                                                       time.Time
+	PodUID, PVC                                                              string
+	CapacityBytes, UsedBytes, AvailableBytes, Inodes, InodesUsed, InodesFree *float64
+}
+    VolumeSample contains a PVC's filesystem statistics; nil means unreported.
+
+type VolumeWindow struct {
+	PodUID, PVC string
+	Samples     []VolumeSample
+}
+    VolumeWindow is an oldest-first history for a pod's PVC.
+
+```
+
+```text
+package logs // import "sdo.dev/operator/sdk/logs"
+
+Package logs exposes bounded, runtime-counted container logs to deterministic
+detectors. No log I/O or pattern matching occurs in detectors.
+
+CONSTANTS
+
+const (
+	MaxQueries      = 32
+	MaxPatterns     = 32
+	MaxPatternBytes = 1024
+	MaxIDBytes      = 128
+	LimitBytes      = 64 * 1024
+	WindowCycles    = 20
+	MaxExcerpts     = 3
+	MaxExcerptBytes = 256
+	MaxContainers   = 256
+)
+    Limits bound declarations, collection, retained history and evidence.
+    MaxPatterns bounds both each query and total declared patterns across
+    queries.
+
+
+VARIABLES
+
+var Watch = sdk.WatchKind{APIVersion: "sdo.dev/v1alpha1", Kind: "Logs"}
+    Watch schedules log consumers on their interval; no informer backs it.
+
+
+FUNCTIONS
+
+func ValidateDetector(d sdk.Detector) error
+    ValidateDetector validates a log consumer at registration.
+
+func ValidateQueries(qs []Query) error
+    ValidateQueries rejects malformed, duplicate or excessive declarations.
+
+
+TYPES
+
+type Consumer interface{ LogQueries() []Query }
+    Consumer declares a detector's log inputs.
+
+type Cycle struct {
+	Start, End time.Time
+	Running    bool
+	Lines      int
+	Matches    map[string]Match
+	Truncated  bool
+	Previous   *Cycle
+	Error      string
+}
+    Cycle is one container's observation interval. Error makes it unobservable.
+    Previous is separate from current counts and must not establish a healthy
+    rate.
+
+type Evidence struct {
+	Count, Lines, Cycles int
+	Start, End           time.Time
+	Truncated            bool
+	Excerpts             []string
+}
+    Evidence describes the counts, interval and excerpts behind a helper
+    decision.
+
+func Appeared(w Window, p string) (bool, Evidence)
+    Appeared reports a zero-to-positive transition in the last two cycles.
+    A truncated or failed zero observation cannot establish absence.
+
+func Rate(w Window, pattern string) (float64, Evidence)
+    Rate returns matched lines per second over the observed window; empty
+    pattern selects all lines. Truncated evidence means the rate is a lower
+    bound.
+
+func Silent(w Window, n int) (bool, Evidence)
+    Silent reports N complete empty Running cycles after earlier log activity.
+    Restarts begin new windows, so an old incarnation never establishes
+    activity.
+
+type Match struct {
+	Count    int
+	Excerpts []string
+}
+    Match holds a lower-bound count and bounded matching excerpts.
+
+type Pattern struct {
+	ID  string
+	RE2 string
+}
+    Pattern names an RE2 expression evaluated by the runtime once per line.
+
+type Query struct {
+	ID       string
+	Patterns []Pattern
+	Previous bool
+	// Terminations requests tails retained across incarnation window resets.
+	Terminations bool
+}
+    Query declares patterns, optional previous logs and completed-container
+    tails.
+
+func Queries(ds []sdk.Detector) ([]Query, error)
+    Queries merges identical query IDs and rejects conflicting definitions.
+
+func (q Query) Validate() error
+    Validate checks a query's identifiers, expressions and bounds.
+
+type Result struct {
+	Query      Query
+	ObservedAt time.Time
+	Windows    []Window
+	Error      string
+}
+    Result is a query's frozen windows; Error is neither health nor a finding.
+
+func Require(ctx sdk.DetectionContext, id string) (Result, error)
+    Require returns a result or an actionable detector error, including
+    per-cycle source errors. Detectors must use this before interpreting a
+    window.
+
+func ResultFrom(ctx sdk.DetectionContext, id string) (Result, bool)
+    ResultFrom reads a frozen result without I/O.
+
+type Source interface{ LogResult(string) (Result, bool) }
+    Source supplies frozen query results.
+
+type Termination struct {
+	RestartCount int32
+	FinishedAt   time.Time
+	ExitCode     int32
+	Tail         Cycle
+}
+    Termination is a bounded tail captured once for a completed container.
+    RestartCount identifies the exited incarnation, not its successor.
+
+type Window struct {
+	Namespace, Pod, UID, Container string
+	RestartCount                   int32
+	Cycles                         []Cycle
+	Terminations                   []Termination
+}
+    Window holds current-incarnation cycles and at most WindowCycles completed
+    container tails retained across restarts. Removed pods discard their
+    history.
 
 ```

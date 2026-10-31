@@ -47,24 +47,6 @@ message ImageBuild {
   string dockerfile_path = 3;
 }
 
-// Architecture is generated only after the source proposal is accepted, so
-// its provenance can cite the broker's canonical source commit.
-message ArchitectureRequest {
-  string application = 1;
-  string accepted_source_commit = 2;
-  string correction_feedback = 3;
-  uint32 attempt = 4;
-  repeated SourceResource source_resources = 5;
-  string source_topology_fingerprint = 6;
-}
-
-message ArchitectureResult {
-  string summary_markdown = 1;
-  string topology_fingerprint = 2;
-  string source_commit = 3;
-  string agent_session_id = 4;
-}
-
 // The independent health judge authors diagnostics after source is accepted.
 message HealthJudgeRequest {
   option (buf.validate.message).cel = {
@@ -80,7 +62,8 @@ message HealthJudgeRequest {
   uint32 attempt = 6;
   string architecture_summary_markdown = 7;
   repeated SourceResource source_resources = 8;
-  string source_topology_fingerprint = 9;
+  reserved 9;
+  reserved "source_topology_fingerprint";
   // Go-owned retry feedback for the diagnostics proposal: validation_attempt is
   // 1 for the first dispatch; later attempts carry the broker's rejection
   // diagnostics. Distinct from attempt, which counts whole deployment attempts.
@@ -101,7 +84,8 @@ message HealthJudgeResult {
   bool authored = 1;
   string summary = 2;
   string agent_session_id = 3;
-  string objective_digest = 4;
+  reserved 4;
+  reserved "objective_digest";
   repeated string detector_ids = 5 [(buf.validate.field).repeated.items.string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
   // Wire compatibility only; direct-edit judges must leave this absent.
   OperationalArtifactProposal artifact_proposal = 6 [deprecated = true];

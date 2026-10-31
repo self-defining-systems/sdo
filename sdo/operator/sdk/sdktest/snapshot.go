@@ -1,6 +1,7 @@
 package sdktest
 
 import (
+	batchv1 "k8s.io/api/batch/v1"
 	"sort"
 	"time"
 
@@ -12,11 +13,28 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/sdk/usage"
 )
 
 type Snapshot struct {
+	Reachability *servicehealth.ReachabilityWindow `json:"-"`
+	// Usage holds a synthetic resource usage window.
+	Usage              *usage.Result                  `json:"-"`
+	SecretList         []sdk.SecretMetadata           `json:"secrets"`
+	NodeList           []corev1.Node                  `json:"nodes"`
+	IngressList        []networkingv1.Ingress         `json:"ingresses"`
+	ServiceAccountList []corev1.ServiceAccount        `json:"serviceAccounts"`
+	PVCList            []corev1.PersistentVolumeClaim `json:"persistentVolumeClaims"`
+	CronJobList        []batchv1.CronJob              `json:"cronJobs"`
+	JobList            []batchv1.Job                  `json:"jobs"`
+	DaemonSetList      []appsv1.DaemonSet             `json:"daemonSets"`
+	// Logs holds synthetic bounded log windows by query ID.
+	Logs map[string]logs.Result `json:"-"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName        string                                  `json:"-"`
 	NamespaceName     string                                  `json:"namespace"`
@@ -260,4 +278,110 @@ func lessObject(leftNamespace string, leftName string, rightNamespace string, ri
 		return leftNamespace < rightNamespace
 	}
 	return leftName < rightName
+}
+
+// UsageResult implements usage.Source with isolated synthetic windows.
+func (s Snapshot) UsageResult() (usage.Result, bool) {
+	if s.Usage == nil {
+		return usage.Result{}, false
+	}
+	return usage.Clone(*s.Usage), true
+}
+
+func (s Snapshot) DaemonSets() []appsv1.DaemonSet {
+	items := make([]appsv1.DaemonSet, len(s.DaemonSetList))
+	for i := range s.DaemonSetList {
+		items[i] = *s.DaemonSetList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s Snapshot) Jobs() []batchv1.Job {
+	items := make([]batchv1.Job, len(s.JobList))
+	for i := range s.JobList {
+		items[i] = *s.JobList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s Snapshot) CronJobs() []batchv1.CronJob {
+	items := make([]batchv1.CronJob, len(s.CronJobList))
+	for i := range s.CronJobList {
+		items[i] = *s.CronJobList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s Snapshot) PersistentVolumeClaims() []corev1.PersistentVolumeClaim {
+	items := make([]corev1.PersistentVolumeClaim, len(s.PVCList))
+	for i := range s.PVCList {
+		items[i] = *s.PVCList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s Snapshot) ServiceAccounts() []corev1.ServiceAccount {
+	items := make([]corev1.ServiceAccount, len(s.ServiceAccountList))
+	for i := range s.ServiceAccountList {
+		items[i] = *s.ServiceAccountList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s Snapshot) Ingresses() []networkingv1.Ingress {
+	items := make([]networkingv1.Ingress, len(s.IngressList))
+	for i := range s.IngressList {
+		items[i] = *s.IngressList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s Snapshot) Nodes() []corev1.Node {
+	items := make([]corev1.Node, len(s.NodeList))
+	for i := range s.NodeList {
+		items[i] = *s.NodeList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s Snapshot) Secrets() []sdk.SecretMetadata {
+	items := make([]sdk.SecretMetadata, len(s.SecretList))
+	for i := range s.SecretList {
+		items[i] = *s.SecretList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+// LogResult implements logs.Source.
+func (s Snapshot) LogResult(id string) (logs.Result, bool) { r, ok := s.Logs[id]; return r, ok }
+
+func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if s.Reachability == nil {
+		return servicehealth.ReachabilityWindow{}, false
+	}
+	return *s.Reachability, true
 }

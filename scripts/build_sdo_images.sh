@@ -4,10 +4,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tag="${SDO_IMAGE_TAG:-v0.1.0}"
 # CI builds only changed targets through Bake, then uses these same smoke gates.
-read -r -a selected <<<"${SDO_IMAGES:-controller validator responder benchmark}"
+read -r -a selected <<<"${SDO_IMAGES:-controller responder benchmark}"
 for image in "${selected[@]}"; do
   case "${image}" in
-  controller | validator | responder | benchmark) ;;
+  controller | responder | benchmark) ;;
   *)
     echo "unknown SDO image target: ${image}" >&2
     exit 1
@@ -15,12 +15,8 @@ for image in "${selected[@]}"; do
   esac
 done
 selected_image() { [[ " ${selected[*]} " == *" $1 "* ]]; }
-validator_schema_identity="${SDO_VALIDATOR_SCHEMA_IDENTITY:-}"
-if [[ -z "${validator_schema_identity}" ]]; then
-  validator_schema_identity="$(cd "${repo_root}/sdo/operator" && go run ./cmd/sdo-operator schema-identity)"
-fi
 if [[ "${SDO_SKIP_IMAGE_BUILD:-0}" != "1" ]]; then
-  export SDO_IMAGE_TAG="${tag}" SDO_VALIDATOR_SCHEMA_IDENTITY="${validator_schema_identity}"
+  export SDO_IMAGE_TAG="${tag}"
   export SDO_WORKER_TARGET=sregym-responder
   if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
     export SDO_WORKER_TARGET=scripted-worker
@@ -32,10 +28,6 @@ for target in "${selected[@]}"; do
   controller)
     image=sdo-controller
     role=controller_image
-    ;;
-  validator)
-    image=sdo-detector-validator
-    role=validator_image
     ;;
   responder)
     image=sdo-responder
@@ -56,7 +48,7 @@ for target in "${selected[@]}"; do
     '
     docker run --rm --user 65532:65532 \
       --volume "${repo_root}/tests/fixtures/sdo/playbook_program_app:/fixture:ro" \
-      "${image}:${tag}" sdo-operator validate --app /fixture --expect-schema "${validator_schema_identity}"
+      "${image}:${tag}" sdo-operator validation-child /fixture /opt/sdo/sdo/operator ""
   else
     docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
       ! command -v go
@@ -83,6 +75,6 @@ if selected_image benchmark; then
   if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
     docker run --rm --user 65532:65532 \
       sdo-sregym-responder:${tag} \
-      python3 -c "from benchmarks.sregym.adapter.scripted_worker import scripted_responder, ScriptedReflector" >/dev/null
+      python3 -c "from benchmarks.sregym.fastloop.generated_worker import main" >/dev/null
   fi
 fi

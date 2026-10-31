@@ -78,7 +78,7 @@ def kill_controller_mid_incident(ctx: ChaosContext) -> None:
 
 
 def kill_responder_mid_mitigation(ctx: ChaosContext) -> None:
-    """Delete the responder pod inside its pre-repair pause (the directive holds it there)."""
+    """Delete the responder pod inside its pre-repair pause (the script holds it there)."""
 
     ctx.wait_for(lambda: bool(responder_running(ctx)), "a running responder pod")
     time.sleep(20)

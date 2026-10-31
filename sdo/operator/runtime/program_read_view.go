@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -29,7 +30,7 @@ type PrimitiveProber interface {
 // LiveReadView adds read-only primitives to one detector snapshot. Its
 // dependencies expose reads only; no program receives a Kubernetes writer.
 type LiveReadView struct {
-	sdk.DetectionContext
+	inputs.Carrier
 	Context        context.Context
 	Client         kubernetes.Interface
 	Prober         PrimitiveProber
@@ -320,7 +321,7 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 }
 
 func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	if ref.Namespace != v.Namespace() {
+	if ref.Namespace != v.Namespace() && !(ref.Kind == "Node" && ref.APIVersion == "v1" && ref.Namespace == "") {
 		return nil, errors.New("object is outside snapshot namespace")
 	}
 	var object any
@@ -369,6 +370,76 @@ func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructu
 		}
 	case "EndpointSlice":
 		for _, item := range v.EndpointSlices() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "StatefulSet":
+		for _, item := range v.StatefulSets() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "DaemonSet":
+		for _, item := range v.DaemonSets() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "Job":
+		for _, item := range v.Jobs() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "CronJob":
+		for _, item := range v.CronJobs() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "PersistentVolumeClaim":
+		for _, item := range v.PersistentVolumeClaims() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "ServiceAccount":
+		for _, item := range v.ServiceAccounts() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "HorizontalPodAutoscaler":
+		for _, item := range v.HorizontalPodAutoscalers() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "PodDisruptionBudget":
+		for _, item := range v.PodDisruptionBudgets() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "Ingress":
+		for _, item := range v.Ingresses() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "Node":
+		for _, item := range v.Nodes() {
 			if item.Namespace == ref.Namespace && item.Name == ref.Name {
 				object = &item
 				break

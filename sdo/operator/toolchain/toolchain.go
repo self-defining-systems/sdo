@@ -14,7 +14,7 @@ import (
 // Runtime images are compiler-free; the trusted controller image supplies Go.
 func ValidateImage(image string) error {
 	if strings.TrimSpace(image) == "" {
-		return fmt.Errorf("--toolchain-image is required: worker and validator runtime images lack Go; set it to the controller image")
+		return fmt.Errorf("--toolchain-image is required: worker runtime images lack Go; set it to the controller image")
 	}
 	return nil
 }

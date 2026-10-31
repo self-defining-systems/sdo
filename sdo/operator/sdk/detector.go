@@ -2,10 +2,13 @@ package sdk
 
 import (
 	"context"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	policyv1 "k8s.io/api/policy/v1"
 	"sort"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -144,50 +147,16 @@ type ConfigMapReference struct {
 // same ConfigMap is referenced as both optional and required, the required
 // reference wins.
 func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapReference {
-	references := make(map[string]bool)
-	add := func(name string, optional *bool) {
-		if name == "" {
-			return
-		}
-		isOptional := optional != nil && *optional
-		current, exists := references[name]
-		if !exists || current && !isOptional {
-			references[name] = isOptional
-		}
-	}
-
-	for _, volume := range deployment.Spec.Template.Spec.Volumes {
-		if volume.ConfigMap != nil {
-			add(volume.ConfigMap.Name, volume.ConfigMap.Optional)
-		}
-		if volume.Projected == nil {
+	references := map[string]bool{}
+	for _, ref := range PodTemplateReferences(deployment.Spec.Template) {
+		if ref.Kind != "ConfigMap" {
 			continue
 		}
-		for _, source := range volume.Projected.Sources {
-			if source.ConfigMap != nil {
-				add(source.ConfigMap.Name, source.ConfigMap.Optional)
-			}
+		old, exists := references[ref.Name]
+		if !exists || old && !ref.Optional {
+			references[ref.Name] = ref.Optional
 		}
 	}
-
-	addContainerReferences := func(containers []corev1.Container) {
-		for _, container := range containers {
-			for _, source := range container.EnvFrom {
-				if source.ConfigMapRef != nil {
-					add(source.ConfigMapRef.Name, source.ConfigMapRef.Optional)
-				}
-			}
-			for _, environment := range container.Env {
-				if environment.ValueFrom != nil && environment.ValueFrom.ConfigMapKeyRef != nil {
-					reference := environment.ValueFrom.ConfigMapKeyRef
-					add(reference.Name, reference.Optional)
-				}
-			}
-		}
-	}
-	addContainerReferences(deployment.Spec.Template.Spec.InitContainers)
-	addContainerReferences(deployment.Spec.Template.Spec.Containers)
-
 	names := make([]string, 0, len(references))
 	for name := range references {
 		names = append(names, name)
@@ -201,6 +170,18 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
 }
 
 type DetectionContext interface {
+	StatefulSets() []appsv1.StatefulSet
+	DaemonSets() []appsv1.DaemonSet
+	Jobs() []batchv1.Job
+	CronJobs() []batchv1.CronJob
+	PersistentVolumeClaims() []corev1.PersistentVolumeClaim
+	ServiceAccounts() []corev1.ServiceAccount
+	HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	Ingresses() []networkingv1.Ingress
+	Nodes() []corev1.Node
+	Secrets() []SecretMetadata
+
 	Namespace() string
 	ConfigMaps() []corev1.ConfigMap
 	Services() []corev1.Service

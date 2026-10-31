@@ -19,7 +19,7 @@ import (
 )
 
 func testConfig() Config {
-	return Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}")}
+	return Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}")}
 }
 
 func TestDevControllerUsesMountedSourceAndTimingConfig(t *testing.T) {
@@ -62,7 +62,7 @@ func TestNativeJobSelectsBrokerAndProposalMountTogether(t *testing.T) {
 	if !contains(container.Args, "--broker-mode=native") || !contains(container.Args, "--worker-mount-mode=proposal-only") {
 		t.Fatalf("native modes missing: %v", container.Args)
 	}
-	if valueAfter(container.Args, "--validator-image") != "validator:test" || valueAfter(container.Args, "--model") != "gpt-test" || valueAfter(container.Args, "--responder-backend") != "codex" {
+	if valueAfter(container.Args, "--model") != "gpt-test" || valueAfter(container.Args, "--responder-backend") != "codex" {
 		t.Fatalf("native validator/model missing: %v", container.Args)
 	}
 	if contains(container.Args, "--broker-arg=-m") || contains(container.Args, "--worker-mount-mode=linked") {
@@ -821,6 +821,36 @@ func TestControllerSecretGrantsOnlyAllowMetadataListWatch(t *testing.T) {
 					if verb != "list" && verb != "watch" {
 						t.Errorf("Secret grant includes unnecessary verb %q in %s/%s", verb, role.Namespace, role.Name)
 					}
+				}
+			}
+		}
+	}
+}
+
+func TestControllerRetainsNetworkPolicyObservationAndProberGrants(t *testing.T) {
+	for _, split := range []bool{false, true} {
+		config := testConfig()
+		if !split {
+			config.ControlNamespace = config.Namespace
+		}
+		plan, err := Resources(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roles := append(append([]*rbacv1.Role{}, plan.ControlRoles...), plan.AppRoles...)
+		for _, role := range roles {
+			if role.Name != "sdo-controller" {
+				continue
+			}
+			for _, verb := range []string{"get", "list", "watch"} {
+				if !roleAllows(role, "networkpolicies", verb) {
+					t.Fatalf("split=%v namespace=%s controller lacks NetworkPolicy %s", split, role.Namespace, verb)
+				}
+			}
+			for _, verb := range []string{"create", "update", "delete"} {
+				want := role.Namespace == config.controlNamespace()
+				if roleAllows(role, "networkpolicies", verb) != want {
+					t.Fatalf("split=%v namespace=%s prober NetworkPolicy %s grant, want %v", split, role.Namespace, verb, want)
 				}
 			}
 		}

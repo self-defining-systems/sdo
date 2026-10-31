@@ -5,7 +5,7 @@ into the ``sregym-responder`` image. The responder runs ``codex exec`` with
 ``danger-full-access`` inside SREGym incidents, so that copy let it read the answer key:
 ``benchmarks/sregym/experiments/assurance/composites.toml`` (``correct_mitigation``,
 ``expected_diff``, ``partial_fix_trap``), the assurance plan, and
-``benchmarks/sregym/assurance/scripted_codex/faults.py`` (repair commands).
+``benchmarks/sregym/assurance/faults.py`` (repair commands).
 
 These tests are static: they parse the Dockerfiles' ``COPY`` lines (no image is built) and
 cross-check them against what the responder's entry points actually import, so a future
@@ -50,7 +50,7 @@ SCRIPTED_PROGRAM_FILES = {
 
 #: The scripted-Codex test wrapper is allowed to add exactly this, and nothing else that
 #: FORBIDDEN_PREFIXES would otherwise catch.
-SCRIPTED_ALLOWANCE = "benchmarks/sregym/assurance/scripted_codex"
+SCRIPTED_ALLOWANCE = "benchmarks/sregym/assurance/"
 
 _COPY_LOCAL = re.compile(r"^COPY\s+(?!--from=)(\S.*?)\s+(\S+)\s*$", re.MULTILINE)
 
@@ -106,7 +106,7 @@ def test_controller_and_plain_responder_stages_copy_no_benchmarks_code() -> None
 def test_controller_image_is_separate_from_python_agent_runtime() -> None:
     text = RUNTIME_DOCKERFILE.read_text(encoding="utf-8")
     go_stage, controller = text.split("FROM runtime-sources AS controller", 1)
-    controller = controller.split("FROM runtime-sources AS validator", 1)[0]
+    controller = controller.split("FROM model-deps AS worker-runtime", 1)[0]
     assert "COPY --from=kubectl" in go_stage.split("AS runtime-base", 1)[1]
     assert "python3" not in controller
     assert "npm " not in controller
@@ -130,7 +130,14 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
     assert leaked == set(), f"sregym-responder image would copy answer-key paths: {sorted(leaked)}"
     assert {path for path in copied if path.startswith("benchmarks/sregym/fastloop/")} == ALLOWED_FASTLOOP_FILES
     scripted = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
-    assert scripted == {"benchmarks/sregym/adapter/scripted_worker.py", *SCRIPTED_PROGRAM_FILES}
+    assert scripted == {
+        *(str(path.relative_to(REPO_ROOT)) for path in (REPO_ROOT / "benchmarks/sregym/agent_script").glob("*.py")),
+        *(
+            f"benchmarks/sregym/fastloop/{name}.py"
+            for name in ("generated_worker", "responder_script", "responder_steps", "reflection_script")
+        ),
+        *SCRIPTED_PROGRAM_FILES,
+    }
     guard_build = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "submission-guard-build"))
     assert {path for path in guard_build if path.startswith("benchmarks/")} == {
         "benchmarks/sregym/protocol/submission_go/go.mod",
@@ -146,19 +153,20 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
     )
 
 
-def test_scripted_test_wrapper_adds_only_the_scripted_codex_and_nothing_from_experiments() -> None:
+def test_scripted_test_wrapper_adds_only_cli_support_and_nothing_from_experiments() -> None:
     sources = [src for src in _local_copy_sources(SCRIPTED_DOCKERFILE) if src.startswith("benchmarks")]
     copied = _expand(sources)
 
+    support = {str(path.relative_to(REPO_ROOT)) for path in (REPO_ROOT / "benchmarks/sregym/agent_script").glob("*.py")}
     leaked = {
         path
-        for path in copied
+        for path in copied - support
         if any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES) and not path.startswith(SCRIPTED_ALLOWANCE)
     }
 
     assert leaked == set(), f"the :assure scripted wrapper would copy answer-key paths: {sorted(leaked)}"
     assert copied, "the scripted wrapper copies nothing"
-    assert all(path.startswith(SCRIPTED_ALLOWANCE) for path in copied), (
+    assert all(path.startswith(SCRIPTED_ALLOWANCE) for path in copied - support), (
         f"the scripted wrapper should add only {SCRIPTED_ALLOWANCE}, not {sorted(copied)}"
     )
 
@@ -217,10 +225,14 @@ def test_sregym_responder_copy_matches_exactly_what_its_entry_points_import() ->
     assert copied - needed == set(), f"the image copies files its entry points never import: {copied - needed}"
 
 
-def test_scripted_worker_stage_contains_only_its_entry_point_and_program() -> None:
+def test_scripts_stage_contains_only_its_entry_point_and_program() -> None:
     copied = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
     assert copied == {
-        "benchmarks/sregym/adapter/scripted_worker.py",
+        *(str(path.relative_to(REPO_ROOT)) for path in (REPO_ROOT / "benchmarks/sregym/agent_script").glob("*.py")),
+        *(
+            f"benchmarks/sregym/fastloop/{name}.py"
+            for name in ("generated_worker", "responder_script", "responder_steps", "reflection_script")
+        ),
         "benchmarks/sregym/fastloop/scripted_program/README.md",
         "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
         "benchmarks/sregym/fastloop/scripted_program/mitigate.go",

@@ -10,9 +10,9 @@ A receipt whose `resolution` is `external_recovery` or `cleared_without_sdo_acti
 
 ## Outcome-layout or broker-mode mismatch
 
-**Signature:** an investigator counts both imported `.sdo/outcomes/*.json` documents and the retired `.sdo/outcomes.jsonl` stream as independent incidents.
+**Signature:** a repository uses an unsupported operational-memory schema or outcome layout.
 
-Use the logical incident ID and `sdo/operator/memory` semantics; the JSON filename is `sha256(incident_id)`, not the ID itself. Import is restartable and removes the legacy stream only after every record is accepted. Trusted source evidence is broker-owned, tied to the accepted Git tree and immutable images, and independently re-observed after restart. A worker-reported `deployed` flag or image annotation alone is not evidence. For historical JSONL runs, inspect the accepted Git revision before comparing outcomes.
+Use the logical incident ID and `sdo/operator/memory` semantics; the JSON filename is `sha256(incident_id)`, not the ID itself. Current repositories require schema version 3 and per-incident JSON documents; unsupported formats fail fast and have no migration path. Trusted source evidence is broker-owned, tied to the accepted Git tree and immutable images, and independently re-observed after restart. A worker-reported `deployed` flag or image annotation alone is not evidence. For historical JSONL runs, inspect the accepted Git revision before comparing outcomes.
 
 ## Lifecycle provenance mismatch
 
@@ -51,6 +51,8 @@ Inspect firing/clearing thresholds, debounce state, snapshot versions, durable c
 **Signature:** a finding with rule `link-reachability.<from>.<to>.<port>` (detector `traffic-<workload>` for a `purpose: link-probe` workload in `.sdo/diagnostics/traffic/workloads/`) while every `scenario-slo.*` scenario stays green.
 
 The prober dials each declared edge afresh every interval and the finding needs `failures` consecutive failed dials of an edge that had connected before. The caller may still hold an old connection, so user-facing probes can stay healthy for the whole fault. Check that the edge and port are grounded in the application source, that the fix restored fresh connectivity for the same edge (the finding must clear), and that no finding appeared for an edge the prober never reached (those are never reported: the prober's own identity may simply not be admitted there). Detection time is the first failed dial plus about `failures` intervals; a link detector should not carry the scenario detector's 9 s minimum duration.
+
+For protocol-aware links, read finding metadata `protocol`, `last_class`, `last_status`, `last_excerpt` and `last_latency_ns`, plus recent samples in Evidence. `tcp` remains the default; `http`, `grpc`, `redis`, `memcached`, `mongodb`, `postgres` and `mysql` require protocol replies. `protocol_error` means a connected peer supplied no valid reply, `not_serving` means a valid negative application response, and `refused`, `timeout`, `reset` or `transport_error` describe connection/transport failures. Redis/MongoDB auth-required replies and valid gRPC error statuses establish reachability without credentials; these probes do not prove authenticated reads or writes. Compare recovery using the same protocol and options, not a TCP-only replacement.
 
 ## Workload-health finding
 

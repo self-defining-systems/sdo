@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import ssl
@@ -12,8 +11,6 @@ from pathlib import Path
 from sdo.contracts import (
     AgentResult,
     AgentTask,
-    ArchitectureRequest,
-    ArchitectureResult,
     DeploymentPlan,
     HealthJudgeRequest,
     HealthJudgeResult,
@@ -38,7 +35,7 @@ type Detector struct{}
 func New() sdk.Detector { return Detector{} }
 func (Detector) Spec() sdk.DetectorSpec {
     return sdk.DetectorSpec{
-        ID: "health-objective", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
+        ID: "application-ready", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
         Description: "demo Deployment has an available replica",
         Interval: 30*time.Second,
         Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2},
@@ -118,24 +115,15 @@ spec:
         typed = SourceDeploymentResult(
             proposed=True, summary="deterministic source fixture", agent_session_id="fixture-source", plan=plan
         )
-    elif task.task_type == "source-architecture":
-        request = ArchitectureRequest()
-        assert task.request.Unpack(request)
-        typed = ArchitectureResult(
-            summary_markdown="# Architecture\n\nOne Deployment runs a pinned pause image.",
-            topology_fingerprint=request.source_topology_fingerprint,
-            source_commit=request.accepted_source_commit,
-            agent_session_id="fixture-architecture",
-        )
     elif task.task_type == "health-judgment-direct-v1":
         request = HealthJudgeRequest()
         assert task.request.Unpack(request)
-        detector = checkout / ".sdo/diagnostics/detectors/health/health-objective"
+        detector = checkout / ".sdo/diagnostics/detectors/health/application-ready"
         detector.mkdir(parents=True, exist_ok=True)
         (detector / "manifest.yaml").write_text("""apiVersion: sdo.dev/v1alpha1
 kind: DetectorManifest
 sdkVersion: v0.1
-id: health-objective
+id: application-ready
 constructor: New
 class: health
 owner: health_judge
@@ -160,13 +148,11 @@ originatingCommit: lifecycle-bootstrap
             "originating_incident: lifecycle-bootstrap\n---\n" + PLAYBOOK
         )
         (playbooks / "README.md").write_text("# Playbooks\n\n- [health-objective](health-objective/README.md)\n")
-        digest = hashlib.sha256(request.health_objective.strip().encode()).hexdigest()
         typed = HealthJudgeResult(
             authored=True,
             summary="deterministic availability detector",
             agent_session_id="fixture-judge",
-            objective_digest=digest,
-            detector_ids=["health-objective"],
+            detector_ids=["application-ready"],
         )
     else:
         raise ValueError(f"unsupported task type {task.task_type}")

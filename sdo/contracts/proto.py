@@ -174,8 +174,6 @@ SourceDeploymentResult = lifecycle_pb2.SourceDeploymentResult
 DeploymentPlan = lifecycle_pb2.DeploymentPlan
 RawManifestStrategy = lifecycle_pb2.RawManifestStrategy
 ImageBuild = lifecycle_pb2.ImageBuild
-ArchitectureRequest = lifecycle_pb2.ArchitectureRequest
-ArchitectureResult = lifecycle_pb2.ArchitectureResult
 HealthJudgeRequest = lifecycle_pb2.HealthJudgeRequest
 HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
 SourceResource = lifecycle_pb2.SourceResource
@@ -279,8 +277,6 @@ __all__ = [
     "DeploymentPlan",
     "RawManifestStrategy",
     "ImageBuild",
-    "ArchitectureRequest",
-    "ArchitectureResult",
     "HealthJudgeRequest",
     "HealthJudgeResult",
     "SourceResource",
