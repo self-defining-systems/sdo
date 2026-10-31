@@ -15,10 +15,9 @@ import (
 )
 
 type reflectionNode struct {
-	state            *contracts.BrokerLedger
-	faults, restarts int
-	now              time.Time
-	payloads         map[string][]byte
+	state    *contracts.BrokerLedger
+	now      time.Time
+	payloads map[string][]byte
 }
 
 func reflectionBytes(effect ReflectionEffect) []byte {
@@ -31,7 +30,7 @@ func reflectionBytes(effect ReflectionEffect) []byte {
 func reflectionKey(node reflectionNode) string {
 	var result bytes.Buffer
 	var frame [8]byte
-	for _, value := range []uint64{uint64(node.faults), uint64(node.restarts), uint64(node.now.UnixNano())} {
+	for _, value := range []uint64{uint64(node.now.UnixNano())} {
 		binary.BigEndian.PutUint64(frame[:], value)
 		result.Write(frame[:])
 	}
@@ -132,9 +131,7 @@ func TestExhaustiveReflectionLifecycle(t *testing.T) {
 				event.Kind = ReflectionCleaned
 				events = append(events, event)
 			}
-			if node.faults < 3 {
-				events = append(events, ReflectionEvent{Kind: ReflectionFault, EffectID: effect.ID, At: node.now.Add(time.Second)})
-			}
+			events = append(events, ReflectionEvent{Kind: ReflectionFault, EffectID: effect.ID, At: node.now})
 			events = append(events, ReflectionEvent{Kind: ReflectionCompleted, EffectID: "stale", At: node.now, Decision: &contracts.ReflectionDecision{LearningDecision: "failed"}})
 		}
 		for _, event := range events {
@@ -166,15 +163,17 @@ func TestExhaustiveReflectionLifecycle(t *testing.T) {
 			if len(after.ReflectionRejections) > 3 {
 				t.Fatal("correction budget exceeded")
 			}
-			child := reflectionNode{state: after, faults: node.faults, restarts: node.restarts, now: event.At, payloads: copyEvidence(node.payloads)}
+			// Faults are proven identity transitions above. Re-enqueuing them
+			// multiplies the same graph by fault counts without testing new behavior.
+			if event.Kind == ReflectionFault {
+				continue
+			}
+			child := reflectionNode{state: after, now: event.At, payloads: copyEvidence(node.payloads)}
 			// Only the current step can retry. Completed step IDs include the
 			// durable phase and attempt, so earlier payload maps cannot affect
 			// any future transition and need not inflate the BFS state key.
 			if after.ReflectionPhase != node.state.ReflectionPhase {
 				child.payloads = map[string][]byte{}
-			}
-			if event.Kind == ReflectionFault {
-				child.faults++
 			}
 			key := reflectionKey(child)
 			target, ok := seen[key]
@@ -189,7 +188,9 @@ func TestExhaustiveReflectionLifecycle(t *testing.T) {
 				edges++
 			}
 		}
-		if node.restarts < 1 {
+		// Restart is also an identity transition. Check the persisted round
+		// trip at every reachable state without adding duplicate graph nodes.
+		{
 			raw, err := protojson.Marshal(node.state)
 			if err != nil {
 				t.Fatal(err)
@@ -202,17 +203,7 @@ func TestExhaustiveReflectionLifecycle(t *testing.T) {
 			if !proto.Equal(restored, node.state) {
 				t.Fatal("restart changed persisted reflection state or reset its budget")
 			}
-			child := reflectionNode{state: restored, faults: node.faults, restarts: node.restarts + 1, now: node.now.Add(time.Second), payloads: copyEvidence(node.payloads)}
-			key := reflectionKey(child)
-			target, ok := seen[key]
-			if !ok {
-				target = len(nodes)
-				seen[key] = target
-				nodes = append(nodes, child)
-				reverse = append(reverse, nil)
-			}
-			reverse[target] = append(reverse[target], cursor)
-			edges++
+
 		}
 	}
 	live := make([]bool, len(nodes))
@@ -233,5 +224,5 @@ func TestExhaustiveReflectionLifecycle(t *testing.T) {
 			t.Fatalf("stuck reflection state %d: %v", index, nodes[index].state)
 		}
 	}
-	t.Logf("%d reflection states, %d transitions; 3 API faults, 1 restart, 3 bounded worker attempts", len(nodes), edges)
+	t.Logf("%d reflection states, %d transitions; fault/restart identity checked at every state, 3 bounded worker attempts", len(nodes), edges)
 }
