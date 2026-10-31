@@ -461,3 +461,18 @@ immediately on mismatch, including binaries without a stamp. This cache has no
 prefix fallback. Go's separate compiler/module caches remain content-addressed
 and can be shared across source revisions. To check an existing binary, run
 `uv run python scripts/operator_test_binary.py --check /absolute/path/to/sdo-operator`.
+
+Unit tests must synchronize on observable readiness or drive injected clocks.
+`test_unit_tests_synchronize_without_wall_clock_sleeps` in the architecture gate
+rejects `time.sleep` and `asyncio.sleep`, including imported aliases. Its only
+allowance is the process-registry readiness helper: that sleep backs off between
+explicit liveness checks. Go deadline assertions use `testing/synctest` so elapsed
+time measures the deadline contract rather than host scheduling.
+
+To hunt scheduling and order dependence without changing the locked dependencies:
+
+```bash
+uv run --extra test --with pytest-randomly pytest -p no:tach -n 6 --randomly-seed=101 tests/unit
+# Repeat with other seeds; concurrent copies supply CPU/build contention.
+(cd sdo/operator/runtime && go test -race -count=5 -shuffle=on ./...)
+```

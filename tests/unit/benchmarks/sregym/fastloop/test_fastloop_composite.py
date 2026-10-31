@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -20,7 +19,7 @@ from benchmarks.sregym.adapter.persistent import (
 )
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, CompositeSettings, TrackedAgent
-from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
+from benchmarks.sregym.fastloop.fault_tracker import FaultSpec, FaultTracker
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict, TokenCounts
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings
@@ -32,6 +31,44 @@ if TYPE_CHECKING:
 INJECTED = datetime(2026, 10, 1, 12, 0, 0, tzinfo=timezone.utc)
 PROBLEM = "composite3_hotel_geo_rate_recommendation"
 FAST = CompositeSettings(deadline_seconds=60, idle_seconds=5, stable_seconds=0.001, poll_seconds=0.01)
+
+
+# Composite tests drive sampling at state transitions. BackgroundPoller has its
+# own tests; OS thread scheduling must not decide which repairs these fakes see.
+_ACTIVE_TRACKERS: list[FaultTracker] = []
+
+
+def _poll_trackers() -> None:
+    for tracker in _ACTIVE_TRACKERS:
+        tracker.poll()
+        tracker.poll()
+
+
+@pytest.fixture(autouse=True)
+def synchronous_fault_sampling(monkeypatch: pytest.MonkeyPatch):
+    ticks = iter(range(1_000_000))
+
+    def tracker(probes, *, stable_seconds):
+        return FaultTracker(probes, stable_seconds=stable_seconds, clock=lambda: float(next(ticks)))
+
+    class Poller:
+        def __init__(self, tracker, *, interval_seconds):
+            self.tracker = tracker
+
+        def __enter__(self):
+            self.tracker.restart()
+            _ACTIVE_TRACKERS.append(self.tracker)
+            _poll_trackers()
+            return self
+
+        def __exit__(self, *exc):
+            _poll_trackers()
+            _ACTIVE_TRACKERS.remove(self.tracker)
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.composite.FaultTracker", tracker)
+    monkeypatch.setattr("benchmarks.sregym.fastloop.composite.BackgroundPoller", Poller)
+    yield
+    assert not _ACTIVE_TRACKERS
 
 
 def _closure(incident_id: str, offset: int) -> dict[str, Any]:
@@ -96,7 +133,7 @@ class FakeOps:
     def runtime_state(self, control_namespace: str) -> dict[str, Any]:
         if threading.current_thread().name == "controller-state":
             return self.states.get(control_namespace, {})
-        time.sleep(0.03)  # real time passes so the background fault poller samples between controller polls
+        _poll_trackers()
         state = self.states[control_namespace]
         closure = state.get("pending_closure")
         if isinstance(closure, dict):
@@ -538,7 +575,7 @@ class _Inner:
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
         window = inject()
         self.fixed.add("readiness:geo")
-        time.sleep(0.2)
+        _poll_trackers()
         return AgentOutcome(injection=window, mitigation_applied_at=window.finished_at + timedelta(seconds=30))
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:

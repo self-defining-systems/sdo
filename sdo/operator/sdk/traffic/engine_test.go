@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"sdo.dev/operator/sdk/traffic"
@@ -290,18 +292,28 @@ func TestScheduleFollowsWeightsDeterministically(t *testing.T) {
 	}
 }
 
+type immediateDoer struct{}
+
+func (immediateDoer) Do(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+}
+
 func TestRunHonoursTheRateAndBoundedDuration(t *testing.T) {
-	app := &recorder{}
-	w := workload(t, "verify", traffic.PurposeVerifyBurst, traffic.WorkloadScenario{ID: "search"})
-	w.RatePerSecond, w.Duration = 20, traffic.Duration(500*time.Millisecond)
-	e := engine(t, w, traffic.Catalog{search()}, serve(t, app))
-	var emitted atomic.Int64
-	started := time.Now()
-	next, skipped := e.Run(context.Background(), 0, func(string, traffic.Sample) { emitted.Add(1) })
-	elapsed := time.Since(started)
-	if elapsed > 2*time.Second || next < 8 || next > 12 || skipped != 0 || emitted.Load() != int64(next) {
-		t.Fatalf("20/s for 500ms: next=%d skipped=%d emitted=%d elapsed=%s", next, skipped, emitted.Load(), elapsed)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		w := workload(t, "verify", traffic.PurposeVerifyBurst, traffic.WorkloadScenario{ID: "search"})
+		w.RatePerSecond, w.Duration = 20, traffic.Duration(500*time.Millisecond)
+		e, err := traffic.NewEngine(w, traffic.Catalog{search()}, immediateDoer{}, func(traffic.Target) string { return "http://app" }, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var emitted atomic.Int64
+		started := time.Now()
+		next, skipped := e.Run(context.Background(), 0, func(string, traffic.Sample) { emitted.Add(1) })
+		elapsed := time.Since(started)
+		if elapsed != 500*time.Millisecond || (next < 10 || next > 11) || skipped != 0 || emitted.Load() != int64(next) {
+			t.Fatalf("20/s for 500ms: next=%d skipped=%d emitted=%d elapsed=%s", next, skipped, emitted.Load(), elapsed)
+		}
+	})
 }
 
 func TestWorkloadValidationRejectsUnsafeProfiles(t *testing.T) {

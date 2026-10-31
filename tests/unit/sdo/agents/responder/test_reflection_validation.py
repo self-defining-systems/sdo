@@ -13,6 +13,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from sdo.agents.responder.reflection import ClaudeSessionBackend, CodexSessionBackend
+from sdo.agents.responder.reflection_validation import validation_server
 from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ def _validator(tmp_path: Path, body: str, monkeypatch: pytest.MonkeyPatch) -> Pa
     return tmp_path
 
 
-async def _call(root: Path, *, timeout: float = 2) -> dict[str, object]:
+async def _call(root: Path, *, timeout: float = 30) -> dict[str, object]:
     parameters = StdioServerParameters(
         command=sys.executable,
         args=[
@@ -60,10 +61,9 @@ async def test_validation_tool_waits_for_final_diagnostics_in_one_call(
 ) -> None:
     _validator(
         tmp_path,
-        """import time, json, sys, os
+        """import json, sys, os
 assert sys.argv[1:] == ["memory", "check", "--json", "--decision", "decision.json"]
 assert os.getcwd() == os.environ["EXPECTED_CHECKOUT"]
-time.sleep(0.1)
 print(json.dumps({"diagnostics": [{"rule": "program.replay", "message": "wrong verdict"}]}))
 sys.exit(1)
 """,
@@ -80,23 +80,49 @@ sys.exit(1)
 async def test_validation_tool_timeout_returns_failure_and_stops_children(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    marker = tmp_path / "child-finished"
-    child_code = f"import time; from pathlib import Path; time.sleep(0.8); Path({str(marker)!r}).touch()"
-    _validator(
-        tmp_path,
-        f"""import subprocess, sys, time
-subprocess.Popen([sys.executable, "-c", {child_code!r}])
+    # The deadline fires only once a real grandchild is connected. EOF proves
+    # the process-group kill closed its socket, without a post-kill sleep.
+    connected = asyncio.Event()
+    connections: list[tuple[asyncio.StreamReader, asyncio.StreamWriter]] = []
+
+    def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        connections.append((reader, writer))
+        connected.set()
+
+    async with await asyncio.start_server(accept, "127.0.0.1", 0) as listener:
+        port = listener.sockets[0].getsockname()[1]
+        child_code = f"import socket; s = socket.create_connection(('127.0.0.1', {port})); s.recv(1)"
+        _validator(
+            tmp_path,
+            f"""import subprocess, sys
 print("checking replay", flush=True)
-time.sleep(20)
+child = subprocess.Popen([sys.executable, "-c", {child_code!r}])
+child.wait()
 """,
-        monkeypatch,
-    )
-    result = await _call(tmp_path, timeout=0.1)
-    assert result["timed_out"]
-    assert result["exit_code"] != 0
-    assert "checking replay" in result["stdout"]
-    await asyncio.sleep(1)
-    assert not marker.exists()
+            monkeypatch,
+        )
+
+        async def expire_when_ready(awaitable: object, timeout: float) -> None:
+            async with asyncio.timeout(30):  # deadlock watchdog, not the behavior under test
+                await connected.wait()
+            raise TimeoutError
+
+        monkeypatch.setattr(asyncio, "wait_for", expire_when_ready)
+        server = validation_server(tmp_path)
+        result = await server.call_tool("check_memory", {"decision_path": "decision.json"})
+        # FastMCP returns both text and structured content for dataclass results.
+        assert isinstance(result, tuple)
+        structured = result[1]
+        assert structured["timed_out"]
+        assert structured["exit_code"] != 0
+        assert "checking replay" in structured["stdout"]
+        reader, writer = connections[0]
+        try:
+            async with asyncio.timeout(30):
+                assert await reader.read() == b""
+        finally:
+            writer.close()
+            await writer.wait_closed()
 
 
 @pytest.mark.parametrize(

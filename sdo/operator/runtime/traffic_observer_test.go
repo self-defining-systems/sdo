@@ -195,8 +195,29 @@ func TestProberClientRefreshesTheAddressAfterATransportError(t *testing.T) {
 // The synthetic-traffic detector opens an incident when the application
 // fails for the prober, and the evidence carries each scenario's error body.
 func TestControllerOpensIncidentFromFailingSyntheticTraffic(t *testing.T) {
-	frontend := &fakeFrontend{}
-	observer := NewTrafficObserver(runProber(t, frontend), []string{"health"}, nil, 0)
+	// Exact windows isolate controller persistence from prober arrival timing.
+	// The HTTP client and observer still run through the real API transport.
+	var broken atomic.Bool
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		window := traffic.Window{Workload: traffic.Workload{Name: "health", Purpose: traffic.PurposeHealthProbe}}
+		for _, scenario := range frontendCatalog() {
+			sample := traffic.Sample{Outcome: traffic.OutcomeOK, Status: 200}
+			if broken.Load() {
+				sample.Outcome = traffic.OutcomeError
+				sample.Status = 500
+				sample.Error = "rpc error: code = Unavailable desc = connection error"
+			}
+			window.Scenarios = append(window.Scenarios, traffic.ScenarioObservations{
+				Scenario: scenario.Describe(), Qualified: true, Samples: []traffic.Sample{sample, sample, sample},
+			})
+		}
+		if err := json.NewEncoder(w).Encode(prober.WindowsResponse{Windows: map[string]traffic.Window{"health": window}}); err != nil {
+			t.Errorf("encode windows: %v", err)
+		}
+	}))
+	defer api.Close()
+	observer := NewTrafficObserver(HTTPProberClient{BaseURL: StaticProberURL(api.URL)}, []string{"health"}, nil, 0)
+
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	controller, err := NewController(ControllerConfig{
 		Application: "hotel", Namespace: "hotel-reservation", SourceCommit: "source", DeployedCommit: "deployed",
@@ -209,8 +230,6 @@ func TestControllerOpensIncidentFromFailingSyntheticTraffic(t *testing.T) {
 		t.Fatalf("new controller: %v", err)
 	}
 	ctx := context.Background()
-	observer.WaitWarm(ctx, 5*time.Second)
-	time.Sleep(300 * time.Millisecond)
 	observer.Poll(ctx)
 	now := time.Unix(0, 0)
 	if err := controller.StepEvents(ctx, now, []sdk.WatchKind{traffic.Watch}); err != nil {
@@ -219,8 +238,7 @@ func TestControllerOpensIncidentFromFailingSyntheticTraffic(t *testing.T) {
 	if controller.IncidentOpen() {
 		t.Fatalf("healthy traffic must not open an incident")
 	}
-	frontend.broken.Store(true)
-	time.Sleep(600 * time.Millisecond)
+	broken.Store(true)
 	observer.Poll(ctx)
 	// traffic-health additionally requires the finding to persist for
 	// traffic.DefaultHealthMinDuration (9s) before it fires, so

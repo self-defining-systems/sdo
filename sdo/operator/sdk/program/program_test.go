@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -100,10 +101,12 @@ func TestRunDiagnoseContainsFailures(t *testing.T) {
 		}, program.Bindings{"service": serviceRef}, "deadline"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := program.RunDiagnose(context.Background(), diagnostic{fn: tc.fn}, &sdktest.ReplayReadView{}, tc.bindings, time.Millisecond)
-			if got.Result != program.Unknown || len(got.Evidence) == 0 || !strings.Contains(got.Evidence[0].Observed, tc.why) {
-				t.Fatalf("got %+v", got)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				got := program.RunDiagnose(context.Background(), diagnostic{fn: tc.fn}, &sdktest.ReplayReadView{}, tc.bindings, time.Millisecond)
+				if got.Result != program.Unknown || len(got.Evidence) == 0 || !strings.Contains(got.Evidence[0].Observed, tc.why) {
+					t.Fatalf("got %+v", got)
+				}
+			})
 		})
 	}
 }
