@@ -41,7 +41,6 @@ class RuntimeConfig:
     credentials_secret: str
     model: str
     timeout_seconds: int
-    validator_image: str = "sdo-detector-validator:v0.1.0"
     verification_timeout_seconds: int = 120
     wait_for_completion: bool = False
     repair_policy: str = "commit"
@@ -77,7 +76,6 @@ class RuntimeConfig:
             "application",
             "controller_image",
             "responder_image",
-            "validator_image",
             "repository_pvc",
             "credentials_secret",
             "model",
@@ -137,7 +135,6 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         application=config.application,
         controller_image=config.controller_image,
         responder_image=config.responder_image,
-        validator_image=config.validator_image,
         repository_pvc=config.repository_pvc,
         credentials_secret=config.credentials_secret,
         model=config.model,

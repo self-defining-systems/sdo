@@ -234,7 +234,6 @@ def merge_stage_config(
             preserve_infrastructure=bool(env_raw.get("preserve_infrastructure", False)),
             submit_done_returns_feedback=bool(env_raw.get("submit_done_returns_feedback", False)),
             defer_diagnosis_grading=bool(env_raw.get("defer_diagnosis_grading", False)),
-            lifecycle_validation_cache=bool(env_raw.get("lifecycle_validation_cache", False)),
             source_build_cache=bool(env_raw.get("source_build_cache", False)),
             fast_namespace_teardown=bool(env_raw.get("fast_namespace_teardown", False)),
             cleanup_defer_timeout_seconds=int(env_raw.get("cleanup_defer_timeout_seconds", 0)),

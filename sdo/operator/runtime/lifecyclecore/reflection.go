@@ -84,7 +84,7 @@ func reflectionIdentity(state *contracts.BrokerLedger, kind ReflectionEffectKind
 }
 
 // StepReflection owns dispatch, completed-result retention, typed rejections and
-// reset/publication ordering. Files, validation Jobs and commits remain one
+// reset/publication ordering. Files, validation subprocesses and commits remain one
 // atomic trusted broker publication effect at the edge.
 func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*contracts.BrokerLedger, []ReflectionEffect) {
 	next := &contracts.BrokerLedger{}

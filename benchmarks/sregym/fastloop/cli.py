@@ -100,7 +100,7 @@ def node_images_match(cluster: str, images: Images) -> bool:
     nodes = subprocess.run(["kind", "get", "nodes", "--name", cluster], capture_output=True, text=True, check=False)
     if nodes.returncode != 0 or not nodes.stdout.strip():
         return False
-    for image in (images.controller, images.responder, images.validator):
+    for image in (images.controller, images.responder):
         local = subprocess.run(
             [
                 "docker",
@@ -148,14 +148,14 @@ def node_images_match(cluster: str, images: Images) -> bool:
 def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[str, str]:
     """The SREGym worker environment for ``up``: one reused kind lane deploying ``workspace`` from source."""
 
-    images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
+    images = Images(controller=args.controller_image, responder=args.responder_image)
     worker_env = {
         "SREGYM_KIND_CLUSTER_PREFIX": args.cluster_prefix,
         "SREGYM_KIND_CLUSTER_NAME": f"{args.cluster_prefix}{args.worker_id}",
         "SREGYM_KIND_REQUIRE_NETWORK_POLICY": "1",
         "FASTLOOP_DELIVERY_RECORD": str(args.run_dir.resolve() / "image_delivery.jsonl"),
-        "SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE": images.validator,
-        "SREGYM_KIND_REQUIRED_IMAGES": json.dumps([images.controller, images.responder, images.validator]),
+        "SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE": images.controller,
+        "SREGYM_KIND_REQUIRED_IMAGES": json.dumps([images.controller, images.responder]),
         "SREGYM_REUSE_CLUSTER": "1",
         "SREGYM_WORKER_CPU_LIMIT": args.cpu_limit,
         "SREGYM_DEPLOY_FROM_SOURCE": "1",
@@ -228,7 +228,7 @@ def up_preflight(args: argparse.Namespace) -> None:
         warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
     elif not (args.dev_mount.resolve() / "sdo/operator/go.mod").is_file():
         raise ValueError(f"fastloop preflight: not an SDO worktree: {args.dev_mount}")
-    for image in (args.controller_image, args.responder_image, args.validator_image):
+    for image in (args.controller_image, args.responder_image):
         if image is None:
             continue
         subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True, text=True)
@@ -262,7 +262,7 @@ def _up(args: argparse.Namespace) -> int:
     private_tmp = None if args.no_sandbox else run_dir / "tmp"
     if private_tmp is not None:
         private_tmp.mkdir(exist_ok=True)
-    images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
+    images = Images(controller=args.controller_image, responder=args.responder_image)
     if args.dev_mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
@@ -442,7 +442,6 @@ def _sdo_agent(
         application=environment.application,
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
-        validator_image=environment.images.validator,
         deployed_manifest_paths=("kubernetes",),
         repository_pvc="sdo-application-repository",
         credentials_secret="sdo-agent-credentials",
@@ -964,7 +963,7 @@ def build_parser() -> argparse.ArgumentParser:
     preflight = commands.add_parser("preflight", help="fail fast on host prerequisites before building images")
     preflight.add_argument("--dev-mount", type=Path, nargs="?", const=REPO_ROOT, default=REPO_ROOT)
     preflight.add_argument("--kind-worker-nodes", type=int, default=1)
-    for role in ("controller", "responder", "validator"):
+    for role in ("controller", "responder"):
         preflight.add_argument(f"--{role}-image", default=None)
     preflight.set_defaults(handler=lambda args: up_preflight(args) or 0)
 
@@ -986,7 +985,6 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--builder", default="fastloop", help="private buildx builder for the application image")
     up.add_argument("--controller-image", default=Images().controller)
     up.add_argument("--responder-image", default=Images().responder)
-    up.add_argument("--validator-image", default=Images().validator)
     up.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
     up.add_argument(
         "--dev-mount",

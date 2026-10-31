@@ -690,7 +690,6 @@ with attribution. Source reads and tool calls happen during execution, not durin
 generation. The checkout comes from the executing worker. Action and verification
 timestamps come from the live clock. Transient state uses `SDO_TOOLS_DIR` and is
 removed on success; a failed turn may leave its incident-scoped state for diagnosis.
-Caller registrations still use the legacy worker until the next migration step.
 
 A command may set `capture_json: true` to parse its successful stdout as one JSON
 value. Subsequent steps and the result can reference `{{steps.0.output}}` or nested
@@ -708,3 +707,9 @@ production worker with the agent-script CLI. Scratch state uses the writable
 tool request exchange; the accepted checkout is changed only by script steps.
 Replay uses these generators with captured command transport. Custom registrations
 remain subject to the live-run time-scale guard.
+
+Broker compilation uses the running controller executable in a bounded subprocess.
+`go test ./broker -run TestValidationSubprocessLimits` checks deadline and aggregate
+process-group memory failures as infrastructure errors (exit 2). The CLI/broker
+parity suite exercises this production subprocess transport. No validator image
+or schema fingerprint is required; worker Jobs retain controller toolchain mounts.

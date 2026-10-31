@@ -296,7 +296,6 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
         application="demo",
         controller_image="controller:test",
         responder_image="responder:test",
-        validator_image="validator:test",
         repository_pvc="repository",
         credentials_secret="credentials",
         model="gpt-6-luna",

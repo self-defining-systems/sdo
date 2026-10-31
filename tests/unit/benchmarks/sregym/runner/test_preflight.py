@@ -118,9 +118,7 @@ def test_luna_arms_on_a_healthy_host_pass_and_resolve_every_role(fake_host: Fake
     }
     assert sdo_roles["sregym_judge"]["effort"] == "xhigh"
     assert codex_roles["baseline_agent"]["model"] == "gpt-6-luna"
-    assert {"sdo-controller:v0.1.0", "sdo-sregym-responder:v0.1.0", "sdo-detector-validator:v0.1.0"} <= set(
-        fake_host.probed
-    )
+    assert {"sdo-controller:v0.1.0", "sdo-sregym-responder:v0.1.0"} <= set(fake_host.probed)
 
 
 def _empty_applications(sregym_dir: Path) -> Path:
@@ -228,7 +226,7 @@ def test_go_only_images_probe_the_native_binary_without_python_or_codex() -> Non
 
     def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         commands.append(command)
-        return subprocess.CompletedProcess(command, 0, "sdo.dev/v1alpha1+sdk.test\n", "")
+        return subprocess.CompletedProcess(command, 0, "memory check\n", "")
 
     versions = SystemHost(run=run).image_versions("sdo-controller:test", ())
 
@@ -244,7 +242,8 @@ def test_go_only_images_probe_the_native_binary_without_python_or_codex() -> Non
         "--entrypoint",
         "/usr/local/bin/sdo-operator",
         "sdo-controller:test",
-        "schema-identity",
+        "memory",
+        "help",
     ]
 
 

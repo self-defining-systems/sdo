@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/broker"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk/inputs"
@@ -71,6 +72,7 @@ func Run(detectors []sdk.Detector) {
 }
 
 func RunWithPrograms(detectors []sdk.Detector, programs program.ProgramRegistry) {
+	broker.RunValidationChild()
 	if err := RunWithOptions(context.Background(), detectors, RuntimeOptions{Programs: programs}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -246,7 +248,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	proberBinary := flags.String(
 		"prober-binary", "", "compiled routing and traffic prober on the shared repository volume; the controller runs it as an isolated pod",
 	)
-	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers and validators (required in job mode)")
+	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required in job mode)")
 	proberImage := flags.String("prober-image", "", "image that runs the prober binary; defaults to --responder-image")
 	proberURL := flags.String("prober-url", "", "use an already running prober at this URL instead of starting one")
 	metricsURL := flags.String(

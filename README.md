@@ -80,7 +80,6 @@ sdo-operator host --repository /path/to/application \
   --operation-id my-app-bootstrap \
   --controller-image sdo-controller:v0.1.0 \
   --responder-image sdo-responder:v0.1.0 \
-  --validator-image sdo-detector-validator:v0.1.0 \
   --buildkit-image 'moby/buildkit@sha256:<pinned-digest>' \
   --repository-pvc sdo-application-repository \
   --credentials-secret sdo-agent-credentials \
@@ -94,7 +93,7 @@ The full interface:
 sdo-operator host --repository REPOSITORY --namespace NAMESPACE
   --application NAME (--goal TEXT | --goal-file PATH)
   --operation-id ID --controller-image IMAGE --responder-image IMAGE
-  --validator-image IMAGE --buildkit-image DIGEST_PINNED_IMAGE
+  --buildkit-image DIGEST_PINNED_IMAGE
   --repository-pvc PVC --credentials-secret SECRET
   --registry-push-secret SECRET --model MODEL
 ```

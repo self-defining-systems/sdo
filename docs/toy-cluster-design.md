@@ -31,12 +31,9 @@ clear: the responder must establish the source contradiction. A repeat
 on a different service must be detected by the accepted invariant Go program.
 A bad image and a broken readiness probe provide health-visible controls.
 
-NetworkPolicy deny is included. The initial kindnet decision was overturned by
-the real broker: its isolated validator requires a positive connectivity canary
-and an enforced default-deny canary before accepting any program. The unchanged
-production check is in `sdo/operator/broker/kubernetes_validator.go`. Calico is
-therefore required for this tier, even when the application fault itself does
-not involve network policy. No drift feed
+NetworkPolicy deny is included, so Calico remains required to enforce application
+fault scenarios. Broker validation now runs in a bounded subprocess of the
+controller; it no longer requires validation Jobs or connectivity canaries. No drift feed
 or production operational decision behavior is changed by this tier. Scripted
 reflection validates learning plumbing; it does not establish model learning.
 

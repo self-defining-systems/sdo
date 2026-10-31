@@ -109,7 +109,7 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--control-namespace", cfg.controlNamespace(), "--application", cfg.Application,
 		"--health-objective", healthObjective, "--operation-id", operationID,
 		"--max-attempts", fmt.Sprint(maxAttempts), "--controller-image", cfg.ControllerImage,
-		"--responder-image", cfg.ResponderImage, "--validator-image", cfg.ValidatorImage,
+		"--responder-image", cfg.ResponderImage,
 		"--repository-pvc", cfg.RepositoryPVC, "--repository-mount-path", "/workspace",
 		"--credentials-secret", cfg.CredentialsSecret, "--model", cfg.Model,
 		"--agent-provider", provider(cfg), "--worktree-root", "/workspace/worktrees",

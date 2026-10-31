@@ -140,13 +140,6 @@ COPY sdo/agents/registrations /opt/sdo/sdo/agents/registrations
 LABEL org.opencontainers.image.title="SDO Go operator" org.opencontainers.image.version="0.1.0"
 CMD ["/usr/local/bin/sdo-operator", "controller", "--help"]
 
-FROM runtime-sources AS validator
-ARG SDO_VALIDATOR_SCHEMA_IDENTITY="unknown"
-LABEL org.opencontainers.image.title="SDO detector validator" \
-      org.opencontainers.image.version="0.1.0" \
-      dev.sdo.validator-schema="${SDO_VALIDATOR_SCHEMA_IDENTITY}"
-CMD ["/usr/local/bin/sdo-operator", "validate", "--help"]
-
 FROM model-deps AS worker-runtime
 COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
 COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator

@@ -5,8 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
+	"path/filepath"
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
@@ -56,24 +55,9 @@ func openMigrationBroker(config *contracts.ControllerConfig) (lifecycle.Proposal
 		return nil, err
 	}
 
-	restConfig, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("memory migration in-cluster credentials: %w", err)
+	validation := broker.SubprocessValidator{}
+	if config.GetHealthyBaseline() {
+		validation.HealthyBaseline = filepath.Join(config.GetRepositoryMountPath(), ".sdo-baseline/healthy")
 	}
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("memory migration Kubernetes client: %w", err)
-	}
-	namespace := config.GetControlNamespace()
-	if namespace == "" {
-		namespace = config.GetNamespace()
-	}
-	job := broker.KubernetesValidationJobClient{
-		ToolchainImage: config.GetToolchainImage(),
-		Client:         client, Namespace: namespace, Image: config.GetValidatorImage(),
-		RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
-		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
-		HealthyBaseline: config.GetHealthyBaseline(),
-	}
-	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job))
+	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), validation.Validator())
 }

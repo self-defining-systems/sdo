@@ -32,7 +32,8 @@ message NativeProductionReceipt {
   string controller_workload = 8;
   string controller_image = 9;
   string responder_image = 10;
-  string validator_image = 11;
+  reserved 11;
+  reserved "validator_image";
   string controller_pod_uid = 12;
   BrokerLedger native_ledger = 13;
   repeated ResponderJobEvidence responder_job_evidence = 14;

@@ -44,7 +44,6 @@ def scripted_images(tag: str) -> Images:
     return Images(
         controller=f"sdo-controller:{tag}",
         responder=f"sdo-sregym-responder:{tag}",
-        validator=f"sdo-detector-validator:{tag}",
     )
 
 
@@ -65,7 +64,7 @@ def require_scripted(images: Images) -> None:
 def load_images(cluster: str, images: Images, *, record_path: Path | None = None) -> None:
     from benchmarks.sregym.fastloop.toy_images import load_images as deliver
 
-    deliver(cluster, [images.controller, images.responder, images.validator], record_path=record_path)
+    deliver(cluster, [images.controller, images.responder], record_path=record_path)
 
 
 def reset_to_seed(environment: FastloopEnvironment) -> str:
@@ -139,7 +138,6 @@ def _run(args: argparse.Namespace) -> int:
         application=environment.application,
         controller_image=images.controller,
         responder_image=images.responder,
-        validator_image=images.validator,
         repository_pvc="sdo-application-repository",
         credentials_secret="sdo-agent-credentials",
         model="gpt-6-luna",

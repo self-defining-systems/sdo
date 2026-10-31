@@ -39,7 +39,6 @@ def _receipt() -> dict[str, Any]:
         "control_namespace": "demo-sdo",
         "controller_image": "controller:go",
         "responder_image": "responder:python",
-        "validator_image": "validator:go",
         "controller_pod_uid": "pod-1",
         "outcome_commit": commit,
         "resolution": "sdo_mitigated",

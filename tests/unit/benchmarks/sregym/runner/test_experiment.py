@@ -131,7 +131,6 @@ def test_sdo_codex_exports_required_kind_images_for_prefault_preflight(tmp_path:
             "sdo_codex": {
                 "controller_image": "controller:run-123",
                 "responder_image": "responder:run-123",
-                "validator_image": "validator:run-123",
             }
         },
     )
@@ -141,10 +140,9 @@ def test_sdo_codex_exports_required_kind_images_for_prefault_preflight(tmp_path:
     assert json.loads(env["SREGYM_KIND_REQUIRED_IMAGES"]) == [
         "controller:run-123",
         "responder:run-123",
-        "validator:run-123",
     ]
     assert env["SREGYM_KIND_REQUIRE_NETWORK_POLICY"] == "1"
-    assert env["SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE"] == "validator:run-123"
+    assert env["SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE"] == "controller:run-123"
 
 
 def test_every_arm_gets_an_enforcing_cni_on_the_same_kind_topology(tmp_path: Path, monkeypatch) -> None:
@@ -536,29 +534,6 @@ def test_source_build_cache_is_opt_in_and_reaches_the_conductor(tmp_path: Path) 
     assert load_experiment_config(snapshot).env.source_build_cache is True
     disabled = resolve_config(config, env_overrides={"SREGYM_SOURCE_BUILD_CACHE": "0"})
     assert disabled.env.source_build_cache is False
-
-
-def test_lifecycle_validation_cache_is_opt_in_and_shared_across_pipelines(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("SDO_LIFECYCLE_VALIDATION_CACHE_DIR", raising=False)
-    assert "SDO_LIFECYCLE_VALIDATION_CACHE_DIR" not in config_to_env(ExperimentConfig(), project_root=tmp_path)
-    toml = _write_toml(
-        tmp_path,
-        """
-        [runner.env]
-        lifecycle_validation_cache = true
-    """,
-    )
-    config = load_experiment_config(toml)
-
-    env = config_to_env(config, project_root=tmp_path)
-    assert env["SDO_LIFECYCLE_VALIDATION_CACHE_DIR"] == str(tmp_path / ".sdo-runtime" / "lifecycle-validation-cache")
-    snapshot = tmp_path / "snapshot.toml"
-    snapshot.write_text(_serialize_config(config))
-    assert load_experiment_config(snapshot).env.lifecycle_validation_cache is True
-    disabled = resolve_config(config, env_overrides={"SDO_LIFECYCLE_VALIDATION_CACHE": "0"})
-    assert disabled.env.lifecycle_validation_cache is False
 
 
 def test_deploy_from_source_env_override_enables() -> None:

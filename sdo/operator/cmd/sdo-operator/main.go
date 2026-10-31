@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli"
@@ -16,6 +17,7 @@ import (
 var sourceHash string
 
 func main() {
+	broker.RunValidationChild()
 	if len(os.Args) == 2 && os.Args[1] == "source-hash" {
 		fmt.Println(sourceHash)
 		return
@@ -51,37 +53,6 @@ func main() {
 			os.Exit(1)
 		}
 		if err := operatorcli.RunBaselineWrite(os.Stdin, operatorcli.BaselineDirectory); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
-	if len(os.Args) == 2 && os.Args[1] == "schema-identity" {
-		identity, err := builder.SchemaIdentity(".")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		fmt.Println(identity)
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "network-canary" {
-		if len(os.Args) != 3 || (os.Args[2] != "allow" && os.Args[2] != "deny") {
-			fmt.Fprintln(os.Stderr, "network-canary requires allow or deny")
-			os.Exit(1)
-		}
-		if err := operatorcli.RunNetworkCanary(context.Background(), os.Args[2] == "deny"); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "validate" {
-		config, err := operatorcli.ParseValidateLaunch(os.Args[1:])
-		if err == nil {
-			err = operatorcli.RunValidateReport(context.Background(), config, os.Stdout)
-		}
-		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

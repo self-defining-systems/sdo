@@ -121,7 +121,7 @@ func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConf
 	plan, err := Resources(Config{
 		Namespace: cfg.Namespace, ControlNamespace: cfg.ControlNamespace, Application: cfg.Application,
 		RepositoryPVC: cfg.RepositoryPVC, CredentialsSecret: "grants-only", Model: "grants-only",
-		ControllerImage: cfg.ControllerImage, ResponderImage: cfg.ControllerImage, ValidatorImage: cfg.ControllerImage,
+		ControllerImage: cfg.ControllerImage, ResponderImage: cfg.ControllerImage,
 		// The plan is built only for its grants; these satisfy its validation of the controller Job it never creates.
 		TimeoutSeconds: 1, AcceptedCommit: strings.Repeat("0", 40), NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 	})

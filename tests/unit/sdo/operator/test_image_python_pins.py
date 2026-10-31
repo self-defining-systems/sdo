@@ -118,18 +118,6 @@ def test_external_base_images_are_pinned_by_digest(dockerfile: str) -> None:
     assert floating == []
 
 
-def test_validator_image_contains_no_python_dependency_install() -> None:
-    text = (
-        (REPO_ROOT / "sdo/operator/Dockerfile.runtime")
-        .read_text(encoding="utf-8")
-        .split(" AS validator\n", 1)[1]
-        .split("\nFROM ", 1)[0]
-    )
-    assert "pip install" not in text
-    assert "python3" not in text
-    assert "COPY --from=go" not in text
-
-
 def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
     dockerfile = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text(encoding="utf-8")
     assert "COPY examples/playbook-programs /opt/sdo/examples/playbook-programs" in dockerfile
@@ -154,25 +142,16 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
         assert (REPO_ROOT / "examples/playbook-programs" / relative).is_file(), relative
 
 
-def test_validator_image_uses_controller_supplied_offline_toolchain() -> None:
-    runtime = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text()
-    assert 'cd "$dir" && go mod download all' in runtime
-    assert "GOPROXY=off" in runtime
-    assert 'GOFLAGS="-mod=mod -p=2"' in runtime
-    source = (REPO_ROOT / "sdo/operator/broker/kubernetes_validator.go").read_text()
-    assert "toolchain.Apply(&job.Spec.Template.Spec, k.ToolchainImage)" in source
-
-
 def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
     script = (REPO_ROOT / "scripts/build_sdo_images.sh").read_text(encoding="utf-8")
-    for image in ("sdo-detector-validator", "sdo-controller", "sdo-responder", "sdo-sregym-responder"):
+    for image in ("sdo-controller", "sdo-responder", "sdo-sregym-responder"):
         assert image in script
     assert "--user 65532:65532" in script
     assert "command -v go" in script
     assert "command -v sdo-operator" in script
     assert "go list ./program" in script
     assert "tests/fixtures/sdo/playbook_program_app:/fixture:ro" in script
-    assert "sdo-operator validate --app /fixture --expect-schema" in script
+    assert "sdo-operator validation-child /fixture /opt/sdo/sdo/operator" in script
 
 
 def test_image_npm_installs_are_pinned_to_exact_versions() -> None:

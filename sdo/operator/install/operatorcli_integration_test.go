@@ -13,7 +13,7 @@ import (
 func TestInstallerNativeJobPreservesBrokerAndMountModeInChildConfig(t *testing.T) {
 	cfg := install.Config{
 		Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo",
-		ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test",
+		ControllerImage: "controller:test", ResponderImage: "responder:test",
 		RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test",
 		AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, RepairPolicy: "recorded-actions",
 	}
@@ -32,7 +32,7 @@ func TestInstallerNativeJobPreservesBrokerAndMountModeInChildConfig(t *testing.T
 	if !supervise || launch.Controller.GetBrokerMode() != "native" || launch.Controller.GetWorkerMountMode() != "proposal-only" {
 		t.Fatalf("native mode lost at child boundary: %+v", launch.Controller)
 	}
-	if launch.Controller.GetValidatorImage() != "validator:test" || launch.Controller.GetResponderModel() != "gpt-test" || launch.Controller.GetResponderBackend() != "codex" {
+	if launch.Controller.GetResponderModel() != "gpt-test" || launch.Controller.GetResponderBackend() != "codex" {
 		t.Fatalf("native verifier/responder fields lost: %+v", launch.Controller)
 	}
 	if launch.Controller.GetControlNamespace() != "demo-sdo" || launch.Controller.GetRepositoryPvc() != "repository" {
@@ -44,7 +44,7 @@ func TestInstallerNativeJobPreservesBrokerAndMountModeInChildConfig(t *testing.T
 }
 
 func TestInstallerOperateJobParsesAsInClusterLifecycle(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, RegistrationConfigMap: "sdo-agents", BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
+	cfg := install.Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, RegistrationConfigMap: "sdo-agents", BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
 	job, err := install.OperateJob(cfg, "pods stay healthy", "operation-1", 3)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestInstallerOperateJobParsesAsInClusterLifecycle(t *testing.T) {
 }
 
 func TestInstallerOperateJobCarriesBenchmarkTransportAndRegistrySetting(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, VerificationTimeoutSeconds: 45, RepairPolicy: "recorded-actions", NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryHost: "registry.demo-sdo.svc.cluster.local:5000", ResponderEnv: []string{"SDO_SREGYM_API_BASE=http://bridge:8000"}, RegistryInsecure: true}
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, VerificationTimeoutSeconds: 45, RepairPolicy: "recorded-actions", NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryHost: "registry.demo-sdo.svc.cluster.local:5000", ResponderEnv: []string{"SDO_SREGYM_API_BASE=http://bridge:8000"}, RegistryInsecure: true}
 	job, err := install.OperateJob(cfg, "healthy", "operation-1", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestInstallerOperateJobCarriesBenchmarkTransportAndRegistrySetting(t *testi
 }
 
 func TestNativeControllerLateFindingsPullUsesNarrowWorkerSetting(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, LateFindings: "pull"}
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, LateFindings: "pull"}
 	plan, err := install.Resources(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestNativeControllerLateFindingsPullUsesNarrowWorkerSetting(t *testing.T) {
 }
 
 func TestOperateRejectsRegistryHostWithSchemeOrPath(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
 	for _, invalid := range []string{"http://registry:5000", "registry:5000/app", "Registry:5000", "registry:0"} {
 		cfg.RegistryHost = invalid
 		if _, err := install.OperateJob(cfg, "healthy", "operation-1", 1); err == nil {
@@ -107,7 +107,7 @@ func TestOperateRejectsRegistryHostWithSchemeOrPath(t *testing.T) {
 }
 
 func TestNativeReflectionSessionIsForwardedToOperateAndController(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
 	job, err := install.OperateJob(cfg, "healthy", "operation-1", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestNativeReflectionSessionIsForwardedToOperateAndController(t *testing.T) 
 }
 
 func TestBoundedNativeInstallCarriesDurationWithoutSupervisor(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", ControllerDurationSeconds: 120, WaitForCompletion: true}
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", ControllerDurationSeconds: 120, WaitForCompletion: true}
 	plan, err := install.Resources(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestBoundedNativeInstallCarriesDurationWithoutSupervisor(t *testing.T) {
 }
 
 func TestHealthyBaselineIsForwardedAcrossOperateAndControllerJobs(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", HealthyBaseline: true}
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", HealthyBaseline: true}
 	operate, err := install.OperateJob(cfg, "healthy", "operation-1", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ func contains(values []string, want string) bool {
 }
 
 func TestMetricsURLIsForwardedAcrossOperateAndControllerJobsOnlyWhenSet(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
 	operate, err := install.OperateJob(cfg, "healthy", "operation-1", 1)
 	if err != nil {
 		t.Fatal(err)

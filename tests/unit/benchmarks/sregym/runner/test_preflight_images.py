@@ -47,11 +47,11 @@ def test_an_unknown_image_role_is_rejected(fake_host: FakeHost) -> None:
 def test_the_cli_checks_only_the_named_images(fake_host: FakeHost, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(preflight, "SystemHost", lambda: fake_host)
 
-    assert preflight.main(["--image", "validator_image=ci/validator:1"]) == 0
-    assert fake_host.probed == ["ci/validator:1"]
+    assert preflight.main(["--image", "controller_image=ci/controller:1"]) == 0
+    assert fake_host.probed == ["ci/controller:1"]
 
-    fake_host.missing_images = {"ci/validator:1"}
-    assert preflight.main(["--image", "validator_image=ci/validator:1"]) == 1
+    fake_host.missing_images = {"ci/controller:1"}
+    assert preflight.main(["--image", "controller_image=ci/controller:1"]) == 1
 
 
 def test_the_cli_needs_configs_or_images() -> None:

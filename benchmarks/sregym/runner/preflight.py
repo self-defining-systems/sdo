@@ -86,14 +86,12 @@ AGENT_BASE_IMAGE = "sregym-agent-base:latest"
 SDO_IMAGE_DEFAULTS = {
     "controller_image": "sdo-controller:v0.1.0",
     "responder_image": "sdo-sregym-responder:v0.1.0",
-    "validator_image": "sdo-detector-validator:v0.1.0",
 }
 #: Python modules imported by the worker image. An empty tuple means the image
 #: runs the Go operator binary and must not need a Python interpreter.
 SDO_IMAGE_ENTRY_POINTS = {
     "controller_image": (),
     "responder_image": ("sdo.agents.responder.worker", "libs.agent_cli", "agentshim"),
-    "validator_image": (),
 }
 #: Only the worker image runs agent turns and needs these Python/CLI pins.
 AGENT_IMAGES = ("responder_image",)
@@ -358,18 +356,15 @@ class SystemHost:
                     "--entrypoint",
                     "/usr/local/bin/sdo-operator",
                     ref,
-                    "schema-identity",
+                    "memory",
+                    "help",
                 ],
                 timeout=120,
             )
             if identity is None:
-                return ImageVersions(
-                    codex=None, agentshim=None, import_error="Go operator schema-identity probe failed"
-                )
-            if not identity.strip().startswith("sdo.dev/"):
-                return ImageVersions(
-                    codex=None, agentshim=None, import_error="Go operator returned an invalid schema identity"
-                )
+                return ImageVersions(codex=None, agentshim=None, import_error="Go operator memory help probe failed")
+            if "memory check" not in identity:
+                return ImageVersions(codex=None, agentshim=None, import_error="Go operator memory help is unavailable")
             return ImageVersions(codex=None, agentshim=None)
         codex_out = self._text(["docker", "run", "--rm", "--entrypoint", "codex", ref, "--version"], timeout=120)
         script = (

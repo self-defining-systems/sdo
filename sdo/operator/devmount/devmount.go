@@ -76,7 +76,7 @@ func mount(container *corev1.Container) {
 }
 
 // ApplyWorker adds only the benchmark worker entry points to a development
-// agent Job. Controllers and validators remain free of benchmark code.
+// agent Job. Controllers remain free of benchmark code.
 func ApplyWorker(pod *corev1.PodSpec) {
 	Apply(pod)
 	directory, file := corev1.HostPathDirectory, corev1.HostPathFile

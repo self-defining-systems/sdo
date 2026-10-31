@@ -26,19 +26,19 @@ def workflow() -> dict:
         ("tests/unit/test_example.py", set()),
         ("sdo/agents/responder/worker.py", {"responder", "benchmark"}),
         ("libs/agent_cli/cli.py", {"responder", "benchmark"}),
-        ("sdo/operator/runtime/controller.go", {"controller", "validator", "responder", "benchmark"}),
+        ("sdo/operator/runtime/controller.go", {"controller", "responder", "benchmark"}),
         ("sdo/agents/registrations/responder.yaml", {"controller", "responder", "benchmark"}),
         ("benchmarks/sregym/adapter/submission.py", {"benchmark"}),
         ("benchmarks/sregym/fastloop/recording_worker.py", {"benchmark"}),
         ("benchmarks/sregym/analysis/report.py", set()),
-        ("scripts/build_sdo_images.sh", {"controller", "validator", "responder", "benchmark"}),
+        ("scripts/build_sdo_images.sh", {"controller", "responder", "benchmark"}),
     ],
 )
 def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> None:
     filters = yaml.safe_load(workflow()["jobs"]["changes"]["steps"][1]["with"]["filters"])
     selected = {
         image
-        for image in ("controller", "validator", "responder", "benchmark")
+        for image in ("controller", "responder", "benchmark")
         if any(fnmatch.fnmatchcase(path, pattern) for pattern in filters[f"image_{image}"])
     }
     assert selected == images
@@ -57,7 +57,7 @@ def test_merge_queue_forces_every_image_and_test_area(event: str, tmp_path: Path
     )
     assert result.returncode == 0, result.stderr
     resolved = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    for name in ("python", "go", "image_controller", "image_validator", "image_responder", "image_benchmark"):
+    for name in ("python", "go", "image_controller", "image_responder", "image_benchmark"):
         assert resolved[name] == str(event == "merge_group").lower()
 
 
@@ -73,7 +73,6 @@ def test_required_ci_still_accounts_for_every_job() -> None:
     ("images", "expected"),
     [
         ("controller", {"sdo-controller"}),
-        ("validator", {"sdo-detector-validator"}),
         ("responder", {"sdo-responder"}),
         ("benchmark", {"sdo-sregym-responder"}),
         ("responder benchmark", {"sdo-responder", "sdo-sregym-responder"}),

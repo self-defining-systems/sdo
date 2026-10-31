@@ -26,8 +26,7 @@ leaves numeric targetPort mismatch latent: Kubernetes still publishes ready
 endpoint addresses even though no process listens at that port. The separate
 journey endpoint makes the broken dependency observable on demand.
 
-Pinned Calico enforces NetworkPolicy, as required by the production broker's
-isolated validator canaries. `toy_network_policy_backend` isolates backend
+Pinned Calico enforces the application's NetworkPolicy faults. `toy_network_policy_backend` isolates backend
 ingress; its oracle requires the injected policy to be removed. This fault is
 provided for network validation; the default scripted latent stream exercises
 targetPort drift and an image control. See [the design decision](../../docs/toy-cluster-design.md)

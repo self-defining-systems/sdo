@@ -18,7 +18,7 @@ The Go `sdo-operator host` command owns production lifecycle orchestration. It a
 
 ## Healthy detector baseline
 
-`--healthy-baseline` is an opt-in detector gate. A benchmark adapter captures healthy Kubernetes snapshots before injecting a fault and publishes them to a controller-owned directory outside the accepted repository using `sdo-operator baseline-write`. When a proposal changes incident detector source, the isolated validator mounts only that snapshot directory read-only and replays the proposed detector against it. A detector that fires on a healthy snapshot fails validation. The gate does not read benchmark verdicts. If the recorded baseline is missing when an incident detector is validated, validation fails closed.
+`--healthy-baseline` is an opt-in detector gate. A benchmark adapter captures healthy Kubernetes snapshots before injecting a fault and publishes them to a controller-owned directory outside the accepted repository using `sdo-operator baseline-write`. When a proposal changes incident detector source, the bounded controller validation subprocess reads that snapshot directory and replays the proposed detector against it. A detector that fires on a healthy snapshot fails validation. The gate does not read benchmark verdicts. If the recorded baseline is missing when an incident detector is validated, validation fails closed.
 
 The Go builder also accepts a `HealthyBaseline` directory for local detector tests. The directory contains one `*.json` file per `sdktest.Snapshot`; an empty directory or malformed snapshot is rejected.
 

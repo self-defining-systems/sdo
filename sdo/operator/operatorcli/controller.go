@@ -20,8 +20,6 @@ import (
 	"sdo.dev/operator/toolchain"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.28a096cc2fa47a01"
-
 type repeatable []string
 
 func (r *repeatable) String() string         { return strings.Join(*r, ",") }
@@ -42,17 +40,15 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	controlNamespace := flags.String("control-namespace", "", "controller namespace")
 	application := flags.String("application", "", "application identity")
 	responderImage := flags.String("responder-image", "", "registered responder image")
-	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers and validators (required)")
+	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required)")
 	proberImage := flags.String("prober-image", "", "traffic prober image")
 	repositoryPVC := flags.String("repository-pvc", "", "repository PVC")
 	repositoryMount := flags.String("repository-mount-path", "", "repository PVC mount")
 	repositorySubPath := flags.String("repository-pvc-subpath", "", "repository PVC subpath")
 	credentialsSecret := flags.String("credentials-secret", "", "responder credentials secret")
 	worktreeRoot := flags.String("worktree-root", "", "broker proposal and ledger root")
-	validatorImage := flags.String("validator-image", "", "isolated validator image")
 	model := flags.String("model", "", "responder model")
 	backend := flags.String("responder-backend", "codex", "responder backend")
-	schemaIdentity := flags.String("schema-identity", sdkSchemaIdentity, "accepted SDK schema identity")
 	brokerMode := flags.String("broker-mode", "", "broker mode")
 	workerMountMode := flags.String("worker-mount-mode", "", "worker mount mode")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
@@ -114,8 +110,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		return builder.RunConfig{}, false, errors.New("program fast path requires recorded-actions repair policy")
 	}
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
-		*credentialsSecret == "" || *worktreeRoot == "" || *validatorImage == "" || *model == "" || *backend == "" || *schemaIdentity == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
-		return builder.RunConfig{}, false, errors.New("native launch requires application, namespace, images, repository, credentials, validator, schema, and responder identity")
+		*credentialsSecret == "" || *worktreeRoot == "" || *model == "" || *backend == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
+		return builder.RunConfig{}, false, errors.New("native launch requires application, namespace, images, repository, credentials, and responder identity")
 	}
 	if !filepath.IsAbs(*repositoryMount) || !filepath.IsAbs(*worktreeRoot) {
 		return builder.RunConfig{}, false, errors.New("repository mount and proposal root must be absolute")
@@ -135,8 +131,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		RepairPolicy: *repairPolicy, MaxFollowUps: int32(*maxFollowUps), FollowUpCooldown: durationpb.New(*followUpCooldown), MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), DiagnosisSettleDelay: durationpb.New(*diagnosisSettleDelay), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
 		ExitAfterClosure: *exitAfterClosure,
 		ToolchainImage:   *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
-		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
-		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
+		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
+		ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
 		DriftTokensPerHour: *driftTokensPerHour,
 		ProgramMinDuration: durationpb.New(*programMinDuration),

@@ -79,13 +79,13 @@ Only the controller image stores Go and the offline dependency/build caches.
 The installer passes that image as the required `--toolchain-image` setting,
 independently of `--prober-image`. Direct controller launches must set it too;
 missing configuration fails before building, migration or Kubernetes access.
-Worker and validator init containers use that image to populate a private
+Worker init containers use that image to populate a private
 emptyDir, mounted read-only into compiler-free runtime containers. The init
 container has no candidate or provider-credential mounts. Compilation, vet,
 replay and network isolation remain required. Scripted images omit model CLIs
 from their ancestry. Bake shares OS and dependency stages; never flatten images.
 
-Use an existing set of SDO controller, responder, and validator images for the
+Use an existing set of SDO controller and responder images for the
 first `up`. The worktree is mounted into every kind node at `/opt/sdo-dev`; the
 Pods use its Python packages and a host-built `sdo-operator` at
 `.fastloop/sdo-operator`. The host build uses the warm Go cache. `reset` reuses
@@ -162,8 +162,7 @@ SDO_IMAGE_TAG=scripted-fastloop SDO_SCRIPTED_WORKER=1 bash scripts/build_sdo_ima
 uv run python -m benchmarks.sregym.fastloop up \
   --run-dir "$SDO_SCRIPTED_RUN" --seed "$SDO_SCRIPTED_SEED" \
   --controller-image sdo-controller:scripted-fastloop \
-  --responder-image sdo-sregym-responder:scripted-fastloop \
-  --validator-image sdo-detector-validator:scripted-fastloop
+  --responder-image sdo-sregym-responder:scripted-fastloop
 uv run python -m benchmarks.sregym.fastloop run \
   --run-dir "$SDO_SCRIPTED_RUN" --agent sdo \
   --agent-registrations benchmarks/sregym/fastloop/agent_registrations \
@@ -237,7 +236,7 @@ and outside this repository. Hand-authored scripts use the same stand-in; see th
 The reusable [toy application](../../../../apps/toy/README.md) has three tiny HTTP
 services, real Deployments, local readiness probes and a frontend-to-backend
 journey. It does not import or populate `third_party/sregym`. Pinned Calico
-provides NetworkPolicy enforcement, required by the production validator canary.
+provides NetworkPolicy enforcement, required by the application network-policy incidents.
 See the [decision and alternatives](../../../../docs/toy-cluster-design.md).
 
 Prepare matching runtime images once (or use already built image tags):

@@ -31,7 +31,6 @@ jobs:
       python: ${{ steps.resolve.outputs.python }}
       go: ${{ steps.resolve.outputs.go }}
       image_controller: ${{ steps.resolve.outputs.image_controller }}
-      image_validator: ${{ steps.resolve.outputs.image_validator }}
       image_responder: ${{ steps.resolve.outputs.image_responder }}
       image_benchmark: ${{ steps.resolve.outputs.image_benchmark }}
     steps:
@@ -76,11 +75,6 @@ jobs:
               - 'scripts/build_sdo_images.sh'
               - '.github/workflows/ci.yml'
               - 'sdo/agents/registrations/**'
-            image_validator:
-              - 'sdo/operator/**'
-              - 'scripts/sdo-images.hcl'
-              - 'scripts/build_sdo_images.sh'
-              - '.github/workflows/ci.yml'
             image_responder:
               - 'sdo/operator/**'
               - 'scripts/sdo-images.hcl'
@@ -121,11 +115,10 @@ jobs:
           PYTHON: ${{ steps.filter.outputs.python }}
           GO: ${{ steps.filter.outputs.go }}
           IMAGE_CONTROLLER: ${{ steps.filter.outputs.image_controller }}
-          IMAGE_VALIDATOR: ${{ steps.filter.outputs.image_validator }}
           IMAGE_RESPONDER: ${{ steps.filter.outputs.image_responder }}
           IMAGE_BENCHMARK: ${{ steps.filter.outputs.image_benchmark }}
         run: |
-          for area in python go image_controller image_validator image_responder image_benchmark; do
+          for area in python go image_controller image_responder image_benchmark; do
             variable="${area^^}"
             if [ "${EVENT}" = "merge_group" ]; then
               # Validate every area on the merge queue's real merge commit.
@@ -472,7 +465,6 @@ jobs:
     needs: changes
     if: >-
       needs.changes.outputs.image_controller == 'true' ||
-      needs.changes.outputs.image_validator == 'true' ||
       needs.changes.outputs.image_responder == 'true' ||
       needs.changes.outputs.image_benchmark == 'true'
     runs-on: ubuntu-latest
@@ -502,16 +494,15 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
-      - name: Select affected images and compute schema identity
+      - name: Select affected images
         id: image-inputs
         env:
           CONTROLLER: ${{ needs.changes.outputs.image_controller }}
-          VALIDATOR: ${{ needs.changes.outputs.image_validator }}
           RESPONDER: ${{ needs.changes.outputs.image_responder }}
           BENCHMARK: ${{ needs.changes.outputs.image_benchmark }}
         run: |
           images=()
-          for image in controller validator responder benchmark; do
+          for image in controller responder benchmark; do
             variable="${image^^}"
             if [ "${!variable}" = "true" ]; then
               images+=("${image}")
@@ -519,8 +510,6 @@ jobs:
           done
           echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
           (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
-          identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
-          echo "SDO_VALIDATOR_SCHEMA_IDENTITY=${identity}" >> "${GITHUB_ENV}"
       - name: Build affected images with persistent layers
         uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
         with:
@@ -531,8 +520,6 @@ jobs:
           set: |
             controller.cache-from=type=gha,scope=sdo-controller
             controller.cache-to=type=gha,scope=sdo-controller,mode=max
-            validator.cache-from=type=gha,scope=sdo-validator
-            validator.cache-to=type=gha,scope=sdo-validator,mode=max
             responder.cache-from=type=gha,scope=sdo-responder
             responder.cache-to=type=gha,scope=sdo-responder,mode=max
             benchmark.cache-from=type=gha,scope=sdo-benchmark

@@ -344,7 +344,7 @@ def test_up_cache_requires_every_node_to_have_the_requested_image_digests(
         return type("Result", (), {"returncode": 0, "stdout": value})()
 
     monkeypatch.setattr(cli.subprocess, "run", run)
-    images = Images(controller="controller:pbprog", responder="responder:pbprog", validator="validator:pbprog")
+    images = Images(controller="controller:pbprog", responder="responder:pbprog")
 
     assert cli.node_images_match("fastloop-w0", images) is False
     assert any(call[:3] == ["docker", "exec", "node-b"] for call in calls)
