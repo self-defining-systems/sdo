@@ -85,7 +85,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	}
 	for key, value := range map[string]string{
 		"application checkout": *app, "operator root": *operatorRoot, "namespace": *namespace,
-		"application": *application, "health objective": *objective, "operation ID": *operationID,
+		"application": *application, "operation ID": *operationID,
 		"controller image": *controllerImage, "responder image": *responderImage,
 		"repository PVC": *repositoryPVC,
 		"BuildKit image": *buildkitImage, "registry push Secret": *registryPushSecret,

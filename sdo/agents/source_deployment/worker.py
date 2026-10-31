@@ -1,4 +1,4 @@
-"""Typed deployer workers. Go owns build, apply, verification, and acceptance."""
+"""Source deployment plan worker. Go owns build, apply, verification, and acceptance."""
 
 from __future__ import annotations
 
@@ -11,20 +11,12 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from libs.agent_cli.structured import run_structured_turn
-from sdo.agents.lifecycle import (
-    ClaudeLifecycleBackend,
-    CodexLifecycleBackend,
-    DeployerAssessment,
-    TopologyResourceDTO,
-)
 from sdo.agents.provider import resolve_agent
 from sdo.agents.responder import AGENT_SKILLS, KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
     AgentTask,
-    ArchitectureRequest,
-    ArchitectureResult,
     DeploymentPlan,
     ImageBuild,
     RawManifestStrategy,
@@ -64,7 +56,7 @@ class SourceProposalDraft(BaseModel):
 
 
 def _provider(model_env: str) -> Literal["codex", "claude"]:
-    return "claude" if resolve_agent("deployer", model_env).provider == "claude" else "codex"
+    return "claude" if resolve_agent("source_deployment", model_env).provider == "claude" else "codex"
 
 
 def _source_path(value: str) -> str:
@@ -143,52 +135,6 @@ benchmark data.
     )
 
 
-def describe_architecture(request: ArchitectureRequest, checkout: Path) -> ArchitectureResult:
-    """Generate a source-grounded handoff after the broker accepted source."""
-
-    provider = _provider("SDO_LIFECYCLE_MODEL")
-    if provider == "codex":
-        architect = CodexLifecycleBackend(model=os.environ.get("SDO_LIFECYCLE_MODEL") or None)
-    else:
-        architect = ClaudeLifecycleBackend(model=os.environ.get("SDO_LIFECYCLE_MODEL") or None)
-    if not request.source_topology_fingerprint or not request.source_resources:
-        raise ValueError("architecture requires trusted accepted-source inventory")
-    handoff = architect.run_deployer(
-        repository=checkout,
-        application=request.application,
-        correction_feedback=(
-            "Copy the trusted source commit and topology fingerprint exactly:\n"
-            + f"{request.accepted_source_commit}\n{request.source_topology_fingerprint}\n"
-            + request.correction_feedback
-        ),
-    )
-    inventory = [
-        TopologyResourceDTO(
-            kind=row.kind,
-            name=row.name,
-            namespace=row.namespace,
-            source=row.source,
-            dependencies=list(row.dependencies),
-        )
-        for row in request.source_resources
-    ]
-    assessment = DeployerAssessment(**handoff.model_dump(), resources=inventory)
-    if assessment.source_commit != request.accepted_source_commit:
-        raise ValueError("architecture source commit does not match the broker accepted commit")
-    if assessment.topology_fingerprint != request.source_topology_fingerprint:
-        raise ValueError("architecture topology fingerprint does not match trusted source inventory")
-    summary = assessment.architecture_summary_markdown.lower()
-    missing = sorted({resource.name for resource in inventory if resource.name.lower() not in summary})
-    if missing:
-        raise ValueError("architecture summary omits source-backed resources: " + ", ".join(missing))
-    return ArchitectureResult(
-        summary_markdown=assessment.architecture_summary_markdown,
-        topology_fingerprint=assessment.topology_fingerprint,
-        source_commit=assessment.source_commit,
-        agent_session_id=assessment.session_id,
-    )
-
-
 def run_deployment_task(
     task_path: Path,
     result_name: str,
@@ -203,42 +149,8 @@ def run_deployment_task(
     request = SourceDeploymentRequest()
     if not task.request.Unpack(request):
         raise ValueError("source deployment request has wrong type")
-    if (
-        not request.application
-        or not request.namespace
-        or not request.health_objective
-        or request.attempt < 1
-        or not request.registry_host
-    ):
+    if not request.application or not request.namespace or request.attempt < 1 or not request.registry_host:
         raise ValueError("source deployment request is incomplete")
-    typed = execute(request, Path(task.workspace.checkout_path))
-    result = AgentResult(
-        schema_version=SCHEMA_VERSION,
-        task_id=task.task_id,
-        status="completed",
-        proposal_id=task.workspace.proposal_id,
-    )
-    result.response.Pack(typed)
-    publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(result))
-    return result
-
-
-def run_architecture_task(
-    task_path: Path,
-    result_name: str,
-    publisher: ResultPublisher,
-    *,
-    execute: Callable[[ArchitectureRequest, Path], ArchitectureResult] = describe_architecture,
-) -> AgentResult:
-    task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
-    validate(task)
-    if not task.workspace.proposal_id or not task.workspace.checkout_path:
-        raise ValueError("architecture requires a source proposal workspace")
-    request = ArchitectureRequest()
-    if not task.request.Unpack(request):
-        raise ValueError("architecture request has wrong type")
-    if not request.application or request.accepted_source_commit != task.workspace.base_commit or request.attempt < 1:
-        raise ValueError("architecture request does not match accepted source")
     typed = execute(request, Path(task.workspace.checkout_path))
     result = AgentResult(
         schema_version=SCHEMA_VERSION,
@@ -258,15 +170,13 @@ def main() -> int:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
         return 2
     try:
-        prepare_codex_home(skills=AGENT_SKILLS["deployer"])
-        prepare_claude_home(skills=AGENT_SKILLS["deployer"])
+        prepare_codex_home(skills=AGENT_SKILLS["source_deployment"])
+        prepare_claude_home(skills=AGENT_SKILLS["source_deployment"])
         task_path = Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH)))
         task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
         publisher = KubernetesResultPublisher(namespace=namespace)
         if task.request.Is(SourceDeploymentRequest.DESCRIPTOR):
             run_deployment_task(task_path, result_name, publisher)
-        elif task.request.Is(ArchitectureRequest.DESCRIPTOR):
-            run_architecture_task(task_path, result_name, publisher)
         else:
             raise ValueError(f"unsupported deployer request type {task.request.TypeName()!r}")
     except (OSError, ValueError, RuntimeError) as exc:

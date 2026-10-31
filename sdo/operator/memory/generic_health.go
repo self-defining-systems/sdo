@@ -41,11 +41,6 @@ func PrepareHealth(root string) error {
 // and broker acceptance. It installs policy detectors from final workload
 // files; it never translates or repairs the judge's authored artifacts.
 func PrepareHealthWith(root string, options HealthOptions) error {
-	if _, err := os.Stat(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, "health-objective"))); os.IsNotExist(err) {
-		return fmt.Errorf("health judge omitted health-objective detector")
-	} else if err != nil {
-		return err
-	}
 	endpoint := genericManifest("service-endpoints", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Endpoints"}, {APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}})
 	if err := writeGenericDetector(root, endpoint, endpointSource()); err != nil {
 		return err

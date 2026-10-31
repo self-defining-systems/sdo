@@ -77,7 +77,7 @@ func TestBuiltInLifecycleWorkersHaveTypedCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, request := range []proto.Message{&contracts.SourceDeploymentRequest{}, &contracts.ArchitectureRequest{}, &contracts.HealthJudgeRequest{}} {
+	for _, request := range []proto.Message{&contracts.SourceDeploymentRequest{}, &contracts.HealthJudgeRequest{}} {
 		agent, err := registry.AgentFor(request)
 		if err != nil {
 			t.Fatal(err)

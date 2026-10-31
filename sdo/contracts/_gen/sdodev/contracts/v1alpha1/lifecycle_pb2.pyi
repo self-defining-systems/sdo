@@ -66,36 +66,8 @@ class ImageBuild(_message.Message):
     dockerfile_path: str
     def __init__(self, image: _Optional[str] = ..., context_path: _Optional[str] = ..., dockerfile_path: _Optional[str] = ...) -> None: ...
 
-class ArchitectureRequest(_message.Message):
-    __slots__ = ("application", "accepted_source_commit", "correction_feedback", "attempt", "source_resources", "source_topology_fingerprint")
-    APPLICATION_FIELD_NUMBER: _ClassVar[int]
-    ACCEPTED_SOURCE_COMMIT_FIELD_NUMBER: _ClassVar[int]
-    CORRECTION_FEEDBACK_FIELD_NUMBER: _ClassVar[int]
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
-    SOURCE_RESOURCES_FIELD_NUMBER: _ClassVar[int]
-    SOURCE_TOPOLOGY_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
-    application: str
-    accepted_source_commit: str
-    correction_feedback: str
-    attempt: int
-    source_resources: _containers.RepeatedCompositeFieldContainer[SourceResource]
-    source_topology_fingerprint: str
-    def __init__(self, application: _Optional[str] = ..., accepted_source_commit: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., source_resources: _Optional[_Iterable[_Union[SourceResource, _Mapping]]] = ..., source_topology_fingerprint: _Optional[str] = ...) -> None: ...
-
-class ArchitectureResult(_message.Message):
-    __slots__ = ("summary_markdown", "topology_fingerprint", "source_commit", "agent_session_id")
-    SUMMARY_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
-    TOPOLOGY_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
-    SOURCE_COMMIT_FIELD_NUMBER: _ClassVar[int]
-    AGENT_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
-    summary_markdown: str
-    topology_fingerprint: str
-    source_commit: str
-    agent_session_id: str
-    def __init__(self, summary_markdown: _Optional[str] = ..., topology_fingerprint: _Optional[str] = ..., source_commit: _Optional[str] = ..., agent_session_id: _Optional[str] = ...) -> None: ...
-
 class HealthJudgeRequest(_message.Message):
-    __slots__ = ("application", "namespace", "health_objective", "accepted_source_commit", "correction_feedback", "attempt", "architecture_summary_markdown", "source_resources", "source_topology_fingerprint", "validation_attempt", "previous_diagnostics")
+    __slots__ = ("application", "namespace", "health_objective", "accepted_source_commit", "correction_feedback", "attempt", "architecture_summary_markdown", "source_resources", "validation_attempt", "previous_diagnostics")
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     HEALTH_OBJECTIVE_FIELD_NUMBER: _ClassVar[int]
@@ -104,7 +76,6 @@ class HealthJudgeRequest(_message.Message):
     ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     ARCHITECTURE_SUMMARY_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     SOURCE_RESOURCES_FIELD_NUMBER: _ClassVar[int]
-    SOURCE_TOPOLOGY_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
     VALIDATION_ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     PREVIOUS_DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
     application: str
@@ -115,10 +86,9 @@ class HealthJudgeRequest(_message.Message):
     attempt: int
     architecture_summary_markdown: str
     source_resources: _containers.RepeatedCompositeFieldContainer[SourceResource]
-    source_topology_fingerprint: str
     validation_attempt: int
     previous_diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
-    def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., accepted_source_commit: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., architecture_summary_markdown: _Optional[str] = ..., source_resources: _Optional[_Iterable[_Union[SourceResource, _Mapping]]] = ..., source_topology_fingerprint: _Optional[str] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
+    def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., accepted_source_commit: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., architecture_summary_markdown: _Optional[str] = ..., source_resources: _Optional[_Iterable[_Union[SourceResource, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
 
 class SourceResource(_message.Message):
     __slots__ = ("kind", "name", "namespace", "source", "dependencies")
@@ -135,17 +105,15 @@ class SourceResource(_message.Message):
     def __init__(self, kind: _Optional[str] = ..., name: _Optional[str] = ..., namespace: _Optional[str] = ..., source: _Optional[str] = ..., dependencies: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class HealthJudgeResult(_message.Message):
-    __slots__ = ("authored", "summary", "agent_session_id", "objective_digest", "detector_ids", "artifact_proposal")
+    __slots__ = ("authored", "summary", "agent_session_id", "detector_ids", "artifact_proposal")
     AUTHORED_FIELD_NUMBER: _ClassVar[int]
     SUMMARY_FIELD_NUMBER: _ClassVar[int]
     AGENT_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
-    OBJECTIVE_DIGEST_FIELD_NUMBER: _ClassVar[int]
     DETECTOR_IDS_FIELD_NUMBER: _ClassVar[int]
     ARTIFACT_PROPOSAL_FIELD_NUMBER: _ClassVar[int]
     authored: bool
     summary: str
     agent_session_id: str
-    objective_digest: str
     detector_ids: _containers.RepeatedScalarFieldContainer[str]
     artifact_proposal: _messages_pb2.OperationalArtifactProposal
-    def __init__(self, authored: _Optional[bool] = ..., summary: _Optional[str] = ..., agent_session_id: _Optional[str] = ..., objective_digest: _Optional[str] = ..., detector_ids: _Optional[_Iterable[str]] = ..., artifact_proposal: _Optional[_Union[_messages_pb2.OperationalArtifactProposal, _Mapping]] = ...) -> None: ...
+    def __init__(self, authored: _Optional[bool] = ..., summary: _Optional[str] = ..., agent_session_id: _Optional[str] = ..., detector_ids: _Optional[_Iterable[str]] = ..., artifact_proposal: _Optional[_Union[_messages_pb2.OperationalArtifactProposal, _Mapping]] = ...) -> None: ...

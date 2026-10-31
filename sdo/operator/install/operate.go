@@ -101,8 +101,8 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.BuildKitImage == "" || cfg.RegistryPushSecret == "" {
 		return nil, errors.New("native operate requires BuildKit image and dedicated registry push Secret")
 	}
-	if strings.TrimSpace(healthObjective) == "" || strings.TrimSpace(operationID) == "" || maxAttempts <= 0 {
-		return nil, errors.New("operate requires objective, operation ID, and positive max attempts")
+	if strings.TrimSpace(operationID) == "" || maxAttempts <= 0 {
+		return nil, errors.New("operate requires operation ID and positive max attempts")
 	}
 	args := []string{
 		"operate", "--app", "/workspace/application", "--namespace", cfg.Namespace,

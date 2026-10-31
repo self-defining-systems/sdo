@@ -214,7 +214,6 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 		"manifest-parse":                validate.RuleManifestParse,
 		"manifest-invalid":              validate.RuleManifestInvalid,
 		"manifest-location":             validate.RuleManifestLocation,
-		"goal-missing":                  validate.RuleGoalMissing,
 		"architecture-missing":          validate.RuleArchitectureMissing,
 		"goal-owner":                    validate.RuleGoalOwner,
 		"manifest-missing":              validate.RuleManifestMissing,
@@ -291,26 +290,6 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", strings.Replace(incidentManifest, "%s", "base", 1), 0o644)
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", parityDetector(t, "dns"), 0o644)
 		}, want: []string{validate.RuleInitialHealthOnly}, allowAdditional: true},
-		{name: "architecture accepted source", actor: validate.Deployer, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
-			replaceParityText(t, r, ".sdo/arch.md", "generated_at_commit:", "generated_at_commit: deadbeef #")
-		}, want: []string{validate.RuleArchitectureBaseline}},
-		{name: "architecture source binding", actor: validate.Deployer, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
-			put(t, r, "app.txt", "deployed\n", 0o644)
-			runGit(t, r, "add", "-A")
-			runGit(t, r, "commit", "-qm", "source\n\nSDO-Actor: deployer\nSDO-Phase: initial")
-			replaceParityText(t, r, ".sdo/arch.md", "generated_at_commit:", "generated_at_commit: deadbeef #")
-		}, want: []string{validate.RuleArchitectureCommit}},
-		{name: "architecture alone", actor: validate.Deployer, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
-			put(t, r, "app.txt", "changed\n", 0o644)
-			runGit(t, r, "add", "-A")
-			runGit(t, r, "commit", "-qm", "source\n\nSDO-Actor: deployer\nSDO-Phase: initial")
-			head, err := exec.Command("git", "-C", r, "rev-parse", "HEAD").Output()
-			if err != nil {
-				t.Fatal(err)
-			}
-			put(t, r, ".sdo/arch.md", "---\nschema_version: 1\ngenerated_at_commit: "+strings.TrimSpace(string(head))+"\n---\nArchitecture\n", 0o644)
-			put(t, r, "app.txt", "changed again\n", 0o644)
-		}, want: []string{validate.RuleArchitectureAlone}},
 	}...)
 	cases = append(cases, []parityCase{
 		{"direct program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},

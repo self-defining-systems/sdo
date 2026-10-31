@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"sdo.dev/operator/memory/layout"
 )
@@ -30,8 +29,8 @@ func ReadArchitecture(checkout string) (string, error) {
 }
 
 func WriteGoal(checkout, application, objective string) error {
-	if checkout == "" || strings.TrimSpace(application) == "" || strings.TrimSpace(objective) == "" {
-		return fmt.Errorf("checkout, application, and health objective are required")
+	if checkout == "" || strings.TrimSpace(application) == "" {
+		return fmt.Errorf("checkout and application are required")
 	}
 	body := fmt.Sprintf("---\nschema_version: 1\nowner: human\napplication: %s\n---\n# Health objective\n\n%s\n", strconv.Quote(application), strings.TrimSpace(objective))
 	return writeBootstrapFile(checkout, layout.GoalFile, body)
@@ -57,17 +56,17 @@ func WriteSchema(checkout string) error {
 	return nil
 }
 
-func WriteArchitecture(checkout, application, acceptedSourceCommit, fingerprint, summary string) error {
-	for _, value := range []string{checkout, application, acceptedSourceCommit, fingerprint, summary} {
+func WriteArchitecture(checkout, application, acceptedSourceCommit, summary string) error {
+	for _, value := range []string{checkout, application, acceptedSourceCommit, summary} {
 		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("architecture requires checkout, application, accepted source, fingerprint, and summary")
+			return fmt.Errorf("architecture requires checkout, application, accepted source and inventory")
 		}
 	}
 	if layout.ContainsPhysicalPath(strings.ToLower(summary)) {
 		return fmt.Errorf("architecture summary contains a physical operational-memory path")
 	}
-	content := fmt.Sprintf("---\nschema_version: 1\ngenerated_at_commit: %s\ngenerated_at: %s\napplication: %s\ntopology_fingerprint: %s\n---\n%s\n",
-		acceptedSourceCommit, time.Now().UTC().Format(time.RFC3339Nano), strconv.Quote(application), fingerprint, strings.TrimSpace(summary))
+	content := fmt.Sprintf("---\nschema_version: 1\ngenerated_at_commit: %s\napplication: %s\n---\n%s\n",
+		acceptedSourceCommit, strconv.Quote(application), strings.TrimSpace(summary))
 	return writeBootstrapFile(checkout, layout.ArchitectureFile, content)
 }
 

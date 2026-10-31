@@ -52,7 +52,6 @@ var grants = []grant{
 	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{kindSource}},
 
 	{actor: Human, phase: InitialPhase, kinds: []layout.Kind{layout.KindGoal}},
-	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{layout.KindArchitecture}},
 	{actor: Upkeep, phase: InitialPhase, kinds: []layout.Kind{
 		layout.KindArchitecture, layout.KindSchemaVersion, layout.KindDiagnosticsModule, layout.KindLegacyDetectorManifest,
 		layout.KindHealthDetectorManifest, layout.KindIncidentDetectorManifest, layout.KindHealthDetectorSource, layout.KindIncidentDetectorSource,
@@ -153,9 +152,7 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) {
 		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests"})
 	}
-	if phase == InitialPhase && actor == Deployer && containsPath(s.changed, layout.ArchitectureFile) && len(s.changed) != 1 {
-		s.add(Ownership, Diagnostic{Rule: RuleArchitectureAlone, Path: layout.ArchitectureFile, Message: "initial architecture must follow a separately accepted source proposal", Hint: "propose arch.md alone, after the source commit is accepted"})
-	}
+
 	needsBase := (actor == Upkeep && changesDetectors(s.changed)) || ((actor == Responder || actor == HealthJudge) && manifests)
 	if !needsBase {
 		return nil

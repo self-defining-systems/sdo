@@ -386,3 +386,20 @@ def test_install_records_abort_target_before_transport_call(tmp_path, monkeypatc
     monkeypatch.setattr(native_operator, "execute_operator", interrupted)
     with pytest.raises(NativeOperatorError, match="interrupted install"):
         install_existing(config)
+
+
+def test_host_accepts_optional_goal_and_absent_goal_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.adapter import native_operator
+
+    host = NativeHostConfig(
+        install=_install(tmp_path),
+        health_objective="",
+        operation_id="no-goal",
+        buildkit_image="buildkit@sha256:" + "b" * 64,
+        registry_push_secret="registry",
+        registry_host="registry:5000",
+    )
+    receipt = {"installed": True, "operation_id": "no-goal"}
+    receipt.update(dict.fromkeys(("schema_commit", "source_commit", "architecture_commit", "judge_commit"), "a" * 40))
+    monkeypatch.setattr(native_operator, "_run", lambda *args, **kwargs: receipt)
+    assert launch_host(host) == receipt

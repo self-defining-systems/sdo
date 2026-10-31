@@ -56,6 +56,18 @@ func TestCatalogSnapshotExposesLogicalPlaybooksAndAcceptedCommit(t *testing.T) {
 	if strings.Contains(snapshot.String(), ".sdo/") || strings.Contains(snapshot.GetPlaybookIndexMarkdown(), "README.md") {
 		t.Fatal("physical playbook path leaked into worker snapshot")
 	}
+	if err := os.Remove(filepath.Join(root, ".sdo/goal.md")); err != nil {
+		t.Fatal(err)
+	}
+	withoutGoal, err := CandidateSnapshot(root, snapshot.GetAcceptedCommit())
+	if err != nil || withoutGoal.GetGoalMarkdown() != "" {
+		t.Fatalf("optional goal: %v %v", withoutGoal, err)
+	}
+	write(".sdo/goal.md", "Free text human goal")
+	freeText, err := CandidateSnapshot(root, snapshot.GetAcceptedCommit())
+	if err != nil || freeText.GetGoalMarkdown() != "Free text human goal" {
+		t.Fatalf("free text goal: %v %v", freeText, err)
+	}
 	write(".sdo/goal.md", "# unaccepted goal\n")
 	if _, err := OpenCatalogReader(root).Snapshot(context.Background()); err == nil {
 		t.Fatal("unaccepted operational-memory edit entered worker snapshot")

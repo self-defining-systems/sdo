@@ -36,7 +36,7 @@ depends_on = [
 ]
 
 [[modules]]
-path = "sdo.agents.deployer"
+path = "sdo.agents.source_deployment"
 depends_on = [
     "libs.agent_cli",
     "sdo.agents.lifecycle",

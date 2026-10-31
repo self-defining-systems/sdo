@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import sys
@@ -12,7 +11,6 @@ from typing import TYPE_CHECKING, Protocol, cast
 from sdo.agents.lifecycle import (
     ClaudeLifecycleBackend,
     CodexLifecycleBackend,
-    DeployerAssessment,
     TopologyResourceDTO,
 )
 from sdo.agents.memory_diagnostics import render_validation_feedback
@@ -41,15 +39,6 @@ class ResultPublisher(Protocol):
 
 class _JudgeDraft(Protocol):
     @property
-    def objective_digest(self) -> str: ...
-
-    @property
-    def source_commit(self) -> str: ...
-
-    @property
-    def round(self) -> int: ...
-
-    @property
     def failure_patterns(self) -> Sequence[str]: ...
 
     @property
@@ -62,41 +51,31 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
     summary = request.architecture_summary_markdown.strip()
     if not summary:
         raise ValueError("health judge requires accepted architecture summary")
-    deployer = DeployerAssessment(
-        source_commit=request.accepted_source_commit,
-        topology_fingerprint=request.source_topology_fingerprint,
-        architecture_summary_markdown=summary,
-        session_id="accepted-source",
-        resources=[
-            TopologyResourceDTO(
-                kind=row.kind,
-                name=row.name,
-                namespace=row.namespace,
-                source=row.source,
-                dependencies=list(row.dependencies),
-            )
-            for row in request.source_resources
-        ],
-    )
+    resources = [
+        TopologyResourceDTO(
+            kind=row.kind,
+            name=row.name,
+            namespace=row.namespace,
+            source=row.source,
+            dependencies=list(row.dependencies),
+        )
+        for row in request.source_resources
+    ]
     resolved = resolve_agent("health_judge", "SDO_LIFECYCLE_MODEL")
     backend = (ClaudeLifecycleBackend if resolved.provider == "claude" else CodexLifecycleBackend)(model=resolved.model)
     artifact = backend.run_health_judge(
         repository=checkout,
         application=request.application,
         health_objective=request.health_objective,
-        deployer=deployer,
-        round_index=1,
-        previous=None,
+        architecture=summary,
+        resources=resources,
         correction_feedback=_judge_feedback(request),
     )
-    _validate_judge_draft(
-        artifact, health_objective=request.health_objective, source_commit=request.accepted_source_commit
-    )
+    _validate_judge_draft(artifact)
     return HealthJudgeResult(
         authored=True,
         summary="health diagnostics authored",
         agent_session_id=artifact.session_id,
-        objective_digest=artifact.objective_digest,
         detector_ids=list(artifact.detector_ids),
     )
 
@@ -111,16 +90,8 @@ def _judge_feedback(request: HealthJudgeRequest) -> str | None:
     return "\n".join(part for part in parts if part) or None
 
 
-def _validate_judge_draft(artifact: _JudgeDraft, *, health_objective: str, source_commit: str) -> None:
-    """Check agent self-consistency before the Go broker's authoritative validation."""
-
-    expected_digest = hashlib.sha256(health_objective.strip().encode()).hexdigest()
-    if artifact.objective_digest != expected_digest:
-        raise ValueError("health judge objective digest does not match human objective")
-    if artifact.source_commit != source_commit:
-        raise ValueError("health judge source commit does not match accepted source")
-    if artifact.round != 1:
-        raise ValueError("health judge must return the requested authoring round")
+def _validate_judge_draft(artifact: _JudgeDraft) -> None:
+    """Check logical detector metadata before authoritative Go validation."""
     if not artifact.failure_patterns:
         raise ValueError("health judge must enumerate failure patterns")
     if not artifact.detector_ids or any(
@@ -145,13 +116,11 @@ def run_judge_task(
     request = HealthJudgeRequest()
     if not task.request.Unpack(request):
         raise ValueError("health judge request has wrong type")
-    if not request.application or not request.namespace or not request.health_objective or request.attempt < 1:
+    if not request.application or not request.namespace or request.attempt < 1:
         raise ValueError("health judge request is incomplete")
     checkout = Path(task.workspace.checkout_path)
     if not request.accepted_source_commit or not request.architecture_summary_markdown:
         raise ValueError("health judge requires accepted source and architecture context")
-    if not re.fullmatch(r"[a-f0-9]{64}", request.source_topology_fingerprint):
-        raise ValueError("health judge requires Go-prepared source inventory fingerprint")
     if any(not (row.kind and row.name and row.namespace and row.source) for row in request.source_resources):
         raise ValueError("health judge received an incomplete source inventory resource")
     typed = execute(request, checkout)

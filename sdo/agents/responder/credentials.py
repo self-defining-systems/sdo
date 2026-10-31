@@ -18,7 +18,7 @@ AGENT_SKILLS = MappingProxyType(
         "responder": ("sdo-memory",),
         "reflector": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"),
         "health-judge": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"),
-        "deployer": ("sdo-memory",),
+        "source_deployment": ("sdo-memory",),
     }
 )
 

@@ -94,3 +94,7 @@ Runtime-crash patterns cover Go panic/fatal, Python traceback, Java OOM/thread e
 segmentation faults; `logs.Appeared` supplies transition persistence (firing 1, clearing 2).
 Cause detectors batch at warn so cause findings open incidents. Workload unavailability is critical.
 Use source-specific detectors for config parsing, named peers, journeys, domain logs and metrics.
+
+Health judges author ordinary health detectors; no detector ID, package, watch set or Spec is reserved
+for the human goal. No goal digest or authoring-round metadata is required. Use the health-objective
+playbook as the default repair guide and run the shared memory check before returning logical IDs.

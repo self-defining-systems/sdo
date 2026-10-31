@@ -197,6 +197,10 @@ func (c *collector) add(rel string, kind Kind, id string, read func() ([]byte, e
 			return err
 		}
 		document, err := ParseDocument(data)
+		if kind == KindGoal && !strings.HasPrefix(string(data), "---\n") {
+			document = Document{Body: string(data), Source: string(data)}
+			err = nil
+		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
 		}
@@ -217,6 +221,10 @@ func (c *collector) add(rel string, kind Kind, id string, read func() ([]byte, e
 			return err
 		}
 		document, err := ParseDocument(data)
+		if kind == KindGoal && !strings.HasPrefix(string(data), "---\n") {
+			document = Document{Body: string(data), Source: string(data)}
+			err = nil
+		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
 		}

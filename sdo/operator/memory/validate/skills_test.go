@@ -19,18 +19,14 @@ var skillsRoot = filepath.Join("..", "..", "..", "skills")
 
 // internalRules are validator rules no agent skill teaches, each with the reason.
 var internalRules = map[string]string{
-	RuleLegacyManifest:       "Upkeep migrates schema versions; authoring agents never see a legacy manifest",
-	RuleSchemaVersion:        "the schema-version file is controller metadata, changed only by Upkeep",
-	RuleGoalMissing:          "the human goal is installed before any agent runs",
-	RuleArchitectureMissing:  "the deployer's architecture stage is not an authoring skill flow",
-	RuleGoalOwner:            "goal.md is human-owned and no skill flow edits it",
-	RuleArchitectureCommit:   "architecture belongs to the deployer lifecycle stage",
-	RuleArchitectureBaseline: "architecture belongs to the deployer lifecycle stage",
-	RuleUnknownActor:         "the controller supplies the actor; an agent cannot choose it",
-	RuleUnknownPhase:         "the controller supplies the phase; an agent cannot choose it",
-	RuleUnsafePath:           "a path-traversal guard against malformed diffs, not an authoring decision",
-	RuleUpkeepMigration:      "only the Upkeep actor migrates schema versions",
-	RuleArchitectureAlone:    "architecture belongs to the deployer lifecycle stage",
+	RuleLegacyManifest:      "Upkeep migrates schema versions; authoring agents never see a legacy manifest",
+	RuleSchemaVersion:       "the schema-version file is controller metadata, changed only by Upkeep",
+	RuleArchitectureMissing: "Go generates the manifest inventory; no authoring skill edits it",
+	RuleGoalOwner:           "goal.md is human-owned and no skill flow edits it",
+	RuleUnknownActor:        "the controller supplies the actor; an agent cannot choose it",
+	RuleUnknownPhase:        "the controller supplies the phase; an agent cannot choose it",
+	RuleUnsafePath:          "a path-traversal guard against malformed diffs, not an authoring decision",
+	RuleUpkeepMigration:     "only the Upkeep actor migrates schema versions",
 }
 
 // ruleIDs returns every rule constant declared in rules.go.

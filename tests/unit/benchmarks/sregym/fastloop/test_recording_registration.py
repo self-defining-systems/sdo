@@ -24,7 +24,7 @@ def test_recording_registrations_preserve_all_builtin_capabilities(tmp_path: Pat
     root = Path(__file__).resolve().parents[5]
     builtins = root / "sdo/agents/registrations"
     assert {path.name for path in directory.glob("*.json")} == {
-        "deployer.json",
+        "source-deployment.json",
         "health-judge.json",
         "responder.json",
         "reflector.json",
@@ -35,7 +35,7 @@ def test_recording_registrations_preserve_all_builtin_capabilities(tmp_path: Pat
         assert recorded["agent_id"] == original["agent_id"]
         assert recorded["capabilities"] == original["capabilities"]
         assert recorded["kubernetes_job"]["image"] == "worker:test"
-        if path.stem in {"deployer", "health-judge"}:
+        if path.stem in {"source-deployment", "health-judge"}:
             assert recorded["kubernetes_job"]["command"] == original["kubernetes_job"]["command"]
 
 

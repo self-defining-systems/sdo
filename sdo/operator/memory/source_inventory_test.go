@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,10 +55,21 @@ func TestSourceInventoryBindsAcceptedCommitAndExcludesMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Fingerprint != second.Fingerprint || len(second.Resources) != 1 || second.Resources[0].Kind != "Deployment" {
+	if fmt.Sprint(first.Resources) != fmt.Sprint(second.Resources) || len(second.Resources) != 1 || second.Resources[0].Kind != "Deployment" {
 		t.Fatalf("inventory drifted from accepted source: first=%+v second=%+v", first, second)
 	}
 	if _, err := SourceInventory(context.Background(), root, strings.Repeat("0", 40)); err == nil {
 		t.Fatal("unknown accepted commit was allowed")
+	}
+}
+
+func TestManifestInventoryIncludesSelectorsAndPodImages(t *testing.T) {
+	facts := sourceDependencies(map[string]any{"kind": "Pod", "spec": map[string]any{
+		"selector":   map[string]any{"matchLabels": map[string]any{"app": "api"}},
+		"containers": []any{map[string]any{"image": "example/api:v1"}},
+	}})
+	got := strings.Join(facts, ",")
+	if !strings.Contains(got, "selector:app=api") || !strings.Contains(got, "image:example/api:v1") {
+		t.Fatalf("manifest inventory omitted declared facts: %s", got)
 	}
 }

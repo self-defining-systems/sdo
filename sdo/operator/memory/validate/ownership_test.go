@@ -155,10 +155,6 @@ func TestOwnershipTable(t *testing.T) {
 		{"deployer cannot edit source later", Deployer, ProposalPhase, func(t *testing.T, r string) {
 			write(t, r, "app.txt", "deployed\n")
 		}, denied},
-		{"deployer architecture must stand alone", Deployer, InitialPhase, func(t *testing.T, r string) {
-			write(t, r, layout.ArchitectureFile, "---\nschema_version: 1\ngenerated_at_commit: x\n---\nx\n")
-			write(t, r, "app.txt", "deployed\n")
-		}, []string{RuleArchitectureAlone}},
 		{"deployer cannot edit detectors", Deployer, InitialPhase, func(t *testing.T, r string) {
 			write(t, r, healthDetector, "package objective\n\n// x\n")
 		}, denied},
@@ -267,32 +263,6 @@ func TestUpkeepMayMigrateLegacyDetectorsButNotRewriteThem(t *testing.T) {
 	write(t, current, layout.SchemaVersionFile, "3\n\n")
 	if got := ruleSet(diagnose(t, request(current))); !same(got, []string{RuleUpkeepMigration}) {
 		t.Fatalf("detector source edit during a schema stamp: rules = %v", got)
-	}
-}
-
-func TestInitialArchitectureMustCiteTheAcceptedSourceCommit(t *testing.T) {
-	root := t.TempDir()
-	write(t, root, ".sdo/goal.md", "---\nschema_version: 1\nowner: human\n---\nGoal\n")
-	commit(t, root, "human goal")
-	write(t, root, "app.txt", "deployed\n")
-	gitIn(t, root, "add", "-A")
-	gitIn(t, root, "commit", "-q", "-m", "sdo: validated\n\nSDO-Actor: deployer\nSDO-Phase: initial\nSDO-Validation: passed")
-	source := gitIn(t, root, "rev-parse", "HEAD")
-	request := Request{Root: root, Base: "HEAD", Actor: Deployer, Phase: InitialPhase, Layers: Semantic}
-
-	write(t, root, layout.ArchitectureFile, "---\nschema_version: 1\ngenerated_at_commit: "+source+"\n---\nArch\n")
-	if got := diagnose(t, request); len(got) != 0 {
-		t.Fatalf("architecture citing the accepted source was rejected: %v", got)
-	}
-	write(t, root, layout.ArchitectureFile, "---\nschema_version: 1\ngenerated_at_commit: deadbeef\n---\nArch\n")
-	if got := ruleSet(diagnose(t, request)); !same(got, []string{RuleArchitectureCommit}) {
-		t.Fatalf("wrong commit: rules = %v", got)
-	}
-
-	// A base that is not a deployer source commit cannot anchor architecture.
-	gitIn(t, root, "checkout", "-q", "--detach", "HEAD~1")
-	if got := ruleSet(diagnose(t, request)); !same(got, []string{RuleArchitectureBaseline}) {
-		t.Fatalf("unaccepted base: rules = %v", got)
 	}
 }
 
