@@ -160,6 +160,19 @@ func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (pr
 func (v *ReplayReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
 
 type Snapshot struct {
+	Reachability *servicehealth.ReachabilityWindow `json:"-"`
+	// Usage holds a synthetic resource usage window.
+	Usage              *usage.Result                  `json:"-"`
+	SecretList         []sdk.SecretMetadata           `json:"secrets"`
+	NodeList           []corev1.Node                  `json:"nodes"`
+	IngressList        []networkingv1.Ingress         `json:"ingresses"`
+	ServiceAccountList []corev1.ServiceAccount        `json:"serviceAccounts"`
+	PVCList            []corev1.PersistentVolumeClaim `json:"persistentVolumeClaims"`
+	CronJobList        []batchv1.CronJob              `json:"cronJobs"`
+	JobList            []batchv1.Job                  `json:"jobs"`
+	DaemonSetList      []appsv1.DaemonSet             `json:"daemonSets"`
+	// Logs holds synthetic bounded log windows by query ID.
+	Logs map[string]logs.Result `json:"-"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName        string                                  `json:"-"`
 	NamespaceName     string                                  `json:"namespace"`
@@ -200,6 +213,10 @@ func (s Snapshot) AlertsResult() (metrics.AlertsResult, bool)
 
 func (s Snapshot) ConfigMaps() []corev1.ConfigMap
 
+func (s Snapshot) CronJobs() []batchv1.CronJob
+
+func (s Snapshot) DaemonSets() []appsv1.DaemonSet
+
 func (s Snapshot) Deployments() []appsv1.Deployment
 
 func (s Snapshot) EndpointSlices() []discoveryv1.EndpointSlice
@@ -210,6 +227,13 @@ func (s Snapshot) Events() []corev1.Event
 
 func (s Snapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
 
+func (s Snapshot) Ingresses() []networkingv1.Ingress
+
+func (s Snapshot) Jobs() []batchv1.Job
+
+func (s Snapshot) LogResult(id string) (logs.Result, bool)
+    LogResult implements logs.Source.
+
 func (s Snapshot) MetricResult(id string) (metrics.Result, bool)
     MetricResult implements metrics.Source.
 
@@ -217,8 +241,12 @@ func (s Snapshot) Namespace() string
 
 func (s Snapshot) NetworkPolicies() []networkingv1.NetworkPolicy
 
+func (s Snapshot) Nodes() []corev1.Node
+
 func (s Snapshot) ObservedAt() time.Time
     ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
+
+func (s Snapshot) PersistentVolumeClaims() []corev1.PersistentVolumeClaim
 
 func (s Snapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 
@@ -232,11 +260,20 @@ func (s Snapshot) RecentEventsFor(namespace string, kind string, name string) []
 
 func (s Snapshot) ReplicaSets() []appsv1.ReplicaSet
 
+func (s Snapshot) Secrets() []sdk.SecretMetadata
+
+func (s Snapshot) ServiceAccounts() []corev1.ServiceAccount
+
+func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
+
 func (s Snapshot) Services() []corev1.Service
 
 func (s Snapshot) StatefulSets() []appsv1.StatefulSet
 
 func (s Snapshot) TrafficWindow(workload string) (traffic.Window, bool)
     TrafficWindow implements traffic.Source.
+
+func (s Snapshot) UsageResult() (usage.Result, bool)
+    UsageResult implements usage.Source with isolated synthetic windows.
 
 ```

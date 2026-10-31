@@ -36,3 +36,5 @@ Correlate the deployer source commit with Git and `arch.md`. Correlate the objec
 - When validating benchmark claims and costs, read [receipts and benchmark results](benchmark-results.md).
 - For fastloop rows and learned-program confirmation, read [fastloop results](fastloop-results.md).
 - When reconstructing controller timing, read [telemetry and trajectories](telemetry.md).
+
+Detector/corpus snapshot JSON now also carries `statefulSets`, `daemonSets`, `jobs`, `cronJobs`, `persistentVolumeClaims`, `serviceAccounts`, `horizontalPodAutoscalers`, `podDisruptionBudgets`, `ingresses`, `nodes` and `secrets`. Nodes are cluster-scoped observations. Each Secret entry is a value-free projection (`name`, `namespace`, `type`, `labels`, sorted `dataKeys`), not a Kubernetes Secret object; never interpret it as a value capture. Missing lists in older captures mean unrecorded, not proof of absence.

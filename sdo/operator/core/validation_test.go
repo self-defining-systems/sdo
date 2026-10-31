@@ -9,6 +9,7 @@ import (
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/sdk/usage"
 )
 
 func TestValidateDetectorsAcceptsTheServiceReachabilityWatches(t *testing.T) {
@@ -92,7 +93,7 @@ func TestValidateDetectorsRejectsUnsupportedAndDuplicateWatches(t *testing.T) {
 	}{
 		{
 			name:    "unsupported",
-			watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Secret"}},
+			watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Namespace"}},
 		},
 		{
 			name: "duplicate",
@@ -187,5 +188,11 @@ func validFinding() sdk.Finding {
 			"target": resource,
 		},
 		Metadata: map[string]any{"count": 1},
+	}
+}
+
+func TestUsageWatch(t *testing.T) {
+	if err := ValidateDetectors([]sdk.Detector{validationDetector{spec: sdk.DetectorSpec{ID: "usage", Interval: time.Second, Watches: []sdk.WatchKind{usage.Watch}}}}); err != nil {
+		t.Fatal(err)
 	}
 }

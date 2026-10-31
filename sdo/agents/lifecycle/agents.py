@@ -112,7 +112,8 @@ _COVERED_KINDS = ", ".join(sorted(COVERED_RESOURCE_KINDS))
 
 #: Health-judge instructions for direct synthetic traffic edits.
 TRAFFIC_AUTHORING = """Synthetic traffic (health-judge owned). For an application that serves HTTP, also author
-end-to-end synthetic traffic in the checkout under `.sdo/diagnostics/traffic/`. Ground it in the application source and
+end-to-end synthetic traffic in the checkout under `.sdo/diagnostics/traffic/` (full API: references/traffic.md of the
+`sdo-detector-authoring` skill). Ground it in the application source and
 the accepted architecture summary: open the user-facing entrypoint's route handlers (its HTTP mux or
 router) and derive paths it really serves, their methods, and parameter values its handlers accept, including the
 records the application seeds at startup. Cover the main user journeys, read and write paths both when the
@@ -153,10 +154,14 @@ when the same scenarios recover. Every scenario must therefore succeed against t
    config value naming another service and port, and the architecture summary's dependency edges), add one link to
    workloads/links.yaml: apiVersion sdo.dev/v1alpha1, kind TrafficWorkload, name `links`,
    purpose `link-probe`, and `links: [{from: <calling Service>, to: <called Service>, port: <the port the called
-   Service exposes>}]`. Both names must be source-backed Services in the deployer handoff and the port the one the
-   caller really uses, taken from the source, not guessed. Do not declare links to datastores or services the
-   application does not run itself. Optional: interval (default 1s), timeout (default 1s), failures (default 5, the
-   consecutive failed fresh TCP dials that report an edge). No scenarios and no generator code are involved; the
+   Service exposes>, protocol: <how the caller talks to it>}]`. Both names must be source-backed Services in the
+   deployer handoff and the port the one the caller really uses, taken from the source, not guessed. Include the
+   application's own data stores; do not declare links to services the application does not run itself. Choose the
+   protocol the caller uses: http (optional http.path and http.statusMin/statusMax), grpc (health check; grpc.tls
+   when required), redis, memcached, mongodb, postgres or mysql; use tcp only when none fits. These probes prove the
+   server answers its protocol, including auth-required replies, not that queries succeed. Optional: interval
+   (default 1s), timeout (default 1s), failures (default 5, the consecutive failed fresh probes that report an
+   edge). No scenarios and no generator code are involved; the
    controller installs the detector, which decides deterministically from the prober's dials and names the failing
    edge. Do not encode any particular cause of an unreachable edge.
 Omit synthetic traffic only for an application that serves no HTTP."""
@@ -290,8 +295,8 @@ Author deterministic Go detector code and deterministic Go tests using only sdo.
 DetectionContext snapshot methods and Kubernetes API types already available to SDO diagnostics. The application
 checkout is intentionally not expected to contain the controller SDK. The trusted SDK reference is
 references/sdk.md of the `sdo-detector-authoring` skill (read it from the skill directory, which is the one place
-outside this checkout you may read). This session cannot edit files, so ignore the skill's file-editing workflow
-and return the source in the structured fields.
+outside this checkout you may read). Use the `sdo-operationalize` skill to decide which health detectors and
+synthetic traffic the application needs.
 
 Ground the assessment in the current application checkout and the supplied SDO references. Never inspect
 sibling experiments, benchmark results, hidden fault labels, or external oracles.
@@ -330,13 +335,21 @@ Run `sdo-operator memory ls` to inspect existing memory and `sdo-operator memory
 Fix every named diagnostic and rerun until it exits zero within your turn budget. The environment is already
 set to SDO_ACTOR=health_judge and SDO_PHASE=initial with the accepted SDO_BASE_COMMIT; never override it.
 The Go broker repeats the same validation independently. Its explicit bootstrap step installs the generic
-service-endpoints, workload-health, service-reachability and traffic-* detectors (the last from the authored workloads);
+service-endpoints, workload-health, service-reachability, cluster-wiring, workload-controllers,
+warning-events, node-health, resource-saturation, runtime-crashes and traffic-* detectors
+(the last from the authored workloads);
 do not author those packages. service-endpoints already reports Services without ready endpoints.
 service-reachability already reports Service ports that refuse connections while their pods are Ready.
 workload-health already reports failed, Unknown, stuck Pending or unschedulable pods; crash-looping,
 image-pull, config-error, OOMKilled, errored, waiting, restarting or unready containers; stuck init
 containers; and Deployments below their desired availability or past their progress deadline.
-Do not re-implement those generic pod and Deployment state checks in health-objective; spend it on
+cluster-wiring checks Service selectors and declared target ports, template dependencies and keys, PVC binding,
+Ingress backends, total NetworkPolicy isolation and in-namespace ExternalName targets. workload-controllers
+checks StatefulSet/DaemonSet availability and stuck revisions, failed Jobs and overdue CronJobs. warning-events
+checks persistent recent mount, scheduling, backoff, probe, eviction and OOM warnings. node-health checks
+application nodes for readiness and pressure. resource-saturation checks memory limits and PVC bytes/inodes
+including forecasts. runtime-crashes checks newly appearing narrow runtime crash signatures with previous logs.
+Do not re-implement these generic checks in health-objective or separate detectors; spend your turn on
 application-specific evidence of the human objective.
 For covered_resources, copy every resource required by the objective exactly from the deployer handoff, preserving
 each kind, name, source-manifest namespace, source path, and complete dependencies list; never invent an object that
@@ -345,7 +358,8 @@ global objective, or when the controller-observed active topology is non-null, t
 provenance itself from the trusted inventory ({_COVERED_KINDS} objects, restricted to active ones), so coverage is
 metadata and does not choose your checks.
 
-Choose the checks from the human objective and the application's own topology, not from a catalogue of fault types.
+Choose the checks from the human objective, the application's source and its own topology, not from a catalogue of
+fault types.
 Derive what a check depends on from the objects observed at detection time (the relationships the deployer assessment
 and the active topology record) rather than hard-coding object names, so each check stays valid when objects are
 recreated, and include matching and near-miss tests for every check.

@@ -30,6 +30,17 @@ DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 2.0
 # Kubernetes kind -> sdktest.Snapshot JSON key.
 _SNAPSHOT_KEYS: dict[str, str] = {
     "ConfigMap": "configMaps",
+    "StatefulSet": "statefulSets",
+    "DaemonSet": "daemonSets",
+    "Job": "jobs",
+    "CronJob": "cronJobs",
+    "PersistentVolumeClaim": "persistentVolumeClaims",
+    "ServiceAccount": "serviceAccounts",
+    "HorizontalPodAutoscaler": "horizontalPodAutoscalers",
+    "PodDisruptionBudget": "podDisruptionBudgets",
+    "Ingress": "ingresses",
+    "Node": "nodes",
+    "Secret": "secrets",
     "Service": "services",
     "Pod": "pods",
     "Deployment": "deployments",
@@ -39,7 +50,11 @@ _SNAPSHOT_KEYS: dict[str, str] = {
     "NetworkPolicy": "networkPolicies",
     "Event": "events",
 }
-_RESOURCES = "configmaps,services,pods,deployments,replicasets,endpoints,endpointslices,networkpolicies,events"
+_RESOURCES = (
+    "configmaps,services,pods,deployments,replicasets,endpoints,endpointslices,networkpolicies,events,"
+    "statefulsets,daemonsets,jobs,cronjobs,persistentvolumeclaims,serviceaccounts,"
+    "horizontalpodautoscalers,poddisruptionbudgets,ingresses,secrets"
+)
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.json$")
 
 
@@ -60,6 +75,18 @@ def snapshot_document(namespace: str, listing: dict[str, Any]) -> dict[str, Any]
     for item in listing.get("items", []):
         key = _SNAPSHOT_KEYS.get(str(item.get("kind", "")))
         if key is None:
+            continue
+        if item.get("kind") == "Secret":
+            metadata = item.get("metadata", {})
+            document[key].append(
+                {
+                    "name": metadata.get("name", ""),
+                    "namespace": metadata.get("namespace", ""),
+                    "type": item.get("type", ""),
+                    "labels": metadata.get("labels", {}),
+                    "dataKeys": sorted(set(item.get("data", {})) | set(item.get("stringData", {}))),
+                }
+            )
             continue
         metadata = item.get("metadata")
         if isinstance(metadata, dict):
@@ -96,6 +123,13 @@ def capture_snapshots(
             raise HealthyBaselineCaptureError(
                 f"kubectl returned invalid JSON for namespace {namespace!r}: {exc}"
             ) from exc
+        nodes = kubectl_runner(["get", "nodes", "-o", "json"], namespace=None, check=False)
+        if nodes.returncode != 0:
+            raise HealthyBaselineCaptureError("cannot list nodes for the healthy baseline")
+        try:
+            listing.setdefault("items", []).extend(json.loads(nodes.stdout).get("items", []))
+        except json.JSONDecodeError as exc:
+            raise HealthyBaselineCaptureError("invalid node JSON for the healthy baseline") from exc
         snapshots[f"healthy-{index}.json"] = snapshot_document(namespace, listing)
     return snapshots
 

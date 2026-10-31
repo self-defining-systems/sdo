@@ -180,3 +180,24 @@ func TestPrepareHealthWithMetricsInstallsTheAlertsDetectorIdempotently(t *testin
 		t.Fatalf("an edited generic detector must be rejected: %v", err)
 	}
 }
+
+func TestPrepareHealthInstallsIndependentChecks(t *testing.T) {
+	root := preparedHealthRoot(t)
+	for _, id := range []string{"cluster-wiring", "workload-controllers", "warning-events", "node-health", "resource-saturation", "runtime-crashes"} {
+		data, err := os.ReadFile(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, id)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifest, err := layout.ParseDetectorManifest(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		firing := 2
+		if id == "runtime-crashes" {
+			firing = 1
+		}
+		if manifest.Batching.Severity != "warn" || manifest.Persistence.Firing != firing {
+			t.Fatalf("%+v", manifest)
+		}
+	}
+}

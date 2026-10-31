@@ -163,6 +163,28 @@ func (w Workload) WithDefaults() Workload {
 		_, _ = hash.Write([]byte(w.Name))
 		w.Seed = hash.Sum64()
 	}
+	links := append([]Link(nil), w.Links...)
+	for i := range links {
+		l := &links[i]
+		l.Protocol = l.EffectiveProtocol()
+		if l.Protocol == LinkProtocolHTTP {
+			o := LinkHTTPOptions{}
+			if l.HTTP != nil {
+				o = *l.HTTP
+			}
+			if o.Path == "" {
+				o.Path = "/"
+			}
+			if o.StatusMin == 0 {
+				o.StatusMin = 100
+			}
+			if o.StatusMax == 0 {
+				o.StatusMax = 499
+			}
+			l.HTTP = &o
+		}
+	}
+	w.Links = links
 	w.SLO = mergeSLO(defaultSLO(), w.SLO)
 	scenarios := make([]WorkloadScenario, len(w.Scenarios))
 	for index, scenario := range w.Scenarios {

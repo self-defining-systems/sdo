@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/sdk/inputs"
 	"strings"
 	"testing"
 	"time"
@@ -196,9 +197,9 @@ func TestHermeticForeignNetworkPolicyInvariantRepeat(t *testing.T) {
 	sourceAvailable := true
 	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		if !sourceAvailable {
-			return LiveReadView{DetectionContext: snapshot}
+			return LiveReadView{Carrier: inputs.New(snapshot)}
 		}
-		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}
 	}})
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)
@@ -255,7 +256,7 @@ func TestForeignNetworkPolicyInvariantNearMisses(t *testing.T) {
 		}(), program.NoMatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			view := LiveReadView{DetectionContext: policyWorkloadSnapshot(tc.policies...), Source: source, SourceCommit: commit}
+			view := LiveReadView{Carrier: inputs.New(policyWorkloadSnapshot(tc.policies...)), Source: source, SourceCommit: commit}
 			verdict, err := learned.Diagnose(context.Background(), view, program.Bindings{"policy": {APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}})
 			if err != nil || verdict.Result != tc.want {
 				t.Fatalf("verdict=%+v error=%v", verdict, err)

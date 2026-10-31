@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sdo.dev/operator/sdk/inputs"
 	"testing"
 	"time"
 
@@ -309,7 +310,7 @@ func TestControllerAdoptionDoesNotOverwriteConcurrentMutation(t *testing.T) {
 			// This view uses the controller's earlier snapshot. A conflict must
 			// classify the freshly read object even if the informer is stale.
 			controller.drift.View = func(snapshot sdk.DetectionContext) program.ReadView {
-				return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}
+				return LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}
 			}
 			api.afterDryRun = func(service *corev1.Service) {
 				service.ResourceVersion = "2"
@@ -351,7 +352,7 @@ func TestControllerAdoptsAvailableObjectsWithExplicitRenderGap(t *testing.T) {
 	controller.drift.Source = source
 	api.service.Spec.Selector = map[string]string{"app": "api"}
 	controller.drift.View = func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit, Client: controller.drift.Client}
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit, Client: controller.drift.Client}
 	}
 	start := time.Unix(10, 0).UTC()
 	if err := controller.StepEvents(context.Background(), start, nil); err != nil {

@@ -8,12 +8,12 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -22,9 +22,11 @@ import (
 
 	controllercore "sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/sdk/usage"
 )
 
 type KubernetesCacheConfig struct {
@@ -80,6 +82,11 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 		config: config, pending: make(map[string]sdk.WatchKind), changes: make(map[string]ObjectChange), notify: make(chan struct{}, 1),
 	}
 	declared := make(map[string]sdk.WatchKind)
+	for _, d := range detectors {
+		if _, ok := d.(usage.Consumer); ok {
+			declared["v1/Pod"] = sdk.WatchKind{APIVersion: "v1", Kind: "Pod", Namespace: config.Namespace}
+		}
+	}
 	for _, detector := range detectors {
 		for _, watch := range detector.Spec().Watches {
 			if watch.Namespace != "" && watch.Namespace != config.Namespace {
@@ -90,11 +97,18 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 				// Synthetic-traffic and reachability results arrive through Notify, not an informer.
 				continue
 			}
-			if watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
+			if watch.APIVersion == usage.Watch.APIVersion && watch.Kind == usage.Watch.Kind || watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
 				// Metrics detectors run on their interval; no informer backs the watch.
 				continue
 			}
+			if watch.APIVersion == logs.Watch.APIVersion && watch.Kind == logs.Watch.Kind {
+				declared["v1/Pod"] = sdk.WatchKind{APIVersion: "v1", Kind: "Pod", Namespace: config.Namespace}
+				continue
+			}
 			watch.Namespace = config.Namespace
+			if watch.Kind == "Node" && watch.APIVersion == "v1" {
+				watch.Namespace = ""
+			}
 			declared[watch.APIVersion+"/"+watch.Kind] = watch
 		}
 	}
@@ -126,6 +140,25 @@ func (c *KubernetesCache) build() (informers.SharedInformerFactory, map[string]c
 		informer, err := informerFor(factory, key)
 		if err != nil {
 			return nil, nil, err
+		}
+		if watch.Kind == "Secret" {
+			if err := informer.SetTransform(func(object any) (any, error) {
+				if secret, ok := object.(*corev1.Secret); ok {
+					metadata := sdk.SecretMetadataFrom(*secret)
+					safe := &corev1.Secret{ObjectMeta: metadata.ObjectMeta(), Type: metadata.Type, Data: map[string][]byte{}}
+					// Informer update classification needs the server revision. Neither
+					// this revision nor UID is exported in SecretMetadata.
+					safe.ResourceVersion = secret.ResourceVersion
+					safe.UID = secret.UID
+					for _, key := range metadata.DataKeys {
+						safe.Data[key] = nil
+					}
+					return safe, nil
+				}
+				return object, nil
+			}); err != nil {
+				return nil, nil, err
+			}
 		}
 		built[key] = informer
 		if _, err := informer.AddEventHandler(c.eventHandler(watch)); err != nil {
@@ -256,21 +289,6 @@ func (c *KubernetesCache) enqueue(watch sdk.WatchKind) {
 
 func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
 	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC()}
-	statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list statefulsets: %w", err)
-	}
-	hpas, err := c.config.Client.AutoscalingV2().HorizontalPodAutoscalers(c.config.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list horizontalpodautoscalers: %w", err)
-	}
-	pdbs, err := c.config.Client.PolicyV1().PodDisruptionBudgets(c.config.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list poddisruptionbudgets: %w", err)
-	}
-	snapshot.StatefulSetList = append([]appsv1.StatefulSet(nil), statefulSets.Items...)
-	snapshot.HPAList = append([]autoscalingv2.HorizontalPodAutoscaler(nil), hpas.Items...)
-	snapshot.PDBList = append([]policyv1.PodDisruptionBudget(nil), pdbs.Items...)
 	c.informerMu.RLock()
 	defer c.informerMu.RUnlock()
 	for key, informer := range c.informers {
@@ -295,6 +313,28 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 				snapshot.EndpointSliceList = append(snapshot.EndpointSliceList, *object.(*discoveryv1.EndpointSlice).DeepCopy())
 			case "networking.k8s.io/v1/NetworkPolicy":
 				snapshot.NetworkPolicyList = append(snapshot.NetworkPolicyList, *object.(*networkingv1.NetworkPolicy).DeepCopy())
+			case "apps/v1/StatefulSet":
+				snapshot.StatefulSetList = append(snapshot.StatefulSetList, *object.(*appsv1.StatefulSet).DeepCopy())
+			case "apps/v1/DaemonSet":
+				snapshot.DaemonSetList = append(snapshot.DaemonSetList, *object.(*appsv1.DaemonSet).DeepCopy())
+			case "batch/v1/Job":
+				snapshot.JobList = append(snapshot.JobList, *object.(*batchv1.Job).DeepCopy())
+			case "batch/v1/CronJob":
+				snapshot.CronJobList = append(snapshot.CronJobList, *object.(*batchv1.CronJob).DeepCopy())
+			case "v1/PersistentVolumeClaim":
+				snapshot.PVCList = append(snapshot.PVCList, *object.(*corev1.PersistentVolumeClaim).DeepCopy())
+			case "v1/ServiceAccount":
+				snapshot.ServiceAccountList = append(snapshot.ServiceAccountList, *object.(*corev1.ServiceAccount).DeepCopy())
+			case "autoscaling/v2/HorizontalPodAutoscaler":
+				snapshot.HPAList = append(snapshot.HPAList, *object.(*autoscalingv2.HorizontalPodAutoscaler).DeepCopy())
+			case "policy/v1/PodDisruptionBudget":
+				snapshot.PDBList = append(snapshot.PDBList, *object.(*policyv1.PodDisruptionBudget).DeepCopy())
+			case "networking.k8s.io/v1/Ingress":
+				snapshot.IngressList = append(snapshot.IngressList, *object.(*networkingv1.Ingress).DeepCopy())
+			case "v1/Node":
+				snapshot.NodeList = append(snapshot.NodeList, *object.(*corev1.Node).DeepCopy())
+			case "v1/Secret":
+				snapshot.SecretList = append(snapshot.SecretList, sdk.SecretMetadataFrom(*object.(*corev1.Secret)))
 			case "v1/Event":
 				snapshot.EventList = append(snapshot.EventList, *object.(*corev1.Event).DeepCopy())
 			}
@@ -376,6 +416,29 @@ func objectName(object any) string {
 
 func informerFor(factory informers.SharedInformerFactory, key string) (cache.SharedIndexInformer, error) {
 	switch key {
+	case "apps/v1/StatefulSet":
+		return factory.Apps().V1().StatefulSets().Informer(), nil
+	case "apps/v1/DaemonSet":
+		return factory.Apps().V1().DaemonSets().Informer(), nil
+	case "batch/v1/Job":
+		return factory.Batch().V1().Jobs().Informer(), nil
+	case "batch/v1/CronJob":
+		return factory.Batch().V1().CronJobs().Informer(), nil
+	case "v1/PersistentVolumeClaim":
+		return factory.Core().V1().PersistentVolumeClaims().Informer(), nil
+	case "v1/ServiceAccount":
+		return factory.Core().V1().ServiceAccounts().Informer(), nil
+	case "autoscaling/v2/HorizontalPodAutoscaler":
+		return factory.Autoscaling().V2().HorizontalPodAutoscalers().Informer(), nil
+	case "policy/v1/PodDisruptionBudget":
+		return factory.Policy().V1().PodDisruptionBudgets().Informer(), nil
+	case "networking.k8s.io/v1/Ingress":
+		return factory.Networking().V1().Ingresses().Informer(), nil
+	case "v1/Node":
+		return factory.Core().V1().Nodes().Informer(), nil
+	case "v1/Secret":
+		return factory.Core().V1().Secrets().Informer(), nil
+
 	case "v1/ConfigMap":
 		return factory.Core().V1().ConfigMaps().Informer(), nil
 	case "v1/Service":

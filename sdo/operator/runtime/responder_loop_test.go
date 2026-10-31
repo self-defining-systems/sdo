@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/sdk/inputs"
 	"strings"
 	"testing"
 	"time"
@@ -246,7 +247,7 @@ func TestSettleCaptureDoesNotBlockResponderAndMatchesRediagnosis(t *testing.T) {
 	loop.CorpusSessionRoot = root
 	loop.DiagnosisSettleDelay = 250 * time.Millisecond
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Baseline: &StateChanges{}}
+		return LiveReadView{Carrier: inputs.New(snapshot), Baseline: &StateChanges{}}
 	}
 	loop.InitialDiagnose(context.Background())
 	done := make(chan struct{})
@@ -389,7 +390,7 @@ func TestColdLearningCapturesResponderSourceReads(t *testing.T) {
 	loop := NewResponderLoop(request, nil, &changingProvider{snapshot: snapshot}, nil, PlanExecutor{Source: source}, 1)
 	loop.CorpusSessionRoot = t.TempDir()
 	loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: s, Source: source, SourceCommit: commit}
+		return LiveReadView{Carrier: inputs.New(s), Source: source, SourceCommit: commit}
 	}
 	loop.InitialDiagnose(context.Background())
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}

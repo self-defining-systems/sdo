@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/sdk/inputs"
 	"strings"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestRenderedSourceRestoresBuiltImageWithoutFalseDrift(t *testing.T) {
 		t.Fatalf("restored = %s; deployed = %s", got, want)
 	}
 	replicas := int32(1)
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "rate", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "rate", Image: image}}}}}}}}, SourceCommit: strings.TrimSpace(string(commit)), Source: source}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "rate", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "rate", Image: image}}}}}}}}), SourceCommit: strings.TrimSpace(string(commit)), Source: source}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
 		t.Fatalf("untouched deployed object drifted: %+v %v", diff, err)
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/sdk/inputs"
 	"testing"
 	"time"
 
@@ -103,7 +104,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 		if phase == "fixed" {
 			snapshot = fixed
 		}
-		recorder := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: snapshot, Source: sourceReader, SourceCommit: "before-learning"}}
+		recorder := &sdktest.RecordingReadView{ReadView: LiveReadView{Carrier: inputs.New(snapshot), Source: sourceReader, SourceCommit: "before-learning"}}
 		for _, object := range []sdk.ObjectRef{ref, {APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, Name: "peer"}} {
 			if _, err := recorder.DiffAgainstSource(object); err != nil {
 				t.Fatal(err)
@@ -174,7 +175,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	makeLoop := func(request IncidentRequest) *ResponderLoop {
 		loop := NewResponderLoop(request, registry, provider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Source: sourceReader, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: provider}}, 5)
 		loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
-			return LiveReadView{DetectionContext: s, Source: sourceReader, SourceCommit: request.SourceCommit}
+			return LiveReadView{Carrier: inputs.New(s), Source: sourceReader, SourceCommit: request.SourceCommit}
 		}
 		loop.DiagnosisSettleDelay = time.Millisecond
 		loop.CorpusReplayPassed = true

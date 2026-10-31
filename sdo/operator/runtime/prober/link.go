@@ -69,21 +69,45 @@ func (p *Prober) runLinks(ctx context.Context, probe *linkProbe) {
 	running.Wait()
 }
 
-// dialLink makes one fresh TCP connection to the link's target and closes
-// it at once: no pooled or established connection can answer for the link.
+// dialLink opens one fresh connection and checks its declared protocol within
+// one timeout. No pooled or established connection can answer for the link.
 func (p *Prober) dialLink(ctx context.Context, workload traffic.Workload, state *linkState) {
 	started := p.config.Clock.Now()
 	dialCtx, cancel := context.WithTimeout(ctx, workload.Timeout.Duration())
 	connection, err := p.config.DialContext(dialCtx, "tcp", p.config.LinkAddress(state.link))
-	cancel()
-	if ctx.Err() != nil {
-		return // shutting down: an aborted dial says nothing about the link
-	}
-	sample := traffic.LinkSample{At: started.UTC(), Duration: p.config.Clock.Now().Sub(started), OK: err == nil}
-	if err != nil {
-		sample.Error = err.Error()
-	} else {
+	defer cancel()
+	sample := traffic.LinkSample{At: started.UTC()}
+	if err == nil {
+		deadline, _ := dialCtx.Deadline()
+		_ = connection.SetDeadline(deadline)
+		stop := context.AfterFunc(dialCtx, func() { _ = connection.Close() })
+		observed := &linkConnection{Conn: connection}
+		sample.Status, sample.Excerpt, sample.Class, err = probeProtocol(dialCtx, observed, state.link)
+		if err != nil && observed.failureClass() != "" {
+			sample.Class = observed.failureClass()
+		}
+		stop()
 		_ = connection.Close()
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	sample.Status = bounded(sample.Status)
+	sample.Excerpt = bounded(sample.Excerpt)
+	sample.Duration = p.config.Clock.Now().Sub(started)
+	sample.OK = err == nil
+	if err != nil {
+		sample.Error = bounded(err.Error())
+		if sample.Class == "" {
+			sample.Class = linkErrorClass(err)
+			// A clean EOF or malformed reply after connecting is a protocol failure.
+			if connection != nil && sample.Class == traffic.LinkFailureTransport {
+				sample.Class = traffic.LinkFailureProtocol
+			}
+		}
+		if dialCtx.Err() != nil {
+			sample.Class = traffic.LinkFailureTimeout
+		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()

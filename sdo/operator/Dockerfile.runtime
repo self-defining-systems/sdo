@@ -157,6 +157,7 @@ COPY libs/agent_cli /opt/sdo/libs/agent_cli
 RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-operationalize/SKILL.md \
     && command -v sdo-operator
 RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > /usr/local/bin/sdo \
     && chmod 755 /usr/local/bin/sdo
@@ -176,6 +177,7 @@ COPY libs/agent_cli /opt/sdo/libs/agent_cli
 RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-operationalize/SKILL.md \
     && command -v sdo-operator
 RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > /usr/local/bin/sdo \
     && chmod 755 /usr/local/bin/sdo

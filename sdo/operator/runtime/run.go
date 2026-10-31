@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/sdk/inputs"
 	"strconv"
 	"strings"
 	"time"
@@ -470,6 +471,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
 	}
+	snapshotProvider = withUsage(snapshotProvider, detectors, bootstrapProvider.Client, nil)
+	logsObserver, err := NewLogsObserver(bootstrapProvider.Client, detectors, LogsObserverOptions{})
+	if err != nil {
+		return err
+	}
+	snapshotProvider = LogsSnapshotProvider{Base: snapshotProvider, Observer: logsObserver}
 	snapshotProvider, metricsObserver, err := withMetrics(snapshotProvider, detectors, *metricsURL, *metricsTokenFile, false)
 	if err != nil {
 		return err
@@ -540,7 +547,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
 						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
 				return loop
@@ -581,7 +588,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, Programs: options.Programs, ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1, MinDuration: *programMinDuration}, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, BatchWindow: *driftBatchWindow, DispatchesPerHour: *driftDispatchesPerHour, TokensPerHour: *driftTokensPerHour,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
-			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+			return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
 				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker}
 		},
 	})
@@ -1272,6 +1279,15 @@ func evaluateOnce(
 			return fmt.Errorf("create Kubernetes snapshot provider: %w", err)
 		}
 		provider = kubernetesProvider
+		provider = withUsage(provider, detectors, kubernetesProvider.Client, nil)
+	}
+	var logClient kubernetes.Interface
+	if kp, ok := provider.(*core.KubernetesSnapshotProvider); ok {
+		logClient = kp.Client
+	}
+	logObserver, err := NewLogsObserver(logClient, detectors, LogsObserverOptions{})
+	if err != nil {
+		return err
 	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
@@ -1303,7 +1319,8 @@ func evaluateOnce(
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
 		provider = trafficProvider
 	}
-	provider, _, err := withMetrics(provider, detectors, *metricsURL, *metricsTokenFile, true)
+	provider = LogsSnapshotProvider{Base: provider, Observer: logObserver}
+	provider, _, err = withMetrics(provider, detectors, *metricsURL, *metricsTokenFile, true)
 	if err != nil {
 		return err
 	}

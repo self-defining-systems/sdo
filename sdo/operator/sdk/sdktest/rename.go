@@ -242,6 +242,8 @@ func renameSnapshot(source Snapshot, m *renameMapping) (Snapshot, error) {
 	}
 	result.SourceName, result.Traffic = source.SourceName, source.Traffic
 	result.Metrics, result.Alerts = source.Metrics, source.Alerts
+	result.Logs = source.Logs
+	result.Usage, result.Reachability = source.Usage, source.Reachability
 	namespace := source.NamespaceName
 	for index := range result.ConfigMapList {
 		renameMeta(&result.ConfigMapList[index].ObjectMeta, namespace, m)
@@ -340,6 +342,82 @@ func renameSnapshot(source Snapshot, m *renameMapping) (Snapshot, error) {
 		renameMeta(&event.ObjectMeta, namespace, m)
 		renameObjectRef(&event.InvolvedObject, namespace, m)
 		renameObjectRef(event.Related, namespace, m)
+	}
+	for index := range result.StatefulSetList {
+		item := &result.StatefulSetList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+		renameWorkloadTemplate(&item.Spec.Template, item.Spec.Selector, namespace, m)
+		item.Spec.ServiceName = m.value(item.Spec.ServiceName)
+		for i := range item.Spec.VolumeClaimTemplates {
+			renameMeta(&item.Spec.VolumeClaimTemplates[i].ObjectMeta, namespace, m)
+		}
+	}
+	for index := range result.DaemonSetList {
+		item := &result.DaemonSetList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+		renameWorkloadTemplate(&item.Spec.Template, item.Spec.Selector, namespace, m)
+	}
+	for index := range result.JobList {
+		item := &result.JobList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+		renameWorkloadTemplate(&item.Spec.Template, item.Spec.Selector, namespace, m)
+	}
+	for index := range result.CronJobList {
+		item := &result.CronJobList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+		renameMeta(&item.Spec.JobTemplate.ObjectMeta, namespace, m)
+		renameWorkloadTemplate(&item.Spec.JobTemplate.Spec.Template, item.Spec.JobTemplate.Spec.Selector, namespace, m)
+	}
+	for index := range result.PVCList {
+		item := &result.PVCList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+	}
+	for index := range result.ServiceAccountList {
+		item := &result.ServiceAccountList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+	}
+	for index := range result.HPAList {
+		item := &result.HPAList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+		item.Spec.ScaleTargetRef.Name = m.value(item.Spec.ScaleTargetRef.Name)
+	}
+	for index := range result.PDBList {
+		item := &result.PDBList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+		renameSelector(item.Spec.Selector, m)
+	}
+	for index := range result.IngressList {
+		item := &result.IngressList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+		for i := range item.Spec.TLS {
+			item.Spec.TLS[i].SecretName = m.value(item.Spec.TLS[i].SecretName)
+		}
+		renameBackend := func(b *networkingv1.IngressBackend) {
+			if b != nil && b.Service != nil {
+				b.Service.Name = m.value(b.Service.Name)
+				b.Service.Port.Name = m.value(b.Service.Port.Name)
+				b.Service.Port.Number = m.port(b.Service.Port.Number)
+			}
+		}
+		renameBackend(item.Spec.DefaultBackend)
+		for i := range item.Spec.Rules {
+			if h := item.Spec.Rules[i].HTTP; h != nil {
+				for j := range h.Paths {
+					renameBackend(&h.Paths[j].Backend)
+				}
+			}
+		}
+	}
+	for index := range result.NodeList {
+		item := &result.NodeList[index]
+		renameMeta(&item.ObjectMeta, namespace, m)
+	}
+	for i := range result.SecretList {
+		item := &result.SecretList[i]
+		item.Name = m.value(item.Name)
+		for key, value := range item.Labels {
+			item.Labels[key] = m.value(value)
+		}
 	}
 	return result, nil
 }

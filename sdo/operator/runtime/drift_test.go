@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sdo.dev/operator/sdk/inputs"
 	"testing"
 	"time"
 
@@ -215,7 +216,7 @@ func TestControllerOpensLatentIncidentOnDriftWithinOneStep(t *testing.T) {
 	}
 	source := planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "app"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80), "targetPort": float64(8080)}}}}}}
 	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Client: apiClient, Source: source, SourceCommit: "accepted"}
+		return LiveReadView{Carrier: inputs.New(snapshot), Client: apiClient, Source: source, SourceCommit: "accepted"}
 	}})
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)

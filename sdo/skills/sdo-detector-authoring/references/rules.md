@@ -27,11 +27,18 @@ diagnostic; look it up here.
 ## Watchable kinds
 
 - A watch is `{apiVersion, kind}` and must name a kind the snapshot exposes: `apps/v1 Deployment`,
-  `apps/v1 ReplicaSet`, `discovery.k8s.io/v1 EndpointSlice`, `networking.k8s.io/v1 NetworkPolicy`,
+  `apps/v1 ReplicaSet`, `apps/v1 StatefulSet`, `apps/v1 DaemonSet`, `batch/v1 Job`, `batch/v1 CronJob`,
+  `v1 PersistentVolumeClaim`, `v1 ServiceAccount`, `autoscaling/v2 HorizontalPodAutoscaler`,
+  `policy/v1 PodDisruptionBudget`, `networking.k8s.io/v1 Ingress`, `v1 Node` (cluster-scoped, read-only),
+  `v1 Secret` (name, namespace, type, labels and sorted data keys only),
+  `discovery.k8s.io/v1 EndpointSlice`, `networking.k8s.io/v1 NetworkPolicy`,
   `v1 ConfigMap`, `v1 Endpoints`, `v1 Event`, `v1 Pod`, `v1 Service`, and the synthetic-traffic watch
   `sdo.dev/v1alpha1 SyntheticTraffic` (health detectors over traffic workloads only), and the controller-emitted
   `sdo.dev/v1alpha1 ServiceReachability` (detectors over Service reachability dials). Watches are unique and
-  non-empty. Enforced by: `manifest.invalid`, `detector.compile`.
+  non-empty. The synthetic `sdo.dev/v1alpha1 ResourceUsage` watch exposes kubelet usage windows. Enforced by: `manifest.invalid`, `detector.compile`.
+- The interval-driven `sdo.dev/v1alpha1 Logs` watch exposes bounded container-log counts and excerpts through
+  `logs.Consumer` and `logs.Require`; declarations validate RE2 patterns and query limits at registration.
+  Source errors must propagate as detector errors. Enforced by: `manifest.invalid`, `detector.compile`, `detector.test`.
 Advice, not validator-checked: watch every kind whose snapshot accessor the detector calls; the controller
 evaluates a detector when a watched kind changes.
 
@@ -72,3 +79,18 @@ incident that taught the pattern.
 - A responder keeps the provenance (`originatingIncident`, `originatingCommit`) of an existing detector. Enforced
   by: `ownership.provenance-rewrite`.
 - Detector files are changed only in the phase and by the actor the task names. Enforced by: `ownership.denied`.
+
+## Go-installed generic health detectors
+
+Do not author `service-endpoints`, `workload-health`, `service-reachability`, `cluster-wiring`,
+`workload-controllers`, `warning-events`, `node-health`, `resource-saturation`, or `runtime-crashes`.
+The shared memory check installs these constructors from the SDK. Wiring checks selectors,
+protocol-specific declared targets, required template references/keys, PVC binding, Ingress backends,
+total NetworkPolicy isolation and local ExternalName aliases. Other controller kinds, persistent
+warning events and application-node health also require no application-source expectations.
+Saturation covers memory and PVC bytes/inodes (90% or short forecasts); CPU throttling is opt-in
+because collecting cAdvisor counters adds a kubelet request and substantial parsing allocation.
+Runtime-crash patterns cover Go panic/fatal, Python traceback, Java OOM/thread exceptions and
+segmentation faults; `logs.Appeared` supplies transition persistence (firing 1, clearing 2).
+Cause detectors batch at warn so cause findings open incidents. Workload unavailability is critical.
+Use source-specific detectors for config parsing, named peers, journeys, domain logs and metrics.

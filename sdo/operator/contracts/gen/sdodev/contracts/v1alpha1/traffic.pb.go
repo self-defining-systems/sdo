@@ -217,7 +217,9 @@ type TrafficLink struct {
 	To    string                 `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`
 	Port  int32                  `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
 	// "" means unset; the loader defaults it to "tcp".
-	Protocol      string `protobuf:"bytes,4,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Protocol      string                  `protobuf:"bytes,4,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Http          *TrafficLinkHTTPOptions `protobuf:"bytes,5,opt,name=http,proto3" json:"http,omitempty"`
+	Grpc          *TrafficLinkGRPCOptions `protobuf:"bytes,6,opt,name=grpc,proto3" json:"grpc,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -280,6 +282,130 @@ func (x *TrafficLink) GetProtocol() string {
 	return ""
 }
 
+func (x *TrafficLink) GetHttp() *TrafficLinkHTTPOptions {
+	if x != nil {
+		return x.Http
+	}
+	return nil
+}
+
+func (x *TrafficLink) GetGrpc() *TrafficLinkGRPCOptions {
+	if x != nil {
+		return x.Grpc
+	}
+	return nil
+}
+
+// TrafficLinkHTTPOptions configures a GET with inclusive status bounds.
+type TrafficLinkHTTPOptions struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Empty defaults to /.
+	Path string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	// Zero defaults to 100.
+	StatusMin int32 `protobuf:"varint,2,opt,name=status_min,json=statusMin,proto3" json:"status_min,omitempty"`
+	// Zero defaults to 499.
+	StatusMax     int32 `protobuf:"varint,3,opt,name=status_max,json=statusMax,proto3" json:"status_max,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TrafficLinkHTTPOptions) Reset() {
+	*x = TrafficLinkHTTPOptions{}
+	mi := &file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrafficLinkHTTPOptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrafficLinkHTTPOptions) ProtoMessage() {}
+
+func (x *TrafficLinkHTTPOptions) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrafficLinkHTTPOptions.ProtoReflect.Descriptor instead.
+func (*TrafficLinkHTTPOptions) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_traffic_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *TrafficLinkHTTPOptions) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *TrafficLinkHTTPOptions) GetStatusMin() int32 {
+	if x != nil {
+		return x.StatusMin
+	}
+	return 0
+}
+
+func (x *TrafficLinkHTTPOptions) GetStatusMax() int32 {
+	if x != nil {
+		return x.StatusMax
+	}
+	return 0
+}
+
+// TrafficLinkGRPCOptions configures the gRPC health transport.
+type TrafficLinkGRPCOptions struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Use system roots and target hostname verification; plaintext by default.
+	Tls           bool `protobuf:"varint,1,opt,name=tls,proto3" json:"tls,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TrafficLinkGRPCOptions) Reset() {
+	*x = TrafficLinkGRPCOptions{}
+	mi := &file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrafficLinkGRPCOptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrafficLinkGRPCOptions) ProtoMessage() {}
+
+func (x *TrafficLinkGRPCOptions) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrafficLinkGRPCOptions.ProtoReflect.Descriptor instead.
+func (*TrafficLinkGRPCOptions) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_traffic_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *TrafficLinkGRPCOptions) GetTls() bool {
+	if x != nil {
+		return x.Tls
+	}
+	return false
+}
+
 // TrafficWorkload is a logical workload profile. A `health-probe` runs
 // continuously and feeds traffic health detectors; a `verify-burst` runs for a
 // few seconds on demand to verify a repair; a `journey` runs on demand for a
@@ -323,7 +449,7 @@ type TrafficWorkload struct {
 
 func (x *TrafficWorkload) Reset() {
 	*x = TrafficWorkload{}
-	mi := &file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[3]
+	mi := &file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -335,7 +461,7 @@ func (x *TrafficWorkload) String() string {
 func (*TrafficWorkload) ProtoMessage() {}
 
 func (x *TrafficWorkload) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[3]
+	mi := &file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -348,7 +474,7 @@ func (x *TrafficWorkload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficWorkload.ProtoReflect.Descriptor instead.
 func (*TrafficWorkload) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_traffic_proto_rawDescGZIP(), []int{3}
+	return file_sdodev_contracts_v1alpha1_traffic_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *TrafficWorkload) GetApiVersion() string {
@@ -492,14 +618,27 @@ const file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc = "" +
 	"\x06weight\x18\x02 \x01(\x05Bb\xbaH_\xba\x01\\\n" +
 	"\x15scenario.weight_range\x12\x1aweight must be in [1, 100]\x1a'this == 0 || (this >= 1 && this <= 100)R\x06weight\x12<\n" +
 	"\x03slo\x18\x03 \x01(\v2%.sdodev.contracts.v1alpha1.TrafficSLOH\x00R\x03slo\x88\x01\x01B\x06\n" +
-	"\x04_slo\"\xf2\x02\n" +
+	"\x04_slo\"\xa9\x06\n" +
 	"\vTrafficLink\x12?\n" +
 	"\x04from\x18\x01 \x01(\tB+\xbaH(r&2$^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$R\x04from\x12;\n" +
 	"\x02to\x18\x02 \x01(\tB+\xbaH(r&2$^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$R\x02to\x12\x1f\n" +
 	"\x04port\x18\x03 \x01(\x05B\v\xbaH\b\x1a\x06\x18\xff\xff\x03(\x01R\x04port\x12\x1a\n" +
-	"\bprotocol\x18\x04 \x01(\tR\bprotocol:\xa7\x01\xbaH\xa3\x01\x1aF\n" +
-	"\x11link.no_self_loop\x12\x1ba link must not call itself\x1a\x14this.from != this.to\x1aY\n" +
-	"\rlink.protocol\x12\x19link protocol must be tcp\x1a-this.protocol == '' || this.protocol == 'tcp'\"\xdb\x10\n" +
+	"\bprotocol\x18\x04 \x01(\tR\bprotocol\x12E\n" +
+	"\x04http\x18\x05 \x01(\v21.sdodev.contracts.v1alpha1.TrafficLinkHTTPOptionsR\x04http\x12E\n" +
+	"\x04grpc\x18\x06 \x01(\v21.sdodev.contracts.v1alpha1.TrafficLinkGRPCOptionsR\x04grpc:\xd0\x03\xbaH\xcc\x03\x1aF\n" +
+	"\x11link.no_self_loop\x12\x1ba link must not call itself\x1a\x14this.from != this.to\x1a\xd2\x01\n" +
+	"\rlink.protocol\x12]unknown link protocol: expected tcp, http, grpc, redis, memcached, mongodb, postgres or mysql\x1abthis.protocol in ['', 'tcp', 'http', 'grpc', 'redis', 'memcached', 'mongodb', 'postgres', 'mysql']\x1a\xac\x01\n" +
+	"\x15link.protocol_options\x125http and grpc options require their matching protocol\x1a\\(!has(this.http) || this.protocol == 'http') && (!has(this.grpc) || this.protocol == 'grpc')\"\x8f\x05\n" +
+	"\x16TrafficLinkHTTPOptions\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1d\n" +
+	"\n" +
+	"status_min\x18\x02 \x01(\x05R\tstatusMin\x12\x1d\n" +
+	"\n" +
+	"status_max\x18\x03 \x01(\x05R\tstatusMax:\xa2\x04\xbaH\x9e\x04\x1a\xc6\x01\n" +
+	"\x0elink.http_path\x12*http path must be an absolute request path\x1a\x87\x01this.path == '' || (this.path.startsWith('/') && !this.path.startsWith('//') && !this.path.contains('\\r') && !this.path.contains('\\n'))\x1a\xd2\x02\n" +
+	"\x16link.http_status_range\x125http status range must be within 100..599 and ordered\x1a\x80\x02(this.status_min == 0 || (this.status_min >= 100 && this.status_min <= 599)) && (this.status_max == 0 || (this.status_max >= 100 && this.status_max <= 599)) && (this.status_min == 0 ? 100 : this.status_min) <= (this.status_max == 0 ? 499 : this.status_max)\"*\n" +
+	"\x16TrafficLinkGRPCOptions\x12\x10\n" +
+	"\x03tls\x18\x01 \x01(\bR\x03tls\"\xdb\x10\n" +
 	"\x0fTrafficWorkload\x128\n" +
 	"\vapi_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\n" +
@@ -547,23 +686,27 @@ func file_sdodev_contracts_v1alpha1_traffic_proto_rawDescGZIP() []byte {
 	return file_sdodev_contracts_v1alpha1_traffic_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_sdodev_contracts_v1alpha1_traffic_proto_goTypes = []any{
 	(*TrafficSLO)(nil),              // 0: sdodev.contracts.v1alpha1.TrafficSLO
 	(*TrafficWorkloadScenario)(nil), // 1: sdodev.contracts.v1alpha1.TrafficWorkloadScenario
 	(*TrafficLink)(nil),             // 2: sdodev.contracts.v1alpha1.TrafficLink
-	(*TrafficWorkload)(nil),         // 3: sdodev.contracts.v1alpha1.TrafficWorkload
+	(*TrafficLinkHTTPOptions)(nil),  // 3: sdodev.contracts.v1alpha1.TrafficLinkHTTPOptions
+	(*TrafficLinkGRPCOptions)(nil),  // 4: sdodev.contracts.v1alpha1.TrafficLinkGRPCOptions
+	(*TrafficWorkload)(nil),         // 5: sdodev.contracts.v1alpha1.TrafficWorkload
 }
 var file_sdodev_contracts_v1alpha1_traffic_proto_depIdxs = []int32{
 	0, // 0: sdodev.contracts.v1alpha1.TrafficWorkloadScenario.slo:type_name -> sdodev.contracts.v1alpha1.TrafficSLO
-	0, // 1: sdodev.contracts.v1alpha1.TrafficWorkload.slo:type_name -> sdodev.contracts.v1alpha1.TrafficSLO
-	1, // 2: sdodev.contracts.v1alpha1.TrafficWorkload.scenarios:type_name -> sdodev.contracts.v1alpha1.TrafficWorkloadScenario
-	2, // 3: sdodev.contracts.v1alpha1.TrafficWorkload.links:type_name -> sdodev.contracts.v1alpha1.TrafficLink
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	3, // 1: sdodev.contracts.v1alpha1.TrafficLink.http:type_name -> sdodev.contracts.v1alpha1.TrafficLinkHTTPOptions
+	4, // 2: sdodev.contracts.v1alpha1.TrafficLink.grpc:type_name -> sdodev.contracts.v1alpha1.TrafficLinkGRPCOptions
+	0, // 3: sdodev.contracts.v1alpha1.TrafficWorkload.slo:type_name -> sdodev.contracts.v1alpha1.TrafficSLO
+	1, // 4: sdodev.contracts.v1alpha1.TrafficWorkload.scenarios:type_name -> sdodev.contracts.v1alpha1.TrafficWorkloadScenario
+	2, // 5: sdodev.contracts.v1alpha1.TrafficWorkload.links:type_name -> sdodev.contracts.v1alpha1.TrafficLink
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_traffic_proto_init() }
@@ -573,14 +716,14 @@ func file_sdodev_contracts_v1alpha1_traffic_proto_init() {
 	}
 	file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[0].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[1].OneofWrappers = []any{}
-	file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[3].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_traffic_proto_msgTypes[5].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

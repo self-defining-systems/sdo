@@ -70,14 +70,47 @@ message TrafficLink {
   };
   option (buf.validate.message).cel = {
     id: "link.protocol"
-    message: "link protocol must be tcp"
-    expression: "this.protocol == '' || this.protocol == 'tcp'"
+    message: "unknown link protocol: expected tcp, http, grpc, redis, memcached, mongodb, postgres or mysql"
+    expression: "this.protocol in ['', 'tcp', 'http', 'grpc', 'redis', 'memcached', 'mongodb', 'postgres', 'mysql']"
   };
   string from = 1 [(buf.validate.field).string.pattern = "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"];
   string to = 2 [(buf.validate.field).string.pattern = "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"];
   int32 port = 3 [(buf.validate.field).int32 = {gte: 1, lte: 65535}];
   // "" means unset; the loader defaults it to "tcp".
   string protocol = 4;
+  TrafficLinkHTTPOptions http = 5;
+  TrafficLinkGRPCOptions grpc = 6;
+  option (buf.validate.message).cel = {
+    id: "link.protocol_options"
+    message: "http and grpc options require their matching protocol"
+    expression: "(!has(this.http) || this.protocol == 'http') && (!has(this.grpc) || this.protocol == 'grpc')"
+  };
+}
+
+// TrafficLinkHTTPOptions configures a GET with inclusive status bounds.
+message TrafficLinkHTTPOptions {
+  option (buf.validate.message).cel = {
+    id: "link.http_path"
+    message: "http path must be an absolute request path"
+    expression: "this.path == '' || (this.path.startsWith('/') && !this.path.startsWith('//') && !this.path.contains('\\r') && !this.path.contains('\\n'))"
+  };
+  option (buf.validate.message).cel = {
+    id: "link.http_status_range"
+    message: "http status range must be within 100..599 and ordered"
+    expression: "(this.status_min == 0 || (this.status_min >= 100 && this.status_min <= 599)) && (this.status_max == 0 || (this.status_max >= 100 && this.status_max <= 599)) && (this.status_min == 0 ? 100 : this.status_min) <= (this.status_max == 0 ? 499 : this.status_max)"
+  };
+  // Empty defaults to /.
+  string path = 1;
+  // Zero defaults to 100.
+  int32 status_min = 2;
+  // Zero defaults to 499.
+  int32 status_max = 3;
+}
+
+// TrafficLinkGRPCOptions configures the gRPC health transport.
+message TrafficLinkGRPCOptions {
+  // Use system roots and target hostname verification; plaintext by default.
+  bool tls = 1;
 }
 
 // TrafficWorkload is a logical workload profile. A `health-probe` runs

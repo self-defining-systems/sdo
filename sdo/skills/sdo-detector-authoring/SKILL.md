@@ -8,7 +8,7 @@ description: Use when authoring or changing an SDO detector - a deterministic Go
 A detector is deterministic Go that reads a Kubernetes snapshot and returns findings. It never calls an LLM, reads
 the environment, the clock, or the network, and never looks at benchmark data or verdicts. Measure ages with
 `sdk.ObservationTime(ctx)`, never `time.Now()`. Read the `sdo-memory` skill first for artifact IDs and the
-`memory` commands.
+`memory` commands. To decide which detectors an application needs, use the `sdo-operationalize` skill.
 
 ## Workflow
 
@@ -20,7 +20,8 @@ the environment, the clock, or the network, and never looks at benchmark data or
    `--class health`). It writes `manifest.yaml`, `detector.go`, and `detector_test.go`.
    Create the playbook first if it does not exist (see `sdo-playbook-authoring`).
 3. Write the detector. Edit `manifest.yaml` and the `Spec()` in `detector.go` together: they must agree field for
-   field. The API is in [SDK reference](references/sdk.md); a full example is in `assets/restart-loop/`.
+   field. The API is in [SDK reference](references/sdk.md); a full example is in `assets/restart-loop/`. For
+   synthetic traffic scenarios, workloads and links, read the [traffic reference](references/traffic.md).
 4. Write tests: one case that fires (use different resource names than the incident that taught you the pattern)
    and near-miss cases that stay quiet. Use `sdktest.Snapshot` and consult the [replay reference](references/replay.md).
 5. Run `go test` in the detector directory when your sandbox allows `go` and the checkout resolves the SDK

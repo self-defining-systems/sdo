@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/sdk/inputs"
 	"slices"
 	"strings"
 	"sync"
@@ -61,7 +62,7 @@ func (p *routingTestProber) ProbePod(ctx context.Context, ref sdk.ObjectRef, ip 
 }
 func TestLiveReadViewConcurrentPodTCPProbes(t *testing.T) {
 	probe := &routingTestProber{}
-	view := LiveReadView{DetectionContext: routingCaptureSnapshot(), Prober: probe}
+	view := LiveReadView{Carrier: inputs.New(routingCaptureSnapshot()), Prober: probe}
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
 	start := make(chan struct{})
 	var workers sync.WaitGroup
@@ -86,7 +87,7 @@ func routingCaptureSnapshot() sdktest.Snapshot {
 }
 func TestLiveReadViewPodTCPUsesCapturedAddress(t *testing.T) {
 	probe := &routingTestProber{}
-	view := LiveReadView{DetectionContext: routingCaptureSnapshot(), Prober: probe}
+	view := LiveReadView{Carrier: inputs.New(routingCaptureSnapshot()), Prober: probe}
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
 	result, err := view.ProbeTCP(ref, 8080)
 	if err != nil || !result.Success {
@@ -109,7 +110,9 @@ func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "routing", Namespace: "app", Findings: []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: ref}}}, nil, &changingProvider{snapshot: snapshot}, nil, PlanExecutor{}, 1)
 	loop.CorpusSessionRoot = t.TempDir()
-	loop.ReadView = func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }
+	loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
+		return LiveReadView{Carrier: inputs.New(s), Prober: probe}
+	}
 	loop.InitialDiagnose(ctx)
 	dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, "routing")
 	if err != nil {
@@ -181,7 +184,7 @@ func TestRoutingCaptureProbesSuspectServiceNamedByNoFinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	probe := &boundedRoutingProber{}
-	if err := captureRoutingEvidence(context.Background(), root, "incident-one", "open@detect", findings, LiveReadView{DetectionContext: snapshot, Prober: probe}); err != nil {
+	if err := captureRoutingEvidence(context.Background(), root, "incident-one", "open@detect", findings, LiveReadView{Carrier: inputs.New(snapshot), Prober: probe}); err != nil {
 		t.Fatal(err)
 	}
 	dir, err := memory.IncidentCorpusDir(root, "incident-one")
@@ -263,7 +266,7 @@ func TestRoutingCaptureHasCountAndTimeBudgets(t *testing.T) {
 					t.Fatal(err)
 				}
 				start := time.Now()
-				err := captureRoutingEvidence(context.Background(), root, "bounded", "open@detect", findings, LiveReadView{DetectionContext: snapshot, Prober: probe})
+				err := captureRoutingEvidence(context.Background(), root, "bounded", "open@detect", findings, LiveReadView{Carrier: inputs.New(snapshot), Prober: probe})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -293,7 +296,7 @@ func TestRoutingCaptureNotesProbesSkippedForBudget(t *testing.T) {
 		if err := memory.CaptureIncidentSnapshot(root, "skipped", "open@detect", snapshot, "app"); err != nil {
 			t.Fatal(err)
 		}
-		if err := captureRoutingEvidence(context.Background(), root, "skipped", "open@detect", findings, LiveReadView{DetectionContext: snapshot, Prober: probe}); err != nil {
+		if err := captureRoutingEvidence(context.Background(), root, "skipped", "open@detect", findings, LiveReadView{Carrier: inputs.New(snapshot), Prober: probe}); err != nil {
 			t.Fatal(err)
 		}
 		dir, err := memory.IncidentCorpusDir(root, "skipped")
@@ -364,7 +367,9 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }})
+	controller.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView {
+		return LiveReadView{Carrier: inputs.New(s), Prober: probe}
+	}})
 	for i := 0; i < 2; i++ {
 		if err := controller.Step(ctx, time.Unix(int64(i), 0), nil); err != nil {
 			t.Fatal(err)
@@ -459,7 +464,9 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	}
 	warm := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ProgramFastPath: true, ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, Outcomes: priorOutcomeReader{outcomes: outcomes}, LoopFactory: func(request IncidentRequest) *ResponderLoop {
 		loop := NewResponderLoop(request, registry, liveProvider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: liveProvider}}, 1)
-		loop.ReadView = func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }
+		loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
+			return LiveReadView{Carrier: inputs.New(s), Prober: probe}
+		}
 		loop.CorpusReplayPassed = true
 		loop.DiagnosisSettleDelay = time.Millisecond
 		return loop
@@ -488,12 +495,12 @@ func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {
 		view   func(sdk.DetectionContext) program.ReadView
 		reason string
 	}{
-		{"missing", func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s} }, "prober_not_configured"},
+		{"missing", func(s sdk.DetectionContext) program.ReadView { return LiveReadView{Carrier: inputs.New(s)} }, "prober_not_configured"},
 		{"non-live", func(s sdk.DetectionContext) program.ReadView {
 			return &sdktest.ReplayReadView{Snapshot: s.(sdktest.Snapshot)}
 		}, "read_view_not_live"},
 		{"unreachable", func(s sdk.DetectionContext) program.ReadView {
-			return LiveReadView{DetectionContext: s, Prober: unavailable}
+			return LiveReadView{Carrier: inputs.New(s), Prober: unavailable}
 		}, "probe_failed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -580,7 +587,7 @@ func TestRoutingCaptureRecordsHangingDialAsFailedObservation(t *testing.T) {
 				}
 				service := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 				findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: service}}
-				view := LiveReadView{DetectionContext: snapshot, Prober: inProcessProberClient(prober.Handler(p))}
+				view := LiveReadView{Carrier: inputs.New(snapshot), Prober: inProcessProberClient(prober.Handler(p))}
 				if err := captureRoutingEvidence(context.Background(), root, incident, "open@detect", findings, view); err != nil {
 					t.Fatal(err)
 				}
@@ -663,7 +670,7 @@ func TestRoutingCaptureWaitsForSlowHealthyProber(t *testing.T) {
 			t.Fatal(err)
 		}
 		findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
-		view := LiveReadView{DetectionContext: snapshot, Prober: inProcessProberClient(prober.Handler(p))}
+		view := LiveReadView{Carrier: inputs.New(snapshot), Prober: inProcessProberClient(prober.Handler(p))}
 		if err := captureRoutingEvidence(context.Background(), root, incident, "open@detect", findings, view); err != nil {
 			t.Fatal(err)
 		}
@@ -719,7 +726,7 @@ func TestRoutingCaptureContinuesAfterProberTransportFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}}
-	if err := captureRoutingEvidence(context.Background(), root, incident, "open@detect", findings, LiveReadView{DetectionContext: snapshot, Prober: client}); err != nil {
+	if err := captureRoutingEvidence(context.Background(), root, incident, "open@detect", findings, LiveReadView{Carrier: inputs.New(snapshot), Prober: client}); err != nil {
 		t.Fatal(err)
 	}
 	dir, err := memory.IncidentCorpusDir(root, incident)
