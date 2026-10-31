@@ -162,6 +162,8 @@ func Inspect(filename string, file *ast.File) ([]string, error) {
 			forbidden = contains(name, "Getenv LookupEnv Environ ExpandEnv StartProcess")
 		case "syscall":
 			forbidden = contains(name, "Getenv Environ Socket Socketpair Connect Bind Listen Accept Accept4 ForkExec Exec StartProcess")
+		case "crypto/tls":
+			forbidden = contains(name, "Dial DialWithDialer Listen Dialer")
 		case "net":
 			forbidden = strings.HasPrefix(name, "Dial") || strings.HasPrefix(name, "Listen") || strings.HasPrefix(name, "Resolve")
 		case "net/http":

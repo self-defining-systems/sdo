@@ -22,6 +22,8 @@ func TestForbiddenEdges(t *testing.T) {
 		`import "crypto/rand"; var f = rand.Read`,
 		`import "net"; var f = net.Dial`,
 		`import "net"; var f = net.Listen`,
+		`import "crypto/tls"; var f = tls.Dial`,
+		`import "crypto/tls"; var f = tls.Listen`,
 		`import "net"; var f = net.Dialer{}`,
 		`import "net/http"; var f = http.Get`,
 		`import "net/http"; var f = http.Client{}`,
