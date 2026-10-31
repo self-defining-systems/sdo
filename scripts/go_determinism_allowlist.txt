@@ -218,7 +218,6 @@ sdo/operator/runtime/responder_loop_mitigator_test.go:time.Since
 sdo/operator/runtime/responder_loop_test.go:time.After
 sdo/operator/runtime/responder_tools_transport.go:crypto/rand.Text
 sdo/operator/runtime/responder_tools_transport.go:time.NewTicker
-sdo/operator/runtime/responder_tools_transport_test.go:time.Sleep
 sdo/operator/runtime/responder_verification_failure_test.go:time.Now
 sdo/operator/runtime/routing_capture_test.go:net/http.Client
 sdo/operator/runtime/routing_capture_test.go:time.Sleep
