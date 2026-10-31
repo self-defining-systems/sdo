@@ -23,7 +23,6 @@ sdo/operator/builder/native.go:os.Getenv
 sdo/operator/builder/native.go:os/exec
 sdo/operator/builder/native_runner.go:os/exec
 sdo/operator/builder/native_test.go:os.Getenv
-sdo/operator/builder/native_test.go:os/exec
 sdo/operator/cmd/sdo-operator/main.go:os.Getenv
 sdo/operator/core/kubernetes_snapshot.go:os.Getenv
 sdo/operator/core/kubernetes_snapshot.go:os.LookupEnv

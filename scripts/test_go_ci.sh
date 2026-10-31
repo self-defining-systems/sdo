@@ -3,9 +3,9 @@
 # cache or serial preparation job; package parallelism uses the runner's CPUs.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-args=(-json -timeout=5m)
+args=(-tags=integration -json -timeout=5m)
 if [[ "${1:-pr}" == nightly ]]; then
-    args=(-json -timeout=15m -race -skip '^TestChaos|^TestExhaustive|^TestExplorer')
+    args=(-tags=integration -json -timeout=15m -race -skip '^TestChaos|^TestExhaustive|^TestExplorer')
 else
     # Extended interleaving campaigns run nightly; ordinary controller tests
     # and every fuzz seed still run here.
@@ -37,7 +37,6 @@ patterns=()
 cd "$root"
 # Nested builder tests must select their own isolated modules.
 go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}"
-go test -exec 'env GOWORK=off' -tags integration -json -run "^TestBuildMemoryHostUsesStagedMemory$" -timeout=3m ./sdo/operator/builder
 if [[ "${1:-pr}" == nightly ]]; then
-    go test -exec 'env GOWORK=off' -json -race -run '^TestChaos|^TestExhaustive|^TestExplorer' -timeout=5m ./sdo/operator/runtime/...
+    go test -exec 'env GOWORK=off' -tags=integration -json -race -run '^TestChaos|^TestExhaustive|^TestExplorer' -timeout=5m ./sdo/operator/runtime/...
 fi

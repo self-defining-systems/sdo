@@ -170,3 +170,53 @@ def test_nightly_compile_integrations_keep_fast_pr_contracts() -> None:
         path = f"tests/unit/benchmarks/sregym/fastloop/{filename}"
         assert (ROOT / path).is_file()
         assert f"--ignore={path}" not in pr_commands
+
+
+def test_go_job_saves_its_own_cache_without_racing_python_checks() -> None:
+    jobs = workflow()["jobs"]
+    keys = {}
+    for name in ("checks", "tests"):
+        saves = [s for s in jobs[name]["steps"] if s.get("uses", "").startswith("actions/cache/save@")]
+        assert len(saves) == 1
+        keys[name] = saves[0]["with"]["key"]
+    assert keys["checks"] != keys["tests"], "immutable caches must retain generated Go test builds"
+    restores = [s for s in jobs["tests"]["steps"] if s.get("uses", "").startswith("actions/cache/restore@")]
+    assert restores[0]["with"]["key"] == keys["tests"]
+    assert restores[0]["with"]["restore-keys"].splitlines()[0].startswith("ci-tests-")
+
+
+@pytest.mark.parametrize("mode", ["pr", "nightly"])
+def test_go_runner_keeps_integration_coverage_in_one_package_scheduler(tmp_path: Path, mode: str) -> None:
+    calls = tmp_path / "calls"
+    command = tmp_path / "go"
+    command.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SDO_TEST_CALLS"\n')
+    command.chmod(0o755)
+    subprocess.run(
+        ["bash", str(ROOT / "scripts/test_go_ci.sh"), mode],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        check=True,
+    )
+    invocations = [shlex.split(line) for line in calls.read_text().splitlines()]
+    assert len(invocations) == (1 if mode == "pr" else 2)
+    for args in invocations:
+        assert "-tags=integration" in args
+    assert "./sdo/operator/..." in invocations[0]
+    nightly_names = [
+        line
+        for line in (ROOT / "scripts/ci_nightly_go_tests.txt").read_text().splitlines()
+        if line and not line.startswith("#")
+    ]
+    if mode == "pr":
+        skip = invocations[0][invocations[0].index("-skip") + 1]
+        for name in nightly_names:
+            assert re.search(skip, name)
+        for name in (
+            "TestBuildWorkspaceCompilesApplicationDetectors",
+            "TestCompileReportsTheFailingStage",
+            "TestSimTrustedFastPathNeverRollsBackACorrectFix",
+            "TestBuildMemoryHostUsesStagedMemory",
+        ):
+            assert not re.search(skip, name)
+    else:
+        skip = invocations[0][invocations[0].index("-skip") + 1]
+        assert all(not re.search(skip, name) for name in nightly_names)

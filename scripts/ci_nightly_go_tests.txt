@@ -20,3 +20,10 @@ TestHermeticFastloopRealGoGate
 TestHermeticForeignNetworkPolicyInvariantRepeat
 TestReflectionDirectFilesCLIAndBroker
 TestReflectionLearnedProgramCLIAndBroker
+# Captured routing program compilation: 64.38 s on #664. PRs retain
+# TestRoutingCaptureWaitsForSlowHealthyProber (record/replay), capture budget
+# tests, TestTargetPortFixtureCandidateClearsAfterRepair, and TestSimTrusted*.
+TestHermeticRoutingCaptureCompilesReplayableMitigator
+# Valid metrics is a second successful controller/prober compilation. PRs keep
+# the application compile smoke and TestBuildWorkspaceRejectsInvalidMetricsDetectors.
+TestBuildWorkspaceAcceptsValidMetricsDetectors

@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -90,39 +91,41 @@ func TestStopSeededLifecycleCuts(t *testing.T) {
 	for seed := int64(1); seed <= 20; seed++ {
 		for cut := 0; cut < 5; cut++ {
 			t.Run(fmt.Sprintf("seed-%d/cut-%d", seed, cut), func(t *testing.T) {
-				random := rand.New(rand.NewSource(seed))
-				client := fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "accepted", Namespace: "demo"}})
-				jobs := []string{"sdo-controller", "sdo-worker", "sdo-worker", "sdo-worker", "sdo-worker"}
-				for phase := 0; phase <= cut; phase++ {
-					name := fmt.Sprintf("phase-%d-%d", phase, random.Intn(10000))
-					labels := map[string]string{"app.kubernetes.io/name": jobs[phase]}
-					job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "demo"}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}}}}
-					if _, err := client.BatchV1().Jobs("demo").Create(context.Background(), job, metav1.CreateOptions{}); err != nil {
-						t.Fatal(err)
+				synctest.Test(t, func(t *testing.T) {
+					random := rand.New(rand.NewSource(seed))
+					client := fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "accepted", Namespace: "demo"}})
+					jobs := []string{"sdo-controller", "sdo-worker", "sdo-worker", "sdo-worker", "sdo-worker"}
+					for phase := 0; phase <= cut; phase++ {
+						name := fmt.Sprintf("phase-%d-%d", phase, random.Intn(10000))
+						labels := map[string]string{"app.kubernetes.io/name": jobs[phase]}
+						job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "demo"}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}}}}
+						if _, err := client.BatchV1().Jobs("demo").Create(context.Background(), job, metav1.CreateOptions{}); err != nil {
+							t.Fatal(err)
+						}
+						pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name + "-pod", Namespace: "demo", Labels: labels}}
+						if _, err := client.CoreV1().Pods("demo").Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+							t.Fatal(err)
+						}
+						// A controller/Job disappearing before abort must not hide orphan Pods.
+						if random.Intn(2) == 0 {
+							_ = client.BatchV1().Jobs("demo").Delete(context.Background(), name, metav1.DeleteOptions{})
+						}
 					}
-					pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name + "-pod", Namespace: "demo", Labels: labels}}
-					if _, err := client.CoreV1().Pods("demo").Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
-						t.Fatal(err)
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
+					result, err := Stop(ctx, client, "demo")
+					if err != nil || len(result.Leftovers) != 0 {
+						t.Fatalf("cut %d: %+v %v", cut, result, err)
 					}
-					// A controller/Job disappearing before abort must not hide orphan Pods.
-					if random.Intn(2) == 0 {
-						_ = client.BatchV1().Jobs("demo").Delete(context.Background(), name, metav1.DeleteOptions{})
+					jobsLeft, _ := client.BatchV1().Jobs("demo").List(ctx, metav1.ListOptions{})
+					podsLeft, _ := client.CoreV1().Pods("demo").List(ctx, metav1.ListOptions{})
+					if len(jobsLeft.Items)+len(podsLeft.Items) != 0 {
+						t.Fatal("runtime survived abort")
 					}
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-				defer cancel()
-				result, err := Stop(ctx, client, "demo")
-				if err != nil || len(result.Leftovers) != 0 {
-					t.Fatalf("cut %d: %+v %v", cut, result, err)
-				}
-				jobsLeft, _ := client.BatchV1().Jobs("demo").List(ctx, metav1.ListOptions{})
-				podsLeft, _ := client.CoreV1().Pods("demo").List(ctx, metav1.ListOptions{})
-				if len(jobsLeft.Items)+len(podsLeft.Items) != 0 {
-					t.Fatal("runtime survived abort")
-				}
-				if _, err := client.CoreV1().PersistentVolumeClaims("demo").Get(ctx, "accepted", metav1.GetOptions{}); err != nil {
-					t.Fatal("accepted repository was removed")
-				}
+					if _, err := client.CoreV1().PersistentVolumeClaims("demo").Get(ctx, "accepted", metav1.GetOptions{}); err != nil {
+						t.Fatal("accepted repository was removed")
+					}
+				})
 			})
 		}
 	}
