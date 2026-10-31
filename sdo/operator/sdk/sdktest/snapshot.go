@@ -16,11 +16,13 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
 )
 
 type Snapshot struct {
+	Reachability *servicehealth.ReachabilityWindow `json:"-"`
 	// Usage holds a synthetic resource usage window.
 	Usage              *usage.Result                  `json:"-"`
 	SecretList         []sdk.SecretMetadata           `json:"secrets"`
@@ -376,3 +378,10 @@ func (s Snapshot) Secrets() []sdk.SecretMetadata {
 
 // LogResult implements logs.Source.
 func (s Snapshot) LogResult(id string) (logs.Result, bool) { r, ok := s.Logs[id]; return r, ok }
+
+func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if s.Reachability == nil {
+		return servicehealth.ReachabilityWindow{}, false
+	}
+	return *s.Reachability, true
+}

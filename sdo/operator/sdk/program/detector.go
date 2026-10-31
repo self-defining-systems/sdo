@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 )
 
 type Locator func(sdk.DetectionContext) []Bindings
@@ -27,7 +28,7 @@ func (d programDetector) Spec() sdk.DetectorSpec { return d.spec }
 func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionContext) ([]sdk.Finding, error) {
 	findings := make([]sdk.Finding, 0)
 	for _, bindings := range d.locate(snapshot) {
-		verdict := RunDiagnose(ctx, d.program, snapshotReadView{snapshot}, bindings, 10*time.Second)
+		verdict := RunDiagnose(ctx, d.program, snapshotReadView{inputs.New(snapshot)}, bindings, 10*time.Second)
 		if verdict.Result != Match {
 			continue
 		}
@@ -52,7 +53,7 @@ func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionConte
 	return findings, nil
 }
 
-type snapshotReadView struct{ sdk.DetectionContext }
+type snapshotReadView struct{ inputs.Carrier }
 
 func (snapshotReadView) Logs(sdk.ObjectRef, string, time.Duration) (string, error) {
 	return "", fmt.Errorf("logs unavailable in detector context")

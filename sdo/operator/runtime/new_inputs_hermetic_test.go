@@ -19,6 +19,7 @@ import (
 	"sdo.dev/operator/runtime/internal/testprotocol"
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
 )
@@ -92,7 +93,7 @@ func (p observedLinks) Snapshot(ctx context.Context) (sdk.DetectionContext, erro
 	if err != nil {
 		return nil, err
 	}
-	return trafficContext{DetectionContext: base, windows: p.p.Windows()}, nil
+	return inputs.New(base).WithTraffic(trafficWindows(p.p.Windows())), nil
 }
 
 // One HTTP fake is shared with Python fastloop; the pipe only controls fixture state.

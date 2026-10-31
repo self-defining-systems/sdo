@@ -14,8 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
-	"sdo.dev/operator/sdk/metrics"
 )
 
 // LogsObserverOptions supplies the cycle clock; zero uses time.Now.
@@ -84,25 +84,14 @@ func (p LogsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContex
 	if err != nil || p.Observer == nil {
 		return base, err
 	}
-	return logsContext{metricsContext: metricsContext{DetectionContext: base}, results: p.Observer.collect(ctx, base)}, nil
+	return inputs.New(base).WithLogs(logResults(p.Observer.collect(ctx, base))), nil
 }
 
-// Embed the existing optional-view forwarding surface without changing shared
-// snapshot types. Metrics are forwarded explicitly rather than loaded here.
-type logsContext struct {
-	metricsContext
-	results map[string]logs.Result
-}
+type logResults map[string]logs.Result
 
-func (c logsContext) MetricResult(id string) (metrics.Result, bool) {
-	return metrics.ResultFrom(c.DetectionContext, id)
-}
-func (c logsContext) AlertsResult() (metrics.AlertsResult, bool) {
-	return metrics.AlertsFrom(c.DetectionContext)
-}
-func (c logsContext) LogResult(id string) (logs.Result, bool) {
-	r, ok := c.results[id]
-	return cloneLogResult(r), ok
+func (r logResults) LogResult(id string) (logs.Result, bool) {
+	v, ok := r[id]
+	return cloneLogResult(v), ok
 }
 func cloneLogResult(r logs.Result) logs.Result {
 	r.Query.Patterns = append([]logs.Pattern(nil), r.Query.Patterns...)

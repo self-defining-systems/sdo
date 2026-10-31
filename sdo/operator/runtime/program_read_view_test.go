@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sdo.dev/operator/sdk/inputs"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +46,7 @@ func (p *fakePrimitiveProber) Probe(_ context.Context, ref sdk.ObjectRef, port i
 
 func TestLiveReadViewDiffsSnapshotAgainstAcceptedManifest(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 81}}}}}}, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 81}}}}}}), SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || !diff.Changed || !strings.Contains(diff.Text, "81") {
 		t.Fatalf("source diff: %+v %v", diff, err)
@@ -54,7 +55,7 @@ func TestLiveReadViewDiffsSnapshotAgainstAcceptedManifest(t *testing.T) {
 
 func TestLiveReadViewIgnoresKubernetesDefaultsAbsentFromSource(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.1", Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}}}}, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.1", Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}}}}), SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || diff.Changed {
 		t.Fatalf("Kubernetes defaults are not source drift: %+v %v", diff, err)
@@ -74,7 +75,7 @@ func TestLiveReadViewNormalizesSourceWithServerSideDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}}}}, Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}}}}), Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || diff.Changed || !called {
 		t.Fatalf("source was not normalized by dry run: %+v, %v, called=%v", diff, err, called)
@@ -92,7 +93,7 @@ func TestLiveReadViewDiffsDeclaredLabelsAgainstSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app", Labels: map[string]string{"app": "changed"}}}}}, Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": "app", "name": "settings", "labels": map[string]any{"app": "accepted"}}}}}}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app", Labels: map[string]string{"app": "changed"}}}}}), Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": "app", "name": "settings", "labels": map[string]any{"app": "accepted"}}}}}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || !diff.Changed {
 		t.Fatalf("declared label change was not source drift: %+v %v", diff, err)
@@ -110,7 +111,7 @@ func TestLiveReadViewIgnoresDeploymentRevisionStamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app", Annotations: map[string]string{"sdo.dev/source-tree": "abc"}}}}}, Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": "app", "name": "settings"}}}}}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app", Annotations: map[string]string{"sdo.dev/source-tree": "abc"}}}}}), Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": "app", "name": "settings"}}}}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || diff.Changed {
 		t.Fatalf("deployer's revision stamp was treated as drift: %+v %v", diff, err)
@@ -119,7 +120,7 @@ func TestLiveReadViewIgnoresDeploymentRevisionStamp(t *testing.T) {
 
 func TestLiveReadViewReportsDeletedAcceptedObject(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || !diff.Changed {
 		t.Fatalf("deleted source object was not drift: %+v, %v", diff, err)
@@ -129,7 +130,7 @@ func TestLiveReadViewReportsDeletedAcceptedObject(t *testing.T) {
 func TestLiveReadViewRefreshesHealthyBaselineAfterRepair(t *testing.T) {
 	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
 	baseline := &changingBaseline{changes: &StateChanges{Changes: []StateChange{{Kind: "Service", Name: "api", Change: StateChangeModified}}}}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, BaselineSource: baseline}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), BaselineSource: baseline}
 	if diff, err := view.DiffAgainstBaseline(ref); err != nil || !diff.Changed {
 		t.Fatalf("before repair: %+v %v", diff, err)
 	}
@@ -144,7 +145,7 @@ func TestLiveReadViewUsesSnapshotAndReadOnlyPrimitives(t *testing.T) {
 	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
 	client := fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}})
 	prober := &fakePrimitiveProber{}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}}}}}, Client: client, Prober: prober, Context: context.Background(), Baseline: &StateChanges{Changes: []StateChange{{Kind: "Service", Name: "api", Change: StateChangeModified, Fields: []StateFieldChange{{Field: "spec.ports", Before: "80", After: "81"}}}}}}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}}}}}), Client: client, Prober: prober, Context: context.Background(), Baseline: &StateChanges{Changes: []StateChange{{Kind: "Service", Name: "api", Change: StateChangeModified, Fields: []StateFieldChange{{Field: "spec.ports", Before: "80", After: "81"}}}}}}
 	if len(view.Services()) != 1 {
 		t.Fatal("snapshot was not exposed")
 	}
@@ -183,7 +184,7 @@ func (p unavailableCapabilityProgram) Diagnose(_ context.Context, v program.Read
 func TestUnavailableSweepCapabilityCannotClearFault(t *testing.T) {
 	for _, method := range []string{"prober", "baseline"} {
 		t.Run(method, func(t *testing.T) {
-			verdict := program.RunDiagnose(context.Background(), unavailableCapabilityProgram{method: method}, LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}}, nil, time.Second)
+			verdict := program.RunDiagnose(context.Background(), unavailableCapabilityProgram{method: method}, LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"})}, nil, time.Second)
 			if verdict.Result != program.Unknown {
 				t.Fatalf("unavailable %s cleared fault: %+v", method, verdict)
 			}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/sdk/inputs"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +84,7 @@ func TestForeignNetworkPolicyAdmission(t *testing.T) {
 			if tc.next != nil {
 				snapshot.NetworkPolicyList = []networkingv1.NetworkPolicy{*tc.next}
 			}
-			view := LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
+			view := LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}
 			var change ObjectChange
 			if tc.old != nil {
 				change.Old = driftObject(tc.old, watch)
@@ -120,7 +121,7 @@ func TestForeignReadViewDiffAndSourceFailures(t *testing.T) {
 	policy := foreignPolicy("deny-api")
 	ref := sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: policy.Name}
 	client := fake.NewSimpleClientset(policy)
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", NetworkPolicyList: []networkingv1.NetworkPolicy{*policy}}, Source: source, SourceCommit: commit, Client: client}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", NetworkPolicyList: []networkingv1.NetworkPolicy{*policy}}), Source: source, SourceCommit: commit, Client: client}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || !diff.Changed || !diff.SourceAbsent || !strings.Contains(diff.Text, "accepted: null") || !strings.Contains(diff.Text, "podSelector") {
 		t.Fatalf("foreign diff=%+v error=%v", diff, err)
@@ -194,7 +195,7 @@ func TestForeignDriftNormalChurn(t *testing.T) {
 		EventList:         []corev1.Event{*objects["Event"].(*corev1.Event)},
 	}
 	for _, change := range cache.TakeObjectChanges() {
-		event, _, err := (DriftClassifier{}).Classify(context.Background(), change, LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}, time.Unix(10, 0))
+		event, _, err := (DriftClassifier{}).Classify(context.Background(), change, LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}, time.Unix(10, 0))
 		t.Logf("%s: event=%v", change.New.GetKind(), event != nil)
 		if err != nil || event != nil {
 			t.Fatalf("controller churn admitted: %+v %v", event, err)
@@ -235,7 +236,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 		t.Fatal(err)
 	}
 	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}
 	}, BatchWindow: time.Second})
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)
@@ -251,7 +252,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	loop := NewResponderLoop(request, nil, provider, nil, PlanExecutor{Source: source}, 1)
 	loop.CorpusSessionRoot = root
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}
 	}
 	loop.InitialDiagnose(context.Background())
 	for _, ref := range []sdk.ObjectRef{
@@ -301,7 +302,7 @@ func TestForeignNonPolicyWithStaleDeployerOwnershipIsIgnored(t *testing.T) {
 	old.Name = "source-absent-service"
 	next := old.DeepCopy()
 	next.Spec.Ports[0].TargetPort = driftService(9999).Spec.Ports[0].TargetPort
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*next}}, Source: source, SourceCommit: commit}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*next}}), Source: source, SourceCommit: commit}
 	event, _, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "v1", "Service"), view, time.Unix(10, 0))
 	if err != nil || event != nil {
 		t.Fatalf("unlisted foreign kind admitted using stale ownership: %+v %v", event, err)

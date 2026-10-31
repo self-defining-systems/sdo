@@ -243,6 +243,7 @@ func renameSnapshot(source Snapshot, m *renameMapping) (Snapshot, error) {
 	result.SourceName, result.Traffic = source.SourceName, source.Traffic
 	result.Metrics, result.Alerts = source.Metrics, source.Alerts
 	result.Logs = source.Logs
+	result.Usage, result.Reachability = source.Usage, source.Reachability
 	namespace := source.NamespaceName
 	for index := range result.ConfigMapList {
 		renameMeta(&result.ConfigMapList[index].ObjectMeta, namespace, m)

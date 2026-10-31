@@ -160,6 +160,7 @@ func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (pr
 func (v *ReplayReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
 
 type Snapshot struct {
+	Reachability *servicehealth.ReachabilityWindow `json:"-"`
 	// Usage holds a synthetic resource usage window.
 	Usage              *usage.Result                  `json:"-"`
 	SecretList         []sdk.SecretMetadata           `json:"secrets"`
@@ -262,6 +263,8 @@ func (s Snapshot) ReplicaSets() []appsv1.ReplicaSet
 func (s Snapshot) Secrets() []sdk.SecretMetadata
 
 func (s Snapshot) ServiceAccounts() []corev1.ServiceAccount
+
+func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
 
 func (s Snapshot) Services() []corev1.Service
 

@@ -14,6 +14,7 @@ import (
 
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
@@ -435,39 +436,30 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 		window, _ := p.Reachability.Window()
 		reachability = &window
 	}
-	return trafficContext{DetectionContext: base, windows: windows, reachability: reachability}, nil
-}
-
-type trafficContext struct {
-	sdk.DetectionContext
-	windows      map[string]traffic.Window
-	reachability *servicehealth.ReachabilityWindow
-}
-
-// ServiceReachability implements servicehealth.ReachabilitySource.
-func (c trafficContext) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
-	if c.reachability == nil {
-		return servicehealth.ReachabilityWindow{}, false
+	carrier := inputs.New(base)
+	if p.Observer != nil {
+		carrier = carrier.WithTraffic(trafficWindows(windows))
 	}
-	return *c.reachability, true
-}
-
-// ObservedAt forwards the base snapshot's clock, which embedding an interface
-// would otherwise hide from sdk.ObservationTime.
-func (c trafficContext) ObservedAt() time.Time {
-	if clock, ok := c.DetectionContext.(sdk.ObservationClock); ok {
-		return clock.ObservedAt()
+	if reachability != nil {
+		carrier = carrier.WithReachability(reachabilityWindow{reachability})
 	}
-	return time.Time{}
-}
-
-func (c trafficContext) TrafficWindow(workload string) (traffic.Window, bool) {
-	window, ok := c.windows[workload]
-	return window, ok
+	return carrier, nil
 }
 
 // ProbePod carries only the address already observed in the namespace snapshot.
 // The credential-free prober uses its existing application-only network policy.
 func (c HTTPProberClient) ProbePod(ctx context.Context, ref sdk.ObjectRef, ip string, port int32) (program.ProbeResult, error) {
 	return c.primitive(ctx, prober.PrimitiveRequest{To: ref, Port: port, PodIP: ip})
+}
+
+type trafficWindows map[string]traffic.Window
+
+func (w trafficWindows) TrafficWindow(id string) (traffic.Window, bool) { v, ok := w[id]; return v, ok }
+
+type reachabilityWindow struct {
+	window *servicehealth.ReachabilityWindow
+}
+
+func (w reachabilityWindow) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	return *w.window, true
 }

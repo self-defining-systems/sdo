@@ -14,7 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/usage"
 )
 
@@ -66,28 +66,12 @@ func (p *usageSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCont
 			p.result = mergeUsage(previous, next)
 		}
 	}
-	return usageContext{metricsContext: metricsContext{DetectionContext: base}, result: usage.Clone(p.result)}, nil
+	return inputs.New(base).WithUsage(usageResult{usage.Clone(p.result)}), nil
 }
 
-type usageContext struct {
-	metricsContext
-	result usage.Result
-}
+type usageResult struct{ result usage.Result }
 
-func (c usageContext) UsageResult() (usage.Result, bool) { return usage.Clone(c.result), true }
-func (c usageContext) MetricResult(id string) (metrics.Result, bool) {
-	return metrics.ResultFrom(c.DetectionContext, id)
-}
-func (c usageContext) AlertsResult() (metrics.AlertsResult, bool) {
-	return metrics.AlertsFrom(c.DetectionContext)
-}
-func (c metricsContext) UsageResult() (usage.Result, bool) {
-	s, ok := c.DetectionContext.(usage.Source)
-	if !ok {
-		return usage.Result{}, false
-	}
-	return s.UsageResult()
-}
+func (r usageResult) UsageResult() (usage.Result, bool) { return usage.Clone(r.result), true }
 
 const maxUsageBytes = 16 << 20
 const maxUsageNodes = 128
@@ -402,13 +386,4 @@ func parseUsageCounters(data []byte, namespace string) (map[string]usageCounters
 		}
 	}
 	return result, nil
-}
-
-// Forward optional input views through the existing context wrappers.
-func (c trafficContext) UsageResult() (usage.Result, bool) {
-	source, ok := c.DetectionContext.(usage.Source)
-	if !ok {
-		return usage.Result{}, false
-	}
-	return source.UsageResult()
 }

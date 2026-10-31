@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -29,7 +30,7 @@ type PrimitiveProber interface {
 // LiveReadView adds read-only primitives to one detector snapshot. Its
 // dependencies expose reads only; no program receives a Kubernetes writer.
 type LiveReadView struct {
-	sdk.DetectionContext
+	inputs.Carrier
 	Context        context.Context
 	Client         kubernetes.Interface
 	Prober         PrimitiveProber
