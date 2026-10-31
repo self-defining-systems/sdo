@@ -476,3 +476,9 @@ uv run --extra test --with pytest-randomly pytest -p no:tach -n 6 --randomly-see
 # Repeat with other seeds; concurrent copies supply CPU/build contention.
 (cd sdo/operator/runtime && go test -race -count=5 -shuffle=on ./...)
 ```
+
+The proto drift gate generates in a private temporary workspace and compares
+those results with the source tree. It never replaces live generated files;
+Python imports and Go compilers can run concurrently with the gate. The synthetic
+`test_proto_drift_check_generates_outside_the_source_tree` regression exercises a
+mismatching generator and requires the live source to remain unchanged.
