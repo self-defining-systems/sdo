@@ -10,7 +10,7 @@ Stdlib-only: this runs inside the controller and responder images.
 
 from __future__ import annotations
 
-from .wire import RequestUsage
+from benchmarks.sregym.agent_script.wire import RequestUsage
 
 #: Distinct offsets per turn kind, so one kind's tokens can never masquerade as another's.
 KIND_OFFSETS = {

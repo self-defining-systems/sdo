@@ -70,7 +70,14 @@ class Wait(Model):
     seconds: float = Field(ge=0, le=60)
 
 
-Step = Annotated[Command | Tool | Write | Delete | Wait, Field(discriminator="kind")]
+class Exit(Model):
+    """End the CLI process without publishing a structured answer."""
+
+    kind: Literal["exit"]
+    code: int = Field(ge=1, le=255)
+
+
+Step = Annotated[Command | Tool | Write | Delete | Wait | Exit, Field(discriminator="kind")]
 
 
 class ScriptTurn(Model):

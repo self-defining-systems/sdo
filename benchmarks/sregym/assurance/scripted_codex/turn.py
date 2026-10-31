@@ -15,8 +15,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from benchmarks.sregym.agent_script.wire import TOKEN_FIELDS, EventStream, RequestUsage, Rollout
+
 from .usage import request_usage
-from .wire import TOKEN_FIELDS, EventStream, RequestUsage, Rollout
 
 if TYPE_CHECKING:
     from pathlib import Path

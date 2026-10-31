@@ -8,14 +8,24 @@ import subprocess
 import time
 from pathlib import Path
 
-from benchmarks.sregym.assurance.scripted_codex.wire import EventStream
+from benchmarks.sregym.agent_script.wire import EventStream
 
-from .model import Command, Delete, ScriptTurn, Tool, Wait, Write
+from .model import Command, Delete, Exit, ScriptTurn, Tool, Wait, Write
+
+
+class ScriptExit(Exception):
+    """A planned CLI failure; the selected turn has already been consumed."""
+
+    def __init__(self, code: int) -> None:
+        self.code = code
+        super().__init__(f"scripted exit {code}")
 
 
 def execute(turn: ScriptTurn, root: Path, stream: EventStream, *, access: str = "danger-full-access") -> None:
     root = root.resolve()
     for step in turn.steps:
+        if isinstance(step, Exit):
+            raise ScriptExit(step.code)
         if isinstance(step, Wait):
             time.sleep(step.seconds)
             continue

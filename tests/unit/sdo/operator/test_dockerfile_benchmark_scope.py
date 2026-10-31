@@ -146,19 +146,20 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
     )
 
 
-def test_scripted_test_wrapper_adds_only_the_scripted_codex_and_nothing_from_experiments() -> None:
+def test_scripted_test_wrapper_adds_only_cli_support_and_nothing_from_experiments() -> None:
     sources = [src for src in _local_copy_sources(SCRIPTED_DOCKERFILE) if src.startswith("benchmarks")]
     copied = _expand(sources)
 
+    support = {f"benchmarks/sregym/agent_script/{name}.py" for name in ("__init__", "invocation", "wire")}
     leaked = {
         path
-        for path in copied
+        for path in copied - support
         if any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES) and not path.startswith(SCRIPTED_ALLOWANCE)
     }
 
     assert leaked == set(), f"the :assure scripted wrapper would copy answer-key paths: {sorted(leaked)}"
     assert copied, "the scripted wrapper copies nothing"
-    assert all(path.startswith(SCRIPTED_ALLOWANCE) for path in copied), (
+    assert all(path.startswith(SCRIPTED_ALLOWANCE) for path in copied - support), (
         f"the scripted wrapper should add only {SCRIPTED_ALLOWANCE}, not {sorted(copied)}"
     )
 

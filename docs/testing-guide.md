@@ -504,8 +504,10 @@ A `command` step has a shell `command`, expected `exit_code` (default 0), option
 `attempts` and `interval`. `tool` takes an argv list beginning with `sdo` or
 `sdo-operator`; shell metacharacters remain literal arguments. `write` takes a
 relative `path`, UTF-8 `text`, and optional `executable`; `delete` takes a path;
-`wait` takes `seconds` (at most 60). All executed commands appear in the audit
-stream, including file edits and unsuccessful assertions. Bubblewrap must be
+`wait` takes `seconds` (at most 60). An `exit` step takes a nonzero `code`
+(1–255) and ends the stand-in without a result, for crash/retry scenarios. The
+turn is consumed before execution, so a later invocation selects the next turn.
+All executed commands appear in the audit stream, including file edits and unsuccessful assertions. Bubblewrap must be
 installed and user namespaces enabled: commands see a read-only host and may
 write only the checkout and the responder tool exchange directory. As with real
 workspace-write turns, a typed `sdo-operator memory check` runs outside that

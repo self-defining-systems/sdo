@@ -11,6 +11,7 @@ FROM ${BASE}
 RUN npm uninstall --global @openai/codex @anthropic-ai/claude-code >/dev/null 2>&1; \
     rm -f /usr/local/bin/codex /usr/local/bin/claude \
     && ! command -v claude
+COPY benchmarks/sregym/agent_script/__init__.py benchmarks/sregym/agent_script/invocation.py benchmarks/sregym/agent_script/wire.py /opt/sdo/benchmarks/sregym/agent_script/
 COPY benchmarks/sregym/assurance/scripted_codex /opt/sdo-scripted/scripted_codex
 RUN printf '#!/bin/sh\nPYTHONPATH=/opt/sdo-scripted:/opt/sdo exec python3 -m scripted_codex "$@"\n' \
       > /usr/local/bin/codex \

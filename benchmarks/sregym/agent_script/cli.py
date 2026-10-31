@@ -16,12 +16,12 @@ from typing import Any
 
 import yaml
 
-from benchmarks.sregym.assurance.scripted_codex.cli import Invocation
-from benchmarks.sregym.assurance.scripted_codex.wire import EventStream
+from benchmarks.sregym.agent_script.wire import EventStream
 
 from .converter import convert_recording
+from .invocation import Invocation
 from .model import AgentScript, ScriptTurn
-from .runner import execute
+from .runner import ScriptExit, execute
 
 
 def load(path: Path) -> AgentScript:
@@ -108,7 +108,10 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
         if flag in argv:
             access = argv[argv.index(flag) + 1]
     counter.write_text(json.dumps(index + 1), encoding="utf-8")
-    execute(turn, Path.cwd(), stream, access=access)
+    try:
+        execute(turn, Path.cwd(), stream, access=access)
+    except ScriptExit as exc:
+        return exc.code
     stream.agent_message(json.dumps(turn.result, sort_keys=True))
     stream.turn_completed({})
     return 0

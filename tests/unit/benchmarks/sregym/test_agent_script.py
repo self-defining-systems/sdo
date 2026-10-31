@@ -23,6 +23,8 @@ def script(**turn):
         script(role="unknown"),
         script(steps=[{"kind": "wait", "seconds": -1}]),
         script(unrecognized=True),
+        script(steps=[{"kind": "exit", "code": 0}]),
+        script(steps=[{"kind": "exit", "code": 256}]),
     ],
 )
 def test_invalid_scripts_fail_before_execution(payload):
@@ -151,7 +153,7 @@ def test_symlink_file_step_fails(scripted_cli):
     import io
 
     from benchmarks.sregym.agent_script.runner import execute
-    from benchmarks.sregym.assurance.scripted_codex.wire import EventStream
+    from benchmarks.sregym.agent_script.wire import EventStream
 
     path, root = scripted_cli
     (root / "escape").symlink_to(root.parent, target_is_directory=True)
@@ -387,7 +389,7 @@ def test_read_only_turn_refuses_checkout_writes(scripted_cli):
     import io
 
     from benchmarks.sregym.agent_script.runner import execute
-    from benchmarks.sregym.assurance.scripted_codex.wire import EventStream
+    from benchmarks.sregym.agent_script.wire import EventStream
 
     _, root = scripted_cli
     turn = AgentScript.model_validate(script(steps=[{"kind": "write", "path": "forbidden", "text": "bad"}])).turns[0]
@@ -405,3 +407,60 @@ def test_literal_placeholders_fail_closed_and_are_revalidated():
     with pytest.raises(ValidationError):
         AgentScript.model_validate(expand(payload, {"checkout": "../escape", "incident_id": "synthetic"}))
     assert expand({"incident_id": "{{incident_id}}"}, {"incident_id": "synthetic"}) == {"incident_id": "synthetic"}
+
+
+def test_scripted_crash_consumes_turn_without_emitting_result(scripted_cli, monkeypatch, capsys):
+    from benchmarks.sregym.agent_script.cli import codex
+
+    path, root = scripted_cli
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "turns": [
+                    {"role": "reflector", "index": 0, "steps": [{"kind": "exit", "code": 17}], "result": {}},
+                    {"role": "reflector", "index": 1, "result": {"learning_decision": "no_change"}},
+                ],
+            }
+        )
+    )
+    schema = root / "schema.json"
+    schema.write_text(json.dumps({"properties": {"learning_decision": {"type": "string"}}}))
+    monkeypatch.chdir(root)
+    args = ["exec", "--output-schema", str(schema), "--json", "-"]
+    assert codex(args, stdin="reflect") == 17
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert not any(event["type"] in {"item.completed", "turn.completed"} for event in events)
+    assert codex(args, stdin="reflect") == 0
+    assert "no_change" in capsys.readouterr().out
+
+
+def test_agent_script_has_no_dependency_on_legacy_menus():
+    root = Path(__file__).resolve().parents[4] / "benchmarks/sregym/agent_script"
+    assert not any("assurance.scripted_codex" in path.read_text() for path in root.glob("*.py"))
+
+
+def test_planned_crash_is_a_real_provider_failure(scripted_cli):
+    from libs.agent_cli.structured import StructuredTurnError, run_structured_turn
+
+    path, root = scripted_cli
+    path.write_text(
+        json.dumps(
+            script(
+                steps=[
+                    {"kind": "exit", "code": 19},
+                    {"kind": "write", "path": "after-crash", "text": "must not run"},
+                ]
+            )
+        )
+    )
+    with pytest.raises(StructuredTurnError):
+        run_structured_turn(
+            provider="codex",
+            model="unused",
+            cwd=root,
+            prompt="test",
+            output_schema={"type": "object", "properties": {"confirmed_root_causes": {"type": "array"}}},
+            access="danger-full-access",
+        )
+    assert not (root / "after-crash").exists()
