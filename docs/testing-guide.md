@@ -98,6 +98,18 @@ deployed commit are covered. A later Service targetPort change must produce unex
 coverage checks retain Service adoption and responder admission when another
 workload cannot render, with the render gap recorded for retry; application
 source changes must never reuse the old deployment images.
+The gate also runs `TestHermeticNewDetectorInputs`: the real controller and
+informer cache read the shared fastloop HTTP fake, collect per-node kubelet
+summary/cAdvisor data, and consume real MongoDB handshake results through an
+injected wire peer. A healthy baseline is quiet; StatefulSet readiness, memory
+forecast and MongoDB protocol failures open one incident with numerical and
+protocol evidence, and recovered inputs close it. Its test log includes wall
+time through fixture cleanup. `TestHermeticProtocolDialer` checks healthy,
+refused and malformed replies for all seven protocols. Fake API contract tests
+cover list/watch for every added kind and Secret redaction on creation and
+patch. The fake's subresource dispatch leaves room for independent pod log
+support without implementing the logs input.
+
 The gate needs Go and `uv`, but no cluster or container runtime.
 
 ### Tier 2a: toy real cluster
