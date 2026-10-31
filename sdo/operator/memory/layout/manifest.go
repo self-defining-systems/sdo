@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/sdk"
 )
 
 const (
@@ -109,7 +110,7 @@ func (m DetectorManifest) Validate() error {
 	}
 	watches := map[Watch]bool{}
 	for _, watch := range m.Watches {
-		if watch.APIVersion == "" || watch.Kind == "" {
+		if !sdk.IsSupportedWatchKind(sdk.WatchKind{APIVersion: watch.APIVersion, Kind: watch.Kind}) {
 			return fmt.Errorf("detector %s has invalid watch", m.ID)
 		}
 		if watches[watch] {

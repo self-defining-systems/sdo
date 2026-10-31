@@ -7,9 +7,6 @@ import (
 	"strings"
 
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/metrics"
-	"sdo.dev/operator/sdk/servicehealth"
-	"sdo.dev/operator/sdk/traffic"
 )
 
 // logicalPlaybookID is the grammar of a playbook reference in a detector spec
@@ -36,26 +33,6 @@ func ValidateDetectors(detectors []sdk.Detector) error {
 		seen[id] = struct{}{}
 	}
 	return nil
-}
-
-var supportedWatches = map[string]struct{}{
-	"apps/v1/Deployment":                 {},
-	"apps/v1/ReplicaSet":                 {},
-	"discovery.k8s.io/v1/EndpointSlice":  {},
-	"networking.k8s.io/v1/NetworkPolicy": {},
-	"v1/ConfigMap":                       {},
-	"v1/Endpoints":                       {},
-	"v1/Event":                           {},
-	"v1/Pod":                             {},
-	"v1/Service":                         {},
-	// Emitted by the controller runtime's synthetic-traffic prober rather
-	// than by a Kubernetes informer.
-	traffic.Watch.APIVersion + "/" + traffic.Watch.Kind: {},
-	// Emitted by the controller runtime's Service reachability observer.
-	servicehealth.ReachabilityWatch.APIVersion + "/" + servicehealth.ReachabilityWatch.Kind: {},
-	// Declared by metrics detectors, which run on their interval; no
-	// informer backs it.
-	metrics.Watch.APIVersion + "/" + metrics.Watch.Kind: {},
 }
 
 func validateDetectorSpec(spec sdk.DetectorSpec) error {
@@ -100,7 +77,7 @@ func validateDetectorSpec(spec sdk.DetectorSpec) error {
 			return fmt.Errorf("watch %d fields must not contain surrounding whitespace", index)
 		}
 		resourceKey := watch.APIVersion + "/" + watch.Kind
-		if _, ok := supportedWatches[resourceKey]; !ok {
+		if !sdk.IsSupportedWatchKind(watch) {
 			return fmt.Errorf("watch %d uses unsupported resource %q", index, resourceKey)
 		}
 		key := resourceKey + "/" + watch.Namespace

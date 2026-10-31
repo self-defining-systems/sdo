@@ -92,7 +92,7 @@ func TestValidateDetectorsRejectsUnsupportedAndDuplicateWatches(t *testing.T) {
 	}{
 		{
 			name:    "unsupported",
-			watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Secret"}},
+			watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Namespace"}},
 		},
 		{
 			name: "duplicate",

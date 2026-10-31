@@ -12,7 +12,7 @@ rules:
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
   - apiGroups: [""]
-    resources: ["services", "pods", "endpoints", "events"]
+    resources: ["services", "pods", "endpoints", "events", "persistentvolumeclaims", "serviceaccounts"]
     verbs: ["get", "list", "watch"]
   # The isolated synthetic-traffic prober pod, its Service and its NetworkPolicy.
   - apiGroups: [""]
@@ -27,8 +27,13 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
-  # Read-only observation for the healthy-state baseline. Secret values are
-  # reduced to digests in memory and never logged or sent to a responder.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  # Secret values are stripped before entering the informer store.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch"]
@@ -37,10 +42,10 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
     verbs: ["get", "list", "watch"]
@@ -106,10 +111,10 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies", "ingresses"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -131,3 +136,27 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: sdo-responder
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sdo-controller-nodes
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sdo-controller-nodes
+subjects:
+  - kind: ServiceAccount
+    name: sdo-controller
+    # Set this to the controller namespace when applying outside default.
+    namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sdo-controller-nodes

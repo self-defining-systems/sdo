@@ -315,6 +315,34 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 			return fmt.Errorf("create ServiceAccount %s: %w", sa.Name, err)
 		}
 	}
+	for _, want := range p.ClusterRoles {
+		roles := i.Client.RbacV1().ClusterRoles()
+		existing, err := roles.Get(ctx, want.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = roles.Create(ctx, want, metav1.CreateOptions{})
+		} else if err == nil {
+			updated := want.DeepCopy()
+			updated.ResourceVersion = existing.ResourceVersion
+			_, err = roles.Update(ctx, updated, metav1.UpdateOptions{})
+		}
+		if err != nil {
+			return fmt.Errorf("ensure node ClusterRole: %w", err)
+		}
+	}
+	for _, want := range p.ClusterBindings {
+		bindings := i.Client.RbacV1().ClusterRoleBindings()
+		existing, err := bindings.Get(ctx, want.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = bindings.Create(ctx, want, metav1.CreateOptions{})
+		} else if err == nil {
+			updated := want.DeepCopy()
+			updated.ResourceVersion = existing.ResourceVersion
+			_, err = bindings.Update(ctx, updated, metav1.UpdateOptions{})
+		}
+		if err != nil {
+			return fmt.Errorf("ensure node ClusterRoleBinding: %w", err)
+		}
+	}
 	for _, role := range append(p.ControlRoles, p.AppRoles...) {
 		if err := i.upsertRole(ctx, role); err != nil {
 			return err

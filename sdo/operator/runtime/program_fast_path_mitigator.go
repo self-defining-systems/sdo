@@ -61,7 +61,7 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 		}
 		// Each accessor returns defensive copies. Timed-out executions keep only this
 		// private snapshot and read capabilities, never maps owned by ResponderLoop.
-		snapshot := sdktest.Snapshot{NamespaceName: view.Namespace(), ConfigMapList: view.ConfigMaps(), ServiceList: view.Services(), PodList: view.Pods(), DeploymentList: view.Deployments(), ReplicaSetList: view.ReplicaSets(), EndpointList: view.Endpoints(), EndpointSliceList: view.EndpointSlices(), NetworkPolicyList: view.NetworkPolicies(), EventList: view.Events()}
+		snapshot := sdktest.Snapshot{NamespaceName: view.Namespace(), ConfigMapList: view.ConfigMaps(), ServiceList: view.Services(), PodList: view.Pods(), DeploymentList: view.Deployments(), ReplicaSetList: view.ReplicaSets(), EndpointList: view.Endpoints(), EndpointSliceList: view.EndpointSlices(), NetworkPolicyList: view.NetworkPolicies(), EventList: view.Events(), StatefulSetList: view.StatefulSets(), DaemonSetList: view.DaemonSets(), JobList: view.Jobs(), CronJobList: view.CronJobs(), PVCList: view.PersistentVolumeClaims(), ServiceAccountList: view.ServiceAccounts(), HPAList: view.HorizontalPodAutoscalers(), PDBList: view.PodDisruptionBudgets(), IngressList: view.Ingresses(), NodeList: view.Nodes(), SecretList: view.Secrets()}
 		if extended, ok := view.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
 			snapshot.StatefulSetList = extended.StatefulSets()
 		}

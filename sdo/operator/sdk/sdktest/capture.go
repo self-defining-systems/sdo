@@ -6,10 +6,7 @@ import (
 	"fmt"
 	"regexp"
 
-	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
-	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
 )
@@ -61,11 +58,8 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 		redactPodSpec(&copy.Spec.Template.Spec)
 		s.DeploymentList = append(s.DeploymentList, copy)
 	}
-	if extended, ok := view.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
-		for _, object := range extended.StatefulSets() {
-			if object.Namespace != namespace {
-				continue
-			}
+	for _, object := range view.StatefulSets() {
+		if object.Namespace == namespace {
 			copy := *object.DeepCopy()
 			compactMeta(&copy.ObjectMeta)
 			compactMeta(&copy.Spec.Template.ObjectMeta)
@@ -73,26 +67,18 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 			s.StatefulSetList = append(s.StatefulSetList, copy)
 		}
 	}
-	if extended, ok := view.(interface {
-		HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
-	}); ok {
-		for _, object := range extended.HorizontalPodAutoscalers() {
-			if object.Namespace == namespace {
-				copy := *object.DeepCopy()
-				compactMeta(&copy.ObjectMeta)
-				s.HPAList = append(s.HPAList, copy)
-			}
+	for _, object := range view.HorizontalPodAutoscalers() {
+		if object.Namespace == namespace {
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.HPAList = append(s.HPAList, copy)
 		}
 	}
-	if extended, ok := view.(interface {
-		PodDisruptionBudgets() []policyv1.PodDisruptionBudget
-	}); ok {
-		for _, object := range extended.PodDisruptionBudgets() {
-			if object.Namespace == namespace {
-				copy := *object.DeepCopy()
-				compactMeta(&copy.ObjectMeta)
-				s.PDBList = append(s.PDBList, copy)
-			}
+	for _, object := range view.PodDisruptionBudgets() {
+		if object.Namespace == namespace {
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.PDBList = append(s.PDBList, copy)
 		}
 	}
 	for _, object := range view.ReplicaSets() {
@@ -133,6 +119,65 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 			copy.InvolvedObject.ResourceVersion = ""
 			copy.InvolvedObject.UID = ""
 			s.EventList = append(s.EventList, copy)
+		}
+	}
+	for _, object := range view.DaemonSets() {
+		if object.Namespace == namespace {
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			compactMeta(&copy.Spec.Template.ObjectMeta)
+			redactPodSpec(&copy.Spec.Template.Spec)
+			s.DaemonSetList = append(s.DaemonSetList, copy)
+		}
+	}
+	for _, object := range view.Jobs() {
+		if object.Namespace == namespace {
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			compactMeta(&copy.Spec.Template.ObjectMeta)
+			redactPodSpec(&copy.Spec.Template.Spec)
+			s.JobList = append(s.JobList, copy)
+		}
+	}
+	for _, object := range view.CronJobs() {
+		if object.Namespace == namespace {
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			compactMeta(&copy.Spec.JobTemplate.ObjectMeta)
+			compactMeta(&copy.Spec.JobTemplate.Spec.Template.ObjectMeta)
+			redactPodSpec(&copy.Spec.JobTemplate.Spec.Template.Spec)
+			s.CronJobList = append(s.CronJobList, copy)
+		}
+	}
+	for _, object := range view.PersistentVolumeClaims() {
+		if object.Namespace == namespace {
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.PVCList = append(s.PVCList, copy)
+		}
+	}
+	for _, object := range view.ServiceAccounts() {
+		if object.Namespace == namespace {
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.ServiceAccountList = append(s.ServiceAccountList, copy)
+		}
+	}
+	for _, object := range view.Ingresses() {
+		if object.Namespace == namespace {
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.IngressList = append(s.IngressList, copy)
+		}
+	}
+	for _, object := range view.Nodes() {
+		copy := *object.DeepCopy()
+		compactMeta(&copy.ObjectMeta)
+		s.NodeList = append(s.NodeList, copy)
+	}
+	for _, object := range view.Secrets() {
+		if object.Namespace == namespace {
+			s.SecretList = append(s.SecretList, *object.DeepCopy())
 		}
 	}
 	data, err := json.Marshal(s)

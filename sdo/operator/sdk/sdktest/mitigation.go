@@ -137,8 +137,8 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 }
 
 func fixtureObject(snapshot map[string]any, ref sdk.ObjectRef) (map[string]any, error) {
-	kinds := map[string]string{"Service": "services", "Pod": "pods", "Deployment": "deployments", "ReplicaSet": "replicaSets", "ConfigMap": "configMaps", "Endpoints": "endpoints", "EndpointSlice": "endpointSlices", "NetworkPolicy": "networkPolicies"}
-	versions := map[string]string{"Service": "v1", "Pod": "v1", "Deployment": "apps/v1", "ReplicaSet": "apps/v1", "ConfigMap": "v1", "Endpoints": "v1", "EndpointSlice": "discovery.k8s.io/v1", "NetworkPolicy": "networking.k8s.io/v1"}
+	kinds := map[string]string{"StatefulSet": "statefulSets", "DaemonSet": "daemonSets", "Job": "jobs", "CronJob": "cronJobs", "PersistentVolumeClaim": "persistentVolumeClaims", "ServiceAccount": "serviceAccounts", "HorizontalPodAutoscaler": "horizontalPodAutoscalers", "PodDisruptionBudget": "podDisruptionBudgets", "Ingress": "ingresses", "Service": "services", "Pod": "pods", "Deployment": "deployments", "ReplicaSet": "replicaSets", "ConfigMap": "configMaps", "Endpoints": "endpoints", "EndpointSlice": "endpointSlices", "NetworkPolicy": "networkPolicies"}
+	versions := map[string]string{"StatefulSet": "apps/v1", "DaemonSet": "apps/v1", "Job": "batch/v1", "CronJob": "batch/v1", "PersistentVolumeClaim": "v1", "ServiceAccount": "v1", "HorizontalPodAutoscaler": "autoscaling/v2", "PodDisruptionBudget": "policy/v1", "Ingress": "networking.k8s.io/v1", "Service": "v1", "Pod": "v1", "Deployment": "apps/v1", "ReplicaSet": "apps/v1", "ConfigMap": "v1", "Endpoints": "v1", "EndpointSlice": "discovery.k8s.io/v1", "NetworkPolicy": "networking.k8s.io/v1"}
 	if ref.Namespace != snapshot["namespace"] || versions[ref.Kind] != ref.APIVersion || ref.Name == "" {
 		return nil, fmt.Errorf("invalid fixture reference %+v", ref)
 	}
