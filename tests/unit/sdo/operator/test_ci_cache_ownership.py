@@ -15,11 +15,10 @@ def test_go_cache_writes_belong_only_to_durable_base_pushes() -> None:
             action = step.get("uses", "")
             if action.startswith("actions/setup-go@"):
                 assert step["with"].get("cache") is False
-            if action.startswith(("actions/cache@", "actions/cache/save@")):
+            if action.startswith("actions/cache/save@") and "go-build" in step["with"]["path"]:
                 condition = step.get("if", "")
                 assert "github.event_name == 'push'" in condition
                 assert "github.ref == 'refs/heads/main'" in condition
-                assert "github.ref == 'refs/heads/vic-lsh/dev/sdo-improve'" in condition
                 assert any(
                     restore.get("uses", "").startswith("actions/cache/restore@")
                     and restore["with"]["key"] == step["with"]["key"]

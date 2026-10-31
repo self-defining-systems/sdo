@@ -4,8 +4,8 @@
 package registrytest
 
 import (
+	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -14,8 +14,21 @@ import (
 
 // Directory is the checked-in directory of built-in agent manifests.
 func Directory() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "..", "..", "agents", "registrations")
+	directory, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	for {
+		candidate := filepath.Join(directory, "sdo", "agents", "registrations")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			panic("cannot locate built-in agent registrations from test working directory")
+		}
+		directory = parent
+	}
 }
 
 // BuiltIn loads the built-in registrations.

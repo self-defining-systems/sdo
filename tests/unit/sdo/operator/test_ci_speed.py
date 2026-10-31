@@ -1,8 +1,7 @@
-"""Required CI keeps all coverage while selecting only affected image builds."""
+"""PR CI has a small fixed job graph; extended coverage remains nightly."""
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import re
 import shlex
@@ -19,46 +18,26 @@ def workflow() -> dict:
     return yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
 
 
-@pytest.mark.parametrize(
-    ("path", "images"),
-    [
-        ("docs/architecture.md", set()),
-        ("tests/unit/test_example.py", set()),
-        ("sdo/agents/responder/worker.py", {"responder", "benchmark"}),
-        ("libs/agent_cli/cli.py", {"responder", "benchmark"}),
-        ("sdo/operator/runtime/controller.go", {"controller", "responder", "benchmark"}),
-        ("sdo/agents/registrations/responder.yaml", {"controller", "responder", "benchmark"}),
-        ("benchmarks/sregym/adapter/submission.py", {"benchmark"}),
-        ("benchmarks/sregym/fastloop/recording_worker.py", {"benchmark"}),
-        ("benchmarks/sregym/analysis/report.py", set()),
-        ("scripts/build_sdo_images.sh", {"controller", "responder", "benchmark"}),
-    ],
-)
-def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> None:
-    filters = yaml.safe_load(workflow()["jobs"]["changes"]["steps"][1]["with"]["filters"])
-    selected = {
-        image
-        for image in ("controller", "responder", "benchmark")
-        if any(fnmatch.fnmatchcase(path, pattern) for pattern in filters[f"image_{image}"])
-    }
-    assert selected == images
+def test_pr_ci_has_at_most_three_jobs_without_matrix_or_path_skips() -> None:
+    config = workflow()
+    assert len(config["jobs"]) <= 3
+    assert "merge_group" in config.get("on", config.get(True, {}))
+    for name, job in config["jobs"].items():
+        assert "matrix" not in job.get("strategy", {})
+        if name != "required-pr-ci":
+            assert "if" not in job
+            assert job["timeout-minutes"] <= 5
 
 
-@pytest.mark.parametrize("event", ["pull_request", "merge_group"])
-def test_merge_queue_forces_every_image_and_test_area(event: str, tmp_path: Path) -> None:
-    step = next(s for s in workflow()["jobs"]["changes"]["steps"] if s.get("id") == "resolve")
-    output = tmp_path / "output"
-    result = subprocess.run(
-        ["bash", "-e", "-c", step["run"]],
-        env={**os.environ, **dict.fromkeys(step["env"], "false"), "EVENT": event, "GITHUB_OUTPUT": str(output)},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    resolved = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    for name in ("python", "go", "image_controller", "image_responder", "image_benchmark"):
-        assert resolved[name] == str(event == "merge_group").lower()
+def test_extended_checks_have_scheduled_and_manual_coverage() -> None:
+    config = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
+    triggers = config.get("on", config.get(True, {}))
+    assert "schedule" in triggers
+    assert "workflow_dispatch" in triggers
+    assert "images" in config["jobs"]
+    commands = "\n".join(step.get("run", "") for step in config["jobs"]["extended"]["steps"])
+    assert "scripts/test_go_ci.sh nightly" in commands
+    assert commands.count("-fuzztime=30s") == 6
 
 
 def test_required_ci_still_accounts_for_every_job() -> None:
@@ -131,15 +110,13 @@ def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expec
 
 
 @pytest.mark.parametrize(
-    ("result", "accepted"), [("success", True), ("skipped", True), ("failure", False), ("cancelled", False)]
+    ("result", "accepted"), [("success", True), ("skipped", False), ("failure", False), ("cancelled", False)]
 )
 def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accepted: bool) -> None:
-    import json
-
     step = workflow()["jobs"]["required-pr-ci"]["steps"][0]
     completed = subprocess.run(
         ["bash", "-e", "-c", step["run"]],
-        env={**os.environ, "JOB_RESULTS": json.dumps({"images": {"result": result}})},
+        env={**os.environ, "CHECKS": result, "TESTS": "success"},
         capture_output=True,
         text=True,
         check=False,

@@ -1159,15 +1159,15 @@ def test_no_incident_by_the_detection_deadline_is_a_detection_miss(tmp_path: Pat
 
     with pytest.raises(DetectionMissError) as raised:
         run_persistent_stage(
-            _inputs(tmp_path, "s0", verification_timeout_seconds=3900, detection_timeout_seconds=900),
+            _inputs(tmp_path, "s0", verification_timeout_seconds=39, detection_timeout_seconds=9),
             ops=ops,
             run_lifecycle=lambda: True,
             inject=lambda: None,
             clock=clock,
         )
 
-    assert "no incident opened within 900s" in str(raised.value)
-    assert clock.monotonic() < 3900  # it did not wait out the verification budget
+    assert "no incident opened within 9s" in str(raised.value)
+    assert clock.monotonic() < 39  # it did not wait out the verification budget
 
 
 def test_an_incident_that_opened_keeps_the_full_verification_budget(tmp_path: Path) -> None:
