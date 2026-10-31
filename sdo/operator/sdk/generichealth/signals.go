@@ -106,12 +106,15 @@ func (e *evaluation) capacity(rule string, r sdk.ObjectRef, value float64, limit
 		return
 	}
 	var forecast *time.Duration
-	// Two minutes and three observations reject startup spikes and one-point slopes.
+	// Forecast storage growth only: unlike stored bytes and inodes, memory is
+	// reclaimable. Heap warm-up and GC cycles cannot predict an OOM from a
+	// short working-set slope; memory still reports observed pressure above 90%.
+	// Two minutes and three observations reject one-point storage slopes.
 	window := time.Duration(0)
 	if len(points) > 0 {
 		window = points[len(points)-1].At.Sub(points[0].At)
 	}
-	if len(points) >= 3 && window >= 2*time.Minute {
+	if rule != "memory-saturation" && len(points) >= 3 && window >= 2*time.Minute {
 		if t, ok := usage.TimeToThreshold(points, *limit); ok {
 			forecast = &t
 		}

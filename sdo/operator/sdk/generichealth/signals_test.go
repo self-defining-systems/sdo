@@ -51,7 +51,7 @@ func TestSaturation(t *testing.T) {
 				for _, f := range fs {
 					got = got || f.RuleID == rule
 				}
-				want := state == "matching" || state == "forecast" && rule != "cpu-throttling"
+				want := state == "matching" || state == "forecast" && rule != "cpu-throttling" && rule != "memory-saturation"
 				if got != want {
 					t.Fatalf("want %v: %+v", want, fs)
 				}
@@ -101,5 +101,23 @@ func TestPreviousTailDoesNotFire(t *testing.T) {
 	fs, err := generichealth.NewCrashes(sdk.DetectorSpec{}).Detect(context.Background(), s)
 	if err != nil || len(fs) != 0 {
 		t.Fatalf("%+v %v", fs, err)
+	}
+}
+
+// Memory is reclaimable: a short increase below the limit can be heap warm-up,
+// not impending exhaustion. Disk-capacity forecasts do not have that property.
+func TestMemoryWarmupDoesNotForecastExhaustion(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, values := range [][]float64{{30, 40, 50}, {55, 70, 50, 80}} {
+		s := healthy()
+		samples := []usage.Sample{}
+		for i, value := range values {
+			samples = append(samples, usage.Sample{At: now.Add(time.Duration(i) * time.Minute), WorkingSetBytes: ptr(value), MemoryLimit: ptr(100.0)})
+		}
+		s.Usage = &usage.Result{ObservedAt: samples[len(samples)-1].At, Containers: []usage.ContainerWindow{{Identity: usage.Identity{Pod: "instance-x", Container: "worker"}, Samples: samples}}}
+		findings, err := generichealth.NewSaturation(sdk.DetectorSpec{}, false).Detect(context.Background(), s)
+		if err != nil || len(findings) != 0 {
+			t.Fatalf("reclaimable memory below pressure threshold must not forecast failure: findings=%+v err=%v", findings, err)
+		}
 	}
 }
