@@ -47,3 +47,21 @@ fidelity bound; do not hide it by loosening a decision-level comparison.
   log truncation, memory-host crash.
 - Every incident class a real run hit in the last week.
 - At least one controller restart at a decision point.
+
+## Shared-world conformance commands
+
+The reusable package is `sdo.dev/operator/runtime/sim`. Follow the cached-environment
+setup in [the testing guide](../../../../docs/testing-guide.md#writing-a-deterministic-go-simulation-test)
+before every Go command. From the repository root:
+
+```bash
+(cd sdo/operator/runtime && go test ./sim ./prober . -run 'TestCrashLoopRecovery|TestSnapshotKindsAndRollout|TestSeededInvariants|TestFaultSchedule|TestHermeticProtocolDialer|TestSimRealDetectionInputs|TestSimTrusted' -count=20)
+(cd sdo/operator/runtime && SDO_SIM_SEED=17 go test ./sim . -run 'TestSeededInvariants|TestSimTrusted' -count=20)
+(cd sdo/operator/runtime && go test -race ./sim ./prober . -run 'TestCrashLoopRecovery|TestFaultSchedule|TestHermeticProtocolDialer|TestSimRealDetectionInputs|TestSimTrusted')
+```
+
+Use `World.Client()` to exercise real snapshot/input collection, `World.Dial` for
+wire peers and `Faults.Rules` for exact edge schedules. Record the seed and rules
+alongside a failing scenario. `World.Invariant`/`Emit` provide explicit decision
+trace boundaries. A passing synthetic conformance test does not replace a kind
+alignment comparison; record which evidence each ledger entry actually uses.

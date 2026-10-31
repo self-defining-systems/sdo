@@ -788,3 +788,47 @@ and tests took 192 s / 217 s (cancelled). The generated-worker cases above
 now run in the existing nightly integration step with bubblewrap installed.
 The PR selection guard requires every ignored Python integration file to appear
 in nightly, and keeps the cheap reflection/responder contracts on PRs.
+
+## Writing a deterministic Go simulation test
+
+Import `sdo.dev/operator/runtime/sim` from the runtime module or its subpackages.
+Use `sim.Run(t, seed, func(t *testing.T, w *sim.World) { ... })` for a directed case,
+or `sim.Sweep(t, body)` for seeds 1–256. Each body runs in a fresh synctest bubble.
+Use `w.Now`/`w.Sleep` at injected clock seams; standard timers inside the bubble
+also use virtual time. Keep cluster operations and fault consumption on the driver goroutine.
+Use `synctest.Wait` to synchronize background work, never host sleeps.
+
+Populate `w.Kube.Put` with synthetic unstructured objects. `w.Cache` supplies a
+stale-capable SDK snapshot; `w.Client()` supplies the real client-go read client
+through the in-memory transport for `core.KubernetesSnapshotProvider` and runtime
+input observers. Set its `Clock: w.Now`. `w.Logs` holds timestamped bytes keyed by
+namespace/pod/container/previous; `w.Kubelet` holds raw summary/cAdvisor samples.
+Schedule `w.PodAfter`, `w.RolloutAfter` or `w.After` transitions and drive them with
+`w.Advance` or the injected `w.Sleep`. Plain Go sleeps advance the bubble but do
+not drain the driver's explicit cluster-event queue.
+
+Set `w.Faults.Rules[edge]` for an ordered `[]sim.Fault`, or enable seeded
+`RandomFailures`. Edges are `get`, `patch`, `snapshot`, `api`, `kubelet`, `logs`
+and `probe/<protocol>`. Set `Partition[edge]` to retain an outage until cleared.
+`DrawFaults(w.RNG)` configures bounded API churn and stale reads through
+`Kube.SetFaults`/`Cache.SetFaults`. `Cache.CatchUp` models a completed relist.
+`w.Dial` runs the existing seven link-protocol peers over in-memory connections.
+`w.Endpoints` maps service addresses to protocols; inject `w.DialContext` into the prober.
+
+Register `w.Invariant` hooks and call `w.Emit` at the actual decision/mutation
+boundaries being tested; hooks do not infer controller decisions automatically.
+Use the fast-path sweep as an example of a real mitigation path, and
+`TestSimRealDetectionInputs` for production input collection.
+
+Source the cached environment as described above before these commands:
+
+```bash
+(cd sdo/operator/runtime && go test ./sim ./prober . -run 'TestCrashLoopRecovery|TestSnapshotKindsAndRollout|TestSeededInvariants|TestFaultSchedule|TestHermeticProtocolDialer|TestSimRealDetectionInputs|TestSimTrusted' -count=20)
+(cd sdo/operator/runtime && SDO_SIM_SEED=17 go test ./sim . -run 'TestSeededInvariants|TestSimTrusted' -count=20)
+```
+
+`SDO_SIM_RUNS` changes sweep length. The 45-second host-time budget is checked
+between seeds; individual seeds must also terminate (use `go test -timeout`).
+Tests that need processes or real sockets must be integration-tagged. Use the
+[fidelity ledger](simulation-fidelity.md) to distinguish modeled edges from real
+cluster coverage; the memory-host and full controller driver remain follow-up work.

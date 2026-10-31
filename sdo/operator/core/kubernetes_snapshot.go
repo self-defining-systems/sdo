@@ -28,6 +28,8 @@ import (
 )
 
 type KubernetesSnapshotProvider struct {
+	// Clock supplies the snapshot observation time; nil uses time.Now.
+	Clock     func() time.Time
 	Namespace string
 	Client    kubernetes.Interface
 }
@@ -84,6 +86,10 @@ func NewKubernetesMetadataClient() (rest.Interface, error) {
 }
 
 func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	now := p.Clock
+	if now == nil {
+		now = time.Now
+	}
 	if p.Client == nil {
 		return DetectionSnapshot{}, fmt.Errorf("kubernetes client is required")
 	}
@@ -200,7 +206,7 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		NetworkPolicyList:  networkPolicies.Items,
 		EventList:          events.Items,
 		// Stamped after every list so no listed object postdates it.
-		ObservedAtTime: time.Now().UTC(),
+		ObservedAtTime: now().UTC(),
 	}, nil
 }
 

@@ -83,10 +83,14 @@ type PlanExecutor struct {
 }
 
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
-	started := time.Now()
+	now := e.Now
+	if now == nil {
+		now = time.Now
+	}
+	started := now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
 	defer func() {
-		result.Duration = time.Since(started)
+		result.Duration = now().Sub(started)
 		if err != nil && result.PendingAction != nil {
 			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			reconciled, reconcileErr := e.Reconcile(recoveryCtx, result)
