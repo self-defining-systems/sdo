@@ -42,8 +42,8 @@ def validate_references(value: Any) -> None:
         for match in TOKEN.finditer(value):
             name = match[1]
             if not (
-                name in {"now", "turn.started_at", "checkout", "incident_id", "objective_digest"}
-                or re.fullmatch(r"steps\.[0-9]+\.(?:started_at|completed_at)", name)
+                name in {"now", "turn.started_at", "checkout", "incident_id", "objective_digest", "request"}
+                or re.fullmatch(r"steps\.[0-9]+\.(?:started_at|completed_at|output(?:\.[a-zA-Z0-9_]+)*)", name)
                 or NESTED.fullmatch(name)
                 or name.startswith("request.")
                 and name[8:] in SCALARS
@@ -62,7 +62,7 @@ def validate_references(value: Any) -> None:
 def validate_step_references(value: Any, *, limit: int) -> None:
     if isinstance(value, str):
         for match in TOKEN.finditer(value):
-            capture = re.fullmatch(r"steps\.([0-9]+)\.(?:started_at|completed_at)", match[1])
+            capture = re.fullmatch(r"steps\.([0-9]+)\.(?:started_at|completed_at|output(?:\.[a-zA-Z0-9_]+)*)", match[1])
             if capture and int(capture[1]) >= limit:
                 raise ValueError(f"unavailable step reference: {match[1]}")
     elif isinstance(value, (list, dict)):

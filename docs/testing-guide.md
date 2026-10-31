@@ -502,7 +502,9 @@ turns:
 A `command` step has a shell `command`, expected `exit_code` (default 0), optional
 `contains` assertion, `timeout` (up to 300 seconds), and bounded polling through
 `attempts` and `interval`. `tool` takes an argv list beginning with `sdo` or
-`sdo-operator`; shell metacharacters remain literal arguments. `write` takes a
+`sdo-operator`; shell metacharacters remain literal arguments. It also accepts a
+`timeout` (default 60 seconds, up to 300), so full memory checks can keep their
+original validation deadline. `write` takes a
 relative `path`, UTF-8 `text`, and optional `executable`; `delete` takes a path;
 `wait` takes `seconds` (at most 60). An `exit` step takes a nonzero `code`
 (1–255) and ends the stand-in without a result, for crash/retry scenarios. The
@@ -637,3 +639,53 @@ native verifier still decides whether this diagnosis and mitigation earn credit.
 Structured references embedded within text are rejected. Substituted file paths
 are validated again. Quote inserted scalar values appropriately in shell commands;
 use typed `tool` argv entries to avoid shell interpretation.
+
+
+Captured repair reflection can be prepared as an ordinary version 1 script,
+without editing the accepted checkout during generation:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+uv run python -m benchmarks.sregym.fastloop.reflection_script \
+  --task /absolute/agent-task.json --capture /absolute/corpus \
+  --out /absolute/results/reflection-script.json
+SDO_AGENT_SCRIPT=/absolute/results/reflection-script.json \
+  uv run python -m benchmarks.sregym.agent_script launch -- \
+  python -m sdo.agents.responder.reflection_worker
+```
+
+The generated script preserves original captured bytes, incident provenance and
+same-kind peer bindings, writes program/corpus files through audited steps, and
+runs the shared memory validator. Reflection selects its incident-specific turn
+from `request.outcome.incident_id`. This generator is preparatory: fastloop's
+legacy worker registrations have not yet been replaced. See the
+[retirement inventory](scripted-worker-retirement.md) for remaining behaviors
+and callers.
+
+The responder half can also be generated without checkout side effects:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+uv run python -m benchmarks.sregym.fastloop.responder_script \
+  --task /absolute/agent-task.json --out /absolute/results/responder-script.json
+SDO_AGENT_SCRIPT=/absolute/results/responder-script.json \
+  uv run python -m benchmarks.sregym.agent_script launch -- \
+  python -m sdo.agents.responder.worker
+```
+
+Generate separately for each typed incident task. Four ordinary command steps
+perform live planning, drift investigation/repair, fallback repair and verification
+with attribution. Source reads and tool calls happen during execution, not during
+generation. The checkout comes from the executing worker. Action and verification
+timestamps come from the live clock. Transient state uses `SDO_TOOLS_DIR` and is
+removed on success; a failed turn may leave its incident-scoped state for diagnosis.
+Caller registrations still use the legacy worker until the next migration step.
+
+A command may set `capture_json: true` to parse its successful stdout as one JSON
+value. Subsequent steps and the result can reference `{{steps.0.output}}` or nested
+fields such as `{{steps.0.output.status}}`. Whole-value references retain JSON types;
+invalid JSON, missing fields and forward references fail. Output must contain only
+JSON; diagnostics belong on stderr. This is live output, never recorded evidence.
+
+`command.input_json` sends a JSON value on stdin. Use `input_json: "{{request}}"`
+to pass the complete live task safely without interpolating it into shell syntax.
