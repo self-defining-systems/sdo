@@ -34,7 +34,7 @@ def test_scripted_source_restore_repairs_declared_readiness(monkeypatch):
     import json
     from types import SimpleNamespace
 
-    from benchmarks.sregym.adapter import scripted_worker
+    from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
     probe = {"httpGet": {"path": "/ready", "port": 8080}, "periodSeconds": 1}
     source = {
@@ -42,11 +42,11 @@ def test_scripted_source_restore_repairs_declared_readiness(monkeypatch):
             "template": {"spec": {"containers": [{"name": "backend", "image": "toy:v1", "readinessProbe": probe}]}}
         }
     }
-    monkeypatch.setattr(scripted_worker, "_tool", lambda *args: {"source": source})
+    monkeypatch.setattr(scripts, "_tool", lambda *args: {"source": source})
     calls = []
-    monkeypatch.setattr(scripted_worker, "_command", lambda args, **kwargs: calls.append(args))
+    monkeypatch.setattr(scripts, "_command", lambda args, **kwargs: calls.append(args))
     request = SimpleNamespace(namespace="toy", state_changes=None)
-    scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "backend"})
+    scripts._patch_from_source(request, {"kind": "Deployment", "name": "backend"})
     patched = json.loads(calls[0][-1])["spec"]["template"]["spec"]["containers"][0]
     assert patched["readinessProbe"] == probe
     assert calls[1][:5] == ["kubectl", "-n", "toy", "rollout", "status"]
@@ -168,4 +168,4 @@ def test_toy_controller_publishes_selected_registrations(tmp_path, monkeypatch, 
     monkeypatch.setattr(toy.subprocess, "run", lambda *args, **kwargs: CompletedProcess(args, 0))
     monkeypatch.setattr(toy, "wait_for_baseline", lambda *args: None)
     assert toy.install_controller(environment, config) is config
-    assert published[0][0] == (selected or ROOT / "benchmarks/sregym/adapter/scripted_registrations")
+    assert published[0][0] == (selected or ROOT / "benchmarks/sregym/fastloop/agent_registrations")

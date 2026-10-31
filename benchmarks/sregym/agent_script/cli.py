@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -92,12 +93,9 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
     return 0
 
 
-def launch(command: list[str]) -> int:
-    """Wrap a production worker. Script may be local or read once from a ConfigMap."""
-    if command[:1] == ["--"]:
-        command = command[1:]
-    if not command:
-        raise ValueError("launch requires a production worker command")
+@contextmanager
+def script_environment():
+    """Prepare the stand-in CLI environment for a production worker."""
     with tempfile.TemporaryDirectory(prefix="sdo-agent-script-") as temporary:
         directory = Path(temporary)
         env = dict(os.environ)
@@ -128,6 +126,15 @@ def launch(command: list[str]) -> int:
         login.mkdir()
         (login / "auth.json").write_text('{"tokens":"agent-script-no-model"}')
         env["CODEX_HOME"] = str(login)
+        yield env
+
+
+def launch(command: list[str]) -> int:
+    if command[:1] == ["--"]:
+        command = command[1:]
+    if not command:
+        raise ValueError("launch requires a production worker command")
+    with script_environment() as env:
         return subprocess.run(command, env=env, check=False).returncode
 
 

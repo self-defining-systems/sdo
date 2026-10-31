@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pytest
 
-from benchmarks.sregym.adapter import scripted_worker
+from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
 ROOT = Path(__file__).resolve().parents[5]
 
@@ -24,7 +24,7 @@ def test_scripted_policy_reflection_uses_captured_repair(tmp_path: Path, monkeyp
     (capture / "open@detect-recordings.json").write_text("[]")
     (capture / "fixed.json").write_text(json.dumps({"networkPolicies": [peer]}))
     # An accepted targetPort program must not suppress learning another class.
-    accepted = tmp_path / ".sdo/playbooks" / scripted_worker.PROGRAM_ID
+    accepted = tmp_path / ".sdo/playbooks" / scripts.PROGRAM_ID
     accepted.mkdir(parents=True)
     (accepted / "diagnose.go").write_text("package targetport\n")
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
@@ -49,13 +49,13 @@ def test_scripted_policy_reflection_uses_captured_repair(tmp_path: Path, monkeyp
         assert labels["peer_bindings"]["policy"]["name"] == "peer"
         return ""
 
-    monkeypatch.setattr(scripted_worker, "_command", command)
+    monkeypatch.setattr(scripts, "_command", command)
     monkeypatch.setattr(
-        scripted_worker,
+        scripts,
         "NETWORKPOLICY_PROGRAM_SOURCE",
         ROOT / "benchmarks/sregym/fastloop/scripted_networkpolicy_program",
     )
-    turn = scripted_worker.ScriptedReflector().resume(
+    turn = scripts.Reflector().resume(
         worktree=tmp_path,
         incident_id="first-incident",
         closure=SimpleNamespace(

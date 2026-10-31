@@ -284,16 +284,16 @@ def test_replay_cli_selects_one_stage_without_loading_environment(
     assert "no_change" in capsys.readouterr().out
 
 
-def test_scripted_responder_replay_uses_captured_kubernetes_objects(
+def test_respond_replay_uses_captured_kubernetes_objects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from google.protobuf import json_format
     from google.protobuf.any_pb2 import Any as ProtoAny
 
-    from benchmarks.sregym.adapter import scripted_worker
     from benchmarks.sregym.fastloop.cli import main
     from benchmarks.sregym.fastloop.replay_worker import CapturedKubernetesAPI
     from sdo.agents.responder.worker import run_worker_task
+    from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
     source = tmp_path / "source"
     (source / "kubernetes").mkdir(parents=True)
@@ -365,8 +365,8 @@ def test_scripted_responder_replay_uses_captured_kubernetes_objects(
         ).encode(),
     }
     api = CapturedKubernetesAPI(captures)
-    monkeypatch.setattr(scripted_worker, "_command", api.command)
-    monkeypatch.setattr(scripted_worker, "_tool", api.tool)
+    monkeypatch.setattr(scripts, "_command", api.command)
+    monkeypatch.setattr(scripts, "_tool", api.tool)
     task_path = tmp_path / "task.json"
     task_path.write_text(to_canonical_json(task), encoding="utf-8")
 
@@ -377,7 +377,7 @@ def test_scripted_responder_replay_uses_captured_kubernetes_objects(
             self.payload = payload
 
     publisher = Publisher()
-    run_worker_task(task_path, "result", publisher, executor=scripted_worker.scripted_responder)
+    run_worker_task(task_path, "result", publisher, executor=scripts.respond)
     CheckpointStore(run_dir).save(
         0, "responder", request=to_canonical_json(task), result=publisher.payload, captures=captures
     )
@@ -442,10 +442,10 @@ def test_scripted_reflection_replay_runs_worker_again(tmp_path: Path, capsys: py
         def publish_payload(self, _name: str, _key: str, payload: str) -> None:
             self.payload = payload
 
-    from benchmarks.sregym.adapter.scripted_worker import ScriptedReflector
+    from tests.unit.benchmarks.sregym.fastloop.script_harness import Reflector
 
     publisher = Publisher()
-    run_reflection_task(task_path, "result", publisher, reflector=ScriptedReflector())
+    run_reflection_task(task_path, "result", publisher, reflector=Reflector())
     run_dir = tmp_path / "results" / "run"
     run_dir.mkdir(parents=True)
     (tmp_path / "fastloop.json").write_text(json.dumps({"workspace": str(source)}), encoding="utf-8")

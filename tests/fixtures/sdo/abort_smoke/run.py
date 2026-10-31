@@ -157,9 +157,34 @@ def main():
     kube("-n", app, "apply", "-f", str(repo / "kubernetes"))
     kube("-n", app, "rollout", "status", "deployment", "--timeout=90s")
     registrations = {}
-    for path in (ROOT / "benchmarks/sregym/adapter/scripted_registrations").glob("*.json"):
+    for path in (ROOT / "benchmarks/sregym/fastloop/agent_registrations").glob("*.json"):
         registration = json.loads(path.read_text())
-        registration["kubernetes_job"].update(image=args.worker_image, command=["sh", "-c", "sleep 600"])
+        # Pause the generated agent turn beneath the real worker, so abort also
+        # exercises its provider and subprocess cleanup instead of a sleeping shell.
+        delay = r"""
+from benchmarks.sregym.fastloop import generated_worker
+from benchmarks.sregym.agent_script.model import Wait
+import re
+
+def delayed(generate):
+    def build(*args, **kwargs):
+        script = generate(*args, **kwargs)
+        turn = script.turns[0]
+        turn.result = {
+            key: re.sub(r"steps\.(\d+)\.", lambda match: f"steps.{int(match[1]) + 10}.", value)
+            if isinstance(value, str) else value
+            for key, value in turn.result.items()
+        }
+        turn.steps[:0] = [Wait(kind="wait", seconds=60) for _ in range(10)]
+        return script
+    return build
+
+generated_worker.responder_script = delayed(generated_worker.responder_script)
+generated_worker.reflection_script = delayed(generated_worker.reflection_script)
+raise SystemExit(generated_worker.main())
+"""
+        original = registration["kubernetes_job"]["command"]
+        registration["kubernetes_job"].update(image=args.worker_image, command=["python3", "-c", delay, *original[3:]])
         registrations[path.name] = json.dumps(registration)
     config = {
         "apiVersion": "v1",

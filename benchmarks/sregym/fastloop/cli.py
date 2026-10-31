@@ -430,7 +430,7 @@ def _sdo_agent(
 
     registrations = args.agent_registrations.resolve() if args.agent_registrations else None
     if registrations is None and environment.app == "toy":
-        registrations = REPO_ROOT / "benchmarks/sregym/adapter/scripted_registrations"
+        registrations = REPO_ROOT / "benchmarks/sregym/fastloop/agent_registrations"
     if registrations is None and args.provider == "codex":
         from benchmarks.sregym.fastloop.recording_worker import recording_registrations
 
@@ -530,7 +530,7 @@ def _run(args: argparse.Namespace) -> int:
     if args.time_scale < 1:
         scripted = args.agent == "sdo" and (
             args.agent_registrations.resolve()
-            == (REPO_ROOT / "benchmarks/sregym/adapter/scripted_registrations").resolve()
+            == (REPO_ROOT / "benchmarks/sregym/fastloop/agent_registrations").resolve()
             if args.agent_registrations is not None
             else environment.app == "toy"
         )
@@ -1141,13 +1141,13 @@ def _replay(args: argparse.Namespace) -> int:
     if args.stage == "broker":
         result = replay_broker(store, args.incident, source=source, operator_root=REPO_ROOT / "sdo" / "operator")
     elif args.stage == "responder" and agent == "scripted":
-        from benchmarks.sregym.fastloop.replay_worker import replay_scripted_responder
+        from benchmarks.sregym.fastloop.replay_worker import replay_generated_responder
 
-        result = replay_scripted_responder(store, args.incident, source=source)
+        result = replay_generated_responder(store, args.incident, source=source)
     elif args.stage == "reflection" and agent == "scripted":
-        from benchmarks.sregym.fastloop.replay_worker import replay_scripted_reflection
+        from benchmarks.sregym.fastloop.replay_worker import replay_generated_reflection
 
-        result = replay_scripted_reflection(
+        result = replay_generated_reflection(
             store, args.incident, source=source, operator_root=REPO_ROOT / "sdo" / "operator"
         )
     elif args.stage in {"responder", "reflection"} and agent == "live":

@@ -10,6 +10,15 @@
   ],
   "kubernetes_job": {
     "image": "${RESPONDER_IMAGE}",
-    "command": ["python3", "-m", "benchmarks.sregym.adapter.scripted_worker", "responder"]
+    "command": [
+      "python3",
+      "-m",
+      "benchmarks.sregym.fastloop.generated_worker",
+      "responder",
+      "--",
+      "python3",
+      "-m",
+      "sdo.agents.responder.worker"
+    ]
   }
 }

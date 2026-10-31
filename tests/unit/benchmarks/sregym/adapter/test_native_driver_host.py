@@ -127,7 +127,7 @@ def test_incomplete_current_memory_does_not_skip_lifecycle(tmp_path: Path, healt
     assert driver._has_accepted_lifecycle(tmp_path) is False
 
 
-def test_scripted_worker_override_requires_accepted_lifecycle_before_cluster_access(
+def test_scripts_override_requires_accepted_lifecycle_before_cluster_access(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "sregym-w1")
@@ -150,7 +150,7 @@ def test_scripted_worker_override_requires_accepted_lifecycle_before_cluster_acc
 
 
 @pytest.mark.parametrize("schema_version", [1, 3])
-def test_seeded_workspace_publishes_scripted_worker_registrations(
+def test_seeded_workspace_publishes_scripts_registrations(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, schema_version: int
 ) -> None:
     sdo = tmp_path / ".sdo"

@@ -32,7 +32,7 @@ def test_scripted_image_build_checks_the_merged_workers_as_the_runtime_uid() -> 
     assert 'docker buildx bake --file scripts/sdo-images.hcl --load "${selected[@]}"' in script
     graph = (Path(__file__).parents[5] / "scripts/sdo-images.hcl").read_text()
     assert "target = SDO_WORKER_TARGET" in graph
-    entry_point = "from benchmarks.sregym.adapter.scripted_worker import scripted_responder, ScriptedReflector"
+    entry_point = "from benchmarks.sregym.fastloop.generated_worker import main"
     assert entry_point in script
 
 

@@ -83,6 +83,6 @@ if selected_image benchmark; then
   if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
     docker run --rm --user 65532:65532 \
       sdo-sregym-responder:${tag} \
-      python3 -c "from benchmarks.sregym.adapter.scripted_worker import scripted_responder, ScriptedReflector" >/dev/null
+      python3 -c "from benchmarks.sregym.fastloop.generated_worker import main" >/dev/null
   fi
 fi

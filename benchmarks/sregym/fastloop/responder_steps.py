@@ -1,7 +1,7 @@
 """Live evidence and source-repair snippets embedded in generated agent commands.
 
 These functions are emitted as source, so scripts need no legacy worker import.
-Keep their equivalence tests until the legacy implementation is removed.
+Their script and transport contracts are tested with synthetic scenarios.
 """
 
 from __future__ import annotations

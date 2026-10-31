@@ -9,7 +9,6 @@ import pytest
 from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any as ProtoAny
 
-from benchmarks.sregym.adapter import scripted_worker
 from sdo.contracts import (
     AgentResult,
     AgentTask,
@@ -21,6 +20,7 @@ from sdo.contracts import (
 )
 from sdo.contracts.proto import parse_json, to_canonical_json
 from tests.proto_messages import evolve, from_dict
+from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
 
@@ -36,8 +36,8 @@ def test_matched_program_runs_use_the_real_tool_binding_shape(monkeypatch: pytes
         calls.append(args)
         return {"plan_id": "plan-1"}
 
-    monkeypatch.setattr(scripted_worker, "_tool", tool)
-    plans, programs = scripted_worker._matched_plans(
+    monkeypatch.setattr(scripts, "_tool", tool)
+    plans, programs = scripts._matched_plans(
         {
             "program_runs": [
                 {
@@ -117,7 +117,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
             self.results[key] = payload
 
     api = FakeKubernetesAPI(namespace="hotel")
-    monkeypatch.setattr(scripted_worker, "KubernetesResultPublisher", lambda **kwargs: api)
+    monkeypatch.setattr(scripts, "KubernetesResultPublisher", lambda **kwargs: api)
 
     def command(argv: list[str], **_kwargs: Any) -> str:
         if argv[:4] == ["kubectl", "-n", "hotel", "patch"]:
@@ -144,12 +144,12 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
             return {"healthy": service["targetPort"] != 9999 and image != "missing:tag", "summary": "checked fake API"}
         raise AssertionError(args)
 
-    monkeypatch.setattr(scripted_worker, "_command", command)
-    monkeypatch.setattr(scripted_worker, "_tool", tool)
+    monkeypatch.setattr(scripts, "_command", command)
+    monkeypatch.setattr(scripts, "_tool", tool)
     monkeypatch.setenv("SDO_NAMESPACE", "hotel")
     monkeypatch.setenv("SDO_RESULT_CONFIGMAP", "result-map")
     monkeypatch.setenv("SDO_TASK_PATH", str(task_path))
-    assert scripted_worker.main(["responder"]) == 0
+    assert scripts.main(["responder"]) == 0
     result = parse_json(api.results["agent-result.json"], AgentResult())
     response = IncidentResult()
     assert result.response.Unpack(response)
@@ -192,7 +192,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
             snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
     program_source = ROOT / "benchmarks/sregym/fastloop/scripted_program"
-    monkeypatch.setattr(scripted_worker, "PROGRAM_SOURCE", program_source)
+    monkeypatch.setattr(scripts, "PROGRAM_SOURCE", program_source)
     closure = _closure()
     closure.request.repository_worktree = str(seed)
     closure.request.namespace = "hotel"
@@ -201,18 +201,18 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     def operator_command(argv: list[str], **_kwargs: Any) -> str:
         if argv[1:3] == ["program", "scaffold"]:
             target = Path(argv[argv.index("--out") + 1])
-            target.mkdir()
+            target.mkdir(parents=True)
             (target / "diagnose_test.go").write_text("package targetport\n", encoding="utf-8")
             return ""
         assert argv[1:3] == ["memory", "check"]
-        target = seed / ".sdo/playbooks" / scripted_worker.PROGRAM_ID
+        target = seed / ".sdo/playbooks" / scripts.PROGRAM_ID
         assert (target / "diagnose.go").is_file()
         labels = json.loads(next((seed / ".sdo/corpus").glob("*/labels.json")).read_text())
         assert labels["bindings"]["service"]["name"] == "reservation"
         assert labels["peer_bindings"]["service"]["name"] == "rate"
         return ""
 
-    monkeypatch.setattr(scripted_worker, "_command", operator_command)
+    monkeypatch.setattr(scripts, "_command", operator_command)
     reflection = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit")
     reflection.memory_snapshot.accepted_commit = "outcome-commit"
     packed.Pack(reflection)
@@ -225,13 +225,13 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
         workspace={"proposal_id": "proposal-2", "checkout_path": str(seed), "base_commit": "outcome-commit"},
     )
     task_path.write_text(to_canonical_json(task), encoding="utf-8")
-    assert scripted_worker.main(["reflection"]) == 0
+    assert scripts.main(["reflection"]) == 0
     reflected = parse_json(api.results["agent-result.json"], AgentResult())
     decision = ReflectionResult()
     assert reflected.response.Unpack(decision)
     assert reflected.status == "completed"
     assert decision.learning_decision == "updated"
-    assert list(decision.proposed_artifact_ids) == [scripted_worker.PROGRAM_ID]
+    assert list(decision.proposed_artifact_ids) == [scripts.PROGRAM_ID]
     assert not decision.HasField("artifact_proposal")
 
 
@@ -252,7 +252,7 @@ def test_captured_pair_selects_changed_service_and_healthy_peer(tmp_path: Path) 
     }
     (tmp_path / "open@pre-apply.json").write_text(json.dumps(open_snapshot), encoding="utf-8")
     (tmp_path / "fixed.json").write_text(json.dumps(fixed_snapshot), encoding="utf-8")
-    assert scripted_worker._captured_pair(tmp_path) == ("front", "peer")
+    assert scripts._captured_pair(tmp_path) == ("front", "peer")
 
 
 def test_scripted_source_repair_preserves_deployment_container_fields(
@@ -280,14 +280,14 @@ def test_scripted_source_repair_preserves_deployment_container_fields(
         calls.append(argv)
         return ""
 
-    monkeypatch.setattr(scripted_worker, "_command", command)
-    monkeypatch.setattr(scripted_worker, "_tool", lambda *_args: {"source": manifest})
-    scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "front"})
+    monkeypatch.setattr(scripts, "_command", command)
+    monkeypatch.setattr(scripts, "_tool", lambda *_args: {"source": manifest})
+    scripts._patch_from_source(request, {"kind": "Deployment", "name": "front"})
     assert calls[0][:7] == ["kubectl", "-n", "hotel", "patch", "deployment", "front", "--type=strategic"]
     assert calls[1][:6] == ["kubectl", "-n", "hotel", "rollout", "status", "deployment/front"]
 
 
-def test_scripted_responder_returns_typed_result_after_source_repair(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_respond_returns_typed_result_after_source_repair(monkeypatch: pytest.MonkeyPatch) -> None:
     request = from_dict(IncidentRequest, json.loads((FIXTURES / "incident_request.json").read_text()))
     request = evolve(
         request,
@@ -307,9 +307,9 @@ def test_scripted_responder_returns_typed_result_after_source_repair(monkeypatch
             return {"program_runs": []}
         return {"healthy": len(calls) >= 3, "summary": "clear"}
 
-    monkeypatch.setattr(scripted_worker, "_tool", tool)
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, ref: repairs.append(ref))
-    result = scripted_worker.scripted_responder(request)
+    monkeypatch.setattr(scripts, "_tool", tool)
+    monkeypatch.setattr(scripts, "_patch_from_source", lambda _request, ref: repairs.append(ref))
+    result = scripts.respond(request)
     assert result.status == "completed"
     assert result.incident_id == request.incident_id
     assert result.confirmed_root_causes[0].explained_detectors == [request.findings[0].detector_id]
@@ -320,7 +320,7 @@ def test_scripted_responder_returns_typed_result_after_source_repair(monkeypatch
     assert repairs[0]["name"] == "front"
 
 
-def test_scripted_responder_repairs_changed_service_behind_deployment_finding(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_respond_repairs_changed_service_behind_deployment_finding(monkeypatch: pytest.MonkeyPatch) -> None:
     request = from_dict(IncidentRequest, json.loads((FIXTURES / "incident_request.json").read_text()))
     request = evolve(
         request,
@@ -346,8 +346,8 @@ def test_scripted_responder_repairs_changed_service_behind_deployment_finding(mo
             return {"program_runs": []}
         return {"healthy": calls >= 3, "summary": "clear"}
 
-    monkeypatch.setattr(scripted_worker, "_tool", tool)
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, ref: repairs.append(ref["name"]))
-    result = scripted_worker.scripted_responder(request)
+    monkeypatch.setattr(scripts, "_tool", tool)
+    monkeypatch.setattr(scripts, "_patch_from_source", lambda _request, ref: repairs.append(ref["name"]))
+    result = scripts.respond(request)
     assert {"front", "back"} <= set(repairs)
     assert {"front", "back"} <= {resource.name for action in result.repair_actions for resource in action.resources}

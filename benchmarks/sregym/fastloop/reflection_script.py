@@ -221,7 +221,7 @@ def reflection_script(
     )
     # The validator checks every checkout change, so the decision belongs in
     # the worker's writable tool exchange, outside repository-owned artifacts.
-    tools = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
+    tools = Path(os.environ.get("SDO_AGENT_SCRIPT_WORK_DIR", os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
     decision = tools / ("reflection-decision-" + hashlib.sha256(incident.encode()).hexdigest() + ".json")
     encoded = base64.b64encode(
         json.dumps({"learning_decision": "updated", "playbook_ids": [program_id]}).encode()

@@ -11,12 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks.sregym.adapter import scripted_worker
 from benchmarks.sregym.agent_script.runner import execute
 from benchmarks.sregym.agent_script.wire import EventStream
 from benchmarks.sregym.fastloop.reflection_script import reflection_script
 from sdo.agents.responder import ReflectionTurn
 from sdo.contracts import IncidentClosure
+from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
 ROOT = Path(__file__).resolve().parents[5]
 OPERATOR = ROOT / "sdo/operator"
@@ -113,8 +113,8 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     assert not list(tools.glob("reflection-decision-*"))
 
     assert turn.learning_decision == "updated"
-    assert turn.playbook_ids == [scripted_worker.PROGRAM_ID]
-    program = app / ".sdo/playbooks" / scripted_worker.PROGRAM_ID
+    assert turn.playbook_ids == [scripts.PROGRAM_ID]
+    program = app / ".sdo/playbooks" / scripts.PROGRAM_ID
     assert (program / "diagnose.go").is_file()
     assert "originating_incident: scripted-incident" in (program / "README.md").read_text()
     labels = json.loads(next((app / ".sdo/corpus").glob("*/labels.json")).read_text())
@@ -125,7 +125,7 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     assert (case / "recordings.json").read_bytes() == (capture / f"open@{open_at}-recordings.json").read_bytes()
 
 
-def test_scripted_responder_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_respond_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     env = dict(os.environ, SDO_SCRIPTED_TOOL_RESPONSES=str(tmp_path))
     subprocess.run(
         ["go", "test", "-run", "^TestHermeticResponderProgramReuseThroughRealToolTransport$", "-count=1", "."],
@@ -141,25 +141,24 @@ def test_scripted_responder_consumes_real_go_tool_responses(tmp_path: Path, monk
             key += "." + argv[2]
         return (tmp_path / f"{key}.json").read_text() + "\nGo tool summary\n"
 
-    monkeypatch.setattr(scripted_worker, "_command", command)
-    assert scripted_worker._tool("status")["command"] == "status"
-    diagnosis = scripted_worker._tool("diagnose")
-    plans, programs = scripted_worker._matched_plans(diagnosis)
+    monkeypatch.setattr(scripts, "_command", command)
+    assert scripts._tool("status")["command"] == "status"
+    diagnosis = scripts._tool("diagnose")
+    plans, programs = scripts._matched_plans(diagnosis)
     assert set(programs) == {"service-targetport-mismatch", "image-pull-failure"}
     assert len(plans) == 2
-    assert scripted_worker._tool("apply", *plans)["healthy"] is True
-    assert scripted_worker._tool("verify")["healthy"] is True
+    assert scripts._tool("apply", *plans)["healthy"] is True
+    assert scripts._tool("verify")["healthy"] is True
 
-    # Retain the legacy path as the differential oracle until caller retirement.
     from sdo.contracts import IncidentRequest
     from tests.unit.benchmarks.sregym.fastloop.test_responder_script import generated_call
 
     request = IncidentRequest(incident_id="go-transport", namespace="demo", repository_worktree=str(tmp_path))
-    expected = scripted_worker.scripted_responder(request)
     actual = generated_call(request, tmp_path, monkeypatch)
-    expected.ClearField("timing")
-    actual.ClearField("timing")
-    for result in (expected, actual):
-        for evidence in result.verification_evidence:
-            evidence.ClearField("observed_at")
-    assert actual == expected
+    assert actual.status == "completed"
+    assert {book.playbook_id for book in actual.applied_playbooks} == {
+        "service-targetport-mismatch",
+        "image-pull-failure",
+    }
+    assert actual.verification_evidence[0].passed
+    assert not actual.repair_actions

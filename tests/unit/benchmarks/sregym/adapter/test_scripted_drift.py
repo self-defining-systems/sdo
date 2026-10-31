@@ -1,11 +1,10 @@
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from benchmarks.sregym.adapter import scripted_worker
 from sdo.contracts import DriftEvent, IncidentRequest, ObjectRef
+from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
 
 def test_scripted_drift_requires_source_mismatch_and_observed_listening_ports(monkeypatch, tmp_path: Path) -> None:
@@ -28,7 +27,7 @@ def test_scripted_drift_requires_source_mismatch_and_observed_listening_ports(mo
         ],
     )
     monkeypatch.setattr(
-        scripted_worker,
+        scripts,
         "_command",
         lambda argv, **_: (
             (
@@ -48,7 +47,7 @@ def test_scripted_drift_requires_source_mismatch_and_observed_listening_ports(mo
 
     monkeypatch.setattr("socket.create_connection", connect)
 
-    result = scripted_worker._assess_drift(request, request.drift_events[0])
+    result = scripts._assess_drift(request, request.drift_events[0])
 
     assert result.investigation_verdict == "bug"
     assert {item.kind for item in result.investigation_evidence} == {"source_contradiction", "violated_relation"}
@@ -71,7 +70,7 @@ def test_scripted_drift_is_unsure_without_selected_pods(monkeypatch, tmp_path: P
         ],
     )
     monkeypatch.setattr(
-        scripted_worker,
+        scripts,
         "_command",
         lambda argv, **_: (
             '{"items": []}'
@@ -80,34 +79,34 @@ def test_scripted_drift_is_unsure_without_selected_pods(monkeypatch, tmp_path: P
         ),
     )
 
-    assert scripted_worker._assess_drift(request, request.drift_events[0]).investigation_verdict == "unsure"
+    assert scripts._assess_drift(request, request.drift_events[0]).investigation_verdict == "unsure"
 
 
-def test_scripted_responder_does_not_repair_prior_incident_drift(monkeypatch) -> None:
+def test_respond_does_not_repair_prior_incident_drift(monkeypatch) -> None:
     old = ObjectRef(api_version="v1", kind="Service", namespace="app", name="reservation")
     current = ObjectRef(api_version="v1", kind="Service", namespace="app", name="peer")
     stale = DriftEvent(
         ref=old, observed_at=datetime.now(timezone.utc), classification="fault", investigation_verdict="bug"
     )
-    request = SimpleNamespace(
+    request = IncidentRequest(
         incident_id="second",
         namespace="app",
         drift_events=[stale],
         state_changes=None,
         findings=[
-            SimpleNamespace(
-                detector_id="drift.service-targetport-mismatch",
-                primary_resource=current,
-                summary="peer targetPort drift",
-                evidence="peer is broken",
-            )
+            {
+                "detector_id": "drift.service-targetport-mismatch",
+                "primary_resource": current,
+                "summary": "peer targetPort drift",
+                "evidence": "peer is broken",
+            }
         ],
     )
     patches = []
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, ref: patches.append(ref))
-    monkeypatch.setattr(scripted_worker, "_tool", lambda *_args: {"healthy": True})
+    monkeypatch.setattr(scripts, "_patch_from_source", lambda _request, ref: patches.append(ref))
+    monkeypatch.setattr(scripts, "_tool", lambda *_args: {"healthy": True})
 
-    result = scripted_worker.scripted_responder(request)
+    result = scripts.respond(request)
 
     assert patches == []
     assert result.repair_actions == []
@@ -157,10 +156,10 @@ def test_scripted_drift_assesses_scratch_pods_without_exec_utilities(
                 raise TimeoutError("network unavailable")
         return nullcontext()
 
-    monkeypatch.setattr(scripted_worker, "_command", command)
+    monkeypatch.setattr(scripts, "_command", command)
     monkeypatch.setattr("socket.create_connection", connect)
 
-    label = scripted_worker._assess_drift(request, request.drift_events[0])
+    label = scripts._assess_drift(request, request.drift_events[0])
     assert label.investigation_verdict == ("bug" if probe_result == "refused" else "unsure")
     assert connections == [("10.0.0.2", 8080)] + ([] if probe_result == "source_refused" else [("10.0.0.2", 9999)])
     if probe_result == "refused":
@@ -232,14 +231,14 @@ def test_scripted_policy_drift_requires_source_absence_and_total_ingress_isolati
     def tool(*args):
         return {"source": accepted} if args[0] == "source" else {"healthy": bool(deleted)}
 
-    monkeypatch.setattr(scripted_worker, "_command", command)
-    monkeypatch.setattr(scripted_worker, "_tool", tool)
+    monkeypatch.setattr(scripts, "_command", command)
+    monkeypatch.setattr(scripts, "_tool", tool)
 
-    result = scripted_worker._assess_drift(request, request.drift_events[0])
+    result = scripts._assess_drift(request, request.drift_events[0])
     assert result.investigation_verdict == ("unsure" if near_miss else "bug")
     if not near_miss:
         assert {item.kind for item in result.investigation_evidence} == {"source_contradiction", "violated_relation"}
-    response = scripted_worker.scripted_responder(request)
+    response = scripts.respond(request)
     assert deleted == ([] if near_miss else ["deny"])
     assert response.status == ("failed" if near_miss else "completed")
     if not near_miss:

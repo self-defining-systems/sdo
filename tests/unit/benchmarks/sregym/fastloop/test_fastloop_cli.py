@@ -288,7 +288,7 @@ def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_
     assert selected.repair_policy == "commit"
 
 
-def test_sdo_accepts_scripted_worker_registration_override(tmp_path: Path) -> None:
+def test_sdo_accepts_scripts_registration_override(tmp_path: Path) -> None:
     registrations = tmp_path / "registrations"
     registrations.mkdir()
     args = build_parser().parse_args(
@@ -686,7 +686,7 @@ def test_normal_live_and_reduced_scripted_scales_pass_preflight(
 
     monkeypatch.setattr(cli, "_worker", stop_before_worker)
     flags = (
-        ["--agent-registrations", str(cli.REPO_ROOT / "benchmarks/sregym/adapter/scripted_registrations")]
+        ["--agent-registrations", str(cli.REPO_ROOT / "benchmarks/sregym/fastloop/agent_registrations")]
         if scripted
         else []
     )

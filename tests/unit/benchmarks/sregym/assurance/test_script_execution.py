@@ -171,7 +171,7 @@ def _expected_usage(seed: int, kind: str, requests: int) -> dict[str, int]:
     }
 
 
-def test_scripted_responder_repairs_through_the_real_structured_turn(
+def test_generated_responder_repairs_through_the_real_structured_turn(
     scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])

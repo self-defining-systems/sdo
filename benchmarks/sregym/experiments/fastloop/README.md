@@ -109,7 +109,7 @@ uv run python -m benchmarks.sregym.fastloop run \
 
 `--time-scale` defaults to 1. Live LLM runs, including smokes, use 1.
 Values below 1 are refused before runtime setup unless SDO uses the repository's
-`benchmarks/sregym/adapter/scripted_registrations` (explicitly selected, or the
+`benchmarks/sregym/fastloop/agent_registrations` (explicitly selected, or the
 toy lane default). Custom registrations are conservatively treated as live.
 This keeps live verification and responder deadlines from being shortened.
 For scripted-agent runs it scales controller detector intervals, finding
@@ -139,10 +139,10 @@ use fault-only recovery and mark `cleanup_skipped_reason` in each incident row.
 
 # Scripted SDO loop (kind, no LLM)
 
-Level 1 exercises both scripted worker entry points with a fake Kubernetes API:
+Level 1 exercises both generated agent scripts with a fake Kubernetes API:
 
 ```bash
-uv run pytest -q -p no:tach tests/unit/benchmarks/sregym/fastloop/test_scripted_worker.py tests/unit/benchmarks/sregym/fastloop/test_scripted_image_build.py
+uv run pytest -q -p no:tach tests/unit/benchmarks/sregym/fastloop/test_generated_worker.py tests/unit/benchmarks/sregym/fastloop/test_scripted_image_build.py
 ```
 
 The test copies the accepted hotel seed when it is available at the experiment
@@ -166,7 +166,7 @@ uv run python -m benchmarks.sregym.fastloop up \
   --validator-image sdo-detector-validator:scripted-fastloop
 uv run python -m benchmarks.sregym.fastloop run \
   --run-dir "$SDO_SCRIPTED_RUN" --agent sdo \
-  --agent-registrations benchmarks/sregym/adapter/scripted_registrations \
+  --agent-registrations benchmarks/sregym/fastloop/agent_registrations \
   --stream tests/fixtures/sregym/fastloop/pbprog_repeat.json \
   --diagnosis-grading off --reflection-session fresh --timeout 300
 ```
@@ -217,7 +217,7 @@ no output is invented. All Git writes happen in temporary clones. No cluster,
 Docker or live model is needed. The source repository must retain the accepted
 outcome commit named by the checkpoint.
 
-`responder` defaults to the scripted worker against captured open and fixed
+`responder` defaults to the generated agent script beneath the production worker against captured open and fixed
 snapshots. Select `--agent live` to use its recorded Codex turns. Select
 `--agent scripted` explicitly for a scripted reflection. `broker` validates an
 existing reflection result without re-executing the agent. Worker replay also
@@ -273,8 +273,7 @@ uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN"
 The cluster name uses `--cluster-prefix` plus `--worker-id`; creation refuses to adopt an existing
 cluster without its environment record. The source mount is mandatory internally
 and defaults to this worktree. `run` and `reset` rebuild the host operator, so code
-changes need no runtime image rebuild. Scripted responder, reflector and drift
-investigator registrations are the toy default. No model calls are needed.
+changes need no runtime image rebuild. Generated responder and reflector registrations are the toy default. No model calls are needed.
 
 After that stream has accepted the program, run `toy_sweep.json` with
 `--timeout 900` and the same other run flags. It models a healthy imported Service

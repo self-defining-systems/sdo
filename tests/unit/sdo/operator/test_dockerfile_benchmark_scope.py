@@ -130,7 +130,14 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
     assert leaked == set(), f"sregym-responder image would copy answer-key paths: {sorted(leaked)}"
     assert {path for path in copied if path.startswith("benchmarks/sregym/fastloop/")} == ALLOWED_FASTLOOP_FILES
     scripted = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
-    assert scripted == {"benchmarks/sregym/adapter/scripted_worker.py", *SCRIPTED_PROGRAM_FILES}
+    assert scripted == {
+        *(str(path.relative_to(REPO_ROOT)) for path in (REPO_ROOT / "benchmarks/sregym/agent_script").glob("*.py")),
+        *(
+            f"benchmarks/sregym/fastloop/{name}.py"
+            for name in ("generated_worker", "responder_script", "responder_steps", "reflection_script")
+        ),
+        *SCRIPTED_PROGRAM_FILES,
+    }
     guard_build = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "submission-guard-build"))
     assert {path for path in guard_build if path.startswith("benchmarks/")} == {
         "benchmarks/sregym/protocol/submission_go/go.mod",
@@ -218,10 +225,14 @@ def test_sregym_responder_copy_matches_exactly_what_its_entry_points_import() ->
     assert copied - needed == set(), f"the image copies files its entry points never import: {copied - needed}"
 
 
-def test_scripted_worker_stage_contains_only_its_entry_point_and_program() -> None:
+def test_scripts_stage_contains_only_its_entry_point_and_program() -> None:
     copied = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
     assert copied == {
-        "benchmarks/sregym/adapter/scripted_worker.py",
+        *(str(path.relative_to(REPO_ROOT)) for path in (REPO_ROOT / "benchmarks/sregym/agent_script").glob("*.py")),
+        *(
+            f"benchmarks/sregym/fastloop/{name}.py"
+            for name in ("generated_worker", "responder_script", "responder_steps", "reflection_script")
+        ),
         "benchmarks/sregym/fastloop/scripted_program/README.md",
         "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
         "benchmarks/sregym/fastloop/scripted_program/mitigate.go",

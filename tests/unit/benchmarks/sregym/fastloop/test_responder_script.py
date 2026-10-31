@@ -1,4 +1,4 @@
-"""Differential contracts for generated responder steps."""
+"""Generated responder scripts through subprocess tools and the provider parser."""
 
 import io
 import json
@@ -12,11 +12,11 @@ from pathlib import Path
 import pytest
 from google.protobuf import json_format
 
-from benchmarks.sregym.adapter import scripted_worker
 from benchmarks.sregym.agent_script.runner import execute
 from benchmarks.sregym.agent_script.wire import EventStream
 from benchmarks.sregym.fastloop.responder_script import responder_script
 from sdo.contracts import DriftEvent, IncidentRequest, IncidentResult
+from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
 
 def test_generator_is_pure_and_uses_live_outputs(tmp_path):
@@ -52,8 +52,7 @@ def test_command_json_output_is_typed(tmp_path):
     assert result == {"healthy": True, "items": [1]}
 
 
-# The legacy scenario tests run unchanged against both implementations. Only the
-# process boundary is supplied here: commands cross a real local HTTP transport.
+# Synthetic scenarios use a real local HTTP boundary for subprocess commands.
 
 
 @contextmanager
@@ -66,13 +65,13 @@ def tool_transport(tmp_path, monkeypatch):
             argv = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             try:
                 if argv[0] == "sdo":
-                    value = json.dumps(scripted_worker._tool(*argv[1:])) + "\nTool summary\n"
+                    value = json.dumps(scripts._tool(*argv[1:])) + "\nTool summary\n"
                 elif argv[0] == "probe":
-                    with scripted_worker.socket.create_connection(tuple(argv[1:]), timeout=2):
+                    with scripts.socket.create_connection(tuple(argv[1:]), timeout=2):
                         pass
                     value = ""
                 else:
-                    value = scripted_worker._command(argv)
+                    value = scripts._command(argv)
                 data = {"value": value}
             except Exception as exc:
                 data = {"error": type(exc).__name__, "message": str(exc)}
@@ -185,7 +184,6 @@ def generated_call(request, tmp_path, monkeypatch, *, drift=None):
         )
 
 
-@pytest.mark.parametrize("mode", ["legacy", "generated"])
 @pytest.mark.parametrize(
     "scenario",
     [
@@ -203,18 +201,15 @@ def generated_call(request, tmp_path, monkeypatch, *, drift=None):
         "unknown_selector",
     ],
 )
-def test_existing_drift_scenarios_through_script_transport(tmp_path, monkeypatch, mode, scenario):
+def test_existing_drift_scenarios_through_script_transport(tmp_path, monkeypatch, scenario):
     from tests.unit.benchmarks.sregym.adapter import test_scripted_drift as cases
 
-    if mode == "generated":
-        monkeypatch.setattr(
-            scripted_worker,
-            "_assess_drift",
-            lambda request, event: generated_call(request, tmp_path, monkeypatch, drift=event),
-        )
-        monkeypatch.setattr(
-            scripted_worker, "scripted_responder", lambda request: generated_call(request, tmp_path, monkeypatch)
-        )
+    monkeypatch.setattr(
+        scripts,
+        "_assess_drift",
+        lambda request, event: generated_call(request, tmp_path, monkeypatch, drift=event),
+    )
+    monkeypatch.setattr(scripts, "respond", lambda request: generated_call(request, tmp_path, monkeypatch))
     if scenario == "listener":
         cases.test_scripted_drift_requires_source_mismatch_and_observed_listening_ports(monkeypatch, tmp_path)
     elif scenario == "no_pods":
@@ -243,7 +238,7 @@ def test_existing_drift_scenarios_through_script_transport(tmp_path, monkeypatch
         "mixed",
     ],
 )
-def test_full_result_and_calls_are_equivalent(tmp_path, monkeypatch, scenario):
+def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
     from copy import deepcopy
 
     from google.protobuf.any_pb2 import Any as ProtoAny
@@ -309,7 +304,7 @@ def test_full_result_and_calls_are_equivalent(tmp_path, monkeypatch, scenario):
     )
     if scenario == "exhausted":
         del request.findings[:]
-        monkeypatch.setattr(scripted_worker.time, "sleep", lambda _: None)
+        monkeypatch.setattr(scripts.time, "sleep", lambda _: None)
     calls = []
     repaired = False
 
@@ -348,12 +343,8 @@ def test_full_result_and_calls_are_equivalent(tmp_path, monkeypatch, scenario):
             return {"source": source}
         return {"healthy": repaired or scenario in {"healthy", "stale"}, "summary": "live verification"}
 
-    monkeypatch.setattr(scripted_worker, "_tool", tool)
-    monkeypatch.setattr(scripted_worker, "_command", command)
-    expected = scripted_worker.scripted_responder(request)
-    expected_calls = deepcopy(calls)
-    calls.clear()
-    repaired = False
+    monkeypatch.setattr(scripts, "_tool", tool)
+    monkeypatch.setattr(scripts, "_command", command)
     with tool_transport(tmp_path, monkeypatch):
         script = responder_script(request)
         if scenario == "exhausted":
@@ -406,19 +397,19 @@ def test_full_result_and_calls_are_equivalent(tmp_path, monkeypatch, scenario):
         result = run_worker_task(task_path, "result", Publisher(), executor=executor)
         actual = IncidentResult()
         assert result.response.Unpack(actual)
-    assert calls == expected_calls
+    assert calls[0] == ["sdo", "diagnose"]
+    assert calls[-1] == ["sdo", "verify"]
 
-    def normalized(value):
-        data = json_format.MessageToDict(value, preserving_proto_field_name=True)
-        data.pop("timing", None)
-        for action in data.get("repair_actions", []):
-            action.pop("started_at")
-            action.pop("completed_at")
-        for evidence in data.get("verification_evidence", []):
-            evidence.pop("observed_at")
-        return data
-
-    assert normalized(actual) == normalized(expected)
+    assert actual.status == ("failed" if scenario in {"unsure", "exhausted"} else "completed")
+    assert actual.incident_id == request.incident_id
+    assert bool(actual.repair_actions) == (scenario not in {"matched", "healthy", "stale", "unsure", "exhausted"})
+    assert len(actual.verification_evidence) >= 1
+    if scenario == "matched":
+        assert [p.playbook_id for p in actual.applied_playbooks] == ["repair"]
+    if scenario == "immutable-image":
+        assert any("accepted@sha256:" in str(call) for call in calls)
+    if scenario == "mutable-image":
+        assert any("healthy:baseline" in str(call) for call in calls)
     assert not list((tmp_path / "exchange").glob("responder-*.json"))
 
 

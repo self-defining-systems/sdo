@@ -16,9 +16,24 @@ func Enabled() bool { return os.Getenv("SDO_DEV_MOUNT") == "1" }
 // benchmarkFiles is an allowlist: mounting all of benchmarks would expose the
 // fault catalog and assurance answer keys to live model workers.
 var benchmarkFiles = []string{
+	"benchmarks/sregym/fastloop/generated_worker.py",
+	"benchmarks/sregym/fastloop/responder_script.py",
+	"benchmarks/sregym/fastloop/responder_steps.py",
+	"benchmarks/sregym/fastloop/reflection_script.py",
+	"benchmarks/sregym/agent_script/template.py",
+	"benchmarks/sregym/agent_script/model.py",
+	"benchmarks/sregym/agent_script/invocation.py",
+	"benchmarks/sregym/agent_script/__init__.py",
+	"benchmarks/sregym/agent_script/judge_example.py",
+	"benchmarks/sregym/agent_script/runner.py",
+	"benchmarks/sregym/agent_script/converter.py",
+	"benchmarks/sregym/agent_script/cli.py",
+	"benchmarks/sregym/agent_script/wire.py",
+	"benchmarks/sregym/agent_script/__main__.py",
+
 	"benchmarks/__init__.py", "benchmarks/sregym/__init__.py",
 	"benchmarks/sregym/adapter/__init__.py", "benchmarks/sregym/adapter/submission.py",
-	"benchmarks/sregym/adapter/submission_relay.py", "benchmarks/sregym/adapter/scripted_worker.py",
+	"benchmarks/sregym/adapter/submission_relay.py",
 	"benchmarks/sregym/protocol/__init__.py", "benchmarks/sregym/protocol/_http.py",
 	"benchmarks/sregym/protocol/benchmark.py", "benchmarks/sregym/protocol/conductor.py",
 	"benchmarks/sregym/protocol/mcp_client.py", "benchmarks/sregym/protocol/receipt.py",
@@ -84,8 +99,8 @@ func mountWorker(container *corev1.Container) {
 	for index, path := range benchmarkFiles {
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: fmt.Sprintf("dev-bench-%d", index), MountPath: "/opt/sdo/" + path, ReadOnly: true})
 	}
-	for index, name := range []string{"targetport", "networkpolicy"} {
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: fmt.Sprintf("dev-script-%d", index), MountPath: "/opt/sdo-scripted/" + name, ReadOnly: true})
+	for index, name := range []string{"scripted_program", "scripted_networkpolicy_program"} {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: fmt.Sprintf("dev-script-%d", index), MountPath: "/opt/sdo/benchmarks/sregym/fastloop/" + name, ReadOnly: true})
 	}
 
 }

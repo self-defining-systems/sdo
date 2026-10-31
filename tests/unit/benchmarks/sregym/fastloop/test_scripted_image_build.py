@@ -17,7 +17,7 @@ def test_compiler_cache_lives_only_in_controller_image() -> None:
     assert "SDO_GO_CACHE_SEED=/go/build-cache" in runtime
 
 
-def test_scripted_worker_build_uses_runtime_target_and_tag(tmp_path: Path) -> None:
+def test_scripts_build_uses_runtime_target_and_tag(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "docker-calls"

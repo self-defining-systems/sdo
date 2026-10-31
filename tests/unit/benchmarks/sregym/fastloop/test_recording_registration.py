@@ -42,7 +42,7 @@ def test_recording_registrations_preserve_all_builtin_capabilities(tmp_path: Pat
 def test_recording_roles_retain_scripted_incident_task_coverage(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[5]
     live = recording_registrations(tmp_path, "worker:test")
-    scripted = root / "benchmarks/sregym/adapter/scripted_registrations"
+    scripted = root / "benchmarks/sregym/fastloop/agent_registrations"
 
     def task_types(directory: Path, roles: set[str] | None = None) -> set[str]:
         return {

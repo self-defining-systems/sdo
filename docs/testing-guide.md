@@ -214,7 +214,7 @@ For a captured run, `uv run python -m benchmarks.sregym.fastloop replay
 --run-dir <results/run-id> --incident 0 --stage broker` reruns the current Go
 memory edge and broker in a temporary repository. Reflection replay feeds
 recorded model turns through the current agent and recorded direct file edits and the real
-corpus-provenance and broker validation, reporting each dispatch's commit or rejection. Responder replay defaults to its scripted worker;
+corpus-provenance and broker validation, reporting each dispatch's commit or rejection. Responder replay defaults to generated scripts beneath its production worker;
 `--agent live` uses recorded Codex turns. Use `--agent scripted` for an explicitly
 scripted reflection. A missing turn fails without a model call unless
 `--live-on-cache-miss` is selected. Replay does not contact a cluster. See the
@@ -657,10 +657,9 @@ SDO_AGENT_SCRIPT=/absolute/results/reflection-script.json \
 The generated script preserves original captured bytes, incident provenance and
 same-kind peer bindings, writes program/corpus files through audited steps, and
 runs the shared memory validator. Reflection selects its incident-specific turn
-from `request.outcome.incident_id`. This generator is preparatory: fastloop's
-legacy worker registrations have not yet been replaced. See the
-[retirement inventory](scripted-worker-retirement.md) for remaining behaviors
-and callers.
+from `request.outcome.incident_id`. Fastloop's generated registrations launch these scripts beneath the real
+production workers. See the [worker guide](scripted-worker-retirement.md)
+for task generation, writable exchange state and replay.
 
 The responder half can also be generated without checkout side effects:
 
@@ -689,3 +688,11 @@ JSON; diagnostics belong on stderr. This is live output, never recorded evidence
 
 `command.input_json` sends a JSON value on stdin. Use `input_json: "{{request}}"`
 to pass the complete live task safely without interpolating it into shell syntax.
+
+Fastloop toy lanes select `benchmarks/sregym/fastloop/agent_registrations` by
+default. Their `generated_worker` launcher reads each typed task and generates
+its responder or reflection script separately, then wraps the corresponding
+production worker with the agent-script CLI. Scratch state uses the writable
+tool request exchange; the accepted checkout is changed only by script steps.
+Replay uses these generators with captured command transport. Custom registrations
+remain subject to the live-run time-scale guard.

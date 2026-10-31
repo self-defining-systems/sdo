@@ -207,7 +207,8 @@ def responder_script(request: IncidentRequest) -> AgentScript:
     )
     prelude += "request.repository_worktree = str(Path.cwd())\n"
     key = hashlib.sha256(request.incident_id.encode()).hexdigest()[:16]
-    prelude += f"state_path = Path(os.environ['SDO_TOOLS_DIR']) / 'responder-{key}.json'\n"
+    prelude += "exchange = os.environ.get('SDO_AGENT_SCRIPT_WORK_DIR', os.environ['SDO_TOOLS_DIR'])\n"
+    prelude += f"state_path = Path(exchange) / 'responder-{key}.json'\n"
     save = "\nstate_path.write_text(json.dumps(state))\n"
     load = "state = json.loads(state_path.read_text())\n"
     phases = [
@@ -248,9 +249,7 @@ def responder_script(request: IncidentRequest) -> AgentScript:
         "repair_actions",
         "repair_changes",
         "verification_evidence",
-        "usage",
         "timing",
-        "responder_session_id",
     )
     return AgentScript.model_validate(
         {
