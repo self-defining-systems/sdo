@@ -22,6 +22,7 @@ var Edges = map[string]bool{
 	"sdo/operator/runtime/prometheus":           true, // Prometheus HTTP adapter
 	"sdo/operator/toolchain":                    true, // Go compiler process adapter
 	"sdo/operator/devmount":                     true, // development mount process adapter
+	"sdo/operator/runtime/sim":                  true, // simulation world: virtual time inside synctest bubbles, seed replay, in-memory transport; tests only
 }
 
 func integrationOnly(file *ast.File) (bool, error) {

@@ -57,6 +57,9 @@ The exact production edge-package list is:
 - `sdo/operator/runtime/prometheus`: Prometheus HTTP adapter.
 - `sdo/operator/toolchain`: Go compiler process adapter.
 - `sdo/operator/devmount`: development mount process adapter.
+- `sdo/operator/runtime/sim`: the deterministic simulation world. Its clock reads are the synctest bubble's
+  virtual time, its one environment read is the `SDO_SIM_SEED` replay seed, and its HTTP client runs over an
+  in-memory transport. Only test code may import it.
 
 These are exact directories, not recursive exemptions. Mixed packages containing
 existing kubelet, logs, dial, process, git and clock code are grandfathered only
