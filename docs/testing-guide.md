@@ -771,6 +771,7 @@ reports failures. It retains the following extended checks:
 | `TestBuildWorkspaceAcceptsValidMetricsDetectors` | Repeats successful controller/prober compilation: 8.64 s on #664 | `TestBuildWorkspaceCompilesApplicationDetectors` plus `TestBuildWorkspaceRejectsInvalidMetricsDetectors`, and SDK metrics detector unit tests |
 | `TestBuildMemoryHostUsesStagedMemory` | Repeated host compilation took 69.52 s on the first #666 run | `TestMemoryHostWorkspaceStagesAcceptedMemory` checks staging and host/controller isolation; `TestRemoteMemoryPreservesInputsAndCorpusReceipts` and memory-host simulation check real in-memory RPC parity |
 | `TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder` | Repeated source-program compilation took 19.93 s on the first #666 run | `TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields`, source render/reconcile contracts, deterministic trusted fast-path simulation and validator/broker tests |
+| `TestCompileReportsTheFailingStage` | Vet/test fixtures each rebuilt the generated controller for ~51 s on the second #666 run before failing at the intended stage | `TestCompileStageDiagnostics` drives build/vet/test failures through the existing Go process seam and checks rule, path and line; real builder syntax, registration and invalid-metrics rejection still run |
 
 `TestStopSeededLifecycleCuts` retains all 100 seed/cut cases but runs each in a
 `testing/synctest` bubble: the installer's 100 ms deletion polls use virtual time

@@ -35,3 +35,7 @@ TestBuildMemoryHostUsesStagedMemory
 # TestSimTrustedFastPathNeverRollsBackACorrectFix, TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields,
 # source render/reconcile contracts, and validator/broker acceptance tests.
 TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder
+# #666 second hosted run: vet/test fixtures each spent ~51 s compiling the
+# controller before their intended failure. PRs keep TestCompileStageDiagnostics
+# through the real Go-process seam, plus real builder syntax/registration/metrics rejection.
+TestCompileReportsTheFailingStage
