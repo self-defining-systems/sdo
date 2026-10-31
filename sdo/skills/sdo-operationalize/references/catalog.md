@@ -53,8 +53,10 @@ scenarios, workloads and links.
   Services. When a journey fails, these show which hop broke.
 - Each service-to-service call the source declares, data stores included: a link with the protocol the caller
   uses, following the link rules in the judge task. Use `tcp` only when no protocol fits.
-- Not expressible yet: request-level calls to gRPC, Thrift or other non-HTTP APIs. A grpc link proves the server
-  answers its health check, not that a method works.
+- A grpc link works on any gRPC server: one without the health service answers UNIMPLEMENTED, which counts as
+  reachable.
+- Not expressible yet: request-level calls to gRPC, Thrift or other non-HTTP APIs, and UDP. A grpc link proves
+  the server answers gRPC, not that a method works.
 
 ## 3. Declared versus actual in Kubernetes (Snapshot, warn)
 

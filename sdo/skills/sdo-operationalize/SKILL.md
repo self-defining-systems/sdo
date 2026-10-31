@@ -30,7 +30,8 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
 2. List what already runs, so you do not duplicate it: `sdo-operator memory ls --kind detector`, and the
    Go-installed checks under "Already covered" in the [detector catalog](references/catalog.md).
 3. Walk the [detector catalog](references/catalog.md) layer by layer. Write every item that applies to
-   something in your inventory, using the input the catalog names. Skip items that do not apply.
+   something in your inventory, using the input the catalog names. Every layer your inventory touches gets a
+   detector or a line under `Not monitored` saying why it cannot be observed; lack of time is not a reason.
 4. User journeys come first. Every user-facing route gets a scenario that checks the response body. Every write
    route gets a journey that writes synthetic data, reads it back and cleans up. A read-only scenario set for an
    application with write paths is incomplete.
@@ -49,8 +50,10 @@ unlocalized fault costs the whole incident. So aim for high recall and precise e
   such as "a Service selector matches no pods", says where. The responder needs both.
 - One detector per mechanism, and one finding per affected object with a stable fingerprint. Then the controller
   folds the findings of one fault into one incident instead of starting several agents on it.
-- The `health-objective` detector has a fixed spec. Put checks that need other watches (Events, traffic, metrics)
-  or another severity in separate health detectors with their own IDs, each listed in your result.
+- The `health-objective` detector has a fixed spec. Put checks that need other watches (Events, usage, logs, the
+  newer workload kinds, metrics) or another severity in separate health detectors with their own IDs, each listed
+  in your result. A typical application needs several: warning events, resource usage, and logs when the source
+  logs errors.
 - Evidence is the agent's only view of the alert. Put the observed value, the expected value, the source of the
   expectation and how it was computed in `Finding.Evidence`.
 - Cheapest input first: snapshot reads are free; traffic costs requests; usage, logs and metrics cost one read
