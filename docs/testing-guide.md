@@ -748,7 +748,8 @@ cache namespace on main: Actions caches are immutable, so sharing a save key wit
 Python checks let the first finisher discard the other job's generated builds.
 Both restore the older shared cache as a fallback. Real compiler tests use the
 `integration` tag in the same invocation (PR and nightly), including the separate
-`builder/compiletest` package so the compile smoke overlaps builder validation. Both validation jobs have five-minute limits.
+`builder/compiletest` package so the compile smoke overlaps builder validation.
+The independent foreign-policy near-miss compiler test also runs in parallel. Both validation jobs have five-minute limits.
 
 `Nightly CI` runs daily and through `workflow_dispatch`. Its Actions conclusion
 reports failures. It retains the following extended checks:
@@ -768,6 +769,8 @@ reports failures. It retains the following extended checks:
 | --- | --- | --- |
 | `TestHermeticRoutingCaptureCompilesReplayableMitigator` | Recompiles captured routing programs through the complete validator: 64.38 s on #664 | `TestRoutingCaptureWaitsForSlowHealthyProber` records/replays TCP evidence; capture count/time budgets; `TestTargetPortFixtureCandidateClearsAfterRepair`; `TestSimTrustedFastPathNeverRollsBackACorrectFix` |
 | `TestBuildWorkspaceAcceptsValidMetricsDetectors` | Repeats successful controller/prober compilation: 8.64 s on #664 | `TestBuildWorkspaceCompilesApplicationDetectors` plus `TestBuildWorkspaceRejectsInvalidMetricsDetectors`, and SDK metrics detector unit tests |
+| `TestBuildMemoryHostUsesStagedMemory` | Repeated host compilation took 69.52 s on the first #666 run | `TestMemoryHostWorkspaceStagesAcceptedMemory` checks staging and host/controller isolation; `TestRemoteMemoryPreservesInputsAndCorpusReceipts` and memory-host simulation check real in-memory RPC parity |
+| `TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder` | Repeated source-program compilation took 19.93 s on the first #666 run | `TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields`, source render/reconcile contracts, deterministic trusted fast-path simulation and validator/broker tests |
 
 `TestStopSeededLifecycleCuts` retains all 100 seed/cut cases but runs each in a
 `testing/synctest` bubble: the installer's 100 ms deletion polls use virtual time

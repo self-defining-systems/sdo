@@ -235,6 +235,7 @@ func TestHermeticForeignNetworkPolicyInvariantRepeat(t *testing.T) {
 }
 
 func TestForeignNetworkPolicyInvariantNearMisses(t *testing.T) {
+	t.Parallel()
 	source, commit := foreignSource(t)
 	learned := compileForeignInvariant(t)
 	for _, tc := range []struct {

@@ -27,3 +27,11 @@ TestHermeticRoutingCaptureCompilesReplayableMitigator
 # Valid metrics is a second successful controller/prober compilation. PRs keep
 # the application compile smoke and TestBuildWorkspaceRejectsInvalidMetricsDetectors.
 TestBuildWorkspaceAcceptsValidMetricsDetectors
+# #666 first hosted run: 69.52 s building the host repeatedly. PRs retain
+# TestMemoryHostWorkspaceStagesAcceptedMemory, TestRemoteMemoryPreservesInputsAndCorpusReceipts,
+# and TestSimMemoryHostParityAndCrash (virtual-time real RPC/program parity).
+TestBuildMemoryHostUsesStagedMemory
+# #666 first hosted run: 19.93 s repeating real program compilation. PRs retain
+# TestSimTrustedFastPathNeverRollsBackACorrectFix, TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields,
+# source render/reconcile contracts, and validator/broker acceptance tests.
+TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder

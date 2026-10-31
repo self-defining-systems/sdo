@@ -12,7 +12,8 @@ import (
 	"sdo.dev/operator/memoryhost/hostio"
 )
 
-func TestBuildMemoryHostUsesStagedMemory(t *testing.T) {
+func stagedMemoryHost(t *testing.T) *Workspace {
+	t.Helper()
 	repository := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app")
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
@@ -22,11 +23,33 @@ func TestBuildMemoryHostUsesStagedMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer workspace.Close()
+	t.Cleanup(func() { _ = workspace.Close() })
 	main, err := os.ReadFile(filepath.Join(workspace.Directory, "cmd/controller/main.go"))
 	if err != nil || bytes.Contains(main, []byte("generated")) {
 		t.Fatal("host controller imports accepted memory", string(main), err)
 	}
+	return workspace
+}
+
+// Staging and host/controller isolation are cheap PR contracts; the real
+// compiler/digest round trip remains in the nightly integration tier.
+func TestMemoryHostWorkspaceStagesAcceptedMemory(t *testing.T) {
+	workspace := stagedMemoryHost(t)
+	if err := workspace.prepareMemoryHost(); err != nil {
+		t.Fatal(err)
+	}
+	main, err := os.ReadFile(filepath.Join(workspace.Directory, "cmd/memory-host/main.go"))
+	if err != nil || !bytes.Contains(main, []byte(workspace.ModulePath+"/generated")) {
+		t.Fatalf("host does not import staged memory: %s %v", main, err)
+	}
+	source, err := os.ReadFile(filepath.Join(workspace.Directory, "detectors/incidents/missing-configmap/detector.go"))
+	if err != nil || len(source) == 0 {
+		t.Fatalf("accepted detector not staged: %v", err)
+	}
+}
+
+func TestBuildMemoryHostUsesStagedMemory(t *testing.T) {
+	workspace := stagedMemoryHost(t)
 	if err := workspace.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}

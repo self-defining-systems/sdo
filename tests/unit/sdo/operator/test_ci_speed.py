@@ -214,7 +214,7 @@ def test_go_runner_keeps_integration_coverage_in_one_package_scheduler(tmp_path:
             "TestBuildWorkspaceCompilesApplicationDetectors",
             "TestCompileReportsTheFailingStage",
             "TestSimTrustedFastPathNeverRollsBackACorrectFix",
-            "TestBuildMemoryHostUsesStagedMemory",
+            "TestMemoryHostWorkspaceStagesAcceptedMemory",
         ):
             assert not re.search(skip, name)
     else:
