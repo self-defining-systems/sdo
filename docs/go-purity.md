@@ -32,3 +32,60 @@ map iteration and input aliasing also need behavioral checks. The lifecycle
 explorer must repeat every `(state, event)` transition and compare canonical
 state/effect bytes, verify that inputs remain unchanged, and explore retry/restart
 orders independently of the real-world driver.
+
+## Codebase nondeterminism ratchet
+
+`scripts/check_go_determinism.sh` complements the stricter functional-core gate.
+It reuses its AST/import-resolution approach without loading dependency graphs.
+It scans every `.go` file under `sdo/operator/` (including all nested modules)
+and `benchmarks/`, regardless of build selection. `vendor`, `.git` and `testdata`
+fixture trees are excluded; generated markers do not exempt application code.
+Python is outside the deterministic simulation policy.
+
+Production references to wall-clock APIs (`time.Now`, `Since`, `Until`, `Sleep`,
+`After`, `AfterFunc`, `Tick`, `NewTimer`, `NewTicker`), global randomness,
+network dial/listen APIs, concrete HTTP clients/transports, process execution and
+environment reads are forbidden. Import aliases and function values are checked,
+not just calls. Dot imports are forbidden. Use event time and injected clocks,
+explicitly seeded RNGs, dialers and launchers. Seeded RNG construction is allowed;
+`crypto/rand` is conservatively forbidden regardless of purpose.
+
+The exact production edge-package list is:
+
+- `sdo/operator/runtime/internal/lifecycleio`: Kubernetes lifecycle driver.
+- `sdo/operator/runtime/prober`: protocol dial adapter.
+- `sdo/operator/runtime/prometheus`: Prometheus HTTP adapter.
+- `sdo/operator/toolchain`: Go compiler process adapter.
+- `sdo/operator/devmount`: development mount process adapter.
+
+These are exact directories, not recursive exemptions. Mixed packages containing
+existing kubelet, logs, dial, process, git and clock code are grandfathered only
+at their recorded file/symbol pairs; they are not blanket edges. Extract such
+adapters before adding new nondeterministic APIs. Edge packages do not exempt tests.
+
+Tests may use real clocks, subprocesses or sockets only when a `//go:build`
+expression *requires* `integration` (e.g. `integration && linux`, never
+`integration || linux`). All `time.Now` references are conservatively checked,
+including assertion timestamps. `net.Pipe`, HTTP recorders, in-memory gRPC,
+injected clocks and inline `testing/synctest.Test`/`Run` bubbles are allowed;
+time APIs inside those bubbles are virtual, while real I/O is still rejected.
+
+The sorted `scripts/go_determinism_allowlist.txt` inventory records one
+`file:symbol` per legacy allowance, without unstable line numbers. It is a
+file/symbol ratchet, not an occurrence counter: more calls to an already recorded
+symbol in the same file cannot be distinguished. This static API gate does not
+prove semantic determinism or inspect arbitrary third-party implementations;
+retain the functional-core gate and behavioral simulation checks.
+
+Run `bash scripts/check_go_determinism.sh` to check. After removing violations,
+run `bash scripts/check_go_determinism.sh --update`; it removes fixed entries and
+refuses new ones. `-bootstrap` on the Go command prints a proposed inventory for
+inspection only. The check compares the working list to the committed merge-base
+with `origin/main` (override with `SDO_DETERMINISM_BASE` for offline tooling), so
+regenerating or committing an expanded list cannot bless new exceptions. The
+first rollout bootstraps only when that base predates the allowlist. CI fetches
+history for this comparison. Stale entries fail too. New baseline exceptions
+require changing the policy, not regeneration.
+
+This gate runs its negative fixtures before scanning, is wired into
+`scripts/check_errors.sh`, and takes about one second with a warm compiler cache.
