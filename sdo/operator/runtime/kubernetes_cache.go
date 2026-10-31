@@ -22,6 +22,7 @@ import (
 
 	controllercore "sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
@@ -98,6 +99,10 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 			}
 			if watch.APIVersion == usage.Watch.APIVersion && watch.Kind == usage.Watch.Kind || watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
 				// Metrics detectors run on their interval; no informer backs the watch.
+				continue
+			}
+			if watch.APIVersion == logs.Watch.APIVersion && watch.Kind == logs.Watch.Kind {
+				declared["v1/Pod"] = sdk.WatchKind{APIVersion: "v1", Kind: "Pod", Namespace: config.Namespace}
 				continue
 			}
 			watch.Namespace = config.Namespace

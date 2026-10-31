@@ -13,7 +13,9 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -291,4 +293,26 @@ func (c metricsContext) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
 		return view.PodDisruptionBudgets()
 	}
 	return nil
+}
+
+func (c metricsContext) LogResult(id string) (logs.Result, bool) {
+	return logs.ResultFrom(c.DetectionContext, id)
+}
+
+// ObservedAt preserves the wrapped snapshot's deterministic clock.
+func (c metricsContext) ObservedAt() time.Time {
+	if clock, ok := c.DetectionContext.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
+// ServiceReachability preserves routing observations through input wrappers.
+func (c metricsContext) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := c.DetectionContext.(interface {
+		ServiceReachability() (servicehealth.ReachabilityWindow, bool)
+	}); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
 }

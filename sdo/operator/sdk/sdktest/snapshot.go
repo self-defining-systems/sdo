@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
@@ -30,6 +31,8 @@ type Snapshot struct {
 	CronJobList        []batchv1.CronJob              `json:"cronJobs"`
 	JobList            []batchv1.Job                  `json:"jobs"`
 	DaemonSetList      []appsv1.DaemonSet             `json:"daemonSets"`
+	// Logs holds synthetic bounded log windows by query ID.
+	Logs map[string]logs.Result `json:"-"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName        string                                  `json:"-"`
 	NamespaceName     string                                  `json:"namespace"`
@@ -370,3 +373,6 @@ func (s Snapshot) Secrets() []sdk.SecretMetadata {
 	})
 	return items
 }
+
+// LogResult implements logs.Source.
+func (s Snapshot) LogResult(id string) (logs.Result, bool) { r, ok := s.Logs[id]; return r, ok }

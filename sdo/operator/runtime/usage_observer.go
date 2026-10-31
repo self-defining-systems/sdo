@@ -15,7 +15,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
-	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/usage"
 )
 
@@ -412,8 +411,4 @@ func (c trafficContext) UsageResult() (usage.Result, bool) {
 		return usage.Result{}, false
 	}
 	return source.UsageResult()
-}
-func (c metricsContext) ObservedAt() time.Time { return sdk.ObservationTime(c.DetectionContext) }
-func (c metricsContext) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
-	return servicehealth.ReachabilityFrom(c.DetectionContext)
 }

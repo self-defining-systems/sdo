@@ -36,6 +36,9 @@ diagnostic; look it up here.
   `sdo.dev/v1alpha1 SyntheticTraffic` (health detectors over traffic workloads only), and the controller-emitted
   `sdo.dev/v1alpha1 ServiceReachability` (detectors over Service reachability dials). Watches are unique and
   non-empty. The synthetic `sdo.dev/v1alpha1 ResourceUsage` watch exposes kubelet usage windows. Enforced by: `manifest.invalid`, `detector.compile`.
+- The interval-driven `sdo.dev/v1alpha1 Logs` watch exposes bounded container-log counts and excerpts through
+  `logs.Consumer` and `logs.Require`; declarations validate RE2 patterns and query limits at registration.
+  Source errors must propagate as detector errors. Enforced by: `manifest.invalid`, `detector.compile`, `detector.test`.
 Advice, not validator-checked: watch every kind whose snapshot accessor the detector calls; the controller
 evaluates a detector when a watched kind changes.
 

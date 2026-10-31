@@ -210,15 +210,18 @@ const metricsContractTest = `package generated
 import (
     "testing"
     "sdo.dev/operator/sdk/metrics"
+    "sdo.dev/operator/sdk/logs"
 )
 
 func TestMetricsDetectorsDeclareValidQueries(t *testing.T) {
     detectors := All()
     for _, detector := range detectors {
+        if err := logs.ValidateDetector(detector); err != nil { t.Error(err) }
         if err := metrics.ValidateDetector(detector); err != nil {
             t.Errorf("detector %s: %v", detector.Spec().ID, err)
         }
     }
+    if _,err:=logs.Queries(detectors);err!=nil {t.Error(err)}
     if _, err := metrics.Queries(detectors); err != nil {
         t.Error(err)
     }

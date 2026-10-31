@@ -170,6 +170,8 @@ type Snapshot struct {
 	CronJobList        []batchv1.CronJob              `json:"cronJobs"`
 	JobList            []batchv1.Job                  `json:"jobs"`
 	DaemonSetList      []appsv1.DaemonSet             `json:"daemonSets"`
+	// Logs holds synthetic bounded log windows by query ID.
+	Logs map[string]logs.Result `json:"-"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName        string                                  `json:"-"`
 	NamespaceName     string                                  `json:"namespace"`
@@ -227,6 +229,9 @@ func (s Snapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutosc
 func (s Snapshot) Ingresses() []networkingv1.Ingress
 
 func (s Snapshot) Jobs() []batchv1.Job
+
+func (s Snapshot) LogResult(id string) (logs.Result, bool)
+    LogResult implements logs.Source.
 
 func (s Snapshot) MetricResult(id string) (metrics.Result, bool)
     MetricResult implements metrics.Source.

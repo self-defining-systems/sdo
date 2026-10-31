@@ -471,6 +471,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		defer trafficObserver.Stop()
 	}
 	snapshotProvider = withUsage(snapshotProvider, detectors, bootstrapProvider.Client, nil)
+	logsObserver, err := NewLogsObserver(bootstrapProvider.Client, detectors, LogsObserverOptions{})
+	if err != nil {
+		return err
+	}
+	snapshotProvider = LogsSnapshotProvider{Base: snapshotProvider, Observer: logsObserver}
 	snapshotProvider, metricsObserver, err := withMetrics(snapshotProvider, detectors, *metricsURL, *metricsTokenFile, false)
 	if err != nil {
 		return err
@@ -1275,6 +1280,14 @@ func evaluateOnce(
 		provider = kubernetesProvider
 		provider = withUsage(provider, detectors, kubernetesProvider.Client, nil)
 	}
+	var logClient kubernetes.Interface
+	if kp, ok := provider.(*core.KubernetesSnapshotProvider); ok {
+		logClient = kp.Client
+	}
+	logObserver, err := NewLogsObserver(logClient, detectors, LogsObserverOptions{})
+	if err != nil {
+		return err
+	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if *proberURL == "" {
@@ -1305,7 +1318,8 @@ func evaluateOnce(
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
 		provider = trafficProvider
 	}
-	provider, _, err := withMetrics(provider, detectors, *metricsURL, *metricsTokenFile, true)
+	provider = LogsSnapshotProvider{Base: provider, Observer: logObserver}
+	provider, _, err = withMetrics(provider, detectors, *metricsURL, *metricsTokenFile, true)
 	if err != nil {
 		return err
 	}
