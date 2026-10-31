@@ -62,7 +62,7 @@ func TestCatalogSnapshotExposesLogicalPlaybooksAndAcceptedCommit(t *testing.T) {
 	}
 }
 
-func TestCatalogSnapshotRejectsUnmigratedMemory(t *testing.T) {
+func TestCatalogSnapshotRejectsUnsupportedSchema(t *testing.T) {
 	root := t.TempDir()
 	for name, content := range map[string]string{
 		".sdo/schema-version":            "1\n",
@@ -84,7 +84,7 @@ func TestCatalogSnapshotRejectsUnmigratedMemory(t *testing.T) {
 			t.Fatalf("git %v: %v: %s", args, err, output)
 		}
 	}
-	if _, err := OpenCatalogReader(root).Snapshot(context.Background()); err == nil || !strings.Contains(err.Error(), "schema-version") {
+	if _, err := OpenCatalogReader(root).Snapshot(context.Background()); err == nil || !strings.Contains(err.Error(), "schema version 1; required 3") {
 		t.Fatalf("schema-version 1 repository entered worker snapshot: %v", err)
 	}
 }

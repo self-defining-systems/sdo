@@ -10,9 +10,9 @@ A receipt whose `resolution` is `external_recovery` or `cleared_without_sdo_acti
 
 ## Outcome-layout or broker-mode mismatch
 
-**Signature:** an investigator counts both imported `.sdo/outcomes/*.json` documents and the retired `.sdo/outcomes.jsonl` stream as independent incidents.
+**Signature:** a repository uses an unsupported operational-memory schema or outcome layout.
 
-Use the logical incident ID and `sdo/operator/memory` semantics; the JSON filename is `sha256(incident_id)`, not the ID itself. Import is restartable and removes the legacy stream only after every record is accepted. Trusted source evidence is broker-owned, tied to the accepted Git tree and immutable images, and independently re-observed after restart. A worker-reported `deployed` flag or image annotation alone is not evidence. For historical JSONL runs, inspect the accepted Git revision before comparing outcomes.
+Use the logical incident ID and `sdo/operator/memory` semantics; the JSON filename is `sha256(incident_id)`, not the ID itself. Current repositories require schema version 3 and per-incident JSON documents; unsupported formats fail fast and have no migration path. Trusted source evidence is broker-owned, tied to the accepted Git tree and immutable images, and independently re-observed after restart. A worker-reported `deployed` flag or image annotation alone is not evidence. For historical JSONL runs, inspect the accepted Git revision before comparing outcomes.
 
 ## Lifecycle provenance mismatch
 

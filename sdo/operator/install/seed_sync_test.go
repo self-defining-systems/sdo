@@ -9,7 +9,7 @@ import (
 )
 
 // The synced archive overlays the accepted tree onto the host checkout, so a file an accepted commit deleted
-// (for example the retired .sdo/outcomes.jsonl) would otherwise linger as an untracked change and make the
+// (for example a removed memory artifact) would otherwise linger as an untracked change and make the
 // next install-existing refuse the checkout as dirty.
 func TestRemoveStaleUntrackedDropsFilesTheAcceptedTreeDeleted(t *testing.T) {
 	repo := t.TempDir()
@@ -21,7 +21,7 @@ func TestRemoveStaleUntrackedDropsFilesTheAcceptedTreeDeleted(t *testing.T) {
 		}
 	}
 	git("init", "-q")
-	stale := filepath.Join(repo, ".sdo", "outcomes.jsonl")
+	stale := filepath.Join(repo, ".sdo", "obsolete.txt")
 	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestRemoveStaleUntrackedDropsFilesTheAcceptedTreeDeleted(t *testing.T) {
 	}
 	git("add", ".")
 	git("commit", "-qm", "seed")
-	git("rm", "-q", "--cached", ".sdo/outcomes.jsonl")
+	git("rm", "-q", "--cached", ".sdo/obsolete.txt")
 	git("commit", "-qm", "accepted commit deletes the legacy stream")
 	if err := removeStaleUntracked(context.Background(), repo); err != nil {
 		t.Fatal(err)

@@ -20,7 +20,7 @@ import (
 	"sdo.dev/operator/toolchain"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.28a096cc2fa47a01"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.02a0d13dbabcab7d"
 
 type repeatable []string
 
@@ -150,11 +150,11 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	return builder.RunConfig{
 		Build: builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
 		ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
-			repository, err := openMigrationBroker(launch)
+			projected, err := memory.AcceptedDiagnostics(ctx, root)
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
-			return resolveAcceptedDiagnostics(ctx, root, repository)
+			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
 		},
 		PublishProber: memory.PublishProber,
 	}, *supervise, nil

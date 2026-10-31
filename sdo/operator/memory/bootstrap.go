@@ -37,15 +37,20 @@ func WriteGoal(checkout, application, objective string) error {
 	return writeBootstrapFile(checkout, layout.GoalFile, body)
 }
 
-// WriteSchema stamps the current operational-memory schema. On a repository at
-// an older schema it also migrates the layout, so the Upkeep actor commits one
-// self-consistent change.
+// WriteSchema initializes the current operational-memory schema for a fresh repository.
 func WriteSchema(checkout string) error {
 	if checkout == "" {
 		return fmt.Errorf("checkout is required")
 	}
-	if _, err := layout.Migrate(checkout); err != nil {
-		return fmt.Errorf("migrate operational memory: %w", err)
+	if _, err := os.Stat(filepath.Join(checkout, layout.SchemaVersionFile)); err == nil {
+		if _, err := layout.ReadTree(checkout); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := writeBootstrapFile(checkout, layout.SchemaVersionFile, strconv.Itoa(layout.CurrentSchemaVersion)+"\n"); err != nil {
+		return err
 	}
 	module := filepath.Join(checkout, layout.DiagnosticsGoModFile)
 	if err := os.MkdirAll(filepath.Dir(module), 0o755); err != nil {

@@ -30,7 +30,7 @@ func TestClassify(t *testing.T) {
 		{".sdo/playbooks/cache-pressure/README.md", KindPlaybook, "cache-pressure", true},
 		{".sdo/playbooks/cache-pressure/scripts/fix.sh", KindPlaybookScript, "cache-pressure/fix.sh", true},
 		{".sdo/lifecycle-provenance.yaml", KindLifecycleProvenance, "", true},
-		{".sdo/outcomes.jsonl", KindLegacyOutcomes, "", true},
+		{".sdo/outcomes.jsonl", "", "", false},
 		{outcome, KindOutcome, strings.TrimSuffix(strings.TrimPrefix(outcome, ".sdo/outcomes/"), ".json"), true},
 		{"README.md", "", "", false},
 		{".sdo", "", "", false},

@@ -2,14 +2,10 @@ package memory
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
@@ -41,37 +37,6 @@ func TestOutcomeStoreIsImmutableAndLayoutIsPrivate(t *testing.T) {
 	if err != nil || len(all) != 1 {
 		t.Fatalf("list = %+v, %v", all, err)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".sdo", "outcomes.jsonl")); !os.IsNotExist(err) {
-		t.Fatalf("legacy layout persisted: %v", err)
-	}
-}
-
-func TestImportLegacyIsIdempotentAndRejectsConflicts(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, ".sdo", "outcomes.jsonl")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	legacy, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(outcome("old", "success"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(legacy, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	store := NewJSONStore(root)
-	if err := store.ImportLegacy(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ImportLegacy(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("legacy file remains: %v", err)
-	}
-	if _, err := store.Put(context.Background(), outcome("old", "failed")); err == nil {
-		t.Fatal("conflicting replacement accepted")
-	}
 }
 
 func TestOutcomeValidation(t *testing.T) {
@@ -83,76 +48,5 @@ func TestOutcomeValidation(t *testing.T) {
 	}
 	if _, err := store.Put(context.Background(), outcome(strings.Repeat("x", 512), "success")); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func writeLegacy(t *testing.T, root, line string) string {
-	t.Helper()
-	path := filepath.Join(root, ".sdo", "outcomes.jsonl")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(line+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-const legacyPhysical = `{"schema_version":1,"incident_id":"old","classification":"success","applied_playbooks":[".sdo/playbooks/fix-cache/README.md"]}`
-
-func TestImportLegacyNormalizesPlaybookReferencesToLogicalIDs(t *testing.T) {
-	root := t.TempDir()
-	writeLegacy(t, root, legacyPhysical)
-	store := NewJSONStore(root)
-	if err := store.ImportLegacy(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.Get(context.Background(), "old")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ids := got.Record.GetAppliedPlaybooks(); len(ids) != 1 || ids[0] != "fix-cache" {
-		t.Fatalf("applied playbooks = %v", ids)
-	}
-	if strings.Contains(string(got.document), ".sdo/") {
-		t.Fatalf("physical path persisted: %s", got.document)
-	}
-}
-
-func TestReadersSeeLegacyHistoryWithoutMutatingRepository(t *testing.T) {
-	root := t.TempDir()
-	path := writeLegacy(t, root, legacyPhysical)
-	store := OpenReader(root)
-	all, err := store.List(context.Background())
-	if err != nil || len(all) != 1 || all[0].Record.GetAppliedPlaybooks()[0] != "fix-cache" {
-		t.Fatalf("list = %+v, %v", all, err)
-	}
-	if _, err := store.Get(context.Background(), "old"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("reader mutated the repository: %v", err)
-	}
-}
-
-func TestLegacyStreamShowsRepeatedIncidentOnce(t *testing.T) {
-	root := t.TempDir()
-	path := writeLegacy(t, root, legacyPhysical+"\n"+legacyPhysical)
-	store := OpenReader(root)
-	all, err := store.List(context.Background())
-	if err != nil || len(all) != 1 {
-		t.Fatalf("list = %d outcomes, %v", len(all), err)
-	}
-	conflicting := strings.Replace(legacyPhysical, `"success"`, `"failed"`, 1)
-	if err := os.WriteFile(path, []byte(legacyPhysical+"\n"+conflicting+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for name, read := range map[string]func() error{
-		"list": func() error { _, err := store.List(context.Background()); return err },
-		"get":  func() error { _, err := store.Get(context.Background(), "old"); return err },
-	} {
-		if err := read(); !errors.Is(err, ErrConflict) {
-			t.Errorf("%s accepted conflicting repeats of one incident: %v", name, err)
-		}
 	}
 }

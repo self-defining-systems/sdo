@@ -263,9 +263,9 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 		{name: "protected health registration", actor: validate.Responder, phase: validate.ReflectionPhase, edit: func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/diagnostics/detectors/health/health/manifest.yaml", "interval: 30s", "interval: 20s")
 		}, want: []string{validate.RuleOwnershipDenied, validate.RuleProtectedDetector}},
-		{name: "upkeep requires migration", actor: validate.Upkeep, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
+		{name: "upkeep cannot change detectors", actor: validate.Upkeep, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", "package detector", "package detector\n// changed")
-		}, want: []string{validate.RuleUpkeepMigration}},
+		}, want: []string{validate.RuleOwnershipDenied}},
 		{name: "unknown phase", actor: validate.Responder, phase: "unknown", edit: func(t *testing.T, r string) {
 			put(t, r, "app.txt", "change\n", 0o644)
 		}, want: []string{validate.RuleUnknownPhase}},

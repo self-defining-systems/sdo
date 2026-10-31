@@ -19,7 +19,7 @@ var skillsRoot = filepath.Join("..", "..", "..", "skills")
 
 // internalRules are validator rules no agent skill teaches, each with the reason.
 var internalRules = map[string]string{
-	RuleLegacyManifest:       "Upkeep migrates schema versions; authoring agents never see a legacy manifest",
+	RuleLegacyManifest:       "only the current schema is supported; authoring agents never see a legacy manifest",
 	RuleSchemaVersion:        "the schema-version file is controller metadata, changed only by Upkeep",
 	RuleGoalMissing:          "the human goal is installed before any agent runs",
 	RuleArchitectureMissing:  "the deployer's architecture stage is not an authoring skill flow",
@@ -29,7 +29,6 @@ var internalRules = map[string]string{
 	RuleUnknownActor:         "the controller supplies the actor; an agent cannot choose it",
 	RuleUnknownPhase:         "the controller supplies the phase; an agent cannot choose it",
 	RuleUnsafePath:           "a path-traversal guard against malformed diffs, not an authoring decision",
-	RuleUpkeepMigration:      "only the Upkeep actor migrates schema versions",
 	RuleArchitectureAlone:    "architecture belongs to the deployer lifecycle stage",
 }
 

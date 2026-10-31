@@ -69,7 +69,6 @@ const (
 	RuleInitialHealthOnly     = "ownership.initial-health-only"
 	RuleInitialNeedsDetectors = "ownership.initial-needs-detectors"
 	RuleArchitectureAlone     = "ownership.architecture-alone"
-	RuleUpkeepMigration       = "ownership.upkeep-migration"
 
 	// Explicit Go health-bootstrap preparation.
 	RuleGenericHealth = "bootstrap.generic-health"
