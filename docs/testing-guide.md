@@ -515,6 +515,10 @@ builder program/prober/baseline builds. The assurance-seed test alone took
 303 seconds locally. PRs retain `TestBuildWorkspaceCompilesApplicationDetectors`,
 compiler rejection tests, validator rule tests, broker ownership/acceptance
 contracts, CLI error/JSON diagnostics and SDK program unit tests. Nightly runs
-the unfiltered suite with race instrumentation. Run `bash scripts/test_go_ci.sh` locally for the PR Go suite, or add
+the unfiltered suite with race instrumentation. Python's
+`test_recorded_reflection_stage.py` and `test_scripted_worker_contract.py` also
+run nightly: their real CLI/broker and generated-program builds took 66–117
+seconds per case locally. Ordinary Python reflection, worker transport,
+recording, provenance and Go broker contracts remain on PRs. Run `bash scripts/test_go_ci.sh` locally for the PR Go suite, or add
 `nightly` for the full race suite. Both emit `go test -json` timing evidence;
 Python CI logs include `--durations=30`. Keep full run logs outside the repo.

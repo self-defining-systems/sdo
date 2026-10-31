@@ -71,11 +71,13 @@ jobs:
       # check_errors already includes types, architecture, proto and Go mains.
       - name: Static contracts and Python unit tests
         run: |
-          bash scripts/format_code.sh --check
-          bash scripts/check_errors.sh > /tmp/checks.log 2>&1 &
+          bash ./scripts/format_code.sh --check
+          bash ./scripts/check_errors.sh > /tmp/checks.log 2>&1 &
           checks=$!
           status=0
-          bash scripts/test_python.sh --durations=30 || status=1
+          bash ./scripts/test_python.sh --durations=30 \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py || status=1
           wait "$checks" || status=1
           cat /tmp/checks.log
           exit "$status"
@@ -117,7 +119,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --all-extras
       - name: All Go modules (one shared compiler and module cache)
-        run: bash scripts/test_go_ci.sh
+        run: bash ./scripts/test_go_ci.sh
 
       - name: Save shared Go cache on main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
