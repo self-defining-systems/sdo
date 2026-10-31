@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -20,8 +19,9 @@ from benchmarks.sregym.agent_script.wire import EventStream
 
 from .converter import convert_recording
 from .invocation import Invocation
-from .model import AgentScript, ScriptTurn
+from .model import AgentScript
 from .runner import ScriptExit, execute
+from .template import TemplateContext
 
 
 def load(path: Path) -> AgentScript:
@@ -42,24 +42,6 @@ def _role(schema: dict[str, Any]) -> str:
     raise ValueError("unsupported role output schema")
 
 
-def expand(value: Any, values: dict[str, str]) -> Any:
-    """Small literal substitutions; never evaluates code or executes a template."""
-    if isinstance(value, str):
-
-        def replace(match: re.Match[str]) -> str:
-            name = match.group(1)
-            if name not in values:
-                raise ValueError(f"unavailable script placeholder: {name}")
-            return values[name]
-
-        return re.sub(r"\{\{([a-z0-9_.]+)\}\}", replace, value)
-    if isinstance(value, list):
-        return [expand(item, values) for item in value]
-    if isinstance(value, dict):
-        return {key: expand(item, values) for key, item in value.items()}
-    return value
-
-
 def codex(argv: list[str], *, stdin: str | None = None) -> int:
     if not argv or argv[0] in {"--help", "-h", "--version", "-V"}:
         print("codex-cli 0.0.0-agent-script (no model)")
@@ -76,7 +58,7 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
     if task_path.is_file():
         request = json.loads(task_path.read_text(encoding="utf-8")).get("request", {})
         incident = request.get("incident_id", request.get("incidentId", incident))
-    if incident is None and "Incident request:\n" in prompt:
+    if not request and "Incident request:\n" in prompt:
         request = json.loads(prompt.split("Incident request:\n", 1)[1])
         incident = request.get("incident_id")
     plan_path = Path(os.environ["SDO_AGENT_SCRIPT"])
@@ -88,17 +70,7 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
     # Worker jobs serialize their own turns; state must be private to each worker.
     index = json.loads(counter.read_text()) if counter.exists() else 0
     turn = plan.select(role, incident, index)
-    values = {"checkout": str(Path.cwd())}
-    if incident is not None:
-        values["incident_id"] = incident
-    for name, value in request.items():
-        if isinstance(value, (str, int, bool)):
-            snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
-            values[f"request.{snake}"] = str(value)
-    objective = values.get("request.health_objective")
-    if objective is not None:
-        values["objective_digest"] = hashlib.sha256(objective.strip().encode()).hexdigest()
-    turn = ScriptTurn.model_validate(expand(turn.model_dump(), values))
+    context = TemplateContext(request, Path.cwd(), incident=incident)
     session = invocation.resume or hashlib.sha256(f"{key}:{index}".encode()).hexdigest()[:32]
     stream = EventStream()
     stream.thread_started(session)
@@ -109,10 +81,10 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
             access = argv[argv.index(flag) + 1]
     counter.write_text(json.dumps(index + 1), encoding="utf-8")
     try:
-        execute(turn, Path.cwd(), stream, access=access)
+        result = execute(turn, Path.cwd(), stream, access=access, context=context)
     except ScriptExit as exc:
         return exc.code
-    stream.agent_message(json.dumps(turn.result, sort_keys=True))
+    stream.agent_message(json.dumps(result, sort_keys=True))
     stream.turn_completed({})
     return 0
 

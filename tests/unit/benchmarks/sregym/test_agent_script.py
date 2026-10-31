@@ -249,7 +249,10 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
     request_payload["memory_snapshot"] = {"accepted_commit": request_payload["repository_base_commit"]}
     incident = request_payload["incident_id"]
     result = json.loads((repo / "tests/fixtures/sdo/contracts/incident_result.json").read_text())
-    result["incident_id"] = incident
+    result["incident_id"] = "{{incident_id}}"
+    result["confirmed_root_causes"][0]["resources"] = ["{{request.findings.0.primary_resource}}"]
+    result["confirmed_root_causes"][0]["explained_detectors"] = ["{{request.findings.0.detector_id}}"]
+    result["timing"] = {"started_at": "{{turn.started_at}}", "completed_at": "{{now}}"}
     tools = root.parent / "tools"
     for name in ("requests", "responses"):
         (tools / name).mkdir(parents=True)
@@ -340,6 +343,13 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                 parse_json(json.dumps(request_payload), IncidentRequest()), provider="codex", model="unused"
             )
             assert completed.status == "completed"
+            assert (
+                completed.confirmed_root_causes[0].resources[0].name
+                == request_payload["findings"][0]["primary_resource"]["name"]
+            )
+            assert completed.confirmed_root_causes[0].explained_detectors == [
+                request_payload["findings"][0]["detector_id"]
+            ]
             assert unpublished.exists(), "the synthetic controller must ignore atomic request staging files"
             assert api.objects[("services", "api")]["spec"]["ports"][0]["targetPort"] == 80
             reflected = CodexSessionBackend(model="unused").resume(
@@ -404,7 +414,7 @@ def test_read_only_turn_refuses_checkout_writes(scripted_cli):
 
 
 def test_literal_placeholders_fail_closed_and_are_revalidated():
-    from benchmarks.sregym.agent_script.cli import expand
+    from benchmarks.sregym.agent_script.template import expand
 
     payload = script(steps=[{"kind": "write", "path": "{{checkout}}", "text": "incident {{incident_id}}"}])
     with pytest.raises(ValueError, match="unavailable script placeholder"):
@@ -469,3 +479,101 @@ def test_planned_crash_is_a_real_provider_failure(scripted_cli):
             access="danger-full-access",
         )
     assert not (root / "after-crash").exists()
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "now.bad",
+        "request.no_such_field",
+        "request.findings.0.no_such_field",
+        "request.findings.-1.primary_resource",
+        "request.findings.0.primary_resource.nope",
+    ],
+)
+def test_unknown_template_references_rejected_at_load(reference):
+    with pytest.raises(ValidationError, match="reference"):
+        AgentScript.model_validate(script(result={"value": "{{" + reference + "}}"}))
+
+
+def test_task_templates_preserve_types_and_clock_is_per_step(tmp_path):
+    import io
+
+    from benchmarks.sregym.agent_script.runner import execute
+    from benchmarks.sregym.agent_script.template import TemplateContext
+    from benchmarks.sregym.agent_script.wire import EventStream
+
+    resource = {"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "api"}
+    request = {
+        "incidentId": "live-incident",
+        "findings": [{"primaryResource": resource, "parameterBindings": {"target": resource}}],
+        "surfacedPlaybooks": [{"playbookId": "repair"}],
+    }
+    ticks = iter(["start", "step0", "end0", "step1", "end1", "result"])
+    context = TemplateContext(request, tmp_path, clock=lambda: next(ticks))
+    turn = AgentScript.model_validate(
+        script(
+            steps=[
+                {"kind": "write", "path": "one", "text": "{{now}}"},
+                {"kind": "write", "path": "two", "text": "{{now}}"},
+            ],
+            result={
+                "resource": "{{request.findings.0.primary_resource}}",
+                "bindings": "{{request.findings.0.parameter_bindings}}",
+                "playbook": "{{request.surfaced_playbooks.0.playbook_id}}",
+                "start": "{{steps.0.started_at}}",
+                "end": "{{steps.0.completed_at}}",
+                "now": "{{now}}",
+            },
+        )
+    ).turns[0]
+    answer = execute(turn, tmp_path, EventStream(io.StringIO()), context=context)
+    assert (tmp_path / "one").read_text() == "step0"
+    assert (tmp_path / "two").read_text() == "step1"
+    assert answer == {
+        "resource": resource,
+        "bindings": {"target": resource},
+        "playbook": "repair",
+        "start": "step0",
+        "end": "end0",
+        "now": "result",
+    }
+
+
+@pytest.mark.parametrize(
+    ("steps", "result"),
+    [
+        ([], {"time": "{{steps.0.started_at}}"}),
+        ([{"kind": "write", "path": "x", "text": "{{steps.0.completed_at}}"}], {}),
+        ([{"kind": "write", "path": "x", "text": "{{steps.1.started_at}}"}], {}),
+    ],
+)
+def test_capture_references_require_an_existing_completed_step(steps, result):
+    with pytest.raises(ValidationError, match="step reference"):
+        AgentScript.model_validate(script(steps=steps, result=result))
+
+
+def test_missing_binding_fails_before_writing(tmp_path):
+    import io
+
+    from benchmarks.sregym.agent_script.runner import execute
+    from benchmarks.sregym.agent_script.template import TemplateContext
+    from benchmarks.sregym.agent_script.wire import EventStream
+
+    turn = AgentScript.model_validate(
+        script(
+            steps=[{"kind": "write", "path": "should-not-exist", "text": "hello"}],
+            result={"resource": "{{request.findings.0.parameter_bindings.missing}}"},
+        )
+    ).turns[0]
+    with pytest.raises(ValueError, match="unavailable"):
+        execute(turn, tmp_path, EventStream(io.StringIO()), context=TemplateContext({}, tmp_path))
+    assert not (tmp_path / "should-not-exist").exists()
+
+
+def test_go_composite_literals_are_not_template_references():
+    from benchmarks.sregym.agent_script.template import expand
+
+    source = '[]sdk.ObjectRef{{APIVersion: "v1", Kind: "Pod"}}'
+    plan = AgentScript.model_validate(script(steps=[{"kind": "write", "path": "detector.go", "text": source}]))
+    assert expand(plan.turns[0].steps[0].text, {}) == source

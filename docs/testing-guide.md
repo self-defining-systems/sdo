@@ -589,11 +589,34 @@ The launcher reads the ConfigMap once at worker startup. Override its name with
 assurance executables also accept `SDO_AGENT_SCRIPT`; the legacy Directive menus
 remain for scenarios that have not yet been migrated.
 
-For IDs assigned at runtime, string values in the selected turn support literal
-`{{incident_id}}`, `{{checkout}}`, `{{objective_digest}}` and
-`{{request.field_name}}` substitutions (scalar fields of the mounted typed task,
-using snake_case). For example set the responder result's `incident_id` to
-`"{{incident_id}}"` and a judge result's `source_commit` to
-`"{{request.accepted_source_commit}}"`. Unknown placeholders fail before actions;
-expanded paths are validated again. This is literal substitution, with no code
-execution; quote inserted values appropriately inside shell commands.
+Script string values reserve `{{lowercase_reference}}` for substitutions. No
+expressions, filters or code evaluation are supported. Unknown references fail
+script validation; references missing from the selected task fail before actions.
+Go composite literals such as `{{APIVersion: "v1"}}` remain literal source.
+
+Supported references are:
+
+- `{{now}}`: worker UTC clock sampled at the start of this step (or when publishing
+  the result). `{{turn.started_at}}` retains the turn's start time.
+- `{{steps.0.started_at}}` / `{{steps.0.completed_at}}`: measured boundaries of a
+  preceding step, or any existing step in the result. Forward references fail
+  validation. Use these for action timing rather than literal timestamps.
+- `{{incident_id}}`, `{{checkout}}`, `{{objective_digest}}` and
+  `{{request.field_name}}` for scalar typed request fields, using snake_case.
+- `{{request.findings.0.primary_resource}}` and its `.api_version`, `.kind`,
+  `.namespace`, `.name` fields; finding `.detector_id`, `.rule_id`, `.status`,
+  `.severity`, `.summary`, `.evidence`, `.fingerprint`, `.playbook_ids.0`;
+  `.parameter_bindings` or `.parameter_bindings.target_resource` and its resource
+  fields. Binding names retain their original spelling.
+- `{{request.surfaced_playbooks.0.playbook_id}}` and its `.parameter_bindings`
+  (with the same binding/resource access as findings).
+
+A reference occupying the entire value preserves its JSON type, so a responder
+can use `resources: ["{{request.findings.0.primary_resource}}"]` and
+`explained_detectors: ["{{request.findings.0.detector_id}}"]` in a root cause,
+with `kind: detector-finding`, `source: "{{request.findings.0.detector_id}}"`
+and `observation: "{{request.findings.0.evidence}}"` as evidence. The normal
+native verifier still decides whether this diagnosis and mitigation earn credit.
+Structured references embedded within text are rejected. Substituted file paths
+are validated again. Quote inserted scalar values appropriately in shell commands;
+use typed `tool` argv entries to avoid shell interpretation.

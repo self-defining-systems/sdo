@@ -7,10 +7,14 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
+
+from pydantic import TypeAdapter
 
 from benchmarks.sregym.agent_script.wire import EventStream
 
-from .model import Command, Delete, Exit, ScriptTurn, Tool, Wait, Write
+from .model import Command, Delete, Exit, ScriptTurn, Step, Tool, Wait, Write
+from .template import TemplateContext, expand
 
 
 class ScriptExit(Exception):
@@ -21,13 +25,34 @@ class ScriptExit(Exception):
         super().__init__(f"scripted exit {code}")
 
 
-def execute(turn: ScriptTurn, root: Path, stream: EventStream, *, access: str = "danger-full-access") -> None:
+def execute(
+    turn: ScriptTurn,
+    root: Path,
+    stream: EventStream,
+    *,
+    access: str = "danger-full-access",
+    context: TemplateContext | None = None,
+) -> dict[str, Any]:
     root = root.resolve()
-    for step in turn.steps:
+    context = context or TemplateContext({}, root)
+    # Check task-dependent references before side effects. Captures are validated
+    # structurally at load time; their real clock values become available below.
+    probe = dict(context.values)
+    probe["now"] = context.values["turn.started_at"]
+    for index in range(len(turn.steps)):
+        for field in ("started_at", "completed_at"):
+            probe[f"steps.{index}.{field}"] = probe["now"]
+    expand(turn.model_dump(), probe)
+    adapter = TypeAdapter(Step)
+    for index, raw_step in enumerate(turn.steps):
+        started = context.clock()
+        context.values[f"steps.{index}.started_at"] = started
+        step = adapter.validate_python(context.expand(raw_step.model_dump(), now=started))
         if isinstance(step, Exit):
             raise ScriptExit(step.code)
         if isinstance(step, Wait):
             time.sleep(step.seconds)
+            context.values[f"steps.{index}.completed_at"] = context.clock()
             continue
         if isinstance(step, (Write, Delete)):
             target = root / step.path
@@ -96,3 +121,6 @@ def execute(turn: ScriptTurn, root: Path, stream: EventStream, *, access: str = 
             if attempt + 1 == action.attempts:
                 raise ValueError(f"script assertion failed: {action.command}: exit {code}, output {output[:2000]}")
             time.sleep(action.interval)
+
+        context.values[f"steps.{index}.completed_at"] = context.clock()
+    return context.expand(turn.result, now=context.clock())

@@ -5,6 +5,8 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .template import validate_references, validate_step_references
+
 Role = Literal["deployer", "architecture", "health-judge", "responder", "reflector"]
 
 
@@ -94,6 +96,11 @@ class AgentScript(Model):
 
     @model_validator(mode="after")
     def unique_selectors(self) -> Self:
+        validate_references(self.model_dump())
+        for turn in self.turns:
+            for index, step in enumerate(turn.steps):
+                validate_step_references(step.model_dump(), limit=index)
+            validate_step_references(turn.result, limit=len(turn.steps))
         keys = [(turn.role, turn.incident, turn.index) for turn in self.turns]
         if len(keys) != len(set(keys)):
             raise ValueError("duplicate turn selector")
