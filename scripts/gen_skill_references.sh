@@ -13,6 +13,8 @@ render() {
     cd "$SDK_DIR"
     if [ "$reference" = "sdk.md" ]; then
         echo '# Detector SDK reference'
+    elif [ "$reference" = "traffic.md" ]; then
+        echo '# Synthetic traffic SDK reference'
     else
         echo '# Detector replay reference'
     fi
@@ -26,12 +28,14 @@ HEADER
     local packages=(. ./servicehealth ./workloadhealth)
     if [ "$reference" = "replay.md" ]; then
         packages=(./sdktest)
+    elif [ "$reference" = "traffic.md" ]; then
+        packages=(./traffic)
     fi
     for package in "${packages[@]}"; do
         echo '```text'
         go doc -all "$package"
         echo '```'
-        if [ "$reference" != "replay.md" ]; then
+        if [ "$reference" = "sdk.md" ]; then
             echo
         fi
     done
@@ -52,7 +56,7 @@ HEADER
 
 expected="$(mktemp)"
 trap 'rm -f "$expected"' EXIT
-for reference in sdk.md replay.md; do
+for reference in sdk.md replay.md traffic.md; do
     if [ "${1:-}" = "--check" ]; then
         render "$reference" > "$expected"
         if ! diff -u "$REFERENCE_DIR/$reference" "$expected"; then

@@ -112,7 +112,8 @@ _COVERED_KINDS = ", ".join(sorted(COVERED_RESOURCE_KINDS))
 
 #: Health-judge instructions for direct synthetic traffic edits.
 TRAFFIC_AUTHORING = """Synthetic traffic (health-judge owned). For an application that serves HTTP, also author
-end-to-end synthetic traffic in the checkout under `.sdo/diagnostics/traffic/`. Ground it in the application source and
+end-to-end synthetic traffic in the checkout under `.sdo/diagnostics/traffic/` (full API: references/traffic.md of the
+`sdo-detector-authoring` skill). Ground it in the application source and
 the accepted architecture summary: open the user-facing entrypoint's route handlers (its HTTP mux or
 router) and derive paths it really serves, their methods, and parameter values its handlers accept, including the
 records the application seeds at startup. Cover the main user journeys, read and write paths both when the
@@ -153,10 +154,14 @@ when the same scenarios recover. Every scenario must therefore succeed against t
    config value naming another service and port, and the architecture summary's dependency edges), add one link to
    workloads/links.yaml: apiVersion sdo.dev/v1alpha1, kind TrafficWorkload, name `links`,
    purpose `link-probe`, and `links: [{from: <calling Service>, to: <called Service>, port: <the port the called
-   Service exposes>}]`. Both names must be source-backed Services in the deployer handoff and the port the one the
-   caller really uses, taken from the source, not guessed. Do not declare links to datastores or services the
-   application does not run itself. Optional: interval (default 1s), timeout (default 1s), failures (default 5, the
-   consecutive failed fresh TCP dials that report an edge). No scenarios and no generator code are involved; the
+   Service exposes>, protocol: <how the caller talks to it>}]`. Both names must be source-backed Services in the
+   deployer handoff and the port the one the caller really uses, taken from the source, not guessed. Include the
+   application's own data stores; do not declare links to services the application does not run itself. Choose the
+   protocol the caller uses: http (optional http.path and http.statusMin/statusMax), grpc (health check; grpc.tls
+   when required), redis, memcached, mongodb, postgres or mysql; use tcp only when none fits. These probes prove the
+   server answers its protocol, including auth-required replies, not that queries succeed. Optional: interval
+   (default 1s), timeout (default 1s), failures (default 5, the consecutive failed fresh probes that report an
+   edge). No scenarios and no generator code are involved; the
    controller installs the detector, which decides deterministically from the prober's dials and names the failing
    edge. Do not encode any particular cause of an unreachable edge.
 Omit synthetic traffic only for an application that serves no HTTP."""

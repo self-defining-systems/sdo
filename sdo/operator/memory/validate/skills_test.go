@@ -165,6 +165,7 @@ func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 	for _, rel := range []string{
 		"sdo-memory/SKILL.md", "sdo-memory/references/rules.md",
 		"sdo-detector-authoring/SKILL.md", "sdo-detector-authoring/references/sdk.md",
+		"sdo-detector-authoring/references/traffic.md",
 		"sdo-detector-authoring/references/rules.md", "sdo-detector-authoring/assets/restart-loop/detector.go",
 		"sdo-playbook-authoring/SKILL.md", "sdo-playbook-authoring/references/rules.md",
 		"sdo-playbook-authoring/assets/restart-loop/README.md",

@@ -2,17 +2,22 @@
 
 Each item says what to check, which source fact it comes from, and the input that expresses it. Inputs:
 
-- **Snapshot**: the controller's watched Kubernetes objects (Pod, Service, Deployment, ReplicaSet, ConfigMap,
-  Endpoints, EndpointSlice, NetworkPolicy, Event). Event-driven and free.
+- **Snapshot**: the controller's watched Kubernetes objects: Pod, Service, Deployment, ReplicaSet, StatefulSet,
+  DaemonSet, Job, CronJob, ConfigMap, PersistentVolumeClaim, ServiceAccount, HorizontalPodAutoscaler,
+  PodDisruptionBudget, Endpoints, EndpointSlice, NetworkPolicy, Ingress, Event, Node (cluster-scoped), and Secret
+  metadata (name, type, labels and data key names, never values). Event-driven and free.
 - **Traffic**: synthetic HTTP scenarios and workloads (`sdo.dev/operator/sdk/traffic`), a few requests per second.
-- **Links**: fresh TCP dials between Services, declared in the `links` workload.
+- **Links**: fresh protocol probes between Services, declared in the `links` workload: tcp, http, grpc (health
+  check), redis, memcached, mongodb, postgres or mysql. A probe proves the server answers its protocol, not that a
+  query succeeds.
 - **Usage**: kubelet container and volume usage (`sdo.dev/operator/sdk/usage`): CPU, memory working set and RSS
   with requests and limits, optional CPU throttling, and PVC capacity, use and inodes, over a rolling window of
   recent samples. No observability stack needed; collected only while a detector watches `usage.Watch`.
 - **Metrics**: PromQL threshold rules (`sdo.dev/operator/sdk/metrics`). Only when the task says a metrics source
   is configured, and only over series whose exporter you can find in the source.
 
-The SDK reference in `sdo-detector-authoring` has the exact types.
+The `sdo-detector-authoring` skill has the exact types: its SDK reference, and its traffic reference for
+scenarios, workloads and links.
 
 ## Already covered (do not author)
 
@@ -42,17 +47,19 @@ The SDK reference in `sdo-detector-authoring` has the exact types.
 
 - Each internal HTTP API: a scenario aimed at that Service directly, with `DependsOn` naming its downstream
   Services. When a journey fails, these show which hop broke.
-- Each service-to-service call the source declares: a link, following the link rules in the judge task.
-- Not expressible yet: request-level probes of gRPC, Thrift or other non-HTTP APIs. Links prove only that a
-  TCP connection opens.
+- Each service-to-service call the source declares, data stores included: a link with the protocol the caller
+  uses, following the link rules in the judge task. Use `tcp` only when no protocol fits.
+- Not expressible yet: request-level calls to gRPC, Thrift or other non-HTTP APIs. A grpc link proves the server
+  answers its health check, not that a method works.
 
 ## 3. Declared versus actual in Kubernetes (Snapshot, warn)
 
 - **Selector:** a Service selector matches no pods, or matches pods owned by more than one Deployment.
 - **Ports:** a Service `targetPort` (numeric or named) is not a container port of the pods it selects. An
   EndpointSlice port disagrees with its Service port.
-- **ConfigMap references:** a Deployment references a ConfigMap or key that does not exist. Use
-  `sdk.ConfigMapReferencesForDeployment`; skip references marked optional.
+- **References:** a pod template references a ConfigMap, Secret, key, PVC or ServiceAccount that does not
+  exist. Use `sdk.PodTemplateReferences` on every workload kind; skip references marked optional. Secret keys are
+  in the metadata; values never are.
 - **ConfigMap content:** a key the code reads is missing, or does not parse in the format the loader expects
   (JSON, YAML, number, duration, host:port). Check structure, never literal values.
 - **Named peers:** an env, arg or config value that names another Service and port points to a Service that
@@ -63,9 +70,14 @@ The SDK reference in `sdo-detector-authoring` has the exact types.
   application objects, above the healthy rate (normally zero). Use `RecentEventsFor`.
 - **Replica outliers:** one pod's restart count, readiness or event count differs sharply from its siblings
   under the same owner.
-- Not expressible yet from the snapshot: StatefulSet, DaemonSet, Job, CronJob, PersistentVolumeClaim,
-  HorizontalPodAutoscaler, Ingress, Secret and Node state. Use Metrics over kube-state-metrics series when a
-  source exports them; otherwise record a blind spot.
+- **Other workloads:** `workload-health` judges Deployments and pods only. For StatefulSets and DaemonSets, check
+  ready replicas against desired, and a rollout stuck on an old revision. For Jobs, check failures. For CronJobs,
+  check that the last successful run is not older than about two schedule periods.
+- **Storage:** a PVC that is not Bound, or pods pending on an unbound claim.
+- **Scaling and disruption:** an autoscaler at its maximum while its target is saturated; a disruption budget
+  with zero allowed disruptions for longer than a rollout.
+- **Ingress:** a rule whose backend Service or port does not exist.
+- **Nodes:** a node running application pods is NotReady or reports memory, disk or PID pressure.
 
 ## 4. Saturation and capacity (Usage, warn)
 
@@ -77,8 +89,6 @@ The SDK reference in `sdo-detector-authoring` has the exact types.
 - A container without a limit has no ratio: compare against its request or its siblings instead, and say so in
   the evidence.
 - Build findings with `usage.ThresholdFinding` so the observed value, limit, window and forecast are in Evidence.
-- Kubernetes objects the snapshot lacks (CronJob success, failed Jobs, autoscaler at maximum): Metrics over
-  kube-state-metrics series when a source exports them; otherwise record a blind spot.
 
 ## 5. Data stores and queues
 
@@ -86,8 +96,9 @@ The SDK reference in `sdo-detector-authoring` has the exact types.
   wiped or unreachable data end to end.
 - Store and queue health from exporters the source deploys (Metrics): replication state, cache hit ratio
   falling, connections near maximum, consumer lag growing, dead-letter growth.
-- Not expressible yet: native-protocol pings (Mongo, Redis, memcached, SQL, Kafka) and reads of a store's own
-  records outside the application.
+- Store reachability: a link with the store's protocol (mongodb, redis, memcached, postgres, mysql) from each
+  Service that uses it.
+- Not expressible yet: authenticated queries, data contents outside the application, and Kafka.
 
 ## 6. Application metrics (Metrics)
 
