@@ -832,3 +832,26 @@ between seeds; individual seeds must also terminate (use `go test -timeout`).
 Tests that need processes or real sockets must be integration-tagged. Use the
 [fidelity ledger](simulation-fidelity.md) to distinguish modeled edges from real
 cluster coverage; the memory-host and full controller driver remain follow-up work.
+
+## Go deterministic simulation policy
+
+The Go codebase (operator modules and benchmark Go) uses deterministic tests by
+default. New `_test.go` files must use injected clocks, seeded RNGs, `net.Pipe`,
+in-memory gRPC, or `testing/synctest`, rather than wall clocks, real processes or
+real sockets. The [Go nondeterminism ratchet](go-purity.md#codebase-nondeterminism-ratchet)
+describes the APIs, exact production edges, limitations and shrink-only inventory.
+
+```bash
+bash scripts/check_go_determinism.sh
+# After fixing existing violations; cannot add allowances:
+bash scripts/check_go_determinism.sh --update
+```
+
+Real compiler/CLI/kind tests belong behind `//go:build integration`, with an
+explicit `go test -tags integration` invocation in the CI job that owns them.
+The initial ratchet rollout does **not** retag existing tests or change suite
+selection: all existing real-compile, CLI, socket and kind violations remain on
+the allowlist, so no coverage silently disappears. Before retagging a legacy
+file, change the relevant CI invocation to retain its coverage. Tests newly
+marked integration must likewise run in the owning integration job; tagging is
+not a way to remove tests from CI. PR jobs retain their five-minute deadlines.

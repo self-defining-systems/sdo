@@ -59,3 +59,5 @@ Use `uv` and `uv run ...` for Python. See [docs/testing-guide.md](docs/testing-g
 ## Remote repository access
 
 Use `gh` when available for GitHub issues and pull requests.
+
+The repository tooling map is [scripts/README.md](scripts/README.md).
