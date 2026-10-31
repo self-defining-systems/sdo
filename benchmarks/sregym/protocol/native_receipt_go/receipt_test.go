@@ -17,7 +17,7 @@ func fixture() *c.NativeProductionReceipt {
 	stamp := timestamppb.New(time.Date(2026, 10, 18, 3, 0, 0, 0, time.UTC))
 	proposal, outcome, reflection := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
 	return &c.NativeProductionReceipt{
-		SchemaVersion: "sdo.production-receipt/v2", RecordedAt: stamp, BrokerMode: "native", WorkerMountMode: "proposal-only", IncidentId: "incident-1", Namespace: "demo", ControlNamespace: "demo-sdo", ControllerImage: "controller:go", ResponderImage: "responder:python", ValidatorImage: "validator:go", ControllerPodUid: "pod-uid",
+		SchemaVersion: "sdo.production-receipt/v2", RecordedAt: stamp, BrokerMode: "native", WorkerMountMode: "proposal-only", IncidentId: "incident-1", Namespace: "demo", ControlNamespace: "demo-sdo", ControllerImage: "controller:go", ResponderImage: "responder:python", ControllerPodUid: "pod-uid",
 		NativeLedger: &c.BrokerLedger{
 			IncidentId: "incident-1", Acknowledged: true, ProposalCommit: proposal, OutcomeCommit: outcome, ReflectionCommit: reflection, RequiresReflection: true, ReflectionProcessed: true,
 			ReflectionDecision: &c.ReflectionDecision{LearningDecision: "no_change"},

@@ -422,10 +422,6 @@ class TestMergeStageConfig:
         config = merge_stage_config({"env": {"fast_namespace_teardown": True}}, {})
         assert config.env.fast_namespace_teardown is True
 
-    def test_defaults_env_preserves_lifecycle_validation_cache(self) -> None:
-        config = merge_stage_config({"env": {"lifecycle_validation_cache": True}}, {})
-        assert config.env.lifecycle_validation_cache is True
-
     def test_defaults_env_preserves_source_build_cache(self) -> None:
         config = merge_stage_config({"env": {"source_build_cache": True}}, {})
         assert config.env.source_build_cache is True

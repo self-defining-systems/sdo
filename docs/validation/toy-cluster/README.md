@@ -79,7 +79,7 @@ to the correlated native ledger.
 | Health-visible control | Catalog image incident `toy-1792607197353695754`: finding `toy-endpoints`, classification `success`, oracle true. |
 
 The supplied deterministic program was accepted through the real Go controller,
-broker, captured corpus, isolated validator and memory edge. This proves the
+broker, captured corpus, bounded controller validation subprocess and memory edge. This proves the
 learning machinery and reuse, not model learning.
 
 ## Measured costs

@@ -129,3 +129,5 @@ unrelated repairs in the outcome do not suppress credit. Every planned resource
 needs a successful receipt, exact observed plan equivalence, and independent
 outcome success. Match-to-NoMatch alone earns nothing. Summaries distinguish verification and mutation. Each program earns at most one
 success per outcome; failed live fast paths roll back and block revision trust.
+
+Validator-image identity is retired from current native receipts. Controller and responder image identities remain; historical `validator_image` fields do not establish current acceptance. Broker compilation executes the current controller binary in a bounded subprocess.

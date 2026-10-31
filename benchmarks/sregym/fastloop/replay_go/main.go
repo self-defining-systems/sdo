@@ -15,14 +15,13 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
-	"sdo.dev/operator/operatorcli"
 )
 
 func main() {
+	broker.RunValidationChild()
 	if err := run(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -117,9 +116,8 @@ func run(ctx context.Context) error {
 	if err := git(ctx, accepted, "config", "user.email", "fastloop-replay@example.invalid"); err != nil {
 		return err
 	}
-	validator := func(ctx context.Context, candidate string, _ []string) error {
-		return operatorcli.RunValidate(ctx, builder.Config{ApplicationRoot: candidate, OperatorRoot: *operatorRoot})
-	}
+	validator := (broker.SubprocessValidator{OperatorRoot: *operatorRoot}).Validator()
+
 	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), validator)
 	if err != nil {
 		return err

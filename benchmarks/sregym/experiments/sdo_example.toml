@@ -12,7 +12,7 @@
 #       benchmarks/sregym/experiments/sdo_example.toml \
 #       benchmarks/sregym/experiments/codex_baseline_example.toml
 #
-# Before running, build the controller, responder, and validator images referenced
+# Before running, build the controller and responder images referenced
 # under [defaults.agent_config.sdo_codex] into your local Docker image store (or
 # replace the tags with images from your own registry), and create the
 # credentials secret they name.
@@ -52,7 +52,6 @@ model = "gpt-6-luna"
 timeout_sec = 3600
 controller_image = "sdo-controller:v0.1.0"
 responder_image = "sdo-sregym-responder:v0.1.0"
-validator_image = "sdo-detector-validator:v0.1.0"
 credentials_secret = "sdo-agent-credentials"
 # Explicit source tree deployed by SREGym's hotel adapter; required for accepted-source lookup.
 deployed_manifest_paths = ["kubernetes"]

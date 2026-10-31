@@ -36,7 +36,7 @@ const (
 
 type Config struct {
 	Namespace, ControlNamespace, Application                string
-	ControllerImage, ResponderImage, ValidatorImage         string
+	ControllerImage, ResponderImage                         string
 	RepositoryPVC, CredentialsSecret, Model                 string
 	AcceptedCommit                                          string
 	RepairPolicy, AgentProvider                             string
@@ -113,8 +113,8 @@ func (c Config) validate() error {
 			return fmt.Errorf("%s must be a Kubernetes DNS label: %q", name, value)
 		}
 	}
-	if c.ControllerImage == "" || c.ResponderImage == "" || c.ValidatorImage == "" {
-		return errors.New("controller, responder, and validator images are required")
+	if c.ControllerImage == "" || c.ResponderImage == "" {
+		return errors.New("controller and responder images are required")
 	}
 	if strings.TrimSpace(c.Model) == "" {
 		return errors.New("agent model is required")
@@ -235,7 +235,6 @@ func Resources(c Config) (Plan, error) {
 		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list", "watch"),
 		rule("policy", []string{"poddisruptionbudgets"}, "get", "list", "watch"),
 		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
-		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "list", "watch", "create", "update", "delete"),
 		rule("rbac.authorization.k8s.io", []string{"roles", "rolebindings"}, "get", "list", "watch"),
 		rule("coordination.k8s.io", []string{"leases"}, "get", "create", "update", "patch"),
 		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "delete"),
@@ -370,7 +369,7 @@ func controllerJob(c Config) *batchv1.Job {
 	if provider == "" {
 		provider = "codex"
 	}
-	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--validator-image", c.ValidatorImage, "--model", c.Model, "--responder-backend", provider)
+	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--model", c.Model, "--responder-backend", provider)
 	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
 	if c.ForceReflection {

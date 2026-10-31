@@ -90,8 +90,8 @@ func validate(r *c.NativeProductionReceipt) error {
 		return errors.New("native receipt requires Go broker and proposal-only worker mounts")
 	}
 	for _, field := range []struct{ value, name string }{
+		{r.GetControllerImage(), "controller_image"}, {r.GetResponderImage(), "responder_image"}, {r.GetControllerPodUid(), "controller_pod_uid"},
 		{r.GetIncidentId(), "incident ID"}, {r.GetNamespace(), "namespace"}, {r.GetControlNamespace(), "control namespace"},
-		{r.GetControllerImage(), "controller_image"}, {r.GetResponderImage(), "responder_image"}, {r.GetValidatorImage(), "validator_image"}, {r.GetControllerPodUid(), "controller_pod_uid"},
 	} {
 		if err := nonempty(field.value, field.name); err != nil {
 			return err

@@ -254,10 +254,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--responder-image",
         default=config.get("responder_image", "sdo-sregym-responder:v0.1.0"),
     )
-    parser.add_argument(
-        "--validator-image",
-        default=config.get("validator_image", "sdo-detector-validator:v0.1.0"),
-    )
     parser.add_argument("--repository-pvc", default=config.get("repository_pvc", "sdo-application-repository"))
     parser.add_argument("--credentials-secret", default=config.get("credentials_secret", "sdo-codex-credentials"))
     parser.add_argument("--registry-push-secret", default=config.get("registry_push_secret", "sdo-registry-push"))
@@ -623,7 +619,6 @@ def _launch_native_lifecycle(
         application=application,
         controller_image=args.controller_image,
         responder_image=args.responder_image,
-        validator_image=args.validator_image,
         repository_pvc=args.repository_pvc,
         credentials_secret=args.credentials_secret,
         model=args.model,
@@ -675,7 +670,7 @@ def _launch_native_lifecycle(
                 control_namespace,
                 kubeconfig,
                 install.responder_image,
-                {install.controller_image, install.responder_image, install.validator_image},
+                {install.controller_image, install.responder_image},
             )
         receipt = install_existing(install)
         # Bounded nonpersistent installs already wait for completion, so their Job is no longer active.
@@ -731,7 +726,6 @@ def _native_install_for_run(
         application=application,
         controller_image=args.controller_image,
         responder_image=args.responder_image,
-        validator_image=args.validator_image,
         repository_pvc=args.repository_pvc,
         credentials_secret=args.credentials_secret,
         model=args.model,
@@ -925,7 +919,6 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         application=application,
         controller_image=args.controller_image,
         responder_image=args.responder_image,
-        validator_image=args.validator_image,
         repository_pvc=args.repository_pvc,
         credentials_secret=args.credentials_secret,
         model=args.model,

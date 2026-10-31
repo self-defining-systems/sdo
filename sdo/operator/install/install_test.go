@@ -19,7 +19,7 @@ import (
 )
 
 func testConfig() Config {
-	return Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}")}
+	return Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}")}
 }
 
 func TestDevControllerUsesMountedSourceAndTimingConfig(t *testing.T) {
@@ -62,7 +62,7 @@ func TestNativeJobSelectsBrokerAndProposalMountTogether(t *testing.T) {
 	if !contains(container.Args, "--broker-mode=native") || !contains(container.Args, "--worker-mount-mode=proposal-only") {
 		t.Fatalf("native modes missing: %v", container.Args)
 	}
-	if valueAfter(container.Args, "--validator-image") != "validator:test" || valueAfter(container.Args, "--model") != "gpt-test" || valueAfter(container.Args, "--responder-backend") != "codex" {
+	if valueAfter(container.Args, "--model") != "gpt-test" || valueAfter(container.Args, "--responder-backend") != "codex" {
 		t.Fatalf("native validator/model missing: %v", container.Args)
 	}
 	if contains(container.Args, "--broker-arg=-m") || contains(container.Args, "--worker-mount-mode=linked") {

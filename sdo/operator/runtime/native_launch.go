@@ -30,9 +30,9 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if config.GetBrokerMode() != "native" || config.GetWorkerMountMode() != "proposal-only" {
 		return nil, nil, errors.New("native broker requires proposal-only worker mounts")
 	}
-	if config.GetValidatorImage() == "" || config.GetSchemaIdentity() == "" || config.GetResponderBackend() == "" || config.GetResponderModel() == "" ||
+	if config.GetResponderBackend() == "" || config.GetResponderModel() == "" ||
 		config.GetBrokerWorktreeRoot() == "" || config.GetAppRoot() == "" || config.GetRepositoryPvc() == "" || config.GetRepositoryMountPath() == "" {
-		return nil, nil, errors.New("native broker requires validator, schema, responder identity, proposal root, and repository mount")
+		return nil, nil, errors.New("native broker requires responder identity, proposal root, and repository mount")
 	}
 	if err := toolchain.ValidateImage(config.GetToolchainImage()); err != nil {
 		return nil, nil, err
@@ -51,15 +51,11 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if controlNamespace == "" {
 		controlNamespace = config.GetNamespace()
 	}
-	job := broker.KubernetesValidationJobClient{
-		ToolchainImage: config.GetToolchainImage(),
-		Client:         client, Namespace: controlNamespace, Image: config.GetValidatorImage(),
-		RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
-		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
-		HealthyBaseline: config.GetHealthyBaseline(),
-		OnPhase:         recordClosurePhase,
+	validation := broker.SubprocessValidator{}
+	if config.GetHealthyBaseline() {
+		validation.HealthyBaseline = filepath.Join(config.GetRepositoryMountPath(), ".sdo-baseline/healthy")
 	}
-	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job))
+	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), validation.Validator())
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}

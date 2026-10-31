@@ -473,3 +473,9 @@ immediately on mismatch, including binaries without a stamp. This cache has no
 prefix fallback. Go's separate compiler/module caches remain content-addressed
 and can be shared across source revisions. To check an existing binary, run
 `uv run python scripts/operator_test_binary.py --check /absolute/path/to/sdo-operator`.
+
+Broker compilation uses the running controller executable in a bounded subprocess.
+`go test ./broker -run TestValidationSubprocessLimits` checks deadline and aggregate
+process-group memory failures as infrastructure errors (exit 2). The CLI/broker
+parity suite exercises this production subprocess transport. No validator image
+or schema fingerprint is required; worker Jobs retain controller toolchain mounts.

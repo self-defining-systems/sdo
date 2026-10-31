@@ -13,7 +13,7 @@ import (
 )
 
 func TestControllerLaunchPreservesTypedConfigAndInjectsBuildPaths(t *testing.T) {
-	original := &contractsv1alpha1.ControllerConfig{Namespace: "app", ResponderAgentId: "custom-worker", DispatcherMode: "job", RepairPolicy: "commit", BrokerMode: "native", WorkerMountMode: "proposal-only", ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model"}
+	original := &contractsv1alpha1.ControllerConfig{Namespace: "app", ResponderAgentId: "custom-worker", DispatcherMode: "job", RepairPolicy: "commit", BrokerMode: "native", WorkerMountMode: "proposal-only", ResponderBackend: "codex", ResponderModel: "model"}
 	data, err := controllerConfigJSON(RunConfig{Build: Config{ApplicationRoot: "/accepted/repo"}, Controller: original}, "/shared/.sdo-prober/digest/sdo-prober", provenance{Fingerprint: "tree", ArtifactDigest: "sha256:artifact", Revision: "head"})
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestControllerLaunchPreservesTypedConfigAndInjectsBuildPaths(t *testing.T) 
 	if err := protojson.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.AppRoot != "/accepted/repo" || decoded.ProberBinary != "/shared/.sdo-prober/digest/sdo-prober" || decoded.ResponderAgentId != "custom-worker" || decoded.DiagnosticsFingerprint != "tree" || decoded.ControllerArtifactDigest != "sha256:artifact" || decoded.ControllerRevision != "head" || decoded.BrokerMode != "native" || decoded.WorkerMountMode != "proposal-only" || decoded.ValidatorImage != "validator:test" || decoded.ResponderModel != "model" {
+	if decoded.AppRoot != "/accepted/repo" || decoded.ProberBinary != "/shared/.sdo-prober/digest/sdo-prober" || decoded.ResponderAgentId != "custom-worker" || decoded.DiagnosticsFingerprint != "tree" || decoded.ControllerArtifactDigest != "sha256:artifact" || decoded.ControllerRevision != "head" || decoded.BrokerMode != "native" || decoded.WorkerMountMode != "proposal-only" || decoded.ResponderModel != "model" {
 		t.Fatalf("launch contract lost fields: %s", decoded.String())
 	}
 	if original.AppRoot != "" || original.ProberBinary != "" {

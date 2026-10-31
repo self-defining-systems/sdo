@@ -104,7 +104,7 @@ conflict is an error. The context binds task/proposal ID and contains:
   image, Go version, module graph/cache seed, deterministic seeds, deadlines
   and resource limits. Go/toolchain/modules and `bash -n` are installed.
 
-The worker image includes the same hermetic runner as the validator Job.
+The worker image includes the same hermetic runner as the bounded controller subprocess.
 `memory check` launches it in a local isolated child sandbox with read-only
 candidate/inputs, writable scratch and private caches, no egress, publishing
 credentials or cluster credentials. Provider access stays in the outer agent
@@ -354,7 +354,7 @@ Prefixes below are relative to `sdo/operator/` unless stated otherwise.
 | 10 | `sdk/program/candidates.go`, `runtime/program_candidates.go`, `memory/replay/mapping.go`: shared selection/binding and corpus replay | 90m | Wrong hint, bad binding, all-positive/empty-program controls |
 | 11 | `memory/replay/metrics.go`: precision/recall and preserved-case gates | 75m | Score dilution, relabel/deletion and per-class regressions |
 | 12 | Worker/validator Dockerfiles, `worker_registry/kubernetes*.go`, `broker/kubernetes_validator.go`: seal/mount bundle and local runner | 90m | Image preflight and actual provider confinement smoke |
-| 13 | `operatorcli/{memory,validate}.go`, `broker/{validation,validator_job}.go`: both call full Check; extend parity tests | 90m | Real no-flag command vs publish, every gate and receipt |
+| 13 | `operatorcli/{memory,validate}.go`, `broker/{validation,subprocess_validator}.go`: both call full Check; extend parity tests | 90m | Real no-flag command vs publish, every gate and receipt |
 | 14 | `runtime/registered_reflection.go`, `sdo/agents/responder/reflection*.py`, `worker.proto`: direct edits/result slot | 90m | Fake worker edits, green update, no-change/gap and #19 retry |
 | 15 | `lifecycle/coordinator.go`, `artifacts/bootstrap.go`, `sdo/agents/health_judge/worker.py`, `lifecycle.proto`: judge direct edits | 90m | Initial/refinement ownership, independent health evidence |
 | 16 | `memory/layout/migrate.go`, `operatorcli/migrate_memory.go`: versioned repository migration | 90m | Legacy replay, absent archives, idempotence and rollback |

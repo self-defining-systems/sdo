@@ -94,8 +94,10 @@ message ControllerConfig {
   // A native launch must also use proposal-only worker mounts; these fields
   // are checked together before the controller acquires its lease.
   string broker_mode = 46;
-  string validator_image = 47;
-  string schema_identity = 48;
+  reserved 47;
+  reserved "validator_image";
+  reserved 48;
+  reserved "schema_identity";
   string responder_backend = 49;
   string responder_model = 50;
   string worker_mount_mode = 51;

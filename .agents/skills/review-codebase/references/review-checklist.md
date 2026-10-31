@@ -41,7 +41,7 @@ Apply the relevant checks rather than mechanically reporting every item.
 
 ## Security
 
-- [ ] Generated code and repair proposals run in isolated validators with explicit resource/network policy.
+- [ ] Generated code and repair proposals run in bounded controller subprocesses with explicit time and memory limits.
 - [ ] Shell commands avoid injection and unresolved destructive targets.
 - [ ] Secrets are mounted or passed narrowly and never committed, logged, or copied into memory.
 - [ ] Kubernetes RBAC, pod security contexts, service-account tokens, volumes, and network access use least privilege.

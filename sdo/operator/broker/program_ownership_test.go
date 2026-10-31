@@ -38,14 +38,12 @@ func TestIgnoredSharedLibraryReachesValidatorTree(t *testing.T) {
 	if len(paths) != 2 || paths[0] != ".sdo/corpus/case-1/labels.json" || paths[1] != ".sdo/lib/ports/ports.go" {
 		t.Fatalf("library missing from proposal diff: %v", paths)
 	}
-	validator := JobValidator(validationJobFunc(func(_ context.Context, request ValidationJobRequest) (ValidationJobReceipt, error) {
-		files := git(t, root, "ls-tree", "-r", "--name-only", request.CandidateTree)
-		if !strings.Contains(files, ".sdo/lib/ports/ports.go") || !strings.Contains(files, ".sdo/corpus/case-1/labels.json") {
-			t.Fatalf("library missing from validator tree: %s", files)
-		}
-		return ValidationJobReceipt{CandidateTree: request.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true, ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true}, nil
-	}))
-	if err := validator(context.Background(), root, paths); err != nil {
+	if err := addIgnoredProgramMemory(context.Background(), root, nil); err != nil {
 		t.Fatal(err)
+	}
+	git(t, root, "add", "--all", "--", ".")
+	files := git(t, root, "ls-files")
+	if !strings.Contains(files, ".sdo/lib/ports/ports.go") || !strings.Contains(files, ".sdo/corpus/case-1/labels.json") {
+		t.Fatalf("memory missing: %s", files)
 	}
 }

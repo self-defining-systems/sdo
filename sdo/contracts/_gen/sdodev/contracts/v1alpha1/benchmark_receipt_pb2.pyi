@@ -27,7 +27,7 @@ class ResponderJobEvidence(_message.Message):
     def __init__(self, incident_id: _Optional[str] = ..., job_name: _Optional[str] = ..., job_uid: _Optional[str] = ..., succeeded: _Optional[bool] = ...) -> None: ...
 
 class NativeProductionReceipt(_message.Message):
-    __slots__ = ("schema_version", "recorded_at", "broker_mode", "worker_mount_mode", "incident_id", "namespace", "control_namespace", "controller_workload", "controller_image", "responder_image", "validator_image", "controller_pod_uid", "native_ledger", "responder_job_evidence", "proposal_commit", "outcome_commit", "reflection_commit", "reflection_usage", "reflection_skipped_reason", "outcome_classification", "resolution")
+    __slots__ = ("schema_version", "recorded_at", "broker_mode", "worker_mount_mode", "incident_id", "namespace", "control_namespace", "controller_workload", "controller_image", "responder_image", "controller_pod_uid", "native_ledger", "responder_job_evidence", "proposal_commit", "outcome_commit", "reflection_commit", "reflection_usage", "reflection_skipped_reason", "outcome_classification", "resolution")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     RECORDED_AT_FIELD_NUMBER: _ClassVar[int]
     BROKER_MODE_FIELD_NUMBER: _ClassVar[int]
@@ -38,7 +38,6 @@ class NativeProductionReceipt(_message.Message):
     CONTROLLER_WORKLOAD_FIELD_NUMBER: _ClassVar[int]
     CONTROLLER_IMAGE_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_IMAGE_FIELD_NUMBER: _ClassVar[int]
-    VALIDATOR_IMAGE_FIELD_NUMBER: _ClassVar[int]
     CONTROLLER_POD_UID_FIELD_NUMBER: _ClassVar[int]
     NATIVE_LEDGER_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_JOB_EVIDENCE_FIELD_NUMBER: _ClassVar[int]
@@ -59,7 +58,6 @@ class NativeProductionReceipt(_message.Message):
     controller_workload: str
     controller_image: str
     responder_image: str
-    validator_image: str
     controller_pod_uid: str
     native_ledger: _controller_state_pb2.BrokerLedger
     responder_job_evidence: _containers.RepeatedCompositeFieldContainer[ResponderJobEvidence]
@@ -70,7 +68,7 @@ class NativeProductionReceipt(_message.Message):
     reflection_skipped_reason: str
     outcome_classification: str
     resolution: str
-    def __init__(self, schema_version: _Optional[str] = ..., recorded_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., broker_mode: _Optional[str] = ..., worker_mount_mode: _Optional[str] = ..., incident_id: _Optional[str] = ..., namespace: _Optional[str] = ..., control_namespace: _Optional[str] = ..., controller_workload: _Optional[str] = ..., controller_image: _Optional[str] = ..., responder_image: _Optional[str] = ..., validator_image: _Optional[str] = ..., controller_pod_uid: _Optional[str] = ..., native_ledger: _Optional[_Union[_controller_state_pb2.BrokerLedger, _Mapping]] = ..., responder_job_evidence: _Optional[_Iterable[_Union[ResponderJobEvidence, _Mapping]]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., reflection_commit: _Optional[str] = ..., reflection_usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., reflection_skipped_reason: _Optional[str] = ..., outcome_classification: _Optional[str] = ..., resolution: _Optional[str] = ...) -> None: ...
+    def __init__(self, schema_version: _Optional[str] = ..., recorded_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., broker_mode: _Optional[str] = ..., worker_mount_mode: _Optional[str] = ..., incident_id: _Optional[str] = ..., namespace: _Optional[str] = ..., control_namespace: _Optional[str] = ..., controller_workload: _Optional[str] = ..., controller_image: _Optional[str] = ..., responder_image: _Optional[str] = ..., controller_pod_uid: _Optional[str] = ..., native_ledger: _Optional[_Union[_controller_state_pb2.BrokerLedger, _Mapping]] = ..., responder_job_evidence: _Optional[_Iterable[_Union[ResponderJobEvidence, _Mapping]]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., reflection_commit: _Optional[str] = ..., reflection_usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., reflection_skipped_reason: _Optional[str] = ..., outcome_classification: _Optional[str] = ..., resolution: _Optional[str] = ...) -> None: ...
 
 class ReceiptFailure(_message.Message):
     __slots__ = ("incident_id", "code", "message")

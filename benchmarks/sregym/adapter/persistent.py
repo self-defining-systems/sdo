@@ -4,7 +4,7 @@ SREGym redeploys the application for every problem: the conductor deletes the
 application namespace after each problem and recreates it before the next.
 The SDO controller is long-running, so in persistent mode the controller,
 its repository PVC, state ConfigMap, Lease, credentials, and responder and
-validator Jobs live in a dedicated per-application namespace
+validation subprocesses live in a dedicated per-application namespace
 (``<application-namespace>-sdo``) that observes the application namespace
 through namespace-scoped RBAC. Between problems the adapter pauses the
 controller through its maintenance ConfigMap; the next problem re-grants

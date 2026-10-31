@@ -50,7 +50,6 @@ def worker(args, state_path, app, control):
             application="toy",
             controller_image=args.controller_image,
             responder_image=args.worker_image,
-            validator_image=args.controller_image,
             repository_pvc="sdo-application-repository",
             credentials_secret="sdo-agent-credentials",
             model="scripted-no-model",

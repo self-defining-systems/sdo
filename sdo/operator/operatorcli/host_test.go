@@ -13,7 +13,7 @@ func TestHostLaunchBuildsNativeInstallerContract(t *testing.T) {
 	args := []string{
 		"host", "--repository", "/tmp/app", "--namespace", "demo", "--control-namespace", "demo-sdo",
 		"--application", "demo", "--health-objective", "pods stay healthy", "--operation-id", "op-1",
-		"--controller-image", "controller:test", "--responder-image", "agent:test", "--validator-image", "validator:test",
+		"--controller-image", "controller:test", "--responder-image", "agent:test",
 		"--buildkit-image", "moby/buildkit@sha256:" + strings.Repeat("a", 64), "--repository-pvc", "repository",
 		"--credentials-secret", "agent-credentials", "--registry-push-secret", "registry-push", "--registry-host", "registry.example:5000",
 		"--model", "model", "--agent-provider", "codex", "--max-attempts", "2",
@@ -66,7 +66,7 @@ func TestHostAcceptsGoalFileWithoutPythonCLI(t *testing.T) {
 	if err := os.WriteFile(goal, []byte("Keep the service healthy\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"host", "--repository", "/tmp/app", "--namespace", "demo", "--application", "demo", "--goal-file", goal, "--operation-id", "op-1", "--controller-image", "controller:test", "--responder-image", "agent:test", "--validator-image", "validator:test", "--buildkit-image", "buildkit@sha256:" + strings.Repeat("a", 64), "--repository-pvc", "repo", "--credentials-secret", "agents", "--registry-push-secret", "registry", "--model", "model"}
+	args := []string{"host", "--repository", "/tmp/app", "--namespace", "demo", "--application", "demo", "--goal-file", goal, "--operation-id", "op-1", "--controller-image", "controller:test", "--responder-image", "agent:test", "--buildkit-image", "buildkit@sha256:" + strings.Repeat("a", 64), "--repository-pvc", "repo", "--credentials-secret", "agents", "--registry-push-secret", "registry", "--model", "model"}
 	launch, err := ParseHostLaunch(args)
 	if err != nil {
 		t.Fatal(err)

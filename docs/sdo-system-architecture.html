@@ -1161,7 +1161,7 @@ html&gt;body{padding:0}&lt;/style&gt;
           phase: &#x27;Definition plane&#x27;,
           title: &#x27;Validate and commit operational memory&#x27;,
           copy: &#x27;Every candidate is compiled and tested in isolation. Only the fully validated final detector, playbooks, architecture, and lifecycle provenance enter the .sdo Git history.&#x27;,
-          boundary: &#x27;Generated code is untrusted until the tokenless, network-isolated validator passes.&#x27;,
+          boundary: &#x27;Generated code is untrusted until the tokenless, network-bounded controller validation subprocess passes.&#x27;,
           durable: &#x27;One atomic lifecycle commit containing validated operational memory.&#x27;,
           nodes: [&#x27;judge&#x27;, &#x27;validator&#x27;, &#x27;memory&#x27;],
           edges: [&#x27;judge-validator&#x27;, &#x27;validator-memory&#x27;],

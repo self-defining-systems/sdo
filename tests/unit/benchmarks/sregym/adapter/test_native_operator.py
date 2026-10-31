@@ -35,7 +35,6 @@ def _install(tmp_path: Path) -> NativeInstallConfig:
         application="hotel",
         controller_image="controller:go",
         responder_image="responder:python",
-        validator_image="validator:go",
         repository_pvc="repository",
         credentials_secret="agent-credentials",
         model="gpt-6-luna",

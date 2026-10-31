@@ -25,7 +25,7 @@ var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?((?:detectors|traffi
 
 // compile builds the detectors against the SDK in an isolated workspace, then
 // vets and tests them. It executes detector code: the broker invokes it in
-// its network-isolated Job; agent self-checks invoke the same runner locally.
+// its bounded subprocess; agent self-checks invoke the same runner locally.
 func (s *run) compile(ctx context.Context) error {
 	diagnostics, err := memory.CandidateDiagnostics(s.req.Root)
 	if errors.Is(err, memory.ErrDiagnosticsNotBootstrapped) {

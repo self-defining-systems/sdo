@@ -9,7 +9,7 @@ import (
 )
 
 // checkCandidate applies the same complete pipeline as memory check. Only the
-// compile transport differs: the broker requires its independent validator Job.
+// compile transport differs: the broker requires its bounded validation subprocess.
 func checkCandidate(ctx context.Context, root, base string, actor Actor, phase Phase, paths []string, runner Validator, publication *validate.PublicationContext, decision *contracts.ReflectionDecision, metricsDetectors bool) ([]validate.Diagnostic, error) {
 	var compile validate.CompileRunner
 	if runner != nil {

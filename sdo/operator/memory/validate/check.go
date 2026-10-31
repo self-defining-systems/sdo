@@ -81,7 +81,7 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 }
 
 // CompileCandidate is the runner body shared by local memory checks and the
-// broker's validation Job. It builds, vets, and tests using the same builder.
+// broker's validation subprocess. It builds, vets, and tests using the same builder.
 func CompileCandidate(ctx context.Context, request Request) ([]Diagnostic, error) {
 	if request.OperatorRoot == "" {
 		return nil, errors.New("memory check requires operator sources (SDO_OPERATOR_ROOT)")

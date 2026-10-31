@@ -42,7 +42,6 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	application := flags.String("application", "", "application identity")
 	controllerImage := flags.String("controller-image", "", "Go controller image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
-	validatorImage := flags.String("validator-image", "", "isolated validator image")
 	repositoryPVC := flags.String("repository-pvc", "", "shared accepted repository PVC")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	model := flags.String("model", "", "agent model")
@@ -78,7 +77,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	}
 	for name, value := range map[string]string{
 		"repository": *repository, "namespace": *namespace, "application": *application,
-		"controller image": *controllerImage, "responder image": *responderImage, "validator image": *validatorImage,
+		"controller image": *controllerImage, "responder image": *responderImage,
 		"repository PVC": *repositoryPVC, "credentials Secret": *credentialsSecret, "model": *model,
 	} {
 		if strings.TrimSpace(value) == "" {
@@ -117,7 +116,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	}
 	config := install.Config{
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
-		ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
+		ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
 		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,

@@ -40,7 +40,6 @@ class NativeInstallConfig:
     application: str
     controller_image: str
     responder_image: str
-    validator_image: str
     repository_pvc: str
     credentials_secret: str
     model: str
@@ -77,7 +76,6 @@ class NativeInstallConfig:
             "application",
             "controller_image",
             "responder_image",
-            "validator_image",
             "repository_pvc",
             "credentials_secret",
             "model",
@@ -125,8 +123,6 @@ class NativeInstallConfig:
             self.controller_image,
             "--responder-image",
             self.responder_image,
-            "--validator-image",
-            self.validator_image,
             "--repository-pvc",
             self.repository_pvc,
             "--credentials-secret",
@@ -420,7 +416,6 @@ def collect_native_receipt(
         control_namespace=config.control_namespace,
         controller_image=config.controller_image,
         responder_image=config.responder_image,
-        validator_image=config.validator_image,
         controller_pod_uid=controller_uid,
         responder_job_evidence=responder_job_evidence,
     )

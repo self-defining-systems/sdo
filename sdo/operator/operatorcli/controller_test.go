@@ -6,7 +6,7 @@ import (
 )
 
 func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
-	args := []string{"controller", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--application", "demo", "--responder-image", "responder:test", "--prober-image", "controller:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--response-timeout", "60s", "--verification-timeout", "120s", "--repair-policy", "recorded-actions", "--validator-image", "validator:test", "--model", "model", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--force-reflection", "--healthy-baseline", "--max-follow-ups", "2", "--max-response-loops", "3", "--follow-up-cooldown", "25s", "--deployed-manifest-path", "kubernetes", "--program-fast-path", "--program-trust-threshold", "4", "--drift-tokens-per-hour", "250000", "--supervise", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
+	args := []string{"controller", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--application", "demo", "--responder-image", "responder:test", "--prober-image", "controller:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--response-timeout", "60s", "--verification-timeout", "120s", "--repair-policy", "recorded-actions", "--model", "model", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--force-reflection", "--healthy-baseline", "--max-follow-ups", "2", "--max-response-loops", "3", "--follow-up-cooldown", "25s", "--deployed-manifest-path", "kubernetes", "--program-fast-path", "--program-trust-threshold", "4", "--drift-tokens-per-hour", "250000", "--supervise", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
 	config, supervise, err := ParseControllerLaunch(args)
 	if err != nil {
 		t.Fatal(err)
@@ -16,7 +16,7 @@ func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
 	if configErr != nil || configured.Controller.GetProgramMinDuration().AsDuration().Seconds() != 3 {
 		t.Fatalf("program persistence did not reach the typed launch: %v", configErr)
 	}
-	if !supervise || launch.GetBrokerMode() != "native" || launch.GetWorkerMountMode() != "proposal-only" || launch.GetValidatorImage() != "validator:test" || launch.GetResponderModel() != "model" || launch.GetAppRoot() != "/workspace/application" || launch.GetReflectionSession() != "resume" || launch.GetReflectionGuidance() != "generalize-spec" || !launch.GetForceReflection() || !launch.GetHealthyBaseline() || launch.GetMaxFollowUps() != 2 || launch.GetMaxResponseLoops() != 3 || !launch.GetProgramFastPath() || launch.GetProgramTrustThreshold() != 4 || launch.GetDriftTokensPerHour() != 250000 || launch.GetFollowUpCooldown().AsDuration().Seconds() != 25 || len(launch.GetDeployedManifestPaths()) != 1 || launch.GetDeployedManifestPaths()[0] != "kubernetes" {
+	if !supervise || launch.GetBrokerMode() != "native" || launch.GetWorkerMountMode() != "proposal-only" || launch.GetResponderModel() != "model" || launch.GetAppRoot() != "/workspace/application" || launch.GetReflectionSession() != "resume" || launch.GetReflectionGuidance() != "generalize-spec" || !launch.GetForceReflection() || !launch.GetHealthyBaseline() || launch.GetMaxFollowUps() != 2 || launch.GetMaxResponseLoops() != 3 || !launch.GetProgramFastPath() || launch.GetProgramTrustThreshold() != 4 || launch.GetDriftTokensPerHour() != 250000 || launch.GetFollowUpCooldown().AsDuration().Seconds() != 25 || len(launch.GetDeployedManifestPaths()) != 1 || launch.GetDeployedManifestPaths()[0] != "kubernetes" {
 		t.Fatalf("native mode lost at typed child boundary: %+v", launch)
 	}
 	for index, arg := range args {
@@ -31,7 +31,7 @@ func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
 }
 
 func TestBoundedNativeControllerLaunch(t *testing.T) {
-	args := []string{"controller", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:test", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only", "--duration", "30s", "--exit-after-closure", "--repair-policy", "recorded-actions"}
+	args := []string{"controller", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only", "--duration", "30s", "--exit-after-closure", "--repair-policy", "recorded-actions"}
 	config, supervise, err := ParseControllerLaunch(args)
 	if err == nil && config.Controller.GetReflectionSession() != "resume" {
 		t.Fatalf("default reflection mode: %q", config.Controller.GetReflectionSession())
@@ -51,7 +51,7 @@ func TestBoundedNativeControllerLaunch(t *testing.T) {
 }
 
 func TestControllerLaunchRequiresDedicatedToolchainImage(t *testing.T) {
-	args := []string{"controller", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:slim", "--prober-image", "traffic-only:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:slim", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
+	args := []string{"controller", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:slim", "--prober-image", "traffic-only:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
 	if _, _, err := ParseControllerLaunch(args); err == nil || !strings.Contains(err.Error(), "--toolchain-image") {
 		t.Fatalf("missing toolchain must fail before building or launching: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestControllerLaunchRequiresDedicatedToolchainImage(t *testing.T) {
 }
 
 func TestMemoryMigrationRejectsMissingCompilerBeforeCredentials(t *testing.T) {
-	config, _, err := ParseControllerLaunch([]string{"controller", "--toolchain-image", "controller:test", "--app", "/workspace/app", "--namespace", "app", "--responder-image", "responder:slim", "--repository-pvc", "repo", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:slim", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"})
+	config, _, err := ParseControllerLaunch([]string{"controller", "--toolchain-image", "controller:test", "--app", "/workspace/app", "--namespace", "app", "--responder-image", "responder:slim", "--repository-pvc", "repo", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"})
 	if err != nil {
 		t.Fatal(err)
 	}
