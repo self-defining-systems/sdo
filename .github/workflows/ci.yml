@@ -58,7 +58,7 @@ jobs:
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: ~/go/bin
-          key: proto-tools-${{ runner.os }}-${{ runner.arch }}-buf1.73.0-go1.26.8-protobuf1.36.12
+          key: proto-tools-${{ runner.os }}-${{ runner.arch }}-buf1.73.0-go1.26.8-protobuf1.36.12-protoc33.4
       - name: Install pinned proto tools
         if: steps.proto-tools.outputs.cache-hit != 'true'
         run: |
@@ -66,6 +66,8 @@ jobs:
           curl --fail --location --retry 3 https://github.com/bufbuild/buf/releases/download/v1.73.0/buf-Linux-x86_64 -o /tmp/buf
           install -m 755 /tmp/buf "$(go env GOPATH)/bin/buf"
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          curl --fail --location --retry 3 https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-linux-x86_64.zip -o /tmp/protoc.zip
+          unzip -j /tmp/protoc.zip bin/protoc -d "$(go env GOPATH)/bin"
       # check_errors already includes types, architecture, proto and Go mains.
       - name: Static contracts and Python unit tests
         run: |
