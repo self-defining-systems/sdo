@@ -38,12 +38,17 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
+      - name: Install bubblewrap for agent-script tests
+        run: |
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --ro-bind / / --dev /dev --proc /proc true
       - name: Recorded reflection and scripted worker end-to-end compilation
         if: always()
         run: |
           uv run pytest -n 2 --durations=30 \
             tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
-            tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py
+            tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py
       - name: Complete race suite including replay and chaos
         run: bash scripts/test_go_ci.sh nightly
       - name: Bounded fuzz campaigns (seed cases also run on every PR)

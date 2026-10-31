@@ -754,6 +754,9 @@ reports failures. It retains the following extended checks:
 | Go race instrumentation across all seven modules | Separate instrumented compiler graph and slower execution | All ordinary Go tests without race instrumentation |
 | `TestReplay*` recorded incidents | Extended recorded regression tier | Ordinary controller, outcome and receipt contract tests |
 | `TestChaos*`, `TestExhaustive*`, `TestExplorer*` | Extended interleaving/state-space campaigns | Ordinary deterministic controller tests |
+| `test_scripted_reflector_writes_program_that_passes_real_memory_check[ordinary-repair]` | Repeated real memory-check/program compilation: 55.00 s on PR #657 | `test_reflection_script.py` capture provenance, no-change and timeout contracts; Go validator/broker acceptance tests |
+| `test_scripted_reflector_writes_program_that_passes_real_memory_check[verified-drift-repair]` | Same compilation for the drift variant: 5.02 s after warming | `test_reflection_script_preserves_capture_provenance` and drift responder-script contracts |
+| `test_respond_consumes_real_go_tool_responses` | Launches a Go integration test from Python: 11.73 s; Go CI already runs `TestHermeticResponderProgramReuseThroughRealToolTransport` | That same Go integration plus `test_responder_script.py` generated result/tool parsing contracts |
 | Six 30-second fuzz mutation campaigns | Fixed mutation time adds minutes | Every checked-in fuzz seed executes in ordinary `go test` |
 
 The exact repeated end-to-end compile tests moved to nightly are listed in
@@ -766,9 +769,22 @@ foreign-policy repeat and direct-files/learned-program CLI/broker integration. T
 compiler rejection tests, validator rule tests, broker ownership/acceptance
 contracts, CLI error/JSON diagnostics and SDK program unit tests. Nightly runs
 the unfiltered suite with race instrumentation. Python's
-`test_recorded_reflection_stage.py` and `test_scripted_worker_contract.py` also
-run nightly: their real CLI/broker and generated-program builds took 66–117
-seconds per case locally. Ordinary Python reflection, worker transport,
+`test_recorded_reflection_stage.py` also runs nightly: its real CLI/broker
+and generated-program builds took 66–117 seconds per case locally. The removed
+`test_scripted_worker_contract.py` was superseded by
+`test_generated_worker_contract.py`; the three moved cases are listed above. Ordinary Python reflection, worker transport,
 recording, provenance and Go broker contracts remain on PRs. Run `bash scripts/test_go_ci.sh` locally for the PR Go suite, or add
 `nightly` for the full race suite. Both emit `go test -json` timing evidence;
 Python CI logs include `--durations=30`. Keep full run logs outside the repo.
+
+
+PR #657 timing investigation (Actions runs 41243599469 and 41243997276):
+checks/Python took 241 s on the PR and 314 s before merge-group cancellation.
+The Python suite took 190 s on the PR; the merge group was cancelled before
+printing its durations table. Go cache restoration grew from 14 s to 69 s
+(670 MB); uv sync took 2 s, pinned proto installation 8 s on a miss / 0 s on a
+hit, and bubblewrap installation 5–7 s. Formatting plus overlapped static checks
+and tests took 192 s / 217 s (cancelled). The generated-worker cases above
+now run in the existing nightly integration step with bubblewrap installed.
+The PR selection guard requires every ignored Python integration file to appear
+in nightly, and keeps the cheap reflection/responder contracts on PRs.

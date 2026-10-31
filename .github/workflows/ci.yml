@@ -85,7 +85,7 @@ jobs:
           status=0
           bash ./scripts/test_python.sh --durations=30 \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
-            --ignore=tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py || status=1
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py || status=1
           wait "$checks" || status=1
           cat /tmp/checks.log
           exit "$status"
