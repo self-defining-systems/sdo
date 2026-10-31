@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.memory_diagnostics import render_validation_feedback
+from sdo.agents.metrics_context import metrics_context
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, VALIDATION_TOOL_TIMEOUT_SECONDS
@@ -181,6 +182,7 @@ def _logical_learning_request(
     snapshot = closure.request.memory_snapshot
     classification = outcome.classification
     return (
+        f"{metrics_context(closure.request.metrics_source)}\n"
         "The controller verified this incident and committed its outcome. "
         "Read the supplied logical memory snapshot, source code, and installed sdo-memory, "
         "sdo-detector-authoring, sdo-playbook-authoring and sdo-operationalize skills. Edit the final files directly "

@@ -14,6 +14,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 (
     cd "$root/sdo/operator"
     go test ./broker -run '^TestAgentScriptJudgeMemoryCheckAndBroker$' -count=1
+    go test ./install -run '^TestObservabilityPlanAndApply$' -count=1
 )
 
 cd "$root"

@@ -104,6 +104,9 @@ def test_judge_authors_final_files_in_writable_session(
     task = parse_json(judge_task(tmp_path).read_text(), AgentTask())
     request = HealthJudgeRequest()
     assert task.request.Unpack(request)
+    request.metrics_source.query_url = "http://metrics"
+    request.metrics_source.annotated_pod_scraping = True
+    request.metrics_source.otlp_metrics_url = "http://metrics/api/v1/otlp/v1/metrics"
     if retry:
         request.validation_attempt = 2
         request.previous_diagnostics.add(rule="detector.manifest", path="m.yaml", line=2, message="bad", hint="fix")
@@ -132,6 +135,8 @@ def test_judge_authors_final_files_in_writable_session(
     assert any("workspace-write" in arg for arg in agent.argvs[0])
     prompt = agent.prompts[0]
     assert "sdo-operator memory check" in prompt
+    assert "prometheus.io/scrape" in prompt
+    assert "http://metrics/api/v1/otlp/v1/metrics" in prompt
     assert "SDO_ACTOR=health_judge" in prompt
     assert "SDO_PHASE=initial" in prompt
     assert "app.yaml" in prompt

@@ -62,6 +62,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after the first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
+	disableObservability := flags.Bool("no-observability-stack", false, "Do not install the SDO Prometheus stack")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
@@ -121,11 +122,11 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
 		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
-		DriftTokensPerHour: *driftTokensPerHour,
-		LateFindings:       *lateFindings,
-		HealthyBaseline:    *healthyBaseline,
-		MetricsURL:         *metricsURL,
-		TimeoutSeconds:     int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
+		DriftTokensPerHour:   *driftTokensPerHour,
+		LateFindings:         *lateFindings,
+		HealthyBaseline:      *healthyBaseline,
+		DisableObservability: *disableObservability, MetricsURL: *metricsURL,
+		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,
 		RegistrationConfigMap: *registrationConfigMap,

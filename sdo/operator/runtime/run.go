@@ -251,6 +251,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required in job mode)")
 	proberImage := flags.String("prober-image", "", "image that runs the prober binary; defaults to --responder-image")
 	proberURL := flags.String("prober-url", "", "use an already running prober at this URL instead of starting one")
+	metricsPublishURL := flags.String("metrics-publish-url", "", "SDO Prometheus publishing base URL")
 	metricsURL := flags.String(
 		"metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle",
 	)
@@ -569,7 +570,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
-	controller, err = NewController(ControllerConfig{
+	controller, err = NewController(ControllerConfig{MetricsSource: configuredMetricsSource(*metricsURL, *metricsPublishURL),
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
@@ -1430,4 +1431,13 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 		}
 	}
 	return nil
+}
+
+func configuredMetricsSource(queryURL, publishURL string) *contractsv1alpha1.MetricsSource {
+	source := &contractsv1alpha1.MetricsSource{QueryUrl: queryURL}
+	if publishURL != "" {
+		source.AnnotatedPodScraping = true
+		source.OtlpMetricsUrl = strings.TrimRight(publishURL, "/") + "/api/v1/otlp/v1/metrics"
+	}
+	return source
 }

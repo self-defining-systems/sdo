@@ -131,8 +131,10 @@ type ControllerConfig struct {
 	// evaluation cycle. Unset runs no metrics source: detectors that need one
 	// report an error instead of health. The token file holds an optional bearer
 	// token and requires metrics_url.
-	MetricsUrl       string `protobuf:"bytes,70,opt,name=metrics_url,json=metricsUrl,proto3" json:"metrics_url,omitempty"`
-	MetricsTokenFile string `protobuf:"bytes,71,opt,name=metrics_token_file,json=metricsTokenFile,proto3" json:"metrics_token_file,omitempty"`
+	MetricsUrl string `protobuf:"bytes,70,opt,name=metrics_url,json=metricsUrl,proto3" json:"metrics_url,omitempty"`
+	// SDO-owned publishing base, independent of an overridden query URL.
+	MetricsPublishUrl string `protobuf:"bytes,73,opt,name=metrics_publish_url,json=metricsPublishUrl,proto3" json:"metrics_publish_url,omitempty"`
+	MetricsTokenFile  string `protobuf:"bytes,71,opt,name=metrics_token_file,json=metricsTokenFile,proto3" json:"metrics_token_file,omitempty"`
 	// Trusted controller image supplying Go to compiler-free workers and validators.
 	// Required at startup, independently of the optional traffic prober image.
 	ToolchainImage string `protobuf:"bytes,72,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
@@ -613,6 +615,13 @@ func (x *ControllerConfig) GetMetricsUrl() string {
 	return ""
 }
 
+func (x *ControllerConfig) GetMetricsPublishUrl() string {
+	if x != nil {
+		return x.MetricsPublishUrl
+	}
+	return ""
+}
+
 func (x *ControllerConfig) GetMetricsTokenFile() string {
 	if x != nil {
 		return x.MetricsTokenFile
@@ -631,7 +640,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xb0\x1d\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xe0\x1d\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -704,7 +713,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x17program_trust_threshold\x18A \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x15programTrustThreshold\x12U\n" +
 	"\x14program_min_duration\x18E \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x12programMinDuration\x12\x1f\n" +
 	"\vmetrics_url\x18F \x01(\tR\n" +
-	"metricsUrl\x12,\n" +
+	"metricsUrl\x12.\n" +
+	"\x13metrics_publish_url\x18I \x01(\tR\x11metricsPublishUrl\x12,\n" +
 	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFile\x12'\n" +
 	"\x0ftoolchain_image\x18H \x01(\tR\x0etoolchainImageB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +

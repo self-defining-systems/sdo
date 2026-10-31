@@ -29,6 +29,7 @@ type Dispatcher interface {
 }
 
 type ControllerConfig struct {
+	MetricsSource       *contracts.MetricsSource
 	Application         string
 	Namespace           string
 	SourceCommit        string
@@ -883,7 +884,7 @@ func (c *Controller) detectorOrigins() map[string]string {
 func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) IncidentRequest {
 	incidentID := fmt.Sprintf("%s-%d", c.config.Application, now.UnixNano())
 	driftEvents := driftEventsForFindings(c.driftEvents, findings)
-	return IncidentRequest{
+	return IncidentRequest{MetricsSource: c.config.MetricsSource,
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
 		DriftEvents:     driftEvents,

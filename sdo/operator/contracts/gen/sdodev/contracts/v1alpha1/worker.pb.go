@@ -556,6 +556,7 @@ func (x *AgentResult) GetErrorSummary() string {
 // outcome. Its worker may propose file edits, but cannot publish them.
 type ReflectionRequest struct {
 	state          protoimpl.MessageState     `protogen:"open.v1"`
+	MetricsSource  *MetricsSource             `protobuf:"bytes,13,opt,name=metrics_source,json=metricsSource,proto3" json:"metrics_source,omitempty"`
 	Closure        *IncidentClosure           `protobuf:"bytes,1,opt,name=closure,proto3" json:"closure,omitempty"`
 	ProposalCommit string                     `protobuf:"bytes,4,opt,name=proposal_commit,json=proposalCommit,proto3" json:"proposal_commit,omitempty"`
 	OutcomeCommit  string                     `protobuf:"bytes,5,opt,name=outcome_commit,json=outcomeCommit,proto3" json:"outcome_commit,omitempty"`
@@ -603,6 +604,13 @@ func (x *ReflectionRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ReflectionRequest.ProtoReflect.Descriptor instead.
 func (*ReflectionRequest) Descriptor() ([]byte, []int) {
 	return file_sdodev_contracts_v1alpha1_worker_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ReflectionRequest) GetMetricsSource() *MetricsSource {
+	if x != nil {
+		return x.MetricsSource
+	}
+	return nil
 }
 
 func (x *ReflectionRequest) GetClosure() *IncidentClosure {
@@ -879,8 +887,9 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\bresponse\x18\x04 \x01(\v2\x14.google.protobuf.AnyR\bresponse\x12\x1f\n" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
-	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\xaf\a\n" +
-	"\x11ReflectionRequest\x12D\n" +
+	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\x80\b\n" +
+	"\x11ReflectionRequest\x12O\n" +
+	"\x0emetrics_source\x18\r \x01(\v2(.sdodev.contracts.v1alpha1.MetricsSourceR\rmetricsSource\x12D\n" +
 	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +
 	"\x0eoutcome_commit\x18\x05 \x01(\tR\routcomeCommit\x12]\n" +
@@ -936,11 +945,12 @@ var file_sdodev_contracts_v1alpha1_worker_proto_goTypes = []any{
 	(*SdkGap)(nil),                      // 9: sdodev.contracts.v1alpha1.SdkGap
 	(*anypb.Any)(nil),                   // 10: google.protobuf.Any
 	(*timestamppb.Timestamp)(nil),       // 11: google.protobuf.Timestamp
-	(*IncidentClosure)(nil),             // 12: sdodev.contracts.v1alpha1.IncidentClosure
-	(*OperationalMemorySnapshot)(nil),   // 13: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	(*OutcomeRecord)(nil),               // 14: sdodev.contracts.v1alpha1.OutcomeRecord
-	(*MemoryDiagnostic)(nil),            // 15: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*OperationalArtifactProposal)(nil), // 16: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*MetricsSource)(nil),               // 12: sdodev.contracts.v1alpha1.MetricsSource
+	(*IncidentClosure)(nil),             // 13: sdodev.contracts.v1alpha1.IncidentClosure
+	(*OperationalMemorySnapshot)(nil),   // 14: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
+	(*OutcomeRecord)(nil),               // 15: sdodev.contracts.v1alpha1.OutcomeRecord
+	(*MemoryDiagnostic)(nil),            // 16: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*OperationalArtifactProposal)(nil), // 17: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	1,  // 0: sdodev.contracts.v1alpha1.AgentRegistration.capabilities:type_name -> sdodev.contracts.v1alpha1.AgentCapability
@@ -950,18 +960,19 @@ var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	4,  // 4: sdodev.contracts.v1alpha1.AgentTask.workspace:type_name -> sdodev.contracts.v1alpha1.ProposalWorkspace
 	11, // 5: sdodev.contracts.v1alpha1.AgentTask.deadline:type_name -> google.protobuf.Timestamp
 	10, // 6: sdodev.contracts.v1alpha1.AgentResult.response:type_name -> google.protobuf.Any
-	12, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
-	13, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	14, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	14, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	15, // 11: sdodev.contracts.v1alpha1.ReflectionRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	16, // 12: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	9,  // 13: sdodev.contracts.v1alpha1.ReflectionResult.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	12, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
+	13, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
+	14, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
+	15, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	15, // 11: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	16, // 12: sdodev.contracts.v1alpha1.ReflectionRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	17, // 13: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	9,  // 14: sdodev.contracts.v1alpha1.ReflectionResult.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_worker_proto_init() }

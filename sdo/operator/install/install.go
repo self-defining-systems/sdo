@@ -315,6 +315,9 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 			return fmt.Errorf("create ServiceAccount %s: %w", sa.Name, err)
 		}
 	}
+	if err := i.ensureObservability(ctx, p); err != nil {
+		return err
+	}
 	if err := i.ensureClusterGrants(ctx, p); err != nil {
 		return err
 	}

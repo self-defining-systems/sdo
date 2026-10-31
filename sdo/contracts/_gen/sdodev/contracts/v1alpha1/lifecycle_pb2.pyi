@@ -67,7 +67,8 @@ class ImageBuild(_message.Message):
     def __init__(self, image: _Optional[str] = ..., context_path: _Optional[str] = ..., dockerfile_path: _Optional[str] = ...) -> None: ...
 
 class HealthJudgeRequest(_message.Message):
-    __slots__ = ("application", "namespace", "health_objective", "accepted_source_commit", "correction_feedback", "attempt", "architecture_summary_markdown", "source_resources", "validation_attempt", "previous_diagnostics")
+    __slots__ = ("metrics_source", "application", "namespace", "health_objective", "accepted_source_commit", "correction_feedback", "attempt", "architecture_summary_markdown", "source_resources", "validation_attempt", "previous_diagnostics")
+    METRICS_SOURCE_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     HEALTH_OBJECTIVE_FIELD_NUMBER: _ClassVar[int]
@@ -78,6 +79,7 @@ class HealthJudgeRequest(_message.Message):
     SOURCE_RESOURCES_FIELD_NUMBER: _ClassVar[int]
     VALIDATION_ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     PREVIOUS_DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+    metrics_source: _messages_pb2.MetricsSource
     application: str
     namespace: str
     health_objective: str
@@ -88,7 +90,7 @@ class HealthJudgeRequest(_message.Message):
     source_resources: _containers.RepeatedCompositeFieldContainer[SourceResource]
     validation_attempt: int
     previous_diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
-    def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., accepted_source_commit: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., architecture_summary_markdown: _Optional[str] = ..., source_resources: _Optional[_Iterable[_Union[SourceResource, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
+    def __init__(self, metrics_source: _Optional[_Union[_messages_pb2.MetricsSource, _Mapping]] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., accepted_source_commit: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., architecture_summary_markdown: _Optional[str] = ..., source_resources: _Optional[_Iterable[_Union[SourceResource, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
 
 class SourceResource(_message.Message):
     __slots__ = ("kind", "name", "namespace", "source", "dependencies")

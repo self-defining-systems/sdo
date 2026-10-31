@@ -103,7 +103,8 @@ class AgentResult(_message.Message):
     def __init__(self, schema_version: _Optional[str] = ..., task_id: _Optional[str] = ..., status: _Optional[str] = ..., response: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., proposal_id: _Optional[str] = ..., error_summary: _Optional[str] = ...) -> None: ...
 
 class ReflectionRequest(_message.Message):
-    __slots__ = ("closure", "proposal_commit", "outcome_commit", "memory_snapshot", "session_mode", "guidance", "outcome", "prior_outcomes", "validation_attempt", "previous_diagnostics")
+    __slots__ = ("metrics_source", "closure", "proposal_commit", "outcome_commit", "memory_snapshot", "session_mode", "guidance", "outcome", "prior_outcomes", "validation_attempt", "previous_diagnostics")
+    METRICS_SOURCE_FIELD_NUMBER: _ClassVar[int]
     CLOSURE_FIELD_NUMBER: _ClassVar[int]
     PROPOSAL_COMMIT_FIELD_NUMBER: _ClassVar[int]
     OUTCOME_COMMIT_FIELD_NUMBER: _ClassVar[int]
@@ -114,6 +115,7 @@ class ReflectionRequest(_message.Message):
     PRIOR_OUTCOMES_FIELD_NUMBER: _ClassVar[int]
     VALIDATION_ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     PREVIOUS_DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+    metrics_source: _messages_pb2.MetricsSource
     closure: _messages_pb2.IncidentClosure
     proposal_commit: str
     outcome_commit: str
@@ -124,7 +126,7 @@ class ReflectionRequest(_message.Message):
     prior_outcomes: _containers.RepeatedCompositeFieldContainer[_outcome_pb2.OutcomeRecord]
     validation_attempt: int
     previous_diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
-    def __init__(self, closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
+    def __init__(self, metrics_source: _Optional[_Union[_messages_pb2.MetricsSource, _Mapping]] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
 
 class ReflectionResult(_message.Message):
     __slots__ = ("summary", "learning_decision", "no_change_reason", "proposed_artifact_ids", "artifact_proposal", "sdk_gaps")

@@ -26,7 +26,8 @@ type HealthProbe interface {
 }
 
 type AcceptedDetectorProbe struct {
-	Limit time.Duration
+	MetricsURL string
+	Limit      time.Duration
 }
 
 func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string) (string, error) {
@@ -49,7 +50,7 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	if err != nil {
 		return "", fmt.Errorf("compile accepted health detectors: %w", err)
 	}
-	args := []string{"--evaluate-once", "--namespace", namespace, "--app-root", acceptedRoot}
+	args := probe.evaluationArgs(acceptedRoot, namespace)
 	if workspace.HasProber {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -189,4 +190,12 @@ func (v IndependentHealthVerifier) Validate() error {
 		return fmt.Errorf("operator runtime module: %w", err)
 	}
 	return nil
+}
+
+func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string) []string {
+	args := []string{"--evaluate-once", "--namespace", namespace, "--app-root", acceptedRoot}
+	if probe.MetricsURL != "" {
+		args = append(args, "--metrics-url", probe.MetricsURL)
+	}
+	return args
 }

@@ -152,8 +152,11 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.HealthyBaseline {
 		args = append(args, "--healthy-baseline")
 	}
-	if cfg.MetricsURL != "" {
-		args = append(args, "--metrics-url", cfg.MetricsURL)
+	if cfg.DisableObservability {
+		args = append(args, "--no-observability-stack")
+	}
+	if cfg.EffectiveMetricsURL() != "" {
+		args = append(args, "--metrics-url", cfg.EffectiveMetricsURL())
 	}
 	if cfg.ControllerDurationSeconds > 0 {
 		args = append(args, "--controller-duration", fmt.Sprintf("%ds", cfg.ControllerDurationSeconds))

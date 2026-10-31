@@ -101,14 +101,15 @@ when the same scenarios recover. Every scenario must therefore succeed against t
    edge. Do not encode any particular cause of an unreachable edge.
 Omit synthetic traffic only for an application that serves no HTTP."""
 
-#: Metrics are an optional detector input, present only when an operator configured a metrics source.
-METRICS_AUTHORING = """Metrics (optional input). Only when the controller has a metrics source (a Prometheus URL the
-operator configured) may a health detector also judge application metrics: import "sdo.dev/operator/sdk/metrics",
+#: The task explicitly describes available metrics and publishing capabilities.
+METRICS_AUTHORING = """Metrics (optional input). When the supplied task.metrics_source.query_url is non-empty,
+a health detector may judge application metrics: import "sdo.dev/operator/sdk/metrics",
 declare `Watches: []sdk.WatchKind{metrics.Watch}`, and build it with `metrics.NewThresholdDetector(spec, rules)`.
 Each rule names a query ID and a PromQL expression you ground in metrics the application actually exports, a
 comparison, a threshold, and the label names that identify its Deployment, Pod or Service. The controller runs
 each query once per cycle; the detector never does I/O, and an unreachable source is a detector error, not a
-clear. Never assume a metrics source: without one, omit these detectors. The shared check installs the generic
+clear. Use task.metrics_source for availability and publishing instructions; without a query URL, omit these
+detectors. The shared check installs the generic
 alerts detector itself when a source is configured."""
 
 
