@@ -8,9 +8,8 @@ on:
 permissions:
   contents: read
 
-env:
-  GOFLAGS: "-trimpath"
-
+# Full integration parity checks use production compiler source locations.
+# PR-only trimpath caching can reuse vet output from an older isolated path.
 jobs:
   extended:
     name: race, replay, chaos and fuzz
