@@ -290,7 +290,7 @@ func (e *evaluation) networkDeny(s core.Service, pod core.Pod) {
 			anyAllow = anyAllow || direction == netv1.PolicyTypeIngress && len(p.Spec.Ingress) > 0 || direction == netv1.PolicyTypeEgress && len(p.Spec.Egress) > 0
 		}
 		if isolated && !anyAllow {
-			e.emit("network-deny-all-"+strings.ToLower(string(direction)), ref("Pod", "v1", &pod), "all selecting NetworkPolicies have no "+string(direction)+" allow rules; pod backs Service "+s.Name, false)
+			e.emit("network-isolated-"+strings.ToLower(string(direction)), ref("Pod", "v1", &pod), "all selecting NetworkPolicies have no "+string(direction)+" allow rules; pod backs Service "+s.Name, false)
 		}
 	}
 }

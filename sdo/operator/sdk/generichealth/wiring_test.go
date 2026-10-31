@@ -69,7 +69,7 @@ func wiringCases() []wiringCase {
 		{"ingress port", "ingress-service-port", func(s *sdktest.Snapshot) {
 			s.IngressList = []netv1.Ingress{{ObjectMeta: s.DeploymentList[0].ObjectMeta, Spec: netv1.IngressSpec{DefaultBackend: &netv1.IngressBackend{Service: &netv1.IngressServiceBackend{Name: "route-x", Port: netv1.ServiceBackendPort{Number: 999}}}}}}
 		}, func(s *sdktest.Snapshot) { s.IngressList[0].Spec.DefaultBackend.Service.Port.Number = 80 }},
-		{"deny ingress", "network-deny-all-ingress", func(s *sdktest.Snapshot) {
+		{"deny ingress", "network-isolated-ingress", func(s *sdktest.Snapshot) {
 			s.NetworkPolicyList = []netv1.NetworkPolicy{{ObjectMeta: s.DeploymentList[0].ObjectMeta, Spec: netv1.NetworkPolicySpec{PolicyTypes: []netv1.PolicyType{netv1.PolicyTypeIngress}}}}
 		}, func(s *sdktest.Snapshot) {
 			p := *s.NetworkPolicyList[0].DeepCopy()
@@ -77,7 +77,7 @@ func wiringCases() []wiringCase {
 			p.Spec.Ingress = []netv1.NetworkPolicyIngressRule{{}}
 			s.NetworkPolicyList = append(s.NetworkPolicyList, p)
 		}},
-		{"deny egress", "network-deny-all-egress", func(s *sdktest.Snapshot) {
+		{"deny egress", "network-isolated-egress", func(s *sdktest.Snapshot) {
 			s.NetworkPolicyList = []netv1.NetworkPolicy{{ObjectMeta: s.DeploymentList[0].ObjectMeta, Spec: netv1.NetworkPolicySpec{PolicyTypes: []netv1.PolicyType{netv1.PolicyTypeEgress}}}}
 		}, func(s *sdktest.Snapshot) { s.NetworkPolicyList[0].Spec.Egress = []netv1.NetworkPolicyEgressRule{{}} }},
 	}
