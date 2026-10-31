@@ -96,3 +96,24 @@ func TestCompileSkipsRepositoriesWithoutDetectors(t *testing.T) {
 		t.Fatalf("unbootstrapped repository rejected: %v", got)
 	}
 }
+
+// Reporting does not need to rebuild Kubernetes/controller dependencies for
+// each Go failure stage. Real compiler fixtures still run in nightly CI.
+func TestCompileStageDiagnostics(t *testing.T) {
+	for _, stage := range []struct{ name, rule string }{
+		{"build", RuleDetectorCompile}, {"vet", RuleDetectorVet}, {"test", RuleDetectorTest},
+	} {
+		t.Run(stage.name, func(t *testing.T) {
+			bin := t.TempDir()
+			script := "#!/bin/sh\nif [ \"$1\" = \"" + stage.name + "\" ]; then\n printf '%s\\n' 'detectors/incidents/missing-configmap/detector.go:17: synthetic stage failure'\n exit 1\nfi\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin)
+			got := diagnose(t, compileRequest(compileTree(t)))
+			if len(got) != 1 || got[0].Rule != stage.rule || got[0].Path != detectorSource || got[0].Line != 17 {
+				t.Fatalf("%s diagnostic: %+v", stage.name, got)
+			}
+		})
+	}
+}

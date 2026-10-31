@@ -743,7 +743,16 @@ one job. `check_errors.sh` already includes types, architecture and proto;
 CI does not repeat those as separate jobs. Go modules use one temporary workspace and one `go test` invocation to schedule
 packages across all modules, one compiler/module cache and normal package parallelism, with `-trimpath` allowing compiler entries
 to survive generated-workspace path changes. No prepared-cache job or shard
-matrix sits on the critical path. Both validation jobs have five-minute limits.
+matrix sits on the critical path. The Go job saves to its own `ci-tests-v2`
+cache namespace on main: Actions caches are immutable, so sharing a save key with
+Python checks let the first finisher discard the other job's generated builds.
+The Go job also restores current-toolchain caches across dependency-hash changes;
+Go validates compiler entries by content. Hash discovery can change after
+submodule initialization, so an exact-hash-only fallback repeatedly restored
+an obsolete cache on #664. Real compiler tests use the
+`integration` tag in the same invocation (PR and nightly), including the separate
+`builder/compiletest` package so the compile smoke overlaps builder validation.
+The independent foreign-policy near-miss compiler test also runs in parallel. Both validation jobs have five-minute limits.
 
 `Nightly CI` runs daily and through `workflow_dispatch`. Its Actions conclusion
 reports failures. It retains the following extended checks:
@@ -758,6 +767,18 @@ reports failures. It retains the following extended checks:
 | `test_scripted_reflector_writes_program_that_passes_real_memory_check[verified-drift-repair]` | Same compilation for the drift variant: 5.02 s after warming | `test_reflection_script_preserves_capture_provenance` and drift responder-script contracts |
 | `test_respond_consumes_real_go_tool_responses` | Launches a Go integration test from Python: 11.73 s; Go CI already runs `TestHermeticResponderProgramReuseThroughRealToolTransport` | That same Go integration plus `test_responder_script.py` generated result/tool parsing contracts |
 | Six 30-second fuzz mutation campaigns | Fixed mutation time adds minutes | Every checked-in fuzz seed executes in ordinary `go test` |
+
+| Additional nightly test | Reason | PR replacement |
+| --- | --- | --- |
+| `TestHermeticRoutingCaptureCompilesReplayableMitigator` | Recompiles captured routing programs through the complete validator: 64.38 s on #664 | `TestRoutingCaptureWaitsForSlowHealthyProber` records/replays TCP evidence; capture count/time budgets; `TestTargetPortFixtureCandidateClearsAfterRepair`; `TestSimTrustedFastPathNeverRollsBackACorrectFix` |
+| `TestBuildWorkspaceAcceptsValidMetricsDetectors` | Repeats successful controller/prober compilation: 8.64 s on #664 | `TestBuildWorkspaceCompilesApplicationDetectors` plus `TestBuildWorkspaceRejectsInvalidMetricsDetectors`, and SDK metrics detector unit tests |
+| `TestBuildMemoryHostUsesStagedMemory` | Repeated host compilation took 69.52 s on the first #666 run | `TestMemoryHostWorkspaceStagesAcceptedMemory` checks staging and host/controller isolation; `TestRemoteMemoryPreservesInputsAndCorpusReceipts` and memory-host simulation check real in-memory RPC parity |
+| `TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder` | Repeated source-program compilation took 19.93 s on the first #666 run | `TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields`, source render/reconcile contracts, deterministic trusted fast-path simulation and validator/broker tests |
+| `TestCompileReportsTheFailingStage` | Vet/test fixtures each rebuilt the generated controller for ~51 s on the second #666 run before failing at the intended stage | `TestCompileStageDiagnostics` drives build/vet/test failures through the existing Go process seam and checks rule, path and line; real builder syntax, registration and invalid-metrics rejection still run |
+
+`TestStopSeededLifecycleCuts` retains all 100 seed/cut cases but runs each in a
+`testing/synctest` bubble: the installer's 100 ms deletion polls use virtual time
+instead of accumulating 19 seconds of host time. No simulation seeds were cut.
 
 The exact repeated end-to-end compile tests moved to nightly are listed in
 `scripts/ci_nightly_go_tests.txt`. They cover assurance seed compilation,

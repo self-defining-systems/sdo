@@ -118,9 +118,12 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
+            ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
         with:
@@ -138,7 +141,7 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   required-pr-ci:
     name: Required PR CI
