@@ -491,8 +491,8 @@ PRs and merge groups run three jobs: `checks and Python`, `Go tests`, and
 `Required PR CI`. The aggregate requires both validation jobs to succeed;
 skips and cancellation fail closed. Static checks overlap Python tests within
 one job. `check_errors.sh` already includes types, architecture and proto;
-CI does not repeat those as separate jobs. Go modules use one compiler/module
-cache and normal package parallelism, with `-trimpath` allowing compiler entries
+CI does not repeat those as separate jobs. Go modules use one temporary workspace and one `go test` invocation to schedule
+packages across all modules, one compiler/module cache and normal package parallelism, with `-trimpath` allowing compiler entries
 to survive generated-workspace path changes. No prepared-cache job or shard
 matrix sits on the critical path. Both validation jobs have five-minute limits.
 

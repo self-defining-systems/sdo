@@ -16,8 +16,24 @@ else
     done < "$root/scripts/ci_nightly_go_tests.txt"
     args+=(-skip "$extended")
 fi
-for module in sdo/operator/sdk sdo/operator/core sdo/operator/contracts \
-    sdo/operator/runtime sdo/operator \
-    benchmarks/sregym/protocol/native_receipt_go benchmarks/sregym/protocol/submission_go; do
-    (cd "$root/$module" && go test "${args[@]}" ./...)
-done
+# A temporary workspace lets one go test invocation schedule packages across
+# module boundaries, rather than waiting for each module's slowest test.
+workspace="$(mktemp -d)"
+trap 'rm -rf "$workspace"' EXIT
+export GOWORK="$workspace/go.work"
+modules=(sdo/operator/sdk sdo/operator/core sdo/operator/contracts
+    sdo/operator/runtime sdo/operator
+    benchmarks/sregym/protocol/native_receipt_go benchmarks/sregym/protocol/submission_go)
+patterns=()
+{
+    echo 'go 1.26.8'
+    echo 'use ('
+    for module in "${modules[@]}"; do
+        echo "    $root/$module"
+        patterns+=("./$module/...")
+    done
+    echo ')'
+} > "$GOWORK"
+cd "$root"
+# Nested builder tests must select their own isolated modules.
+go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}"
