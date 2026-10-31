@@ -48,6 +48,17 @@ def test_snapshot_document_uses_the_sdktest_shape_and_drops_other_kinds_and_mana
     assert document["namespace"] == "app"
     assert set(document) == {
         "namespace",
+        "statefulSets",
+        "daemonSets",
+        "jobs",
+        "cronJobs",
+        "persistentVolumeClaims",
+        "serviceAccounts",
+        "horizontalPodAutoscalers",
+        "podDisruptionBudgets",
+        "ingresses",
+        "nodes",
+        "secrets",
         "configMaps",
         "services",
         "pods",
@@ -60,7 +71,7 @@ def test_snapshot_document_uses_the_sdktest_shape_and_drops_other_kinds_and_mana
     }
     assert [item["metadata"]["name"] for item in document["services"]] == ["frontend"]  # type: ignore[index]
     assert "managedFields" not in document["services"][0]["metadata"]  # type: ignore[index]
-    assert "Secret" not in json.dumps(document)
+    assert document["secrets"][0]["name"] == "must-not-be-copied"
 
 
 def test_snapshot_document_is_json_serialisable_with_empty_lists_for_absent_kinds() -> None:
@@ -81,7 +92,10 @@ class _Kubectl:
         self.calls.append((args, namespace, input_text))
         if self.fail:
             return subprocess.CompletedProcess(args, 1, "", "boom")
-        return subprocess.CompletedProcess(args, 0, json.dumps(_listing()), "")
+        listing = _listing()
+        if args[:2] == ["get", "nodes"]:
+            listing = {"items": [{"apiVersion": "v1", "kind": "Node", "metadata": {"name": "worker"}}]}
+        return subprocess.CompletedProcess(args, 0, json.dumps(listing), "")
 
 
 def test_capture_takes_the_requested_number_of_spaced_snapshots_of_the_application_namespace() -> None:
@@ -92,9 +106,10 @@ def test_capture_takes_the_requested_number_of_spaced_snapshots_of_the_applicati
 
     assert sorted(snapshots) == ["healthy-0.json", "healthy-1.json", "healthy-2.json"]
     assert sleeps == [2.0, 2.0]
-    assert all(namespace == "app" for _, namespace, _ in kubectl.calls)
+    assert [namespace for _, namespace, _ in kubectl.calls] == ["app", None] * 3
     assert all(call[0][0] == "get" and "-o" in call[0] for call in kubectl.calls)
     assert snapshots["healthy-0.json"]["namespace"] == "app"
+    assert snapshots["healthy-0.json"]["nodes"][0]["metadata"]["name"] == "worker"
 
 
 def test_capture_fails_loudly_when_kubectl_fails() -> None:
@@ -188,3 +203,16 @@ def test_ops_wrapper_does_not_inject_when_capture_fails() -> None:
     with pytest.raises(HealthyBaselineCaptureError):
         ops.inject_after_resume("ctl", "g1", lambda: events.append("inject"))
     assert "inject" not in events
+
+
+def test_secret_baseline_contains_only_metadata_and_sorted_keys() -> None:
+    secret = _item(
+        "Secret", "credentials", data={"z": "c2VjcmV0", "a": "c2VjcmV0"}, stringData={"b": "secret"}, type="Opaque"
+    )
+    secret["metadata"]["annotations"] = {"last-applied": "secret"}
+    document = snapshot_document("app", {"items": [secret]})
+    assert document["secrets"] == [
+        {"name": "credentials", "namespace": "app", "type": "Opaque", "labels": {}, "dataKeys": ["a", "b", "z"]}
+    ]
+    assert "c2VjcmV0" not in json.dumps(document)
+    assert "last-applied" not in json.dumps(document)

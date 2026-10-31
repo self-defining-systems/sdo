@@ -19,6 +19,10 @@ func FormatObjectRef(ref ObjectRef) (string, error)
     retained explicitly, so parsing the formatted value preserves every
     ObjectRef field.
 
+func IsSupportedWatchKind(watch WatchKind) bool
+    IsSupportedWatchKind reports whether a watch names a snapshot or controller
+    input. Kubernetes kinds require their exact served API version.
+
 func ObservationTime(ctx DetectionContext) time.Time
     ObservationTime returns the time a detection context describes. Detectors
     that judge an age ("Pending longer than a minute", "restarted within five
@@ -61,6 +65,18 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
     reference wins.
 
 type DetectionContext interface {
+	StatefulSets() []appsv1.StatefulSet
+	DaemonSets() []appsv1.DaemonSet
+	Jobs() []batchv1.Job
+	CronJobs() []batchv1.CronJob
+	PersistentVolumeClaims() []corev1.PersistentVolumeClaim
+	ServiceAccounts() []corev1.ServiceAccount
+	HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	Ingresses() []networkingv1.Ingress
+	Nodes() []corev1.Node
+	Secrets() []SecretMetadata
+
 	Namespace() string
 	ConfigMaps() []corev1.ConfigMap
 	Services() []corev1.Service
@@ -231,6 +247,41 @@ type PersistencePolicy struct {
 	// while a persistent fault still fires once both conditions hold.
 	MinDuration time.Duration
 }
+
+type PodTemplateReference struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	Key      string `json:"key,omitempty"`
+	Optional bool   `json:"optional"`
+}
+    PodTemplateReference identifies a consumed ConfigMap, Secret, PVC or
+    ServiceAccount. Key is empty for whole-object references. Required wins for
+    duplicate references.
+
+func PodTemplateReferences(template corev1.PodTemplateSpec) []PodTemplateReference
+    PodTemplateReferences returns sorted distinct dependencies of any workload
+    pod template, including projected volumes, init/ephemeral containers and
+    image pulls. Pass CronJob.Spec.JobTemplate.Spec.Template for CronJobs.
+    An empty service account name means Kubernetes' default ServiceAccount.
+
+type SecretMetadata struct {
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	Type      corev1.SecretType `json:"type"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	DataKeys  []string          `json:"dataKeys"`
+}
+    SecretMetadata exposes only identity, type, labels and data key names.
+    It cannot hold Secret values.
+
+func SecretMetadataFrom(secret corev1.Secret) SecretMetadata
+    SecretMetadataFrom discards values, annotations and all other Secret fields.
+
+func (s SecretMetadata) DeepCopy() *SecretMetadata
+    DeepCopy returns an independent copy of the metadata.
+
+func (s SecretMetadata) ObjectMeta() metav1.ObjectMeta
+    ObjectMeta returns the safe Kubernetes identity for read-view projections.
 
 type WatchKind struct {
 	APIVersion string

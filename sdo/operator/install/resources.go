@@ -217,9 +217,6 @@ func Resources(c Config) (Plan, error) {
 	control := c.controlNamespace()
 	split := control != c.Namespace
 	plan := Plan{PVC: &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: c.RepositoryPVC, Namespace: control}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}}}}}
-	roleName := "sdo-usage-" + control
-	plan.ClusterRoles = []*rbacv1.ClusterRole{{ObjectMeta: metav1.ObjectMeta{Name: roleName}, Rules: []rbacv1.PolicyRule{rule("", []string{"nodes"}, "get", "list"), rule("", []string{"nodes/proxy"}, "get")}}}
-	plan.ClusterBindings = []*rbacv1.ClusterRoleBinding{{ObjectMeta: metav1.ObjectMeta{Name: roleName}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: roleName}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-controller", Namespace: control}, {Kind: "ServiceAccount", Name: "sdo-operate", Namespace: control}}}}
 	if split {
 		plan.Namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", ControllerNamespaceLabel: "true", ApplicationNamespaceLabel: c.Namespace}}}
 	}
@@ -228,28 +225,33 @@ func Resources(c Config) (Plan, error) {
 	}
 	controllerRules := []rbacv1.PolicyRule{
 		// Kubernetes RBAC cannot distinguish metadata-only reads from full objects.
-		// The baseline negotiates metadata strictly and never needs Secret get.
+		// Informer transforms discard values; the baseline negotiates metadata strictly.
 		rule("", []string{"secrets"}, "list", "watch"),
 		rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "delete"),
-		rule("", []string{"services", "pods", "endpoints", "events"}, "get", "list", "watch"),
+		rule("", []string{"services", "pods", "endpoints", "events", "persistentvolumeclaims", "serviceaccounts"}, "get", "list", "watch"),
 		rule("", []string{"pods/log"}, "get"),
 		rule("", []string{"pods", "services"}, "create", "delete"),
 		rule("apps", []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, "get", "list", "watch"),
-		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list"),
-		rule("policy", []string{"poddisruptionbudgets"}, "get", "list"),
+		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list", "watch"),
+		rule("policy", []string{"poddisruptionbudgets"}, "get", "list", "watch"),
 		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
 		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "list", "watch", "create", "update", "delete"),
 		rule("rbac.authorization.k8s.io", []string{"roles", "rolebindings"}, "get", "list", "watch"),
 		rule("coordination.k8s.io", []string{"leases"}, "get", "create", "update", "patch"),
 		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "delete"),
+		rule("batch", []string{"cronjobs"}, "get", "list", "watch"),
+		rule("networking.k8s.io", []string{"ingresses"}, "get", "list", "watch"),
 	}
+	clusterName := "sdo-cluster-" + control
+	plan.ClusterRoles = []*rbacv1.ClusterRole{{ObjectMeta: metav1.ObjectMeta{Name: clusterName}, Rules: []rbacv1.PolicyRule{rule("", []string{"nodes"}, "get", "list", "watch"), rule("", []string{"nodes/proxy"}, "get")}}}
+	plan.ClusterBindings = []*rbacv1.ClusterRoleBinding{{ObjectMeta: metav1.ObjectMeta{Name: clusterName}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: clusterName}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-controller", Namespace: control}, {Kind: "ServiceAccount", Name: "sdo-operate", Namespace: control}}}}
 	responderRules := []rbacv1.PolicyRule{
 		rule("", []string{"configmaps", "services", "pods", "persistentvolumeclaims"}, "get", "list", "watch", "create", "update", "patch", "delete"),
 		rule("", []string{"pods/log", "events", "endpoints"}, "get", "list", "watch"),
 		rule("", []string{"pods/exec", "pods/attach", "pods/portforward"}, "get", "create"),
 		rule("apps", []string{"deployments", "statefulsets", "daemonsets", "replicasets"}, "get", "list", "watch", "create", "update", "patch", "delete"),
-		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list"),
-		rule("policy", []string{"poddisruptionbudgets"}, "get", "list"),
+		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list", "watch"),
+		rule("policy", []string{"poddisruptionbudgets"}, "get", "list", "watch"),
 		rule("networking.k8s.io", []string{"networkpolicies", "ingresses"}, "get", "list", "watch", "create", "update", "patch", "delete"),
 		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
 		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "update", "patch", "delete"),
@@ -258,7 +260,7 @@ func Resources(c Config) (Plan, error) {
 		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerRules), role(control, "sdo-operate", controllerRules), role(control, "sdo-responder", []rbacv1.PolicyRule{rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "patch")}))
 		readRules := []rbacv1.PolicyRule{}
 		for _, r := range controllerRules {
-			if r.APIGroups[0] == "coordination.k8s.io" || r.APIGroups[0] == "batch" {
+			if r.APIGroups[0] == "coordination.k8s.io" {
 				continue
 			}
 			if len(r.Resources) == 1 && r.Resources[0] == "secrets" {

@@ -25,6 +25,7 @@ func (e *ObjectRefError) Error() string {
 }
 
 var objectKinds = map[string]string{
+	"node": "Node", "nodes": "Node", "pdb": "PodDisruptionBudget", "poddisruptionbudget": "PodDisruptionBudget", "poddisruptionbudgets": "PodDisruptionBudget",
 	"cm": "ConfigMap", "configmap": "ConfigMap", "configmaps": "ConfigMap",
 	"cj": "CronJob", "cronjob": "CronJob", "cronjobs": "CronJob",
 	"ds": "DaemonSet", "daemonset": "DaemonSet", "daemonsets": "DaemonSet",
@@ -57,11 +58,13 @@ func objectAPIVersion(kind string) string {
 		return "batch/v1"
 	case "Ingress", "NetworkPolicy":
 		return "networking.k8s.io/v1"
+	case "PodDisruptionBudget":
+		return "policy/v1"
 	case "HorizontalPodAutoscaler":
 		return "autoscaling/v2"
 	case "Role", "RoleBinding":
 		return "rbac.authorization.k8s.io/v1"
-	case "ConfigMap", "Secret", "Pod", "Service", "ServiceAccount", "PersistentVolumeClaim":
+	case "Node", "ConfigMap", "Secret", "Pod", "Service", "ServiceAccount", "PersistentVolumeClaim":
 		return "v1"
 	}
 	return ""

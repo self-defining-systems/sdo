@@ -18,7 +18,7 @@ func TestUsageProxyGrants(t *testing.T) {
 		nodes, proxy := false, false
 		for _, rule := range plan.ClusterRoles[0].Rules {
 			for _, verb := range rule.Verbs {
-				if verb != "get" && verb != "list" {
+				if verb != "get" && verb != "list" && verb != "watch" {
 					t.Fatalf("unexpected permission %s", verb)
 				}
 				for _, res := range rule.Resources {

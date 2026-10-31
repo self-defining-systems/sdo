@@ -309,6 +309,71 @@ func sweepRefs(view program.ReadView, kind program.Kind) []sdk.ObjectRef {
 		for i := range items {
 			objects = append(objects, &items[i])
 		}
+	case "StatefulSet":
+		apiVersion = "apps/v1"
+		items := view.StatefulSets()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "DaemonSet":
+		apiVersion = "apps/v1"
+		items := view.DaemonSets()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "Job":
+		apiVersion = "batch/v1"
+		items := view.Jobs()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "CronJob":
+		apiVersion = "batch/v1"
+		items := view.CronJobs()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "PersistentVolumeClaim":
+		apiVersion = "v1"
+		items := view.PersistentVolumeClaims()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "ServiceAccount":
+		apiVersion = "v1"
+		items := view.ServiceAccounts()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "HorizontalPodAutoscaler":
+		apiVersion = "autoscaling/v2"
+		items := view.HorizontalPodAutoscalers()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "PodDisruptionBudget":
+		apiVersion = "policy/v1"
+		items := view.PodDisruptionBudgets()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "Ingress":
+		apiVersion = "networking.k8s.io/v1"
+		items := view.Ingresses()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "Node":
+		apiVersion = "v1"
+		items := view.Nodes()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "Secret":
+		for _, item := range view.Secrets() {
+			metadata := item.ObjectMeta()
+			objects = append(objects, &metadata)
+		}
 	case "NetworkPolicy":
 		apiVersion = "networking.k8s.io/v1"
 		items := view.NetworkPolicies()
@@ -320,7 +385,7 @@ func sweepRefs(view program.ReadView, kind program.Kind) []sdk.ObjectRef {
 	}
 	refs := make([]sdk.ObjectRef, 0, len(objects))
 	for _, object := range objects {
-		if object.GetNamespace() == view.Namespace() && object.GetName() != "" {
+		if (object.GetNamespace() == view.Namespace() || kind == "Node" && object.GetNamespace() == "") && object.GetName() != "" {
 			refs = append(refs, sdk.ObjectRefFrom(string(kind), apiVersion, object))
 		}
 	}

@@ -9,6 +9,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -140,39 +141,91 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		return DetectionSnapshot{}, fmt.Errorf("list events: %w", err)
 	}
 
+	daemonSets, err := p.Client.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list daemonSets: %w", err)
+	}
+	jobs, err := p.Client.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list jobs: %w", err)
+	}
+	cronJobs, err := p.Client.BatchV1().CronJobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list cronJobs: %w", err)
+	}
+	persistentVolumeClaims, err := p.Client.CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list persistentVolumeClaims: %w", err)
+	}
+	serviceAccounts, err := p.Client.CoreV1().ServiceAccounts(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list serviceAccounts: %w", err)
+	}
+	ingresses, err := p.Client.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list ingresses: %w", err)
+	}
+	nodes, err := p.Client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list nodes: %w", err)
+	}
+	secrets, err := p.Client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list secret metadata: %w", err)
+	}
+	var secretMetadata []sdk.SecretMetadata
+	for _, s := range secrets.Items {
+		secretMetadata = append(secretMetadata, sdk.SecretMetadataFrom(s))
+	}
 	return DetectionSnapshot{
-		NamespaceName:     namespace,
-		ConfigMapList:     configMaps.Items,
-		ServiceList:       services.Items,
-		PodList:           pods.Items,
-		DeploymentList:    deployments.Items,
-		ReplicaSetList:    replicaSets.Items,
-		StatefulSetList:   statefulSets.Items,
-		HPAList:           hpas.Items,
-		PDBList:           pdbs.Items,
-		EndpointList:      endpoints.Items,
-		EndpointSliceList: endpointSlices.Items,
-		NetworkPolicyList: networkPolicies.Items,
-		EventList:         events.Items,
+		NamespaceName:      namespace,
+		SecretList:         secretMetadata,
+		NodeList:           nodes.Items,
+		IngressList:        ingresses.Items,
+		ServiceAccountList: serviceAccounts.Items,
+		PVCList:            persistentVolumeClaims.Items,
+		CronJobList:        cronJobs.Items,
+		JobList:            jobs.Items,
+		DaemonSetList:      daemonSets.Items,
+		ConfigMapList:      configMaps.Items,
+		ServiceList:        services.Items,
+		PodList:            pods.Items,
+		DeploymentList:     deployments.Items,
+		ReplicaSetList:     replicaSets.Items,
+		StatefulSetList:    statefulSets.Items,
+		HPAList:            hpas.Items,
+		PDBList:            pdbs.Items,
+		EndpointList:       endpoints.Items,
+		EndpointSliceList:  endpointSlices.Items,
+		NetworkPolicyList:  networkPolicies.Items,
+		EventList:          events.Items,
 		// Stamped after every list so no listed object postdates it.
 		ObservedAtTime: time.Now().UTC(),
 	}, nil
 }
 
 type DetectionSnapshot struct {
-	NamespaceName     string
-	ConfigMapList     []corev1.ConfigMap
-	ServiceList       []corev1.Service
-	PodList           []corev1.Pod
-	DeploymentList    []appsv1.Deployment
-	ReplicaSetList    []appsv1.ReplicaSet
-	StatefulSetList   []appsv1.StatefulSet
-	HPAList           []autoscalingv2.HorizontalPodAutoscaler
-	PDBList           []policyv1.PodDisruptionBudget
-	EndpointList      []corev1.Endpoints
-	EndpointSliceList []discoveryv1.EndpointSlice
-	NetworkPolicyList []networkingv1.NetworkPolicy
-	EventList         []corev1.Event
+	SecretList         []sdk.SecretMetadata
+	NodeList           []corev1.Node
+	IngressList        []networkingv1.Ingress
+	ServiceAccountList []corev1.ServiceAccount
+	PVCList            []corev1.PersistentVolumeClaim
+	CronJobList        []batchv1.CronJob
+	JobList            []batchv1.Job
+	DaemonSetList      []appsv1.DaemonSet
+	NamespaceName      string
+	ConfigMapList      []corev1.ConfigMap
+	ServiceList        []corev1.Service
+	PodList            []corev1.Pod
+	DeploymentList     []appsv1.Deployment
+	ReplicaSetList     []appsv1.ReplicaSet
+	StatefulSetList    []appsv1.StatefulSet
+	HPAList            []autoscalingv2.HorizontalPodAutoscaler
+	PDBList            []policyv1.PodDisruptionBudget
+	EndpointList       []corev1.Endpoints
+	EndpointSliceList  []discoveryv1.EndpointSlice
+	NetworkPolicyList  []networkingv1.NetworkPolicy
+	EventList          []corev1.Event
 	// TrafficWindows holds synthetic-traffic observations by workload name.
 	TrafficWindows map[string]traffic.Window
 	// ObservedAtTime is when the snapshot was read. Detectors read it through
@@ -402,4 +455,92 @@ func kubernetesConfig() (*rest.Config, error) {
 		return nil, fmt.Errorf("load kubernetes config: %w", err)
 	}
 	return config, nil
+}
+
+func (s DetectionSnapshot) DaemonSets() []appsv1.DaemonSet {
+	items := make([]appsv1.DaemonSet, len(s.DaemonSetList))
+	for i := range s.DaemonSetList {
+		items[i] = *s.DaemonSetList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s DetectionSnapshot) Jobs() []batchv1.Job {
+	items := make([]batchv1.Job, len(s.JobList))
+	for i := range s.JobList {
+		items[i] = *s.JobList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s DetectionSnapshot) CronJobs() []batchv1.CronJob {
+	items := make([]batchv1.CronJob, len(s.CronJobList))
+	for i := range s.CronJobList {
+		items[i] = *s.CronJobList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s DetectionSnapshot) PersistentVolumeClaims() []corev1.PersistentVolumeClaim {
+	items := make([]corev1.PersistentVolumeClaim, len(s.PVCList))
+	for i := range s.PVCList {
+		items[i] = *s.PVCList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s DetectionSnapshot) ServiceAccounts() []corev1.ServiceAccount {
+	items := make([]corev1.ServiceAccount, len(s.ServiceAccountList))
+	for i := range s.ServiceAccountList {
+		items[i] = *s.ServiceAccountList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s DetectionSnapshot) Ingresses() []networkingv1.Ingress {
+	items := make([]networkingv1.Ingress, len(s.IngressList))
+	for i := range s.IngressList {
+		items[i] = *s.IngressList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s DetectionSnapshot) Nodes() []corev1.Node {
+	items := make([]corev1.Node, len(s.NodeList))
+	for i := range s.NodeList {
+		items[i] = *s.NodeList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
+}
+
+func (s DetectionSnapshot) Secrets() []sdk.SecretMetadata {
+	items := make([]sdk.SecretMetadata, len(s.SecretList))
+	for i := range s.SecretList {
+		items[i] = *s.SecretList[i].DeepCopy()
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
+	})
+	return items
 }

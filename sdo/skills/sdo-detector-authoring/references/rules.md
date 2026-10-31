@@ -27,7 +27,11 @@ diagnostic; look it up here.
 ## Watchable kinds
 
 - A watch is `{apiVersion, kind}` and must name a kind the snapshot exposes: `apps/v1 Deployment`,
-  `apps/v1 ReplicaSet`, `discovery.k8s.io/v1 EndpointSlice`, `networking.k8s.io/v1 NetworkPolicy`,
+  `apps/v1 ReplicaSet`, `apps/v1 StatefulSet`, `apps/v1 DaemonSet`, `batch/v1 Job`, `batch/v1 CronJob`,
+  `v1 PersistentVolumeClaim`, `v1 ServiceAccount`, `autoscaling/v2 HorizontalPodAutoscaler`,
+  `policy/v1 PodDisruptionBudget`, `networking.k8s.io/v1 Ingress`, `v1 Node` (cluster-scoped, read-only),
+  `v1 Secret` (name, namespace, type, labels and sorted data keys only),
+  `discovery.k8s.io/v1 EndpointSlice`, `networking.k8s.io/v1 NetworkPolicy`,
   `v1 ConfigMap`, `v1 Endpoints`, `v1 Event`, `v1 Pod`, `v1 Service`, and the synthetic-traffic watch
   `sdo.dev/v1alpha1 SyntheticTraffic` (health detectors over traffic workloads only), and the controller-emitted
   `sdo.dev/v1alpha1 ServiceReachability` (detectors over Service reachability dials). Watches are unique and

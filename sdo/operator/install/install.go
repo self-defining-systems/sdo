@@ -315,7 +315,7 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 			return fmt.Errorf("create ServiceAccount %s: %w", sa.Name, err)
 		}
 	}
-	if err := i.ensureUsageGrants(ctx, p); err != nil {
+	if err := i.ensureClusterGrants(ctx, p); err != nil {
 		return err
 	}
 	for _, role := range append(p.ControlRoles, p.AppRoles...) {
@@ -510,7 +510,7 @@ func jobFailed(job *batchv1.Job) bool {
 	return false
 }
 
-func (i Installer) ensureUsageGrants(ctx context.Context, p Plan) error {
+func (i Installer) ensureClusterGrants(ctx context.Context, p Plan) error {
 	for _, want := range p.ClusterRoles {
 		api := i.Client.RbacV1().ClusterRoles()
 		prior, err := api.Get(ctx, want.Name, metav1.GetOptions{})
@@ -522,7 +522,7 @@ func (i Installer) ensureUsageGrants(ctx context.Context, p Plan) error {
 			_, err = api.Update(ctx, updated, metav1.UpdateOptions{})
 		}
 		if err != nil {
-			return fmt.Errorf("ensure usage ClusterRole: %w", err)
+			return fmt.Errorf("ensure cluster ClusterRole: %w", err)
 		}
 	}
 	for _, want := range p.ClusterBindings {
@@ -536,7 +536,7 @@ func (i Installer) ensureUsageGrants(ctx context.Context, p Plan) error {
 			_, err = api.Update(ctx, updated, metav1.UpdateOptions{})
 		}
 		if err != nil {
-			return fmt.Errorf("ensure usage ClusterRoleBinding: %w", err)
+			return fmt.Errorf("ensure cluster ClusterRoleBinding: %w", err)
 		}
 	}
 	return nil
