@@ -808,15 +808,32 @@ func TestKubernetesJobDispatcherRejectsWorktreeOutsideSharedMount(t *testing.T) 
 
 func awaitJob(t *testing.T, client *fake.Clientset, name string) *batchv1.Job {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if job, err := client.BatchV1().Jobs("demo").Get(context.Background(), name, metav1.GetOptions{}); err == nil {
-			return job
-		}
-		time.Sleep(time.Millisecond)
+	jobs := client.BatchV1().Jobs("demo")
+	// Subscribe before reading the current state: creation before Watch is
+	// found by Get; creation after Watch is buffered in the event stream.
+	stream, err := jobs.Watch(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("timed out waiting for Job %q", name)
-	return nil
+	defer stream.Stop()
+	if job, err := jobs.Get(context.Background(), name, metav1.GetOptions{}); err == nil {
+		return job
+	}
+	watchdog := time.NewTimer(30 * time.Second)
+	defer watchdog.Stop()
+	for {
+		select {
+		case event, ok := <-stream.ResultChan():
+			if !ok {
+				t.Fatal("Job watch closed before creation")
+			}
+			if job, ok := event.Object.(*batchv1.Job); ok && job.Name == name {
+				return job
+			}
+		case <-watchdog.C:
+			t.Fatalf("dispatcher never published Job %q", name)
+		}
+	}
 }
 
 // testIncidentRegistry is the checked-in built-in manifests; a non-empty image

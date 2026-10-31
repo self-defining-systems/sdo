@@ -100,7 +100,13 @@ func TestRunDiagnoseContainsFailures(t *testing.T) {
 		}, program.Bindings{"service": serviceRef}, "deadline"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := program.RunDiagnose(context.Background(), diagnostic{fn: tc.fn}, &sdktest.ReplayReadView{}, tc.bindings, time.Millisecond)
+			ctx := context.Background()
+			if tc.name == "deadline" {
+				expired, cancel := context.WithDeadline(ctx, time.Unix(1, 0))
+				defer cancel()
+				ctx = expired
+			}
+			got := program.RunDiagnose(ctx, diagnostic{fn: tc.fn}, &sdktest.ReplayReadView{}, tc.bindings, 30*time.Second)
 			if got.Result != program.Unknown || len(got.Evidence) == 0 || !strings.Contains(got.Evidence[0].Observed, tc.why) {
 				t.Fatalf("got %+v", got)
 			}

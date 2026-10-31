@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -290,68 +290,91 @@ func TestScheduleFollowsWeightsDeterministically(t *testing.T) {
 	}
 }
 
-func TestRunHonoursTheRateAndBoundedDuration(t *testing.T) {
-	w := workload(t, "verify", traffic.PurposeVerifyBurst, traffic.WorkloadScenario{ID: "search"})
-	w.RatePerSecond, w.Duration = 20, traffic.Duration(500*time.Millisecond)
-	done := make(chan struct{}, 64)
-	clock := &virtualClock{now: time.Unix(0, 0), settled: done}
-	// Scheduling is independent of HTTP latency and host CPU availability.
-	// Failed requests still emit samples, so use an immediate transport error.
-	e, err := traffic.NewEngine(w, traffic.Catalog{search()}, stubDoer{err: errors.New("synthetic refusal")},
-		func(traffic.Target) string { return "http://synthetic" }, clock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var emitted atomic.Int64
-	started := clock.Now()
-	next, skipped := e.Run(context.Background(), 0, func(string, traffic.Sample) {
-		emitted.Add(1)
-		done <- struct{}{}
-	})
-	elapsed := clock.Now().Sub(started)
-	if elapsed != 500*time.Millisecond || next != 10 || skipped != 0 || emitted.Load() != int64(next) {
-		t.Fatalf("20/s for 500ms: next=%d skipped=%d emitted=%d elapsed=%s", next, skipped, emitted.Load(), elapsed)
-	}
+type immediateDoer struct{}
+
+func (immediateDoer) Do(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok"))}, nil
 }
 
-// virtualClock advances time only when the engine waits for its next
-// arrival, and only after the previous arrival's request finished, so the
-// schedule is exact regardless of host speed. The first After is the
-// workload deadline; it fires once virtual time reaches it.
-type virtualClock struct {
-	mu         sync.Mutex
-	now        time.Time
-	deadlineAt time.Time
-	deadline   chan time.Time
-	settled    chan struct{}
+// rateClock exposes timer registration so the test drives each arrival only
+// after Run has armed its next timer. No OS clock or network scheduling is used.
+type rateTimer struct {
+	delay time.Duration
+	fire  chan time.Time
+}
+type rateClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	timers chan rateTimer
 }
 
-func (c *virtualClock) Now() time.Time {
+func (c *rateClock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
+func (c *rateClock) After(d time.Duration) <-chan time.Time {
+	fire := make(chan time.Time, 1)
+	c.timers <- rateTimer{d, fire}
+	return fire
+}
+func (c *rateClock) advance(d time.Duration) time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
 	return c.now
 }
 
-func (c *virtualClock) After(d time.Duration) <-chan time.Time {
-	c.mu.Lock()
-	if c.deadline == nil {
-		c.deadlineAt, c.deadline = c.now.Add(d), make(chan time.Time, 1)
-		c.mu.Unlock()
-		return c.deadline
+func receiveRate[T any](t *testing.T, ctx context.Context, ch <-chan T) T {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-ctx.Done():
+		t.Fatal("rate test did not reach its next synchronization point")
 	}
-	c.mu.Unlock()
-	<-c.settled
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if target := c.now.Add(d); target.Before(c.deadlineAt) {
-		c.now = target
-		fired := make(chan time.Time, 1)
-		fired <- target
-		return fired
+	var zero T
+	return zero
+}
+
+func TestRunHonoursTheRateAndBoundedDuration(t *testing.T) {
+	w := workload(t, "verify", traffic.PurposeVerifyBurst, traffic.WorkloadScenario{ID: "search"})
+	w.RatePerSecond, w.Duration = 20, traffic.Duration(250*time.Millisecond)
+	clock := &rateClock{now: time.Unix(0, 0), timers: make(chan rateTimer, 16)}
+	e, err := traffic.NewEngine(w, traffic.Catalog{search()}, immediateDoer{}, func(traffic.Target) string { return "http://app" }, clock)
+	if err != nil {
+		t.Fatal(err)
 	}
-	c.now = c.deadlineAt
-	c.deadline <- c.now
-	return make(chan time.Time)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	emitted := make(chan traffic.Sample, 16)
+	done := make(chan struct{})
+	var next uint64
+	var skipped int
+	go func() {
+		defer close(done)
+		next, skipped = e.Run(ctx, 0, func(_ string, sample traffic.Sample) { emitted <- sample })
+	}()
+	deadline := receiveRate(t, ctx, clock.timers)
+	if deadline.delay != 250*time.Millisecond {
+		t.Fatalf("duration: %s", deadline.delay)
+	}
+	for iteration := 0; iteration < 5; iteration++ {
+		gap := receiveRate(t, ctx, clock.timers)
+		if gap.delay != 50*time.Millisecond {
+			t.Fatalf("arrival gap: %s", gap.delay)
+		}
+		sample := receiveRate(t, ctx, emitted)
+		if sample.Outcome != traffic.OutcomeOK {
+			t.Fatalf("sample: %+v", sample)
+		}
+		at := clock.advance(gap.delay)
+		if iteration == 4 {
+			deadline.fire <- at
+		} else {
+			gap.fire <- at
+		}
+	}
+	receiveRate(t, ctx, done)
+	if next != 5 || skipped != 0 {
+		t.Fatalf("20/s for 250ms: next=%d skipped=%d", next, skipped)
+	}
 }
 
 func TestWorkloadValidationRejectsUnsafeProfiles(t *testing.T) {

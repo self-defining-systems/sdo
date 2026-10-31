@@ -234,7 +234,6 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
     """Real responder/reflection sessions and tool wire; synthetic controller endpoint."""
     import os
     import threading
-    import time
     import urllib.request
 
     from benchmarks.sregym.fastloop.fake_kube import FakeKubernetesAPIServer
@@ -332,7 +331,8 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                             assert response.status == 200
                         (tools / "responses" / request.name).write_text('{"applied": true}')
                         request.unlink()
-                    time.sleep(0.01)
+                    # Back off between scans; the stop event ends the loop at once.
+                    stop.wait(0.01)
             except Exception as exc:
                 failures.append(exc)
 

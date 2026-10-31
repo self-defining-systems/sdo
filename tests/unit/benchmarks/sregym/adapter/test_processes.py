@@ -1,5 +1,6 @@
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -153,7 +154,23 @@ def test_killing_uv_wrapper_does_not_orphan_launcher_or_helpers(tmp_path):
         wait_for(lambda: len(processes.read_registry(state).processes) == 3)
         wrapper.kill()
         wrapper.wait(timeout=10)
-        wait_for(lambda: all(not ref.alive() for ref in processes.read_registry(state).processes), timeout=3)
+        # Launcher exit imports the abort stack after its guardian stops. That
+        # import can take seconds under load; it is not an orphaned helper.
+        # Wait on kernel process-exit readiness, with a deadlock watchdog only.
+        for ref in processes.read_registry(state).processes:
+            if not ref.alive():
+                continue
+            try:
+                descriptor = os.pidfd_open(ref.pid)
+            except ProcessLookupError:
+                continue
+            try:
+                poller = select.poll()
+                poller.register(descriptor, select.POLLIN)
+                assert poller.poll(30_000), f"{ref.name} did not exit after wrapper death"
+            finally:
+                os.close(descriptor)
+        assert all(not ref.alive() for ref in processes.read_registry(state).processes)
     finally:
         if wrapper.poll() is None:
             wrapper.kill()

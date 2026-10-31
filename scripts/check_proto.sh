@@ -26,15 +26,21 @@ timeout 30 buf lint
 
 echo "==> generated code is up to date"
 GEN_DIRS=(sdo/operator/contracts/gen sdo/contracts/_gen)
-SNAPSHOT_DIR="$(mktemp -d)"
-trap 'rm -rf "${SNAPSHOT_DIR}"' EXIT
+# Generate in a private workspace: Buf's clean:true deletes output trees.
+# A read-only drift check must not remove live Go/Python compiler inputs.
+GENERATION_ROOT="$(mktemp -d)"
+trap 'rm -rf "${GENERATION_ROOT}"' EXIT
+mkdir -p "${GENERATION_ROOT}/scripts" "${GENERATION_ROOT}/sdo/contracts"
+cp "$SCRIPT_DIR/gen_proto.sh" "${GENERATION_ROOT}/scripts/"
+cp buf.yaml buf.lock buf.gen.yaml buf.gen.validate.yaml "${GENERATION_ROOT}/"
+cp -a sdo/contracts/proto "${GENERATION_ROOT}/sdo/contracts/"
 for generated_dir in "${GEN_DIRS[@]}"; do
-    mkdir -p "${SNAPSHOT_DIR}/$(dirname "${generated_dir}")"
-    cp -a "${generated_dir}" "${SNAPSHOT_DIR}/${generated_dir}"
+    mkdir -p "${GENERATION_ROOT}/$(dirname "${generated_dir}")"
+    cp -a "${generated_dir}" "${GENERATION_ROOT}/${generated_dir}"
 done
-"$SCRIPT_DIR/gen_proto.sh" >/dev/null
-if ! diff -qr --exclude='__pycache__' "${SNAPSHOT_DIR}/sdo/operator/contracts/gen" sdo/operator/contracts/gen >/dev/null \
-    || ! diff -qr --exclude='__pycache__' "${SNAPSHOT_DIR}/sdo/contracts/_gen" sdo/contracts/_gen >/dev/null; then
+"${GENERATION_ROOT}/scripts/gen_proto.sh" >/dev/null
+if ! diff -qr --exclude='__pycache__' "${GENERATION_ROOT}/sdo/operator/contracts/gen" sdo/operator/contracts/gen >/dev/null \
+    || ! diff -qr --exclude='__pycache__' "${GENERATION_ROOT}/sdo/contracts/_gen" sdo/contracts/_gen >/dev/null; then
     echo "Generated proto code is out of date. Run scripts/gen_proto.sh:" >&2
     exit 1
 fi

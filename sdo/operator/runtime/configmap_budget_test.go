@@ -78,6 +78,11 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	root := t.TempDir()
 	client := fake.NewSimpleClientset()
+	created := make(chan *batchv1.Job, 1)
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, k8sruntime.Object, error) {
+		created <- action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
+		return false, nil, nil
+	})
 	sizes := recordConfigMapWrites(client)
 	controller := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 1}, mountedBroker{&rejectingIncidentBroker{rejections: 10}, root}, &now)
 	controller.dispatcher = KubernetesJobDispatcher{
@@ -122,27 +127,18 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 	if len(controller.currentIncidentRequest.PreparedAgentTask) < 5<<20 {
 		t.Fatalf("prepared task did not carry the memory snapshot: %d bytes", len(controller.currentIncidentRequest.PreparedAgentTask))
 	}
-	jobs, err := client.BatchV1().Jobs("demo").Watch(ctx, metav1.ListOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer jobs.Stop()
 	if err := controller.ExecuteDispatchEffect(ctx, dispatch); err != nil {
 		t.Fatal(err)
 	}
-	// Serializing the deliberately oversized snapshot can take longer than
-	// the ordinary Job helper's one-second budget on a busy host. Observe
-	// actual creation, and still fail immediately if dispatch ends instead.
 	select {
 	case completion := <-controller.results:
 		t.Fatalf("dispatch ended before a Job was created: %v", completion.err)
-	case event := <-jobs.ResultChan():
-		job, ok := event.Object.(*batchv1.Job)
-		if !ok || job.Name != IncidentJobName(dispatch.Request.IncidentID) {
-			t.Fatalf("unexpected Job creation: %+v", event)
+	case job := <-created:
+		if job.Name != IncidentJobName(dispatch.Request.IncidentID) {
+			t.Fatalf("wrong Job: %s", job.Name)
 		}
 	case <-time.After(30 * time.Second):
-		t.Fatal("dispatch did not create its Job")
+		t.Fatal("dispatcher did not publish its Job")
 	}
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatalf("persist dispatched incident: %v", err)
