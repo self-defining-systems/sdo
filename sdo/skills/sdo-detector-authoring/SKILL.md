@@ -40,6 +40,16 @@ the environment, the clock, or the network, and never looks at benchmark data or
   (`target_resource` for `<TARGET_RESOURCE>`).
 - Read [validator rules](references/rules.md) before changing a manifest; read [SDK reference](references/sdk.md) before using an SDK type.
 
+## Logs and usage detectors
+
+A detector that reads container logs implements `logs.Consumer`: `LogQueries()` returns its queries (an ID, RE2
+patterns with their own IDs, and `Previous` for a crashed container's tail). Declare `logs.Watch`, read with
+`logs.Require(ctx, queryID)`, and decide with `logs.Appeared`, `logs.Rate` or `logs.Silent`, which take a pattern
+ID. A detector that reads kubelet usage implements `usage.Consumer`: `UsageRequirements()` returns
+`usage.Requirements{Throttling: true}` only when it needs CPU throttling. Declare `usage.Watch` and read with
+`usage.From(ctx)`. A missing input or a source error is a detector error, never a clear. Test with
+`sdktest.Snapshot.Logs` and `sdktest.Snapshot.Usage` (see the [replay reference](references/replay.md)).
+
 ## Metrics detectors (optional input)
 
 When the controller runs with a metrics source (`--metrics-url`, a Prometheus-compatible API), a health detector can
