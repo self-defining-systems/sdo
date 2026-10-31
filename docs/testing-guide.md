@@ -466,8 +466,10 @@ Unit tests must synchronize on observable readiness or drive injected clocks.
 `test_unit_tests_synchronize_without_wall_clock_sleeps` in the architecture gate
 rejects `time.sleep` and `asyncio.sleep`, including imported aliases. Its only
 allowance is the process-registry readiness helper: that sleep backs off between
-explicit liveness checks. Go deadline assertions use `testing/synctest` so elapsed
-time measures the deadline contract rather than host scheduling.
+explicit liveness checks. Go runtime deadline assertions use `testing/synctest`
+so elapsed time measures the deadline contract rather than host scheduling. The
+Go 1.24 SDK uses expired contexts and an explicitly driven clock. Kubernetes
+Job tests subscribe to creation events instead of racing short polling windows.
 
 To hunt scheduling and order dependence without changing the locked dependencies:
 
