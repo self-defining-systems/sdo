@@ -315,6 +315,9 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 			return fmt.Errorf("create ServiceAccount %s: %w", sa.Name, err)
 		}
 	}
+	if err := i.ensureUsageGrants(ctx, p); err != nil {
+		return err
+	}
 	for _, role := range append(p.ControlRoles, p.AppRoles...) {
 		if err := i.upsertRole(ctx, role); err != nil {
 			return err
@@ -505,4 +508,36 @@ func jobFailed(job *batchv1.Job) bool {
 		}
 	}
 	return false
+}
+
+func (i Installer) ensureUsageGrants(ctx context.Context, p Plan) error {
+	for _, want := range p.ClusterRoles {
+		api := i.Client.RbacV1().ClusterRoles()
+		prior, err := api.Get(ctx, want.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = api.Create(ctx, want, metav1.CreateOptions{})
+		} else if err == nil {
+			updated := want.DeepCopy()
+			updated.ResourceVersion = prior.ResourceVersion
+			_, err = api.Update(ctx, updated, metav1.UpdateOptions{})
+		}
+		if err != nil {
+			return fmt.Errorf("ensure usage ClusterRole: %w", err)
+		}
+	}
+	for _, want := range p.ClusterBindings {
+		api := i.Client.RbacV1().ClusterRoleBindings()
+		prior, err := api.Get(ctx, want.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = api.Create(ctx, want, metav1.CreateOptions{})
+		} else if err == nil {
+			updated := want.DeepCopy()
+			updated.ResourceVersion = prior.ResourceVersion
+			_, err = api.Update(ctx, updated, metav1.UpdateOptions{})
+		}
+		if err != nil {
+			return fmt.Errorf("ensure usage ClusterRoleBinding: %w", err)
+		}
+	}
+	return nil
 }

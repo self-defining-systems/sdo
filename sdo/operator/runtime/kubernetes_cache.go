@@ -25,6 +25,7 @@ import (
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/sdk/usage"
 )
 
 type KubernetesCacheConfig struct {
@@ -80,6 +81,11 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 		config: config, pending: make(map[string]sdk.WatchKind), changes: make(map[string]ObjectChange), notify: make(chan struct{}, 1),
 	}
 	declared := make(map[string]sdk.WatchKind)
+	for _, d := range detectors {
+		if _, ok := d.(usage.Consumer); ok {
+			declared["v1/Pod"] = sdk.WatchKind{APIVersion: "v1", Kind: "Pod", Namespace: config.Namespace}
+		}
+	}
 	for _, detector := range detectors {
 		for _, watch := range detector.Spec().Watches {
 			if watch.Namespace != "" && watch.Namespace != config.Namespace {
@@ -90,7 +96,7 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 				// Synthetic-traffic and reachability results arrive through Notify, not an informer.
 				continue
 			}
-			if watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
+			if watch.APIVersion == usage.Watch.APIVersion && watch.Kind == usage.Watch.Kind || watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
 				// Metrics detectors run on their interval; no informer backs the watch.
 				continue
 			}

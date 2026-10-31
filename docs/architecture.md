@@ -40,6 +40,7 @@ The controller captures the application namespace's detection view at detection,
 
 | Package | Responsibility |
 |---|---|
+| `sdo/operator/sdk/usage`, `runtime/usage_observer.go` | Deterministic resource usage windows and helpers; bounded namespace-filtered kubelet Summary API collection through the API server, with opt-in cAdvisor CFS counters and no observability service. |
 | `sdo/agents/{deployer,health_judge,responder}/` | Built-in agent sessions, prompts, local provider adapters, worker entry points, and typed task/result contracts; reflection and the judge author final files in their private checkouts |
 | `sdo/agents/lifecycle/` | Shared source architecture and health judge agent prompts and DTOs |
 | `sdo/contracts/proto/sdodev/contracts/v1alpha1/`, `sdo/contracts/`, `sdo/operator/contracts/` | Shared protobuf schema and generated Python/Go messages |

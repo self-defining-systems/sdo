@@ -66,6 +66,8 @@ type Config struct {
 }
 
 type Plan struct {
+	ClusterRoles                 []*rbacv1.ClusterRole
+	ClusterBindings              []*rbacv1.ClusterRoleBinding
 	Namespace                    *corev1.Namespace
 	PVC                          *corev1.PersistentVolumeClaim
 	ServiceAccounts              []*corev1.ServiceAccount
@@ -215,6 +217,9 @@ func Resources(c Config) (Plan, error) {
 	control := c.controlNamespace()
 	split := control != c.Namespace
 	plan := Plan{PVC: &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: c.RepositoryPVC, Namespace: control}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}}}}}
+	roleName := "sdo-usage-" + control
+	plan.ClusterRoles = []*rbacv1.ClusterRole{{ObjectMeta: metav1.ObjectMeta{Name: roleName}, Rules: []rbacv1.PolicyRule{rule("", []string{"nodes"}, "get", "list"), rule("", []string{"nodes/proxy"}, "get")}}}
+	plan.ClusterBindings = []*rbacv1.ClusterRoleBinding{{ObjectMeta: metav1.ObjectMeta{Name: roleName}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: roleName}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-controller", Namespace: control}, {Kind: "ServiceAccount", Name: "sdo-operate", Namespace: control}}}}
 	if split {
 		plan.Namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", ControllerNamespaceLabel: "true", ApplicationNamespaceLabel: c.Namespace}}}
 	}

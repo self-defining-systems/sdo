@@ -852,3 +852,118 @@ type Validator interface {
     configuration, so a mistake surfaces in tests rather than at runtime.
 
 ```
+
+```text
+package usage // import "sdo.dev/operator/sdk/usage"
+
+Package usage exposes frozen kubelet resource observations to deterministic
+detectors.
+
+CONSTANTS
+
+const MaxSamples = 40
+    MaxSamples bounds each identity's rolling history.
+
+
+VARIABLES
+
+var Watch = sdk.WatchKind{APIVersion: "sdo.dev/v1alpha1", Kind: "ResourceUsage"}
+    Watch schedules resource-usage detectors without an informer.
+
+
+FUNCTIONS
+
+func Evidence(observed float64, limit *float64, window time.Duration, forecast *time.Duration) string
+    Evidence formats the measurements underlying a helper-derived finding.
+    Nil limit or forecast is explicitly unavailable, rather than zero.
+
+func RatioToLimit(value float64, limit *float64) (float64, bool)
+    RatioToLimit reports an explicit absence for missing, zero or invalid
+    limits.
+
+func ThresholdFinding(ruleID string, resource sdk.ObjectRef, severity sdk.FindingSeverity, observed float64, limit *float64, window time.Duration, forecast *time.Duration) sdk.Finding
+    ThresholdFinding constructs a finding with complete numerical helper
+    evidence. The caller chooses the rule, resource and severity, and decides
+    when it fires.
+
+func ThrottledFraction(samples []Sample) (float64, bool)
+    ThrottledFraction computes counter deltas, excluding intervals across
+    resets. Callers must provide samples with available counters, from one
+    identity.
+
+func TimeToThreshold(points []Point, threshold float64) (time.Duration, bool)
+    TimeToThreshold fits least squares against seconds since the first point.
+    False means insufficient or non-increasing data; zero means already reached.
+
+
+TYPES
+
+type Consumer interface{ UsageRequirements() Requirements }
+    Consumer declares resource usage consumption. Throttling opts into cAdvisor
+    reads.
+
+type ContainerWindow struct {
+	Identity Identity
+	Samples  []Sample
+}
+    ContainerWindow is an oldest-first history for one running container.
+
+type Identity struct {
+	PodUID, Pod, Container string
+	StartedAt              time.Time
+}
+    Identity separates pod replacements and container restarts. An empty
+    Container names the pod-level ephemeral-storage observation (including
+    shared volumes).
+
+type Point struct {
+	At    time.Time
+	Value float64
+}
+    Point is one timestamped scalar used by a forecast.
+
+type Requirements struct{ Throttling bool }
+    Requirements selects optional expensive inputs.
+
+type Result struct {
+	ObservedAt time.Time
+	Containers []ContainerWindow
+	Volumes    []VolumeWindow
+	Error      string
+}
+    Result freezes an observation cycle. Error means unavailable, never healthy.
+
+func Clone(r Result) Result
+    Clone isolates mutable slices and optional values from detector mutation.
+
+func From(ctx sdk.DetectionContext) (Result, error)
+    From reads a defensive copy and returns source failures as detector errors.
+
+type Sample struct {
+	At                                                  time.Time
+	CPUCores, WorkingSetBytes, RSSBytes, EphemeralBytes *float64
+	CPURequest, CPULimit, MemoryRequest, MemoryLimit    *float64
+	EphemeralRequest, EphemeralLimit                    *float64
+	Periods, ThrottledPeriods                           float64
+	ThrottlingAvailable                                 bool
+}
+    Sample contains optional observations (nil means unreported), in cores and
+    bytes.
+
+type Source interface{ UsageResult() (Result, bool) }
+    Source is implemented by runtime snapshots and sdktest.Snapshot.
+
+type VolumeSample struct {
+	At                                                                       time.Time
+	PodUID, PVC                                                              string
+	CapacityBytes, UsedBytes, AvailableBytes, Inodes, InodesUsed, InodesFree *float64
+}
+    VolumeSample contains a PVC's filesystem statistics; nil means unreported.
+
+type VolumeWindow struct {
+	PodUID, PVC string
+	Samples     []VolumeSample
+}
+    VolumeWindow is an oldest-first history for a pod's PVC.
+
+```
