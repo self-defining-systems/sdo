@@ -181,7 +181,24 @@ func (w *World) PodAfter(ref sdk.ObjectRef, d time.Duration, ready bool) {
 				w.Kube.Put(&unstructured.Unstructured{Object: data})
 			}
 			emit(1)
-			w.After(time.Minute, func() { emit(2) })
+			w.After(time.Minute, func() {
+				current, err := w.Kube.Get(context.Background(), ref)
+				if err != nil || current.GetUID() != pod.UID {
+					return
+				}
+				var latest corev1.Pod
+				if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(current.Object, &latest); err != nil {
+					panic(err)
+				}
+				for _, status := range latest.Status.ContainerStatuses {
+					for _, crashed := range pod.Status.ContainerStatuses {
+						if status.Name == crashed.Name && status.RestartCount == crashed.RestartCount && status.State.Waiting != nil && status.State.Waiting.Reason == "CrashLoopBackOff" {
+							emit(2)
+							return
+						}
+					}
+				}
+			})
 		}
 	})
 }

@@ -201,3 +201,20 @@ func TestSnapshotKindsAndRollout(t *testing.T) {
 		}
 	})
 }
+
+func TestRecoveryStopsBackoffEvents(t *testing.T) {
+	sim.Run(t, 9, func(t *testing.T, w *sim.World) {
+		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api"}
+		w.Kube.Put(&unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"containers": []any{map[string]any{"name": "api"}}}}})
+		w.PodAfter(ref, time.Second, false)
+		w.PodAfter(ref, 10*time.Second, true)
+		w.Advance(2 * time.Minute)
+		view, err := w.Cache.Snapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if events := view.Events(); len(events) != 1 || events[0].Count != 1 {
+			t.Fatalf("recovered pod continued backoff: %+v", events)
+		}
+	})
+}
