@@ -12,11 +12,14 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
+	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/traffic"
 )
 
 type Snapshot struct {
+	// Logs holds synthetic bounded log windows by query ID.
+	Logs map[string]logs.Result `json:"-"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName        string                                  `json:"-"`
 	NamespaceName     string                                  `json:"namespace"`
@@ -261,3 +264,6 @@ func lessObject(leftNamespace string, leftName string, rightNamespace string, ri
 	}
 	return leftName < rightName
 }
+
+// LogResult implements logs.Source.
+func (s Snapshot) LogResult(id string) (logs.Result, bool) { r, ok := s.Logs[id]; return r, ok }

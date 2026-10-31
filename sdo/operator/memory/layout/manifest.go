@@ -109,7 +109,7 @@ func (m DetectorManifest) Validate() error {
 	}
 	watches := map[Watch]bool{}
 	for _, watch := range m.Watches {
-		if watch.APIVersion == "" || watch.Kind == "" {
+		if !supportedWatchKinds[watch.APIVersion+"/"+watch.Kind] {
 			return fmt.Errorf("detector %s has invalid watch", m.ID)
 		}
 		if watches[watch] {
@@ -213,4 +213,22 @@ func ParseDocument(data []byte) (Document, error) {
 		return Document{}, errors.New("body must not be empty")
 	}
 	return Document{Meta: meta, Body: parts[2], Source: string(data)}, nil
+}
+
+// supportedWatchKinds mirrors the runtime detector watch registration. Logs and
+// Metrics are interval inputs; neither is a Kubernetes informer resource.
+var supportedWatchKinds = map[string]bool{
+	"apps/v1/Deployment":                   true,
+	"apps/v1/ReplicaSet":                   true,
+	"discovery.k8s.io/v1/EndpointSlice":    true,
+	"networking.k8s.io/v1/NetworkPolicy":   true,
+	"v1/ConfigMap":                         true,
+	"v1/Endpoints":                         true,
+	"v1/Event":                             true,
+	"v1/Pod":                               true,
+	"v1/Service":                           true,
+	"sdo.dev/v1alpha1/SyntheticTraffic":    true,
+	"sdo.dev/v1alpha1/ServiceReachability": true,
+	"sdo.dev/v1alpha1/Metrics":             true,
+	"sdo.dev/v1alpha1/Logs":                true,
 }

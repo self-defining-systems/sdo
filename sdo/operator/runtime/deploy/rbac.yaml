@@ -14,6 +14,9 @@ rules:
   - apiGroups: [""]
     resources: ["services", "pods", "endpoints", "events"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
   # The isolated synthetic-traffic prober pod, its Service and its NetworkPolicy.
   - apiGroups: [""]
     resources: ["pods", "services"]

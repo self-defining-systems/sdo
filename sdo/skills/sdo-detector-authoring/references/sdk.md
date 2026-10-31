@@ -852,3 +852,137 @@ type Validator interface {
     configuration, so a mistake surfaces in tests rather than at runtime.
 
 ```
+
+```text
+package logs // import "sdo.dev/operator/sdk/logs"
+
+Package logs exposes bounded, runtime-counted container logs to deterministic
+detectors. No log I/O or pattern matching occurs in detectors.
+
+CONSTANTS
+
+const (
+	MaxQueries      = 32
+	MaxPatterns     = 32
+	MaxPatternBytes = 1024
+	MaxIDBytes      = 128
+	LimitBytes      = 64 * 1024
+	WindowCycles    = 20
+	MaxExcerpts     = 3
+	MaxExcerptBytes = 256
+	MaxContainers   = 256
+)
+    Limits bound declarations, collection, retained history and evidence.
+    MaxPatterns bounds both each query and total declared patterns across
+    queries.
+
+
+VARIABLES
+
+var Watch = sdk.WatchKind{APIVersion: "sdo.dev/v1alpha1", Kind: "Logs"}
+    Watch schedules log consumers on their interval; no informer backs it.
+
+
+FUNCTIONS
+
+func ValidateDetector(d sdk.Detector) error
+    ValidateDetector validates a log consumer at registration.
+
+func ValidateQueries(qs []Query) error
+    ValidateQueries rejects malformed, duplicate or excessive declarations.
+
+
+TYPES
+
+type Consumer interface{ LogQueries() []Query }
+    Consumer declares a detector's log inputs.
+
+type Cycle struct {
+	Start, End time.Time
+	Running    bool
+	Lines      int
+	Matches    map[string]Match
+	Truncated  bool
+	Previous   *Cycle
+	Error      string
+}
+    Cycle is one container's observation interval. Error makes it unobservable.
+    Previous is separate from current counts and must not establish a healthy
+    rate.
+
+type Evidence struct {
+	Count, Lines, Cycles int
+	Start, End           time.Time
+	Truncated            bool
+	Excerpts             []string
+}
+    Evidence describes the counts, interval and excerpts behind a helper
+    decision.
+
+func Appeared(w Window, p string) (bool, Evidence)
+    Appeared reports a zero-to-positive transition in the last two cycles.
+    A truncated or failed zero observation cannot establish absence.
+
+func Rate(w Window, pattern string) (float64, Evidence)
+    Rate returns matched lines per second over the observed window; empty
+    pattern selects all lines. Truncated evidence means the rate is a lower
+    bound.
+
+func Silent(w Window, n int) (bool, Evidence)
+    Silent reports N complete empty Running cycles after earlier log activity.
+    Restarts begin new windows, so an old incarnation never establishes
+    activity.
+
+type Match struct {
+	Count    int
+	Excerpts []string
+}
+    Match holds a lower-bound count and bounded matching excerpts.
+
+type Pattern struct {
+	ID  string
+	RE2 string
+}
+    Pattern names an RE2 expression evaluated by the runtime once per line.
+
+type Query struct {
+	ID       string
+	Patterns []Pattern
+	Previous bool
+}
+    Query declares patterns and optionally the previous terminated container
+    tail.
+
+func Queries(ds []sdk.Detector) ([]Query, error)
+    Queries merges identical query IDs and rejects conflicting definitions.
+
+func (q Query) Validate() error
+    Validate checks a query's identifiers, expressions and bounds.
+
+type Result struct {
+	Query      Query
+	ObservedAt time.Time
+	Windows    []Window
+	Error      string
+}
+    Result is a query's frozen windows; Error is neither health nor a finding.
+
+func Require(ctx sdk.DetectionContext, id string) (Result, error)
+    Require returns a result or an actionable detector error, including
+    per-cycle source errors. Detectors must use this before interpreting a
+    window.
+
+func ResultFrom(ctx sdk.DetectionContext, id string) (Result, bool)
+    ResultFrom reads a frozen result without I/O.
+
+type Source interface{ LogResult(string) (Result, bool) }
+    Source supplies frozen query results.
+
+type Window struct {
+	Namespace, Pod, UID, Container string
+	RestartCount                   int32
+	Cycles                         []Cycle
+}
+    Window holds chronological observations for a single container incarnation.
+
+```

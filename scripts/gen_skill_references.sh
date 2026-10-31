@@ -43,6 +43,10 @@ HEADER
         echo '```text'
         go doc -all ./metrics
         echo '```'
+        echo
+        echo '```text'
+        go doc -all ./logs
+        echo '```'
     fi
 }
 
