@@ -6,6 +6,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -77,32 +78,34 @@ func TestSelectProgramCandidatesSweepsUnnamedResourceAndDeduplicates(t *testing.
 }
 
 func TestSelectProgramCandidatesSweepLimitAndDeadline(t *testing.T) {
-	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "slow", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(ctx context.Context, _ program.Bindings) program.Verdict {
-		<-ctx.Done()
-		return program.Verdict{Result: program.NoMatch}
-	}}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	services := make([]corev1.Service, 100)
-	for i := range services {
-		services[i].Name = fmt.Sprintf("service-%03d", i)
-		services[i].Namespace = "app"
-	}
-	view := &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: services}}
-	start := time.Now()
-	runs := SelectProgramCandidatesWithOptions(context.Background(), registry, view, nil, CandidateOptions{Deadline: 20 * time.Millisecond, SweepLimit: 4})
-	if elapsed := time.Since(start); elapsed > 150*time.Millisecond {
-		t.Fatalf("deadline exceeded: %s", elapsed)
-	}
-	if len(runs) != 4 {
-		t.Fatalf("sweep limit: %d", len(runs))
-	}
-	for _, run := range runs {
-		if run.Verdict.Result != program.Unknown || run.BindingSource != "sweep" {
-			t.Fatalf("deadline result: %+v", run)
+	synctest.Test(t, func(t *testing.T) {
+		registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "slow", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(ctx context.Context, _ program.Bindings) program.Verdict {
+			<-ctx.Done()
+			return program.Verdict{Result: program.NoMatch}
+		}}}, nil)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
+		services := make([]corev1.Service, 100)
+		for i := range services {
+			services[i].Name = fmt.Sprintf("service-%03d", i)
+			services[i].Namespace = "app"
+		}
+		view := &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: services}}
+		start := time.Now()
+		runs := SelectProgramCandidatesWithOptions(context.Background(), registry, view, nil, CandidateOptions{Deadline: 20 * time.Millisecond, SweepLimit: 4})
+		if elapsed := time.Since(start); elapsed > 150*time.Millisecond {
+			t.Fatalf("deadline exceeded: %s", elapsed)
+		}
+		if len(runs) != 4 {
+			t.Fatalf("sweep limit: %d", len(runs))
+		}
+		for _, run := range runs {
+			if run.Verdict.Result != program.Unknown || run.BindingSource != "sweep" {
+				t.Fatalf("deadline result: %+v", run)
+			}
+		}
+	})
 }
 
 func TestSelectProgramCandidatesSweepsRequiredKindPair(t *testing.T) {
@@ -158,21 +161,23 @@ func TestSelectProgramCandidatesBindsEveryResourceAssignmentAndRanks(t *testing.
 }
 
 func TestSelectProgramCandidatesUsesOneDeadlineForSlowPrograms(t *testing.T) {
-	registry, err := program.NewRegistry([]program.Diagnoser{
-		candidateProgram{spec: program.ProgramSpec{ID: "slow"}, run: func(ctx context.Context, _ program.Bindings) program.Verdict {
-			<-ctx.Done()
-			return program.Verdict{Result: program.NoMatch}
-		}},
-		candidateProgram{spec: program.ProgramSpec{ID: "fast"}, run: func(context.Context, program.Bindings) program.Verdict { return program.Verdict{Result: program.Match} }},
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	started := time.Now()
-	got := SelectProgramCandidates(context.Background(), registry, &sdktest.ReplayReadView{}, []sdk.Finding{{Status: sdk.FindingActive}}, 20*time.Millisecond)
-	if time.Since(started) > 150*time.Millisecond || len(got) != 2 || got[0].Verdict.Result != program.Match || got[1].Verdict.Result != program.Unknown {
-		t.Fatalf("shared deadline: %#v, elapsed %s", got, time.Since(started))
-	}
+	synctest.Test(t, func(t *testing.T) {
+		registry, err := program.NewRegistry([]program.Diagnoser{
+			candidateProgram{spec: program.ProgramSpec{ID: "slow"}, run: func(ctx context.Context, _ program.Bindings) program.Verdict {
+				<-ctx.Done()
+				return program.Verdict{Result: program.NoMatch}
+			}},
+			candidateProgram{spec: program.ProgramSpec{ID: "fast"}, run: func(context.Context, program.Bindings) program.Verdict { return program.Verdict{Result: program.Match} }},
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		started := time.Now()
+		got := SelectProgramCandidates(context.Background(), registry, &sdktest.ReplayReadView{}, []sdk.Finding{{Status: sdk.FindingActive}}, 20*time.Millisecond)
+		if time.Since(started) > 150*time.Millisecond || len(got) != 2 || got[0].Verdict.Result != program.Match || got[1].Verdict.Result != program.Unknown {
+			t.Fatalf("shared deadline: %#v, elapsed %s", got, time.Since(started))
+		}
+	})
 }
 
 func TestSelectProgramCandidatesKeepsExplicitHintWithoutBindableKind(t *testing.T) {

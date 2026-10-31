@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
@@ -77,6 +78,11 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	root := t.TempDir()
 	client := fake.NewSimpleClientset()
+	created := make(chan *batchv1.Job, 1)
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, k8sruntime.Object, error) {
+		created <- action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
+		return false, nil, nil
+	})
 	sizes := recordConfigMapWrites(client)
 	controller := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 1}, mountedBroker{&rejectingIncidentBroker{rejections: 10}, root}, &now)
 	controller.dispatcher = KubernetesJobDispatcher{
@@ -127,9 +133,13 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 	select {
 	case completion := <-controller.results:
 		t.Fatalf("dispatch ended before a Job was created: %v", completion.err)
-	case <-time.After(50 * time.Millisecond):
+	case job := <-created:
+		if job.Name != IncidentJobName(dispatch.Request.IncidentID) {
+			t.Fatalf("wrong Job: %s", job.Name)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("dispatcher did not publish its Job")
 	}
-	_ = awaitJob(t, client, IncidentJobName(dispatch.Request.IncidentID))
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatalf("persist dispatched incident: %v", err)
 	}

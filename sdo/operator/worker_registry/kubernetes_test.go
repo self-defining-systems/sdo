@@ -50,6 +50,7 @@ func reflectionTestTask(t *testing.T) *contracts.AgentTask {
 func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.T) {
 	t.Setenv("SDO_DEV_MOUNT", "1")
 	client := fake.NewSimpleClientset()
+	awaitCreated := watchCreatedJobs(t, client)
 	task := reflectionTestTask(t)
 	executor := KubernetesExecutor{
 		ToolchainImage: "controller:compiler", Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), ServiceAccount: "sdo-worker",
@@ -64,19 +65,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	errs := make(chan error, 1)
 	go func() { result, err := executor.Execute(context.Background(), task); results <- result; errs <- err }()
 	jobName := JobName(task.TaskId)
-	var job *batchv1.Job
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		found, err := client.BatchV1().Jobs("demo").Get(context.Background(), jobName, metav1.GetOptions{})
-		if err == nil {
-			job = found
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if job == nil {
-		t.Fatal("agent Job was not created")
-	}
+	job := awaitCreated(jobName)
 	if len(job.Spec.Template.Spec.InitContainers) != 1 || job.Spec.Template.Spec.InitContainers[0].Image != "controller:compiler" {
 		t.Fatal("reflection job missing controller compiler")
 	}
@@ -316,19 +305,15 @@ func largeReflectionTask(t *testing.T, checkout string, snapshotBytes int) *cont
 func TestKubernetesExecutorStagesRequestsAboveConfigMapBudgetOnRepositoryVolume(t *testing.T) {
 	mount := t.TempDir()
 	client := fake.NewSimpleClientset()
+	awaitCreated := watchCreatedJobs(t, client)
 	task := largeReflectionTask(t, mount+"/proposals/reflection-big", 2<<20)
 	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount, RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := executor.Execute(ctx, task); done <- err }()
 	jobName := JobName(task.TaskId)
-	var job *batchv1.Job
-	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && job == nil; time.Sleep(time.Millisecond) {
-		job, _ = client.BatchV1().Jobs("demo").Get(ctx, jobName, metav1.GetOptions{})
-	}
-	if job == nil {
-		t.Fatal("agent Job was not created")
-	}
+	job := awaitCreated(jobName)
 	if maps, _ := client.CoreV1().ConfigMaps("demo").List(ctx, metav1.ListOptions{}); len(maps.Items) != 0 {
 		t.Fatalf("an oversized request must not use a ConfigMap: %d created", len(maps.Items))
 	}
@@ -384,5 +369,34 @@ func TestKubernetesExecutorReportsUnwritableRequestStaging(t *testing.T) {
 	var staging *RequestStagingError
 	if _, err := executor.Execute(context.Background(), task); !errors.As(err, &staging) {
 		t.Fatalf("want RequestStagingError, got %v", err)
+	}
+}
+
+// Subscribe before launching the executor, so even an immediate Job creation
+// cannot be missed. Wait on API readiness rather than a short polling window.
+func watchCreatedJobs(t *testing.T, client *fake.Clientset) func(string) *batchv1.Job {
+	t.Helper()
+	stream, err := client.BatchV1().Jobs("demo").Watch(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stream.Stop)
+	return func(name string) *batchv1.Job {
+		t.Helper()
+		watchdog := time.NewTimer(30 * time.Second)
+		defer watchdog.Stop()
+		for {
+			select {
+			case event, ok := <-stream.ResultChan():
+				if !ok {
+					t.Fatal("Job watch closed before creation")
+				}
+				if job, ok := event.Object.(*batchv1.Job); ok && job.Name == name {
+					return job
+				}
+			case <-watchdog.C:
+				t.Fatalf("executor never published Job %q", name)
+			}
+		}
 	}
 }

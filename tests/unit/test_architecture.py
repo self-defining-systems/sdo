@@ -178,3 +178,52 @@ def test_production_sdo_does_not_import_benchmark_code() -> None:
             if any(module == prefix or module.startswith(f"{prefix}.") for prefix in forbidden):
                 violations.append(_fmt(filepath, lineno, module, "production SDO cannot depend on benchmark code"))
     assert not violations, f"{len(violations)} production-to-benchmark import(s) found:\n" + "\n".join(violations)
+
+
+def _wall_clock_sleeps(source: str) -> list[tuple[str, int]]:
+    """Find real time/asyncio sleeps, resolving module and function aliases."""
+    tree = ast.parse(source)
+    modules: set[str] = set()
+    functions: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.asname or alias.name for alias in node.names if alias.name in {"time", "asyncio"})
+        elif isinstance(node, ast.ImportFrom) and node.module in {"time", "asyncio"}:
+            functions.update(alias.asname or alias.name for alias in node.names if alias.name == "sleep")
+    found: list[tuple[str, int]] = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Call):
+                continue
+            call = node.func
+            if (isinstance(call, ast.Name) and call.id in functions) or (
+                isinstance(call, ast.Attribute)
+                and call.attr == "sleep"
+                and isinstance(call.value, ast.Name)
+                and call.value.id in modules
+            ):
+                found.append((function.name, node.lineno))
+    return found
+
+
+def test_wall_clock_sleep_checker_detects_aliases() -> None:
+    assert _wall_clock_sleeps("import time as clock\ndef test_bad():\n clock.sleep(.1)") == [("test_bad", 3)]
+    assert _wall_clock_sleeps("from asyncio import sleep as wait\nasync def test_bad():\n await wait(1)") == [
+        ("test_bad", 3)
+    ]
+    assert not _wall_clock_sleeps("def test_fake(clock):\n clock.sleep(1)")
+
+
+def test_unit_tests_synchronize_without_wall_clock_sleeps() -> None:
+    # Polling the OS process registry is an integration boundary. This helper
+    # checks readiness each iteration; sleep is backoff, never evidence of success.
+    allowed = {("tests/unit/benchmarks/sregym/adapter/test_processes.py", "wait_for")}
+    violations = []
+    for path in sorted((_REPO_ROOT / "tests/unit").rglob("test_*.py")):
+        relative = path.relative_to(_REPO_ROOT).as_posix()
+        for function, line in _wall_clock_sleeps(path.read_text()):
+            if (relative, function) not in allowed:
+                violations.append(f"{relative}:{line}: {function}: replace sleep with readiness or an injected clock")
+    assert not violations, "\n".join(violations)

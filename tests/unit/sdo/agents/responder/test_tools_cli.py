@@ -2,8 +2,6 @@ import json
 import shlex
 import subprocess
 import sys
-import threading
-import time
 
 import pytest
 
@@ -18,24 +16,18 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
     monkeypatch.setenv("SDO_TOOLS_DIR", str(tmp_path))
     seen = []
 
-    def controller():
-        for _ in range(100):
-            files = [path for path in requests.glob("*.json") if not path.name.startswith(".")]
-            if files:
-                request = json.loads(files[0].read_text())
-                seen.append(request)
-                (responses / files[0].name).write_text(
-                    json.dumps({"command": "diagnose", "summary": "one match", "program_runs": []})
-                )
-                return
-            time.sleep(0.01)
+    def controller(_seconds):
+        # _exchange has published its request before its first response poll.
+        files = list(requests.glob("*.json"))
+        assert len(files) == 1
+        request = json.loads(files[0].read_text())
+        seen.append(request)
+        (responses / files[0].name).write_text(
+            json.dumps({"command": "diagnose", "summary": "one match", "program_runs": []})
+        )
 
-    worker = threading.Thread(target=controller)
-    worker.start()
-    try:
-        assert tools_cli.main(["diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
-    finally:
-        worker.join(timeout=2)
+    monkeypatch.setattr(tools_cli.time, "sleep", controller)
+    assert tools_cli.main(["diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
     assert seen == [
         {
             "command": "diagnose",
