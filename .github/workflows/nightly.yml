@@ -49,12 +49,12 @@ jobs:
         run: bash scripts/test_go_ci.sh nightly
       - name: Bounded fuzz campaigns (seed cases also run on every PR)
         run: |
-          (cd sdo/operator/sdk && go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=30s -parallel=2 -timeout=2m .)
-          (cd sdo/operator/sdk && go test -run '^$' -fuzz '^FuzzObjectRefTypedRoundTrip$' -fuzztime=30s -parallel=2 -timeout=2m .)
-          (cd sdo/operator && go test -run '^$' -fuzz '^FuzzStateChangeRefMatchesObservedLabel$' -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation)
-          (cd sdo/operator && go test -run '^$' -fuzz '^FuzzControllerObservationBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation)
-          (cd benchmarks/sregym/protocol/native_receipt_go && go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .)
-          (cd benchmarks/sregym/protocol/submission_go && go test -run '^$' -fuzz '^FuzzSubmissionPhaseBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .)
+          (cd sdo/operator/sdk && timeout 300s go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=30s -parallel=2 -timeout=2m .)
+          (cd sdo/operator/sdk && timeout 300s go test -run '^$' -fuzz '^FuzzObjectRefTypedRoundTrip$' -fuzztime=30s -parallel=2 -timeout=2m .)
+          (cd sdo/operator && timeout 300s go test -run '^$' -fuzz '^FuzzStateChangeRefMatchesObservedLabel$' -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation)
+          (cd sdo/operator && timeout 300s go test -run '^$' -fuzz '^FuzzControllerObservationBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation)
+          (cd benchmarks/sregym/protocol/native_receipt_go && timeout 300s go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .)
+          (cd benchmarks/sregym/protocol/submission_go && timeout 300s go test -run '^$' -fuzz '^FuzzSubmissionPhaseBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .)
 
   images:
     name: controller images

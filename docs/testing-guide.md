@@ -305,22 +305,19 @@ Native receipt decisions have a hermetic Go suite in
 `benchmarks/sregym/protocol/native_receipt_go`. Its fixtures are hand-authored
 generated messages. Run `go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$'
 -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .` there to attack malformed wire values,
-round-trip acceptance, and rejection followed by a valid incident. The existing
-controller CI matrix includes this module and the bounded fuzz run. Python
+round-trip acceptance, and rejection followed by a valid incident. PR CI includes this module and its fuzz seeds; Nightly CI runs the bounded fuzz campaign. Python
 receipt tests exercise the real checker; transport-error tests mock subprocesses.
 Submission phase tests live in `protocol/submission_go` (benchmark module) and
 `tests/unit/benchmarks/sregym/adapter/test_submission.py`. The Go fuzz target
 `FuzzSubmissionPhaseBoundary` checks that a POST requires matching observed phase,
 that completion polls never post, and that malformed facts yield typed failures.
-Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; the existing
-controller CI matrix runs the same bounded target. Image scope tests verify
+Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the same bounded target, with its seeds retained on PRs. Image scope tests verify
 separate Go compilation and binary-only copying into the benchmark worker.
 Read-only controller observations are tested in `outcome_derivation` and
 `operatorcli/controller_observation_test.go`. `FuzzControllerObservationBoundary`
 checks malformed snapshots, closed lifecycle enums, incident correlation and a
 rejected snapshot followed by a good one. Run it with `-fuzztime=30s
--fuzzminimizetime=1s -parallel=2 -timeout=2m`; the operator CI leg runs the bounded
-target. Fake controller bookkeeping stays outside the generated snapshot shape.
+-fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the bounded target, with its seeds retained on PRs. Fake controller bookkeeping stays outside the generated snapshot shape.
 
 ## Abort and quiescence
 
@@ -512,7 +509,7 @@ The exact repeated end-to-end compile tests moved to nightly are listed in
 CLI/broker parity across every fixture, duplicate CLI clean-tree/JSON and
 scaffold compilations, toy-seed and isolated program validation, and repeated
 builder program/prober/baseline builds, plus compile-through-controller fastloop,
-foreign-policy repeat and direct-files CLI/broker integration. The assurance-seed test alone took
+foreign-policy repeat and direct-files/learned-program CLI/broker integration. The assurance-seed test alone took
 303 seconds locally. PRs retain `TestBuildWorkspaceCompilesApplicationDetectors`,
 compiler rejection tests, validator rule tests, broker ownership/acceptance
 contracts, CLI error/JSON diagnostics and SDK program unit tests. Nightly runs
