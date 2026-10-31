@@ -156,7 +156,6 @@ sdo/operator/runtime/new_inputs_hermetic_test.go:time.Now
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Since
 sdo/operator/runtime/ownership_adoption_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/plan_executor.go:time.Now
-sdo/operator/runtime/plan_executor.go:time.Since
 sdo/operator/runtime/plan_executor_observe.go:time.NewTicker
 sdo/operator/runtime/plan_executor_observe_test.go:time.After
 sdo/operator/runtime/plan_executor_retry.go:math/rand/v2.Int64N
@@ -244,8 +243,6 @@ sdo/operator/runtime/service_reachability.go:time.Now
 sdo/operator/runtime/service_reachability_test.go:net.Dialer
 sdo/operator/runtime/service_reachability_test.go:net.Listen
 sdo/operator/runtime/service_reachability_test.go:net/http/httptest.NewServer
-sdo/operator/runtime/sim_kube_test.go:os.Getenv
-sdo/operator/runtime/sim_kube_test.go:time.Now
 sdo/operator/runtime/source_reconcile_fastloop_test.go:time.Now
 sdo/operator/runtime/state_baseline_secret_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/state_baseline_secret_test.go:time.Now
