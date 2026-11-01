@@ -288,6 +288,12 @@ The toy real-cluster validation tier keeps reusable application and fault code i
 `apps/toy/`; fastloop selects it through its worker interface without the external
 SREGym harness. It uses the same production controller, broker and memory edge.
 
+The installer keeps accepted-checkout Git/archive/kubectl operations inside
+`install/internal/installio`, its private production edge. Installer decisions
+accept an injected clock and poll wait; defaults and time-scale environment
+reads live at that edge. The installer component, repository scope and artifact
+ownership matrix remain unchanged. Process handles never cross the edge.
+
 ## Artifact ownership matrix
 
 | Artifact | May author | May update | Validation rule |

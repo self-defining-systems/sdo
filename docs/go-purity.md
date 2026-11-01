@@ -56,6 +56,7 @@ The exact production edge-package list is:
 
 - `sdo/operator/runtime/internal/lifecycleio`: Kubernetes lifecycle driver.
 - `sdo/operator/runtime/prober`: protocol dial adapter.
+- `sdo/operator/install/internal/installio`: accepted-checkout Git/archive/kubectl processes, installer clock and wait timers, and time-scale environment reads.
 - `sdo/operator/runtime/prometheus`: Prometheus HTTP adapter.
 - `sdo/operator/memoryhost/hostio`: memory-host process launcher, Unix socket server/client and read-only network adapter.
 - `sdo/operator/memory/internal/memoryio`: Git reads, isolated-index whitespace checks, shell syntax and toolchain lookup. No process handles escape.

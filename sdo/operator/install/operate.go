@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/devmount"
+	"sdo.dev/operator/install/internal/installio"
 )
 
 const PreparedCommitAnnotation = "sdo.dev/prepared-commit"
@@ -189,7 +189,7 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)
 	}
-	if scale := os.Getenv("SDO_TIME_SCALE"); scale != "" {
+	if scale := installio.TimeScale(); scale != "" {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
 	}
 	return job, nil
@@ -291,7 +291,7 @@ func (i Installer) acquireOperateLock(ctx context.Context, cfg Config, operation
 		}
 		job, err := i.Client.BatchV1().Jobs(cfg.controlNamespace()).Get(ctx, OperateJobName(owner), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			if prior.CreationTimestamp.IsZero() || time.Since(prior.CreationTimestamp.Time) < 15*time.Minute {
+			if prior.CreationTimestamp.IsZero() || i.now().Sub(prior.CreationTimestamp.Time) < 15*time.Minute {
 				return fmt.Errorf("native operate PVC is claimed by %q but its Job is missing; inspect the claim before retrying", owner)
 			}
 			uid := prior.UID

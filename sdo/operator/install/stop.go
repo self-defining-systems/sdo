@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"sdo.dev/operator/install/internal/installio"
 )
 
 // StopResult describes runtime objects only. Stop never deletes repository PVCs,
@@ -159,10 +160,8 @@ func Stop(ctx context.Context, client kubernetes.Interface, namespace string) (S
 			if !active {
 				break
 			}
-			select {
-			case <-ctx.Done():
+			if err := installio.Wait(ctx, 100*time.Millisecond); err != nil {
 				return result, fmt.Errorf("SDO runtime did not stop; leftovers %v: %w", result.Leftovers, ctx.Err())
-			case <-time.After(100 * time.Millisecond):
 			}
 		}
 	}

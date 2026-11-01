@@ -18,6 +18,7 @@ import (
 // Existing mixed orchestration packages remain on the ratchet, not exempted.
 var Edges = map[string]bool{
 	"sdo/operator/memory/internal/memoryio":         true, // Git and shell syntax subprocesses
+	"sdo/operator/install/internal/installio":       true, // Repository processes, configuration environment and timer adapter
 	"sdo/operator/runtime/internal/lifecycleio":     true, // Kubernetes driver
 	"sdo/operator/runtime/prober":                   true, // protocol dial adapter
 	"sdo/operator/runtime/prometheus":               true, // Prometheus HTTP adapter
