@@ -201,12 +201,8 @@ func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
 	if delay <= 0 {
 		delay = DefaultDiagnosisSettleDelay
 	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
+	if err := l.Executor.sleep(ctx, delay); err != nil {
 		return
-	case <-timer.C:
 	}
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()

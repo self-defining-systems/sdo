@@ -31,6 +31,9 @@ import (
 )
 
 type KubernetesCacheConfig struct {
+	// ResyncPeriod controls informer resyncs. Zero disables resync; simulations
+	// may select a positive virtual interval to keep reflector timers in-bubble.
+	ResyncPeriod time.Duration
 	// Clock supplies snapshot observation time; nil uses the production clock.
 	Clock              func() time.Time
 	Namespace          string
@@ -77,6 +80,9 @@ type KubernetesCache struct {
 func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) (*KubernetesCache, error) {
 	if config.Namespace == "" {
 		return nil, fmt.Errorf("namespace is required")
+	}
+	if config.ResyncPeriod < 0 {
+		return nil, fmt.Errorf("informer resync period must not be negative")
 	}
 	if config.Client == nil {
 		return nil, fmt.Errorf("Kubernetes client is required")
@@ -137,7 +143,7 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 }
 
 func (c *KubernetesCache) build() (informers.SharedInformerFactory, map[string]cache.SharedIndexInformer, error) {
-	factory := informers.NewSharedInformerFactoryWithOptions(c.config.Client, 0, informers.WithNamespace(c.config.Namespace))
+	factory := informers.NewSharedInformerFactoryWithOptions(c.config.Client, c.config.ResyncPeriod, informers.WithNamespace(c.config.Namespace))
 	built := make(map[string]cache.SharedIndexInformer, len(c.declared))
 	for key, watch := range c.declared {
 		informer, err := informerFor(factory, key)

@@ -969,3 +969,27 @@ connection-pool/listener-closure contracts remain in
 `prober/socket_integration_test.go`; PR and nightly `scripts/test_go_ci.sh`
 already include `-tags=integration`, retaining both tests and the five-minute
 PR budget.
+
+Responder diagnosis settling and trusted fast-path settling share
+`PlanExecutor.Sleep`; resource-version retry jitter accepts `PlanExecutor.Jitter`.
+Tests can advance one simulation clock and seeded RNG through these seams.
+Cancellation still prevents the post-settle diagnosis or apply.
+
+Metrics observer and Prometheus adapter unit tests use injected handler-backed
+HTTP and virtual deadlines, including a source that ignores cancellation.
+The three real CLI metrics-URL wiring tests and default-client redirect wiring
+run with `integration` in the existing PR/nightly `scripts/test_go_ci.sh`
+invocations; unit fixtures do not claim real HTTP transport coverage.
+
+Controller dispatch, persistence, admission and effect-durability tests use
+virtual time and quiescence before negative dispatch assertions. Broker and
+dispatch queue helpers synchronize by receiving and restoring the buffered
+result, preserving controller ownership of consumption. Informer notification
+helpers await the event directly instead of host-clock polling.
+
+The real client-go informer/restart test sets a positive virtual resync interval.
+Client-go's disabled-resync path selects on a package-global channel created
+outside the synctest bubble, preventing virtual timers from advancing.
+`KubernetesCacheConfig.ResyncPeriod` leaves production's disabled-resync default
+unchanged while allowing that scheduling boundary to remain in-bubble. This
+does not add client-go watch streams to the simulation world's model.

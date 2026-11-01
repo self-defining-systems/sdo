@@ -59,7 +59,7 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "memory" {
-		os.Exit(operatorcli.RunMemory(context.Background(), os.Args[2:], os.Getenv, os.Stdout, os.Stderr))
+		os.Exit(operatorcli.RunMemory(context.Background(), os.Args[2:], nil, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "operate" {
 		config, err := operatorcli.ParseOperateLaunch(os.Args[1:])

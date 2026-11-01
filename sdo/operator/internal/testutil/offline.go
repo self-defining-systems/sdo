@@ -3,8 +3,8 @@ package testutil
 
 import (
 	"context"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/toolchain"
 	"sync"
 	"testing"
 	"time"
@@ -25,9 +25,7 @@ func OfflineGo(t *testing.T, operatorRoot string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		for _, module := range []string{"sdk", "core", "runtime", "."} {
-			command := exec.CommandContext(ctx, "go", "mod", "download", "all")
-			command.Dir = filepath.Join(operatorRoot, module)
-			moduleCache.output, moduleCache.err = command.CombinedOutput()
+			moduleCache.output, moduleCache.err = toolchain.DownloadModules(ctx, filepath.Join(operatorRoot, module))
 			if moduleCache.err != nil {
 				return
 			}

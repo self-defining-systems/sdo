@@ -63,14 +63,14 @@ The exact production edge-package list is:
 - `sdo/operator/operatorcli/internal/processio`: CLI Git, kubectl and environment adapter.
 - `sdo/operator/broker/internal/processio`: Git commands and bounded validator process supervision.
 
-- `sdo/operator/runtime/internal/lifecycleio`: Kubernetes lifecycle driver and default observation and execution clock.
+- `sdo/operator/runtime/internal/lifecycleio`: Kubernetes lifecycle driver, default observation/execution clock and development time-scale environment, default executor wait timers and retry jitter.
 - `sdo/operator/runtime/prober`: protocol dial adapter.
 - `sdo/operator/install/internal/installio`: accepted-checkout Git/archive/kubectl processes, installer clock and wait timers, and time-scale environment reads.
 - `sdo/operator/runtime/prometheus`: Prometheus HTTP adapter.
 - `sdo/operator/memoryhost/hostio`: memory-host process launcher, Unix socket server/client and read-only network adapter.
 - `sdo/operator/memory/internal/memoryio`: Git reads, isolated-index whitespace checks, shell syntax and toolchain lookup. No process handles escape.
 - `sdo/operator/deployment/internal/deploymentio`: trusted deployment processes, bounded health process execution, wait timers and Job-name suffixes.
-- `sdo/operator/toolchain`: Go compiler process adapter.
+- `sdo/operator/toolchain`: Go compiler and offline module-cache download process adapter.
 - `sdo/operator/devmount`: development mount process adapter.
 - `sdo/operator/runtime/sim`: the deterministic simulation world. Its clock reads are the synctest bubble's
   virtual time, its one environment read is the `SDO_SIM_SEED` replay seed, and its HTTP client runs over an

@@ -37,3 +37,14 @@ func TestKubernetesCacheObservationUsesInjectedClock(t *testing.T) {
 		t.Fatalf("observed at %s, want %s", got, at)
 	}
 }
+
+func (tr handlerTransport) Do(request *http.Request) (*http.Response, error) {
+	return tr.RoundTrip(request)
+}
+
+func TestKubernetesCacheRejectsNegativeResyncPeriod(t *testing.T) {
+	_, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), ResyncPeriod: -time.Second}, nil)
+	if err == nil {
+		t.Fatal("negative resync period accepted")
+	}
+}

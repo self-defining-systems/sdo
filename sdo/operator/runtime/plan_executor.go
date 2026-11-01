@@ -79,7 +79,9 @@ type PlanExecutor struct {
 	// show the application's writes before verifying.
 	Observer WriteObserver
 	Now      func() time.Time
-	// Sleep waits between version-conflict retries; nil waits on the real clock.
+	// Jitter draws a value in [0, bound); nil uses the production RNG.
+	Jitter func(bound int64) int64
+	// Sleep waits between conflict retries and diagnosis settling; nil uses the production timer.
 	Sleep func(context.Context, time.Duration) error
 }
 

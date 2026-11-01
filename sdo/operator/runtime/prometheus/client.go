@@ -31,6 +31,11 @@ const (
 	maxErrorBytes    = 512
 )
 
+// Doer is the HTTP request boundary accepted by the Prometheus adapter.
+type Doer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
 // Client calls a Prometheus-compatible HTTP API. It sets no timeout of its
 // own: callers bound each call with the context.
 type Client struct {
@@ -40,7 +45,7 @@ type Client struct {
 	// every request so a rotated token is picked up.
 	TokenFile string
 	// HTTPClient defaults to a client that follows no redirects.
-	HTTPClient *http.Client
+	HTTPClient Doer
 }
 
 // Query evaluates query at time at: an instant query, or when it has a Range
