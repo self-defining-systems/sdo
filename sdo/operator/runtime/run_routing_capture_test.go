@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"sdo.dev/operator/runtime/internal/testprober"
 	"sdo.dev/operator/runtime/prober"
 	"strings"
@@ -30,12 +29,10 @@ func noTrafficProberHandler(t *testing.T) http.Handler {
 	return testprober.Handler(p)
 }
 
-// noTrafficRoutingProber serves that API on a real loopback socket.
+// noTrafficRoutingProber serves the API through an in-memory transport.
 func noTrafficRoutingProber(t *testing.T) HTTPProberClient {
 	t.Helper()
-	api := httptest.NewServer(noTrafficProberHandler(t))
-	t.Cleanup(api.Close)
-	return HTTPProberClient{BaseURL: StaticProberURL(api.URL)}
+	return inProcessProberClient(noTrafficProberHandler(t))
 }
 
 type routingCaptureDispatcher struct{ requests chan IncidentRequest }

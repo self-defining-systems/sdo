@@ -1,7 +1,4 @@
 benchmarks/sregym/fastloop/replay_go/main.go:os/exec
-sdo/operator/runtime/link_observer_test.go:net.Dialer
-sdo/operator/runtime/link_observer_test.go:net.Listen
-sdo/operator/runtime/link_observer_test.go:time.Sleep
 sdo/operator/runtime/logs_kubelet_test.go:os.Getenv
 sdo/operator/runtime/logs_kubelet_test.go:time.NewTicker
 sdo/operator/runtime/prober/link_protocol_test.go:net.Dialer
@@ -9,13 +6,6 @@ sdo/operator/runtime/prober/link_protocol_test.go:net.Listen
 sdo/operator/runtime/prober/link_protocol_test.go:net/http/httptest.NewUnstartedServer
 sdo/operator/runtime/prober/link_protocol_test.go:os.Getenv
 sdo/operator/runtime/prober/link_protocol_test.go:time.Now
-sdo/operator/runtime/routing_capture_test.go:net/http.Client
-sdo/operator/runtime/routing_capture_test.go:time.Sleep
-sdo/operator/runtime/routing_capture_test.go:time.Until
-sdo/operator/runtime/run_routing_capture_test.go:net/http/httptest.NewServer
-sdo/operator/runtime/service_reachability_test.go:net.Dialer
-sdo/operator/runtime/service_reachability_test.go:net.Listen
-sdo/operator/runtime/service_reachability_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/state_baseline_secret_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/state_baseline_secret_test.go:time.Now
 sdo/operator/runtime/state_baseline_test.go:time.Now
@@ -26,7 +16,6 @@ sdo/operator/runtime/step_latency_test.go:time.After
 sdo/operator/runtime/step_latency_test.go:time.Now
 sdo/operator/runtime/step_latency_test.go:time.Since
 sdo/operator/runtime/step_latency_test.go:time.Sleep
-sdo/operator/runtime/traffic_observer_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/usage_live_test.go:os.Getenv
 sdo/operator/runtime/usage_live_test.go:time.Now
 sdo/operator/runtime/watch_evaluation_test.go:time.Now

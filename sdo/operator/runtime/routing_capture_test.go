@@ -43,7 +43,7 @@ func (p *routingTestProber) Probe(ctx context.Context, ref sdk.ObjectRef, port i
 	defer p.mu.Unlock()
 	p.calls = append(p.calls, fmt.Sprintf("%s/%s:%d", ref.Kind, ref.Name, port))
 	if deadline, ok := ctx.Deadline(); ok {
-		p.deadlines = append(p.deadlines, time.Until(deadline))
+		p.deadlines = append(p.deadlines, deadline.Sub(timerClock(nil).Now()))
 	}
 	return program.ProbeResult{Success: false, Detail: "refused"}, nil
 }
@@ -332,7 +332,7 @@ func (p *boundedRoutingProber) Probe(ctx context.Context, _ sdk.ObjectRef, _ int
 		<-ctx.Done()
 		return program.ProbeResult{}, ctx.Err()
 	}
-	time.Sleep(p.delay)
+	timerClock(nil).Sleep(p.delay)
 	return program.ProbeResult{Success: true}, nil
 }
 
@@ -492,8 +492,12 @@ func (p inProcessProber) RoundTrip(request *http.Request) (*http.Response, error
 	return recorder.Result(), nil
 }
 
+func (p inProcessProber) Do(request *http.Request) (*http.Response, error) {
+	return p.RoundTrip(request)
+}
+
 func inProcessProberClient(handler http.Handler) HTTPProberClient {
-	return HTTPProberClient{BaseURL: StaticProberURL("http://prober.invalid"), Client: &http.Client{Transport: inProcessProber{handler}}}
+	return HTTPProberClient{BaseURL: StaticProberURL("http://prober.invalid"), Client: inProcessProber{handler}}
 }
 
 // A healthy but CPU-starved prober answers slowly. That is wall-clock noise,
@@ -616,7 +620,7 @@ type HTTPProberClient struct {
 	// transport error the client asks again with refresh set, so a replaced
 	// or deleted prober pod is found or recreated.
 	BaseURL func(ctx context.Context, refresh bool) (string, error)
-	Client  *http.Client
+	Client  traffic.Doer
 }
 
 // StaticProberURL addresses a prober at a fixed URL.
@@ -625,6 +629,8 @@ func StaticProberURL(url string) func(context.Context, bool) (string, error) {
 }
 
 func (c HTTPProberClient) do(ctx context.Context, method string, path string, body any, into any) error {
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
 	response, err := c.send(ctx, method, path, body, false)
 	if err != nil && ctx.Err() == nil {
 		response, err = c.send(ctx, method, path, body, true)
@@ -663,7 +669,7 @@ func (c HTTPProberClient) send(ctx context.Context, method string, path string, 
 	request.Header.Set("Content-Type", "application/json")
 	client := c.Client
 	if client == nil {
-		client = &http.Client{Timeout: 90 * time.Second}
+		return nil, errors.New("prober client transport is required")
 	}
 	response, err := client.Do(request)
 	if err != nil {
@@ -699,10 +705,7 @@ func (c HTTPProberClient) primitive(ctx context.Context, request prober.Primitiv
 	// client cancels its request. HTTP does not carry context deadlines.
 	timeout := 5 * time.Second
 	if deadline, ok := ctx.Deadline(); ok {
-		timeout = min(timeout, time.Until(deadline)/2)
-	}
-	if c.Client != nil && c.Client.Timeout > 0 {
-		timeout = min(timeout, c.Client.Timeout/2)
+		timeout = min(timeout, deadline.Sub(timerClock(nil).Now())/2)
 	}
 	if timeout <= 0 {
 		return program.ProbeResult{}, context.DeadlineExceeded

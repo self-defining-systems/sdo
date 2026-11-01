@@ -56,7 +56,7 @@ func TestRunCapturesRoutingWithoutTrafficWorkloads(t *testing.T) {
 			exited := make(chan error, 1)
 			go func() {
 				exited <- RunWithOptions(ctx, []sdk.Detector{detector}, RuntimeOptions{
-					Args: controllerConfigToArgs(launch), Traffic: HTTPProberClient{BaseURL: StaticProberURL(address)}, Client: client, Dispatcher: dispatcher, Stdout: io.Discard, Stderr: io.Discard,
+					Args: controllerConfigToArgs(launch), Traffic: HTTPProberClient{BaseURL: StaticProberURL(address), Client: probe.Client}, Client: client, Dispatcher: dispatcher, Stdout: io.Discard, Stderr: io.Discard,
 					NativeBroker: &NativeIncidentBroker{Repository: repository, LedgerRoot: ledgerRoot, SessionRoot: sessionRoot},
 				})
 			}()
