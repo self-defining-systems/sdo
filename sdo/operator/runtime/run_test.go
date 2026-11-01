@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	clocktesting "k8s.io/utils/clock/testing"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,7 +131,8 @@ func TestEvaluateOnceFailsClosedOnDetectorError(t *testing.T) {
 }
 
 func TestStopTimerForRuntimeEventDetectsExpiredRuntime(t *testing.T) {
-	activeTimer := time.NewTimer(time.Hour)
+	clock := clocktesting.NewFakeClock(time.Unix(123, 0))
+	activeTimer := clock.NewTimer(time.Hour)
 	defer activeTimer.Stop()
 	if stopTimerForRuntimeEvent(context.Background(), activeTimer) {
 		t.Fatal("active runtime was treated as expired")
@@ -138,7 +140,7 @@ func TestStopTimerForRuntimeEventDetectsExpiredRuntime(t *testing.T) {
 
 	expired, cancel := context.WithCancel(context.Background())
 	cancel()
-	expiredTimer := time.NewTimer(time.Hour)
+	expiredTimer := clock.NewTimer(time.Hour)
 	defer expiredTimer.Stop()
 	if !stopTimerForRuntimeEvent(expired, expiredTimer) {
 		t.Fatal("expired runtime was allowed to process another event")

@@ -94,7 +94,7 @@ func TestLeadershipRenewalContinuesWhileControllerLoopIsBusy(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	errors := maintainLeadership(ctx, elector, 5*time.Millisecond)
+	errors := maintainLeadership(ctx, elector, 5*time.Millisecond, nil)
 
 	deadline := time.Now().Add(time.Second)
 	for updates.Load() < 2 && time.Now().Before(deadline) {

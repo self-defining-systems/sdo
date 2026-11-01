@@ -3,12 +3,17 @@
 package runtime
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	clocktesting "k8s.io/utils/clock/testing"
 	"net/http"
 	"net/http/httptest"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/sdktest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newRealFakePrometheus(t *testing.T) (*fakePrometheus, *httptest.Server) {
@@ -57,5 +62,27 @@ func TestEvaluateOnceFailsClosedWhenTheMetricsSourceIsUnavailable(t *testing.T) 
 	}
 	if _, err := evaluateOnceWithMetrics(t, []sdk.Detector{alertReader{spec: metricsSpec("alerts")}}, "--metrics-url", server.URL); err == nil {
 		t.Fatal("unavailable alerts must fail evaluation")
+	}
+}
+
+func TestEvaluateOnceMetricsUsesInjectedRuntimeClock(t *testing.T) {
+	fake, server := newRealFakePrometheus(t)
+	fake.queries[errorQuery.Expr] = vector(`{"metric":{"deployment":"checkout","namespace":"shop"},"value":[1790856000,"0.4"]}`)
+	var output bytes.Buffer
+	err := RunWithOptions(context.Background(), []sdk.Detector{metricsDetector("thresholds", errorQuery)}, RuntimeOptions{
+		Args: []string{"--evaluate-once", "--namespace", "shop", "--metrics-url", server.URL}, Stdout: &output,
+		Provider: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "shop"}}, Clock: clocktesting.NewFakeClock(metricsNow),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Findings []sdk.Finding `json:"findings"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Metadata["observed_at"] != metricsNow.Format(time.RFC3339) {
+		t.Fatalf("findings %+v", result.Findings)
 	}
 }
