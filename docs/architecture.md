@@ -415,12 +415,17 @@ Source-deployment provenance remains separate. `memory_host_activation` controll
 log records include the accepted commit, binary digest, activation latency in
 milliseconds and unchanged controller build revision.
 
-Traffic remains in the current prober until slice 3, which moves both generators
-and the traffic engine into the host with parity tests, makes it the sole memory
-execution path and deletes the flag, in-controller accepted-memory compilation,
-rebuild/relaunch supervisor, prober pod/publication/install wiring and legacy
-per-request full-snapshot protocol field. That field remains only for slice-1
-adapter compatibility; the mirrored production path never sends it.
+In host mode, the same child also constructs accepted traffic generators and
+owns their engines, workload scheduler, windows, verification bursts, primitive
+probes and reachability dial rounds. Typed Traffic RPC operations start, stop,
+reset and read this state. Prepared hosts remain idle; activation and crash
+recovery restore the requested scheduler state. Maintenance stop joins all
+workloads. Each revision starts with fresh observations.
+
+The remaining slice-3 removal makes the host the sole memory execution path and
+deletes the flag, in-controller accepted-memory compilation, rebuild/relaunch
+supervisor, prober pod/publication/install wiring and legacy per-request
+full-snapshot field. The mirrored production path never sends that field.
 
 The memory component owns a private `memory/internal/memoryio` edge for Git
 reads, isolated-index whitespace checks, shell syntax and toolchain lookup.

@@ -6,6 +6,7 @@ from sdodev.contracts.v1alpha1 import common_pb2 as _common_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from sdodev.contracts.v1alpha1 import program_pb2 as _program_pb2
 from google.protobuf.internal import containers as _containers
+from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
 from collections.abc import Iterable as _Iterable, Mapping as _Mapping
@@ -197,3 +198,85 @@ class MitigateResponse(_message.Message):
     error: str
     reads: _containers.RepeatedCompositeFieldContainer[MemoryReadReceipt]
     def __init__(self, plan: _Optional[_Union[_program_pb2.Plan, _Mapping]] = ..., error: _Optional[str] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ...) -> None: ...
+
+class TrafficRequest(_message.Message):
+    __slots__ = ("operation", "workload", "scenarios", "target", "port", "pod_ip", "http_method", "http_path", "http_headers", "timeout_ns", "dial_targets")
+    class Operation(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        OPERATION_UNSPECIFIED: _ClassVar[TrafficRequest.Operation]
+        OPERATION_START: _ClassVar[TrafficRequest.Operation]
+        OPERATION_STOP: _ClassVar[TrafficRequest.Operation]
+        OPERATION_RESET: _ClassVar[TrafficRequest.Operation]
+        OPERATION_WINDOWS: _ClassVar[TrafficRequest.Operation]
+        OPERATION_BURST: _ClassVar[TrafficRequest.Operation]
+        OPERATION_PROBE: _ClassVar[TrafficRequest.Operation]
+        OPERATION_DIALS: _ClassVar[TrafficRequest.Operation]
+    OPERATION_UNSPECIFIED: TrafficRequest.Operation
+    OPERATION_START: TrafficRequest.Operation
+    OPERATION_STOP: TrafficRequest.Operation
+    OPERATION_RESET: TrafficRequest.Operation
+    OPERATION_WINDOWS: TrafficRequest.Operation
+    OPERATION_BURST: TrafficRequest.Operation
+    OPERATION_PROBE: TrafficRequest.Operation
+    OPERATION_DIALS: TrafficRequest.Operation
+    class HttpHeadersEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    OPERATION_FIELD_NUMBER: _ClassVar[int]
+    WORKLOAD_FIELD_NUMBER: _ClassVar[int]
+    SCENARIOS_FIELD_NUMBER: _ClassVar[int]
+    TARGET_FIELD_NUMBER: _ClassVar[int]
+    PORT_FIELD_NUMBER: _ClassVar[int]
+    POD_IP_FIELD_NUMBER: _ClassVar[int]
+    HTTP_METHOD_FIELD_NUMBER: _ClassVar[int]
+    HTTP_PATH_FIELD_NUMBER: _ClassVar[int]
+    HTTP_HEADERS_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_NS_FIELD_NUMBER: _ClassVar[int]
+    DIAL_TARGETS_FIELD_NUMBER: _ClassVar[int]
+    operation: TrafficRequest.Operation
+    workload: str
+    scenarios: _containers.RepeatedScalarFieldContainer[str]
+    target: _common_pb2.ObjectRef
+    port: int
+    pod_ip: str
+    http_method: str
+    http_path: str
+    http_headers: _containers.ScalarMap[str, str]
+    timeout_ns: int
+    dial_targets: _containers.RepeatedCompositeFieldContainer[TrafficDialTarget]
+    def __init__(self, operation: _Optional[_Union[TrafficRequest.Operation, str]] = ..., workload: _Optional[str] = ..., scenarios: _Optional[_Iterable[str]] = ..., target: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., port: _Optional[int] = ..., pod_ip: _Optional[str] = ..., http_method: _Optional[str] = ..., http_path: _Optional[str] = ..., http_headers: _Optional[_Mapping[str, str]] = ..., timeout_ns: _Optional[int] = ..., dial_targets: _Optional[_Iterable[_Union[TrafficDialTarget, _Mapping]]] = ...) -> None: ...
+
+class TrafficResponse(_message.Message):
+    __slots__ = ("windows", "burst", "success", "detail", "dials")
+    class WindowsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: _struct_pb2.Struct
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
+    WINDOWS_FIELD_NUMBER: _ClassVar[int]
+    BURST_FIELD_NUMBER: _ClassVar[int]
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    DIALS_FIELD_NUMBER: _ClassVar[int]
+    windows: _containers.MessageMap[str, _struct_pb2.Struct]
+    burst: _struct_pb2.Struct
+    success: bool
+    detail: str
+    dials: _struct_pb2.Struct
+    def __init__(self, windows: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., burst: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., success: _Optional[bool] = ..., detail: _Optional[str] = ..., dials: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
+
+class TrafficDialTarget(_message.Message):
+    __slots__ = ("service", "port", "port_name")
+    SERVICE_FIELD_NUMBER: _ClassVar[int]
+    PORT_FIELD_NUMBER: _ClassVar[int]
+    PORT_NAME_FIELD_NUMBER: _ClassVar[int]
+    service: str
+    port: int
+    port_name: str
+    def __init__(self, service: _Optional[str] = ..., port: _Optional[int] = ..., port_name: _Optional[str] = ...) -> None: ...

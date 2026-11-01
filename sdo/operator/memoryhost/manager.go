@@ -23,16 +23,17 @@ type Host interface {
 // Manager keeps the old host serving while a candidate is prepared. Calls hold
 // a read lease so retirement cannot kill an evaluation already in flight.
 type Manager struct {
-	mirror     mirrorState
-	swap       sync.Mutex
-	mu         sync.RWMutex
-	active     Host
-	revision   string
-	timeout    time.Duration
-	closed     bool
-	generation uint64
-	recovering bool
-	recovery   func(context.Context) (Host, string, string, uint64, error)
+	mirror         mirrorState
+	swap           sync.Mutex
+	mu             sync.RWMutex
+	active         Host
+	revision       string
+	timeout        time.Duration
+	closed         bool
+	generation     uint64
+	recovering     bool
+	trafficRunning bool
+	recovery       func(context.Context) (Host, string, string, uint64, error)
 }
 
 func NewManager(timeout time.Duration) *Manager {
@@ -66,6 +67,10 @@ func (m *Manager) Swap(ctx context.Context, h Host, commit, digest string, seque
 	if m.closed {
 		m.mu.Unlock()
 		return errors.New("memory host manager is closed")
+	}
+	if err := m.resumeTraffic(ctx, h); err != nil {
+		m.mu.Unlock()
+		return err
 	}
 	old := m.active
 	m.active = h
@@ -180,6 +185,11 @@ func (m *Manager) recover(generation uint64, prepare func(context.Context) (Host
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || m.generation != generation || m.active != nil {
+		delete(m.mirror.hosts, h)
+		_ = h.Close()
+		return
+	}
+	if err := m.resumeTraffic(ctx, h); err != nil {
 		delete(m.mirror.hosts, h)
 		_ = h.Close()
 		return

@@ -287,7 +287,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err := hostManager.Publish(ctx, sdktest.Snapshot{NamespaceName: *namespace}); err != nil {
 			return err
 		}
-		child, err := hostio.Launch(hostio.LaunchConfig{Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		if err != nil {
 			return err
 		}
@@ -311,7 +311,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err != nil {
 			return err
 		}
-		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs = remote.Detectors, remote.Programs
 	}
 	detectors = scaleDetectors(detectors, timeScale)
@@ -473,6 +473,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// Responders outlive prober pod IPs, so they get a stable address.
 	var responderProberAddress func(context.Context, bool) (string, error)
 	switch {
+	case hostManager != nil:
+		proberAPI = MemoryTraffic{RPC: hostManager}
 	case *proberURL != "":
 		proberAddress = StaticProberURL(*proberURL)
 		proberAPI = HTTPProberClient{BaseURL: proberAddress}
@@ -493,19 +495,28 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		proberAPI = HTTPProberClient{BaseURL: proberAddress}
 	}
 	var trafficObserver *TrafficObserver
-	if *syntheticTraffic {
+	if *syntheticTraffic && hostManager != nil {
+		trafficObserver = &TrafficObserver{api: proberAPI, workloads: append([]string(nil), trafficWorkloads...), notify: func() { kubernetesCache.Notify(traffic.Watch) }, interval: DefaultTrafficPollInterval}
+	} else if *syntheticTraffic {
 		trafficObserver = NewTrafficObserver(proberAPI, trafficWorkloads, func() { kubernetesCache.Notify(traffic.Watch) }, 0)
 	}
 	// Service reachability is a routing probe, not a synthetic workload, so
 	// it runs whenever a prober exists and a detector consumes it.
 	var reachabilityObserver *ServiceReachabilityObserver
-	if proberAddress != nil && (*memoryHost || ConsumesServiceReachability(detectors)) {
+	if (hostManager != nil || proberAddress != nil) && (*memoryHost || ConsumesServiceReachability(detectors)) {
 		identity := servicehealth.ProberIdentity{}
-		if *proberURL == "" {
+		if hostManager != nil {
+			identity = servicehealth.ProberIdentity{Namespace: *controlNamespace, Labels: map[string]string{"app.kubernetes.io/name": "sdo-controller"}}
+		} else if *proberURL == "" {
 			identity = servicehealth.ProberIdentity{Namespace: *controlNamespace, Labels: proberPodLabels()}
 		}
 		reachabilityObserver = NewServiceReachabilityObserver(ServiceReachabilityConfig{
-			Prober: HTTPProberClient{BaseURL: proberAddress}, Snapshots: kubernetesCache, Identity: identity,
+			Prober: func() ReachabilityDialer {
+				if hostManager != nil {
+					return MemoryTraffic{RPC: hostManager}
+				}
+				return HTTPProberClient{BaseURL: proberAddress}
+			}(), Snapshots: kubernetesCache, Identity: identity,
 			Notify: func() { kubernetesCache.Notify(servicehealth.ReachabilityWatch) },
 		})
 		defer reachabilityObserver.Stop()
@@ -554,7 +565,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	planSource := GitPlanSource{Repository: resolvedRoot, Images: stateTracker, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
 	var primitiveProber PrimitiveProber
-	if proberAddress != nil {
+	if hostManager != nil {
+		primitiveProber = MemoryTraffic{RPC: hostManager}
+	} else if proberAddress != nil {
 		primitiveProber = HTTPProberClient{BaseURL: proberAddress}
 	}
 	var memoryCatalogMu sync.RWMutex
@@ -667,7 +680,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return memoryCandidate{commit: commit, err: err}
 			}
-			child, err := hostio.Launch(hostio.LaunchConfig{Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
+			child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
 			if err != nil {
 				_ = workspace.Close()
 				return memoryCandidate{commit: commit, err: err}
@@ -715,6 +728,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err = hostManager.Activate(activateCtx, candidate.host, candidate.commit, candidate.digest); err != nil {
 				return err
 			}
+			trafficWorkloads = TrafficWorkloadNames(remote.Detectors)
+			if trafficObserver != nil {
+				trafficObserver.Reconfigure(trafficWorkloads)
+			}
 			if err = controller.ReconfigureMemory(remote, next, time.Now().UTC()); err != nil {
 				return err
 			}
@@ -722,7 +739,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			detectors, options.Programs, snapshotProvider, metricsObserver = remote.Detectors, remote.Programs, next, nextMetrics
 			memoryCatalogMu.Unlock()
 			_ = json.NewEncoder(stdout).Encode(map[string]any{"memory_host_activation": candidate.commit, "binary_digest": candidate.digest, "activation_latency_ms": time.Now().Sub(candidate.started).Milliseconds(), "controller_revision": launchConfig.GetControllerRevision()})
-			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
+			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
 			return nil
 		}
 		defer activation.close()
@@ -857,6 +874,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// evaluation, which may be the all-clear that precedes a fault, judges
 	// observed traffic.
 	startTraffic := func() {
+		if hostManager != nil && *syntheticTraffic {
+			if err := (MemoryTraffic{RPC: hostManager}).Start(runCtx); err != nil {
+				fmt.Fprintf(stderr, "memory traffic startup: %v\n", err)
+			}
+		}
 		if trafficObserver == nil {
 			// Routing capture has a short sampling budget, so create and await
 			// the isolated pod before detection, even without traffic consumers.
@@ -893,6 +915,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	stopTraffic := func() {
+		if hostManager != nil {
+			if err := (MemoryTraffic{RPC: hostManager}).Stop(runCtx); err != nil {
+				fmt.Fprintf(stderr, "memory traffic stop: %v\n", err)
+			}
+		}
 		if trafficObserver != nil {
 			trafficObserver.Stop()
 		}

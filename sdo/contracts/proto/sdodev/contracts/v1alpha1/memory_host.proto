@@ -13,6 +13,7 @@ option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;co
 // MemoryHost is transport-independent. The initial launcher uses a Unix socket;
 // a later sidecar can implement the same service without changing callers.
 service MemoryHostService {
+  rpc Traffic(TrafficRequest) returns (TrafficResponse);
   rpc Ready(ReadyRequest) returns (ReadyResponse);
   rpc Mirror(stream MirrorRequest) returns (MirrorResponse);
   rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
@@ -105,4 +106,43 @@ message MitigateResponse {
   Plan plan = 1;
   string error = 2;
   repeated MemoryReadReceipt reads = 3;
+}
+
+// Host-owned traffic scheduler and read-only primitives. No mutation operation
+// is representable. Observations use the SDK window and burst JSON schemas.
+message TrafficRequest {
+  enum Operation {
+    OPERATION_UNSPECIFIED = 0;
+    OPERATION_START = 1;
+    OPERATION_STOP = 2;
+    OPERATION_RESET = 3;
+    OPERATION_WINDOWS = 4;
+    OPERATION_BURST = 5;
+    OPERATION_PROBE = 6;
+    OPERATION_DIALS = 7;
+  }
+  Operation operation = 1;
+  string workload = 2;
+  repeated string scenarios = 3;
+  ObjectRef target = 4;
+  int32 port = 5;
+  string pod_ip = 6;
+  string http_method = 7;
+  string http_path = 8;
+  map<string, string> http_headers = 9;
+  int64 timeout_ns = 10;
+  repeated TrafficDialTarget dial_targets = 11;
+}
+message TrafficResponse {
+  map<string, google.protobuf.Struct> windows = 1;
+  google.protobuf.Struct burst = 2;
+  bool success = 3;
+  string detail = 4;
+  google.protobuf.Struct dials = 5;
+}
+
+message TrafficDialTarget {
+  string service = 1;
+  int32 port = 2;
+  string port_name = 3;
 }

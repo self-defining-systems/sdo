@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	MemoryHostService_Traffic_FullMethodName  = "/sdodev.contracts.v1alpha1.MemoryHostService/Traffic"
 	MemoryHostService_Ready_FullMethodName    = "/sdodev.contracts.v1alpha1.MemoryHostService/Ready"
 	MemoryHostService_Mirror_FullMethodName   = "/sdodev.contracts.v1alpha1.MemoryHostService/Mirror"
 	MemoryHostService_Evaluate_FullMethodName = "/sdodev.contracts.v1alpha1.MemoryHostService/Evaluate"
@@ -33,6 +34,7 @@ const (
 // MemoryHost is transport-independent. The initial launcher uses a Unix socket;
 // a later sidecar can implement the same service without changing callers.
 type MemoryHostServiceClient interface {
+	Traffic(ctx context.Context, in *TrafficRequest, opts ...grpc.CallOption) (*TrafficResponse, error)
 	Ready(ctx context.Context, in *ReadyRequest, opts ...grpc.CallOption) (*ReadyResponse, error)
 	Mirror(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[MirrorRequest, MirrorResponse], error)
 	Evaluate(ctx context.Context, in *EvaluateRequest, opts ...grpc.CallOption) (*EvaluateResponse, error)
@@ -46,6 +48,16 @@ type memoryHostServiceClient struct {
 
 func NewMemoryHostServiceClient(cc grpc.ClientConnInterface) MemoryHostServiceClient {
 	return &memoryHostServiceClient{cc}
+}
+
+func (c *memoryHostServiceClient) Traffic(ctx context.Context, in *TrafficRequest, opts ...grpc.CallOption) (*TrafficResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrafficResponse)
+	err := c.cc.Invoke(ctx, MemoryHostService_Traffic_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *memoryHostServiceClient) Ready(ctx context.Context, in *ReadyRequest, opts ...grpc.CallOption) (*ReadyResponse, error) {
@@ -108,6 +120,7 @@ func (c *memoryHostServiceClient) Mitigate(ctx context.Context, in *MitigateRequ
 // MemoryHost is transport-independent. The initial launcher uses a Unix socket;
 // a later sidecar can implement the same service without changing callers.
 type MemoryHostServiceServer interface {
+	Traffic(context.Context, *TrafficRequest) (*TrafficResponse, error)
 	Ready(context.Context, *ReadyRequest) (*ReadyResponse, error)
 	Mirror(grpc.ClientStreamingServer[MirrorRequest, MirrorResponse]) error
 	Evaluate(context.Context, *EvaluateRequest) (*EvaluateResponse, error)
@@ -123,6 +136,9 @@ type MemoryHostServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedMemoryHostServiceServer struct{}
 
+func (UnimplementedMemoryHostServiceServer) Traffic(context.Context, *TrafficRequest) (*TrafficResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Traffic not implemented")
+}
 func (UnimplementedMemoryHostServiceServer) Ready(context.Context, *ReadyRequest) (*ReadyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Ready not implemented")
 }
@@ -157,6 +173,24 @@ func RegisterMemoryHostServiceServer(s grpc.ServiceRegistrar, srv MemoryHostServ
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&MemoryHostService_ServiceDesc, srv)
+}
+
+func _MemoryHostService_Traffic_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TrafficRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MemoryHostServiceServer).Traffic(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MemoryHostService_Traffic_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MemoryHostServiceServer).Traffic(ctx, req.(*TrafficRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _MemoryHostService_Ready_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -245,6 +279,10 @@ var MemoryHostService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "sdodev.contracts.v1alpha1.MemoryHostService",
 	HandlerType: (*MemoryHostServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Traffic",
+			Handler:    _MemoryHostService_Traffic_Handler,
+		},
 		{
 			MethodName: "Ready",
 			Handler:    _MemoryHostService_Ready_Handler,

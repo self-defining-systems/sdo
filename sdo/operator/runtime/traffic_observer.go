@@ -212,6 +212,15 @@ func NewTrafficObserver(api ProberAPI, workloads []string, notify func(), interv
 	return &TrafficObserver{api: api, workloads: append([]string(nil), workloads...), notify: notify, interval: interval}
 }
 
+// Reconfigure replaces the accepted workload catalog and drops retired windows.
+func (o *TrafficObserver) Reconfigure(workloads []string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.workloads = append([]string(nil), workloads...)
+	o.windows = nil
+	o.failure = ""
+}
+
 // Poll reads the prober once and reports whether any consumed workload holds
 // a failed iteration within its SLO window.
 func (o *TrafficObserver) Poll(ctx context.Context) bool {
