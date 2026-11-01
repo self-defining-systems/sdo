@@ -91,7 +91,18 @@ func (s *Server) Apply(frame *pb.MirrorRequest) error {
 	if frame.ResetMirror {
 		namespace = frame.Namespace
 	}
+	if frame.Namespace != "" && frame.Namespace != namespace {
+		return errors.New("mirror namespace mismatch")
+	}
+	for _, ref := range frame.Deletes {
+		if ref == nil || ref.Name == "" || snapshotFields[ref.Kind] == "" || (ref.Namespace != namespace && !(ref.Kind == "Node" && ref.Namespace == "")) {
+			return errors.New("invalid mirror deletion")
+		}
+	}
 	for _, item := range frame.Upserts {
+		if item == nil {
+			return errors.New("nil mirror object")
+		}
 		if item.GetRef().GetKind() == "" || item.GetRef().GetName() == "" || item.Object == nil {
 			return errors.New("mirror object requires ref and body")
 		}
@@ -121,9 +132,7 @@ func (s *Server) Apply(frame *pb.MirrorRequest) error {
 		delete(s.objects, objectKey(ref))
 	}
 	s.identity.MirrorSequence = frame.Sequence
-	if frame.Complete {
-		s.identity.MirrorComplete = true
-	}
+	s.identity.MirrorComplete = frame.Complete
 	return nil
 }
 func (s *Server) Mirror(stream grpc.ClientStreamingServer[pb.MirrorRequest, pb.MirrorResponse]) error {

@@ -899,3 +899,6 @@ Deployment Git-backed registry, raw-strategy, health and BuildKit checks
 require `integration` and retain their PR/nightly invocation. BuildKit fake
 clients admit a completed Job synchronously or through an injected wait.
 Command-observation tests inject commands and waits and run in the default tier.
+Core snapshot observation-time tests inject a fixed clock and compare the exact
+observed timestamp. Core retains its Go 1.24 floor and uses no synctest; no tests
+are integration-tagged for this migration.

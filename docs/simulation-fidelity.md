@@ -24,6 +24,9 @@ The simulated API server (`sdo/operator/runtime/sim`) models:
   delayed/failing kubelet/log/probe reads and per-edge partitions;
 - memory-host Evaluate/Diagnose/Mitigate over in-memory gRPC (bufconn), frozen
   snapshot/input parity, host disconnect errors and host-owned log receipts using the same simulated API;
+- memory-host two-commit activation through Manager, detection during injected
+  compilation delay, changed program plans, retained finding state, candidate
+  failure, leased-call retirement, complete mirror deltas and same-revision crash recovery;
 - registered invariant hooks and a 45-second host-time seed-sweep budget.
 
 The pure lifecycle core (`runtime/lifecyclecore`) is covered by exhaustive explorers of closure and
@@ -62,7 +65,13 @@ that covers it.
 | 2026-10-31 | Synthetic memory-host slice 1 | Transport / evidence | Detector and program execution outside the controller | Modeled at RPC boundary | `TestSimMemoryHostParityAndCrash`, `TestRemoteMemoryPreservesInputsAndCorpusReceipts`; same world, bufconn, host-owned log reads and typed receipt replay |
 
 The memory-host tests do not model OS process isolation, Unix socket permissions,
-memory limits or accepted-commit activation. Staged compilation is checked by
-the integration-tagged `TestBuildMemoryHostUsesStagedMemory` in PR CI. The first
-slice sends full frozen snapshots per request; informer mirror fan-out and the
-two-commit no-controller-restart scenario remain slice 2 work.
+memory limits or actual compiler latency. Staged compilation is checked by
+the integration-tagged `TestBuildMemoryHostUsesStagedMemory` in PR CI.
+`TestSimMemoryTwoAcceptedCommits` uses bufconn and injected accepted revisions;
+`TestHostActivationGatesAcknowledgment` checks durable ledger activation and ACK
+gating separately. These are boundary simulations, not a complete native broker
+and controller driver run. The modeled build delay is 50 ms of virtual time;
+it is not a production latency measurement. Runtime activation logs report actual
+build-to-activation latency. `BenchmarkMemoryHostEvaluation` compares flag-off
+execution with mirror/adapter/bufconn overhead, excluding OS startup and compiler
+cost. No live Kubernetes hot-activation experiment has been performed.

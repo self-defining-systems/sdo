@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
-	"os"
+	"sdo.dev/operator/core/internal/kubeio"
 	"sort"
 	"time"
 
@@ -20,8 +20,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/traffic"
@@ -52,11 +50,11 @@ func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvide
 // DefaultKubernetesClientQPS/Burst and honors SDO_KUBE_API_QPS and
 // SDO_KUBE_API_BURST.
 func NewKubernetesClient() (kubernetes.Interface, error) {
-	config, err := kubernetesConfig()
+	config, err := kubeio.Config()
 	if err != nil {
 		return nil, err
 	}
-	if err := applyClientRateLimits(config, os.LookupEnv); err != nil {
+	if err := applyClientRateLimits(config, kubeio.LookupEnv); err != nil {
 		return nil, fmt.Errorf("configure kubernetes client rate limit: %w", err)
 	}
 	client, err := kubernetes.NewForConfig(config)
@@ -70,11 +68,11 @@ func NewKubernetesClient() (kubernetes.Interface, error) {
 // Kubernetes configuration and rate limits as the controller's typed clients.
 // Callers must set a strict PartialObjectMetadata Accept header per request.
 func NewKubernetesMetadataClient() (rest.Interface, error) {
-	config, err := kubernetesConfig()
+	config, err := kubeio.Config()
 	if err != nil {
 		return nil, err
 	}
-	if err := applyClientRateLimits(config, os.LookupEnv); err != nil {
+	if err := applyClientRateLimits(config, kubeio.LookupEnv); err != nil {
 		return nil, err
 	}
 	config = metadata.ConfigFor(config)
@@ -88,7 +86,7 @@ func NewKubernetesMetadataClient() (rest.Interface, error) {
 func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
 	now := p.Clock
 	if now == nil {
-		now = time.Now
+		now = kubeio.Now
 	}
 	if p.Client == nil {
 		return DetectionSnapshot{}, fmt.Errorf("kubernetes client is required")
@@ -439,28 +437,6 @@ func lessSnapshotObject(leftNamespace string, leftName string, rightNamespace st
 		return leftNamespace < rightNamespace
 	}
 	return leftName < rightName
-}
-
-func kubernetesConfig() (*rest.Config, error) {
-	config, err := rest.InClusterConfig()
-	if err == nil {
-		return config, nil
-	}
-
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kubeconfig := os.Getenv("KUBECONFIG"); kubeconfig != "" {
-		loadingRules.ExplicitPath = kubeconfig
-	} else if home := homedir.HomeDir(); home != "" {
-		loadingRules.ExplicitPath = home + "/.kube/config"
-	}
-	config, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		loadingRules,
-		&clientcmd.ConfigOverrides{},
-	).ClientConfig()
-	if err != nil {
-		return nil, fmt.Errorf("load kubernetes config: %w", err)
-	}
-	return config, nil
 }
 
 func (s DetectionSnapshot) DaemonSets() []appsv1.DaemonSet {

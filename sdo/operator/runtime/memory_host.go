@@ -35,6 +35,7 @@ type RemoteMemory struct {
 	Programs      program.ProgramRegistry
 	rpc           MemoryHostRPC
 	sequence      MirrorSequence
+	memoryCommit  string
 	registrations []memoryhost.Registration
 }
 
@@ -42,7 +43,7 @@ func NewRemoteMemory(ready *pb.ReadyResponse, rpc MemoryHostRPC, sequence Mirror
 	if ready == nil || rpc == nil || sequence == nil {
 		return nil, errors.New("remote memory requires identity, transport and snapshot sequence")
 	}
-	r := &RemoteMemory{rpc: rpc, sequence: sequence}
+	r := &RemoteMemory{rpc: rpc, sequence: sequence, memoryCommit: ready.GetMemoryCommit()}
 	seen := map[string]bool{}
 	for _, wire := range ready.Detectors {
 		spec, err := memoryhost.DecodeRegistration(wire)
@@ -99,20 +100,22 @@ type remoteDetector struct {
 func (d *remoteDetector) Spec() sdk.DetectorSpec                { return d.DetectorSpec }
 func (d *remoteDetector) MetricQueries() []metrics.Query        { return d.Metrics }
 func (d *remoteDetector) LogQueries() []logs.Query              { return d.Logs }
+func (d *remoteDetector) ConsumesUsage() bool                   { return d.UsesUsage }
 func (d *remoteDetector) UsageRequirements() usage.Requirements { return d.Usage }
 func (d *remoteDetector) ConsumesServiceReachability() bool     { return d.Reachability }
 func (d *remoteDetector) ConsumesAlerts() bool                  { return d.Alerts }
 func (d *remoteDetector) TrafficWorkloads() []string            { return d.Traffic }
 func (d *remoteDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
-	sequence, err := d.remote.sequence(view)
+	rpc, sequence, release, err := d.remote.capture(ctx, view)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	observation, err := d.remote.observation(view)
 	if err != nil {
 		return nil, err
 	}
-	response, err := d.remote.rpc.Evaluate(ctx, &pb.EvaluateRequest{DetectorIds: []string{d.ID}, MirrorSequence: sequence, Observation: observation})
+	response, err := rpc.Evaluate(ctx, &pb.EvaluateRequest{DetectorIds: []string{d.ID}, MirrorSequence: sequence, Observation: observation})
 	if err != nil {
 		return nil, fmt.Errorf("memory host evaluate: %w", err)
 	}
@@ -151,19 +154,12 @@ func (r *RemoteMemory) observation(view sdk.DetectionContext) (*pb.MemoryObserva
 			return nil, err
 		}
 	}
-	snapshot := sdktest.Snapshot{
-		NamespaceName: view.Namespace(), ConfigMapList: view.ConfigMaps(), ServiceList: view.Services(),
-		PodList: view.Pods(), DeploymentList: view.Deployments(), StatefulSetList: view.StatefulSets(),
-		ReplicaSetList: view.ReplicaSets(), HPAList: view.HorizontalPodAutoscalers(), PDBList: view.PodDisruptionBudgets(),
-		EndpointList: view.Endpoints(), EndpointSliceList: view.EndpointSlices(), NetworkPolicyList: view.NetworkPolicies(),
-		EventList: view.Events(), DaemonSetList: view.DaemonSets(), JobList: view.Jobs(), CronJobList: view.CronJobs(),
-		PVCList: view.PersistentVolumeClaims(), ServiceAccountList: view.ServiceAccounts(),
-		IngressList: view.Ingresses(), NodeList: view.Nodes(), SecretList: view.Secrets(),
-	}
 	var err error
-	out.Snapshot, err = wireStruct(snapshot)
-	if err != nil {
-		return nil, err
+	if _, mirrored := r.rpc.(memorySnapshotRPC); !mirrored {
+		out.Snapshot, err = wireStruct(memoryhost.Freeze(view))
+		if err != nil {
+			return nil, err
+		}
 	}
 	if v, ok := source.ServiceReachability(); ok {
 		out.Reachability, err = wireStruct(v)
@@ -218,12 +214,8 @@ type remoteProgram struct {
 }
 
 func (p *remoteProgram) Spec() program.ProgramSpec { return p.spec }
-func (p *remoteProgram) input(view program.ReadView, b program.Bindings) (*pb.MemoryProgramInput, error) {
+func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequence uint64) (*pb.MemoryProgramInput, error) {
 	if err := program.ValidateBindings(p.spec, b); err != nil {
-		return nil, err
-	}
-	sequence, err := p.remote.sequence(view)
-	if err != nil {
 		return nil, err
 	}
 	observation, err := p.remote.observation(view)
@@ -239,6 +231,24 @@ func (p *remoteProgram) input(view program.ReadView, b program.Bindings) (*pb.Me
 	for _, name := range names {
 		ref := b[name]
 		input.Bindings = append(input.Bindings, &pb.Binding{Name: name, Object: objectRefContract(ref)})
+	}
+	refs, err := memoryhost.SnapshotRefs(view)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[sdk.ObjectRef]bool{}
+	for _, ref := range refs {
+		seen[ref] = true
+	}
+	for _, name := range names {
+		if ref := b[name]; !seen[ref] {
+			refs = append(refs, ref)
+			seen[ref] = true
+		}
+	}
+	input.Reads, err = memoryhost.EncodeReceipts(memoryDiffInputs(view, refs))
+	if err != nil {
+		return nil, err
 	}
 	return input, nil
 }
@@ -261,11 +271,16 @@ func recordHostReads(view program.ReadView, reads []*pb.MemoryReadReceipt) error
 	return nil
 }
 func (p *remoteProgram) Diagnose(ctx context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
-	input, err := p.input(view, b)
+	rpc, sequence, release, err := p.remote.capture(ctx, view)
 	if err != nil {
 		return program.Verdict{}, err
 	}
-	response, err := p.remote.rpc.Diagnose(ctx, &pb.DiagnoseRequest{Input: input})
+	defer release()
+	input, err := p.input(view, b, sequence)
+	if err != nil {
+		return program.Verdict{}, err
+	}
+	response, err := rpc.Diagnose(ctx, &pb.DiagnoseRequest{Input: input})
 	if err != nil {
 		return program.Verdict{}, fmt.Errorf("memory host diagnose: %w", err)
 	}
@@ -285,11 +300,16 @@ func (p *remoteProgram) Diagnose(ctx context.Context, view program.ReadView, b p
 	return verdict, verdict.Validate()
 }
 func (p *remoteProgram) Mitigate(ctx context.Context, view program.ReadView, b program.Bindings) (program.Plan, error) {
-	input, err := p.input(view, b)
+	rpc, sequence, release, err := p.remote.capture(ctx, view)
 	if err != nil {
 		return program.Plan{}, err
 	}
-	response, err := p.remote.rpc.Mitigate(ctx, &pb.MitigateRequest{Input: input})
+	defer release()
+	input, err := p.input(view, b, sequence)
+	if err != nil {
+		return program.Plan{}, err
+	}
+	response, err := rpc.Mitigate(ctx, &pb.MitigateRequest{Input: input})
 	if err != nil {
 		return program.Plan{}, fmt.Errorf("memory host mitigate: %w", err)
 	}
@@ -310,4 +330,32 @@ func (p *remoteProgram) Mitigate(ctx context.Context, view program.ReadView, b p
 		plan.Actions = append(plan.Actions, planActionState(a))
 	}
 	return plan, plan.Validate()
+}
+
+// memorySnapshotRPC holds a mirror barrier and host lease across the complete
+// RPC. No later capture can change the snapshot selected by this call.
+type memorySnapshotRPC interface {
+	Capture(context.Context, sdk.DetectionContext) (memoryhost.Host, uint64, func(), error)
+}
+
+func (r *RemoteMemory) capture(ctx context.Context, view sdk.DetectionContext) (MemoryHostRPC, uint64, func(), error) {
+	if mirrored, ok := r.rpc.(memorySnapshotRPC); ok {
+		host, seq, release, err := mirrored.Capture(ctx, view)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		identity, ok := host.(interface{ MemoryCommit() string })
+		if !ok || identity.MemoryCommit() != r.memoryCommit {
+			release()
+			return nil, 0, nil, errors.New("memory adapter belongs to a retired accepted revision")
+		}
+		rpc, ok := host.(MemoryHostRPC)
+		if !ok {
+			release()
+			return nil, 0, nil, errors.New("host lacks program RPCs")
+		}
+		return rpc, seq, release, nil
+	}
+	seq, err := r.sequence(view)
+	return r.rpc, seq, func() {}, err
 }

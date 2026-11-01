@@ -50,6 +50,7 @@ The controller captures the application namespace's detection view at detection,
 | `sdo/agents/{source_deployment,health_judge,responder}/` | Built-in agent sessions, prompts, local provider adapters, worker entry points, and typed task/result contracts; reflection and the judge author final files in their private checkouts |
 | `sdo/agents/lifecycle/` | Health judge prompts and DTOs |
 | `sdo/contracts/proto/sdodev/contracts/v1alpha1/`, `sdo/contracts/`, `sdo/operator/contracts/` | Shared protobuf schema and generated Python/Go messages |
+| `sdo/operator/core/internal/kubeio/` | Kubernetes configuration discovery and default observation clock; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/worker_registry/` | Strict registration, capability lookup, and implementation-neutral Kubernetes execution |
 | `sdo/operator/lifecycle/`, `deployment/`, `artifacts/` | Go lifecycle decisions, trusted deployment/readiness strategies, and physical bootstrap-artifact writes |
 | `sdo/operator/broker/`, `memory/` (including `memory/layout` and `memory/validate`), `outcome_derivation/` | Go commit authority, logical snapshots and explicit generic-health preparation, the single operational-memory validator, outcome store with physical JSON adapter, controller-derived typed outcomes, and read-only controller observations |
@@ -160,7 +161,7 @@ The application repository is the shared durable memory. Five artifact classes l
 | `arch.md` | Go upkeep | Deterministic inventory of accepted manifests, source commit, and topology fingerprint |
 | `playbooks/`, `lib/`, `corpus/` | Responder in an isolated reflection checkout | Fault-specific judgement guidance and optional typed Go programs, their shared helpers, and labeled replay cases; these are one playbook-memory class. Service-targetPort-only mitigation replay may retain actual direct-Pod TCP observations for unchanged captured Pods; Service probes, fixed answers and reads after other effects are never reused as post-plan evidence. The worker writes provenance for new cases; shared validation checks the provisioned capture context and preserves every accepted case against the base commit. Diagnosis replay is required; mitigator replay is required where replayable. SetField-only plans must repair the open fixture to NoMatch. Plans containing external effects pass plan validation with a typed `skipped_unreplayable_effect` note and do not replay post-plan effects. Such a skip earns no origin credit; three independently verified live successes and zero failures gate default fast-path trust. |
 | `diagnostics/` | Health judge through direct edits; responder in its isolated reflection checkout | Health and incident detector source, tests, module, and manifest; reflection writes responder ownership, incident class, and accepted task provenance for independent broker validation. Synthetic-traffic generators and workloads remain judge-owned, except responder-owned `traffic/generators/incident/` and `traffic/workloads/incident-*.yaml`. |
-| Outcomes | Controller through the broker | Immutable, versioned incident outcome documents and evidence |
+| Outcomes | Controller through the broker | Immutable, versioned incident outcome documents and evidence  Process effects for core are confined to `core/internal/kubeio`; ownership is unchanged. |
 
 The builder stages `.sdo/diagnostics`, `.sdo/playbooks`, and `.sdo/lib` into one temporary Go module using the diagnostics module path. Authored packages import shared helpers as `<diagnostics-module>/lib/<package>` and the SDK as `sdo.dev/operator/sdk`. Detector-only repositories retain their existing `diagnostics/go.mod` without migration. Corpus data stays at `.sdo/corpus/<case>/`; shared libraries may be proposed independently. New programs need a captured matching case with `labels.json` provenance (`incident_id`, `open_sha256`, `fixed_sha256`). An agent-added synthetic NoMatch case uses `no_match_program_ids` and `synthetic_no_match_reason`. The bounded validation subprocess checks imports, program registrations, bindings, corpus generalization and rename invariance, and shell-free program guidance. These policies and generated replay tests live in `memory/validate/program`; the builder consumes their validated specification. Corpus provenance, immutable accepted cases, required capture context and changed-source formatting are semantic rules; program, library, and corpus ownership is in the same declarative ownership table. `program scaffold` creates final files directly; `memory check` uses the same validator and compiler body as broker acceptance.
 
@@ -327,6 +328,7 @@ Source-absent drift admission also covers reviewed foreign NetworkPolicy creates
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/` | Production Go interfaces and implementation. |
 | `sdo/operator/broker/`, `memory/` (including `layout/` and `validate/`), `outcome_derivation/`, `install/` | Production Go authority, physical storage and explicit generic-health preparation, the single operational-memory validator, outcome derivation and read-only controller observation, and installer/runtime shutdown that preserves accepted storage. |
 | `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/program SDK with canonical object-ref parsing, deterministic controller, typed plan execution and rollback, accepted-revision trust, and generated contracts. |
+| `sdo/operator/core/internal/kubeio/` | Production-only private adapter for kubernetes configuration discovery and default observation clock; benchmark code cannot import this internal package. |
 | `sdo/skills/` | Production authoring guidance installed in worker homes; generated SDK references and validator rule citations. |
 | `libs/agent_cli/` | Production-neutral agent turn runner. |
 | `apps/` | Deployment and evaluation inputs. `apps/toy/` owns the reusable tiny Kubernetes app, seed and cluster-state fault injectors/oracles; it has no SREGym dependency. |
@@ -361,14 +363,16 @@ rendering and transport time. Enabling it also makes missing CFS counters fail t
 without representative live cost and availability evidence it stays opt-in. Containers without
 limits never produce memory or CPU saturation findings.
 
-## Memory host (experimental first slice)
+## Memory host (experimental hot activation)
 
 The controller launch flag `--memory-host` is default off. Off retains the existing
 local detector and program path. On starts one bounded memory-host child and
 registers remote SDK adapters from its Ready response. Accepted detector and
 program constructors run only in the child. Evaluate, Diagnose and Mitigate use
-the typed `MemoryHostService` over gRPC on a private Unix socket. Each call carries
-a frozen SDK snapshot and optional input windows; errors and disconnects remain
+the typed `MemoryHostService` over gRPC on a private Unix socket. Informer snapshot projections fan out as complete, contiguous mirror deltas to
+active and prepared hosts. Each call leases its child and holds an exact frozen-view
+sequence barrier through the RPC; optional input windows remain request-local.
+Unchanged projections retain their sequence. Errors and disconnects remain
 detector/program errors, never clearance or an authorized empty plan.
 
 `builder.Workspace.BuildMemoryHost` builds the host from the same staged
@@ -376,12 +380,14 @@ diagnostics, playbooks and shared library used by `validate.Check`. Validation
 builds that executable too. The controller alone executes plans. The host owns
 bounded namespace-scoped log reads and GET/HEAD/TCP probes and returns typed
 primitive receipts; the controller records those through its existing program
-evidence and corpus sinks. Source/baseline diff reads currently fail closed.
+evidence and corpus sinks. Source/baseline diffs arrive as frozen typed read inputs. Source comparison uses
+the accepted manifest projection without issuing a Kubernetes dry-run PATCH;
+unavailable inputs fail closed.
 No mutation client or controller callback is exposed to programs.
 
-| Component | First-slice responsibility |
+| Component | Responsibility |
 | --- | --- |
-| `memoryhost/` | Protocol server, registrations, deterministic snapshot execution, receipts and manager leases |
+| `memoryhost/` | Protocol server, registrations, deterministic snapshot execution, receipts, mirror fan-out and manager leases |
 | `memoryhost/hostio/` | Declared nondeterminism edge: child launch/reaping, memory bound, Unix transport and read-only live reads |
 | `runtime/memory_host.go` | Remote SDK detector/program adapters, input transport and evidence forwarding |
 | `builder/memory_host.go` | Staged host build; digest binds the launched executable |
@@ -391,13 +397,30 @@ and playbooks and authors no durable artifact; the controller and broker retain
 outcome and publication authority. These packages are production scope and have
 no benchmark imports.
 
-This slice activates only the initial accepted revision. Mirror fan-out,
-accepted-commit activation, scheduler reconfiguration and replacement of legacy
-rollout acknowledgment are slice 2; until then the experimental flag does not
-provide live memory refresh. Slice 2 must retain the controller process across
-memory changes and prove a two-commit update without restart. Traffic remains in
-the current prober until slice 3, which moves the traffic engine into the host,
-flips the default and deletes controller compilation and the prober pod.
+Accepted closure commits compile a candidate in an isolated builder workspace while
+existing detection continues. The controller loop catches the candidate up from
+its latest informer projection, verifies revision, executable digest and complete
+mirror sequence through Manager, then activates it and reconfigures future detector
+schedules, persistence policies, input observers and program/drift catalogs.
+Open incidents, finding counters and retained bindings survive. Old RPC leases
+finish before retirement. A crash fails closed and demand restarts/replays the same
+immutable artifact; a newer activation fences late recovery.
+
+The controller remains long-lived. In host mode the supervisor launches it once;
+closure acknowledgment waits for the active host's matching revision/digest and
+durable activation receipt. The temporary legacy ledger wire fields named
+`rollout_expectation` and `rollout_receipts` carry that provenance, with the
+`memory_host_activation` phase replacing `controller_restart_relaunch`.
+Source-deployment provenance remains separate. `memory_host_activation` controller
+log records include the accepted commit, binary digest, activation latency in
+milliseconds and unchanged controller build revision.
+
+Traffic remains in the current prober until slice 3, which moves both generators
+and the traffic engine into the host with parity tests, makes it the sole memory
+execution path and deletes the flag, in-controller accepted-memory compilation,
+rebuild/relaunch supervisor, prober pod/publication/install wiring and legacy
+per-request full-snapshot protocol field. That field remains only for slice-1
+adapter compatibility; the mirrored production path never sends it.
 
 The memory component owns a private `memory/internal/memoryio` edge for Git
 reads, isolated-index whitespace checks, shell syntax and toolchain lookup.

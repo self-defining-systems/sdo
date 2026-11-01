@@ -52,6 +52,8 @@ explicitly seeded RNGs, dialers and launchers. Seeded RNG construction is allowe
 
 The exact production edge-package list is:
 
+- `sdo/operator/core/internal/kubeio`: Kubernetes configuration discovery and default observation clock.
+
 - `sdo/operator/runtime/internal/lifecycleio`: Kubernetes lifecycle driver.
 - `sdo/operator/runtime/prober`: protocol dial adapter.
 - `sdo/operator/install/internal/installio`: accepted-checkout Git/archive/kubectl processes, installer clock and wait timers, and time-scale environment reads.

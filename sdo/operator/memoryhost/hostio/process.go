@@ -168,3 +168,22 @@ func SetMemoryLimit(capBytes uint64) error {
 	debug.SetMemoryLimit(int64(capBytes * 3 / 4))
 	return nil
 }
+
+// MirrorFrame acknowledges a complete contiguous frame before a barrier is used.
+func (p *Process) MirrorFrame(ctx context.Context, frame *pb.MirrorRequest) error {
+	stream, err := p.client.Mirror(ctx)
+	if err != nil {
+		return err
+	}
+	if err = stream.Send(frame); err != nil {
+		return err
+	}
+	ack, err := stream.CloseAndRecv()
+	if err != nil {
+		return err
+	}
+	if ack.GetSequence() != frame.Sequence {
+		return errors.New("mirror acknowledgment sequence mismatch")
+	}
+	return nil
+}

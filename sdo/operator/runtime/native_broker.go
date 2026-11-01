@@ -77,6 +77,7 @@ func (f ReflectionWorkerFunc) Reflect(ctx context.Context, closure IncidentClosu
 // safe to select when a full OutcomeDeriver and ReflectionWorker are configured;
 // no partial closure can be acknowledged.
 type NativeIncidentBroker struct {
+	MemoryHost           bool // Activation provenance replaces controller restart when enabled.
 	Now                  func() time.Time
 	Repository           *broker.Broker
 	LedgerRoot           string
@@ -653,6 +654,9 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 			return errors.New("controller rollout verification time is required")
 		}
 		if receipt.Success {
+			if n.MemoryHost && receipt.ControllerRevision != receipt.Expectation.ReflectionCommit {
+				return errors.New("host activation revision differs from accepted memory")
+			}
 			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint {
 				return errors.New("successful rollout lacks matching build and restarted detector fingerprint")
 			}
@@ -662,7 +666,11 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 		}
 		ledger.RolloutReceipts = append(ledger.RolloutReceipts, rolloutReceiptContract(receipt))
 		if receipt.Success {
-			if err := n.recordPhase(ledger, "controller_restart_relaunch"); err != nil {
+			phase := "controller_restart_relaunch"
+			if n.MemoryHost {
+				phase = "memory_host_activation"
+			}
+			if err := n.recordPhase(ledger, phase); err != nil {
 				return err
 			}
 			if err := n.recordPhase(ledger, "program_registry_rebuild"); err != nil {
