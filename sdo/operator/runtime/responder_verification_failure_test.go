@@ -30,6 +30,7 @@ func TestResponderFailedHealthSurvivesRestart(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			loop, kube := trustedPortLoop(t, false, false, false)
+			loop.Executor.Now = func() time.Time { return time.Unix(1700000000, 0) }
 			dispatcher := KubernetesJobDispatcher{Client: kube, Namespace: "app"}
 			attachRecoveryStore(t, dispatcher, loop)
 			bindings := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}
@@ -213,7 +214,7 @@ func responderRetryOutcome(t *testing.T, loop *ResponderLoop) *contracts.Outcome
 	if err != nil {
 		t.Fatal(err)
 	}
-	completed := time.Unix(1700000000, 0).UTC()
+	completed := loop.clock().Add(time.Second).UTC()
 	closure := &contracts.IncidentClosure{
 		Request: &contracts.IncidentRequest{
 			IncidentId: loop.Request.IncidentID, SourceCommit: loop.Request.SourceCommit,
