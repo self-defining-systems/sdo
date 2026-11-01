@@ -189,6 +189,17 @@ func (c *Controller) ExecuteClosureAcknowledgmentEffect(
 	ctx context.Context,
 	effect ClosureAcknowledgmentEffect,
 ) error {
+	if c.memoryRefresh != nil {
+		ready, err := c.memoryRefresh(ctx)
+		if err != nil {
+			c.reportBrokerError("memory activation", err)
+			return nil
+		}
+		if !ready {
+			return nil
+		}
+	}
+
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
 		return err

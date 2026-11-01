@@ -12,23 +12,28 @@ import (
 	"path/filepath"
 	"regexp"
 	"sdo.dev/operator/broker"
+	"sdo.dev/operator/builder"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk/inputs"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"google.golang.org/protobuf/proto"
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/toolchain"
@@ -275,7 +280,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
+	var hostManager *memoryhost.Manager
 	if *memoryHost {
+		hostManager = memoryhost.NewManager(30 * time.Second)
+		defer hostManager.Close()
+		if err := hostManager.Publish(ctx, sdktest.Snapshot{NamespaceName: *namespace}); err != nil {
+			return err
+		}
 		child, err := hostio.Launch(hostio.LaunchConfig{Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		if err != nil {
 			return err
@@ -290,10 +301,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if ready.GetMemoryCommit() != launchConfig.GetControllerRevision() || ready.GetBinaryDigest() != *memoryHostDigest {
 			return errors.New("memory host identity mismatch")
 		}
-		remote, err := NewRemoteMemory(ready, child, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+		if err := hostManager.Prepare(ctx, child); err != nil {
+			return err
+		}
+		if err := hostManager.Activate(ctx, child, launchConfig.GetControllerRevision(), *memoryHostDigest); err != nil {
+			return err
+		}
+		remote, err := NewRemoteMemory(ready, hostManager, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
 		if err != nil {
 			return err
 		}
+		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs = remote.Detectors, remote.Programs
 	}
 	detectors = scaleDetectors(detectors, timeScale)
@@ -481,7 +499,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// Service reachability is a routing probe, not a synthetic workload, so
 	// it runs whenever a prober exists and a detector consumes it.
 	var reachabilityObserver *ServiceReachabilityObserver
-	if proberAddress != nil && ConsumesServiceReachability(detectors) {
+	if proberAddress != nil && (*memoryHost || ConsumesServiceReachability(detectors)) {
 		identity := servicehealth.ProberIdentity{}
 		if *proberURL == "" {
 			identity = servicehealth.ProberIdentity{Namespace: *controlNamespace, Labels: proberPodLabels()}
@@ -539,6 +557,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if proberAddress != nil {
 		primitiveProber = HTTPProberClient{BaseURL: proberAddress}
 	}
+	var memoryCatalogMu sync.RWMutex
 	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {
@@ -556,6 +575,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
+				memoryCatalogMu.RLock()
+				defer memoryCatalogMu.RUnlock()
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
 					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource,
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
@@ -631,6 +652,107 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	} else if jobDispatch {
 		return errors.New("job controller requires the Go incident broker")
+	}
+
+	var activation *memoryActivation
+	if hostManager != nil {
+		if options.NativeBroker != nil {
+			options.NativeBroker.MemoryHost = true
+		}
+		operatorRoot := builder.DefaultOperatorRoot()
+		activation = &memoryActivation{manager: hostManager, active: launchConfig.GetControllerRevision(), results: make(chan memoryCandidate, 1), notify: make(chan struct{}, 1)}
+		activation.build = func(buildCtx context.Context, commit string) memoryCandidate {
+			started := time.Now()
+			workspace, artifact, err := builder.BuildAcceptedMemoryHost(buildCtx, builder.Config{ApplicationRoot: resolvedRoot, OperatorRoot: operatorRoot}, commit)
+			if err != nil {
+				return memoryCandidate{commit: commit, err: err}
+			}
+			child, err := hostio.Launch(hostio.LaunchConfig{Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
+			if err != nil {
+				_ = workspace.Close()
+				return memoryCandidate{commit: commit, err: err}
+			}
+			readyCtx, cancelReady := context.WithTimeout(buildCtx, 30*time.Second)
+			defer cancelReady()
+			if _, err = child.Ready(readyCtx); err != nil {
+				_ = child.Close()
+				_ = workspace.Close()
+				return memoryCandidate{commit: commit, err: err}
+			}
+			return memoryCandidate{host: child, commit: commit, digest: artifact.Digest, close: func() { _ = workspace.Close() }, binary: artifact.Path, started: started}
+		}
+		activation.install = func(activateCtx context.Context, candidate memoryCandidate) error {
+			fresh, err := kubernetesCache.Snapshot(activateCtx)
+			if err != nil {
+				return err
+			}
+			if err = hostManager.Publish(activateCtx, fresh); err != nil {
+				return err
+			}
+			ready, err := candidate.host.Ready(activateCtx)
+			if err != nil {
+				return err
+			}
+			remote, err := NewRemoteMemory(ready, hostManager, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+			if err != nil {
+				return err
+			}
+			remote.Detectors = scaleDetectors(remote.Detectors, timeScale)
+			if err := core.ValidateDetectors(remote.Detectors); err != nil {
+				return err
+			}
+			var next SnapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver}
+			next = withUsage(next, remote.Detectors, bootstrapProvider.Client, nil)
+			nextLogs, err := NewLogsObserver(bootstrapProvider.Client, remote.Detectors, LogsObserverOptions{})
+			if err != nil {
+				return err
+			}
+			next = LogsSnapshotProvider{Base: next, Observer: nextLogs}
+			next, nextMetrics, err := withMetrics(next, remote.Detectors, *metricsURL, *metricsTokenFile, false)
+			if err != nil {
+				return err
+			}
+			if err = hostManager.Activate(activateCtx, candidate.host, candidate.commit, candidate.digest); err != nil {
+				return err
+			}
+			if err = controller.ReconfigureMemory(remote, next, time.Now().UTC()); err != nil {
+				return err
+			}
+			memoryCatalogMu.Lock()
+			detectors, options.Programs, snapshotProvider, metricsObserver = remote.Detectors, remote.Programs, next, nextMetrics
+			memoryCatalogMu.Unlock()
+			_ = json.NewEncoder(stdout).Encode(map[string]any{"memory_host_activation": candidate.commit, "binary_digest": candidate.digest, "activation_latency_ms": time.Now().Sub(candidate.started).Milliseconds(), "controller_revision": launchConfig.GetControllerRevision()})
+			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
+			return nil
+		}
+		defer activation.close()
+		controller.memoryRefresh = func(refreshCtx context.Context) (bool, error) {
+			ready, err := activation.refresh(refreshCtx, controller.CurrentAcceptedCommit())
+			if err != nil || !ready {
+				return ready, err
+			}
+			identity, identityErr := hostManager.Identity(refreshCtx)
+			if identityErr != nil {
+				return false, identityErr
+			}
+			if identity.GetMemoryCommit() != activation.acceptedCommit() || identity.GetBinaryDigest() != activation.acceptedDigest(*memoryHostDigest) {
+				return false, errors.New("active host does not match accepted memory")
+			}
+			if options.NativeBroker != nil {
+				launch := proto.Clone(launchConfig).(*contractsv1alpha1.ControllerConfig)
+				launch.ControllerRevision = activation.acceptedCommit()
+				launch.ControllerArtifactDigest = activation.acceptedDigest(*memoryHostDigest)
+				fingerprint, err := options.NativeBroker.Repository.DiagnosticsFingerprint(refreshCtx, launch.ControllerRevision)
+				if err != nil {
+					return false, err
+				}
+				launch.DiagnosticsFingerprint = fingerprint
+				if err = completeNativeRolloutHandoffs(refreshCtx, *options.NativeBroker, launch, resolvedRoot); err != nil {
+					return false, err
+				}
+			}
+			return true, nil
+		}
 	}
 	if *stateBaseline {
 		controller.Baseline = stateTracker
@@ -853,7 +975,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// A controller launched during a maintenance pause must still complete its rollout handoff: the pause keeps
 	// the closure acknowledgment waiting on it, so deferring it until resume restarts the controller in a loop.
 	// The handoff verifies the build's provenance against the accepted tree, not an evaluation.
-	if options.NativeBroker != nil {
+	if options.NativeBroker != nil && hostManager == nil {
 		if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
 			return err
 		}
@@ -947,6 +1069,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		case <-runCtx.Done():
 			stopTimerForRuntimeEvent(runCtx, timer)
 			return nil
+		case <-memoryActivationNotifications(activation):
+			stopTimerForRuntimeEvent(runCtx, timer)
+			if err := executePendingEffects(runCtx, controller); err != nil {
+				return err
+			}
+			persistControllerState()
 		case change, ok := <-maintenanceChanges:
 			if stopTimerForRuntimeEvent(runCtx, timer) || !ok {
 				return nil
