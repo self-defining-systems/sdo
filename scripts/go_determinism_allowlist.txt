@@ -1,6 +1,4 @@
 benchmarks/sregym/fastloop/replay_go/main.go:os/exec
-sdo/operator/runtime/broker_effects_test.go:time.Now
-sdo/operator/runtime/broker_effects_test.go:time.Sleep
 sdo/operator/runtime/chaos_clock_skew_test.go:time.After
 sdo/operator/runtime/chaos_harness_test.go:os.Getenv
 sdo/operator/runtime/chaos_harness_test.go:time.Now
@@ -8,11 +6,6 @@ sdo/operator/runtime/configmap_budget_test.go:time.After
 sdo/operator/runtime/controller.go:math/rand/v2.Float64
 sdo/operator/runtime/controller_closure_health_cleared_test.go:time.After
 sdo/operator/runtime/controller_closure_state_diff_test.go:time.After
-sdo/operator/runtime/controller_integration_test.go:time.After
-sdo/operator/runtime/controller_test.go:time.After
-sdo/operator/runtime/controller_test.go:time.Now
-sdo/operator/runtime/controller_test.go:time.Sleep
-sdo/operator/runtime/effect_durability_test.go:time.After
 sdo/operator/runtime/fastloop_real_gate_test.go:os/exec
 sdo/operator/runtime/fastloop_real_gate_test.go:time.After
 sdo/operator/runtime/fastloop_real_gate_test.go:time.Now
@@ -106,8 +99,6 @@ sdo/operator/runtime/state_baseline_secret_test.go:time.Now
 sdo/operator/runtime/state_baseline_test.go:time.Now
 sdo/operator/runtime/state_baseline_test.go:time.Since
 sdo/operator/runtime/state_baseline_test.go:time.Sleep
-sdo/operator/runtime/state_store_test.go:time.After
-sdo/operator/runtime/state_store_test.go:time.Now
 sdo/operator/runtime/step_latency_test.go:os.Getenv
 sdo/operator/runtime/step_latency_test.go:time.After
 sdo/operator/runtime/step_latency_test.go:time.Now

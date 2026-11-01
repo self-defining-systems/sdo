@@ -7,6 +7,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -90,13 +91,15 @@ func TestAdmissionConfigValidateRejectsMisconfiguration(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.cfg.validate()
-			if tc.ok && err != nil {
-				t.Fatalf("valid config rejected: %v", err)
-			}
-			if !tc.ok && err == nil {
-				t.Fatalf("invalid config accepted")
-			}
+			synctest.Test(t, func(t *testing.T) {
+				err := tc.cfg.validate()
+				if tc.ok && err != nil {
+					t.Fatalf("valid config rejected: %v", err)
+				}
+				if !tc.ok && err == nil {
+					t.Fatalf("invalid config accepted")
+				}
+			})
 		})
 	}
 }
@@ -126,58 +129,68 @@ func TestAdmissionAssessAppliesHysteresis(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := cfg.assess(tc.deferred, LoadSample{Pressure: tc.pressure}, tc.backlog)
-			if got.Defer != tc.wantDefer {
-				t.Fatalf("defer = %v, want %v", got.Defer, tc.wantDefer)
-			}
-			if got.Reason != tc.wantReason {
-				t.Fatalf("reason = %q, want %q", got.Reason, tc.wantReason)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				got := cfg.assess(tc.deferred, LoadSample{Pressure: tc.pressure}, tc.backlog)
+				if got.Defer != tc.wantDefer {
+					t.Fatalf("defer = %v, want %v", got.Defer, tc.wantDefer)
+				}
+				if got.Reason != tc.wantReason {
+					t.Fatalf("reason = %q, want %q", got.Reason, tc.wantReason)
+				}
+			})
 		})
 	}
 }
 
 func TestAdmissionAssessDisabledNeverDefers(t *testing.T) {
-	cfg := AdmissionConfig{}
-	if got := cfg.assess(false, LoadSample{Pressure: 1_000_000}, 1_000); got.Defer {
-		t.Fatalf("disabled admission deferred under load")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		cfg := AdmissionConfig{}
+		if got := cfg.assess(false, LoadSample{Pressure: 1_000_000}, 1_000); got.Defer {
+			t.Fatalf("disabled admission deferred under load")
+		}
+	})
 }
 
 func TestProcPressureGaugeReadsAvg10(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cpu")
-	content := "some avg10=12.34 avg60=5.00 avg300=1.00 total=99999\n" +
-		"full avg10=1.00 avg60=0.50 avg300=0.10 total=4242\n"
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write pressure file: %v", err)
-	}
-	sample, err := ProcPressureGauge{Path: path}.Sample()
-	if err != nil {
-		t.Fatalf("sample: %v", err)
-	}
-	if sample.Pressure != 12.34 {
-		t.Fatalf("pressure = %v, want 12.34", sample.Pressure)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cpu")
+		content := "some avg10=12.34 avg60=5.00 avg300=1.00 total=99999\n" +
+			"full avg10=1.00 avg60=0.50 avg300=0.10 total=4242\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write pressure file: %v", err)
+		}
+		sample, err := ProcPressureGauge{Path: path}.Sample()
+		if err != nil {
+			t.Fatalf("sample: %v", err)
+		}
+		if sample.Pressure != 12.34 {
+			t.Fatalf("pressure = %v, want 12.34", sample.Pressure)
+		}
+	})
 }
 
 func TestProcPressureGaugeMissingFileReportsZero(t *testing.T) {
-	sample, err := ProcPressureGauge{Path: filepath.Join(t.TempDir(), "absent")}.Sample()
-	if err != nil {
-		t.Fatalf("missing pressure file should not error: %v", err)
-	}
-	if sample.Pressure != 0 {
-		t.Fatalf("missing pressure file reported %v, want 0", sample.Pressure)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		sample, err := ProcPressureGauge{Path: filepath.Join(t.TempDir(), "absent")}.Sample()
+		if err != nil {
+			t.Fatalf("missing pressure file should not error: %v", err)
+		}
+		if sample.Pressure != 0 {
+			t.Fatalf("missing pressure file reported %v, want 0", sample.Pressure)
+		}
+	})
 }
 
 func TestProcPressureGaugeRejectsMalformedLine(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cpu")
-	if err := os.WriteFile(path, []byte("some avg10=notanumber avg60=0\n"), 0o644); err != nil {
-		t.Fatalf("write pressure file: %v", err)
-	}
-	if _, err := (ProcPressureGauge{Path: path}).Sample(); err == nil {
-		t.Fatalf("malformed pressure line accepted")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cpu")
+		if err := os.WriteFile(path, []byte("some avg10=notanumber avg60=0\n"), 0o644); err != nil {
+			t.Fatalf("write pressure file: %v", err)
+		}
+		if _, err := (ProcPressureGauge{Path: path}).Sample(); err == nil {
+			t.Fatalf("malformed pressure line accepted")
+		}
+	})
 }
 
 // admissionController builds a brokerless controller with a scripted load gauge,
@@ -223,192 +236,202 @@ func admissionDetector() *sequenceDetector {
 // below the low watermark the SAME incident resumes, emits one admission_resumed
 // event, and dispatches exactly once.
 func TestAdmissionDefersThenResumesUnderLoad(t *testing.T) {
-	cfg := AdmissionConfig{Enabled: true, HighWatermark: 80, LowWatermark: 50, RecheckInterval: time.Second}
-	controller, dispatcher, gauge, lifecycle, step := admissionController(t, cfg, admissionDetector())
+	synctest.Test(t, func(t *testing.T) {
+		cfg := AdmissionConfig{Enabled: true, HighWatermark: 80, LowWatermark: 50, RecheckInterval: time.Second}
+		controller, dispatcher, gauge, lifecycle, step := admissionController(t, cfg, admissionDetector())
 
-	gauge.set(90) // above the high watermark
-	step(0)       // first firing sample, below the firing threshold
-	step(1)       // firing threshold reached: the incident opens, but is held
+		gauge.set(90) // above the high watermark
+		step(0)       // first firing sample, below the firing threshold
+		step(1)       // firing threshold reached: the incident opens, but is held
 
-	if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
-		t.Fatalf("incident was not held under load: dispatch state %q", got)
-	}
-	if _, ok := controller.PendingDispatchEffect(); ok {
-		t.Fatal("a held incident produced a dispatch effect")
-	}
-	assertNoRequest(t, dispatcher.requests)
-	opened := lifecycle.byPhase(PhaseOpened)
-	if len(opened) != 1 {
-		t.Fatalf("expected exactly one incident_opened event, got %d", len(opened))
-	}
-	deferredEvents := lifecycle.byPhase(PhaseAdmissionDeferred)
-	if len(deferredEvents) != 1 {
-		t.Fatalf("expected exactly one admission_deferred event, got %d", len(deferredEvents))
-	}
-	deferral := deferredEvents[0]
-	if deferral.IncidentId != opened[0].IncidentId {
-		t.Fatalf("deferral %q not keyed to the opened incident %q", deferral.IncidentId, opened[0].IncidentId)
-	}
-	if deferral.Reason != admissionReasonLoad || deferral.LoadThreshold != 80 || deferral.LoadPressure != 90 {
-		t.Fatalf("admission_deferred did not record the load decision: %+v", deferral)
-	}
+		if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
+			t.Fatalf("incident was not held under load: dispatch state %q", got)
+		}
+		if _, ok := controller.PendingDispatchEffect(); ok {
+			t.Fatal("a held incident produced a dispatch effect")
+		}
+		assertNoRequest(t, dispatcher.requests)
+		opened := lifecycle.byPhase(PhaseOpened)
+		if len(opened) != 1 {
+			t.Fatalf("expected exactly one incident_opened event, got %d", len(opened))
+		}
+		deferredEvents := lifecycle.byPhase(PhaseAdmissionDeferred)
+		if len(deferredEvents) != 1 {
+			t.Fatalf("expected exactly one admission_deferred event, got %d", len(deferredEvents))
+		}
+		deferral := deferredEvents[0]
+		if deferral.IncidentId != opened[0].IncidentId {
+			t.Fatalf("deferral %q not keyed to the opened incident %q", deferral.IncidentId, opened[0].IncidentId)
+		}
+		if deferral.Reason != admissionReasonLoad || deferral.LoadThreshold != 80 || deferral.LoadPressure != 90 {
+			t.Fatalf("admission_deferred did not record the load decision: %+v", deferral)
+		}
 
-	// Still above the low watermark: the hold persists and emits nothing new.
-	gauge.set(60)
-	step(2)
-	if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
-		t.Fatalf("incident resumed inside the hysteresis band: dispatch state %q", got)
-	}
-	if len(lifecycle.byPhase(PhaseAdmissionDeferred)) != 1 {
-		t.Fatal("admission_deferred was re-emitted during a continuous hold")
-	}
-	if len(lifecycle.byPhase(PhaseAdmissionResumed)) != 0 {
-		t.Fatal("incident resumed before load cleared the low watermark")
-	}
+		// Still above the low watermark: the hold persists and emits nothing new.
+		gauge.set(60)
+		step(2)
+		if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
+			t.Fatalf("incident resumed inside the hysteresis band: dispatch state %q", got)
+		}
+		if len(lifecycle.byPhase(PhaseAdmissionDeferred)) != 1 {
+			t.Fatal("admission_deferred was re-emitted during a continuous hold")
+		}
+		if len(lifecycle.byPhase(PhaseAdmissionResumed)) != 0 {
+			t.Fatal("incident resumed before load cleared the low watermark")
+		}
 
-	// Below the low watermark: the incident resumes and dispatches, once.
-	gauge.set(40)
-	step(3)
-	resumed := lifecycle.byPhase(PhaseAdmissionResumed)
-	if len(resumed) != 1 {
-		t.Fatalf("expected exactly one admission_resumed event, got %d", len(resumed))
-	}
-	if resumed[0].Reason != admissionReasonCleared || resumed[0].LoadThreshold != 50 {
-		t.Fatalf("admission_resumed did not record the clearing decision: %+v", resumed[0])
-	}
-	executePendingEffect(t, controller)
-	request := awaitRequest(t, dispatcher.requests)
-	if request.IncidentID != opened[0].IncidentId {
-		t.Fatalf("resumed dispatch opened a different incident: got %q want %q", request.IncidentID, opened[0].IncidentId)
-	}
-	if dispatcher.callCount() != 1 {
-		t.Fatalf("expected exactly one dispatch after resume, got %d", dispatcher.callCount())
-	}
+		// Below the low watermark: the incident resumes and dispatches, once.
+		gauge.set(40)
+		step(3)
+		resumed := lifecycle.byPhase(PhaseAdmissionResumed)
+		if len(resumed) != 1 {
+			t.Fatalf("expected exactly one admission_resumed event, got %d", len(resumed))
+		}
+		if resumed[0].Reason != admissionReasonCleared || resumed[0].LoadThreshold != 50 {
+			t.Fatalf("admission_resumed did not record the clearing decision: %+v", resumed[0])
+		}
+		executePendingEffect(t, controller)
+		request := awaitRequest(t, dispatcher.requests)
+		if request.IncidentID != opened[0].IncidentId {
+			t.Fatalf("resumed dispatch opened a different incident: got %q want %q", request.IncidentID, opened[0].IncidentId)
+		}
+		if dispatcher.callCount() != 1 {
+			t.Fatalf("expected exactly one dispatch after resume, got %d", dispatcher.callCount())
+		}
+	})
 }
 
 // TestAdmissionHeldIncidentCoalescesLaterFindings proves deferral queues work
 // rather than dropping it: a finding that activates during the hold is attached
 // to the held incident, so the responder still sees all corroborating evidence.
 func TestAdmissionHeldIncidentCoalescesLaterFindings(t *testing.T) {
-	cfg := AdmissionConfig{Enabled: true, HighWatermark: 80, LowWatermark: 50, RecheckInterval: time.Second}
-	second := controllerDetector(
-		"second", time.Second,
-		sdk.Finding{}, sdk.Finding{}, stateFinding("other"), stateFinding("other"), stateFinding("other"),
-	)
-	controller, dispatcher, gauge, lifecycle, step := admissionController(t, cfg, admissionDetector(), second)
+	synctest.Test(t, func(t *testing.T) {
+		cfg := AdmissionConfig{Enabled: true, HighWatermark: 80, LowWatermark: 50, RecheckInterval: time.Second}
+		second := controllerDetector(
+			"second", time.Second,
+			sdk.Finding{}, sdk.Finding{}, stateFinding("other"), stateFinding("other"), stateFinding("other"),
+		)
+		controller, dispatcher, gauge, lifecycle, step := admissionController(t, cfg, admissionDetector(), second)
 
-	gauge.set(90)
-	step(0)
-	step(1) // health opens the incident, held under load
-	if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
-		t.Fatalf("incident was not held: %q", got)
-	}
-	// A second detector activates while the incident is held.
-	step(2)
-	step(3)
+		gauge.set(90)
+		step(0)
+		step(1) // health opens the incident, held under load
+		if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
+			t.Fatalf("incident was not held: %q", got)
+		}
+		// A second detector activates while the incident is held.
+		step(2)
+		step(3)
 
-	gauge.set(10)
-	step(4) // resume
-	executePendingEffect(t, controller)
-	request := awaitRequest(t, dispatcher.requests)
-	if len(request.Findings) != 2 {
-		t.Fatalf("held incident did not coalesce the later finding: %#v", request.Findings)
-	}
-	if len(lifecycle.byPhase(PhaseOpened)) != 1 {
-		t.Fatal("coalescing opened a second incident")
-	}
+		gauge.set(10)
+		step(4) // resume
+		executePendingEffect(t, controller)
+		request := awaitRequest(t, dispatcher.requests)
+		if len(request.Findings) != 2 {
+			t.Fatalf("held incident did not coalesce the later finding: %#v", request.Findings)
+		}
+		if len(lifecycle.byPhase(PhaseOpened)) != 1 {
+			t.Fatal("coalescing opened a second incident")
+		}
+	})
 }
 
 // TestAdmissionDefersOnReleaseBacklog proves the controller's own stranded-worktree
 // reap backlog is a backpressure term: a deep backlog defers new incident
 // admission, and clearing it resumes the incident, with no host-load gauge.
 func TestAdmissionDefersOnReleaseBacklog(t *testing.T) {
-	cfg := AdmissionConfig{
-		Enabled: true, ReleaseBacklogHighWatermark: 2, ReleaseBacklogLowWatermark: 1, RecheckInterval: time.Second,
-	}
-	controller, dispatcher, _, lifecycle, step := admissionController(t, cfg, admissionDetector())
+	synctest.Test(t, func(t *testing.T) {
+		cfg := AdmissionConfig{
+			Enabled: true, ReleaseBacklogHighWatermark: 2, ReleaseBacklogLowWatermark: 1, RecheckInterval: time.Second,
+		}
+		controller, dispatcher, _, lifecycle, step := admissionController(t, cfg, admissionDetector())
 
-	// Simulate a congested drain: two worktrees still awaiting reap.
-	controller.mu.Lock()
-	controller.pendingReleases = []string{"incident-a", "incident-b"}
-	controller.mu.Unlock()
+		// Simulate a congested drain: two worktrees still awaiting reap.
+		controller.mu.Lock()
+		controller.pendingReleases = []string{"incident-a", "incident-b"}
+		controller.mu.Unlock()
 
-	step(0)
-	step(1) // incident opens but is held behind the reap backlog
-	if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
-		t.Fatalf("incident was not held behind the release backlog: %q", got)
-	}
-	deferredEvents := lifecycle.byPhase(PhaseAdmissionDeferred)
-	if len(deferredEvents) != 1 || deferredEvents[0].Reason != admissionReasonBacklog {
-		t.Fatalf("expected one backlog deferral, got %+v", deferredEvents)
-	}
-	if deferredEvents[0].ReleaseBacklog != 2 {
-		t.Fatalf("deferral did not record the backlog depth: %+v", deferredEvents[0])
-	}
+		step(0)
+		step(1) // incident opens but is held behind the reap backlog
+		if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
+			t.Fatalf("incident was not held behind the release backlog: %q", got)
+		}
+		deferredEvents := lifecycle.byPhase(PhaseAdmissionDeferred)
+		if len(deferredEvents) != 1 || deferredEvents[0].Reason != admissionReasonBacklog {
+			t.Fatalf("expected one backlog deferral, got %+v", deferredEvents)
+		}
+		if deferredEvents[0].ReleaseBacklog != 2 {
+			t.Fatalf("deferral did not record the backlog depth: %+v", deferredEvents[0])
+		}
 
-	// The drain catches up below the low watermark.
-	controller.mu.Lock()
-	controller.pendingReleases = nil
-	controller.mu.Unlock()
-	step(2)
-	if len(lifecycle.byPhase(PhaseAdmissionResumed)) != 1 {
-		t.Fatal("clearing the release backlog did not resume the incident")
-	}
-	executePendingEffect(t, controller)
-	awaitRequest(t, dispatcher.requests)
-	if dispatcher.callCount() != 1 {
-		t.Fatalf("expected one dispatch after the backlog cleared, got %d", dispatcher.callCount())
-	}
+		// The drain catches up below the low watermark.
+		controller.mu.Lock()
+		controller.pendingReleases = nil
+		controller.mu.Unlock()
+		step(2)
+		if len(lifecycle.byPhase(PhaseAdmissionResumed)) != 1 {
+			t.Fatal("clearing the release backlog did not resume the incident")
+		}
+		executePendingEffect(t, controller)
+		awaitRequest(t, dispatcher.requests)
+		if dispatcher.callCount() != 1 {
+			t.Fatalf("expected one dispatch after the backlog cleared, got %d", dispatcher.callCount())
+		}
+	})
 }
 
 // TestAdmissionDeferredStateSurvivesRestart proves a held incident is durable:
 // the admission_deferred dispatch state round-trips through ExportState /
 // RestoreState, and a restored controller re-samples and resumes once load clears.
 func TestAdmissionDeferredStateSurvivesRestart(t *testing.T) {
-	cfg := AdmissionConfig{Enabled: true, HighWatermark: 80, LowWatermark: 50, RecheckInterval: time.Second}
-	controller, _, gauge, _, step := admissionController(t, cfg, admissionDetector())
+	synctest.Test(t, func(t *testing.T) {
+		cfg := AdmissionConfig{Enabled: true, HighWatermark: 80, LowWatermark: 50, RecheckInterval: time.Second}
+		controller, _, gauge, _, step := admissionController(t, cfg, admissionDetector())
 
-	gauge.set(90)
-	step(0)
-	step(1)
-	state := exportState(t, controller)
-	if state.DispatchState != admissionDeferredState {
-		t.Fatalf("held incident not exported as deferred: %q", state.DispatchState)
-	}
+		gauge.set(90)
+		step(0)
+		step(1)
+		state := exportState(t, controller)
+		if state.DispatchState != admissionDeferredState {
+			t.Fatalf("held incident not exported as deferred: %q", state.DispatchState)
+		}
 
-	// Restart: a fresh controller restores the held incident.
-	restarted, dispatcher, lowGauge, lifecycle, restartStep := admissionController(t, cfg, admissionDetector())
-	lowGauge.set(40) // load has cleared by the time the controller comes back
-	if err := restarted.RestoreState(state); err != nil {
-		t.Fatalf("restore held incident: %v", err)
-	}
-	if got := exportState(t, restarted).DispatchState; got != admissionDeferredState {
-		t.Fatalf("restore lost the held state: %q", got)
-	}
-	restartStep(2) // re-sample: load has cleared, the incident resumes
-	if len(lifecycle.byPhase(PhaseAdmissionResumed)) != 1 {
-		t.Fatal("restored held incident did not resume once load cleared")
-	}
-	executePendingEffect(t, restarted)
-	awaitRequest(t, dispatcher.requests)
-	if lowGauge.sampleCount() == 0 {
-		t.Fatal("restored controller never re-sampled host load")
-	}
+		// Restart: a fresh controller restores the held incident.
+		restarted, dispatcher, lowGauge, lifecycle, restartStep := admissionController(t, cfg, admissionDetector())
+		lowGauge.set(40) // load has cleared by the time the controller comes back
+		if err := restarted.RestoreState(state); err != nil {
+			t.Fatalf("restore held incident: %v", err)
+		}
+		if got := exportState(t, restarted).DispatchState; got != admissionDeferredState {
+			t.Fatalf("restore lost the held state: %q", got)
+		}
+		restartStep(2) // re-sample: load has cleared, the incident resumes
+		if len(lifecycle.byPhase(PhaseAdmissionResumed)) != 1 {
+			t.Fatal("restored held incident did not resume once load cleared")
+		}
+		executePendingEffect(t, restarted)
+		awaitRequest(t, dispatcher.requests)
+		if lowGauge.sampleCount() == 0 {
+			t.Fatal("restored controller never re-sampled host load")
+		}
+	})
 }
 
 // TestAdmissionDisabledAdmitsImmediately pins the default: with admission off a
 // ready batch dispatches with no deferral and no admission lifecycle events,
 // byte-for-byte as before.
 func TestAdmissionDisabledAdmitsImmediately(t *testing.T) {
-	controller, dispatcher, _, lifecycle, step := admissionController(t, AdmissionConfig{}, admissionDetector())
-	step(0)
-	step(1)
-	if got := exportState(t, controller).DispatchState; got != contracts.DispatchState_DISPATCH_STATE_PENDING {
-		t.Fatalf("disabled admission held the incident: %q", got)
-	}
-	if len(lifecycle.byPhase(PhaseAdmissionDeferred)) != 0 || len(lifecycle.byPhase(PhaseAdmissionResumed)) != 0 {
-		t.Fatal("disabled admission emitted admission lifecycle events")
-	}
-	executePendingEffect(t, controller)
-	awaitRequest(t, dispatcher.requests)
+	synctest.Test(t, func(t *testing.T) {
+		controller, dispatcher, _, lifecycle, step := admissionController(t, AdmissionConfig{}, admissionDetector())
+		step(0)
+		step(1)
+		if got := exportState(t, controller).DispatchState; got != contracts.DispatchState_DISPATCH_STATE_PENDING {
+			t.Fatalf("disabled admission held the incident: %q", got)
+		}
+		if len(lifecycle.byPhase(PhaseAdmissionDeferred)) != 0 || len(lifecycle.byPhase(PhaseAdmissionResumed)) != 0 {
+			t.Fatal("disabled admission emitted admission lifecycle events")
+		}
+		executePendingEffect(t, controller)
+		awaitRequest(t, dispatcher.requests)
+	})
 }

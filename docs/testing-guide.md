@@ -980,3 +980,16 @@ HTTP and virtual deadlines, including a source that ignores cancellation.
 The three real CLI metrics-URL wiring tests and default-client redirect wiring
 run with `integration` in the existing PR/nightly `scripts/test_go_ci.sh`
 invocations; unit fixtures do not claim real HTTP transport coverage.
+
+Controller dispatch, persistence, admission and effect-durability tests use
+virtual time and quiescence before negative dispatch assertions. Broker and
+dispatch queue helpers synchronize by receiving and restoring the buffered
+result, preserving controller ownership of consumption. Informer notification
+helpers await the event directly instead of host-clock polling.
+
+The real client-go informer/restart test sets a positive virtual resync interval.
+Client-go's disabled-resync path selects on a package-global channel created
+outside the synctest bubble, preventing virtual timers from advancing.
+`KubernetesCacheConfig.ResyncPeriod` leaves production's disabled-resync default
+unchanged while allowing that scheduling boundary to remain in-bubble. This
+does not add client-go watch streams to the simulation world's model.
