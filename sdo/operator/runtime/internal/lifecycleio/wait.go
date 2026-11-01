@@ -21,3 +21,6 @@ func Wait(ctx context.Context, delay time.Duration) error {
 		return ctx.Err()
 	}
 }
+
+// DispatchJitter supplies the default retry jitter fraction.
+func DispatchJitter() float64 { return rand.Float64() }

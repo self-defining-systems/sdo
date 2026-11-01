@@ -2,13 +2,14 @@ package runtime
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	kclock "k8s.io/utils/clock"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,9 @@ import (
 // PVC mount. The Job already has that mount, so the CLI needs no controller
 // endpoint, service account token, or access to another incident's session.
 type SessionToolServer struct {
+	// Clock and NewReplyID may be injected before Serve; nil selects production sources.
+	Clock        kclock.WithTicker
+	NewReplyID   func() string
 	Directory    string
 	Handle       func(context.Context, ToolRequest) ToolResponse
 	PollInterval time.Duration
@@ -35,7 +39,7 @@ func (s *SessionToolServer) Serve(ctx context.Context) error {
 	if interval <= 0 {
 		interval = 100 * time.Millisecond
 	}
-	ticker := time.NewTicker(interval)
+	ticker := timerClock(s.Clock).NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		if err := s.process(ctx); err != nil {
@@ -44,7 +48,7 @@ func (s *SessionToolServer) Serve(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-ticker.C():
 		}
 	}
 }
@@ -198,7 +202,15 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		temporary := ".reply-" + rand.Text()
+		newID := s.NewReplyID
+		if newID == nil {
+			newID = lifecycleio.NewReplyID
+		}
+		id := newID()
+		if id == "" || strings.ContainsAny(id, "/\\") {
+			return errors.New("reply ID must be a non-empty filename component")
+		}
+		temporary := ".reply-" + id
 		file, err := s.responses.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			return err

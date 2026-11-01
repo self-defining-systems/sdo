@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	kclock "k8s.io/utils/clock"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sync"
 	"time"
@@ -31,6 +32,8 @@ import (
 )
 
 type KubernetesCacheConfig struct {
+	// TimerClock controls waits for informer observation; nil uses production timers.
+	TimerClock kclock.WithTicker
 	// ResyncPeriod controls informer resyncs. Zero disables resync; simulations
 	// may select a positive virtual interval to keep reflector timers in-bubble.
 	ResyncPeriod time.Duration

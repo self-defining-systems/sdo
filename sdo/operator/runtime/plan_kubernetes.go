@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	kclock "k8s.io/utils/clock"
 	"time"
 
 	meta "k8s.io/apimachinery/pkg/api/meta"
@@ -57,6 +58,8 @@ func (c KubernetesPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind
 
 // KubernetesPlanRollouts waits for touched Deployments to finish rolling out.
 type KubernetesPlanRollouts struct {
+	// Clock controls rollout polling; nil uses production timers.
+	Clock  kclock.WithTicker
 	Client kubernetes.Interface
 }
 
@@ -64,7 +67,7 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 	if w.Client == nil {
 		return errors.New("Kubernetes rollout client is required")
 	}
-	ticker := time.NewTicker(time.Second)
+	ticker := timerClock(w.Clock).NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		settled := true
@@ -90,7 +93,7 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-ticker.C():
 		}
 	}
 }

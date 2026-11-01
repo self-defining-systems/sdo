@@ -54,13 +54,13 @@ const cacheObservationLimit = 5 * time.Second
 func (c *KubernetesCache) AwaitWrites(ctx context.Context, writes []ObservedWrite) error {
 	ctx, cancel := context.WithTimeout(ctx, cacheObservationLimit)
 	defer cancel()
-	ticker := time.NewTicker(5 * time.Millisecond)
+	ticker := timerClock(c.config.TimerClock).NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for !c.observed(writes) {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-ticker.C():
 		}
 	}
 	return nil

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"time"
 
 	"sdo.dev/operator/runtime/prometheus"
 	"sdo.dev/operator/sdk"
@@ -30,13 +31,13 @@ func newMetricsSource(address string, tokenFile string) (MetricsAPI, error) {
 // without an address are an error; otherwise they run unconfigured and report
 // their source as unavailable on every evaluation.
 func withMetrics(
-	provider SnapshotProvider, detectors []sdk.Detector, address string, tokenFile string, requireSource bool,
+	provider SnapshotProvider, detectors []sdk.Detector, address string, tokenFile string, requireSource bool, clock func() time.Time,
 ) (SnapshotProvider, *MetricsObserver, error) {
 	api, err := newMetricsSource(address, tokenFile)
 	if err != nil {
 		return nil, nil, err
 	}
-	observer, err := NewMetricsObserver(api, detectors, MetricsObserverOptions{})
+	observer, err := NewMetricsObserver(api, detectors, MetricsObserverOptions{Clock: clock})
 	if err != nil {
 		return nil, nil, err
 	}

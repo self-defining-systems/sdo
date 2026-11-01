@@ -993,3 +993,24 @@ outside the synctest bubble, preventing virtual timers from advancing.
 `KubernetesCacheConfig.ResyncPeriod` leaves production's disabled-resync default
 unchanged while allowing that scheduling boundary to remain in-bubble. This
 does not add client-go watch streams to the simulation world's model.
+
+Maintenance, traffic, Service reachability, rollout and informer-observation
+polling accept client-go clock interfaces. Lease timestamps and expiry callbacks
+share an injected clock via `NewLeaseElectorWithClock`; the default constructor
+keeps production time. An expiry callback retires its fired timer handle before
+revoking authority, so it never tries to stop the timer currently firing.
+
+`RuntimeOptions.Clock` drives controller wakeups, startup/evaluation timestamps,
+observer clocks, lease renewal and executor waits. The metrics-URL integration
+contract checks its clock through the emitted finding's `observed_at` metadata;
+real HTTP wiring remains in the existing integration CI tier.
+
+`NewResponderLoopWithOptions` accepts a replayable session-ID source while
+validating its 32-character lowercase hex namespace. Session tool polling and
+temporary reply IDs can be injected; collision tests retain exclusive file
+creation and prove an existing reply temporary cannot be overwritten.
+
+Closure health/state-diff and firing telemetry, lifecycle events, maintenance,
+lease timing, responder settle/mitigator deadlines and cache write observation
+run in synctest bubbles. Their positive timeout and mutex-release assertions
+retain virtual deadlines; the fake informer uses a positive virtual resync.

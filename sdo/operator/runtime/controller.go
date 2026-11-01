@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"google.golang.org/protobuf/proto"
 	"maps"
-	"math/rand/v2"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sort"
 	"strings"
@@ -280,7 +280,7 @@ func NewController(
 		workspaceResults: make(chan workspaceCompletion, 1), closureResults: make(chan closureCompletion, 1),
 		acknowledgmentResults: make(chan acknowledgmentCompletion, 1),
 		releaseResults:        make(chan releaseCompletion, 1),
-		dispatchJitter:        rand.Float64,
+		dispatchJitter:        lifecycleio.DispatchJitter,
 	}, nil
 }
 

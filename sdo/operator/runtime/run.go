@@ -7,8 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	kclock "k8s.io/utils/clock"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -42,6 +42,8 @@ import (
 )
 
 type RuntimeOptions struct {
+	// Clock controls driver timers and observer timestamps; nil uses production time.
+	Clock    kclock.WithTickerAndDelayedExecution
 	Programs program.ProgramRegistry
 	Args     []string
 	Stdout   io.Writer
@@ -86,6 +88,10 @@ func Run() {
 }
 
 func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) error {
+	clock := options.Clock
+	if clock == nil {
+		clock = lifecycleio.Clock()
+	}
 	// The typed launch path fills options.Client itself; that is still a
 	// production client and must receive the metadata transport below.
 	clientInjected := options.Client != nil
@@ -126,7 +132,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		args = append(controllerConfigToArgs(config), args[2:]...)
 	}
 	if len(args) > 0 && args[0] == "--evaluate-once" {
-		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Traffic)
+		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Traffic, clock)
 	}
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
@@ -402,7 +408,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if stateStartTimeout <= 0 {
 		stateStartTimeout = defaultStateBaselineStartTimeout
 	}
-	elector := NewLeaseElector(leaseClient, *controlNamespace, *leaseName, *identity, *leaseDuration)
+	elector := NewLeaseElectorWithClock(leaseClient, *controlNamespace, *leaseName, *identity, *leaseDuration, clock)
 	for {
 		leader, acquireErr := elector.TryAcquireOrRenew(ctx)
 		if acquireErr != nil {
@@ -414,7 +420,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(*leaseDuration / 3):
+		case <-clock.After(*leaseDuration / 3):
 		}
 	}
 	defer func() {
@@ -433,13 +439,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if renewalInterval > 5*time.Second {
 		renewalInterval = 5 * time.Second
 	}
-	renewalErrors := maintainLeadership(renewalCtx, elector, renewalInterval)
+	renewalErrors := maintainLeadership(renewalCtx, elector, renewalInterval, clock)
 	stateConfigMapName := ""
 	if *controlNamespace == *namespace {
 		stateConfigMapName = controllerStateConfigMap
 	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
-		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
+		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, Clock: clock.Now, TimerClock: clock,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -455,6 +461,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	} else if *syntheticTraffic {
 		trafficObserver = NewTrafficObserver(proberAPI, trafficWorkloads, func() { kubernetesCache.Notify(traffic.Watch) }, 0)
 	}
+	if trafficObserver != nil {
+		trafficObserver.Clock = clock
+	}
 	// Service reachability is a routing probe, not a synthetic workload, so
 	// it runs whenever a prober exists and a detector consumes it.
 	var reachabilityObserver *ServiceReachabilityObserver
@@ -463,7 +472,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if !ok {
 			return errors.New("traffic transport lacks host reachability RPC")
 		}
-		reachabilityObserver = NewServiceReachabilityObserver(ServiceReachabilityConfig{
+		reachabilityObserver = NewServiceReachabilityObserver(ServiceReachabilityConfig{Clock: clock,
 			Prober: dialer, Snapshots: kubernetesCache,
 			Identity: servicehealth.ProberIdentity{Namespace: *controlNamespace, Labels: map[string]string{"app.kubernetes.io/name": "sdo-controller"}},
 			Notify:   func() { kubernetesCache.Notify(servicehealth.ReachabilityWatch) },
@@ -478,13 +487,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
 	}
-	snapshotProvider = withUsage(snapshotProvider, detectors, bootstrapProvider.Client, nil)
-	logsObserver, err := NewLogsObserver(bootstrapProvider.Client, detectors, LogsObserverOptions{})
+	snapshotProvider = withUsage(snapshotProvider, detectors, bootstrapProvider.Client, clock.Now)
+	logsObserver, err := NewLogsObserver(bootstrapProvider.Client, detectors, LogsObserverOptions{Clock: clock.Now})
 	if err != nil {
 		return err
 	}
 	snapshotProvider = LogsSnapshotProvider{Base: snapshotProvider, Observer: logsObserver}
-	snapshotProvider, metricsObserver, err := withMetrics(snapshotProvider, detectors, *metricsURL, *metricsTokenFile, false)
+	snapshotProvider, metricsObserver, err := withMetrics(snapshotProvider, detectors, *metricsURL, *metricsTokenFile, false, clock.Now)
 	if err != nil {
 		return err
 	}
@@ -537,7 +546,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				defer memoryCatalogMu.RUnlock()
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
 					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource,
-					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
+					Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
 				if len(TrafficWorkloadNames(detectors)) > 0 {
 					loop.Traffic = proberAPI
@@ -572,7 +581,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		ReleaseBacklogLowWatermark:  *admissionBacklogLow,
 		RecheckInterval:             *admissionRecheckInterval,
 	}
-	start := time.Now().UTC()
+	start := clock.Now().UTC()
 	corpusSessionRoot := ""
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
@@ -620,7 +629,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		operatorRoot := builder.DefaultOperatorRoot()
 		activation = &memoryActivation{manager: hostManager, active: launchConfig.GetControllerRevision(), results: make(chan memoryCandidate, 1), notify: make(chan struct{}, 1)}
 		activation.build = func(buildCtx context.Context, commit string) memoryCandidate {
-			started := time.Now()
+			started := clock.Now()
 			workspace, artifact, err := builder.BuildAcceptedMemoryHost(buildCtx, builder.Config{ApplicationRoot: resolvedRoot, OperatorRoot: operatorRoot}, commit)
 			if err != nil {
 				return memoryCandidate{commit: commit, err: err}
@@ -660,13 +669,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return err
 			}
 			var next SnapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver}
-			next = withUsage(next, remote.Detectors, bootstrapProvider.Client, nil)
-			nextLogs, err := NewLogsObserver(bootstrapProvider.Client, remote.Detectors, LogsObserverOptions{})
+			next = withUsage(next, remote.Detectors, bootstrapProvider.Client, clock.Now)
+			nextLogs, err := NewLogsObserver(bootstrapProvider.Client, remote.Detectors, LogsObserverOptions{Clock: clock.Now})
 			if err != nil {
 				return err
 			}
 			next = LogsSnapshotProvider{Base: next, Observer: nextLogs}
-			next, nextMetrics, err := withMetrics(next, remote.Detectors, *metricsURL, *metricsTokenFile, false)
+			next, nextMetrics, err := withMetrics(next, remote.Detectors, *metricsURL, *metricsTokenFile, false, clock.Now)
 			if err != nil {
 				return err
 			}
@@ -677,13 +686,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if trafficObserver != nil {
 				trafficObserver.Reconfigure(trafficWorkloads)
 			}
-			if err = controller.ReconfigureMemory(remote, next, time.Now().UTC()); err != nil {
+			if err = controller.ReconfigureMemory(remote, next, clock.Now().UTC()); err != nil {
 				return err
 			}
 			memoryCatalogMu.Lock()
 			detectors, options.Programs, snapshotProvider, metricsObserver = remote.Detectors, remote.Programs, next, nextMetrics
 			memoryCatalogMu.Unlock()
-			_ = json.NewEncoder(stdout).Encode(map[string]any{"memory_host_activation": candidate.commit, "binary_digest": candidate.digest, "activation_latency_ms": time.Now().Sub(candidate.started).Milliseconds(), "controller_revision": launchConfig.GetControllerRevision()})
+			_ = json.NewEncoder(stdout).Encode(map[string]any{"memory_host_activation": candidate.commit, "binary_digest": candidate.digest, "activation_latency_ms": clock.Now().Sub(candidate.started).Milliseconds(), "controller_revision": launchConfig.GetControllerRevision()})
 			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
 			return nil
 		}
@@ -758,6 +767,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			fmt.Fprintln(stderr, err)
 		}
 	}
+	controller.now = clock.Now
 	controller.OnEvaluation = func(findings []sdk.Finding) {
 		if err := encoder.Encode(map[string]any{
 			"controller_iteration": iteration,
@@ -777,17 +787,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		defer cancel()
 	}
 	if options.NativeBroker != nil {
-		if err := options.NativeBroker.PruneIncidentSessions(time.Now().UTC()); err != nil {
+		if err := options.NativeBroker.PruneIncidentSessions(clock.Now().UTC()); err != nil {
 			fmt.Fprintf(stderr, "prune retained incident sessions: %v\n", err)
 		}
 		go func() {
-			ticker := time.NewTicker(24 * time.Hour)
+			ticker := clock.NewTicker(24 * time.Hour)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-runCtx.Done():
 					return
-				case now := <-ticker.C:
+				case now := <-ticker.C():
 					if err := options.NativeBroker.PruneIncidentSessions(now.UTC()); err != nil {
 						fmt.Fprintf(stderr, "prune retained incident sessions: %v\n", err)
 					}
@@ -795,7 +805,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 		}()
 	}
-	maintenance := MaintenanceWatcher{
+	maintenance := MaintenanceWatcher{Clock: clock,
 		Client: bootstrapProvider.Client, Namespace: *controlNamespace, Name: *maintenanceConfigMap,
 	}
 	desired, err := maintenance.Read(runCtx)
@@ -834,13 +844,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			return
 		}
-		started := time.Now()
+		started := clock.Now()
 		resetErr := trafficObserver.Reset(runCtx)
 		trafficObserver.Start(runCtx)
 		warm := trafficObserver.WaitWarm(runCtx, *syntheticWarmup)
 		record := map[string]any{
 			"synthetic_traffic": trafficObserver.Summary(), "synthetic_traffic_warm": warm,
-			"synthetic_traffic_startup_ms": time.Since(started).Milliseconds(),
+			"synthetic_traffic_startup_ms": clock.Since(started).Milliseconds(),
 		}
 		if resetErr != nil {
 			record["synthetic_traffic_error"] = resetErr.Error()
@@ -883,7 +893,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if stateTracker == nil {
 			return func() {}
 		}
-		started := time.Now()
+		started := clock.Now()
 		done := make(chan error, 1)
 		go func() {
 			startCtx, cancelStart := context.WithTimeout(runCtx, stateStartTimeout)
@@ -892,7 +902,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}()
 		return func() {
 			err := <-done
-			record := map[string]any{"state_baseline_startup_ms": time.Since(started).Milliseconds()}
+			record := map[string]any{"state_baseline_startup_ms": clock.Since(started).Milliseconds()}
 			if err != nil {
 				record["state_baseline_error"] = err.Error()
 			} else if unobserved := stateTracker.UnobservedKinds(); len(unobserved) > 0 {
@@ -926,7 +936,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		startTraffic()
 		startReachability()
 		waitState()
-		if err := controller.Step(runCtx, time.Now().UTC(), nil); err != nil {
+		if err := controller.Step(runCtx, clock.Now().UTC(), nil); err != nil {
 			if runCtx.Err() != nil {
 				return nil
 			}
@@ -975,7 +985,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err := encoder.Encode(applied.Record()); err != nil {
 			fmt.Fprintln(stderr, err)
 		}
-		if err := controller.EvaluateAll(runCtx, time.Now().UTC()); err != nil {
+		if err := controller.EvaluateAll(runCtx, clock.Now().UTC()); err != nil {
 			if runCtx.Err() != nil {
 				return nil
 			}
@@ -1006,15 +1016,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		case applied.Paused:
 			delay = time.Hour
 			if wake := controller.PausedWake(); !wake.IsZero() {
-				delay = time.Until(wake)
+				delay = wake.Sub(clock.Now())
 			}
 		default:
-			delay = time.Until(controller.NextWake())
+			delay = controller.NextWake().Sub(clock.Now())
 		}
 		if delay < 0 {
 			delay = 0
 		}
-		timer := time.NewTimer(delay)
+		timer := clock.NewTimer(delay)
 		select {
 		case <-runCtx.Done():
 			stopTimerForRuntimeEvent(runCtx, timer)
@@ -1056,7 +1066,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				kubernetesCache.TakeObjectChanges()
 				continue
 			}
-			if err := controller.StepEvents(runCtx, time.Now().UTC(), kubernetesCache.TakeEvents()); err != nil {
+			if err := controller.StepEvents(runCtx, clock.Now().UTC(), kubernetesCache.TakeEvents()); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1076,7 +1086,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if stopTimerForRuntimeEvent(runCtx, timer) {
 				return nil
 			}
-			controller.handleDispatchCompletion(completion, time.Now().UTC())
+			controller.handleDispatchCompletion(completion, clock.Now().UTC())
 			persistControllerState()
 			if err := reviewGate.check(controller); err != nil {
 				return err
@@ -1137,7 +1147,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			return renewErr
-		case <-timer.C:
+		case <-timer.C():
 			if stopTimerForRuntimeEvent(runCtx, timer) {
 				return nil
 			}
@@ -1156,7 +1166,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				continue
 			}
-			if err := controller.Step(runCtx, time.Now().UTC(), nil); err != nil {
+			if err := controller.Step(runCtx, clock.Now().UTC(), nil); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1249,10 +1259,10 @@ func (gate *detectorReviewGate) check(controller *Controller) error {
 	return nil
 }
 
-func stopTimerForRuntimeEvent(ctx context.Context, timer *time.Timer) bool {
+func stopTimerForRuntimeEvent(ctx context.Context, timer kclock.Timer) bool {
 	if !timer.Stop() {
 		select {
-		case <-timer.C:
+		case <-timer.C():
 		default:
 		}
 	}
@@ -1263,16 +1273,18 @@ func maintainLeadership(
 	ctx context.Context,
 	elector *LeaseElector,
 	interval time.Duration,
+	clock kclock.WithTicker,
 ) <-chan error {
+	clock = timerClock(clock)
 	errors := make(chan error, 1)
 	go func() {
-		ticker := time.NewTicker(interval)
+		ticker := clock.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-ticker.C():
 				attemptTimeout := interval / 2
 				if attemptTimeout <= 0 {
 					attemptTimeout = time.Second
@@ -1325,8 +1337,7 @@ func parseResponderEnvironment(entries []string) (map[string]string, error) {
 func resolveRepositoryCommits(repository string, sourceCommit string, deployedCommit string) (string, string, error) {
 	resolvedSource := strings.TrimSpace(sourceCommit)
 	if resolvedSource == "" {
-		completed := exec.Command("git", "-C", repository, "rev-parse", "HEAD")
-		output, err := completed.CombinedOutput()
+		output, err := lifecycleio.GitCombined(context.Background(), repository, "rev-parse", "HEAD")
 		if err != nil {
 			return "", "", fmt.Errorf("resolve source commit: %w: %s", err, strings.TrimSpace(string(output)))
 		}
@@ -1356,6 +1367,7 @@ func evaluateOnce(
 	stderr io.Writer,
 	provider SnapshotProvider,
 	trafficAPI ProberAPI,
+	clock kclock.WithTicker,
 ) error {
 	flags := flag.NewFlagSet("sdo-controller-evaluate-once", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1416,13 +1428,13 @@ func evaluateOnce(
 			return fmt.Errorf("create Kubernetes snapshot provider: %w", err)
 		}
 		provider = kubernetesProvider
-		provider = withUsage(provider, detectors, kubernetesProvider.Client, nil)
+		provider = withUsage(provider, detectors, kubernetesProvider.Client, clock.Now)
 	}
 	var logClient kubernetes.Interface
 	if kp, ok := provider.(*core.KubernetesSnapshotProvider); ok {
 		logClient = kp.Client
 	}
-	logObserver, err := NewLogsObserver(logClient, detectors, LogsObserverOptions{})
+	logObserver, err := NewLogsObserver(logClient, detectors, LogsObserverOptions{Clock: clock.Now})
 	if err != nil {
 		return err
 	}
@@ -1432,6 +1444,7 @@ func evaluateOnce(
 			return errors.New("traffic health evaluation requires the active memory host")
 		}
 		observer := NewTrafficObserver(trafficAPI, workloads, nil, 0)
+		observer.Clock = clock
 		if !observer.WaitWarm(ctx, 30*time.Second) {
 			return errors.New("traffic prober did not produce a complete bounded health window")
 		}
@@ -1444,7 +1457,7 @@ func evaluateOnce(
 		} else {
 			// Gather the gate's history now: Failures rounds, a second apart,
 			// judged by the same observer and detector as the controller.
-			reachability := NewServiceReachabilityObserver(ServiceReachabilityConfig{
+			reachability := NewServiceReachabilityObserver(ServiceReachabilityConfig{Clock: clock,
 				Prober: dialer, Snapshots: provider,
 				Interval: evaluateOnceReachabilityInterval,
 			})
@@ -1458,11 +1471,11 @@ func evaluateOnce(
 		provider = trafficProvider
 	}
 	provider = LogsSnapshotProvider{Base: provider, Observer: logObserver}
-	provider, _, err = withMetrics(provider, detectors, *metricsURL, *metricsTokenFile, true)
+	provider, _, err = withMetrics(provider, detectors, *metricsURL, *metricsTokenFile, true, clock.Now)
 	if err != nil {
 		return err
 	}
-	start := time.Now().UTC()
+	start := clock.Now().UTC()
 	controller, err := NewController(ControllerConfig{
 		Application: *application, Namespace: *namespace,
 		SourceCommit: "evaluation", DeployedCommit: "evaluation",
@@ -1474,6 +1487,7 @@ func evaluateOnce(
 	}
 	findings := make([]sdk.Finding, 0)
 	var detectorErrors []error
+	controller.now = clock.Now
 	controller.OnEvaluation = func(sample []sdk.Finding) { findings = append([]sdk.Finding{}, sample...) }
 	controller.OnError = func(err error) { detectorErrors = append(detectorErrors, err) }
 	if err := controller.Step(ctx, start, nil); err != nil {
