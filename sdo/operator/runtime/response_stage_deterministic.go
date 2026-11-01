@@ -46,6 +46,7 @@ func (s *DeterministicStage) Run(ctx context.Context, state *IncidentState) (*co
 		state.ProgramToolCalls = loop.ToolCalls()
 	}()
 	attempted := map[string]bool{}
+	ineffective := stageIneffective{}
 	// A write already recorded for this incident was started by an earlier run
 	// of the stage (or the responder) and is never replayed, including one that
 	// stopped between the write and its completed receipt.
@@ -72,7 +73,12 @@ func (s *DeterministicStage) Run(ctx context.Context, state *IncidentState) (*co
 			attempt.SkipReason = "already_attempted"
 			continue
 		}
+		if ineffective.covers(candidate) {
+			attempt.SkipReason = "ineffective"
+			continue
+		}
 		s.attempt(ctx, loop, state, candidate, attempt)
+		ineffective.note(candidate, attempt)
 	}
 	return report, nil
 }
@@ -99,6 +105,38 @@ func stageCandidates(state *IncidentState) []stageCandidate {
 		sort.Strings(result[i].targets)
 	}
 	return result
+}
+
+// stageIneffective remembers findings a program revision already applied for
+// and left open. Its replacement objects, such as the Pod a restart creates,
+// are new bindings but not new evidence: the same revision is not applied again
+// for the same findings. A finding the earlier attempt did not target is new.
+type stageIneffective map[string]map[string]bool
+
+func (e stageIneffective) note(candidate stageCandidate, attempt *contracts.StageMitigation) {
+	if attempt.GetResult() != "applied_still_matching" {
+		return
+	}
+	key := candidate.programID + "\x00" + candidate.revision
+	if e[key] == nil {
+		e[key] = map[string]bool{}
+	}
+	for _, fingerprint := range candidate.targets {
+		e[key][fingerprint] = true
+	}
+}
+
+func (e stageIneffective) covers(candidate stageCandidate) bool {
+	seen := e[candidate.programID+"\x00"+candidate.revision]
+	if len(seen) == 0 || len(candidate.targets) == 0 {
+		return false
+	}
+	for _, fingerprint := range candidate.targets {
+		if !seen[fingerprint] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *DeterministicStage) attempt(ctx context.Context, loop *ResponderLoop, state *IncidentState, candidate stageCandidate, attempt *contracts.StageMitigation) {

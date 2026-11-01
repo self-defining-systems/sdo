@@ -7,6 +7,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/sim"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // stageState opens an incident the way the dispatcher does: the open-time
@@ -115,6 +116,74 @@ func TestDeterministicStageNeverReplaysWriteAfterRestart(t *testing.T) {
 				}
 				if writes != 1 || len(restarted.PlanApplications()) != 0 {
 					t.Fatalf("restart replayed a write: %d %d", writes, len(restarted.PlanApplications()))
+				}
+			})
+		})
+	}
+}
+
+func TestStageIneffectiveCoversOnlySameRevisionAndFindings(t *testing.T) {
+	ineffective := stageIneffective{}
+	first := stageCandidate{programID: "p", revision: "r1", targets: []string{"a", "b"}}
+	ineffective.note(first, &contracts.StageMitigation{Result: "applied_cleared"})
+	if ineffective.covers(first) {
+		t.Fatal("a cleared attempt is not ineffective")
+	}
+	ineffective.note(first, &contracts.StageMitigation{Result: "applied_still_matching"})
+	for name, candidate := range map[string]stageCandidate{
+		"same":          {programID: "p", revision: "r1", targets: []string{"a"}},
+		"new bindings":  {programID: "p", revision: "r1", targets: []string{"a", "b"}},
+		"new finding":   {programID: "p", revision: "r1", targets: []string{"a", "c"}},
+		"new revision":  {programID: "p", revision: "r2", targets: []string{"a"}},
+		"other program": {programID: "q", revision: "r1", targets: []string{"a"}},
+	} {
+		want := name == "same" || name == "new bindings"
+		if got := ineffective.covers(candidate); got != want {
+			t.Errorf("%s: covers = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// Every reason an otherwise matching program is not applied is typed, writes
+// nothing, and leaves the findings for the next stage.
+func TestDeterministicStageSkipsWithTypedReasons(t *testing.T) {
+	cases := map[string]func(*testing.T, *sim.World, *ResponderLoop, *sim.Kube, *IncidentState){
+		"repair_policy": func(_ *testing.T, _ *sim.World, _ *ResponderLoop, _ *sim.Kube, state *IncidentState) {
+			state.Request.RepairPolicy = "commit"
+		},
+		"no_mitigation": func(t *testing.T, _ *sim.World, loop *ResponderLoop, _ *sim.Kube, _ *IncidentState) {
+			registry, err := program.NewRegistry([]program.Diagnoser{fastloopPortProgram{}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			loop.Programs = registry
+		},
+		"unbound_parameter": func(_ *testing.T, _ *sim.World, _ *ResponderLoop, _ *sim.Kube, state *IncidentState) {
+			for i := range state.Request.InitialProgramRuns {
+				state.Request.InitialProgramRuns[i].Bindings = program.Bindings{}
+			}
+		},
+		"diagnose_no_longer_matches": func(_ *testing.T, w *sim.World, _ *ResponderLoop, kube *sim.Kube, _ *IncidentState) {
+			kube.Put(simService(8080))
+			w.Cache.CatchUp()
+		},
+	}
+	for reason, mutate := range cases {
+		t.Run(reason, func(t *testing.T) {
+			sim.Sweep(t, func(t *testing.T, w *sim.World) {
+				loop, kube := simFastPathLoop(t, w)
+				state := stageState(loop)
+				mutate(t, w, loop, kube, state)
+				report, err := (&DeterministicStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+				if err != nil || len(report.GetMitigations()) != 1 {
+					t.Fatalf("report = %v err = %v", report, err)
+				}
+				attempt := report.GetMitigations()[0]
+				if attempt.GetResult() != "skipped" || attempt.GetSkipReason() != reason {
+					t.Fatalf("attempt = %v", attempt)
+				}
+				if len(loop.PlanApplications()) != 0 || loop.stageWrites != 0 {
+					t.Fatal("a skipped attempt wrote")
 				}
 			})
 		})
