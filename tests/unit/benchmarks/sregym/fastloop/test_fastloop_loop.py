@@ -586,7 +586,7 @@ def test_continuity_learning_precedes_recovery_and_survives_row_export(tmp_path:
     class ContinuousAgent(FakeAgent):
         learn_before_recovery = True
 
-        def learn(self, outcome):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
             events.append("learn")
             checks, error = check_activations(trace(skip=failed), {"uid": "one"}, {"uid": "one"}, max_gap=1)
             return outcome.with_learning(memory_host_activations=checks, error=error)

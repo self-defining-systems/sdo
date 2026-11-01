@@ -1506,14 +1506,16 @@ def test_interrupted_install_retains_cleanup_target_before_controller_exists(tmp
 
 
 @pytest.mark.parametrize("reflection", [False, True])
-def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(monkeypatch, reflection):
+def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(
+    monkeypatch: pytest.MonkeyPatch, reflection: bool
+) -> None:
     from benchmarks.sregym.adapter import persistent
 
     elapsed = [0.0]
     clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: None)
 
     class SlowRead:
-        def runtime_state(self, _control):
+        def runtime_state(self, _control: str) -> dict[str, Any]:
             elapsed[0] = 61.0
             return {}
 

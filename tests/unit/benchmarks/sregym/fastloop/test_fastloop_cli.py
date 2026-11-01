@@ -695,7 +695,7 @@ def test_normal_live_and_reduced_scripted_scales_pass_preflight(
     assert float(cli.os.environ["SDO_TIME_SCALE"]) == float(scale)
 
 
-def test_scripted_scale_preserves_wall_time_stage_budgets(tmp_path, monkeypatch):
+def test_scripted_scale_preserves_wall_time_stage_budgets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.fastloop import cli
 
     environment = FastloopEnvironment(
