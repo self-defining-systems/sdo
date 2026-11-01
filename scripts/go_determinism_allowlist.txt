@@ -39,15 +39,6 @@ sdo/operator/deployment/kubernetes_build_test.go:time.After
 sdo/operator/deployment/raw_test.go:os/exec
 sdo/operator/deployment/registry.go:os/exec
 sdo/operator/deployment/registry_test.go:os/exec
-sdo/operator/install/install.go:os/exec
-sdo/operator/install/install.go:time.NewTimer
-sdo/operator/install/install.go:time.Now
-sdo/operator/install/operate.go:os.Getenv
-sdo/operator/install/operate.go:time.Since
-sdo/operator/install/resources.go:os.Getenv
-sdo/operator/install/seed.go:os.Environ
-sdo/operator/install/seed.go:os/exec
-sdo/operator/install/stop.go:time.After
 sdo/operator/internal/testutil/offline.go:os/exec
 sdo/operator/operatorcli/host.go:os/exec
 sdo/operator/operatorcli/host_test.go:os/exec

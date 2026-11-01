@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"sdo.dev/operator/install/internal/installio"
 )
 
 // RepositorySeeder copies only an independently accepted checkout into the
@@ -39,6 +39,8 @@ type Installer struct {
 	Extension          Extension
 	PollInterval       time.Duration
 	SyncTimeout        time.Duration
+	Now                func() time.Time
+	Wait               func(context.Context, time.Duration) error
 }
 
 type Result struct {
@@ -116,7 +118,7 @@ func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, actio
 		return errors.New("repository synchronization requires control namespace, PVC, and controller image")
 	}
 	cfg := Config{Namespace: syncConfig.ControlNamespace, ControlNamespace: syncConfig.ControlNamespace, RepositoryPVC: syncConfig.RepositoryPVC, ControllerImage: syncConfig.ControllerImage}
-	owner := fmt.Sprintf("sync-%d", time.Now().UnixNano())
+	owner := fmt.Sprintf("sync-%d", i.now().UnixNano())
 	if err := i.acquireOperateLock(ctx, cfg, owner); err != nil {
 		return err
 	}
@@ -151,7 +153,7 @@ func verifyPreparedCheckout(ctx context.Context, root, acceptedCommit string) er
 		return fmt.Errorf("resolve prepared checkout: %w", err)
 	}
 	git := func(args ...string) (string, error) {
-		output, err := exec.CommandContext(ctx, "git", append([]string{"-C", absolute}, args...)...).CombinedOutput()
+		output, err := installio.Git(ctx, absolute, args...)
 		if err != nil {
 			return "", fmt.Errorf("inspect prepared checkout (%s): %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 		}
@@ -495,15 +497,18 @@ func (i Installer) pause(ctx context.Context) error {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
-	timer := time.NewTimer(interval)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
+	if i.Wait != nil {
+		return i.Wait(ctx, interval)
 	}
+	return installio.Wait(ctx, interval)
 }
+func (i Installer) now() time.Time {
+	if i.Now != nil {
+		return i.Now()
+	}
+	return installio.Now()
+}
+
 func jobFailed(job *batchv1.Job) bool {
 	for _, condition := range job.Status.Conditions {
 		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {

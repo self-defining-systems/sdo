@@ -398,3 +398,8 @@ reads, isolated-index whitespace checks, shell syntax and toolchain lookup.
 It exposes bytes and errors, never process handles. The artifact ownership
 matrix and repository scope matrix above remain unchanged: this production
 adapter belongs to memory and has no benchmark dependencies.
+The installer keeps accepted-checkout Git/archive/kubectl operations inside
+`install/internal/installio`, its private production edge. Installer decisions
+accept an injected clock and poll wait; defaults and time-scale environment
+reads live at that edge. The installer component, repository scope and artifact
+ownership matrix remain unchanged. Process handles never cross the edge.
