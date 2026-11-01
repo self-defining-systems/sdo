@@ -1030,3 +1030,9 @@ already include `-tags=integration`, with the existing nightly-only compiler
 selection and five-minute PR budget unchanged. `split_go_integration.sh` reports
 AST dependency candidates and moves explicitly selected declarations, preserving
 embedded Go strings; review candidates and compile both build selections.
+
+Cache observation-time contracts compare an exact injected timestamp. Dispatcher
+Job waiting, fast-path restarts and worker completion run in virtual time, with
+an explicit virtual restart boundary for fresh evidence. Process-only fastloop
+wait helpers stay with their integration fixtures. Simulated protocol peers use
+the world clock for safety deadlines; default peer behavior is unchanged.

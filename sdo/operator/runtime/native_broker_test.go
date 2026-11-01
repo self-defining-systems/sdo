@@ -21,7 +21,7 @@ func (rejectingLatePull) VerifyPull(context.Context, string, uint32, string, []s
 }
 
 func nativeClosure(workspace IncidentWorkspace) IncidentClosure {
-	now := time.Now().UTC()
+	now := time.Unix(1700000000, 0).UTC()
 	return IncidentClosure{
 		Request: IncidentRequest{
 			SchemaVersion: ProtocolSchemaVersion, Application: "app", Namespace: "default", IncidentID: workspace.IncidentID,

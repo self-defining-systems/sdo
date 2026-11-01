@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"syscall"
 	"time"
 
@@ -17,13 +18,21 @@ import (
 // Dial returns a fresh peer in healthy, refused or protocol_error mode.
 // The real prober still performs every handshake and classifies the reply.
 func Dial(ctx context.Context, protocol, mode string) (net.Conn, error) {
+	return DialWithClock(ctx, protocol, mode, lifecycleio.Now)
+}
+
+// DialWithClock binds the peer's safety deadline to the caller's virtual clock.
+func DialWithClock(ctx context.Context, protocol, mode string, now func() time.Time) (net.Conn, error) {
+	if now == nil {
+		now = lifecycleio.Now
+	}
 	if mode == "refused" {
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
 	}
 	c, peer := net.Pipe()
 	go func() {
 		defer peer.Close()
-		peer.SetDeadline(time.Now().Add(time.Second))
+		peer.SetDeadline(now().Add(time.Second))
 		stop := context.AfterFunc(ctx, func() { peer.Close() })
 		defer stop()
 		if protocol == "grpc" {
