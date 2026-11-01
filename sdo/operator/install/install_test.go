@@ -3,11 +3,9 @@ package install
 import (
 	"context"
 	"errors"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -15,7 +13,9 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 )
 
 func testConfig() Config {
@@ -233,7 +233,7 @@ func TestPrepareSeedsInitialCheckoutWithoutStartingController(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
 	seeded := false
 	i := Installer{Client: client, PollInterval: time.Millisecond}
-	go markSyncPodReady(client, cfg.ControlNamespace)
+	markSyncPodReady(client, cfg.ControlNamespace)
 	err := i.Prepare(context.Background(), cfg, func(ctx context.Context, got Config) error {
 		seeded = true
 		if got.AcceptedCommit != cfg.AcceptedCommit {
@@ -395,16 +395,18 @@ func TestStartOperateRequiresPreparedCommitAndCreatesJob(t *testing.T) {
 }
 
 func TestStartOperateReclaimsExpiredClaimAfterJobTTL(t *testing.T) {
-	cfg := testConfig()
-	client := fake.NewSimpleClientset(
-		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: cfg.RepositoryPVC, Namespace: cfg.ControlNamespace, Annotations: map[string]string{PreparedCommitAnnotation: cfg.AcceptedCommit}}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.RegistryPushSecret, Namespace: cfg.ControlNamespace}, Type: corev1.SecretTypeDockerConfigJson, Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("{}")}},
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: cfg.ControlNamespace, CreationTimestamp: metav1.NewTime(time.Now().Add(-20 * time.Minute))}, Data: map[string]string{"operation_id": "expired-operation"}},
-	)
-	i := Installer{Client: client}
-	if _, err := i.StartOperate(context.Background(), cfg, "healthy", "operation-2", 2); err != nil {
-		t.Fatalf("expired claim prevented new operation: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		cfg := testConfig()
+		client := fake.NewSimpleClientset(
+			&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: cfg.RepositoryPVC, Namespace: cfg.ControlNamespace, Annotations: map[string]string{PreparedCommitAnnotation: cfg.AcceptedCommit}}},
+			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.RegistryPushSecret, Namespace: cfg.ControlNamespace}, Type: corev1.SecretTypeDockerConfigJson, Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("{}")}},
+			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: cfg.ControlNamespace, CreationTimestamp: metav1.NewTime(time.Now().Add(-20 * time.Minute))}, Data: map[string]string{"operation_id": "expired-operation"}},
+		)
+		i := Installer{Client: client}
+		if _, err := i.StartOperate(context.Background(), cfg, "healthy", "operation-2", 2); err != nil {
+			t.Fatalf("expired claim prevented new operation: %v", err)
+		}
+	})
 }
 
 func TestWaitOperateReleasesClaimAfterFailedJob(t *testing.T) {
@@ -444,7 +446,7 @@ func TestBuilderIdentityAndRegistryCredentialsStaySeparate(t *testing.T) {
 	}
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
 	i := Installer{Client: client, PollInterval: time.Millisecond}
-	go markSyncPodReady(client, cfg.ControlNamespace)
+	markSyncPodReady(client, cfg.ControlNamespace)
 	if err := i.Prepare(context.Background(), cfg, func(context.Context, Config) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -510,17 +512,7 @@ func TestSyncExistingRepositoryUsesTemporaryPodWithoutReplacingController(t *tes
 		}
 		return nil
 	}}
-	go func() {
-		for {
-			pod, err := client.CoreV1().Pods(cfg.ControlNamespace).Get(context.Background(), RepositorySyncPodName, metav1.GetOptions{})
-			if err == nil {
-				pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-				_, _ = client.CoreV1().Pods(cfg.ControlNamespace).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{})
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-	}()
+	markSyncPodReady(client, cfg.ControlNamespace)
 	if err := installer.SyncExistingRepository(context.Background(), SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage}); err != nil {
 		t.Fatal(err)
 	}
@@ -541,17 +533,7 @@ func TestWithSyncPodCleansUpAfterReadFailure(t *testing.T) {
 	cfg := testConfig()
 	client := fake.NewSimpleClientset()
 	installer := Installer{Client: client, PollInterval: time.Millisecond, SyncTimeout: time.Second}
-	go func() {
-		for {
-			pod, err := client.CoreV1().Pods(cfg.ControlNamespace).Get(context.Background(), RepositorySyncPodName, metav1.GetOptions{})
-			if err == nil {
-				pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-				_, _ = client.CoreV1().Pods(cfg.ControlNamespace).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{})
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-	}()
+	markSyncPodReady(client, cfg.ControlNamespace)
 	want := errors.New("read failed")
 	err := installer.WithSyncPod(context.Background(), SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage}, func(context.Context, Config) error { return want })
 	if !errors.Is(err, want) {
@@ -574,47 +556,6 @@ func TestFreshInstallRequiresSeederBeforeControllerJob(t *testing.T) {
 	}
 }
 
-func TestPreparedInstallUsesAcceptedPVCWithoutBootstrapPrivileges(t *testing.T) {
-	root := t.TempDir()
-	for _, args := range [][]string{{"init", "-q", root}, {"-C", root, "config", "user.name", "SDO Test"}, {"-C", root, "config", "user.email", "test@example.invalid"}} {
-		if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("git setup %v: %v: %s", args, err, output)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("accepted\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"-C", root, "add", "README.md"}, {"-C", root, "commit", "-qm", "accepted"}} {
-		if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, output)
-		}
-	}
-	head, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := testConfig()
-	cfg.AcceptedCommit = strings.TrimSpace(string(head))
-	client := fake.NewSimpleClientset()
-	installer := Installer{Client: client}
-	if _, err := installer.InstallPrepared(context.Background(), cfg, root); err != nil {
-		t.Fatalf("prepared install failed under namespaced RBAC: %v", err)
-	}
-	if _, err := client.BatchV1().Jobs(cfg.ControlNamespace).Get(context.Background(), ControllerJobName, metav1.GetOptions{}); err != nil {
-		t.Fatalf("controller Job missing: %v", err)
-	}
-	for _, action := range client.Actions() {
-		if action.GetResource().Resource == "namespaces" || action.GetResource().Resource == "roles" || action.GetResource().Resource == "rolebindings" || action.GetResource().Resource == "serviceaccounts" || action.GetResource().Resource == "pods" || action.GetResource().Resource == "persistentvolumeclaims" {
-			t.Fatalf("prepared install attempted bootstrap operation: %s %s", action.GetVerb(), action.GetResource().Resource)
-		}
-	}
-	wrong := cfg
-	wrong.AcceptedCommit = strings.Repeat("0", 40)
-	if _, err := installer.InstallPrepared(context.Background(), wrong, root); err == nil {
-		t.Fatal("prepared install accepted a different Git HEAD")
-	}
-}
-
 func TestFreshInstallSeedsBeforeStartingJob(t *testing.T) {
 	cfg := testConfig()
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
@@ -630,17 +571,7 @@ func TestFreshInstallSeedsBeforeStartingJob(t *testing.T) {
 		}
 		return nil
 	}}
-	go func() {
-		for {
-			pod, err := client.CoreV1().Pods(cfg.ControlNamespace).Get(context.Background(), RepositorySyncPodName, metav1.GetOptions{})
-			if err == nil {
-				pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-				_, _ = client.CoreV1().Pods(cfg.ControlNamespace).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{})
-				return
-			}
-			time.Sleep(time.Millisecond)
-		}
-	}()
+	markSyncPodReady(client, cfg.ControlNamespace)
 	result, err := i.Install(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -670,22 +601,22 @@ func TestReplacementStopsOldControllerBeforeReseedingPVC(t *testing.T) {
 		}
 		return nil
 	}}
-	go markSyncPodReady(client, cfg.ControlNamespace)
+	markSyncPodReady(client, cfg.ControlNamespace)
 	if _, err := i.Install(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// markSyncPodReady models readiness at fake API admission, before the installer
+// reads the Pod. The default tracker still owns creation and cleanup.
 func markSyncPodReady(client *fake.Clientset, namespace string) {
-	for {
-		pod, err := client.CoreV1().Pods(namespace).Get(context.Background(), RepositorySyncPodName, metav1.GetOptions{})
-		if err == nil {
+	client.PrependReactor("create", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+		pod := action.(ktesting.CreateAction).GetObject().(*corev1.Pod)
+		if pod.Namespace == namespace && pod.Name == RepositorySyncPodName {
 			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-			_, _ = client.CoreV1().Pods(namespace).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{})
-			return
 		}
-		time.Sleep(time.Millisecond)
-	}
+		return false, nil, nil
+	})
 }
 
 func contains(values []string, want string) bool {
@@ -713,86 +644,11 @@ func containsMount(mounts []corev1.VolumeMount, name, path string) bool {
 	return false
 }
 
-func TestAcceptedCheckoutSeederCopiesOnlyAcceptedCommit(t *testing.T) {
-	repo := t.TempDir()
-	git := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %s: %v", args, out, err)
-		}
-		return string(out)
-	}
-	git("init")
-	if err := os.WriteFile(filepath.Join(repo, "version"), []byte("accepted"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "version")
-	git("commit", "-m", "accepted")
-	accepted := strings.TrimSpace(git("rev-parse", "HEAD"))
-	if err := os.WriteFile(filepath.Join(repo, "version"), []byte("later"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "version")
-	git("commit", "-m", "later")
-	checkout, cleanup, err := prepareAcceptedCheckout(context.Background(), repo, accepted)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	data, err := os.ReadFile(filepath.Join(checkout, "version"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "accepted" {
-		t.Fatalf("seeded %q instead of accepted commit", data)
-	}
-}
-
 func TestSeederRejectsCommitDifferentFromInstallFingerprint(t *testing.T) {
 	cfg := testConfig()
 	seeder := KubectlTarSeeder("/tmp/repository", strings.Repeat("b", 40))
 	if err := seeder(context.Background(), cfg); err == nil {
 		t.Fatal("seeder accepted a commit different from install config")
-	}
-}
-
-func TestKubeconfigSeederUsesExplicitContextWithoutChangingProcessEnvironment(t *testing.T) {
-	repo := t.TempDir()
-	git := func(args ...string) string {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@invalid", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@invalid")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %s: %v", args, out, err)
-		}
-		return string(out)
-	}
-	git("init")
-	if err := os.WriteFile(filepath.Join(repo, "version"), []byte("accepted"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "version")
-	git("commit", "-m", "accepted")
-	accepted := strings.TrimSpace(git("rev-parse", "HEAD"))
-	bin := t.TempDir()
-	script := "#!/bin/sh\ntest \"$KUBECONFIG\" = \"$EXPECTED_KUBECONFIG\" || exit 72\ncase \" $* \" in *\" -i \"*) cat >/dev/null;; esac\n"
-	if err := os.WriteFile(filepath.Join(bin, "kubectl"), []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
-	t.Setenv("KUBECONFIG", "/tmp/wrong-context")
-	t.Setenv("EXPECTED_KUBECONFIG", "/tmp/requested-context")
-	cfg := testConfig()
-	cfg.AcceptedCommit = accepted
-	if err := KubectlTarSeederWithKubeconfig(repo, accepted, "/tmp/requested-context")(context.Background(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	if got := os.Getenv("KUBECONFIG"); got != "/tmp/wrong-context" {
-		t.Fatalf("process KUBECONFIG changed to %q", got)
 	}
 }
 

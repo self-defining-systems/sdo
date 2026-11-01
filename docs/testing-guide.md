@@ -855,6 +855,14 @@ Tests that need processes or real sockets must be integration-tagged. Use the
 cluster coverage; the memory-host and full controller driver remain follow-up work.
 
 
+Installer Git/archive coverage lives in `install/process_integration_test.go` and
+`install/seed_sync_test.go`, both requiring `integration`. These retain the
+accepted-commit, prepared-install RBAC, explicit kubeconfig and stale-file cleanup
+checks. `scripts/test_go_ci.sh` passes `-tags=integration` in both PR and nightly
+modes, so the move preserves their existing CI selection. The remaining installer
+fake-client tests run without the tag and admit ready sync Pods synchronously;
+the expired-claim test uses virtual time in a `testing/synctest` bubble.
+
 ## Go deterministic simulation policy
 
 The Go codebase (operator modules and benchmark Go) uses deterministic tests by
