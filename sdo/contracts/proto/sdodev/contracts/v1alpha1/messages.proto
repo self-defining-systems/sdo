@@ -526,4 +526,8 @@ message StageMitigation {
   string error = 11;
   // Findings this binding was selected to fix.
   repeated string target_finding_fingerprints = 12;
+  // Why an applied attempt that left its findings open was not reverted: its
+  // diagnosis cleared (partial), an effect cannot be undone (irreversible), or
+  // restoring the preimages failed (rollback_failed).
+  string kept_reason = 13 [(buf.validate.field).string = {in: ["", "partial", "irreversible", "rollback_failed"]}];
 }

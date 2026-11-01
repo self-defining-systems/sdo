@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/sim"
 	"sdo.dev/operator/sdk"
@@ -187,5 +189,58 @@ func TestDeterministicStageSkipsWithTypedReasons(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// ineffectivePortProgram diagnoses the wrong target port but its plan edits
+// another field, so the fault stays after the write.
+type ineffectivePortProgram struct{ fastloopPortProgram }
+
+func (ineffectivePortProgram) Mitigate(_ context.Context, _ program.ReadView, bindings program.Bindings) (program.Plan, error) {
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings["service"], Path: "spec.ports[0].port", Value: 81, Reason: "unrelated edit"}}}, nil
+}
+
+// An attempt that changes nothing the fault depends on is restored before the
+// agent starts, so the agent begins from the original fault, and says so.
+func TestDeterministicStageRevertsIneffectiveAttemptBeforeHandoff(t *testing.T) {
+	sim.Sweep(t, func(t *testing.T, w *sim.World) {
+		loop, kube := simFastPathLoop(t, w)
+		registry, err := program.NewRegistry([]program.Diagnoser{ineffectivePortProgram{}}, []program.Mitigator{ineffectivePortProgram{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		loop.Programs = registry
+		state := stageState(loop)
+		if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+			t.Fatal(err)
+		}
+		attempt := state.PriorStages[0].GetMitigations()[0]
+		if attempt.GetResult() != "reverted_ineffective" || !attempt.GetApplyReceipt().GetRolledBack() {
+			t.Fatalf("attempt = %v", attempt)
+		}
+		if len(state.Findings) != 1 {
+			t.Fatalf("original fault must remain for the agent: %v", state.Findings)
+		}
+		object, _ := kube.Get(context.Background(), sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"})
+		if port, _ := testField(object, "spec.ports.0.port"); fmt.Sprint(port) != "80" {
+			t.Fatalf("write was not restored: port = %v", port)
+		}
+	})
+}
+
+func TestRevertRestoresPreimageOnlyForFieldWrites(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	object := &unstructured.Unstructured{Object: map[string]any{"kind": "Deployment"}}
+	field := PlanApplicationResult{Applied: true, ActionsApplied: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: 2}}, Patches: []PlanPatch{{Ref: ref, Before: object, After: object}}}
+	if !revertRestoresPreimage(field) {
+		t.Fatal("a field write has a preimage")
+	}
+	restart := PlanApplicationResult{Applied: true, ActionsApplied: []program.Action{program.RestartRollout{Ref: ref}}, Patches: field.Patches}
+	if revertRestoresPreimage(restart) {
+		t.Fatal("a restart cannot be undone")
+	}
+	missing := PlanApplicationResult{Applied: true, ActionsApplied: field.ActionsApplied}
+	if revertRestoresPreimage(missing) {
+		t.Fatal("no recorded patch, no preimage")
 	}
 }

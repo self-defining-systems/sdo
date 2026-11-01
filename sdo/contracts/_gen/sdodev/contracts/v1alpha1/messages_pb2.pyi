@@ -713,7 +713,7 @@ class StageReport(_message.Message):
     def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class StageMitigation(_message.Message):
-    __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error", "target_finding_fingerprints")
+    __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error", "target_finding_fingerprints", "kept_reason")
     PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
@@ -726,6 +726,7 @@ class StageMitigation(_message.Message):
     REMAINING_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     TARGET_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    KEPT_REASON_FIELD_NUMBER: _ClassVar[int]
     playbook_id: str
     program_revision: str
     bindings: _containers.RepeatedCompositeFieldContainer[_program_pb2.Binding]
@@ -738,4 +739,5 @@ class StageMitigation(_message.Message):
     remaining_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
     error: str
     target_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., plan_id: _Optional[str] = ..., apply_receipt: _Optional[_Union[_program_pb2.PlanApplication, _Mapping]] = ..., result: _Optional[str] = ..., skip_reason: _Optional[str] = ..., post_apply_diagnose: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., target_finding_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
+    kept_reason: str
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., plan_id: _Optional[str] = ..., apply_receipt: _Optional[_Union[_program_pb2.PlanApplication, _Mapping]] = ..., result: _Optional[str] = ..., skip_reason: _Optional[str] = ..., post_apply_diagnose: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., target_finding_fingerprints: _Optional[_Iterable[str]] = ..., kept_reason: _Optional[str] = ...) -> None: ...

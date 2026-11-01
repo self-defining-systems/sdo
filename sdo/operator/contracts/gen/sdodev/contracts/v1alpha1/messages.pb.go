@@ -3513,8 +3513,12 @@ type StageMitigation struct {
 	Error                        string                 `protobuf:"bytes,11,opt,name=error,proto3" json:"error,omitempty"`
 	// Findings this binding was selected to fix.
 	TargetFindingFingerprints []string `protobuf:"bytes,12,rep,name=target_finding_fingerprints,json=targetFindingFingerprints,proto3" json:"target_finding_fingerprints,omitempty"`
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
+	// Why an applied attempt that left its findings open was not reverted: its
+	// diagnosis cleared (partial), an effect cannot be undone (irreversible), or
+	// restoring the preimages failed (rollback_failed).
+	KeptReason    string `protobuf:"bytes,13,opt,name=kept_reason,json=keptReason,proto3" json:"kept_reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StageMitigation) Reset() {
@@ -3629,6 +3633,13 @@ func (x *StageMitigation) GetTargetFindingFingerprints() []string {
 		return x.TargetFindingFingerprints
 	}
 	return nil
+}
+
+func (x *StageMitigation) GetKeptReason() string {
+	if x != nil {
+		return x.KeptReason
+	}
+	return ""
 }
 
 var File_sdodev_contracts_v1alpha1_messages_proto protoreflect.FileDescriptor
@@ -4017,7 +4028,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\vmitigations\x18\x02 \x03(\v2*.sdodev.contracts.v1alpha1.StageMitigationR\vmitigations\x12D\n" +
 	"\x1eremaining_finding_fingerprints\x18\x03 \x03(\tR\x1cremainingFindingFingerprints\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12@\n" +
-	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\"\xb3\a\n" +
+	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\"\x85\b\n" +
 	"\x0fStageMitigation\x12(\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"playbookId\x12)\n" +
@@ -4033,7 +4044,9 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x1eremaining_finding_fingerprints\x18\n" +
 	" \x03(\tR\x1cremainingFindingFingerprints\x12\x14\n" +
 	"\x05error\x18\v \x01(\tR\x05error\x12>\n" +
-	"\x1btarget_finding_fingerprints\x18\f \x03(\tR\x19targetFindingFingerprintsB\x80\x02\n" +
+	"\x1btarget_finding_fingerprints\x18\f \x03(\tR\x19targetFindingFingerprints\x12P\n" +
+	"\vkept_reason\x18\r \x01(\tB/\xbaH,r*R\x00R\apartialR\firreversibleR\x0frollback_failedR\n" +
+	"keptReasonB\x80\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\rMessagesProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

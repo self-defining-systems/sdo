@@ -80,6 +80,13 @@ func (s *DeterministicStage) Run(ctx context.Context, state *IncidentState) (*co
 		s.attempt(ctx, loop, state, candidate, attempt)
 		ineffective.note(candidate, attempt)
 	}
+	var applied []*contracts.StageMitigation
+	for _, attempt := range report.Mitigations {
+		if attempt.ApplyReceipt != nil {
+			applied = append(applied, attempt)
+		}
+	}
+	s.revertIneffective(ctx, loop, state, applied)
 	return report, nil
 }
 
@@ -257,6 +264,14 @@ func (s *DeterministicStage) apply(ctx context.Context, loop *ResponderLoop, sta
 		attempt.Result = "applied_cleared"
 	}
 	state.Findings, state.DetectorStates, state.Healthy = response.Findings, response.DetectorStates, response.Healthy
+}
+
+func stageBindingsState(bindings []*contracts.Binding) program.Bindings {
+	result := program.Bindings{}
+	for _, binding := range bindings {
+		result[binding.GetName()] = objectRefState(binding.GetObject())
+	}
+	return result
 }
 
 func stageBindingsContract(bindings program.Bindings) []*contracts.Binding {
