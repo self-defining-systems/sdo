@@ -138,3 +138,30 @@ func TestBoundedBurstOutlivesDetectorRPCTimeout(t *testing.T) {
 		}
 	})
 }
+
+// A broken target may exhaust a routing capture's caller budget without the
+// host process failing. Preserve the accepted host for subsequent detection.
+func TestTrafficCallerDeadlinePreservesAcceptedHost(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := NewManager(5 * time.Second)
+		defer m.Close()
+		h := &timedTrafficHost{fakeHost: readyHost("accepted"), run: func(ctx context.Context) (*pb.TrafficResponse, error) {
+			<-ctx.Done()
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}}
+		if err := m.Swap(context.Background(), h, "accepted", "sha256:abc", 1); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		if _, err := m.Traffic(ctx, &pb.TrafficRequest{Operation: pb.TrafficRequest_OPERATION_WINDOWS}); status.Code(err) != codes.DeadlineExceeded {
+			t.Fatalf("expected caller deadline, got %v", err)
+		}
+		if m.active != h {
+			t.Fatal("caller deadline evicted healthy accepted host")
+		}
+		if _, err := m.Evaluate(context.Background(), &pb.EvaluateRequest{}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}

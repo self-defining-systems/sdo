@@ -37,11 +37,13 @@ func (m *Manager) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.Traffi
 	if r.GetOperation() == pb.TrafficRequest_OPERATION_BURST {
 		timeout = max(timeout, 90*time.Second)
 	}
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	response, err := rpc.Traffic(ctx, r)
 	cancel()
 	m.mu.RUnlock()
-	if status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded {
+	// Caller cancellation bounds a probe, not the lifetime of its serving host.
+	if caller.Err() == nil && (status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded) {
 		m.failed(h)
 	}
 	return response, err
