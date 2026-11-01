@@ -255,7 +255,7 @@ Use `scripts/run_tests.sh` for the repository-wide suite.
 
 Pytest and `scripts/test_python.sh` use six workers by default; `pytest-cov` combines the per-worker coverage so the 70% `fail_under` gate still sees the whole suite. Set `SDO_PYTEST_WORKERS=0` for an in-process run through the script, or pass `-n 0` to pytest, when iterating on a single test. Generated detector compilation is covered by the Go builder and broker suites.
 
-Go-to-Python contract shapes are pinned by fixtures under `tests/fixtures/sdo/contracts/go/` (`sdo/operator/runtime/contract_golden_test.go`) and Python's strict models parse them (`tests/unit/sdo/contracts/test_go_contract_fixtures.py`). After an intentional Go encoding change, regenerate them with `SDO_UPDATE_GO_CONTRACT_FIXTURES=1 go test -run TestGoContractFixtures ./...` in `sdo/operator/runtime` and rerun the Python tests. `TestContractShapesNeverEncodeNullCollections` fails on any `null` in those shapes: Python rejects `null` for a list field.
+Go-to-Python contract shapes are pinned by fixtures under `tests/fixtures/sdo/contracts/go/` (`sdo/operator/runtime/contract_golden_test.go`) and Python's strict models parse them (`tests/unit/sdo/contracts/test_go_contract_fixtures.py`). After an intentional Go encoding change, regenerate them with `go test . -run TestGoContractFixtures -update-go-contract-fixtures` in `sdo/operator/runtime` and rerun the Python tests. `TestContractShapesNeverEncodeNullCollections` fails on any `null` in those shapes: Python rejects `null` for a list field.
 
 Agent turns are tested with agentshim's `FakeExecutor` through `tests/structured_turns.py`, which replays each provider's real stream format. Tests marked `live_agents` run the real Codex and Claude Code CLIs and are opt-in; cheap models keep them inexpensive:
 
@@ -957,3 +957,15 @@ synchronous handler RoundTripper through client-go, preserving wire encoding
 without real sockets. Cache observation timestamps accept an injected clock;
 logs, metrics and usage retain their injected clocks with defaults owned by
 `runtime/internal/lifecycleio`. This migration adds no integration tags.
+
+Program and responder receipts share `PlanExecutor.Now`; candidate diagnosis
+duration accepts `CandidateOptions.Clock`. Retained-drift evaluations use the
+caller's evaluation time, and baseline diffs use their snapshot's observation
+time. These clock seams remain in the default test tier.
+
+Prober traffic, primitive-handler, link and reachability tests run with virtual
+clock time, handler-backed HTTP and injected in-memory dial outcomes. Real
+connection-pool/listener-closure contracts remain in
+`prober/socket_integration_test.go`; PR and nightly `scripts/test_go_ci.sh`
+already include `-tags=integration`, retaining both tests and the five-minute
+PR budget.

@@ -52,8 +52,14 @@ are bounded by the synthetic conformance tests.
 
 ## Accepted bounds
 
-None recorded yet. Each entry names the behavior, why it is not modeled, and the integration-tagged test
-that covers it.
+HTTP connection pooling after an OS listener closes is not represented by the
+handler-backed HTTP transport or credential-free pipe peers. Pool reuse and
+fresh-dial refusal are transport implementation contracts, covered with real
+sockets by the integration-tagged
+`TestKeepAliveConnectionsWouldMaskABlockedListener` and
+`TestBlockedListenerIsClassifiedAsADialFailureWithinAFewSeconds` in
+`prober/socket_integration_test.go`. PR and nightly Go CI run both with
+`-tags=integration`. No NetworkPolicy enforcement claim is implied.
 
 ## Gap ledger
 
@@ -63,6 +69,7 @@ that covers it.
 | 2026-10-31 | Synthetic shared-world conformance | Missing behavior / timing / fault | Shared pod, input and protocol edges | Modeled within bounds above | `TestCrashLoopRecovery`, `TestSimRealDetectionInputs`, `TestFaultSchedule`, `TestHermeticProtocolDialer` |
 
 | 2026-10-31 | Synthetic memory-host slice 1 | Transport / evidence | Detector and program execution outside the controller | Modeled at RPC boundary | `TestSimMemoryHostParityAndCrash`, `TestRemoteMemoryPreservesInputsAndCorpusReceipts`; same world, bufconn, host-owned log reads and typed receipt replay |
+| 2026-11-01 | Prober determinism migration | Transport | HTTP pool reuse after listener closure | Accepted bound | In-memory handlers intentionally omit TCP pooling; `TestKeepAliveConnectionsWouldMaskABlockedListener` and `TestBlockedListenerIsClassifiedAsADialFailureWithinAFewSeconds` retain real-socket integration coverage |
 
 The memory-host tests do not model OS process isolation, Unix socket permissions,
 memory limits or actual compiler latency. Staged compilation is checked by

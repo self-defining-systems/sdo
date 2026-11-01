@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -85,7 +86,7 @@ type PlanExecutor struct {
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
 	now := e.Now
 	if now == nil {
-		now = time.Now
+		now = lifecycleio.Now
 	}
 	started := now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
@@ -467,7 +468,7 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if a.Ref.Kind != "Deployment" || a.Ref.APIVersion != "apps/v1" {
 			return nil, errors.New("RestartRollout requires an apps/v1 Deployment")
 		}
-		now := time.Now
+		now := lifecycleio.Now
 		if e.Now != nil {
 			now = e.Now
 		}

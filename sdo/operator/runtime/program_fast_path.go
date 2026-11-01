@@ -244,7 +244,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	}
 	sort.Strings(attempt.Programs)
 	l.fastPathPrograms = append([]string(nil), attempt.Programs...)
-	started := time.Now().UTC()
+	started := l.clock().UTC()
 	planIDs := make([]string, 0, len(selectedPlans))
 	for i, plan := range selectedPlans {
 		id := fmt.Sprintf("fast-path-plan-%d", i+1)
@@ -269,7 +269,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		for _, id := range attempt.Programs {
 			l.addFailureSignal("fast_path_failure:" + id)
 		}
-		l.applicationsLog[len(l.applicationsLog)-1] = RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()}
+		l.applicationsLog[len(l.applicationsLog)-1] = RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: l.clock().UTC()}
 		return attempt
 	}
 	executor := l.Executor
@@ -314,7 +314,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 			attempt.Summary += ": rollback failed: " + attempt.RollbackErr
 		}
 	}
-	entry := RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: result, StartedAt: started, CompletedAt: time.Now().UTC(), RolledBack: attempt.RolledBack, RollbackError: attempt.RollbackErr}
+	entry := RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: result, StartedAt: started, CompletedAt: l.clock().UTC(), RolledBack: attempt.RolledBack, RollbackError: attempt.RollbackErr}
 	if applyErr != nil {
 		entry.Error = applyErr.Error()
 	}
@@ -348,8 +348,8 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	}
 	requestJSON, _ := json.Marshal(ToolRequest{Command: "apply", PlanIDs: planIDs})
 	responseJSON, _ := json.Marshal(response)
-	l.calls = append(l.calls, ToolCall{Command: "apply", At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: attempt.Summary})
-	l.calls = append(l.calls, ToolCall{Command: "fast-path", At: time.Now().UTC(), Summary: boundedToolText(attempt.Summary)})
+	l.calls = append(l.calls, ToolCall{Command: "apply", At: l.clock().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: attempt.Summary})
+	l.calls = append(l.calls, ToolCall{Command: "fast-path", At: l.clock().UTC(), Summary: boundedToolText(attempt.Summary)})
 	return attempt
 }
 

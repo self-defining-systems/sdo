@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -49,7 +48,7 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		// their application, result and rollback journals are never decoded.
 		attempt := loop.recheckFastPath(ctx, runs)
 		if attempt.Resolved {
-			result := fastPathResult(request, loop, attempt, time.Now().UTC())
+			result := fastPathResult(request, loop, attempt, loop.clock().UTC())
 			fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 			if err = validateIncidentResultFor(result, request); err != nil {
 				return IncidentResult{}, "", false, err
@@ -96,7 +95,7 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		return save()
 	}
 	defer func() { loop.BeforeFastPathApply = nil }()
-	started := time.Now().UTC()
+	started := loop.clock().UTC()
 	attempt := loop.TryTrustedFastPath(ctx, minimum)
 	if !attempt.Attempted {
 		log.Printf("incident %s trusted program fast path skipped: %s", request.IncidentID, attempt.SkippedReason)

@@ -444,7 +444,7 @@ func (n NativeIncidentBroker) clock() time.Time {
 	if n.Now != nil {
 		return n.Now().UTC()
 	}
-	return time.Now().UTC()
+	return lifecycleio.Now().UTC()
 }
 
 func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt ClosureReceipt) error {

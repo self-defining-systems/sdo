@@ -20,7 +20,7 @@ func TestLateFindingSinkPublishesOnlyIncidentLogicalData(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink := lateFindingSink{Store: store}
-	if err := sink.Record(&contracts.FiringRecord{Event: string(FiringActivated), IncidentId: "incident-1", DispatchRelation: string(RelationAfterDispatch), DetectorId: "detector", Fingerprint: "rule/x", SurfacedPlaybooks: []string{"repair"}, RecordedAt: timestamppb.New(time.Now())}); err != nil {
+	if err := sink.Record(&contracts.FiringRecord{Event: string(FiringActivated), IncidentId: "incident-1", DispatchRelation: string(RelationAfterDispatch), DetectorId: "detector", Fingerprint: "rule/x", SurfacedPlaybooks: []string{"repair"}, RecordedAt: timestamppb.New(time.Unix(1700000000, 0))}); err != nil {
 		t.Fatal(err)
 	}
 	cm, err := client.CoreV1().ConfigMaps("control").Get(context.Background(), latefindings.ConfigMapName("incident-1"), metav1.GetOptions{})

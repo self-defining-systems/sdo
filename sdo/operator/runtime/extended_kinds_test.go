@@ -81,7 +81,7 @@ func TestExtendedInformerChangesTriggerEvaluation(t *testing.T) {
 			awaitWatchEvent(t, c, watch)
 			// Move the interval into the future, then prove a real informer update schedules evaluation.
 			scheduler := NewScheduler([]sdk.Detector{detector}, time.Time{})
-			now := time.Now()
+			now := time.Unix(1700000000, 0)
 			scheduler.SelectEvents(now, nil)
 			drainWatchEvents(c)
 			meta.SetLabels(map[string]string{"changed": "yes"})
