@@ -729,6 +729,19 @@ def follow_up_guidance(request: IncidentRequest) -> str:
     )
 
 
+def prior_stages_guidance(request: IncidentRequest) -> str:
+    """Tell the responder what automatic stages already did before it started."""
+
+    if not request.prior_stages:
+        return ""
+    return (
+        "Automatic stages ran before you; prior_stages records each attempt, what it cleared and what remains, and "
+        "findings lists only what remains. An applied attempt already wrote to the cluster: re-check live state "
+        "instead of repeating it. A skipped attempt wrote nothing and states why. A cleared result is the stage's "
+        "claim until sdo verify confirms it.\n\n"
+    )
+
+
 def _prompt_request(request: IncidentRequest) -> dict[str, object]:
     """The request as the prompt shows it; the bulky sections are rendered separately."""
 
@@ -828,6 +841,7 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "present.\n\n"
         f"{late_findings_guidance(request)}"
         f"{follow_up_guidance(request)}"
+        f"{prior_stages_guidance(request)}"
         f"{additional_context}\n"
         f"{_inlined_architecture_summary(request)}"
         f"{_inlined_health_objective(request)}"

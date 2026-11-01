@@ -21,7 +21,7 @@ controller builder/install -> deterministic Go controller -> incident batch
                         -> SDO Prometheus <- annotated application pods / kubelet / OTLP
         |
         v
-trusted program fast path or registered responder job -> independent verification -> broker outcome commit
+deterministic response stage, then registered responder job when findings remain -> independent verification -> broker outcome commit
         |
         v
 fresh reflection proposal -> broker validation/commit -> controller rollout
@@ -243,6 +243,33 @@ After independent health verification, the controller records a versioned per-in
 
 Only the controller image contains the Go compiler and trusted build-cache seed for SDK and runtime dependencies. `operator/toolchain` still provisions read-only compiler mounts for worker Jobs. Broker acceptance launches the same controller executable as a child in a fresh temporary workspace, with a ten-minute wall-clock deadline and a 3 GiB aggregate resident-memory limit across its process group (sampled every 10 ms on Linux). Exceeding either bound kills the entire group and returns an infrastructure failure (exit 2), without consuming a content-correction retry. Static import and purity guards remain part of every shared check. No validator image, validation Job, isolation canary, or hand-pinned SDK schema identity remains.
 
+### Response stages
+
+An incident runs ordered response stages: `[deterministic, agent]`, behind the
+`ResponseStage` interface in `sdo/operator/runtime/response_stages.go`. This
+path is a standing product decision; do not remove it for simplicity.
+
+The deterministic stage runs when the controller is started with the
+automatic-apply option. It takes the programs whose diagnosis matched when the
+incident opened, re-diagnoses each live, and applies one only when the playbook
+has exactly one entry point, a mitigator, and every parameter binds from the
+findings. There is no trust gate: verified success and failure counts are
+information. The memory host diagnoses and plans over `MemoryHostService`; the
+controller alone applies the plan through its executor, observes the result with
+the detectors, and records the plan application, repair receipts and a
+`StageReport`. A host error, disconnect or retired accepted revision is an
+attempt that did not happen (`skipped`/`apply_error`), never clearance and never
+an authorized empty plan. A swap mid-stage fails the remaining calls the same
+way, and the agent then starts from the report.
+
+A stage never closes an incident by its own claim. When its post-write
+observation completes without error and finds nothing open, the incident result
+has `resolution_path: deterministic`, no responder session, and no reflection.
+Otherwise the agent request carries `prior_stages` (what each attempt did, the
+cleared and remaining finding fingerprints, skip reasons) and only the findings
+that remain. The stage persists a write count before the first write, so a
+controller restart re-observes instead of replaying a write.
+
 ## Controller-installation boundary
 
 The Go `sdo/operator/install/` package installs the controller from the broker-accepted commit. The installer owns controller resources and repository synchronization. The SREGym adapter adds benchmark submission resources, readiness, `production-receipt/v2` evidence, and cleanup without changing controller semantics. Benchmark `recorded-actions` policy admits live-only repairs backed by structured action receipts; broker outcome and reflection acceptance still require independent verification.
@@ -288,7 +315,7 @@ Status meanings:
 | Modular agent registration | `sdo/contracts/proto/.../worker.proto`, `sdo/operator/worker_registry/`, `sdo/agents/registrations/` | Active | Strict ProtoJSON capabilities and typed task/result URLs select workers without assuming Python or a model provider; Kubernetes Jobs mount isolated proposal checkouts. |
 | Built-in agents | `sdo/agents/{source_deployment,health_judge,responder}/` | Active | Each implementation owns its prompts and provider choice; tasks carry logical memory snapshots; reflection and the judge return decisions/IDs after direct file edits. |
 | Detector SDK and execution | `sdo/operator/sdk/`, `core/`, `runtime/` | Active | Deterministic Go snapshots, detector evaluation, findings, batching, leader election, and generated controller state have Go tests; lifecycle storage is private to `runtime/internal/lifecycleio`. |
-| Program responder loop and fast path | `sdo/operator/runtime/`, `sdo/agents/responder/tools_cli.py`, `sdo/contracts/proto/.../program.proto` | Active | The controller ranks bound candidates, serves incident-scoped `sdo` tools through the responder session PVC, including rendered accepted source, verifies after each apply, and records tool and program evidence on the outcome. The trusted-program fast path is opt-in; one verified plan batch can resolve without an agent, with in-process rollback and responder handoff on failure. Restart rechecks live bound diagnoses and independent verification; it never replays or undoes a persisted mutation. Only incident identity/status, attempt budgets, bound diagnosis observations and revision-bound failure facts survive. |
+| Program responder loop and fast path | `sdo/operator/runtime/`, `sdo/agents/responder/tools_cli.py`, `sdo/contracts/proto/.../program.proto` | Active | The controller ranks bound candidates, serves incident-scoped `sdo` tools through the responder session PVC, including rendered accepted source, verifies after each apply, and records tool and program evidence on the outcome. The older trusted-program fast path is replaced by the deterministic response stage when automatic apply is on and is deleted when the stage reaches parity; one verified plan batch can resolve without an agent, with in-process rollback and responder handoff on failure. Restart rechecks live bound diagnoses and independent verification; it never replays or undoes a persisted mutation. Only incident identity/status, attempt budgets, bound diagnosis observations and revision-bound failure facts survive. |
 | Drift change feed and response | `sdo/operator/deployment/`, `sdo/operator/sdk/drift.go`, `sdo/operator/runtime/`, `sdo/contracts/proto/.../messages.proto`, `sdo/agents/responder/` | Active | SSA adoption records source contradictions without repairing them. Informers admit changed declared fields and reviewed foreign specs. Learned matches use `drift.<program>` and trusted programs. Unexplained observations open ordinary latent `drift.unexplained` incidents after bounded batching, or attach to the open incident and its late-findings view. The responder establishes source contradiction and a violated relation or observed impact before mutation. Ordinary verification and closure require health plus every retained drift finding. Exact checked benign observations persist in existing outcomes; fault and unsure never suppress recurrence. Repeat drift-only admission is bounded by 20 s / 8 events, 12 dispatches/hour and 1,000,000 responder tokens/hour; new keys bypass spent retry budgets. A 60 s program sweep covers missed changes. |
 | Synthetic traffic | `sdo/operator/sdk/traffic/`, `runtime/prober/`, `builder/`, `.sdo/diagnostics/traffic/` | Active | Generated workloads run in the accepted memory host; acceptance remains independently validated. |
 | Metrics input | `sdo/operator/sdk/metrics/`, `runtime/prometheus/`, `runtime/metrics_observer.go`, `memory/generic_health.go` | Active, default stack; opt-out available | Frozen per-cycle Prometheus results for threshold and alert detectors; installed only with a metrics URL, and an unavailable source is a detector error. |

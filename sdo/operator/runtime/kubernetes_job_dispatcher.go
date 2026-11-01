@@ -47,6 +47,9 @@ type KubernetesJobDispatcher struct {
 	RequireMemorySnapshot bool
 	LoopFactory           func(IncidentRequest) *ResponderLoop
 	ProgramFastPath       bool
+	// ResponseStages runs the deterministic response stage (no trust gate)
+	// before the agent instead of the trusted-program fast path.
+	ResponseStages        bool
 	ProgramTrustThreshold int
 }
 
@@ -185,7 +188,24 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if err := d.Registry.ValidateTask(task); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate agent task: %w", err)
 	}
-	if d.ProgramFastPath && loop != nil {
+	if d.ProgramFastPath && d.ResponseStages && loop != nil {
+		stageResult, staged, resolved, err := d.runDeterministicStage(ctx, request, loop)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		if resolved {
+			return stageResult, nil
+		}
+		if len(staged.PriorStages) > 0 {
+			request = staged
+			if task, request, err = d.handoffTask(request, task); err != nil {
+				return IncidentResult{}, err
+			}
+			if err := d.Registry.ValidateTask(task); err != nil {
+				return IncidentResult{}, fmt.Errorf("validate stage handoff task: %w", err)
+			}
+		}
+	} else if d.ProgramFastPath && loop != nil {
 		fastResult, summary, resolved, err := d.tryFastPath(ctx, request, loop)
 		if err != nil {
 			return IncidentResult{}, err
@@ -306,6 +326,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		result.ProgramFailureSignals = loop.FailureSignals()
 		result.ResponseLoopsUsed = loop.LoopsUsed()
 		result.ResolutionPath = "responder"
+		result.PriorStages = cloneStageReports(request.PriorStages)
 		result.FastPathPrograms = append([]string(nil), loop.fastPathPrograms...)
 		result.FastPathSkippedReason = loop.fastPathSkippedReason
 		result.FastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), loop.fastPathRelationCoveredFindings...)

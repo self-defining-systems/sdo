@@ -38,9 +38,10 @@ func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bin
 }
 ```
 
-Skipped replay proves no repair and earns no origin learning credit. The default
-fast path requires three independently verified live successes and zero failures
-for the unchanged accepted revision. Use a matching program's plan/apply tools
+Skipped replay proves no repair and earns no origin learning credit. When an
+incident opens, the controller applies a saved program itself if its diagnosis
+matches live, it has one entry point and every parameter binds from the
+findings; the agent then sees `prior_stages` and the findings that remain. Use a matching program's plan/apply tools
 when available. An ad-hoc repair can also earn a live credit when the controller
 has a pre-repair matching plan, successful receipts covering every planned
 resource, exact observed plan equivalence, a bound post-repair NoMatch and an

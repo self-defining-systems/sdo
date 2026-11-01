@@ -260,9 +260,13 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			}
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
 			ledger.RequiresReflection = derived.RequiresReflection
-			if derived.Record.GetResolutionPath() == "fast_path" {
+			switch derived.Record.GetResolutionPath() {
+			case "fast_path":
 				ledger.RequiresReflection = false
 				ledger.ReflectionSkippedReason = "trusted program fast path"
+			case "deterministic":
+				ledger.RequiresReflection = false
+				ledger.ReflectionSkippedReason = "deterministic response stage"
 			}
 			if ledger.RequiresReflection && !n.ForceReflection && n.PriorOutcomes != nil {
 				prior, err := n.PriorOutcomes.List(ctx)

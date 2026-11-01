@@ -138,6 +138,7 @@ type ResponderLoop struct {
 	lastDiagnosisView               program.ReadView
 	findings                        []sdk.Finding
 	batches                         int
+	stageWrites                     int
 	fastPathPrograms                []string
 	fastPathRelationCoveredFindings []RelationCoveredFinding
 	fastPathSkippedReason           FastPathSkipReason
@@ -910,7 +911,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 				l.addFailureSignal("new_finding_after_apply:" + FindingFingerprint(finding))
 			}
 		}
-	} else if l.batches == 0 && len(previous) > 0 && len(findings) == 0 {
+	} else if l.batches == 0 && l.stageWrites == 0 && len(previous) > 0 && len(findings) == 0 {
 		matched := false
 		for _, run := range l.runs {
 			if run.Verdict.Result == program.Match {
