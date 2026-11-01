@@ -43,6 +43,7 @@ func (p *routingTestProber) Probe(ctx context.Context, ref sdk.ObjectRef, port i
 	defer p.mu.Unlock()
 	p.calls = append(p.calls, fmt.Sprintf("%s/%s:%d", ref.Kind, ref.Name, port))
 	if deadline, ok := ctx.Deadline(); ok {
+		// Unit callers run inside synctest; process conformance callers retain host time.
 		p.deadlines = append(p.deadlines, deadline.Sub(timerClock(nil).Now()))
 	}
 	return program.ProbeResult{Success: false, Detail: "refused"}, nil
@@ -62,25 +63,27 @@ func (p *routingTestProber) ProbePod(ctx context.Context, ref sdk.ObjectRef, ip 
 }
 
 func TestLiveReadViewConcurrentPodTCPProbes(t *testing.T) {
-	probe := &routingTestProber{}
-	view := LiveReadView{Carrier: inputs.New(routingCaptureSnapshot()), Prober: probe}
-	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
-	start := make(chan struct{})
-	var workers sync.WaitGroup
-	for range 32 {
-		workers.Go(func() {
-			<-start
-			result, err := view.ProbeTCP(ref, 8080)
-			if err != nil || !result.Success {
-				t.Errorf("concurrent Pod probe: %+v %v", result, err)
-			}
-		})
-	}
-	close(start)
-	workers.Wait()
-	if len(probe.calls) != 32 || len(probe.deadlines) != 32 {
-		t.Fatalf("lost probe observations: calls=%d deadlines=%d", len(probe.calls), len(probe.deadlines))
-	}
+	synctest.Test(t, func(t *testing.T) {
+		probe := &routingTestProber{}
+		view := LiveReadView{Carrier: inputs.New(routingCaptureSnapshot()), Prober: probe}
+		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
+		start := make(chan struct{})
+		var workers sync.WaitGroup
+		for range 32 {
+			workers.Go(func() {
+				<-start
+				result, err := view.ProbeTCP(ref, 8080)
+				if err != nil || !result.Success {
+					t.Errorf("concurrent Pod probe: %+v %v", result, err)
+				}
+			})
+		}
+		close(start)
+		workers.Wait()
+		if len(probe.calls) != 32 || len(probe.deadlines) != 32 {
+			t.Fatalf("lost probe observations: calls=%d deadlines=%d", len(probe.calls), len(probe.deadlines))
+		}
+	})
 }
 
 func routingCaptureSnapshot() sdktest.Snapshot {
@@ -88,71 +91,75 @@ func routingCaptureSnapshot() sdktest.Snapshot {
 }
 
 func TestLiveReadViewPodTCPUsesCapturedAddress(t *testing.T) {
-	probe := &routingTestProber{}
-	view := LiveReadView{Carrier: inputs.New(routingCaptureSnapshot()), Prober: probe}
-	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
-	result, err := view.ProbeTCP(ref, 8080)
-	if err != nil || !result.Success {
-		t.Fatalf("pod listener observation %+v %v", result, err)
-	}
-	ref.Namespace = "elsewhere"
-	if _, err := view.ProbeTCP(ref, 8080); err == nil {
-		t.Fatal("out-of-namespace Pod probed")
-	}
-	ref.Namespace = "app"
-	ref.Name = "absent"
-	if _, err := view.ProbeTCP(ref, 8080); err == nil {
-		t.Fatal("missing Pod probed")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		probe := &routingTestProber{}
+		view := LiveReadView{Carrier: inputs.New(routingCaptureSnapshot()), Prober: probe}
+		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
+		result, err := view.ProbeTCP(ref, 8080)
+		if err != nil || !result.Success {
+			t.Fatalf("pod listener observation %+v %v", result, err)
+		}
+		ref.Namespace = "elsewhere"
+		if _, err := view.ProbeTCP(ref, 8080); err == nil {
+			t.Fatal("out-of-namespace Pod probed")
+		}
+		ref.Namespace = "app"
+		ref.Name = "absent"
+		if _, err := view.ProbeTCP(ref, 8080); err == nil {
+			t.Fatal("missing Pod probed")
+		}
+	})
 }
 
 func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
-	ctx := context.Background()
-	snapshot := routingCaptureSnapshot()
-	probe := &routingTestProber{}
-	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	loop := NewResponderLoop(IncidentRequest{IncidentID: "routing", Namespace: "app", Findings: []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: ref}}}, nil, &changingProvider{snapshot: snapshot}, nil, PlanExecutor{}, 1)
-	loop.CorpusSessionRoot = t.TempDir()
-	loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
-		return LiveReadView{Carrier: inputs.New(s), Prober: probe}
-	}
-	loop.InitialDiagnose(ctx)
-	dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, "routing")
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var calls []sdktest.PrimitiveCall
-	if err := json.Unmarshal(data, &calls); err != nil {
-		t.Fatal(err)
-	}
-	view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
-	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
-	for _, port := range []int32{8080, 9999} {
-		result, err := view.ProbeTCP(pod, port)
-		if err != nil || result.Success != (port == 8080) {
-			t.Fatalf("captured port %d: %+v %v; calls=%+v", port, result, err, calls)
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		snapshot := routingCaptureSnapshot()
+		probe := &routingTestProber{}
+		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+		loop := NewResponderLoop(IncidentRequest{IncidentID: "routing", Namespace: "app", Findings: []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: ref}}}, nil, &changingProvider{snapshot: snapshot}, nil, PlanExecutor{}, 1)
+		loop.CorpusSessionRoot = t.TempDir()
+		loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
+			return LiveReadView{Carrier: inputs.New(s), Prober: probe}
 		}
-	}
-	if _, err := view.ProbeTCP(pod, 12345); err == nil {
-		t.Fatal("unrecorded probe invented")
-	}
-	if len(probe.calls) == 0 || len(probe.calls) > 24 {
-		t.Fatalf("unbounded or missing capture: %+v", probe.calls)
-	}
-	for _, deadline := range probe.deadlines {
-		if deadline < time.Second || deadline > routingCaptureProbeTimeout {
-			t.Fatalf("routing probe deadline %s must be generous yet bounded by %s", deadline, routingCaptureProbeTimeout)
+		loop.InitialDiagnose(ctx)
+		dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, "routing")
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	prior := len(probe.calls)
-	loop.InitialDiagnose(ctx)
-	if len(probe.calls) != prior {
-		t.Fatal("repeated detect capture probed again")
-	}
+		data, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var calls []sdktest.PrimitiveCall
+		if err := json.Unmarshal(data, &calls); err != nil {
+			t.Fatal(err)
+		}
+		view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
+		pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
+		for _, port := range []int32{8080, 9999} {
+			result, err := view.ProbeTCP(pod, port)
+			if err != nil || result.Success != (port == 8080) {
+				t.Fatalf("captured port %d: %+v %v; calls=%+v", port, result, err, calls)
+			}
+		}
+		if _, err := view.ProbeTCP(pod, 12345); err == nil {
+			t.Fatal("unrecorded probe invented")
+		}
+		if len(probe.calls) == 0 || len(probe.calls) > 24 {
+			t.Fatalf("unbounded or missing capture: %+v", probe.calls)
+		}
+		for _, deadline := range probe.deadlines {
+			if deadline < time.Second || deadline > routingCaptureProbeTimeout {
+				t.Fatalf("routing probe deadline %s must be generous yet bounded by %s", deadline, routingCaptureProbeTimeout)
+			}
+		}
+		prior := len(probe.calls)
+		loop.InitialDiagnose(ctx)
+		if len(probe.calls) != prior {
+			t.Fatal("repeated detect capture probed again")
+		}
+	})
 }
 
 // incidentOneSnapshot has the shape of a co-injected fault: only Service/user
@@ -180,38 +187,40 @@ func serviceRef(name string) sdk.ObjectRef {
 }
 
 func TestRoutingCaptureProbesSuspectServiceNamedByNoFinding(t *testing.T) {
-	snapshot := incidentOneSnapshot()
-	findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: serviceRef("user")}}
-	root := t.TempDir()
-	if err := memory.CaptureIncidentSnapshot(root, "incident-one", "open@detect", snapshot, "app"); err != nil {
-		t.Fatal(err)
-	}
-	probe := &boundedRoutingProber{}
-	if err := captureRoutingEvidence(context.Background(), root, "incident-one", "open@detect", findings, LiveReadView{Carrier: inputs.New(snapshot), Prober: probe}); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := memory.IncidentCorpusDir(root, "incident-one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var calls []sdktest.PrimitiveCall
-	if err := json.Unmarshal(raw, &calls); err != nil {
-		t.Fatal(err)
-	}
-	replay := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
-	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "reservation-pod"}
-	for _, observed := range []struct {
-		ref  sdk.ObjectRef
-		port int32
-	}{{serviceRef("reservation"), 8087}, {serviceRef("reservation"), 9999}, {pod, 8087}, {pod, 9999}} {
-		if _, err := replay.ProbeTCP(observed.ref, observed.port); err != nil {
-			t.Errorf("no replayable %s/%s:%d observation: %v", observed.ref.Kind, observed.ref.Name, observed.port, err)
+	synctest.Test(t, func(t *testing.T) {
+		snapshot := incidentOneSnapshot()
+		findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: serviceRef("user")}}
+		root := t.TempDir()
+		if err := memory.CaptureIncidentSnapshot(root, "incident-one", "open@detect", snapshot, "app"); err != nil {
+			t.Fatal(err)
 		}
-	}
+		probe := &boundedRoutingProber{}
+		if err := captureRoutingEvidence(context.Background(), root, "incident-one", "open@detect", findings, LiveReadView{Carrier: inputs.New(snapshot), Prober: probe}); err != nil {
+			t.Fatal(err)
+		}
+		dir, err := memory.IncidentCorpusDir(root, "incident-one")
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var calls []sdktest.PrimitiveCall
+		if err := json.Unmarshal(raw, &calls); err != nil {
+			t.Fatal(err)
+		}
+		replay := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
+		pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "reservation-pod"}
+		for _, observed := range []struct {
+			ref  sdk.ObjectRef
+			port int32
+		}{{serviceRef("reservation"), 8087}, {serviceRef("reservation"), 9999}, {pod, 8087}, {pod, 9999}} {
+			if _, err := replay.ProbeTCP(observed.ref, observed.port); err != nil {
+				t.Errorf("no replayable %s/%s:%d observation: %v", observed.ref.Kind, observed.ref.Name, observed.port, err)
+			}
+		}
+	})
 }
 
 func TestRoutingProbeTargetsPrioritizeFindingsAndSuspectsOverPeers(t *testing.T) {
