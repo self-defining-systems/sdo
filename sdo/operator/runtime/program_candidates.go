@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,8 @@ const maxCandidateAssignments = 32
 const DefaultSweepLimit = 64
 
 type CandidateOptions struct {
+	// Clock measures diagnosis duration; nil uses the production clock.
+	Clock      func() time.Time
 	Deadline   time.Duration
 	SweepLimit int
 	Affected   []sdk.ObjectRef
@@ -224,13 +227,17 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	}
 	for _, item := range candidates {
 		go func(candidate candidate) {
-			started := time.Now()
+			clock := options.Clock
+			if clock == nil {
+				clock = lifecycleio.Now
+			}
+			started := clock()
 			diagnoser, ok := registry.Diagnoser(candidate.id)
 			if !ok {
 				return
 			}
 			verdict := program.RunDiagnose(ctx, diagnoser, view, candidate.bindings, deadline)
-			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: time.Since(started)}
+			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: clock().Sub(started)}
 		}(item)
 	}
 	runs := make([]ProgramRun, 0, len(candidates))

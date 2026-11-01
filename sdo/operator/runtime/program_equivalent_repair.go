@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -58,7 +57,7 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 		preview.DryRun = false
 		preview.VerificationCompleted = true
 		preview.VerificationPassed = true
-		completed := time.Now().UTC()
+		completed := l.clock().UTC()
 		applicationID := fmt.Sprintf("equivalent-repair-%d", len(l.applicationsLog)+1)
 		planID := applicationID + "-plan"
 		l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{

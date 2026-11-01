@@ -7,7 +7,7 @@ import (
 )
 
 func fastPathResult(request IncidentRequest, loop *ResponderLoop, attempt FastPathAttempt, started time.Time) IncidentResult {
-	completed := time.Now().UTC()
+	completed := loop.clock().UTC()
 	result := IncidentResult{
 		SchemaVersion: ProtocolSchemaVersion, IncidentID: request.IncidentID, Status: IncidentCompleted,
 		Timing:              TimingMetrics{StartedAt: started, CompletedAt: completed},

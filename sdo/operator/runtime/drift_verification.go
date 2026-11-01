@@ -16,7 +16,7 @@ import (
 
 // checkRetainedDrift never infers clearance from missing namespace bindings or
 // quiet health. Each retained learned binding must explicitly return NoMatch.
-func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view program.ReadView, registry program.ProgramRegistry, deadline time.Duration, benign func(sdk.DriftEvent) bool) ([]sdk.Finding, []DetectorEvaluation, []ProgramRun) {
+func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view program.ReadView, registry program.ProgramRegistry, deadline time.Duration, benign func(sdk.DriftEvent) bool, now time.Time) ([]sdk.Finding, []DetectorEvaluation, []ProgramRun) {
 	unresolved := []sdk.Finding{}
 	states := map[string]DetectorEvaluation{}
 	runs := []ProgramRun{}
@@ -26,7 +26,7 @@ func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view progra
 		}
 		state, exists := states[finding.DetectorID]
 		if !exists {
-			state = DetectorEvaluation{DetectorID: finding.DetectorID, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear}
+			state = DetectorEvaluation{DetectorID: finding.DetectorID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationClear}
 		}
 		clear := false
 		var err error
@@ -158,7 +158,7 @@ func (c *Controller) refreshRetainedDrift(ctx context.Context, now time.Time, sn
 		}
 		return false
 	}
-	active, states, runs := checkRetainedDrift(ctx, retained, c.drift.View(snapshot), c.drift.Programs, c.drift.Deadline, benign)
+	active, states, runs := checkRetainedDrift(ctx, retained, c.drift.View(snapshot), c.drift.Programs, c.drift.Deadline, benign, now)
 	c.observeProgramRuns(now, nil, runs)
 	for _, state := range states {
 		if state.DetectorID != "drift.unexplained" {

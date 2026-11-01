@@ -300,7 +300,7 @@ func projectSourceFields(observed, declared any) any {
 func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error) {
 	baseline := v.Baseline
 	if v.BaselineSource != nil {
-		baseline = v.BaselineSource.Changes(time.Now().UTC())
+		baseline = v.BaselineSource.Changes(v.ObservedAt().UTC())
 	}
 	if baseline == nil {
 		return program.Diff{}, errors.New("healthy baseline is unavailable")

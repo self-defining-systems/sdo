@@ -957,3 +957,8 @@ synchronous handler RoundTripper through client-go, preserving wire encoding
 without real sockets. Cache observation timestamps accept an injected clock;
 logs, metrics and usage retain their injected clocks with defaults owned by
 `runtime/internal/lifecycleio`. This migration adds no integration tags.
+
+Program and responder receipts share `PlanExecutor.Now`; candidate diagnosis
+duration accepts `CandidateOptions.Clock`. Retained-drift evaluations use the
+caller's evaluation time, and baseline diffs use their snapshot's observation
+time. These clock seams remain in the default test tier.

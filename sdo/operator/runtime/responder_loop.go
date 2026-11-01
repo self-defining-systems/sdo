@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sync"
 	"time"
 
@@ -239,12 +240,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	started := time.Now()
+	started := l.clock()
 	l.timing = toolTiming{}
 	defer func() {
 		slog.Info("responder_tool_timing", "incident_id", l.Request.IncidentID, "command", request.Command,
 			"capture_ms", l.timing.capture.Milliseconds(), "refresh_ms", l.timing.refresh.Milliseconds(),
-			"persist_ms", l.timing.persist.Milliseconds(), "total_ms", time.Since(started).Milliseconds())
+			"persist_ms", l.timing.persist.Milliseconds(), "total_ms", l.clock().Sub(started).Milliseconds())
 	}()
 	defer func() { l.capturePhase = "" }()
 	if l.CurrentEvidence != nil {
@@ -269,10 +270,10 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			}
 		}
 		responseJSON := recordedToolResponseJSON(response, applied)
-		l.calls = append(l.calls, ToolCall{Command: request.Command, At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
-		persistStarted := time.Now()
+		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
+		persistStarted := l.clock()
 		err := l.persistToolState(ctx)
-		l.timing.persist = time.Since(persistStarted)
+		l.timing.persist = l.clock().Sub(persistStarted)
 		if err != nil {
 			response.Error = err.Error()
 			response.Summary = response.Error
@@ -307,10 +308,10 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				response.Error = err.Error()
 				break
 			}
-			started := time.Now()
+			started := l.clock()
 			verdict := program.RunDiagnose(ctx, p, view, request.Bindings, l.deadline())
 			_, canMitigate := l.Programs.Mitigator(request.ProgramID)
-			run := ProgramRun{CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: time.Since(started)}
+			run := ProgramRun{CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: l.clock().Sub(started)}
 			response.ProgramRuns = []ProgramRun{run}
 			l.runs = append(l.runs, run)
 		}
@@ -513,8 +514,8 @@ func (l *ResponderLoop) deadline() time.Duration {
 }
 
 func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, error) {
-	started := time.Now()
-	defer func() { l.timing.capture += time.Since(started) }()
+	started := l.clock()
+	defer func() { l.timing.capture += l.clock().Sub(started) }()
 	if l.Provider == nil {
 		return nil, errors.New("snapshot provider is unavailable")
 	}
@@ -578,7 +579,7 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	if err != nil {
 		return nil
 	}
-	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Clock: l.clock, Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
@@ -586,8 +587,8 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 }
 
 func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, string) {
-	started := time.Now()
-	defer func() { l.timing.refresh += time.Since(started) }()
+	started := l.clock()
+	defer func() { l.timing.refresh += l.clock().Sub(started) }()
 	view, err := l.snapshotView(ctx)
 	if err != nil {
 		return nil, nil, err.Error()
@@ -604,11 +605,11 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 			}
 		}
 	}
-	drift, _, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil)
+	drift, _, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil, l.clock())
 	findings = append(findings, drift...)
 	l.runs = append(l.runs, driftRuns...)
 	l.findings = findings
-	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Clock: l.clock, Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
@@ -753,7 +754,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
 	}
 	l.batches++
-	started := time.Now().UTC()
+	started := l.clock().UTC()
 	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.batches)
 	programIDs := make([]string, 0, len(selected))
 	for _, plan := range selected {
@@ -767,7 +768,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	executor := l.Executor
 	result, err := executor.Apply(ctx, l.Request, batch, false)
-	completed := time.Now().UTC()
+	completed := l.clock().UTC()
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
 		response.ApplicationID = id
@@ -847,9 +848,9 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		if !ok {
 			continue
 		}
-		started := time.Now()
+		started := l.clock()
 		verdict := program.RunDiagnose(ctx, p, view, plan.bindings, l.deadline())
-		run := ProgramRun{ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: time.Since(started)}
+		run := ProgramRun{ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: l.clock().Sub(started)}
 		response.ProgramRuns = append(response.ProgramRuns, run)
 		l.runs = append(l.runs, run)
 		if verdict.Result == program.Match {
@@ -860,7 +861,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	for _, detector := range l.Detectors {
 		observed, err := detector.Detect(ctx, view)
-		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear}
+		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear}
 		if err != nil {
 			state.Status, state.Error = DetectorEvaluationError, err.Error()
 			response.Error = err.Error()
@@ -873,7 +874,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 		states = append(states, state)
 	}
-	drift, driftStates, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil)
+	drift, driftStates, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil, l.clock())
 	findings = append(findings, drift...)
 	states = append(states, driftStates...)
 	response.ProgramRuns = append(response.ProgramRuns, driftRuns...)
@@ -912,7 +913,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	}
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
 	if len(findings) > 0 {
-		runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+		runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Clock: l.clock, Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
 		response.ProgramRuns = append(response.ProgramRuns, runs...)
 		l.runs = append(l.runs, runs...)
 	}
@@ -953,4 +954,12 @@ func boundPlansNoMatch(selected []selectedPlan, runs []ProgramRun) bool {
 		}
 	}
 	return true
+}
+
+// clock shares the executor's injected clock across diagnosis and apply receipts.
+func (l *ResponderLoop) clock() time.Time {
+	if l.Executor.Now != nil {
+		return l.Executor.Now()
+	}
+	return lifecycleio.Now()
 }

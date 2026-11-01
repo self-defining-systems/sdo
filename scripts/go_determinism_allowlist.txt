@@ -6,7 +6,6 @@ sdo/operator/runtime/broker_effects_test.go:time.Sleep
 sdo/operator/runtime/chaos_clock_skew_test.go:time.After
 sdo/operator/runtime/chaos_harness_test.go:os.Getenv
 sdo/operator/runtime/chaos_harness_test.go:time.Now
-sdo/operator/runtime/closure_retry.go:time.Now
 sdo/operator/runtime/configmap_budget_test.go:time.After
 sdo/operator/runtime/contract_golden_test.go:os.Getenv
 sdo/operator/runtime/contract_proto_test.go:os.Getenv
@@ -17,7 +16,6 @@ sdo/operator/runtime/controller_integration_test.go:time.After
 sdo/operator/runtime/controller_test.go:time.After
 sdo/operator/runtime/controller_test.go:time.Now
 sdo/operator/runtime/controller_test.go:time.Sleep
-sdo/operator/runtime/drift_verification.go:time.Now
 sdo/operator/runtime/effect_durability_test.go:time.After
 sdo/operator/runtime/extended_kinds_test.go:time.Now
 sdo/operator/runtime/fastloop_real_gate_test.go:os/exec
@@ -30,7 +28,6 @@ sdo/operator/runtime/foreign_invariant_test.go:os/exec
 sdo/operator/runtime/internal/testprotocol/dial.go:time.Now
 sdo/operator/runtime/kubernetes_cache_test.go:time.After
 sdo/operator/runtime/kubernetes_cache_test.go:time.Now
-sdo/operator/runtime/kubernetes_fast_path.go:time.Now
 sdo/operator/runtime/kubernetes_job_dispatcher_learning.go:os/exec
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.After
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.NewTimer
@@ -56,7 +53,6 @@ sdo/operator/runtime/metrics_observer_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/metrics_observer_test.go:net/http/httptest.Server
 sdo/operator/runtime/metrics_observer_test.go:time.Now
 sdo/operator/runtime/metrics_observer_test.go:time.Since
-sdo/operator/runtime/native_broker.go:time.Now
 sdo/operator/runtime/native_broker_test.go:os/exec
 sdo/operator/runtime/native_broker_test.go:time.Now
 sdo/operator/runtime/native_path_integration_test.go:os/exec
@@ -66,7 +62,6 @@ sdo/operator/runtime/new_inputs_hermetic_test.go:os/exec
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.After
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Now
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Since
-sdo/operator/runtime/plan_executor.go:time.Now
 sdo/operator/runtime/plan_executor_observe.go:time.NewTicker
 sdo/operator/runtime/plan_executor_observe_test.go:time.After
 sdo/operator/runtime/plan_executor_retry.go:math/rand/v2.Int64N
@@ -101,14 +96,8 @@ sdo/operator/runtime/prober/reachability_test.go:net/http.Post
 sdo/operator/runtime/prober/reachability_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/prober/reachability_test.go:time.Now
 sdo/operator/runtime/prober/reachability_test.go:time.Since
-sdo/operator/runtime/program_candidates.go:time.Now
-sdo/operator/runtime/program_candidates.go:time.Since
-sdo/operator/runtime/program_equivalent_repair.go:time.Now
 sdo/operator/runtime/program_fast_path.go:time.NewTimer
-sdo/operator/runtime/program_fast_path.go:time.Now
-sdo/operator/runtime/program_fast_path_result.go:time.Now
 sdo/operator/runtime/program_fast_path_test.go:time.Now
-sdo/operator/runtime/program_read_view.go:time.Now
 sdo/operator/runtime/program_repair_receipts_test.go:time.Now
 sdo/operator/runtime/program_revision.go:os/exec
 sdo/operator/runtime/prometheus/client_test.go:net/http/httptest.NewServer
@@ -118,8 +107,6 @@ sdo/operator/runtime/registered_reflection_integration_test.go:os.Environ
 sdo/operator/runtime/registered_reflection_integration_test.go:os/exec
 sdo/operator/runtime/responder_loop.go:crypto/rand.Read
 sdo/operator/runtime/responder_loop.go:time.NewTimer
-sdo/operator/runtime/responder_loop.go:time.Now
-sdo/operator/runtime/responder_loop.go:time.Since
 sdo/operator/runtime/responder_loop_mitigator_test.go:time.After
 sdo/operator/runtime/responder_loop_mitigator_test.go:time.Now
 sdo/operator/runtime/responder_loop_mitigator_test.go:time.Since

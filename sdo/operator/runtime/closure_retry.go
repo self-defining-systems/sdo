@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 )
 
@@ -78,7 +79,7 @@ func (c *Controller) clock() time.Time {
 	if c.now != nil {
 		return c.now().UTC()
 	}
-	return time.Now().UTC()
+	return lifecycleio.Now().UTC()
 }
 
 // PausedWake is when a paused controller must wake: the next closure retry,
