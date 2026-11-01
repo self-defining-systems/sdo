@@ -404,3 +404,8 @@ reads, isolated-index whitespace checks, shell syntax and toolchain lookup.
 It exposes bytes and errors, never process handles. The artifact ownership
 matrix and repository scope matrix above remain unchanged: this production
 adapter belongs to memory and has no benchmark dependencies.
+
+Deployment orchestration injects command execution, polling waits and Job-name
+suffixes. Its private `deployment/internal/deploymentio` adapter owns the
+production process/socket/timer implementations. It stays within the deployment
+component and production scope above; artifact ownership remains unchanged.

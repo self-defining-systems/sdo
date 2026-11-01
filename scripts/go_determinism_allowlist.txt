@@ -28,17 +28,6 @@ sdo/operator/core/kubernetes_snapshot.go:os.Getenv
 sdo/operator/core/kubernetes_snapshot.go:os.LookupEnv
 sdo/operator/core/kubernetes_snapshot.go:time.Now
 sdo/operator/core/kubernetes_snapshot_test.go:time.Now
-sdo/operator/deployment/backend.go:os/exec
-sdo/operator/deployment/backend.go:time.After
-sdo/operator/deployment/health.go:net.Listen
-sdo/operator/deployment/health.go:os/exec
-sdo/operator/deployment/health_test.go:os/exec
-sdo/operator/deployment/kubernetes_build.go:time.NewTicker
-sdo/operator/deployment/kubernetes_build_test.go:os/exec
-sdo/operator/deployment/kubernetes_build_test.go:time.After
-sdo/operator/deployment/raw_test.go:os/exec
-sdo/operator/deployment/registry.go:os/exec
-sdo/operator/deployment/registry_test.go:os/exec
 sdo/operator/internal/testutil/offline.go:os/exec
 sdo/operator/operatorcli/host.go:os/exec
 sdo/operator/operatorcli/host_test.go:os/exec

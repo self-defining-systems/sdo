@@ -894,3 +894,8 @@ not a way to remove tests from CI. PR jobs retain their five-minute deadlines.
 Memory Git-backed snapshot, inventory, ownership and validator checks require
 `integration`; PR and nightly `scripts/test_go_ci.sh` already pass that tag.
 Filesystem-only helpers and static checks remain available without it.
+
+Deployment Git-backed registry, raw-strategy, health and BuildKit checks
+require `integration` and retain their PR/nightly invocation. BuildKit fake
+clients admit a completed Job synchronously or through an injected wait.
+Command-observation tests inject commands and waits and run in the default tier.

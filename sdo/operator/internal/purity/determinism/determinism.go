@@ -17,15 +17,17 @@ import (
 // Edges are exact repository-relative package directories, never subtree globs.
 // Existing mixed orchestration packages remain on the ratchet, not exempted.
 var Edges = map[string]bool{
-	"sdo/operator/memory/internal/memoryio":     true, // Git and shell syntax subprocesses
-	"sdo/operator/install/internal/installio":   true, // Repository processes, configuration environment and timer adapter
-	"sdo/operator/runtime/internal/lifecycleio": true, // Kubernetes driver
-	"sdo/operator/runtime/prober":               true, // protocol dial adapter
-	"sdo/operator/runtime/prometheus":           true, // Prometheus HTTP adapter
-	"sdo/operator/memoryhost/hostio":            true, // Memory-host process launcher, Unix socket and read-only network adapter
-	"sdo/operator/toolchain":                    true, // Go compiler process adapter
-	"sdo/operator/devmount":                     true, // development mount process adapter
-	"sdo/operator/runtime/sim":                  true, // simulation world: virtual time inside synctest bubbles, seed replay, in-memory transport; tests only
+	"sdo/operator/memory/internal/memoryio":         true, // Git and shell syntax subprocesses
+	"sdo/operator/install/internal/installio":       true, // Repository processes, configuration environment and timer adapter
+	"sdo/operator/runtime/internal/lifecycleio":     true, // Kubernetes driver
+	"sdo/operator/runtime/prober":                   true, // protocol dial adapter
+	"sdo/operator/runtime/prometheus":               true, // Prometheus HTTP adapter
+	"sdo/operator/memoryhost/hostio":                true, // Memory-host process launcher, Unix socket and read-only network adapter
+	"sdo/operator/toolchain":                        true, // Go compiler process adapter
+	"sdo/operator/devmount":                         true, // development mount process adapter
+	"sdo/operator/runtime/sim":                      true, // simulation world: virtual time inside synctest bubbles, seed replay, in-memory transport; tests only
+	"sdo/operator/deployment/internal/deploymentio": true, // Deployment process, socket and wait adapter
+
 }
 
 func integrationOnly(file *ast.File) (bool, error) {

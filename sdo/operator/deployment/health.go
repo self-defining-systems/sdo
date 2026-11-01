@@ -1,15 +1,13 @@
 package deployment
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/deployment/internal/deploymentio"
 	"strings"
 	"time"
 
@@ -51,30 +49,11 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 		return "", fmt.Errorf("compile accepted health detectors: %w", err)
 	}
 	args := probe.evaluationArgs(acceptedRoot, namespace)
-	if workspace.HasProber {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return "", fmt.Errorf("reserve local prober address: %w", err)
-		}
-		address := listener.Addr().String()
-		_ = listener.Close()
-		prober := exec.CommandContext(bounded, filepath.Join(workspace.Directory, "sdo-prober"), "--namespace", namespace, "--listen", address)
-		prober.Dir = workspace.Directory
-		if err := prober.Start(); err != nil {
-			return "", fmt.Errorf("start bounded health prober: %w", err)
-		}
-		defer func() { _ = prober.Process.Kill(); _ = prober.Wait() }()
-		args = append(args, "--prober-url", "http://"+address)
-	}
-	command := exec.CommandContext(bounded, binary, args...)
-	command.Dir = workspace.Directory
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	err = command.Run()
+	stdout, stderr, err := deploymentio.Evaluate(bounded, workspace.Directory, binary, namespace, workspace.HasProber, args)
 	if err != nil {
-		return "", fmt.Errorf("evaluate accepted health detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout.Bytes()), boundedHealthOutput(stderr.Bytes()))
+		return "", fmt.Errorf("evaluate accepted health detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
-	return decodeHealthVerdict(stdout.Bytes(), stderr.Bytes())
+	return decodeHealthVerdict(stdout, stderr)
 }
 
 func decodeHealthVerdict(stdout, stderr []byte) (string, error) {
@@ -112,7 +91,7 @@ func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, n
 		return false, "", errors.New("accepted repository, operator, observer, namespace, objective, commit, and source evidence are required")
 	}
 	git := func(args ...string) (string, error) {
-		output, err := exec.CommandContext(ctx, "git", append([]string{"-C", v.AcceptedRoot}, args...)...).CombinedOutput()
+		output, err := deploymentio.Run(ctx, "git", append([]string{"-C", v.AcceptedRoot}, args...), nil)
 		if err != nil {
 			return "", fmt.Errorf("accepted git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 		}
