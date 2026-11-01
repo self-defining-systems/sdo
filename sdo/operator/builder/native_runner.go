@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/builder/internal/buildio"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
@@ -88,15 +88,7 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 	if err := os.WriteFile(configPath, data, 0o600); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, binary, "--config", configPath)
-	command.Dir = workspace.Directory
-	command.Stdin = os.Stdin
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("controller run: %w", err)
-	}
-	return nil
+	return buildio.RunController(ctx, binary, configPath, workspace.Directory)
 }
 
 // Supervise rebuilds from the accepted application tree after each normal

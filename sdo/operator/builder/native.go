@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/builder/internal/buildio"
 	"strings"
 
 	"sdo.dev/operator/memory/layout"
@@ -30,26 +30,10 @@ type Workspace struct {
 	HasProber  bool
 }
 
-// StageError reports the Go toolchain stage that rejected a workspace.
-type StageError struct {
-	Stage  string
-	Output string
-	Err    error
-}
-
-func (e *StageError) Error() string {
-	return fmt.Sprintf("go %s: %v: %s", e.Stage, e.Err, e.Output)
-}
-
-func (e *StageError) Unwrap() error { return e.Err }
+type StageError = buildio.StageError
 
 func (workspace *Workspace) runGo(ctx context.Context, args ...string) error {
-	command := exec.CommandContext(ctx, "go", args...)
-	command.Dir = workspace.Directory
-	if output, err := command.CombinedOutput(); err != nil {
-		return &StageError{Stage: strings.Join(args, " "), Output: strings.TrimSpace(string(output)), Err: err}
-	}
-	return nil
+	return buildio.RunGo(ctx, workspace.Directory, args...)
 }
 
 // ValidateAndBuild compiles detector tests and the controller binary inside
@@ -92,48 +76,14 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 		}
 	}
 	if workspace.HasProber {
-		command := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", filepath.Join(workspace.Directory, "sdo-prober"), "./cmd/prober")
-		command.Dir = workspace.Directory
-		command.Env = append(os.Environ(), "CGO_ENABLED=0")
-		if output, err := command.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("go build prober: %w: %s", err, strings.TrimSpace(string(output)))
+		if err := buildio.BuildProber(ctx, workspace.Directory); err != nil {
+			return "", err
 		}
 	}
 	return binary, nil
 }
 
-func seedGoBuildCache(ctx context.Context) error {
-	seed := os.Getenv("SDO_GO_CACHE_SEED")
-	if seed == "" {
-		return nil
-	}
-	if _, err := os.Stat(seed); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("inspect Go build cache seed: %w", err)
-	}
-	cache := os.Getenv("GOCACHE")
-	if cache == "" {
-		return errors.New("GOCACHE is required when SDO_GO_CACHE_SEED is set")
-	}
-	marker := filepath.Join(cache, ".sdo-seeded")
-	if _, err := os.Stat(marker); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect Go build cache: %w", err)
-	}
-	if err := os.MkdirAll(cache, 0o755); err != nil {
-		return fmt.Errorf("create Go build cache: %w", err)
-	}
-	command := exec.CommandContext(ctx, "cp", "-R", seed+string(os.PathSeparator)+".", cache)
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("seed Go build cache: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	if err := os.WriteFile(marker, nil, 0o644); err != nil {
-		return fmt.Errorf("mark seeded Go build cache: %w", err)
-	}
-	return nil
-}
+func seedGoBuildCache(ctx context.Context) error { return buildio.SeedGoBuildCache(ctx) }
 
 func (workspace *Workspace) Close() error {
 	if workspace == nil || workspace.Directory == "" {
@@ -327,10 +277,4 @@ func moduleRequired(content, path string) bool {
 }
 
 // DefaultOperatorRoot resolves the installed toolchain modules at the process edge.
-func DefaultOperatorRoot() string {
-	root := os.Getenv("SDO_OPERATOR_ROOT")
-	if root == "" {
-		return "/opt/sdo/sdo/operator"
-	}
-	return root
-}
+func DefaultOperatorRoot() string { return buildio.DefaultOperatorRoot() }
