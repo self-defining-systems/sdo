@@ -2,7 +2,7 @@ package runtime
 
 import (
 	"context"
-	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,15 +143,39 @@ type ResponderLoop struct {
 	fastPathSkippedReason           FastPathSkipReason
 }
 
+// ResponderLoopOptions supplies sources that must replay across simulated runs.
+type ResponderLoopOptions struct {
+	// NewSessionID returns 32 lowercase hexadecimal characters. Nil uses the
+	// production cryptographic source; programs never receive the source itself.
+	NewSessionID func() (string, error)
+}
+
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {
+	loop, err := NewResponderLoopWithOptions(request, programs, provider, detectors, executor, maxBatches, ResponderLoopOptions{})
+	if err != nil {
+		panic(err)
+	}
+	return loop
+}
+
+// NewResponderLoopWithOptions creates one incident's replayable tool namespace.
+func NewResponderLoopWithOptions(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int, options ResponderLoopOptions) (*ResponderLoop, error) {
 	if maxBatches <= 0 {
 		maxBatches = DefaultMaxResponseLoops
 	}
-	session := make([]byte, 16)
-	if _, err := rand.Read(session); err != nil {
-		panic(err)
+	source := options.NewSessionID
+	if source == nil {
+		source = lifecycleio.NewSessionID
 	}
-	return &ResponderLoop{sessionID: fmt.Sprintf("%x", session), Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
+	session, err := source()
+	if err != nil {
+		return nil, fmt.Errorf("create responder session ID: %w", err)
+	}
+	decoded, err := hex.DecodeString(session)
+	if err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != session {
+		return nil, fmt.Errorf("responder session ID must be 32 lowercase hexadecimal characters")
+	}
+	return &ResponderLoop{sessionID: session, Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}, nil
 }
 
 func (l *ResponderLoop) ToolCalls() []ToolCall {

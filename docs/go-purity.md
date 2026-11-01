@@ -63,7 +63,7 @@ The exact production edge-package list is:
 - `sdo/operator/operatorcli/internal/processio`: CLI Git, kubectl and environment adapter.
 - `sdo/operator/broker/internal/processio`: Git commands and bounded validator process supervision.
 
-- `sdo/operator/runtime/internal/lifecycleio`: Kubernetes lifecycle driver and accepted-repository Git reads, default observation/execution clock and development time-scale environment, default executor/observer/lease timers and retry jitter.
+- `sdo/operator/runtime/internal/lifecycleio`: Kubernetes lifecycle driver and accepted-repository Git reads, default observation/execution clock and development time-scale environment, default executor/observer/lease/session timers, retry jitter and cryptographic session/reply IDs.
 - `sdo/operator/runtime/prober`: protocol dial adapter.
 - `sdo/operator/install/internal/installio`: accepted-checkout Git/archive/kubectl processes, installer clock and wait timers, and time-scale environment reads.
 - `sdo/operator/runtime/prometheus`: Prometheus HTTP adapter.

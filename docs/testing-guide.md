@@ -1004,3 +1004,8 @@ revoking authority, so it never tries to stop the timer currently firing.
 observer clocks, lease renewal and executor waits. The metrics-URL integration
 contract checks its clock through the emitted finding's `observed_at` metadata;
 real HTTP wiring remains in the existing integration CI tier.
+
+`NewResponderLoopWithOptions` accepts a replayable session-ID source while
+validating its 32-character lowercase hex namespace. Session tool polling and
+temporary reply IDs can be injected; collision tests retain exclusive file
+creation and prove an existing reply temporary cannot be overwritten.
