@@ -245,6 +245,8 @@ def test_full_and_hermetic_runners_retain_integration_tests(tmp_path: Path, scri
     invocations = [line.split("|", 1) for line in calls.read_text().splitlines()]
     assert invocations
     for _, command in invocations:
+        if shlex.split(command)[0] != "test":
+            continue
         assert "-tags=integration" in shlex.split(command), "full runners must not silently omit process contracts"
     if script == "run_tests.sh":
         assert any(Path(directory).name == "replay_go" for directory, _ in invocations)
@@ -256,3 +258,37 @@ def test_full_and_hermetic_runners_retain_integration_tests(tmp_path: Path, scri
         for path in (ROOT / "sdo/operator/runtime").glob("*_test.go"):
             available.update(re.findall(r"^func (Test\w+)\(", path.read_text(), re.MULTILINE))
         assert names <= available, f"retired hermetic selectors: {sorted(names - available)}"
+
+
+def test_python_runner_builds_protocol_tools_once_before_workers(tmp_path: Path) -> None:
+    calls = tmp_path / "calls"
+    for name, body in {
+        "go": 'printf "go %s\\n" "$*" >> "$SDO_TEST_CALLS"',
+        "uv": '''test -f "$SDO_TEST_CALLS"
+ test -n "$SDO_NATIVE_RECEIPT_BIN"
+ test -n "$SDO_SUBMISSION_GUARD_BIN"
+ printf 'uv %s\\n' "$*" >> "$SDO_TEST_CALLS"''',
+    }.items():
+        command = tmp_path / name
+        command.write_text(f"#!/bin/sh\nset -eu\n{body}\n")
+        command.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/test_python.sh"), "--durations=30"],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = calls.read_text().splitlines()
+    assert len([line for line in lines if line.startswith("go build ")]) == 2
+    assert lines[-1].startswith("uv run --extra test pytest ")
+    assert "--durations=30" in lines[-1]
+
+
+def test_architecture_delegation_requires_the_full_python_suite() -> None:
+    commands = "\n".join(step.get("run", "") for step in workflow()["jobs"]["checks"]["steps"])
+    assert "check_errors.sh --python-suite" in commands
+    assert "scripts/test_python.sh --durations=30" in commands
+    assert "--tach" not in commands
+    assert "--ignore=tests/unit/test_architecture.py" not in commands

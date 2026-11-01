@@ -9,7 +9,9 @@
   ratchet; AST scanner and negative controls in
   `sdo/operator/internal/purity/determinism`. See `docs/go-purity.md` for workflow.
 - `test_go_ci.sh`: multi-module Go suite, shared compiler cache and PR/nightly selection.
-- `test_python.sh`: Python unit suite.
+- `test_python.sh`: Python unit suite; builds current-checkout protocol tools once
+  for all workers. `check_errors.sh --python-suite` delegates architecture tests
+  to this complete suite; static checks log individual wall times.
 
 Extend the owning gate when adding a check. Keep policy fixtures alongside its
 implementation; wire mandatory static checks through `check_errors.sh`.

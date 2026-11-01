@@ -1043,3 +1043,18 @@ Job waiting, fast-path restarts and worker completion run in virtual time, with
 an explicit virtual restart boundary for fresh evidence. Process-only fastloop
 wait helpers stay with their integration fixtures. Simulated protocol peers use
 the world clock for safety deadlines; default peer behavior is unchanged.
+
+Checks/Python compiler-cache restores fall back across dependency hashes within
+Go 1.26.8 before considering legacy caches. Submodule initialization changes
+`hashFiles('**/go.sum')` between restore and save; an exact-hash-only fallback
+restored a 639 MB pre-refactor cache on main run 41272152156 and spent 113.18 s
+and 62.49 s rebuilding the receipt checker and submission guard. The Python
+runner now builds each protocol executable once from the current checkout into
+a temporary directory shared by its workers; executables are never restored.
+The uv download cache retains Pyright's bundled engine (`prune-cache: false`);
+the runner supplies Node. Pinned proto tools and the verified golangci-lint
+binary share a versioned tool cache. Formatting overlaps static checks, and
+`check_errors.sh --python-suite` delegates architecture tests to the full Python
+suite rather than running them twice. Default local static checks still run
+the complete architecture file. Per-check timing lines and `--durations=30`
+remain in hosted logs. No additional Python tests move to nightly.
