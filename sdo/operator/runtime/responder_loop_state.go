@@ -16,13 +16,16 @@ type responderToolState struct {
 	FailureSignals []string
 	Batches        int
 	MaxBatches     int
+	// StageWrites counts writes the automatic stage began. A restart never
+	// replays them; it re-observes instead.
+	StageWrites int `json:",omitempty"`
 }
 
 func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	if l.saveToolState == nil {
 		return nil
 	}
-	payload, err := json.Marshal(responderToolState{Version: 2, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
+	payload, err := json.Marshal(responderToolState{Version: 2, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches, StageWrites: l.stageWrites})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -43,6 +46,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 		return fmt.Errorf("invalid responder attempt budget")
 	}
 	l.batches = state.Batches
+	l.stageWrites = state.StageWrites
 	if state.MaxBatches > 0 && state.MaxBatches < l.MaxBatches {
 		l.MaxBatches = state.MaxBatches
 	}

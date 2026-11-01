@@ -77,7 +77,9 @@ type IncidentRequest struct {
 	FollowUp           *FollowUpContext
 	InitialProgramRuns []ProgramRun
 	FastPathSummary    string
-	MaxResponseLoops   int
+	// PriorStages is what earlier automatic stages did, in order.
+	PriorStages      []*contracts.StageReport
+	MaxResponseLoops int
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string
 }
@@ -180,6 +182,7 @@ type IncidentResult struct {
 	FastPathPrograms                []string
 	FastPathSkippedReason           FastPathSkipReason
 	FastPathRelationCoveredFindings []RelationCoveredFinding
+	PriorStages                     []*contracts.StageReport
 }
 
 // LateFindingsPull is a worker's claim that it consumed a controller-authored

@@ -8,7 +8,7 @@ from pathlib import Path
 from google.protobuf import json_format
 
 from sdo.agents.responder.codex import _responder_prompt
-from sdo.contracts import FollowUpContext, IncidentRequest
+from sdo.contracts import FollowUpContext, IncidentRequest, StageReport
 from tests.proto_messages import evolve
 
 _FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "incident_request.json"
@@ -57,3 +57,13 @@ def test_drift_label_follow_up_asks_only_for_labels() -> None:
     assert "one drift_events entry per event" in prompt
     assert "do not repair" in prompt.lower()
     assert "already-repaired" not in prompt
+
+
+def test_prior_stage_report_is_explained_only_when_a_stage_ran() -> None:
+    assert "Automatic stages ran before you" not in _responder_prompt(_request())
+
+    request = _request(prior_stages=[StageReport(stage="deterministic")])
+    prompt = _responder_prompt(request)
+
+    assert "Automatic stages ran before you" in prompt
+    assert '"prior_stages"' in prompt

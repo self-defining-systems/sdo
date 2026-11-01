@@ -113,6 +113,7 @@ def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> No
         "fast_path_programs",
         "fast_path_skipped_reason",
         "fast_path_relation_covered_findings",
+        "prior_stages",
     }
     unrequested = set(IncidentResult.DESCRIPTOR.fields_by_name) - set(schema["properties"]) - owned
     assert unrequested == {"final_detector_states", "proposed_artifact_ids"}

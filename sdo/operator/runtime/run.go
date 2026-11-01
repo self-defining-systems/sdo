@@ -540,7 +540,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
 			Environment: jobEnvironment,
 			Catalog:     catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
-			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
+			ProgramFastPath: *programFastPath, ResponseStages: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				memoryCatalogMu.RLock()
 				defer memoryCatalogMu.RUnlock()

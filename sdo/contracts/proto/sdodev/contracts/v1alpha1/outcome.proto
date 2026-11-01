@@ -41,10 +41,11 @@ message OutcomeRecord {
   int32 response_loops_used = 27;
   bool response_loop_exhausted = 28;
   repeated DriftEvent drift_events = 29;
-  string resolution_path = 30 [(buf.validate.field).string = {in: ["", "fast_path", "responder"]}];
+  string resolution_path = 30 [(buf.validate.field).string = {in: ["", "fast_path", "deterministic", "responder"]}];
   repeated string fast_path_programs = 31;
   string fast_path_skipped_reason = 32;
   repeated RelationCoveredFinding fast_path_relation_covered_findings = 33;
+  repeated StageReport prior_stages = 34;
 }
 
 message OutcomeTimestamps {

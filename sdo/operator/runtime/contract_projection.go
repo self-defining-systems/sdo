@@ -192,7 +192,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
-		FastPathSummary: request.FastPathSummary,
+		FastPathSummary: request.FastPathSummary, PriorStages: cloneStageReports(request.PriorStages),
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
@@ -242,6 +242,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		ResponseLoopsUsed:    int32(result.ResponseLoopsUsed), ResponseLoopExhausted: result.ResponseLoopExhausted,
 		ProgramFailureSignals: append([]string(nil), result.ProgramFailureSignals...),
 		ResolutionPath:        result.ResolutionPath, FastPathPrograms: append([]string(nil), result.FastPathPrograms...), FastPathSkippedReason: string(result.FastPathSkippedReason),
+		PriorStages: cloneStageReports(result.PriorStages),
 	}
 	for _, covered := range result.FastPathRelationCoveredFindings {
 		message.FastPathRelationCoveredFindings = append(message.FastPathRelationCoveredFindings, relationCoveredFindingContract(covered))
@@ -339,6 +340,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		ResponseLoopsUsed: int(message.GetResponseLoopsUsed()), ResponseLoopExhausted: message.GetResponseLoopExhausted(),
 		ProgramFailureSignals: append([]string(nil), message.GetProgramFailureSignals()...),
 		ResolutionPath:        message.GetResolutionPath(), FastPathPrograms: append([]string(nil), message.GetFastPathPrograms()...), FastPathSkippedReason: FastPathSkipReason(message.GetFastPathSkippedReason()),
+		PriorStages: cloneStageReports(message.GetPriorStages()),
 	}
 	for _, covered := range message.GetFastPathRelationCoveredFindings() {
 		result.FastPathRelationCoveredFindings = append(result.FastPathRelationCoveredFindings, relationCoveredFindingState(covered))
@@ -514,6 +516,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		ResponseDeadline: controllerTime(message.GetResponseDeadline()), CancellationToken: message.GetCancellationToken(),
 		RepairPolicy: message.GetRepairPolicy(), StateChanges: stateChangesState(message.GetStateChanges()),
 		DriftEvents: driftEventsState(message.GetDriftEvents()), FastPathSummary: message.GetFastPathSummary(), MaxResponseLoops: int(message.GetMaxResponseLoops()), PreparedAgentTask: message.GetPreparedAgentTask(),
+		PriorStages: cloneStageReports(message.GetPriorStages()),
 	}
 	for _, run := range message.GetInitialProgramRuns() {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunState(run))

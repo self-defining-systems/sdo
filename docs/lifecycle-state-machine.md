@@ -113,6 +113,7 @@ enforcement remains follow-up work.
 | Memory | Logical artifact projection, schema validation, snapshot selection and content identities | Repository reads, physical layout, outcome persistence |
 | Late findings | Report selection, digest/correlation rules and pull-budget transitions | HTTP transport, snapshot observation and report persistence |
 | Runtime controller | Scheduling, batching, incident/closure transitions and deadline calculation | Kubernetes caches/Jobs/ConfigMaps, timers, telemetry, leader election; lifecycle persistence is already `runtime/internal/lifecycleio` |
+| Response stages (deterministic, agent) | Stage order, attempt skip reasons, write-once per binding and restart re-observation | Host plan RPCs, action application, live snapshots and tool-state storage |
 | Program learning / fast path | Trust credit, revision binding, match eligibility, one-attempt and verification transitions | Live snapshots, action application/rollback, capture replay and attempt-marker storage |
 
 Each core accepts plain events and returns decisions/effects. Other subsystems
