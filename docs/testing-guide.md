@@ -924,3 +924,7 @@ manifest-location and prohibited-import rejection tests remain untagged.
 PR and nightly `scripts/test_go_ci.sh` already include `-tags=integration`,
 including the existing `builder/compiletest` smoke package. Nightly-only
 compilation selections and the five-minute PR deadlines are unchanged.
+CLI evidence commands and Git-backed memory fixtures require `integration`.
+The pure host parser and memory admission-error checks stay untagged.
+`scripts/test_go_ci.sh` keeps these tests in their existing PR/nightly selections
+with `-tags=integration`; no CI timeout or selection changes are needed.
