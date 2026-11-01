@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"sdo.dev/operator/sdk/inputs"
 	"testing"
 	"time"
@@ -270,8 +269,8 @@ func adoptionController(t *testing.T, target int32, detectors ...sdk.Detector) (
 	service.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}
 	service.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "kubectl-client-side-apply", Operation: metav1.ManagedFieldsOperationUpdate, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:ports":{"k:{\"port\":80,\"protocol\":\"TCP\"}":{"f:targetPort":{}}}}}`)}}}
 	api := &adoptionServiceAPI{service: service}
-	server := httptest.NewServer(api)
-	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	server := newHandlerTransport(api)
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: "http://in-memory", Transport: server})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +285,7 @@ func adoptionController(t *testing.T, target int32, detectors ...sdk.Detector) (
 	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Source: source, Client: client, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: api.service.Spec.Ports[0].TargetPort.IntVal != 8080}}
 	}})
-	return controller, api, source, server.Close
+	return controller, api, source, func() {}
 }
 
 type adoptionSnapshot struct{ api *adoptionServiceAPI }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strings"
 	"sync"
@@ -56,7 +57,7 @@ func NewLogsObserver(client kubernetes.Interface, ds []sdk.Detector, opt LogsObs
 		return nil, nil
 	}
 	if opt.Clock == nil {
-		opt.Clock = time.Now
+		opt.Clock = lifecycleio.Now
 	}
 	o := &LogsObserver{queries: qs, patterns: map[string]*regexp.Regexp{}, clock: opt.Clock, states: map[string]*logState{}}
 	for _, q := range qs {

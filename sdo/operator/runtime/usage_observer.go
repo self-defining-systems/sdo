@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strings"
 	"sync"
@@ -45,7 +46,7 @@ func withUsage(base SnapshotProvider, detectors []sdk.Detector, client kubernete
 		return base
 	}
 	if clock == nil {
-		clock = time.Now
+		clock = lifecycleio.Now
 	}
 	return &usageSnapshotProvider{Base: base, client: client, throttling: throttling, clock: clock}
 }

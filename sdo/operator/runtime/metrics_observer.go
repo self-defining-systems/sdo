@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"sync"
 	"time"
@@ -74,7 +75,7 @@ func NewMetricsObserver(api MetricsAPI, detectors []sdk.Detector, options Metric
 		options.QueryTimeout = DefaultMetricsQueryTimeout
 	}
 	if options.Clock == nil {
-		options.Clock = time.Now
+		options.Clock = lifecycleio.Now
 	}
 	return &MetricsObserver{api: api, queries: queries, alerts: alerts, timeout: options.QueryTimeout, clock: options.Clock}, nil
 }

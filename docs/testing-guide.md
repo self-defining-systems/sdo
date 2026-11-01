@@ -951,3 +951,9 @@ Broker Git checkout/commit, CLI/compiler parity, agent-script and validator
 process-limit tests require `integration`. They continue in
 `scripts/test_go_ci.sh` with `-tags=integration` on PRs and nightly; the existing
 nightly-only parity selection and five-minute PR budget are unchanged.
+
+Runtime drift, ownership-adoption, read-view and usage observer tests use a
+synchronous handler RoundTripper through client-go, preserving wire encoding
+without real sockets. Cache observation timestamps accept an injected clock;
+logs, metrics and usage retain their injected clocks with defaults owned by
+`runtime/internal/lifecycleio`. This migration adds no integration tags.

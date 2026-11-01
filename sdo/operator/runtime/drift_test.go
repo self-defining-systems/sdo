@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"sdo.dev/operator/sdk/inputs"
 	"testing"
 	"time"
@@ -202,15 +201,15 @@ func TestControllerOpensLatentIncidentOnDriftWithinOneStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newHandlerTransport(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPatch || request.URL.Query().Get("dryRun") != metav1.DryRunAll {
 			t.Errorf("unexpected source normalization request: %s %s", request.Method, request.URL)
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(&corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromInt32(8080)}}}})
 	}))
-	defer server.Close()
-	apiClient, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+
+	apiClient, err := kubernetes.NewForConfig(&rest.Config{Host: "http://in-memory", Transport: server})
 	if err != nil {
 		t.Fatal(err)
 	}
