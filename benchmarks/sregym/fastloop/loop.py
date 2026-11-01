@@ -33,6 +33,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from benchmarks.sregym.fastloop.continuity import ActivationContinuity
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,6 +55,7 @@ class AgentOutcome:
     """What an agent reports for one incident; learning fields arrive after recovery."""
 
     injection: InjectionWindow
+    memory_host_activations: list[ActivationContinuity] = field(default_factory=list)
     detected_at: datetime | None = None
     mitigation_applied_at: datetime | None = None
     resolved_at: datetime | None = None
@@ -338,6 +341,15 @@ def _run_one(
             diagnosis_grade = DiagnosisGrade(error=_describe(exc))
     elif windows and grader is not None:
         diagnosis_grade = DiagnosisGrade(skipped=True, skip_reason="no diagnosis text")
+    learned_early = False
+    learning_complete = True
+    if outcome is not None and getattr(agent, "learn_before_recovery", False):
+        try:
+            outcome = agent.learn(outcome)
+        except Exception as exc:
+            errors.append(f"learning failed: {_describe(exc)}")
+            learning_complete = False
+        learned_early = True
     if windows:
 
         def grade() -> OracleVerdict:
@@ -377,10 +389,9 @@ def _run_one(
             errors.append(f"fault recovery failed: {_describe(exc)}")
             recovered = False
 
-    learning_complete = True
     if outcome is not None and outcome.terminal_error:
         learning_complete = False
-    elif outcome is not None:
+    elif outcome is not None and not learned_early:
         # Benchmark cleanup cannot invalidate SDO's own outcome or suppress its
         # reflection. The separate recovery gate still blocks the next injection.
         try:
@@ -431,6 +442,7 @@ def _run_one(
 
 def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
     return {
+        "memory_host_activations": outcome.memory_host_activations,
         "detected_at": outcome.detected_at,
         "mitigation_applied_at": outcome.mitigation_applied_at,
         "resolved_at": outcome.resolved_at,

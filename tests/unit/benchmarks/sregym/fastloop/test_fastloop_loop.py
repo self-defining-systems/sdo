@@ -573,3 +573,28 @@ def test_incident_row_rereads_delivery_after_source_deployment(tmp_path, failed)
     persisted = load_records(config.results_path)
     assert records[0].image_delivery == persisted[0].image_delivery == "kind-load-fallback"
     assert records[0].image_delivery_reason == "mid-run registry failure"
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_continuity_learning_precedes_recovery_and_survives_row_export(tmp_path: Path, failed: bool) -> None:
+    from benchmarks.sregym.fastloop.continuity import check_activations
+    from tests.unit.benchmarks.sregym.fastloop.test_activation_continuity import trace
+
+    clock = FakeClock()
+    events = []
+
+    class ContinuousAgent(FakeAgent):
+        learn_before_recovery = True
+
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            events.append("learn")
+            checks, error = check_activations(trace(skip=failed), {"uid": "one"}, {"uid": "one"}, max_gap=1)
+            return outcome.with_learning(memory_host_activations=checks, error=error)
+
+    driver = FakeDriver(clock, events=events)
+    records = run_incidents(ContinuousAgent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    assert events.index("learn") < events.index("recover")
+    loaded = load_records(tmp_path / "incidents.jsonl")[0]
+    assert loaded.memory_host_activations == records[0].memory_host_activations
+    assert loaded.memory_host_activations[0].passed is not failed
+    assert bool(loaded.error) is failed

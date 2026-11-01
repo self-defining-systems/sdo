@@ -1405,6 +1405,8 @@ def _wait_for_verified_incident(
     summary = ""
     while clock.monotonic() < deadline:
         state = ops.runtime_state(control)
+        if clock.monotonic() >= deadline:
+            break
         observed = _observe_state(
             state,
             known=known,
@@ -1467,6 +1469,8 @@ def _wait_for_reflection_drain(
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
         state = ops.runtime_state(control)
+        if clock.monotonic() >= deadline:
+            break
         observed = _observe_state(
             state, incident_id=incident_id, timeout=min(30.0, max(0.001, deadline - clock.monotonic()))
         )

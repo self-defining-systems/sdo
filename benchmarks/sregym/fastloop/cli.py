@@ -471,9 +471,8 @@ def _sdo_agent(
         state_path=environment.state_path,
         results_dir=results_dir,
         kubeconfig=str(environment.kubeconfig),
-        verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300)
-        * args.time_scale,
-        reflection_wait_seconds=3600.0 * args.time_scale,
+        verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300),
+        reflection_wait_seconds=3600.0,
         detection_timeout_seconds=args.detection_timeout,
         checkpoint_enabled=not args.no_checkpoints,
     )
@@ -510,7 +509,9 @@ def _sdo_agent(
             composite=_composite_settings(args),
             stream_faults=stream_faults,
         )
-    return SdoPersistentAgent(settings, **agent_arguments)
+    return SdoPersistentAgent(
+        settings, **agent_arguments, keep_running=environment.app == "toy", check_continuity=environment.app == "toy"
+    )
 
 
 def _run(args: argparse.Namespace) -> int:

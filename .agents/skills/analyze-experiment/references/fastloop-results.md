@@ -133,3 +133,11 @@ A full seed-compatible cleanup intentionally removes fault-created objects. Its 
 The persistent fault gate keeps controller startup (including health refresh) separate from its 300-second resumed-baseline readiness budget. The matching maintenance `active` record starts that readiness clock once; later polls or pauses cannot restart it. Startup remains bounded by the existing lifecycle/startup budget. `controller_baseline_wait` retains the total pre-injection wait; `controller_startup_wait` and `controller_resumed_baseline_wait` split it. None belongs to incident TTM or per-incident responder/reflection usage.
 
 Warm resets require structural health and independent HTTP. Failed HTTP permits one bounded hotel-client refresh and recheck, preserving backends/memory. Failed refresh or HTTP blocks admission; restoration earns no responder credit.
+
+Toy single-fault SDO rows include `memory_host_activations`: one entry per host
+activation since injection, containing accepted commit, activation timestamp and
+latency, before/after evaluation counts, maximum/allowed gap, controller pod and
+container identity snapshots, `controller_unchanged` and `passed`. Checks cover
+the build/catch-up interval and a cadence margin before recovery maintenance.
+An empty list establishes no activation proof. Any failed check sets the row
+error and fails the run; stage timeouts use wall time, including scripted runs.
