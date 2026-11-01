@@ -919,3 +919,8 @@ including virtual request-deadline cancellation. The SDK retains Go 1.24 and
 does not use synctest. Only the shell-based generated-reference check gains an
 `integration` tag; both PR and nightly `scripts/test_go_ci.sh` run it with
 `-tags=integration` within the existing five-minute PR budget.
+Builder compiler/cache-seed process tests live in `native_integration_test.go`;
+manifest-location and prohibited-import rejection tests remain untagged.
+PR and nightly `scripts/test_go_ci.sh` already include `-tags=integration`,
+including the existing `builder/compiletest` smoke package. Nightly-only
+compilation selections and the five-minute PR deadlines are unchanged.

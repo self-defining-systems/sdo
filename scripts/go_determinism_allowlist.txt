@@ -18,11 +18,6 @@ sdo/operator/broker/subprocess_validator.go:os/exec
 sdo/operator/broker/subprocess_validator.go:time.NewTicker
 sdo/operator/broker/subprocess_validator_test.go:time.Now
 sdo/operator/broker/subprocess_validator_test.go:time.Sleep
-sdo/operator/builder/native.go:os.Environ
-sdo/operator/builder/native.go:os.Getenv
-sdo/operator/builder/native.go:os/exec
-sdo/operator/builder/native_runner.go:os/exec
-sdo/operator/builder/native_test.go:os.Getenv
 sdo/operator/cmd/sdo-operator/main.go:os.Getenv
 sdo/operator/internal/testutil/offline.go:os/exec
 sdo/operator/operatorcli/host.go:os/exec
