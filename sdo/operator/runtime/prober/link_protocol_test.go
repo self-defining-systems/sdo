@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sdo.dev/operator/runtime/internal/h2testio"
 	"strings"
 	"syscall"
 	"testing"
@@ -48,8 +49,8 @@ func TestLinkProtocols(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					// Configure a per-bubble server: unconfigured ServeConn shares error
 					// channels globally, which cannot cross synctest bubbles.
-					server := &http2.Server{}
-					if err := http2.ConfigureServer(&http.Server{}, server); err != nil {
+					server, err := h2testio.NewServer()
+					if err != nil {
 						t.Fatal(err)
 					}
 					listener := bufconn.Listen(4096)
