@@ -26,6 +26,8 @@ func (e *StageError) Unwrap() error { return e.Err }
 func RunGo(ctx context.Context, directory string, args ...string) error {
 	command := exec.CommandContext(ctx, "go", args...)
 	command.Dir = directory
+	// The workspace is a self-contained module; a caller's go.work must not select it.
+	command.Env = append(os.Environ(), "GOWORK=off")
 	if output, err := command.CombinedOutput(); err != nil {
 		return &StageError{Stage: strings.Join(args, " "), Output: strings.TrimSpace(string(output)), Err: err}
 	}

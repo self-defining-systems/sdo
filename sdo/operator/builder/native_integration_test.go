@@ -238,3 +238,19 @@ func TestBuildWorkspaceRejectsInvalidMetricsDetectors(t *testing.T) {
 		t.Fatalf("a detector with an empty metric expression must fail the build tests: %v", err)
 	}
 }
+
+func TestValidateAndBuildIgnoresCallerGoWorkspace(t *testing.T) {
+	bin := t.TempDir()
+	goCommand := filepath.Join(bin, "go")
+	// The generated workspace is its own module; a caller's go.work must not select it.
+	if err := os.WriteFile(goCommand, []byte("#!/bin/sh\ntest \"$GOWORK\" = off\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GOWORK", filepath.Join(t.TempDir(), "go.work"))
+	workspace := &Workspace{Directory: t.TempDir()}
+
+	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
+		t.Fatalf("generated workspace inherited the caller's go.work: %v", err)
+	}
+}
