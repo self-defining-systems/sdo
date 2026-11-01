@@ -460,6 +460,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		trafficObserver = &TrafficObserver{api: proberAPI, workloads: append([]string(nil), trafficWorkloads...), notify: func() { kubernetesCache.Notify(traffic.Watch) }, interval: DefaultTrafficPollInterval}
 	} else if *syntheticTraffic {
 		trafficObserver = NewTrafficObserver(proberAPI, trafficWorkloads, func() { kubernetesCache.Notify(traffic.Watch) }, 0)
+	}
+	if trafficObserver != nil {
 		trafficObserver.Clock = clock
 	}
 	// Service reachability is a routing probe, not a synthetic workload, so
