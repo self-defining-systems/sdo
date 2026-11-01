@@ -734,6 +734,11 @@ Python imports and Go compilers can run concurrently with the gate. The syntheti
 `test_proto_drift_check_generates_outside_the_source_tree` regression exercises a
 mismatching generator and requires the live source to remain unchanged.
 
+Installer process tests remain in the integration tier established by #667;
+both PR and nightly `scripts/test_go_ci.sh` use `-tags=integration`. Claim-age
+and polling seam tests use fixed clocks and injected waits in the default tier.
+The stop simulation continues using virtual time for production wait adapters.
+
 ### PR CI budget
 
 PRs and merge groups run three jobs: `checks and Python`, `Go tests`, and
@@ -889,7 +894,3 @@ not a way to remove tests from CI. PR jobs retain their five-minute deadlines.
 Memory Git-backed snapshot, inventory, ownership and validator checks require
 `integration`; PR and nightly `scripts/test_go_ci.sh` already pass that tag.
 Filesystem-only helpers and static checks remain available without it.
-Installer process tests remain in the integration tier established by #667;
-both PR and nightly `scripts/test_go_ci.sh` use `-tags=integration`. Claim-age
-and polling seam tests use fixed clocks and injected waits in the default tier.
-The stop simulation continues using virtual time for production wait adapters.
