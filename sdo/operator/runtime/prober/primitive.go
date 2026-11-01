@@ -14,7 +14,7 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 )
 
-// PrimitiveRequest names one read-only probe from the isolated prober pod.
+// PrimitiveRequest names one read-only probe through the read-only memory host.
 type PrimitiveRequest struct {
 	PodIP string             `json:"pod_ip,omitempty"`
 	To    sdk.ObjectRef      `json:"to"`

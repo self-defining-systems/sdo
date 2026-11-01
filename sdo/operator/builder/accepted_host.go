@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"errors"
+
 	"sdo.dev/operator/memory"
 )
 
@@ -16,7 +17,6 @@ func BuildAcceptedMemoryHost(ctx context.Context, config Config, commit string) 
 	if projected.AcceptedRevision != commit {
 		return nil, MemoryHostArtifact{}, errors.New("accepted revision changed before host staging")
 	}
-	config.MemoryHost = true
 	config.DiagnosticsRoot = projected.Directory
 	workspace, err := BuildWorkspace(ctx, config)
 	if err != nil {

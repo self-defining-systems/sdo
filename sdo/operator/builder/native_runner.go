@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/builder/internal/buildio"
@@ -23,7 +22,6 @@ type RunConfig struct {
 	Build              Config
 	Controller         *contractsv1alpha1.ControllerConfig
 	ResolveDiagnostics func(context.Context, string) (DiagnosticsProjection, error)
-	PublishProber      func(string, string) (string, error)
 }
 
 type DiagnosticsProjection struct {
@@ -46,7 +44,6 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 		return err
 	}
 	buildConfig := config.Build
-	buildConfig.MemoryHost = config.Controller.MemoryHost
 	buildConfig.DiagnosticsRoot = projected.Directory
 	workspace, err := BuildWorkspace(ctx, buildConfig)
 	if err != nil {
@@ -57,30 +54,20 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 	if err != nil {
 		return err
 	}
-	var prober string
-	if workspace.HasProber {
-		if config.PublishProber == nil {
-			return errors.New("traffic prober publisher is required")
-		}
-		prober, err = config.PublishProber(config.Controller.RepositoryMountPath, filepath.Join(workspace.Directory, "sdo-prober"))
-		if err != nil {
-			return err
-		}
-	}
+
 	provenance, err := buildProvenance(projected, binary)
 	if err != nil {
 		return err
 	}
-	if config.Controller.MemoryHost {
-		artifact, err := workspace.BuildMemoryHost(ctx)
-		if err != nil {
-			return err
-		}
-		config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
-		config.Controller.MemoryHostBinary = artifact.Path
-		config.Controller.MemoryHostDigest = artifact.Digest
+	artifact, err := workspace.BuildMemoryHost(ctx)
+	if err != nil {
+		return err
 	}
-	data, err := controllerConfigJSON(config, prober, provenance)
+	config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
+	config.Controller.MemoryHostBinary = artifact.Path
+	config.Controller.MemoryHostDigest = artifact.Digest
+
+	data, err := controllerConfigJSON(config, provenance)
 	if err != nil {
 		return fmt.Errorf("serialize controller config: %w", err)
 	}
@@ -89,42 +76,6 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 		return err
 	}
 	return buildio.RunController(ctx, binary, configPath, workspace.Directory)
-}
-
-// Supervise rebuilds from the accepted application tree after each normal
-// controller exit. The runtime must exit before acknowledging any closure
-// whose detector update needs an independently observed restart.
-func Supervise(ctx context.Context, config RunConfig) error {
-	if config.Controller == nil {
-		return errors.New("controller config is required")
-	}
-	if config.Controller.ExitAfterClosure || config.Controller.Duration != nil {
-		return errors.New("supervision cannot be combined with exit_after_closure or duration")
-	}
-	config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
-	if config.Controller.MemoryHost {
-		config.Controller.RestartAfterClosure = false
-		return RunOnce(ctx, config)
-	}
-	config.Controller.RestartAfterClosure = true
-	return supervise(ctx, config, RunOnce, os.Stdout)
-}
-
-// supervise announces every relaunch on out as a JSON record, which the
-// benchmark adapter reads from the controller log to know that learned
-// detectors are live again.
-func supervise(ctx context.Context, config RunConfig, run func(context.Context, RunConfig) error, out io.Writer) error {
-	for launches := 1; ; launches++ {
-		if err := run(ctx, config); err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(out, "{\"controller_supervisor\":\"relaunch\",\"launches\":%d}\n", launches); err != nil {
-			return err
-		}
-	}
 }
 
 type provenance struct {
@@ -145,13 +96,12 @@ func buildProvenance(projected DiagnosticsProjection, binary string) (provenance
 	return provenance{Fingerprint: projected.Fingerprint, ArtifactDigest: fmt.Sprintf("sha256:%x", digest), Revision: projected.AcceptedRevision}, nil
 }
 
-func controllerConfigJSON(config RunConfig, prober string, built provenance) ([]byte, error) {
+func controllerConfigJSON(config RunConfig, built provenance) ([]byte, error) {
 	if config.Controller == nil {
 		return nil, errors.New("controller config is required")
 	}
 	launch := proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
 	launch.AppRoot = config.Build.ApplicationRoot
-	launch.ProberBinary = prober
 	launch.DiagnosticsFingerprint = built.Fingerprint
 	launch.ControllerArtifactDigest = built.ArtifactDigest
 	launch.ControllerRevision = built.Revision

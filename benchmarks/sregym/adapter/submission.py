@@ -119,8 +119,7 @@ def main(argv: list[str] | None = None, *, status_check: Callable[[], IncidentSt
         status = (status_check or live_incident_status)()
         if status.state == IncidentStatusState.UNHEALTHY:
             print(
-                "mitigation not submitted: `python3 -m sdo.agents.responder.status_cli` "
-                "reports the application unhealthy.\n" + status.render(),
+                "mitigation not submitted: `sdo verify` reports the application unhealthy.\n" + status.render(),
                 file=sys.stderr,
             )
             return EXIT_VERIFICATION_FAILED

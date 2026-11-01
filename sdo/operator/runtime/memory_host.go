@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -16,7 +18,6 @@ import (
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/usage"
-	"sort"
 )
 
 // MemoryHostRPC is implemented by the host manager, which leases the active
@@ -27,23 +28,24 @@ type MemoryHostRPC interface {
 	Mitigate(context.Context, *pb.MitigateRequest) (*pb.MitigateResponse, error)
 }
 
-// MirrorSequence must identify the exact snapshot being evaluated, not merely
-// the latest informer sequence. A stale view fails at the host's barrier.
-type MirrorSequence func(sdk.DetectionContext) (uint64, error)
+// MirroredMemoryRPC holds the exact frozen-view barrier for each remote call.
+type MirroredMemoryRPC interface {
+	MemoryHostRPC
+	Capture(context.Context, sdk.DetectionContext) (memoryhost.Host, uint64, func(), error)
+}
 type RemoteMemory struct {
 	Detectors     []sdk.Detector
 	Programs      program.ProgramRegistry
-	rpc           MemoryHostRPC
-	sequence      MirrorSequence
+	rpc           MirroredMemoryRPC
 	memoryCommit  string
 	registrations []memoryhost.Registration
 }
 
-func NewRemoteMemory(ready *pb.ReadyResponse, rpc MemoryHostRPC, sequence MirrorSequence) (*RemoteMemory, error) {
-	if ready == nil || rpc == nil || sequence == nil {
-		return nil, errors.New("remote memory requires identity, transport and snapshot sequence")
+func NewRemoteMemory(ready *pb.ReadyResponse, rpc MirroredMemoryRPC) (*RemoteMemory, error) {
+	if ready == nil || rpc == nil {
+		return nil, errors.New("remote memory requires identity and mirrored transport")
 	}
-	r := &RemoteMemory{rpc: rpc, sequence: sequence, memoryCommit: ready.GetMemoryCommit()}
+	r := &RemoteMemory{rpc: rpc, memoryCommit: ready.GetMemoryCommit()}
 	seen := map[string]bool{}
 	for _, wire := range ready.Detectors {
 		spec, err := memoryhost.DecodeRegistration(wire)
@@ -327,30 +329,21 @@ func (p *remoteProgram) Mitigate(ctx context.Context, view program.ReadView, b p
 	return plan, plan.Validate()
 }
 
-// memorySnapshotRPC holds a mirror barrier and host lease across the complete
-// RPC. No later capture can change the snapshot selected by this call.
-type memorySnapshotRPC interface {
-	Capture(context.Context, sdk.DetectionContext) (memoryhost.Host, uint64, func(), error)
-}
-
+// capture retains the active host lease and exact mirror barrier through the RPC.
 func (r *RemoteMemory) capture(ctx context.Context, view sdk.DetectionContext) (MemoryHostRPC, uint64, func(), error) {
-	if mirrored, ok := r.rpc.(memorySnapshotRPC); ok {
-		host, seq, release, err := mirrored.Capture(ctx, view)
-		if err != nil {
-			return nil, 0, nil, err
-		}
-		identity, ok := host.(interface{ MemoryCommit() string })
-		if !ok || identity.MemoryCommit() != r.memoryCommit {
-			release()
-			return nil, 0, nil, errors.New("memory adapter belongs to a retired accepted revision")
-		}
-		rpc, ok := host.(MemoryHostRPC)
-		if !ok {
-			release()
-			return nil, 0, nil, errors.New("host lacks program RPCs")
-		}
-		return rpc, seq, release, nil
+	host, seq, release, err := r.rpc.Capture(ctx, view)
+	if err != nil {
+		return nil, 0, nil, err
 	}
-	seq, err := r.sequence(view)
-	return r.rpc, seq, func() {}, err
+	identity, ok := host.(interface{ MemoryCommit() string })
+	if !ok || identity.MemoryCommit() != r.memoryCommit {
+		release()
+		return nil, 0, nil, errors.New("memory adapter belongs to a retired accepted revision")
+	}
+	rpc, ok := host.(MemoryHostRPC)
+	if !ok {
+		release()
+		return nil, 0, nil, errors.New("host lacks program RPCs")
+	}
+	return rpc, seq, release, nil
 }

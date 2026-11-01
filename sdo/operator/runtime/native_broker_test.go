@@ -634,6 +634,7 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 		t.Fatal("mismatched detector revision accepted")
 	}
 	good := bad
+	good.ControllerRevision = expectation.ReflectionCommit
 	good.ObservedDetectorFingerprint = expectation.AfterDetectorFingerprint
 	if err := native.RecordControllerRollout(good); err != nil {
 		t.Fatal(err)

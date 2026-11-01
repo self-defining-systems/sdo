@@ -35,7 +35,7 @@ func (s *Server) programView(ctx context.Context, input *pb.MemoryProgramInput) 
 	if input == nil {
 		return nil, nil, errors.New("program input required")
 	}
-	snapshot, err := s.requestSnapshot(input.MirrorSequence, input.Observation)
+	snapshot, err := s.snapshot(input.MirrorSequence)
 	if err != nil {
 		return nil, nil, err
 	}

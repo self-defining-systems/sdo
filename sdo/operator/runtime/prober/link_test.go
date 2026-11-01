@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"sdo.dev/operator/runtime/prober"
@@ -83,47 +84,37 @@ func TestLinkProbeDialsFreshAndRecordsHealthyLinks(t *testing.T) {
 }
 
 func TestLinkProbeRecordsABlockedLinkWhileOthersStayHealthy(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	go func() {
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				return
+	synctest.Test(t, func(t *testing.T) {
+		var blocked atomic.Bool
+		p := newLinkProber(t, func(ctx context.Context, network string, address string) (net.Conn, error) {
+			if address == "backend" && blocked.Load() {
+				<-ctx.Done() // a NetworkPolicy drop looks like a dial that never completes
+				return nil, &net.OpError{Op: "dial", Net: network, Err: context.DeadlineExceeded}
 			}
-			_ = connection.Close()
+			client, server := net.Pipe()
+			_ = server.Close()
+			return client, nil
+		})
+		probeFor(t, p, 250*time.Millisecond)
+		blocked.Store(true)
+		probeFor(t, p, 900*time.Millisecond)
+		observations := linkObservations(t, p)
+		backend := observations["backend"]
+		if !backend.Qualified {
+			t.Fatalf("the link was reachable first, so it must be qualified")
 		}
-	}()
-	var blocked atomic.Bool
-	p := newLinkProber(t, func(ctx context.Context, network string, address string) (net.Conn, error) {
-		if address == "backend" && blocked.Load() {
-			<-ctx.Done() // a NetworkPolicy drop looks like a dial that never completes
-			return nil, &net.OpError{Op: "dial", Net: network, Err: context.DeadlineExceeded}
+		last := backend.Samples[len(backend.Samples)-3:]
+		for _, sample := range last {
+			if sample.OK || sample.Error == "" {
+				t.Fatalf("blocked link sample: %+v", sample)
+			}
 		}
-		return (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
+		for _, sample := range observations["cache"].Samples {
+			if !sample.OK {
+				t.Fatalf("an unrelated link failed: %+v", sample)
+			}
+		}
 	})
-	probeFor(t, p, 250*time.Millisecond)
-	blocked.Store(true)
-	probeFor(t, p, 900*time.Millisecond)
-	observations := linkObservations(t, p)
-	backend := observations["backend"]
-	if !backend.Qualified {
-		t.Fatalf("the link was reachable first, so it must be qualified")
-	}
-	last := backend.Samples[len(backend.Samples)-3:]
-	for _, sample := range last {
-		if sample.OK || sample.Error == "" {
-			t.Fatalf("blocked link sample: %+v", sample)
-		}
-	}
-	for _, sample := range observations["cache"].Samples {
-		if !sample.OK {
-			t.Fatalf("an unrelated link failed: %+v", sample)
-		}
-	}
 }
 
 func TestLinkProbeResetKeepsQualification(t *testing.T) {

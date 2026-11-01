@@ -48,7 +48,12 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("source", epilog="Example: " + CLI_EXAMPLES[0]).add_argument(
         "ref", metavar="Kind/namespace/name"
     )
-    commands.add_parser("verify")
+    verify = commands.add_parser(
+        "verify",
+        help="Verify current health and run a bounded traffic burst through the controller and active memory host",
+    )
+    verify.add_argument("--workload")
+    verify.add_argument("--scenario", action="append", default=[])
     commands.add_parser("rollback").add_argument("application_id")
     return parser
 
@@ -63,6 +68,11 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             if len(bindings) != len(args.bind):
                 raise ValueError("duplicate binding name")
             request["bindings"] = bindings
+    elif args.command == "verify":
+        if args.workload:
+            request["workload"] = args.workload
+        if args.scenario:
+            request["scenarios"] = args.scenario
     elif args.command == "apply":
         request["plan_ids"] = args.plan_ids
     elif args.command == "rollback":
@@ -100,6 +110,11 @@ def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
     raise TimeoutError("SDO tool response timed out")
 
 
+def verify_incident() -> dict[str, object]:
+    """Run bounded verification through the controller's incident session."""
+    return _exchange({"command": "verify"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -109,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(json.dumps(response, sort_keys=True))
     print(response.get("summary", ""))
+    if args.command == "verify":
+        return 3 if response.get("error") else (0 if response.get("healthy") else 1)
     return 1 if response.get("error") else 0
 
 

@@ -603,7 +603,7 @@ how often, and against which SLO.
 The Engine owns everything about when and how much: scheduling, arrival,
 rate and concurrency caps, timeouts, latency measurement and the random seed
 of every iteration, so a failing probe replays exactly. Generators only build
-requests and judge responses. A separate prober process runs the engine; the
+requests and judge responses. The accepted memory host runs the engine; the
 controller runtime hands its observations to detectors built with NewDetector,
 which judge each scenario against a sliding-window SLO. Nothing here knows about
 a particular application, and nothing calls an LLM.

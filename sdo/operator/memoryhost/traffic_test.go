@@ -109,3 +109,32 @@ func TestTrafficActivationFailureAndCrashRecovery(t *testing.T) {
 		}
 	})
 }
+
+type timedTrafficHost struct {
+	*fakeHost
+	run func(context.Context) (*pb.TrafficResponse, error)
+}
+
+func (h *timedTrafficHost) Traffic(ctx context.Context, _ *pb.TrafficRequest) (*pb.TrafficResponse, error) {
+	return h.run(ctx)
+}
+func TestBoundedBurstOutlivesDetectorRPCTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := NewManager(time.Second)
+		defer m.Close()
+		h := &timedTrafficHost{fakeHost: readyHost("active"), run: func(ctx context.Context) (*pb.TrafficResponse, error) {
+			select {
+			case <-time.After(45 * time.Second):
+				return &pb.TrafficResponse{}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}}
+		if err := m.Swap(context.Background(), h, "active", "sha256:abc", 1); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Traffic(context.Background(), &pb.TrafficRequest{Operation: pb.TrafficRequest_OPERATION_BURST}); err != nil {
+			t.Fatal("accepted bounded workload inherited detector timeout", err)
+		}
+	})
+}

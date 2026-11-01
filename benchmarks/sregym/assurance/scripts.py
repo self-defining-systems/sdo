@@ -71,7 +71,7 @@ def assurance_script(
             steps.append({"kind": "wait", "seconds": float(chunk)})
             seconds -= chunk
 
-    status = os.environ.get("SDO_SCRIPTED_STATUS_COMMAND", "python3 -m sdo.agents.responder.status_cli")
+    status = os.environ.get("SDO_SCRIPTED_STATUS_COMMAND", "sdo verify")
     interval = float(os.environ.get("SDO_SCRIPTED_STATUS_POLL_SECONDS", "5"))
     actions = []
     result: dict[str, Any] = {

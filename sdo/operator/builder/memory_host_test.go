@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/memoryhost/hostio"
 )
@@ -19,7 +20,7 @@ func stagedMemoryHost(t *testing.T) *Workspace {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: repository, DiagnosticsRoot: filepath.Join(repository, ".sdo", "diagnostics"), MemoryHost: true, OperatorRoot: operatorRoot})
+	workspace, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: repository, DiagnosticsRoot: filepath.Join(repository, ".sdo", "diagnostics"), OperatorRoot: operatorRoot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,4 +68,44 @@ func TestBuildMemoryHostUsesStagedMemory(t *testing.T) {
 	if err != nil || digest != artifact.Digest {
 		t.Fatal(artifact, err)
 	}
+	// Bounded evaluation also launches outside a pod using kubeconfig.
+	kubeconfig := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(kubeconfig, []byte(`apiVersion: v1
+kind: Config
+clusters:
+- name: fake
+  cluster:
+    server: http://127.0.0.1:1
+contexts:
+- name: fake
+  context:
+    cluster: fake
+    user: fake
+current-context: fake
+users:
+- name: fake
+  user: {}
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", kubeconfig)
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "")
+	var output bytes.Buffer
+	child, err := hostio.Launch(hostio.LaunchConfig{Binary: artifact.Path, Digest: artifact.Digest, Commit: "accepted", Namespace: "toy", MemoryBytes: 512 << 20, Output: &output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer child.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ready, err := child.Ready(ctx)
+	if err != nil {
+		_ = child.Close()
+		t.Fatalf("kubeconfig host startup: %v: %s", err, output.String())
+	}
+	if ready.MemoryCommit != "accepted" || ready.BinaryDigest != artifact.Digest {
+		t.Fatal("host identity differs from accepted artifact", ready)
+	}
+
 }

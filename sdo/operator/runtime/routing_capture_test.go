@@ -6,19 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/sdk/inputs"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"sdo.dev/operator/runtime/internal/testprober"
+
+	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/traffic"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -587,7 +592,7 @@ func TestRoutingCaptureRecordsHangingDialAsFailedObservation(t *testing.T) {
 				}
 				service := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 				findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: service}}
-				view := LiveReadView{Carrier: inputs.New(snapshot), Prober: inProcessProberClient(prober.Handler(p))}
+				view := LiveReadView{Carrier: inputs.New(snapshot), Prober: inProcessProberClient(testprober.Handler(p))}
 				if err := captureRoutingEvidence(context.Background(), root, incident, "open@detect", findings, view); err != nil {
 					t.Fatal(err)
 				}
@@ -670,7 +675,7 @@ func TestRoutingCaptureWaitsForSlowHealthyProber(t *testing.T) {
 			t.Fatal(err)
 		}
 		findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
-		view := LiveReadView{Carrier: inputs.New(snapshot), Prober: inProcessProberClient(prober.Handler(p))}
+		view := LiveReadView{Carrier: inputs.New(snapshot), Prober: inProcessProberClient(testprober.Handler(p))}
 		if err := captureRoutingEvidence(context.Background(), root, incident, "open@detect", findings, view); err != nil {
 			t.Fatal(err)
 		}
@@ -710,7 +715,7 @@ func TestRoutingCaptureContinuesAfterProberTransportFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := inProcessProberClient(prober.Handler(p))
+	api := inProcessProberClient(testprober.Handler(p))
 	resolutions := 0
 	client := HTTPProberClient{BaseURL: func(context.Context, bool) (string, error) {
 		resolutions++
@@ -754,4 +759,121 @@ func TestRoutingCaptureContinuesAfterProberTransportFailure(t *testing.T) {
 	if err != nil || !bytes.Contains(raw, []byte("prober unreachable")) {
 		t.Fatalf("missing transport capability note: %s %v", raw, err)
 	}
+}
+
+// HTTPProberClient calls a prober's HTTP API.
+type HTTPProberClient struct {
+	// BaseURL resolves the prober's address, for example the pod IP. After a
+	// transport error the client asks again with refresh set, so a replaced
+	// or deleted prober pod is found or recreated.
+	BaseURL func(ctx context.Context, refresh bool) (string, error)
+	Client  *http.Client
+}
+
+// StaticProberURL addresses a prober at a fixed URL.
+func StaticProberURL(url string) func(context.Context, bool) (string, error) {
+	return func(context.Context, bool) (string, error) { return url, nil }
+}
+
+func (c HTTPProberClient) do(ctx context.Context, method string, path string, body any, into any) error {
+	response, err := c.send(ctx, method, path, body, false)
+	if err != nil && ctx.Err() == nil {
+		response, err = c.send(ctx, method, path, body, true)
+	}
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 300 {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("prober %s %s: HTTP %d: %s", method, path, response.StatusCode, strings.TrimSpace(string(message)))
+	}
+	if into == nil {
+		return nil
+	}
+	return json.NewDecoder(io.LimitReader(response.Body, 32<<20)).Decode(into)
+}
+
+func (c HTTPProberClient) send(ctx context.Context, method string, path string, body any, refresh bool) (*http.Response, error) {
+	base, err := c.BaseURL(ctx, refresh)
+	if err != nil {
+		return nil, fmt.Errorf("locate prober: %w", err)
+	}
+	var payload io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		payload = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(base, "/")+path, payload)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	client := c.Client
+	if client == nil {
+		client = &http.Client{Timeout: 90 * time.Second}
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("prober %s %s: %w", method, path, err)
+	}
+	return response, nil
+}
+
+func (c HTTPProberClient) Windows(ctx context.Context) (map[string]traffic.Window, error) {
+	var response testprober.WindowsResponse
+	if err := c.do(ctx, http.MethodGet, testprober.PathWindows, nil, &response); err != nil {
+		return nil, err
+	}
+	return response.Windows, nil
+}
+
+func (c HTTPProberClient) Burst(ctx context.Context, request prober.BurstRequest) (prober.BurstResult, error) {
+	var result prober.BurstResult
+	err := c.do(ctx, http.MethodPost, testprober.PathBursts, request, &result)
+	return result, err
+}
+
+func (c HTTPProberClient) Probe(ctx context.Context, ref sdk.ObjectRef, port int32, request *program.HTTPProbe) (program.ProbeResult, error) {
+	return c.primitive(ctx, prober.PrimitiveRequest{To: ref, Port: port, HTTP: request})
+}
+
+func (c HTTPProberClient) primitive(ctx context.Context, request prober.PrimitiveRequest) (program.ProbeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return program.ProbeResult{}, err
+	}
+	// Leave half the caller's remaining time for locating the prober and the
+	// HTTP round trip, so a hanging probe returns an observation before the
+	// client cancels its request. HTTP does not carry context deadlines.
+	timeout := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = min(timeout, time.Until(deadline)/2)
+	}
+	if c.Client != nil && c.Client.Timeout > 0 {
+		timeout = min(timeout, c.Client.Timeout/2)
+	}
+	if timeout <= 0 {
+		return program.ProbeResult{}, context.DeadlineExceeded
+	}
+	request.Timeout = timeout
+	var result program.ProbeResult
+	err := c.do(ctx, http.MethodPost, testprober.PathPrimitive, request, &result)
+	return result, err
+}
+
+func (c HTTPProberClient) Reset(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, testprober.PathReset, map[string]string{}, nil)
+}
+
+// DialTargets runs one round of reachability dials in the prober.
+func (c HTTPProberClient) DialTargets(ctx context.Context, request prober.DialRequest) (prober.DialResponse, error) {
+	var response prober.DialResponse
+	err := c.do(ctx, http.MethodPost, testprober.PathDials, request, &response)
+	return response, err
+}
+func (c HTTPProberClient) ProbePod(ctx context.Context, ref sdk.ObjectRef, ip string, port int32) (program.ProbeResult, error) {
+	return c.primitive(ctx, prober.PrimitiveRequest{To: ref, Port: port, PodIP: ip})
 }

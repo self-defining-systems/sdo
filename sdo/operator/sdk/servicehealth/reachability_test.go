@@ -23,7 +23,7 @@ var (
 	readyAt    = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	observedAt = readyAt.Add(5 * time.Minute)
 	prober     = servicehealth.ProberIdentity{
-		Namespace: "sdo-control", Labels: map[string]string{"app.kubernetes.io/name": "sdo-prober"},
+		Namespace: "sdo-control", Labels: map[string]string{"app.kubernetes.io/name": "sdo-controller"},
 	}
 )
 
@@ -244,7 +244,7 @@ func TestReachabilityTargetsSkipHeadlessExternalNameUDPAndSelectorless(t *testin
 	headless.Spec.ClusterIP = corev1.ClusterIPNone
 	external := service("search-alias", map[string]string{"app": "search"})
 	external.Spec.Type = corev1.ServiceTypeExternalName
-	managed := service("sdo-prober", map[string]string{"app.kubernetes.io/name": "sdo-prober"})
+	managed := service("sdo-controller", map[string]string{"app.kubernetes.io/name": "sdo-controller"})
 	managed.Labels = map[string]string{"app.kubernetes.io/managed-by": "sdo"}
 	snapshot.ServiceList = append(snapshot.ServiceList, headless, external, service("manual", nil), managed, service("frontend", frontendLabels))
 	targets, omitted := servicehealth.ReachabilityTargets(snapshot)

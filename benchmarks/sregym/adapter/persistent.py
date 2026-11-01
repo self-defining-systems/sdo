@@ -1462,7 +1462,7 @@ def wait_for_maintenance_ack(
 def _wait_for_reflection_drain(
     ops: ClusterOps, control: str, incident_id: str, timeout: float, clock: Clock
 ) -> dict[str, Any]:
-    """Wait for broker acknowledgment, which follows any required detector rollout."""
+    """Wait for broker acknowledgment, which follows accepted memory-host activation."""
 
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
@@ -1474,21 +1474,7 @@ def _wait_for_reflection_drain(
         if observed.acknowledged:
             return state
         clock.sleep(POLL_SECONDS)
-    raise PersistentControllerError(f"incident {incident_id!r} was not reflected and rolled out within {timeout:.0f}s")
-
-
-def _relaunched_after(records: list[dict[str, Any]], incident_id: str) -> bool:
-    restarted = False
-    relaunched = False
-    for record in records:
-        if record.get("controller_closure_restart") == incident_id:
-            restarted = True
-        elif restarted and record.get("controller_supervisor") == "relaunch":
-            relaunched = True
-        elif relaunched and "controller_maintenance" in record:
-            # The relaunched controller is up and has read its maintenance mode.
-            return True
-    return False
+    raise PersistentControllerError(f"incident {incident_id!r} was not reflected and activated within {timeout:.0f}s")
 
 
 def _main(argv: list[str] | None = None) -> int:

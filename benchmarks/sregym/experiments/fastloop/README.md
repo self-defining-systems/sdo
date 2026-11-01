@@ -77,7 +77,7 @@ refresh of all affected images clears it. There is no manual flag to prefer arch
 
 Only the controller image stores Go and the offline dependency/build caches.
 The installer passes that image as the required `--toolchain-image` setting,
-independently of `--prober-image`. Direct controller launches must set it too;
+for the compiler toolchain. Direct controller launches must set it too;
 missing configuration fails before building, migration or Kubernetes access.
 Worker init containers use that image to populate a private
 emptyDir, mounted read-only into compiler-free runtime containers. The init

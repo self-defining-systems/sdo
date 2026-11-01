@@ -39,7 +39,7 @@ func TestNativeReflectionSharesIncidentSessionWithResponder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", ProberImage: "traffic-only:test", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume"}
+	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume"}
 	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
 	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", ProberImage: "traffic-only:test", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
+	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
 	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
 	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
 		t.Fatal(err)
@@ -162,7 +162,6 @@ func TestNativeStartupRejectsMissingToolchainBeforeKubernetes(t *testing.T) {
 		BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: "/workspace/app", Namespace: "default",
 		BrokerWorktreeRoot: "/workspace/worktrees", RepositoryMountPath: "/workspace", RepositoryPvc: "repository",
 		ResponderBackend: "codex", ResponderModel: "model",
-		ProberImage: "traffic-only:test",
 	}
 	client := fake.NewSimpleClientset()
 	if _, _, err := nativeBrokerFromLaunch(context.Background(), config, client); err == nil || !strings.Contains(err.Error(), "--toolchain-image") {

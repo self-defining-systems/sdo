@@ -201,13 +201,9 @@ func main() {
 		}
 		return
 	}
-	config, supervise, err := operatorcli.ParseControllerLaunch(os.Args[1:])
+	config, err := operatorcli.ParseControllerLaunch(os.Args[1:])
 	if err == nil {
-		if supervise {
-			err = builder.Supervise(context.Background(), config)
-		} else {
-			err = builder.RunOnce(context.Background(), config)
-		}
+		err = builder.RunOnce(context.Background(), config)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, err)

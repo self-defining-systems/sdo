@@ -11,9 +11,9 @@ import (
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
-// completeNativeRolloutHandoffs runs only in the newly launched controller,
-// after it has acquired the Lease and completed its first detector evaluation.
-// The trusted builder supplies binary and tree provenance in ControllerConfig.
+// completeNativeRolloutHandoffs records only provenance supplied by memoryRefresh
+// after checking the active host identity. Startup and resume never call it with
+// the stable controller build provenance.
 func completeNativeRolloutHandoffs(ctx context.Context, native NativeIncidentBroker, launch *contractsv1alpha1.ControllerConfig, appRoot string) error {
 	handoffs, err := native.PendingControllerRollouts()
 	if err != nil || len(handoffs) == 0 {

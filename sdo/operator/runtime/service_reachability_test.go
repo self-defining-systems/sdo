@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/runtime/internal/testprober"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -111,7 +113,7 @@ func TestReachabilityObserverFeedsTheDetectorFromSnapshotDerivedTargets(t *testi
 	}
 	snapshots := &mutableSnapshots{snapshot: reachabilityApp(8083)}
 	var notified atomic.Int32
-	identity := servicehealth.ProberIdentity{Namespace: "sdo-control", Labels: map[string]string{"app.kubernetes.io/name": "sdo-prober"}}
+	identity := servicehealth.ProberIdentity{Namespace: "sdo-control", Labels: map[string]string{"app.kubernetes.io/name": "sdo-controller"}}
 	observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{
 		Prober: reachabilityDirect{p}, Snapshots: snapshots, Notify: func() { notified.Add(1) }, Identity: identity,
 	})
@@ -182,7 +184,7 @@ func TestHTTPProberClientDialsTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(prober.Handler(p))
+	server := httptest.NewServer(testprober.Handler(p))
 	defer server.Close()
 	client := HTTPProberClient{BaseURL: StaticProberURL(server.URL)}
 	response, err := client.DialTargets(context.Background(), prober.DialRequest{
@@ -237,12 +239,12 @@ func TestEvaluateOnceCollectsReachabilityRounds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			server := httptest.NewServer(prober.Handler(p))
+			server := httptest.NewServer(testprober.Handler(p))
 			defer server.Close()
 			var stdout bytes.Buffer
 			err = RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
-				Args:     []string{"--evaluate-once", "--namespace", "shop", "--prober-url", server.URL},
-				Stdout:   &stdout,
+				Args:    []string{"--evaluate-once", "--namespace", "shop"},
+				Traffic: HTTPProberClient{BaseURL: StaticProberURL(server.URL)}, Stdout: &stdout,
 				Provider: staticProvider{snapshot: reachabilityApp(8083)},
 			})
 			if err != nil {
@@ -266,15 +268,14 @@ func TestEvaluateOnceCollectsReachabilityRounds(t *testing.T) {
 	}
 }
 
-func TestEvaluateOnceSkipsReachabilityWithoutAProber(t *testing.T) {
+func TestEvaluateOnceRejectsReachabilityWithoutAHost(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
 	err := RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
 		Args: []string{"--evaluate-once", "--namespace", "shop"}, Stdout: &stdout, Stderr: &stderr,
 		Provider: staticProvider{snapshot: reachabilityApp(8083)},
 	})
-	if err != nil || !bytes.Contains(stdout.Bytes(), []byte(`"status":"clear"`)) ||
-		!bytes.Contains(stderr.Bytes(), []byte("service reachability skipped")) {
+	if err == nil {
 		t.Fatalf("err %v stdout %q stderr %q", err, stdout.String(), stderr.String())
 	}
 }

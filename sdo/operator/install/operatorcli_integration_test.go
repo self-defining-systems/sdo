@@ -25,11 +25,11 @@ func TestInstallerNativeJobPreservesBrokerAndMountModeInChildConfig(t *testing.T
 	if len(container.Command) != 1 || container.Command[0] != "/usr/local/bin/sdo-operator" {
 		t.Fatalf("native command=%v", container.Command)
 	}
-	launch, supervise, err := operatorcli.ParseControllerLaunch(container.Args)
+	launch, err := operatorcli.ParseControllerLaunch(container.Args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !supervise || launch.Controller.GetBrokerMode() != "native" || launch.Controller.GetWorkerMountMode() != "proposal-only" {
+	if launch.Controller.GetBrokerMode() != "native" || launch.Controller.GetWorkerMountMode() != "proposal-only" {
 		t.Fatalf("native mode lost at child boundary: %+v", launch.Controller)
 	}
 	if launch.Controller.GetResponderModel() != "gpt-test" || launch.Controller.GetResponderBackend() != "codex" {
@@ -172,7 +172,7 @@ func TestHealthyBaselineIsForwardedAcrossOperateAndControllerJobs(t *testing.T) 
 	if !contains(plan.Job.Spec.Template.Spec.Containers[0].Args, "--healthy-baseline") {
 		t.Fatal("controller Job lost healthy baseline setting")
 	}
-	controllerLaunch, _, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	controllerLaunch, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil || !controllerLaunch.Controller.GetHealthyBaseline() {
 		t.Fatalf("controller child lost healthy baseline: %+v, %v", controllerLaunch.Controller, err)
 	}
@@ -215,7 +215,7 @@ func TestMetricsURLIsForwardedAcrossOperateAndControllerJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controllerLaunch, _, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	controllerLaunch, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil || controllerLaunch.Controller.GetMetricsUrl() != cfg.MetricsURL {
 		t.Fatalf("controller child lost the metrics URL: %+v, %v", controllerLaunch.Controller, err)
 	}

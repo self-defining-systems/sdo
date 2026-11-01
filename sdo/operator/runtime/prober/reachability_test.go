@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/runtime/internal/testprober"
+
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
@@ -120,11 +122,11 @@ func TestClassifyDialError(t *testing.T) {
 
 func TestDialTargetsEndpointValidatesRequests(t *testing.T) {
 	p, _ := reachabilityProber(t)
-	server := httptest.NewServer(prober.Handler(p))
+	server := httptest.NewServer(testprober.Handler(p))
 	defer server.Close()
 	post := func(request prober.DialRequest) *http.Response {
 		body, _ := json.Marshal(request)
-		response, err := http.Post(server.URL+prober.PathDials, "application/json", bytes.NewReader(body))
+		response, err := http.Post(server.URL+testprober.PathDials, "application/json", bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}

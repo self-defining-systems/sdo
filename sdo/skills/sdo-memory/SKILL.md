@@ -60,3 +60,13 @@ sdo-operator memory check [--json] [--decision FILE]
   change is wrong or out of scope: revert it instead of working around the validator.
 
 Read [validator rules](references/rules.md) when a diagnostic mentions a layout, ownership, or schema rule.
+
+## Incident verification
+
+Run `sdo verify` before returning a completed repair. It sends an incident tool
+request to the controller, which runs the accepted bounded traffic workload in
+the active memory host and independently evaluates current health. Optional
+`--workload NAME` and repeated `--scenario ID` select the bounded workload.
+Exit codes are 0 healthy, 1 unhealthy, and 3 unavailable. The host is read-only;
+only the controller applies plans. Agents must reach accepted memory only through
+`sdo` incident tools, never a host socket or a prober URL.

@@ -64,13 +64,3 @@ func SeedGoBuildCache(ctx context.Context) error {
 	}
 	return nil
 }
-
-func BuildProber(ctx context.Context, directory string) error {
-	command := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", filepath.Join(directory, "sdo-prober"), "./cmd/prober")
-	command.Dir = directory
-	command.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("go build prober: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return nil
-}

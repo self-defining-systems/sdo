@@ -235,7 +235,7 @@ func Resources(c Config) (Plan, error) {
 		rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "delete"),
 		rule("", []string{"services", "pods", "endpoints", "events", "persistentvolumeclaims", "serviceaccounts"}, "get", "list", "watch"),
 		rule("", []string{"pods/log"}, "get"),
-		rule("", []string{"pods", "services"}, "create", "delete"),
+		rule("", []string{"pods"}, "delete"),
 		rule("apps", []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, "get", "list", "watch"),
 		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list", "watch"),
 		rule("policy", []string{"poddisruptionbudgets"}, "get", "list", "watch"),
@@ -244,9 +244,7 @@ func Resources(c Config) (Plan, error) {
 		rule("coordination.k8s.io", []string{"leases"}, "get", "create", "update", "patch"),
 		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "delete"),
 		rule("batch", []string{"cronjobs"}, "get", "list", "watch"),
-		// The routing/traffic prober still owns a NetworkPolicy independently
-		// of broker validation. Keep its lifecycle grants and informer reads.
-		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "list", "watch", "create", "update", "delete"),
+		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "list", "watch"),
 		rule("networking.k8s.io", []string{"ingresses"}, "get", "list", "watch"),
 	}
 	clusterName := "sdo-cluster-" + control
@@ -367,7 +365,7 @@ func controllerJob(c Config) *batchv1.Job {
 	args := []string{
 		"controller", "--app", "/workspace/application", "--namespace", c.Namespace,
 		"--application", c.Application, "--responder-image", c.ResponderImage,
-		"--toolchain-image", c.ControllerImage, "--prober-image", c.ControllerImage, "--repository-pvc", c.RepositoryPVC,
+		"--toolchain-image", c.ControllerImage, "--repository-pvc", c.RepositoryPVC,
 		"--repository-mount-path", "/workspace", "--credentials-secret", c.CredentialsSecret,
 		"--worktree-root", "/workspace/worktrees", "--response-timeout", fmt.Sprintf("%ds", c.TimeoutSeconds),
 		"--verification-timeout", fmt.Sprintf("%ds", verificationTimeout(c)),
@@ -429,9 +427,6 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-directory", c.registrationDirectory())
-	}
-	if !hasArg(args, "--exit-after-closure") && !hasArg(args, "--duration") {
-		args = append(args, "--supervise")
 	}
 	ttl, backoff := int32(600), int32(6)
 	job := &batchv1.Job{

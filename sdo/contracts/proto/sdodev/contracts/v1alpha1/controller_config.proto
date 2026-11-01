@@ -19,7 +19,8 @@ import "google/protobuf/duration.proto";
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 message ControllerConfig {
-  bool memory_host = 74;
+  reserved 74;
+  reserved "memory_host";
   string memory_host_binary = 75;
   string memory_host_digest = 76;
   // Observation and identity.
@@ -68,15 +69,19 @@ message ControllerConfig {
   // clean_responder_helpers, state_baseline are true) use `optional` so an unset
   // field keeps the controller default rather than flipping to false.
   bool exit_after_closure = 29;
-  bool restart_after_closure = 30;
+  reserved 30;
+  reserved "restart_after_closure";
   string maintenance_configmap = 31;
   google.protobuf.Duration maintenance_poll_interval = 32;
   google.protobuf.Duration resume_sync_timeout = 33;
   optional bool synthetic_traffic = 34;
   google.protobuf.Duration synthetic_traffic_warmup = 35;
-  string prober_binary = 36;
-  string prober_image = 37;
-  string prober_url = 38;
+  reserved 36;
+  reserved "prober_binary";
+  reserved 37;
+  reserved "prober_image";
+  reserved 38;
+  reserved "prober_url";
   optional bool clean_responder_helpers = 39;
   optional bool state_baseline = 40;
 

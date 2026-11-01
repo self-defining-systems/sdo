@@ -5,17 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
+	"sdo.dev/operator/runtime/internal/testprober"
 
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
@@ -71,7 +67,7 @@ func runProber(t *testing.T, application http.Handler) HTTPProberClient {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { p.Run(ctx); close(done) }()
-	api := httptest.NewServer(prober.Handler(p))
+	api := httptest.NewServer(testprober.Handler(p))
 	t.Cleanup(func() { cancel(); <-done; api.Close() })
 	return HTTPProberClient{BaseURL: StaticProberURL(api.URL)}
 }
@@ -113,13 +109,13 @@ func TestObserverNotifiesOnlyWhileFailuresAreInTheWindow(t *testing.T) {
 				}
 				var mu sync.Mutex
 				api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.Method != http.MethodGet || r.URL.Path != prober.PathWindows {
+					if r.Method != http.MethodGet || r.URL.Path != testprober.PathWindows {
 						http.NotFound(w, r)
 						return
 					}
 					mu.Lock()
 					defer mu.Unlock()
-					if err := json.NewEncoder(w).Encode(prober.WindowsResponse{Windows: map[string]traffic.Window{"health": window}}); err != nil {
+					if err := json.NewEncoder(w).Encode(testprober.WindowsResponse{Windows: map[string]traffic.Window{"health": window}}); err != nil {
 						t.Errorf("encode windows: %v", err)
 					}
 				}))
@@ -211,7 +207,7 @@ func TestControllerOpensIncidentFromFailingSyntheticTraffic(t *testing.T) {
 				Scenario: scenario.Describe(), Qualified: true, Samples: []traffic.Sample{sample, sample, sample},
 			})
 		}
-		if err := json.NewEncoder(w).Encode(prober.WindowsResponse{Windows: map[string]traffic.Window{"health": window}}); err != nil {
+		if err := json.NewEncoder(w).Encode(testprober.WindowsResponse{Windows: map[string]traffic.Window{"health": window}}); err != nil {
 			t.Errorf("encode windows: %v", err)
 		}
 	}))
@@ -259,156 +255,5 @@ func TestControllerOpensIncidentFromFailingSyntheticTraffic(t *testing.T) {
 	}
 	if strings.Join(rules, ",") != "scenario-slo.recommend,scenario-slo.search" {
 		t.Fatalf("incident must name every failing scenario, got %v", rules)
-	}
-}
-
-func proberPodConfig(t *testing.T, client *fake.Clientset) *ProberPod {
-	t.Helper()
-	mount := t.TempDir()
-	binary := filepath.Join(mount, ".sdo-prober", "abc", "sdo-prober")
-	if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(binary, []byte("prober build 1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return &ProberPod{
-		Client: client, Namespace: "hotel-reservation-sdo", AppNamespace: "hotel-reservation", Image: "sdo-controller:v0.1.0",
-		RepositoryPVC: "repo", RepositoryMountPath: mount, RepositoryPVCSubPath: "tenant", Binary: binary,
-		ReadyTimeout: 300 * time.Millisecond,
-	}
-}
-
-func TestProberPodIsIsolated(t *testing.T) {
-	policy, pod, err := proberPodConfig(t, fake.NewSimpleClientset()).Manifests()
-	if err != nil {
-		t.Fatalf("manifests: %v", err)
-	}
-	spec := pod.Spec
-	container := spec.Containers[0]
-	if spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
-		t.Fatalf("the prober must not receive Kubernetes credentials")
-	}
-	if container.Resources.Limits.Cpu().IsZero() || container.Resources.Limits.Memory().IsZero() ||
-		!*container.SecurityContext.ReadOnlyRootFilesystem || *container.SecurityContext.AllowPrivilegeEscalation {
-		t.Fatalf("the prober must be resource limited and locked down: %+v", container)
-	}
-	mount := container.VolumeMounts[0]
-	if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-prober/abc" || !spec.Volumes[0].PersistentVolumeClaim.ReadOnly ||
-		container.Command[0] != "/opt/sdo-prober/sdo-prober" {
-		t.Fatalf("the prober must mount only its binary, read-only: %+v %+v", mount, container.Command)
-	}
-	if strings.Join(container.Args, " ") != "--namespace hotel-reservation --listen :8080" {
-		t.Fatalf("prober args: %v", container.Args)
-	}
-	egress := policy.Spec.Egress
-	if len(policy.Spec.PolicyTypes) != 2 || len(egress) != 2 ||
-		egress[0].To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "hotel-reservation" ||
-		egress[1].Ports[0].Port.IntValue() != 53 {
-		t.Fatalf("egress must reach only the application namespace and DNS: %+v", policy.Spec)
-	}
-}
-
-func TestProberPodEnsureReusesAMatchingProberAndReplacesAStaleOne(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	pods := client.CoreV1().Pods("hotel-reservation-sdo")
-	config := proberPodConfig(t, client)
-	_, desired, err := config.Manifests()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ready := desired.DeepCopy()
-	ready.Status = corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.7",
-		Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}
-	if _, err := pods.Create(context.Background(), ready, metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	address, err := config.Ensure(context.Background())
-	if err != nil || address != "http://10.0.0.7:8080" {
-		t.Fatalf("a ready prober with the current binary must be reused: %q %v", address, err)
-	}
-	if cached, _ := config.Address(context.Background(), false); cached != address {
-		t.Fatalf("address must be cached, got %q", cached)
-	}
-
-	stale := proberPodConfig(t, client)
-	if err := os.WriteFile(stale.Binary, []byte("prober build 2"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := stale.Ensure(context.Background()); err == nil || !strings.Contains(err.Error(), "not ready") {
-		t.Fatalf("a replaced prober is recreated and awaited, got %v", err)
-	}
-	replaced, err := pods.Get(context.Background(), ProberName, metav1.GetOptions{})
-	if err != nil || replaced.Labels[proberFingerprintLabel] == ready.Labels[proberFingerprintLabel] {
-		t.Fatalf("a changed binary must replace the prober pod: %+v %v", replaced.Labels, err)
-	}
-	if _, err := client.NetworkingV1().NetworkPolicies("hotel-reservation-sdo").Get(context.Background(), ProberName, metav1.GetOptions{}); err != nil {
-		t.Fatalf("the prober NetworkPolicy must exist: %v", err)
-	}
-}
-
-// A responder can run for many minutes. A pod IP handed to it at dispatch goes
-// stale when the prober pod is replaced, and every `sdo incident status` then
-// times out, so the responder gets the prober's stable Service address.
-func TestResponderGetsAStableProberAddressThatSurvivesPodReplacement(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	config := proberPodConfig(t, client)
-	_, desired, err := config.Manifests()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ready := desired.DeepCopy()
-	ready.Status = corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.7",
-		Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}
-	if _, err := client.CoreV1().Pods("hotel-reservation-sdo").Create(context.Background(), ready, metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-
-	environment := ProberEnvironment(config.ServiceAddress)(context.Background())
-
-	if got := environment[ProberURLEnvironment]; got != "http://sdo-prober.hotel-reservation-sdo.svc:8080" {
-		t.Fatalf("responder must get the prober Service address, got %q", got)
-	}
-	service, err := client.CoreV1().Services("hotel-reservation-sdo").Get(context.Background(), ProberName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("the prober Service must exist: %v", err)
-	}
-	if service.Spec.Selector["app.kubernetes.io/name"] != ProberName || service.Spec.Ports[0].Port != 8080 {
-		t.Fatalf("the Service must select the prober pod on its API port: %+v", service.Spec)
-	}
-}
-
-func TestProberEnvironmentTellsTheResponderWhereToVerify(t *testing.T) {
-	environment := ProberEnvironment(StaticProberURL("http://10.0.0.7:8080"))(context.Background())
-	if environment[ProberURLEnvironment] != "http://10.0.0.7:8080" || len(environment) != 1 {
-		t.Fatalf("responder must receive the prober URL: %v", environment)
-	}
-	if got := ProberEnvironment(nil)(context.Background()); len(got) != 0 {
-		t.Fatalf("without synthetic traffic the responder gets no prober URL: %v", got)
-	}
-	unreachable := func(context.Context, bool) (string, error) { return "", context.DeadlineExceeded }
-	if got := ProberEnvironment(unreachable)(context.Background()); len(got) != 0 {
-		t.Fatalf("an unresolvable prober must not block dispatch: %v", got)
-	}
-}
-
-func TestProberPodPrimitiveOnlyModeChangesFingerprint(t *testing.T) {
-	active := proberPodConfig(t, fake.NewSimpleClientset())
-	activeFingerprint, err := active.Fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	disabled := &ProberPod{Client: active.Client, Namespace: active.Namespace, AppNamespace: active.AppNamespace,
-		Image: active.Image, RepositoryPVC: active.RepositoryPVC, RepositoryMountPath: active.RepositoryMountPath,
-		RepositoryPVCSubPath: active.RepositoryPVCSubPath, Binary: active.Binary, DisableSyntheticTraffic: true}
-	_, pod, err := disabled.Manifests()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pod.Labels[proberFingerprintLabel] == activeFingerprint {
-		t.Fatal("disabling workloads must replace a prober that still runs them")
-	}
-	if got := strings.Join(pod.Spec.Containers[0].Args, " "); !strings.Contains(got, "--synthetic-traffic=false") {
-		t.Fatalf("workloads remain enabled: %s", got)
 	}
 }

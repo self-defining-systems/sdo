@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/runtime/internal/testprober"
+
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -241,14 +243,14 @@ func TestKeepAliveConnectionsWouldMaskABlockedListener(t *testing.T) {
 func TestHandlerServesWindowsBurstsAndReset(t *testing.T) {
 	p := newProber(t, &app{})
 	probeFor(t, p, 300*time.Millisecond)
-	api := httptest.NewServer(prober.Handler(p))
+	api := httptest.NewServer(testprober.Handler(p))
 	t.Cleanup(api.Close)
 
-	response, err := http.Get(api.URL + prober.PathWindows)
+	response, err := http.Get(api.URL + testprober.PathWindows)
 	if err != nil {
 		t.Fatalf("get windows: %v", err)
 	}
-	var windows prober.WindowsResponse
+	var windows testprober.WindowsResponse
 	if err := json.NewDecoder(response.Body).Decode(&windows); err != nil {
 		t.Fatalf("decode windows: %v", err)
 	}
@@ -257,7 +259,7 @@ func TestHandlerServesWindowsBurstsAndReset(t *testing.T) {
 		t.Fatalf("windows must round-trip with the workload seed: %+v", windows)
 	}
 
-	response, err = http.Post(api.URL+prober.PathBursts, "application/json", bytes.NewBufferString(`{"scenarios": ["home"]}`))
+	response, err = http.Post(api.URL+testprober.PathBursts, "application/json", bytes.NewBufferString(`{"scenarios": ["home"]}`))
 	if err != nil {
 		t.Fatalf("post burst: %v", err)
 	}
@@ -267,7 +269,7 @@ func TestHandlerServesWindowsBurstsAndReset(t *testing.T) {
 	}
 	response.Body.Close()
 
-	response, err = http.Post(api.URL+prober.PathReset, "application/json", nil)
+	response, err = http.Post(api.URL+testprober.PathReset, "application/json", nil)
 	if err != nil || response.StatusCode != http.StatusNoContent {
 		t.Fatalf("reset: %v %v", response, err)
 	}

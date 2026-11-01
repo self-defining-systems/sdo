@@ -6,11 +6,11 @@ package compiletest
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sdo.dev/operator/builder"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/builder"
 )
 
 func TestBuildWorkspaceCompilesApplicationDetectors(t *testing.T) {
@@ -33,11 +33,5 @@ func TestBuildWorkspaceCompilesApplicationDetectors(t *testing.T) {
 	}
 	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
 		t.Fatalf("generated workspace does not compile: %v", err)
-	}
-	if !workspace.HasProber {
-		t.Fatal("an application without traffic generators still needs routing probes")
-	}
-	if output, err := exec.Command(filepath.Join(workspace.Directory, "sdo-prober"), "--check").CombinedOutput(); err != nil {
-		t.Fatalf("generated no-traffic prober cannot start: %v: %s", err, output)
 	}
 }

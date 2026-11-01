@@ -64,7 +64,7 @@ func TestBuildWorkspaceAcceptsOpaqueDiagnosticsProjection(t *testing.T) {
 	}
 }
 
-func TestBuildWorkspaceCompilesIsolatedTrafficProber(t *testing.T) {
+func TestBuildWorkspaceCompilesTrafficInMemoryHost(t *testing.T) {
 	app := t.TempDir()
 	source := filepath.Join("..", "..", "..", "benchmarks", "sregym", "experiments", "assurance", "seeds", "hotel_reservation_30e023d", "operational_memory", "diagnostics")
 	diagnostics := filepath.Join(app, ".sdo", "diagnostics")
@@ -80,13 +80,11 @@ func TestBuildWorkspaceCompilesIsolatedTrafficProber(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer workspace.Close()
-	if !workspace.HasProber {
-		t.Fatal("traffic generators should create a prober")
-	}
-	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
+
+	if _, err := workspace.BuildMemoryHost(context.Background()); err != nil {
 		t.Fatalf("traffic prober did not build: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(workspace.Directory, "sdo-prober")); err != nil {
+	if _, err := os.Stat(filepath.Join(workspace.Directory, "sdo-memory-host")); err != nil {
 		t.Fatal(err)
 	}
 }

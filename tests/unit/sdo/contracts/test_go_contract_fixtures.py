@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 
-from sdo.agents.responder.incident_status import _controller_view
 from sdo.contracts import (
     BrokerLedger,
     ControllerState,
@@ -71,9 +70,9 @@ def test_every_go_fixture_is_present_and_null_free() -> None:
 def test_incident_status_accepts_the_controllers_published_view(name: str) -> None:
     raw = _raw(name)
 
-    view, reason = _controller_view("demo/sdo-controller-state", lambda _: json.dumps({"incident_view": raw}), None)
+    view = from_dict(IncidentView, raw)
 
-    assert view is not None, reason
+    assert view is not None
     assert view == parse_json(_text(name), IncidentView())
 
 
@@ -127,11 +126,11 @@ def test_the_controllers_persisted_state_is_protojson_the_status_command_reads()
     text = _text("controller_state.json")
 
     state = parse_json(text, ControllerState())
-    view, reason = _controller_view("demo/sdo-controller-state", lambda _: text, None)
+    view = state.incident_view
 
     assert state.incident_open
     assert state.pending_closure.request.incident_id == state.incident_request.incident_id
-    assert view is not None, reason
+    assert view is not None
     assert view == state.incident_view
     assert [finding.fingerprint for finding in view.blocking_findings] == ["fp"]
 

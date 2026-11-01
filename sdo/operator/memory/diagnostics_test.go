@@ -113,24 +113,6 @@ func TestAcceptedDiagnosticsRejectsDirtyProgramMemory(t *testing.T) {
 	}
 }
 
-func TestPublishProberUsesEdgeOwnedCachePath(t *testing.T) {
-	mount := t.TempDir()
-	binary := filepath.Join(t.TempDir(), "prober")
-	if err := os.WriteFile(binary, []byte("test-prober"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	published, err := PublishProber(mount, binary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Dir(filepath.Dir(published)) != filepath.Join(mount, ".sdo-prober") {
-		t.Fatalf("unexpected cache location: %s", published)
-	}
-	if info, err := os.Stat(published); err != nil || info.Mode().Perm() != 0o555 {
-		t.Fatalf("published prober permissions: %v %v", info, err)
-	}
-}
-
 func gitCommand(t *testing.T, root string, args ...string) {
 	t.Helper()
 	command := exec.Command("git", args...)

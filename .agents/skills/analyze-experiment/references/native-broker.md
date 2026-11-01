@@ -133,7 +133,7 @@ success per outcome; failed live fast paths roll back and block revision trust.
 Validator-image identity is retired from current native receipts. Controller and responder image identities remain; historical `validator_image` fields do not establish current acceptance. Broker compilation executes the current controller binary in a bounded subprocess.
 
 
-With experimental `--memory-host`, accepted-memory activation does not restart the
+For every native controller, accepted-memory activation does not restart the
 controller. Correlate `memory_host_activation` log commit/digest and
 `activation_latency_ms` with the native ledger's matching accepted revision and
 `memory_host_activation` phase. The temporary `rollout_receipts` wire field holds
@@ -141,7 +141,8 @@ host executable provenance in this mode; it does not prove a controller rollout.
 `controller_revision` in the activation log remains the original controller build.
 Never infer that a learned detector is live from acceptance alone: candidate
 build/catch-up failures leave the previous host active and closure unacknowledged.
-Flag-off runs retain the existing restart receipts and supervisor behavior.
+There is no flag-off path or restart supervisor. Startup and resume cannot record
+a controller artifact as a host activation. Source-deployment receipts remain separate.
 
 Memory-host observations contain optional input windows only. Kubernetes object
 state is selected by the completed mirror sequence; no inline snapshot fallback
