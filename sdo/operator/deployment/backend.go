@@ -1,14 +1,13 @@
 package deployment
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/deployment/internal/deploymentio"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +23,8 @@ type CommandBackend struct {
 	KubectlBinary string
 	KubeContext   string
 	ObserveLimit  time.Duration
+	Run           func(context.Context, string, []string, []byte) ([]byte, error)
+	Wait          func(context.Context, time.Duration) error
 }
 
 func (b CommandBackend) docker() string {
@@ -49,8 +50,7 @@ func (b CommandBackend) BuildImage(ctx context.Context, _ string, build *contrac
 	}
 	defer os.RemoveAll(metadataDir)
 	metadata := filepath.Join(metadataDir, "metadata.json")
-	command := exec.CommandContext(ctx, b.docker(), "buildx", "build", "--push", "--metadata-file", metadata, "--file", build.DockerfilePath, "--tag", build.Image, build.ContextPath)
-	output, err := command.CombinedOutput()
+	output, err := b.run(ctx, b.docker(), []string{"buildx", "build", "--push", "--metadata-file", metadata, "--file", build.DockerfilePath, "--tag", build.Image, build.ContextPath}, nil)
 	if err != nil {
 		return "", fmt.Errorf("push image %s: %w: %s", build.Image, err, strings.TrimSpace(string(output)))
 	}
@@ -75,9 +75,7 @@ func (b CommandBackend) Apply(ctx context.Context, documents []byte) error {
 		return errors.New("deployment manifests are empty")
 	}
 	args := b.kubectlArgs("apply", "--server-side", "--force-conflicts", "--field-manager=sdo-deployer", "--filename=-")
-	command := exec.CommandContext(ctx, b.kubectl(), args...)
-	command.Stdin = bytes.NewReader(documents)
-	output, err := command.CombinedOutput()
+	output, err := b.run(ctx, b.kubectl(), args, documents)
 	if err != nil {
 		return fmt.Errorf("apply Kubernetes manifests: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -98,7 +96,7 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 	var lastErr error
 	for {
 		args := b.kubectlArgs("get", parts[0], parts[2], "--namespace", parts[1], "--output=json")
-		output, err := exec.CommandContext(bounded, b.kubectl(), args...).CombinedOutput()
+		output, err := b.run(bounded, b.kubectl(), args, nil)
 		if err != nil {
 			lastErr = fmt.Errorf("get workload %s: %w: %s", resourceID, err, strings.TrimSpace(string(output)))
 		} else {
@@ -111,10 +109,8 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 			}
 			lastErr = fmt.Errorf("workload %s has not completed its rollout", resourceID)
 		}
-		select {
-		case <-bounded.Done():
-			return WorkloadObservation{}, fmt.Errorf("observe workload %s: %w: %v", resourceID, bounded.Err(), lastErr)
-		case <-time.After(2 * time.Second):
+		if err := b.wait(bounded, 2*time.Second); err != nil {
+			return WorkloadObservation{}, fmt.Errorf("observe workload %s: %w: %v", resourceID, err, lastErr)
 		}
 	}
 }
@@ -212,4 +208,17 @@ func objectInt(parent map[string]any, key string) int {
 	default:
 		return 0
 	}
+}
+
+func (b CommandBackend) run(ctx context.Context, name string, args []string, input []byte) ([]byte, error) {
+	if b.Run != nil {
+		return b.Run(ctx, name, args, input)
+	}
+	return deploymentio.Run(ctx, name, args, input)
+}
+func (b CommandBackend) wait(ctx context.Context, d time.Duration) error {
+	if b.Wait != nil {
+		return b.Wait(ctx, d)
+	}
+	return deploymentio.Wait(ctx, d)
 }

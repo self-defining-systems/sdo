@@ -7,8 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"regexp"
+	"sdo.dev/operator/deployment/internal/deploymentio"
 	"strings"
 
 	"google.golang.org/protobuf/proto"
@@ -48,7 +48,7 @@ func (registry *Registry) VerifyAccepted(ctx context.Context, acceptedCommit, na
 		return lifecycle.DeploymentReceipt{}, fmt.Errorf("deployment strategy %q cannot reverify accepted source", prior.StrategyID)
 	}
 	git := func(args ...string) (string, error) {
-		output, err := exec.CommandContext(ctx, "git", append([]string{"-C", registry.AcceptedRoot}, args...)...).CombinedOutput()
+		output, err := deploymentio.Run(ctx, "git", append([]string{"-C", registry.AcceptedRoot}, args...), nil)
 		if err != nil {
 			return "", fmt.Errorf("accepted git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 		}

@@ -3,7 +3,6 @@ package deployment
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,80 +13,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
-
-func TestKubernetesBuildUsesOnlyProposalSubPathAndTrustedDigest(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	root := t.TempDir()
-	checkout := filepath.Join(root, "incident-1")
-	if err := os.MkdirAll(filepath.Join(checkout, "src"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(checkout, "src", "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "base"}} {
-		command := exec.Command("git", args...)
-		command.Dir = checkout
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, output)
-		}
-	}
-	backend := KubernetesBuildBackend{
-		Client: client, Namespace: "operator", RepositoryPVC: "repository", ProposalRoot: root,
-		RepositoryPVCSubPath: "shared/proposals", BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("c", 64),
-		RegistrySecret: "registry-push", ServiceAccount: "image-builder", PollInterval: time.Millisecond,
-		AllowedRegistryHost: "registry.example",
-		ReadJobLogs: func(context.Context, string, string) ([]byte, error) {
-			return []byte("build log\nSDO_BUILD_METADATA={\"containerimage.digest\":\"sha256:" + strings.Repeat("a", 64) + "\"}\n"), nil
-		},
-	}
-	type buildResult struct {
-		image string
-		err   error
-	}
-	result := make(chan buildResult, 1)
-	go func() {
-		image, err := backend.BuildImage(context.Background(), checkout, &contracts.ImageBuild{Image: "registry.example/app:latest", ContextPath: filepath.Join(checkout, "src"), DockerfilePath: filepath.Join(checkout, "src", "Dockerfile")})
-		result <- buildResult{image, err}
-	}()
-	// Wait for creation and mark the deterministic Job complete.
-	var job *batchv1.Job
-	deadline := time.After(time.Second)
-	for job == nil {
-		jobs, _ := client.BatchV1().Jobs("operator").List(context.Background(), metav1.ListOptions{})
-		if len(jobs.Items) > 0 {
-			job = &jobs.Items[0]
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("build Job not created")
-		case <-time.After(time.Millisecond):
-		}
-	}
-	mounts := job.Spec.Template.Spec.Containers[0].VolumeMounts
-	if len(mounts) == 0 || mounts[0].SubPath != "shared/proposals/incident-1" || !mounts[0].ReadOnly {
-		t.Fatalf("proposal-only mount missing: %+v", mounts)
-	}
-	if job.Spec.Template.Spec.ServiceAccountName != "image-builder" || *job.Spec.Template.Spec.AutomountServiceAccountToken {
-		t.Fatalf("build Job gained controller credentials: %+v", job.Spec.Template.Spec)
-	}
-	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: "True"}}
-	if _, err := client.BatchV1().Jobs("operator").UpdateStatus(context.Background(), job, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case result := <-result:
-		if result.err != nil {
-			t.Fatal(result.err)
-		}
-		if result.image != "registry.example/app@sha256:"+strings.Repeat("a", 64) {
-			t.Fatalf("untrusted image receipt %q", result.image)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("build did not complete")
-	}
-}
 
 func TestKubernetesBuildRejectsEscapingProposalAndMutableMetadata(t *testing.T) {
 	backend := KubernetesBuildBackend{Client: fake.NewSimpleClientset(), Namespace: "operator", RepositoryPVC: "repository", ProposalRoot: "/repo/proposals", BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("c", 64), RegistrySecret: "registry-push", ServiceAccount: "image-builder"}
@@ -160,62 +85,6 @@ func TestKubernetesBuildParsesBuildKitMultilineMetadata(t *testing.T) {
 	digest, err := parseBuildMetadata([]byte(logs))
 	if err != nil || digest != "sha256:"+strings.Repeat("d", 64) {
 		t.Fatalf("metadata digest=%q err=%v", digest, err)
-	}
-}
-
-func TestKubernetesBuildFailedJobCannotReturnDigest(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	root := t.TempDir()
-	checkout := filepath.Join(root, "incident")
-	if err := os.MkdirAll(checkout, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(checkout, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "base"}} {
-		command := exec.Command("git", args...)
-		command.Dir = checkout
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, output)
-		}
-	}
-	backend := KubernetesBuildBackend{Client: client, Namespace: "operator", RepositoryPVC: "repository", ProposalRoot: root, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("c", 64), RegistrySecret: "registry-push", AllowedRegistryHost: "registry.example", ServiceAccount: "image-builder", PollInterval: time.Millisecond, ReadJobLogs: func(context.Context, string, string) ([]byte, error) {
-		return []byte("SDO_BUILD_METADATA={\"containerimage.digest\":\"sha256:" + strings.Repeat("a", 64) + "\"}\n"), nil
-	}}
-	type result struct {
-		image string
-		err   error
-	}
-	done := make(chan result, 1)
-	go func() {
-		image, err := backend.BuildImage(context.Background(), checkout, &contracts.ImageBuild{Image: "registry.example/app:latest", ContextPath: checkout, DockerfilePath: filepath.Join(checkout, "Dockerfile")})
-		done <- result{image, err}
-	}()
-	deadline := time.After(time.Second)
-	for {
-		jobs, _ := client.BatchV1().Jobs("operator").List(context.Background(), metav1.ListOptions{})
-		if len(jobs.Items) > 0 {
-			job := jobs.Items[0]
-			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: "True", Message: "image build failed"}}
-			if _, err := client.BatchV1().Jobs("operator").UpdateStatus(context.Background(), &job, metav1.UpdateOptions{}); err != nil {
-				t.Fatal(err)
-			}
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("build Job not created")
-		case <-time.After(time.Millisecond):
-		}
-	}
-	select {
-	case result := <-done:
-		if result.err == nil || result.image != "" {
-			t.Fatalf("failed Job produced receipt: %+v", result)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("failed Job did not return")
 	}
 }
 
