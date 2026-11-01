@@ -15,6 +15,7 @@ verifies, and the loop grades the cluster with the problem's own oracle.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -236,9 +237,12 @@ class SdoPersistentAgent:
         run_lifecycle: Callable[[DeployedLifecycleContext], bool],
         clock: Clock | None = None,
         keep_running: bool = False,
+        check_continuity: bool = False,
         stop_on_detector_review: bool = True,
     ) -> None:
         self._keep_running = keep_running
+        self.learn_before_recovery = check_continuity
+        self._continuity_before: dict[str, Any] = {}
         self._stop_on_detector_review = stop_on_detector_review
         self._settings = settings
         self._ops = ops
@@ -274,6 +278,8 @@ class SdoPersistentAgent:
         windows: list[InjectionWindow] = []
 
         def gated_inject() -> None:
+            if self.learn_before_recovery:
+                self._continuity_before = self._controller_identity()
             windows.append(inject())
 
         resolution = run_persistent_stage(
@@ -408,7 +414,32 @@ class SdoPersistentAgent:
             ),
             None,
         )
+        activations = []
+        if self.learn_before_recovery:
+            from benchmarks.sregym.fastloop.continuity import check_activations
+
+            # Leave room for post-activation evaluations before any recovery maintenance.
+            scale = float(os.getenv("SDO_TIME_SCALE", "1"))
+            allowed_gap = max(1.0, 5.0 * scale)
+            self._clock.sleep((2 * allowed_gap + 0.5) / scale)
+            commits = {
+                str(item["accepted_commit"])
+                for item in rollout_receipts
+                if isinstance(item, dict) and item.get("success") and item.get("accepted_commit")
+            }
+            reflection_commit = ledger.get("reflection_commit") or ledger.get("outcome_commit")
+            if reflection_commit:
+                commits.add(str(reflection_commit))
+            activations, continuity_error = check_activations(
+                self._continuity_logs(outcome.injection.started_at),
+                self._continuity_before,
+                self._controller_identity(),
+                max_gap=allowed_gap,
+                expected_commits=commits,
+            )
+            error = "; ".join(item for item in (error, continuity_error) if item) or None
         return outcome.with_learning(
+            memory_host_activations=activations,
             diagnosis=outcome.diagnosis or _summaries(receipt.get("confirmed_root_causes")),
             mitigation=outcome.mitigation or _summaries(receipt.get("repair_actions"), successful_only=True),
             reflection_seconds=self._clock.monotonic() - started,
@@ -426,6 +457,50 @@ class SdoPersistentAgent:
             **program_metrics,
             error=error,
         )
+
+    def _controller_identity(self) -> dict[str, Any]:
+        from benchmarks.sregym.adapter import kubectl
+
+        response = kubectl(
+            ["get", "pods", "-l", "job-name=sdo-controller-run", "-o", "json"],
+            namespace=self._settings.runtime_config.controller_namespace,
+            kubeconfig=Path(str(self._settings.kubeconfig)),
+        )
+        pods = json.loads(response.stdout)["items"]
+        if len(pods) != 1:
+            raise RuntimeError("continuity requires exactly one controller pod")
+        pod = pods[0]
+        statuses = pod["status"]["containerStatuses"]
+        return {
+            "uid": pod["metadata"]["uid"],
+            "start_time": pod["status"]["startTime"],
+            "containers": [
+                {
+                    "name": c["name"],
+                    "restart_count": c["restartCount"],
+                    "started_at": c["state"]["running"]["startedAt"],
+                }
+                for c in statuses
+            ],
+        }
+
+    def _continuity_logs(self, since: datetime) -> str:
+        from benchmarks.sregym.adapter import kubectl
+
+        return kubectl(
+            [
+                "logs",
+                "-l",
+                "job-name=sdo-controller-run",
+                "-c",
+                "controller",
+                "--timestamps",
+                "--tail=-1",
+                "--since-time=" + since.isoformat(),
+            ],
+            namespace=self._settings.runtime_config.controller_namespace,
+            kubeconfig=Path(str(self._settings.kubeconfig)),
+        ).stdout
 
     @staticmethod
     def _receipt(receipt_dir: Path) -> dict[str, Any]:

@@ -1503,3 +1503,22 @@ def test_interrupted_install_retains_cleanup_target_before_controller_exists(tmp
     with pytest.raises(RuntimeError, match="launcher killed"):
         run_persistent_stage(inputs, ops=ops, run_lifecycle=interrupted, inject=lambda: None, clock=_clock(ops))
     assert PersistentState.load(inputs.state_path).cleanup_targets["hotel"].namespace == "hotel"
+
+
+@pytest.mark.parametrize("reflection", [False, True])
+def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(monkeypatch, reflection):
+    from benchmarks.sregym.adapter import persistent
+
+    elapsed = [0.0]
+    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: None)
+
+    class SlowRead:
+        def runtime_state(self, _control):
+            elapsed[0] = 61.0
+            return {}
+
+    monkeypatch.setattr(persistent, "_observe_state", lambda *a, **kw: pytest.fail("deadline already expired"))
+    wait = persistent._wait_for_reflection_drain if reflection else persistent._wait_for_verified_incident
+    argument = "incident" if reflection else set()
+    with pytest.raises(PersistentControllerError, match="within 60s"):
+        wait(SlowRead(), "demo", argument, 60, clock)

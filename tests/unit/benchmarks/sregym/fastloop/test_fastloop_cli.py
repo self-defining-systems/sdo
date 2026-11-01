@@ -693,3 +693,30 @@ def test_normal_live_and_reduced_scripted_scales_pass_preflight(
     with pytest.raises(RuntimeError, match="passed time-scale preflight"):
         main(["run", "--run-dir", str(tmp_path), "--agent", agent, "--time-scale", scale, *flags])
     assert float(cli.os.environ["SDO_TIME_SCALE"]) == float(scale)
+
+
+def test_scripted_scale_preserves_wall_time_stage_budgets(tmp_path, monkeypatch):
+    from benchmarks.sregym.fastloop import cli
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="toy",
+        application="toy",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        app="toy",
+        private_tmp=None,
+    )
+    args = cli.build_parser().parse_args(
+        ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--time-scale", "0.1", "--timeout", "300"]
+    )
+    from benchmarks.sregym.fastloop import sdo_agent
+
+    monkeypatch.setattr(sdo_agent, "SdoPersistentAgent", lambda settings, **kwargs: (settings, kwargs))
+    settings, kwargs = cli._sdo_agent(args, environment, tmp_path / "results")
+    assert settings.verification_timeout_seconds == 600
+    assert settings.reflection_wait_seconds == 3600
+    assert kwargs["keep_running"]
+    assert kwargs["check_continuity"]

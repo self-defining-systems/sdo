@@ -22,6 +22,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field
 if TYPE_CHECKING:
     from pathlib import Path
 
+from benchmarks.sregym.fastloop.continuity import ActivationContinuity  # noqa: TC001 - Pydantic runtime annotation.
+
 SCHEMA_VERSION = "sdo.fastloop-incident/v1"
 AgentName = Literal["sdo", "codex"]
 #: ``composition`` grades a composite fault: it passes only when every fault's own oracle passes.
@@ -97,6 +99,7 @@ def _seconds(start: datetime | None, end: datetime | None) -> float | None:
 class IncidentRecord(_PersistedModel):
     model_config = ConfigDict(extra="forbid")
 
+    memory_host_activations: list[ActivationContinuity] = Field(default_factory=list)
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
     schema_version: Literal["sdo.fastloop-incident/v1"] = SCHEMA_VERSION
