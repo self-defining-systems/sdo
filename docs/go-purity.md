@@ -56,6 +56,7 @@ The exact production edge-package list is:
 - `sdo/operator/sdk/internal/clockio`: SDK default wall clock; engines accept an injected clock.
 - `sdo/operator/builder/internal/buildio`: compiler, cache seeding and controller process launcher.
 - `sdo/operator/operatorcli/internal/processio`: CLI Git, kubectl and environment adapter.
+- `sdo/operator/broker/internal/processio`: Git commands and bounded validator process supervision.
 
 - `sdo/operator/runtime/internal/lifecycleio`: Kubernetes lifecycle driver.
 - `sdo/operator/runtime/prober`: protocol dial adapter.

@@ -32,6 +32,7 @@ var Edges = map[string]bool{
 	"sdo/operator/sdk/internal/clockio":           true, // SDK default wall clock
 	"sdo/operator/builder/internal/buildio":       true, // Compiler, cache seeding and controller launcher
 	"sdo/operator/operatorcli/internal/processio": true, // CLI Git, kubectl and environment adapter
+	"sdo/operator/broker/internal/processio":      true, // Git and bounded validator process adapter
 }
 
 func integrationOnly(file *ast.File) (bool, error) {

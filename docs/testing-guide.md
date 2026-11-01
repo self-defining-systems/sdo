@@ -928,3 +928,7 @@ CLI evidence commands and Git-backed memory fixtures require `integration`.
 The pure host parser and memory admission-error checks stay untagged.
 `scripts/test_go_ci.sh` keeps these tests in their existing PR/nightly selections
 with `-tags=integration`; no CI timeout or selection changes are needed.
+Broker Git checkout/commit, CLI/compiler parity, agent-script and validator
+process-limit tests require `integration`. They continue in
+`scripts/test_go_ci.sh` with `-tags=integration` on PRs and nightly; the existing
+nightly-only parity selection and five-minute PR budget are unchanged.
