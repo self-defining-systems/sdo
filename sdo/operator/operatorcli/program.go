@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 )
 
@@ -79,7 +80,7 @@ func RunProgramScaffold(config ProgramScaffoldConfig) error {
 	diagnose.WriteString("\t}}\n}\n\nfunc (Program) Diagnose(_ context.Context, _ program.ReadView, _ program.Bindings) (program.Verdict, error) {\n\treturn program.Verdict{Result: program.Unknown}, nil\n}\n")
 	var test strings.Builder
 	fmt.Fprintf(&test, "package %s\n\nimport (\n\t\"testing\"\n\t\"sdo.dev/operator/sdk/program\"\n)\n\nfunc TestRequiredBindings(t *testing.T) {\n\tif err := program.ValidateBindings(Program{}.Spec(), nil); err == nil {\n\t\tt.Fatal(\"unbound program accepted\")\n\t}\n}\n", pkg)
-	readme := "---\nschema_version: 1\nowner: responder\noriginating_incident: " + os.Getenv("SDO_INCIDENT_ID") + "\nfault_class: " + config.FaultClass + "\n---\n\n# " + config.FaultClass + "\n\nDescribe the judgement needed after diagnosis.\n"
+	readme := "---\nschema_version: 1\nowner: responder\noriginating_incident: " + processio.Environment("SDO_INCIDENT_ID") + "\nfault_class: " + config.FaultClass + "\n---\n\n# " + config.FaultClass + "\n\nDescribe the judgement needed after diagnosis.\n"
 	files := map[string]string{"README.md": readme, "diagnose.go": diagnose.String(), "diagnose_test.go": test.String()}
 	if config.Mitigate {
 		files["mitigate.go"] = fmt.Sprintf("package %s\n\nimport (\n\t\"context\"\n\t\"sdo.dev/operator/sdk/program\"\n)\n\nfunc (Program) Mitigate(_ context.Context, _ program.ReadView, _ program.Bindings) (program.Plan, error) {\n\treturn program.Plan{}, nil\n}\n", pkg)

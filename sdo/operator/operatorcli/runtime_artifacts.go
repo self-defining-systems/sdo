@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 
 	"sdo.dev/operator/install"
@@ -62,31 +62,7 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
 		// Archive only evidence files; extraction applies the same allowlist.
 		script := `cd /workspace/.sdo-runtime 2>/dev/null || exit 0; find usage telemetry sessions codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]'); case "$lower_path" in *cache*|*plugin*|*catalog*) continue;; esac; base=${lower_path##*/}; case "$base" in *auth*|*credential*|*token*) [ "$base" = token_usage.json ] || continue;; esac; case "$path" in usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/checkpoints/*/request.json|sessions/*/checkpoints/*/result.json|sessions/*/checkpoints/*/file_edits.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | tar -cf - -T -`
-		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", install.RepositorySyncPodName, "--", "sh", "-c", script)
-		if cfg.Kubeconfig != "" {
-			command.Env = append(os.Environ(), "KUBECONFIG="+cfg.Kubeconfig)
-		}
-		pipe, err := command.StdoutPipe()
-		if err != nil {
-			return err
-		}
-		var stderr bytes.Buffer
-		command.Stderr = &stderr
-		if err := command.Start(); err != nil {
-			return err
-		}
-		copyErr := extractRuntimeArtifacts(pipe, destination)
-		if copyErr != nil {
-			_ = command.Process.Kill()
-		}
-		waitErr := command.Wait()
-		if copyErr != nil {
-			return copyErr
-		}
-		if waitErr != nil {
-			return fmt.Errorf("export runtime artifacts: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
-		}
-		return nil
+		return processio.StreamPodArchive(ctx, cfg.Sync.ControlNamespace, cfg.Kubeconfig, install.RepositorySyncPodName, script, func(r io.Reader) error { return extractRuntimeArtifacts(r, destination) })
 	})
 	if err != nil {
 		return RuntimeArtifactsResult{}, err

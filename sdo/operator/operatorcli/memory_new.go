@@ -9,9 +9,9 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 	"text/template"
 
@@ -164,17 +164,6 @@ func scaffoldDetector(ctx context.Context, root, id string, class layout.Class, 
 	return []string{layout.DetectorManifestPath(class, id), dir + "/" + layout.DetectorFileName, dir + "/" + layout.DetectorTestFileName}, nil
 }
 
-func headCommit(ctx context.Context, root string) string {
-	output, err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "HEAD").Output()
-	if commit := strings.TrimSpace(string(output)); err == nil && commit != "" {
-		return commit
-	}
-	return unspecifiedOrigin
-}
-
-var nonIdentifier = regexp.MustCompile(`[^a-z0-9]+`)
-
-// goPackage derives a Go package name from a detector ID.
 func goPackage(id string) string {
 	name := strings.Trim(nonIdentifier.ReplaceAllString(id, "_"), "_")
 	if name == "" || name[0] >= '0' && name[0] <= '9' {
@@ -269,3 +258,12 @@ func TestDetectorIsQuietOnAnEmptySnapshot(t *testing.T) {
 	}
 }
 `))
+
+func headCommit(ctx context.Context, root string) string {
+	if commit := processio.HeadCommit(ctx, root); commit != "" {
+		return commit
+	}
+	return unspecifiedOrigin
+}
+
+var nonIdentifier = regexp.MustCompile(`[^a-z0-9]+`)

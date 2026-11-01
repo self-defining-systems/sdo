@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -30,11 +31,11 @@ func ParseLateFindingsLaunch(args []string) (LateFindingsConfig, error) {
 	if flags.NArg() != 0 || strings.TrimSpace(*id) == "" {
 		return LateFindingsConfig{}, errors.New("late-findings requires --incident-id and no extra arguments")
 	}
-	path := os.Getenv(latefindings.ReportPathEnv)
+	path := processio.Environment(latefindings.ReportPathEnv)
 	if path == "" {
 		path = latefindings.DefaultReportPath
 	}
-	receipts := os.Getenv(latefindings.ReceiptsPathEnv)
+	receipts := processio.Environment(latefindings.ReceiptsPathEnv)
 	if receipts == "" {
 		receipts = latefindings.DefaultReceiptsPath
 	}

@@ -7,9 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -107,17 +106,9 @@ func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg I
 				return fmt.Errorf("synchronize accepted repository: %w", err)
 			}
 		}
-		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", podName, "--", "cat", path)
-		if cfg.Kubeconfig != "" {
-			command.Env = append(os.Environ(), "KUBECONFIG="+cfg.Kubeconfig)
-		}
-		output, readErr := command.Output()
+		output, readErr := processio.ReadPodFile(ctx, cfg.Sync.ControlNamespace, cfg.Kubeconfig, podName, path)
 		if readErr != nil {
-			var exit *exec.ExitError
-			if errors.As(readErr, &exit) {
-				return fmt.Errorf("read native incident ledger: %w: %s", readErr, strings.TrimSpace(string(exit.Stderr)))
-			}
-			return fmt.Errorf("read native incident ledger: %w", readErr)
+			return readErr
 		}
 		data = output
 		return nil
