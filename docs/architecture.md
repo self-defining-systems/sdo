@@ -392,3 +392,9 @@ provide live memory refresh. Slice 2 must retain the controller process across
 memory changes and prove a two-commit update without restart. Traffic remains in
 the current prober until slice 3, which moves the traffic engine into the host,
 flips the default and deletes controller compilation and the prober pod.
+
+The memory component owns a private `memory/internal/memoryio` edge for Git
+reads, isolated-index whitespace checks, shell syntax and toolchain lookup.
+It exposes bytes and errors, never process handles. The artifact ownership
+matrix and repository scope matrix above remain unchanged: this production
+adapter belongs to memory and has no benchmark dependencies.

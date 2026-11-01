@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/internal/memoryio"
 )
 
 // SourceFacts are a bounded, logical projection of an accepted source commit.
@@ -28,8 +28,7 @@ func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (Sour
 	if !fullCommitID.MatchString(acceptedCommit) {
 		return SourceFacts{}, fmt.Errorf("invalid accepted source commit")
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", checkout, "ls-tree", "-r", "-z", "--full-tree", acceptedCommit)
-	listing, err := cmd.Output()
+	listing, err := memoryio.Git(ctx, checkout, false, nil, "ls-tree", "-r", "-z", "--full-tree", acceptedCommit)
 	if err != nil {
 		return SourceFacts{}, fmt.Errorf("read accepted source tree %s: %w", acceptedCommit, err)
 	}
@@ -57,8 +56,7 @@ func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (Sour
 		if parts[1] != "blob" || parts[0] == "120000" {
 			continue
 		}
-		blob := exec.CommandContext(ctx, "git", "-C", checkout, "cat-file", "blob", parts[2])
-		content, err := blob.Output()
+		content, err := memoryio.Git(ctx, checkout, false, nil, "cat-file", "blob", parts[2])
 		if err != nil {
 			return SourceFacts{}, fmt.Errorf("read accepted source blob %s: %w", path, err)
 		}

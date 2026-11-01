@@ -2,12 +2,11 @@ package validate
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/memory/internal/memoryio"
 	"strconv"
 	"strings"
 )
@@ -21,9 +20,7 @@ func checkWhitespace(ctx context.Context, r Request) ([]Diagnostic, error) {
 	}
 	defer os.RemoveAll(dir)
 	run := func(args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", r.Root}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+filepath.Join(dir, "index"))
-		return cmd.CombinedOutput()
+		return memoryio.Git(ctx, r.Root, true, []string{"GIT_INDEX_FILE=" + filepath.Join(dir, "index")}, args...)
 	}
 	for _, args := range [][]string{{"read-tree", r.Base}, {"add", "-A", "--", "."}} {
 		if out, err := run(args...); err != nil {
@@ -34,8 +31,7 @@ func checkWhitespace(ctx context.Context, r Request) ([]Diagnostic, error) {
 	if err == nil {
 		return nil, nil
 	}
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || ctx.Err() != nil {
+	if !memoryio.Exited(err) || ctx.Err() != nil {
 		return nil, fmt.Errorf("diff check: %w", err)
 	}
 	var ds []Diagnostic
