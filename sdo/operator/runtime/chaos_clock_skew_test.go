@@ -97,7 +97,7 @@ func TestChaosAttributionTimingIgnoresResponderClockSkew(t *testing.T) {
 		var closure IncidentClosure
 		select {
 		case closure = <-closed:
-		case <-time.After(time.Second):
+		default:
 			t.Fatalf("seed %d (skew %s): incident never closed", seed, skew)
 		}
 

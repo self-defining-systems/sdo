@@ -255,7 +255,7 @@ func (w *World) Dial(ctx context.Context, protocol string) (net.Conn, error) {
 	if mode == "" {
 		mode = "healthy"
 	}
-	return testprotocol.Dial(ctx, protocol, mode)
+	return testprotocol.DialWithClock(ctx, protocol, mode, w.Now)
 }
 
 // Sweep caps PR campaigns at 45 seconds of host time. Each seed gets its own

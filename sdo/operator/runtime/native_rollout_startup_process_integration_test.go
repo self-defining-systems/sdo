@@ -1,15 +1,16 @@
+//go:build integration
+
 package runtime
 
 import (
 	"context"
+	"google.golang.org/protobuf/proto"
 	"os"
 	"path/filepath"
-	"strings"
-	"testing"
-
-	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/broker"
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"strings"
+	"testing"
 )
 
 func TestNativeRolloutHandoffRequiresObservedNewRevision(t *testing.T) {

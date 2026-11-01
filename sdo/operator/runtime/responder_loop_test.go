@@ -3,23 +3,22 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
-
-	appsv1 "k8s.io/api/apps/v1"
-	"sdo.dev/operator/memory"
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
-	"sdo.dev/operator/sdk/sdktest"
 )
 
 func TestResponderLoopApplyReturnsLogicalPlaybooksAndBoundedEvidence(t *testing.T) {
@@ -196,12 +195,14 @@ func TestResponderRestartPlansFromLiveViewInsteadOfCapturedMatch(t *testing.T) {
 func (snapshotDiagnoser) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "fault", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
 }
+
 func (snapshotDiagnoser) Diagnose(_ context.Context, view program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	_, _ = view.DiffAgainstBaseline(sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"})
 	return program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Fact: "moment", Observed: view.Services()[0].Annotations["moment"]}}}, nil
 }
 
 func (changingLoopDetector) Spec() sdk.DetectorSpec { return sdk.DetectorSpec{ID: "health"} }
+
 func (d changingLoopDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return d.find(), nil
 }
@@ -312,6 +313,7 @@ type loopProgram struct {
 type loopDetector struct{ finding sdk.Finding }
 
 func (d loopDetector) Spec() sdk.DetectorSpec { return sdk.DetectorSpec{ID: "health"} }
+
 func (d loopDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	if d.finding.Status == sdk.FindingActive {
 		return []sdk.Finding{d.finding}, nil
@@ -398,40 +400,6 @@ func TestCleanVerifyDoesNotSweepUnrelatedPrograms(t *testing.T) {
 		verified := loop.Handle(context.Background(), ToolRequest{Command: "verify"})
 		if !verified.Healthy || len(verified.ProgramRuns) != 0 || !strings.Contains(verified.Summary, "return the structured incident result immediately") {
 			t.Fatalf("clean verify: %+v", verified)
-		}
-	})
-}
-
-func TestColdLearningCapturesResponderSourceReads(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		source, commit := foreignSource(t)
-		snapshot := policyWorkloadSnapshot()
-		request := IncidentRequest{IncidentID: "cold-learning", Namespace: "app", SourceCommit: commit}
-		loop := NewResponderLoop(request, nil, &changingProvider{snapshot: snapshot}, nil, PlanExecutor{Source: source}, 1)
-		loop.CorpusSessionRoot = t.TempDir()
-		loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
-			return LiveReadView{Carrier: inputs.New(s), Source: source, SourceCommit: commit}
-		}
-		loop.InitialDiagnose(context.Background())
-		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-		if response := loop.Handle(context.Background(), ToolRequest{Command: "source", Ref: &ref}); response.Error != "" {
-			t.Fatal(response.Error)
-		}
-		dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, request.IncidentID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		raw, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var calls []sdktest.PrimitiveCall
-		if err := json.Unmarshal(raw, &calls); err != nil {
-			t.Fatal(err)
-		}
-		view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
-		if _, err := view.DiffAgainstSource(ref); err != nil {
-			t.Fatalf("cold source inspection was not replayable: %v", err)
 		}
 	})
 }

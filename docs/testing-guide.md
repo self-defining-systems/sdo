@@ -1014,3 +1014,25 @@ Closure health/state-diff and firing telemetry, lifecycle events, maintenance,
 lease timing, responder settle/mitigator deadlines and cache write observation
 run in synctest bubbles. Their positive timeout and mutex-release assertions
 retain virtual deadlines; the fake informer uses a positive virtual resync.
+
+Chaos replay controls are explicit test flags: from the runtime module, use
+`go test . -run '^TestChaos' -chaos-seed=17 -timeout=5m`, or set
+`-chaos-runs=128` for a fixed sweep. These replace `SDO_CHAOS_SEED` and
+`SDO_CHAOS_RUNS`. Sweeps always run their configured seeds; they no longer
+silently truncate coverage based on machine speed. Closure/reflection explorers
+retain their state bounds, and campaign invocations (including nightly CI) use
+`-timeout=5m` as the wall-clock cap.
+
+Runtime accepted-Git, broker/CLI/compiler/Python-process and recorded worker
+fixtures require `integration`; their shared pure detectors, read views and
+non-process tests stay in the default suite. PR and nightly `test_go_ci.sh`
+already include `-tags=integration`, with the existing nightly-only compiler
+selection and five-minute PR budget unchanged. `split_go_integration.sh` reports
+AST dependency candidates and moves explicitly selected declarations, preserving
+embedded Go strings; review candidates and compile both build selections.
+
+Cache observation-time contracts compare an exact injected timestamp. Dispatcher
+Job waiting, fast-path restarts and worker completion run in virtual time, with
+an explicit virtual restart boundary for fresh evidence. Process-only fastloop
+wait helpers stay with their integration fixtures. Simulated protocol peers use
+the world clock for safety deadlines; default peer behavior is unchanged.

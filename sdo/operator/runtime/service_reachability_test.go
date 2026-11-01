@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"sdo.dev/operator/runtime/internal/testprober"
@@ -80,81 +80,71 @@ func reachabilityApp(port int32) sdktest.Snapshot {
 // only dials, and the wrapped snapshot carries the samples the generic
 // detector judges.
 func TestReachabilityObserverFeedsTheDetectorFromSnapshotDerivedTargets(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	go func() {
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			_ = connection.Close()
+	synctest.Test(t, func(t *testing.T) {
+		var refusing atomic.Bool
+		p, err := prober.New(prober.Config{
+			Namespace:   "shop",
+			LinkAddress: func(link traffic.Link) string { return link.To },
+			DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
+				if address != "geo" {
+					t.Errorf("dialed an underived target %q", address)
+				}
+				if refusing.Load() {
+					return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.ECONNREFUSED}
+				}
+				left, right := net.Pipe()
+				_ = right.Close()
+				return left, nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-	}()
-	var refusing atomic.Bool
-	p, err := prober.New(prober.Config{
-		Namespace:   "shop",
-		LinkAddress: func(link traffic.Link) string { return link.To },
-		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
-			if address != "geo" {
-				t.Errorf("dialed an underived target %q", address)
-			}
-			if refusing.Load() {
-				return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.ECONNREFUSED}
-			}
-			return (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshots := &mutableSnapshots{snapshot: reachabilityApp(8083)}
-	var notified atomic.Int32
-	identity := servicehealth.ProberIdentity{Namespace: "sdo-control", Labels: map[string]string{"app.kubernetes.io/name": "sdo-controller"}}
-	observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{
-		Prober: reachabilityDirect{p}, Snapshots: snapshots, Notify: func() { notified.Add(1) }, Identity: identity,
-	})
-	if observer == nil {
-		t.Fatal("observer must be created with a prober and snapshots")
-	}
-	ctx := context.Background()
-	if observer.Cycle(ctx) {
-		t.Fatal("a healthy round must not wake the controller")
-	}
-	refusing.Store(true)
-	for range 3 {
-		if !observer.Cycle(ctx) {
-			t.Fatal("a failing round must wake the controller")
+		snapshots := &mutableSnapshots{snapshot: reachabilityApp(8083)}
+		var notified atomic.Int32
+		identity := servicehealth.ProberIdentity{Namespace: "sdo-control", Labels: map[string]string{"app.kubernetes.io/name": "sdo-controller"}}
+		observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{
+			Prober: reachabilityDirect{p}, Snapshots: snapshots, Notify: func() { notified.Add(1) }, Identity: identity,
+		})
+		if observer == nil {
+			t.Fatal("observer must be created with a prober and snapshots")
 		}
-	}
-	window, ok := observer.Window()
-	if !ok || window.Prober.Namespace != "sdo-control" || window.Failures != servicehealth.DefaultReachabilityFailures ||
-		len(window.Targets) != 1 || len(window.Targets[0].Samples) != 4 || window.Targets[0].LastSuccess == nil {
-		t.Fatalf("window: %+v", window)
-	}
-	provider := TrafficSnapshotProvider{Base: snapshots, Reachability: observer}
-	snapshot, err := provider.Snapshot(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
-	if !ConsumesServiceReachability([]sdk.Detector{detector}) {
-		t.Fatal("the generic detector must be recognized as a reachability consumer")
-	}
-	findings, err := detector.Detect(ctx, snapshot)
-	if err != nil || len(findings) != 1 || findings[0].PrimaryResource.Name != "geo" {
-		t.Fatalf("findings %v err %v", findings, err)
-	}
+		ctx := context.Background()
+		if observer.Cycle(ctx) {
+			t.Fatal("a healthy round must not wake the controller")
+		}
+		refusing.Store(true)
+		for range 3 {
+			if !observer.Cycle(ctx) {
+				t.Fatal("a failing round must wake the controller")
+			}
+		}
+		window, ok := observer.Window()
+		if !ok || window.Prober.Namespace != "sdo-control" || window.Failures != servicehealth.DefaultReachabilityFailures ||
+			len(window.Targets) != 1 || len(window.Targets[0].Samples) != 4 || window.Targets[0].LastSuccess == nil {
+			t.Fatalf("window: %+v", window)
+		}
+		provider := TrafficSnapshotProvider{Base: snapshots, Reachability: observer}
+		snapshot, err := provider.Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
+		if !ConsumesServiceReachability([]sdk.Detector{detector}) {
+			t.Fatal("the generic detector must be recognized as a reachability consumer")
+		}
+		findings, err := detector.Detect(ctx, snapshot)
+		if err != nil || len(findings) != 1 || findings[0].PrimaryResource.Name != "geo" {
+			t.Fatalf("findings %v err %v", findings, err)
+		}
 
-	// A Service that disappears is no longer dialed and its history goes.
-	snapshots.set(sdktest.Snapshot{NamespaceName: "shop"})
-	observer.Cycle(ctx)
-	if window, _ := observer.Window(); len(window.Targets) != 0 {
-		t.Fatalf("removed Service still observed: %+v", window.Targets)
-	}
+		// A Service that disappears is no longer dialed and its history goes.
+		snapshots.set(sdktest.Snapshot{NamespaceName: "shop"})
+		observer.Cycle(ctx)
+		if window, _ := observer.Window(); len(window.Targets) != 0 {
+			t.Fatalf("removed Service still observed: %+v", window.Targets)
+		}
+	})
 }
 
 func TestReachabilityObserverReportsAnUnavailableProber(t *testing.T) {
@@ -184,9 +174,7 @@ func TestHTTPProberClientDialsTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(testprober.Handler(p))
-	defer server.Close()
-	client := HTTPProberClient{BaseURL: StaticProberURL(server.URL)}
+	client := inProcessProberClient(testprober.Handler(p))
 	response, err := client.DialTargets(context.Background(), prober.DialRequest{
 		Targets: []servicehealth.ReachabilityTarget{{Service: "geo", Port: 8083}},
 	})
@@ -200,26 +188,6 @@ func TestHTTPProberClientDialsTargets(t *testing.T) {
 // prober's /v1/dials endpoint until the gate can be judged, so a refusing
 // port is reported and a listening one stays clear.
 func TestEvaluateOnceCollectsReachabilityRounds(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	go func() {
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			_ = connection.Close()
-		}
-	}()
-	closed, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	refusing := closed.Addr().String()
-	_ = closed.Close()
 	detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{
 		ID: "service-reachability", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
 		Watches: servicehealth.ReachabilityWatches(), Interval: 10 * time.Second,
@@ -231,39 +199,47 @@ func TestEvaluateOnceCollectsReachabilityRounds(t *testing.T) {
 		address string
 		status  DetectorEvaluationStatus
 	}{
-		"refusing":  {address: refusing, status: DetectorEvaluationFiring},
-		"listening": {address: listener.Addr().String(), status: DetectorEvaluationClear},
+		"refusing":  {address: "refusing", status: DetectorEvaluationFiring},
+		"listening": {address: "listening", status: DetectorEvaluationClear},
 	} {
 		t.Run(name, func(t *testing.T) {
-			p, err := prober.New(prober.Config{Namespace: "shop", LinkAddress: func(traffic.Link) string { return test.address }})
-			if err != nil {
-				t.Fatal(err)
-			}
-			server := httptest.NewServer(testprober.Handler(p))
-			defer server.Close()
-			var stdout bytes.Buffer
-			err = RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
-				Args:    []string{"--evaluate-once", "--namespace", "shop"},
-				Traffic: HTTPProberClient{BaseURL: StaticProberURL(server.URL)}, Stdout: &stdout,
-				Provider: staticProvider{snapshot: reachabilityApp(8083)},
+			synctest.Test(t, func(t *testing.T) {
+				p, err := prober.New(prober.Config{Namespace: "shop", LinkAddress: func(traffic.Link) string { return test.address }, DialContext: func(context.Context, string, string) (net.Conn, error) {
+					if test.address == "refusing" {
+						return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+					}
+					left, right := net.Pipe()
+					_ = right.Close()
+					return left, nil
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				var stdout bytes.Buffer
+				err = RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
+					Args:    []string{"--evaluate-once", "--namespace", "shop"},
+					Traffic: inProcessProberClient(testprober.Handler(p)), Stdout: &stdout,
+					Provider: staticProvider{snapshot: reachabilityApp(8083)},
+				})
+				if err != nil {
+					t.Fatalf("evaluate once: %v", err)
+				}
+				var output struct {
+					Status   DetectorEvaluationStatus `json:"status"`
+					Findings []sdk.Finding            `json:"findings"`
+				}
+				if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+					t.Fatalf("decode %q: %v", stdout.String(), err)
+				}
+				if output.Status != test.status {
+					t.Fatalf("status %q, want %q: %s", output.Status, test.status, stdout.String())
+				}
+				if test.status == DetectorEvaluationFiring && (len(output.Findings) != 1 ||
+					output.Findings[0].RuleID != servicehealth.RuleServicePortUnreachable || output.Findings[0].PrimaryResource.Name != "geo") {
+					t.Fatalf("expected one service-port-unreachable finding for geo, got %+v", output.Findings)
+				}
 			})
-			if err != nil {
-				t.Fatalf("evaluate once: %v", err)
-			}
-			var output struct {
-				Status   DetectorEvaluationStatus `json:"status"`
-				Findings []sdk.Finding            `json:"findings"`
-			}
-			if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-				t.Fatalf("decode %q: %v", stdout.String(), err)
-			}
-			if output.Status != test.status {
-				t.Fatalf("status %q, want %q: %s", output.Status, test.status, stdout.String())
-			}
-			if test.status == DetectorEvaluationFiring && (len(output.Findings) != 1 ||
-				output.Findings[0].RuleID != servicehealth.RuleServicePortUnreachable || output.Findings[0].PrimaryResource.Name != "geo") {
-				t.Fatalf("expected one service-port-unreachable finding for geo, got %+v", output.Findings)
-			}
 		})
 	}
 }

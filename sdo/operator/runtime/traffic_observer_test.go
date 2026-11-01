@@ -3,12 +3,13 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"sdo.dev/operator/runtime/internal/testprober"
@@ -42,12 +43,10 @@ func frontendCatalog() traffic.Catalog {
 	return traffic.Catalog{read("search", "/hotels", "search", "geo"), read("recommend", "/recommendations", "recommendation")}
 }
 
-// runProber starts a real prober process stand-in against application and
+// runProber starts an in-process prober against the application handler and
 // returns a client for its API.
 func runProber(t *testing.T, application http.Handler) HTTPProberClient {
 	t.Helper()
-	app := httptest.NewServer(application)
-	t.Cleanup(app.Close)
 	workloads, err := prober.ParseWorkloads(map[string][]byte{
 		"health": []byte(`{"apiVersion": "sdo.dev/v1alpha1", "kind": "TrafficWorkload", "name": "health",
 			"purpose": "health-probe", "ratePerSecond": 20, "scenarios": [{"id": "search"}, {"id": "recommend"}]}`),
@@ -59,7 +58,8 @@ func runProber(t *testing.T, application http.Handler) HTTPProberClient {
 	}
 	p, err := prober.New(prober.Config{
 		Namespace: "hotel-reservation", Catalog: frontendCatalog(), Workloads: workloads,
-		BaseURL: func(traffic.Target) string { return app.URL },
+		BaseURL: func(traffic.Target) string { return "http://application.invalid" },
+		Client:  newHandlerTransport(application),
 	})
 	if err != nil {
 		t.Fatalf("prober: %v", err)
@@ -67,9 +67,8 @@ func runProber(t *testing.T, application http.Handler) HTTPProberClient {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { p.Run(ctx); close(done) }()
-	api := httptest.NewServer(testprober.Handler(p))
-	t.Cleanup(func() { cancel(); <-done; api.Close() })
-	return HTTPProberClient{BaseURL: StaticProberURL(api.URL)}
+	t.Cleanup(func() { cancel(); <-done })
+	return inProcessProberClient(testprober.Handler(p))
 }
 
 func trafficDetector(id string, workload string) sdk.Detector {
@@ -108,7 +107,7 @@ func TestObserverNotifiesOnlyWhileFailuresAreInTheWindow(t *testing.T) {
 					})
 				}
 				var mu sync.Mutex
-				api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				api := inProcessProberClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method != http.MethodGet || r.URL.Path != testprober.PathWindows {
 						http.NotFound(w, r)
 						return
@@ -119,8 +118,7 @@ func TestObserverNotifiesOnlyWhileFailuresAreInTheWindow(t *testing.T) {
 						t.Errorf("encode windows: %v", err)
 					}
 				}))
-				t.Cleanup(api.Close)
-				observer := NewTrafficObserver(HTTPProberClient{BaseURL: StaticProberURL(api.URL)}, []string{"health"}, nil, 0)
+				observer := NewTrafficObserver(api, []string{"health"}, nil, 0)
 				poll := func(want bool) {
 					t.Helper()
 					if got := observer.Poll(context.Background()); got != want {
@@ -155,10 +153,8 @@ func TestObserverNotifiesOnlyWhileFailuresAreInTheWindow(t *testing.T) {
 }
 
 func TestObserverReportsAnUnreachableProberAsALoadError(t *testing.T) {
-	down := httptest.NewServer(http.NotFoundHandler())
-	address := down.URL
-	down.Close()
-	observer := NewTrafficObserver(HTTPProberClient{BaseURL: StaticProberURL(address)}, []string{"health"}, nil, 0)
+	client := HTTPProberClient{BaseURL: StaticProberURL("http://unavailable.invalid"), Client: proberDoer(func(*http.Request) (*http.Response, error) { return nil, errors.New("connection refused") })}
+	observer := NewTrafficObserver(client, []string{"health"}, nil, 0)
 	observer.Poll(context.Background())
 	window := observer.Windows()["health"]
 	if !strings.Contains(window.LoadError, "prober unavailable") {
@@ -170,22 +166,27 @@ func TestObserverReportsAnUnreachableProberAsALoadError(t *testing.T) {
 }
 
 func TestProberClientRefreshesTheAddressAfterATransportError(t *testing.T) {
-	healthy := runProber(t, &fakeFrontend{})
-	good, _ := healthy.BaseURL(context.Background(), false)
-	down := httptest.NewServer(http.NotFoundHandler())
-	stale := down.URL
-	down.Close()
-	refreshed := 0
-	client := HTTPProberClient{BaseURL: func(_ context.Context, refresh bool) (string, error) {
-		if refresh {
-			refreshed++
-			return good, nil
+	synctest.Test(t, func(t *testing.T) {
+		healthy := runProber(t, &fakeFrontend{})
+		good, _ := healthy.BaseURL(context.Background(), false)
+		const stale = "http://replaced.invalid"
+		refreshed := 0
+		client := HTTPProberClient{BaseURL: func(_ context.Context, refresh bool) (string, error) {
+			if refresh {
+				refreshed++
+				return good, nil
+			}
+			return stale, nil
+		}, Client: proberDoer(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host == "replaced.invalid" {
+				return nil, errors.New("connection refused")
+			}
+			return healthy.Client.Do(r)
+		})}
+		if _, err := client.Windows(context.Background()); err != nil || refreshed != 1 {
+			t.Fatalf("client must re-locate a replaced prober once: refreshed=%d err=%v", refreshed, err)
 		}
-		return stale, nil
-	}}
-	if _, err := client.Windows(context.Background()); err != nil || refreshed != 1 {
-		t.Fatalf("client must re-locate a replaced prober once: refreshed=%d err=%v", refreshed, err)
-	}
+	})
 }
 
 // The synthetic-traffic detector opens an incident when the application
@@ -194,7 +195,7 @@ func TestControllerOpensIncidentFromFailingSyntheticTraffic(t *testing.T) {
 	// Exact windows isolate controller persistence from prober arrival timing.
 	// The HTTP client and observer still run through the real API transport.
 	var broken atomic.Bool
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	api := inProcessProberClient(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		window := traffic.Window{Workload: traffic.Workload{Name: "health", Purpose: traffic.PurposeHealthProbe}}
 		for _, scenario := range frontendCatalog() {
 			sample := traffic.Sample{Outcome: traffic.OutcomeOK, Status: 200}
@@ -211,8 +212,7 @@ func TestControllerOpensIncidentFromFailingSyntheticTraffic(t *testing.T) {
 			t.Errorf("encode windows: %v", err)
 		}
 	}))
-	defer api.Close()
-	observer := NewTrafficObserver(HTTPProberClient{BaseURL: StaticProberURL(api.URL)}, []string{"health"}, nil, 0)
+	observer := NewTrafficObserver(api, []string{"health"}, nil, 0)
 
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	controller, err := NewController(ControllerConfig{
@@ -257,3 +257,7 @@ func TestControllerOpensIncidentFromFailingSyntheticTraffic(t *testing.T) {
 		t.Fatalf("incident must name every failing scenario, got %v", rules)
 	}
 }
+
+type proberDoer func(*http.Request) (*http.Response, error)
+
+func (f proberDoer) Do(r *http.Request) (*http.Response, error) { return f(r) }
