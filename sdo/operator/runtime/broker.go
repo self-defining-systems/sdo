@@ -2,12 +2,7 @@ package runtime
 
 import (
 	"context"
-	"errors"
 )
-
-// ErrControllerRolloutRestartRequired tells the supervisor to launch the
-// accepted detector revision before replaying the durable ACK effect.
-var ErrControllerRolloutRestartRequired = errors.New("controller rollout requires restart before closure acknowledgment")
 
 type rolloutPendingBroker interface {
 	RolloutPending(ClosureReceipt) (bool, error)

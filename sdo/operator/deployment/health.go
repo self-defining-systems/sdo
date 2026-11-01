@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/deployment/internal/deploymentio"
 	"strings"
 	"time"
+
+	"sdo.dev/operator/deployment/internal/deploymentio"
 
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/lifecycle"
@@ -48,8 +49,13 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	if err != nil {
 		return "", fmt.Errorf("compile accepted health detectors: %w", err)
 	}
-	args := probe.evaluationArgs(acceptedRoot, namespace)
-	stdout, stderr, err := deploymentio.Evaluate(bounded, workspace.Directory, binary, namespace, workspace.HasProber, args)
+	artifact, err := workspace.BuildMemoryHost(bounded)
+	if err != nil {
+		return "", fmt.Errorf("compile accepted memory host: %w", err)
+	}
+	args := append(probe.evaluationArgs(acceptedRoot, namespace), "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
+	stdout, stderr, err := deploymentio.Evaluate(bounded, workspace.Directory, binary, args)
+
 	if err != nil {
 		return "", fmt.Errorf("evaluate accepted health detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}

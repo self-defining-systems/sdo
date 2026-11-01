@@ -21,13 +21,11 @@ type Config struct {
 	DiagnosticsRoot string
 	OperatorRoot    string
 	HealthyBaseline string
-	MemoryHost      bool // Compile a stable driver with no accepted-memory imports.
 }
 
 type Workspace struct {
 	Directory  string
 	ModulePath string
-	HasProber  bool
 }
 
 type StageError = buildio.StageError
@@ -75,11 +73,7 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 			return "", err
 		}
 	}
-	if workspace.HasProber {
-		if err := buildio.BuildProber(ctx, workspace.Directory); err != nil {
-			return "", err
-		}
-	}
+
 	return binary, nil
 }
 
@@ -95,7 +89,7 @@ func (workspace *Workspace) Close() error {
 var modulePattern = regexp.MustCompile(`(?m)^module\s+(\S+)\s*$`)
 
 // BuildWorkspace stages an opaque diagnostics projection and generates the
-// controller and, when configured, its traffic prober in an isolated workspace.
+// stable controller and accepted memory host in an isolated workspace.
 func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error) {
 	if config.ApplicationRoot == "" || config.DiagnosticsRoot == "" || config.OperatorRoot == "" {
 		return nil, errors.New("application, diagnostics projection, and operator roots are required")
@@ -177,18 +171,15 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 			return nil, err
 		}
 	}
-	main := fmt.Sprintf("package main\n\nimport (\n\t\"log\"\n\t\"sdo.dev/operator/runtime\"\n\t%q\n)\n\nfunc main() { programs, err := generated.Programs(); if err != nil { log.Fatal(err) }; runtime.RunWithPrograms(generated.All(), programs) }\n", module+"/generated")
-	if config.MemoryHost {
-		main = "package main\nimport \"sdo.dev/operator/runtime\"\nfunc main(){runtime.RunWithPrograms(nil,nil)}\n"
-	}
+	main := "package main\nimport \"sdo.dev/operator/runtime\"\nfunc main(){runtime.Run()}\n"
 	if err := os.WriteFile(filepath.Join(directory, "cmd", "controller", "main.go"), []byte(main), 0o644); err != nil {
 		return nil, err
 	}
-	hasProber, err := generateTraffic(directory, module)
+	_, err = generateTraffic(directory, module)
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{Directory: directory, ModulePath: module, HasProber: hasProber}, nil
+	return &Workspace{Directory: directory, ModulePath: module}, nil
 }
 
 func validateDetectors(detectors []layout.Detector) error {

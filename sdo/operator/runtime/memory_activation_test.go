@@ -81,7 +81,7 @@ func TestSimMemoryTwoAcceptedCommits(t *testing.T) {
 			t.Fatal(err)
 		}
 		ready, _ := initial.Ready(ctx)
-		remote, err := NewRemoteMemory(ready, manager, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+		remote, err := NewRemoteMemory(ready, manager)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -112,7 +112,7 @@ func TestSimMemoryTwoAcceptedCommits(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			next, err := NewRemoteMemory(ready, manager, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+			next, err := NewRemoteMemory(ready, manager)
 			if err != nil {
 				return err
 			}
@@ -208,7 +208,7 @@ func TestHostActivationGatesAcknowledgment(t *testing.T) {
 		if err = c.SetIncidentBroker(broker); err != nil {
 			t.Fatal(err)
 		}
-		native := NativeIncidentBroker{Repository: &repositorybroker.Broker{}, MemoryHost: true, LedgerRoot: t.TempDir(), Now: w.Now}
+		native := NativeIncidentBroker{Repository: &repositorybroker.Broker{}, LedgerRoot: t.TempDir(), Now: w.Now}
 		expected := ControllerRolloutExpectation{IncidentID: receipt.IncidentID, ReflectionCommit: "memory", AfterDetectorFingerprint: "tree"}
 		if err = native.saveLedger(&pb.BrokerLedger{IncidentId: receipt.IncidentID, ReflectionCommit: "memory", RolloutExpectation: rolloutExpectationContract(&expected), Receipt: closureReceiptContract(&receipt)}); err != nil {
 			t.Fatal(err)
@@ -233,7 +233,7 @@ func TestHostActivationGatesAcknowledgment(t *testing.T) {
 		if err = native.RecordControllerRollout(bad); err != nil {
 			t.Fatal(err)
 		}
-		recovered := NativeIncidentBroker{Repository: &repositorybroker.Broker{}, LedgerRoot: native.LedgerRoot, MemoryHost: true}
+		recovered := NativeIncidentBroker{Repository: &repositorybroker.Broker{}, LedgerRoot: native.LedgerRoot}
 		if _, pending, err := recovered.PendingControllerRollout("memory"); err != nil || pending {
 			t.Fatal("activation was not durable", pending, err)
 		}
@@ -252,7 +252,7 @@ func TestHostActivationGatesAcknowledgment(t *testing.T) {
 func TestRemoteMemoryRemovesUsageDeclaration(t *testing.T) {
 	host, _ := memoryhost.NewServer("c", "d", []sdk.Detector{scheduledDetector{sdk.DetectorSpec{ID: "no-usage", Interval: time.Second}}})
 	ready, _ := host.Ready(context.Background(), nil)
-	remote, err := NewRemoteMemory(ready, remoteFailure{}, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+	remote, err := NewRemoteMemory(ready, memoryhost.NewManager(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -746,13 +746,13 @@ func TestKubernetesJobDispatcherAddsDispatchTimeEnvironment(t *testing.T) {
 		RepositoryMountPath: "/workspace", PollInterval: time.Millisecond,
 		Environment: map[string]string{"SDO_SREGYM_API_BASE": "http://bridge:18000"},
 		DispatchEnvironment: func(context.Context) map[string]string {
-			return map[string]string{"SDO_PROBER_URL": "http://10.0.0.7:8080", "SDO_NAMESPACE": "hijacked"}
+			return map[string]string{"SDO_TEST_ENDPOINT": "http://10.0.0.7:8080", "SDO_NAMESPACE": "hijacked"}
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	goUntilCleanup(t, cancel, func() { _, _ = dispatcher.Dispatch(ctx, request) })
 	container := awaitJob(t, client, IncidentJobName(request.IncidentID)).Spec.Template.Spec.Containers[0]
-	if !containsEnvironment(container.Env, "SDO_PROBER_URL", "http://10.0.0.7:8080") {
+	if !containsEnvironment(container.Env, "SDO_TEST_ENDPOINT", "http://10.0.0.7:8080") {
 		t.Fatalf("dispatch-time environment was not propagated: %#v", container.Env)
 	}
 	if !containsEnvironment(container.Env, "SDO_SREGYM_API_BASE", "http://bridge:18000") {

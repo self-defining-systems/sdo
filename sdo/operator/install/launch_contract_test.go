@@ -63,12 +63,9 @@ func TestInstallerOperateOptionalArgumentsRoundTripToController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, supervise, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	controller, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if supervise {
-		t.Fatal("bounded controller must not supervise")
 	}
 	assertControllerLaunchRoundTrip(t, cfg, controller.Controller)
 }
@@ -81,12 +78,9 @@ func TestInstallerControllerOptionalArgumentsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	launch, supervise, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	launch, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if supervise {
-		t.Fatal("bounded controller must not supervise")
 	}
 	assertControllerLaunchRoundTrip(t, cfg, launch.Controller)
 	if launch.Controller.GetRepositoryPvcSubpath() != "accepted" || launch.Controller.GetSourceCommit() != cfg.AcceptedCommit || launch.Controller.GetDeployedCommit() != strings.Repeat("c", 40) || !reflect.DeepEqual(launch.Controller.GetDeployedManifestPaths(), []string{"kubernetes", "services"}) {
@@ -108,7 +102,6 @@ func assertControllerLaunchRoundTrip(t *testing.T, cfg install.Config, launch *c
 		"app root":                {launch.GetAppRoot(), "/workspace/application"},
 		"responder image":         {launch.GetResponderImage(), cfg.ResponderImage},
 		"toolchain image":         {launch.GetToolchainImage(), cfg.ControllerImage},
-		"prober image":            {launch.GetProberImage(), cfg.ControllerImage},
 		"repository PVC":          {launch.GetRepositoryPvc(), cfg.RepositoryPVC},
 		"repository mount":        {launch.GetRepositoryMountPath(), "/workspace"},
 		"worktree root":           {launch.GetBrokerWorktreeRoot(), "/workspace/worktrees"},
@@ -158,7 +151,7 @@ func TestInstallerOperateLateFindingsOffAddsNoResponderSetting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		controller, _, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+		controller, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,7 +177,7 @@ func TestOperateDriftBudgetDefaultsAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	controllerArgs := plan.Job.Spec.Template.Spec.Containers[0].Args
-	controller, _, err := operatorcli.ParseControllerLaunch(controllerArgs)
+	controller, err := operatorcli.ParseControllerLaunch(controllerArgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +189,7 @@ func TestOperateDriftBudgetDefaultsAndValidation(t *testing.T) {
 			if _, err := operatorcli.ParseOperateLaunch(append(append([]string{}, args...), "--drift-tokens-per-hour", value)); err == nil {
 				t.Fatal("operate accepted invalid drift token budget")
 			}
-			if _, _, err := operatorcli.ParseControllerLaunch(append(append([]string{}, controllerArgs...), "--drift-tokens-per-hour", value)); err == nil {
+			if _, err := operatorcli.ParseControllerLaunch(append(append([]string{}, controllerArgs...), "--drift-tokens-per-hour", value)); err == nil {
 				t.Fatal("controller accepted invalid drift token budget")
 			}
 		})

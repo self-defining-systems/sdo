@@ -25,7 +25,7 @@ func TestHelperCleanerDeletesOnlyLabelledResponderHelpers(t *testing.T) {
 	client := fake.NewSimpleClientset([]k8sruntime.Object{
 		helperPod("shop", "curl-debug", helper),
 		helperPod("shop", "frontend-abc", map[string]string{"app": "frontend"}),
-		helperPod("sdo", "sdo-prober", map[string]string{"app.kubernetes.io/managed-by": "sdo"}),
+		helperPod("sdo", "sdo-controller", map[string]string{"app.kubernetes.io/managed-by": "sdo"}),
 		helperPod("sdo", "dns-check", helper),
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "mongo-probe", Namespace: "shop", Labels: helper}},
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "sdo-incident-1", Namespace: "sdo"}},
@@ -40,7 +40,7 @@ func TestHelperCleanerDeletesOnlyLabelledResponderHelpers(t *testing.T) {
 	if !reflect.DeepEqual(deleted, want) {
 		t.Fatalf("deleted %v, want %v", deleted, want)
 	}
-	for _, kept := range []struct{ namespace, name string }{{"shop", "frontend-abc"}, {"sdo", "sdo-prober"}} {
+	for _, kept := range []struct{ namespace, name string }{{"shop", "frontend-abc"}, {"sdo", "sdo-controller"}} {
 		if _, err := client.CoreV1().Pods(kept.namespace).Get(context.Background(), kept.name, metav1.GetOptions{}); err != nil {
 			t.Fatalf("unlabelled pod %s/%s must survive: %v", kept.namespace, kept.name, err)
 		}

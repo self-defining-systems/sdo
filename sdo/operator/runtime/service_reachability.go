@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -13,14 +12,8 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 )
 
-// Service reachability splits along the existing controller/prober line.
-// The controller already holds the namespace snapshot and the observer RBAC,
-// so it derives the targets (servicehealth.ReachabilityTargets) and keeps
-// every target's dial history. The credential-free prober pod only dials the
-// targets of each round from inside the cluster network and classifies the
-// errors; it lists nothing and remembers nothing, so it needs no Kubernetes
-// client, no service-account token and no new RBAC, and a replaced prober pod
-// loses no history.
+// The controller derives reachability targets and retains their dial history.
+// The active read-only memory host executes each stateless dial round over RPC.
 
 // evaluateOnceReachabilityInterval spaces the synchronous rounds of a
 // bounded --evaluate-once run: the default three rounds take about two
@@ -30,13 +23,6 @@ const evaluateOnceReachabilityInterval = time.Second
 // ReachabilityDialer is the prober capability the observer needs.
 type ReachabilityDialer interface {
 	DialTargets(ctx context.Context, request prober.DialRequest) (prober.DialResponse, error)
-}
-
-// DialTargets runs one round of reachability dials in the prober.
-func (c HTTPProberClient) DialTargets(ctx context.Context, request prober.DialRequest) (prober.DialResponse, error) {
-	var response prober.DialResponse
-	err := c.do(ctx, http.MethodPost, prober.PathDials, request, &response)
-	return response, err
 }
 
 // ConsumesServiceReachability reports whether any detector needs dial observations.

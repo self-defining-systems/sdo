@@ -28,9 +28,9 @@ func (r *repeatable) Set(value string) error { *r = append(*r, value); return ni
 // ParseControllerLaunch rejects native/legacy split-brain before any build or
 // Kubernetes effect. It is pure so installer Job arguments can be contract
 // tested against the same parser shipped in the controller image.
-func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
+func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
 	if len(args) == 0 || args[0] != "controller" {
-		return builder.RunConfig{}, false, errors.New("expected controller subcommand")
+		return builder.RunConfig{}, errors.New("expected controller subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator controller", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -41,7 +41,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	application := flags.String("application", "", "application identity")
 	responderImage := flags.String("responder-image", "", "registered responder image")
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required)")
-	proberImage := flags.String("prober-image", "", "traffic prober image")
 	repositoryPVC := flags.String("repository-pvc", "", "repository PVC")
 	repositoryMount := flags.String("repository-mount-path", "", "repository PVC mount")
 	repositorySubPath := flags.String("repository-pvc-subpath", "", "repository PVC subpath")
@@ -66,7 +65,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
-	memoryHost := flags.Bool("memory-host", false, "run accepted detectors and programs in the memory host")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	driftTokensPerHour := registerDriftTokenBudget(flags)
@@ -76,47 +74,46 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
-	supervise := flags.Bool("supervise", false, "rebuild and relaunch after closure")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	var deployedManifestPaths repeatable
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
 	if err := flags.Parse(args[1:]); err != nil {
-		return builder.RunConfig{}, false, err
+		return builder.RunConfig{}, err
 	}
 	if flags.NArg() != 0 {
-		return builder.RunConfig{}, false, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
+		return builder.RunConfig{}, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
 	}
 	if err := toolchain.ValidateImage(*toolchainImage); err != nil {
-		return builder.RunConfig{}, false, err
+		return builder.RunConfig{}, err
 	}
 	if *brokerMode != "native" || *workerMountMode != "proposal-only" {
-		return builder.RunConfig{}, false, errors.New("native broker requires proposal-only worker mounts")
+		return builder.RunConfig{}, errors.New("native broker requires proposal-only worker mounts")
 	}
-	if *duration < 0 || (*supervise && (*duration > 0 || *exitAfterClosure)) {
-		return builder.RunConfig{}, false, errors.New("supervision cannot be combined with bounded duration or exit-after-closure")
+	if *duration < 0 {
+		return builder.RunConfig{}, errors.New("duration must be nonnegative")
 	}
 	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown <= 0 {
-		return builder.RunConfig{}, false, errors.New("follow-up limit must be at most 1000 and cooldown positive")
+		return builder.RunConfig{}, errors.New("follow-up limit must be at most 1000 and cooldown positive")
 	}
 	if *programTrustThreshold < 1 {
-		return builder.RunConfig{}, false, errors.New("program trust threshold must be positive")
+		return builder.RunConfig{}, errors.New("program trust threshold must be positive")
 	}
 	if *programMinDuration < 0 {
-		return builder.RunConfig{}, false, errors.New("program minimum duration must be nonnegative")
+		return builder.RunConfig{}, errors.New("program minimum duration must be nonnegative")
 	}
 	if err := validateDriftTokenBudget(*driftTokensPerHour); err != nil {
-		return builder.RunConfig{}, false, err
+		return builder.RunConfig{}, err
 	}
 	if *programFastPath && *repairPolicy != "recorded-actions" {
-		return builder.RunConfig{}, false, errors.New("program fast path requires recorded-actions repair policy")
+		return builder.RunConfig{}, errors.New("program fast path requires recorded-actions repair policy")
 	}
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
 		*credentialsSecret == "" || *worktreeRoot == "" || *model == "" || *backend == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
-		return builder.RunConfig{}, false, errors.New("native launch requires application, namespace, images, repository, credentials, and responder identity")
+		return builder.RunConfig{}, errors.New("native launch requires application, namespace, images, repository, credentials, and responder identity")
 	}
 	if !filepath.IsAbs(*repositoryMount) || !filepath.IsAbs(*worktreeRoot) {
-		return builder.RunConfig{}, false, errors.New("repository mount and proposal root must be absolute")
+		return builder.RunConfig{}, errors.New("repository mount and proposal root must be absolute")
 	}
 	if *application == "" {
 		*application = filepath.Base(*app)
@@ -130,12 +127,12 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,
 		ResponseTimeout: durationpb.New(*responseTimeout), VerificationTimeout: durationpb.New(*verificationTimeout),
-		RepairPolicy: *repairPolicy, MaxFollowUps: int32(*maxFollowUps), FollowUpCooldown: durationpb.New(*followUpCooldown), MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), DiagnosisSettleDelay: durationpb.New(*diagnosisSettleDelay), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
+		RepairPolicy: *repairPolicy, MaxFollowUps: int32(*maxFollowUps), FollowUpCooldown: durationpb.New(*followUpCooldown), MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), DiagnosisSettleDelay: durationpb.New(*diagnosisSettleDelay), LeaseName: "sdo-controller",
 		ExitAfterClosure: *exitAfterClosure,
-		ToolchainImage:   *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
+		ToolchainImage:   *toolchainImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
 		ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL, MetricsPublishUrl: *metricsPublishURL,
-		MemoryHost: *memoryHost, ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
+		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
 		DriftTokensPerHour: *driftTokensPerHour,
 		ProgramMinDuration: durationpb.New(*programMinDuration),
 	}
@@ -143,7 +140,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		launch.Duration = durationpb.New(*duration)
 	}
 	if err := wire.Validate(launch); err != nil {
-		return builder.RunConfig{}, false, err
+		return builder.RunConfig{}, err
 	}
 	return builder.RunConfig{
 		Build: builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
@@ -154,6 +151,5 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 			}
 			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
 		},
-		PublishProber: memory.PublishProber,
-	}, *supervise, nil
+	}, nil
 }

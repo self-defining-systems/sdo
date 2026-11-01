@@ -1,21 +1,14 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
-	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -45,140 +38,6 @@ type ProberAPI interface {
 	Windows(ctx context.Context) (map[string]traffic.Window, error)
 	Burst(ctx context.Context, request prober.BurstRequest) (prober.BurstResult, error)
 	Reset(ctx context.Context) error
-}
-
-// HTTPProberClient calls a prober's HTTP API.
-type HTTPProberClient struct {
-	// BaseURL resolves the prober's address, for example the pod IP. After a
-	// transport error the client asks again with refresh set, so a replaced
-	// or deleted prober pod is found or recreated.
-	BaseURL func(ctx context.Context, refresh bool) (string, error)
-	Client  *http.Client
-}
-
-// StaticProberURL addresses a prober at a fixed URL.
-func StaticProberURL(url string) func(context.Context, bool) (string, error) {
-	return func(context.Context, bool) (string, error) { return url, nil }
-}
-
-// ProberURLEnvironment names the responder environment variable that carries
-// the prober's API address, which `sdo incident status` uses for its verify
-// burst.
-const ProberURLEnvironment = "SDO_PROBER_URL"
-
-// proberEnvironmentTimeout bounds how long dispatch may spend locating the
-// prober; normally its address is already cached.
-const proberEnvironmentTimeout = 2 * time.Second
-
-// ProberEnvironment resolves the prober address at dispatch time. Without a
-// prober, or when it cannot be resolved, the responder gets nothing and
-// falls back to its own verification; dispatch never waits on the prober.
-func ProberEnvironment(address func(context.Context, bool) (string, error)) func(context.Context) map[string]string {
-	return func(ctx context.Context) map[string]string {
-		if address == nil {
-			return nil
-		}
-		resolveCtx, cancel := context.WithTimeout(ctx, proberEnvironmentTimeout)
-		defer cancel()
-		resolved, err := address(resolveCtx, false)
-		if err != nil || resolved == "" {
-			return nil
-		}
-		return map[string]string{ProberURLEnvironment: resolved}
-	}
-}
-
-func (c HTTPProberClient) do(ctx context.Context, method string, path string, body any, into any) error {
-	response, err := c.send(ctx, method, path, body, false)
-	if err != nil && ctx.Err() == nil {
-		response, err = c.send(ctx, method, path, body, true)
-	}
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode >= 300 {
-		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("prober %s %s: HTTP %d: %s", method, path, response.StatusCode, strings.TrimSpace(string(message)))
-	}
-	if into == nil {
-		return nil
-	}
-	return json.NewDecoder(io.LimitReader(response.Body, 32<<20)).Decode(into)
-}
-
-func (c HTTPProberClient) send(ctx context.Context, method string, path string, body any, refresh bool) (*http.Response, error) {
-	base, err := c.BaseURL(ctx, refresh)
-	if err != nil {
-		return nil, fmt.Errorf("locate prober: %w", err)
-	}
-	var payload io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		payload = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(base, "/")+path, payload)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	client := c.Client
-	if client == nil {
-		client = &http.Client{Timeout: 90 * time.Second}
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("prober %s %s: %w", method, path, err)
-	}
-	return response, nil
-}
-
-func (c HTTPProberClient) Windows(ctx context.Context) (map[string]traffic.Window, error) {
-	var response prober.WindowsResponse
-	if err := c.do(ctx, http.MethodGet, prober.PathWindows, nil, &response); err != nil {
-		return nil, err
-	}
-	return response.Windows, nil
-}
-
-func (c HTTPProberClient) Burst(ctx context.Context, request prober.BurstRequest) (prober.BurstResult, error) {
-	var result prober.BurstResult
-	err := c.do(ctx, http.MethodPost, prober.PathBursts, request, &result)
-	return result, err
-}
-
-func (c HTTPProberClient) Probe(ctx context.Context, ref sdk.ObjectRef, port int32, request *program.HTTPProbe) (program.ProbeResult, error) {
-	return c.primitive(ctx, prober.PrimitiveRequest{To: ref, Port: port, HTTP: request})
-}
-
-func (c HTTPProberClient) primitive(ctx context.Context, request prober.PrimitiveRequest) (program.ProbeResult, error) {
-	if err := ctx.Err(); err != nil {
-		return program.ProbeResult{}, err
-	}
-	// Leave half the caller's remaining time for locating the prober and the
-	// HTTP round trip, so a hanging probe returns an observation before the
-	// client cancels its request. HTTP does not carry context deadlines.
-	timeout := 5 * time.Second
-	if deadline, ok := ctx.Deadline(); ok {
-		timeout = min(timeout, time.Until(deadline)/2)
-	}
-	if c.Client != nil && c.Client.Timeout > 0 {
-		timeout = min(timeout, c.Client.Timeout/2)
-	}
-	if timeout <= 0 {
-		return program.ProbeResult{}, context.DeadlineExceeded
-	}
-	request.Timeout = timeout
-	var result program.ProbeResult
-	err := c.do(ctx, http.MethodPost, prober.PathPrimitive, request, &result)
-	return result, err
-}
-
-func (c HTTPProberClient) Reset(ctx context.Context) error {
-	return c.do(ctx, http.MethodPost, prober.PathReset, map[string]string{}, nil)
 }
 
 // DefaultTrafficPollInterval is how often the controller reads the prober.
@@ -453,12 +312,6 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 		carrier = carrier.WithReachability(reachabilityWindow{reachability})
 	}
 	return carrier, nil
-}
-
-// ProbePod carries only the address already observed in the namespace snapshot.
-// The credential-free prober uses its existing application-only network policy.
-func (c HTTPProberClient) ProbePod(ctx context.Context, ref sdk.ObjectRef, ip string, port int32) (program.ProbeResult, error) {
-	return c.primitive(ctx, prober.PrimitiveRequest{To: ref, Port: port, PodIP: ip})
 }
 
 type trafficWindows map[string]traffic.Window

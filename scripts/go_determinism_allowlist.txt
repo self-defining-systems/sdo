@@ -106,8 +106,6 @@ sdo/operator/runtime/prober/reachability_test.go:net/http.Post
 sdo/operator/runtime/prober/reachability_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/prober/reachability_test.go:time.Now
 sdo/operator/runtime/prober/reachability_test.go:time.Since
-sdo/operator/runtime/prober_pod.go:time.After
-sdo/operator/runtime/prober_pod.go:time.Now
 sdo/operator/runtime/program_candidates.go:time.Now
 sdo/operator/runtime/program_candidates.go:time.Since
 sdo/operator/runtime/program_equivalent_repair.go:time.Now
@@ -172,10 +170,8 @@ sdo/operator/runtime/step_latency_test.go:time.Now
 sdo/operator/runtime/step_latency_test.go:time.Since
 sdo/operator/runtime/step_latency_test.go:time.Sleep
 sdo/operator/runtime/time_scale.go:os.Getenv
-sdo/operator/runtime/traffic_observer.go:net/http.Client
 sdo/operator/runtime/traffic_observer.go:time.NewTicker
 sdo/operator/runtime/traffic_observer.go:time.NewTimer
-sdo/operator/runtime/traffic_observer.go:time.Until
 sdo/operator/runtime/traffic_observer_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/usage_live_test.go:os.Getenv
 sdo/operator/runtime/usage_live_test.go:time.Now

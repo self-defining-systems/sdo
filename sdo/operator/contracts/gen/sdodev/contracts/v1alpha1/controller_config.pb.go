@@ -37,7 +37,6 @@ const (
 
 type ControllerConfig struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	MemoryHost       bool                   `protobuf:"varint,74,opt,name=memory_host,json=memoryHost,proto3" json:"memory_host,omitempty"`
 	MemoryHostBinary string                 `protobuf:"bytes,75,opt,name=memory_host_binary,json=memoryHostBinary,proto3" json:"memory_host_binary,omitempty"`
 	MemoryHostDigest string                 `protobuf:"bytes,76,opt,name=memory_host_digest,json=memoryHostDigest,proto3" json:"memory_host_digest,omitempty"`
 	// Observation and identity.
@@ -81,15 +80,11 @@ type ControllerConfig struct {
 	// clean_responder_helpers, state_baseline are true) use `optional` so an unset
 	// field keeps the controller default rather than flipping to false.
 	ExitAfterClosure        bool                 `protobuf:"varint,29,opt,name=exit_after_closure,json=exitAfterClosure,proto3" json:"exit_after_closure,omitempty"`
-	RestartAfterClosure     bool                 `protobuf:"varint,30,opt,name=restart_after_closure,json=restartAfterClosure,proto3" json:"restart_after_closure,omitempty"`
 	MaintenanceConfigmap    string               `protobuf:"bytes,31,opt,name=maintenance_configmap,json=maintenanceConfigmap,proto3" json:"maintenance_configmap,omitempty"`
 	MaintenancePollInterval *durationpb.Duration `protobuf:"bytes,32,opt,name=maintenance_poll_interval,json=maintenancePollInterval,proto3" json:"maintenance_poll_interval,omitempty"`
 	ResumeSyncTimeout       *durationpb.Duration `protobuf:"bytes,33,opt,name=resume_sync_timeout,json=resumeSyncTimeout,proto3" json:"resume_sync_timeout,omitempty"`
 	SyntheticTraffic        *bool                `protobuf:"varint,34,opt,name=synthetic_traffic,json=syntheticTraffic,proto3,oneof" json:"synthetic_traffic,omitempty"`
 	SyntheticTrafficWarmup  *durationpb.Duration `protobuf:"bytes,35,opt,name=synthetic_traffic_warmup,json=syntheticTrafficWarmup,proto3" json:"synthetic_traffic_warmup,omitempty"`
-	ProberBinary            string               `protobuf:"bytes,36,opt,name=prober_binary,json=proberBinary,proto3" json:"prober_binary,omitempty"`
-	ProberImage             string               `protobuf:"bytes,37,opt,name=prober_image,json=proberImage,proto3" json:"prober_image,omitempty"`
-	ProberUrl               string               `protobuf:"bytes,38,opt,name=prober_url,json=proberUrl,proto3" json:"prober_url,omitempty"`
 	CleanResponderHelpers   *bool                `protobuf:"varint,39,opt,name=clean_responder_helpers,json=cleanResponderHelpers,proto3,oneof" json:"clean_responder_helpers,omitempty"`
 	StateBaseline           *bool                `protobuf:"varint,40,opt,name=state_baseline,json=stateBaseline,proto3,oneof" json:"state_baseline,omitempty"`
 	// Directory of agent registration manifests. When omitted the controller
@@ -173,13 +168,6 @@ func (x *ControllerConfig) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ControllerConfig.ProtoReflect.Descriptor instead.
 func (*ControllerConfig) Descriptor() ([]byte, []int) {
 	return file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *ControllerConfig) GetMemoryHost() bool {
-	if x != nil {
-		return x.MemoryHost
-	}
-	return false
 }
 
 func (x *ControllerConfig) GetMemoryHostBinary() string {
@@ -387,13 +375,6 @@ func (x *ControllerConfig) GetExitAfterClosure() bool {
 	return false
 }
 
-func (x *ControllerConfig) GetRestartAfterClosure() bool {
-	if x != nil {
-		return x.RestartAfterClosure
-	}
-	return false
-}
-
 func (x *ControllerConfig) GetMaintenanceConfigmap() string {
 	if x != nil {
 		return x.MaintenanceConfigmap
@@ -427,27 +408,6 @@ func (x *ControllerConfig) GetSyntheticTrafficWarmup() *durationpb.Duration {
 		return x.SyntheticTrafficWarmup
 	}
 	return nil
-}
-
-func (x *ControllerConfig) GetProberBinary() string {
-	if x != nil {
-		return x.ProberBinary
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetProberImage() string {
-	if x != nil {
-		return x.ProberImage
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetProberUrl() string {
-	if x != nil {
-		return x.ProberUrl
-	}
-	return ""
 }
 
 func (x *ControllerConfig) GetCleanResponderHelpers() bool {
@@ -664,10 +624,8 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xdd\x1e\n" +
-	"\x10ControllerConfig\x12\x1f\n" +
-	"\vmemory_host\x18J \x01(\bR\n" +
-	"memoryHost\x12,\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\x8c\x1e\n" +
+	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18K \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18L \x01(\tR\x10memoryHostDigest\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
@@ -701,17 +659,12 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"lease_name\x18\x1a \x01(\tR\tleaseName\x12@\n" +
 	"\x0elease_duration\x18\x1b \x01(\v2\x19.google.protobuf.DurationR\rleaseDuration\x12\x1a\n" +
 	"\bidentity\x18\x1c \x01(\tR\bidentity\x12,\n" +
-	"\x12exit_after_closure\x18\x1d \x01(\bR\x10exitAfterClosure\x122\n" +
-	"\x15restart_after_closure\x18\x1e \x01(\bR\x13restartAfterClosure\x123\n" +
+	"\x12exit_after_closure\x18\x1d \x01(\bR\x10exitAfterClosure\x123\n" +
 	"\x15maintenance_configmap\x18\x1f \x01(\tR\x14maintenanceConfigmap\x12U\n" +
 	"\x19maintenance_poll_interval\x18  \x01(\v2\x19.google.protobuf.DurationR\x17maintenancePollInterval\x12I\n" +
 	"\x13resume_sync_timeout\x18! \x01(\v2\x19.google.protobuf.DurationR\x11resumeSyncTimeout\x120\n" +
 	"\x11synthetic_traffic\x18\" \x01(\bH\x00R\x10syntheticTraffic\x88\x01\x01\x12S\n" +
-	"\x18synthetic_traffic_warmup\x18# \x01(\v2\x19.google.protobuf.DurationR\x16syntheticTrafficWarmup\x12#\n" +
-	"\rprober_binary\x18$ \x01(\tR\fproberBinary\x12!\n" +
-	"\fprober_image\x18% \x01(\tR\vproberImage\x12\x1d\n" +
-	"\n" +
-	"prober_url\x18& \x01(\tR\tproberUrl\x12;\n" +
+	"\x18synthetic_traffic_warmup\x18# \x01(\v2\x19.google.protobuf.DurationR\x16syntheticTrafficWarmup\x12;\n" +
 	"\x17clean_responder_helpers\x18' \x01(\bH\x01R\x15cleanResponderHelpers\x88\x01\x01\x12*\n" +
 	"\x0estate_baseline\x18( \x01(\bH\x02R\rstateBaseline\x88\x01\x01\x12@\n" +
 	"\x1cagent_registration_directory\x18) \x01(\tR\x1aagentRegistrationDirectory\x12,\n" +
@@ -747,7 +700,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x0ftoolchain_image\x18H \x01(\tR\x0etoolchainImageB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
-	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b/\x100J\x04\b0\x101J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>R\x06brokerR\vbroker_argsR\x0fvalidator_imageR\x0fschema_identityR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourB\x88\x02\n" +
+	"\x0f_state_baselineJ\x04\bJ\x10KJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>R\vmemory_hostR\x06brokerR\vbroker_argsR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
+	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourB\x88\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x15ControllerConfigProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

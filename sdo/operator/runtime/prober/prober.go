@@ -1,8 +1,5 @@
-// Package prober runs an application's synthetic-traffic generators in a
-// process of their own. The controller starts it as an isolated pod (no
-// Kubernetes credentials, egress only to the application namespace, resource
-// limits) and reads its observations over HTTP; generator code never runs in
-// the controller. The package has no Kubernetes dependency.
+// Package prober supplies the memory host's routing and synthetic-traffic engine.
+// Accepted generator code never runs in the controller. This engine has no Kubernetes dependency.
 package prober
 
 import (

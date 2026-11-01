@@ -11,15 +11,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk/inputs"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -50,6 +51,8 @@ type RuntimeOptions struct {
 	// controller (observation, state, dispatch, and leader election), so the
 	// production wiring can run against a fake API server.
 	Client kubernetes.Interface
+	// Traffic injects synthetic transport for embedded tests. Installed controllers use Manager.
+	Traffic ProberAPI
 	// MetadataClient replaces the Secret metadata transport in embedded runs.
 	// When Client is supplied without it, Secrets remain unobserved.
 	MetadataClient rest.Interface
@@ -73,19 +76,16 @@ func (values *repeatedFlag) Set(value string) error {
 	return nil
 }
 
-func Run(detectors []sdk.Detector) {
-	RunWithPrograms(detectors, nil)
-}
-
-func RunWithPrograms(detectors []sdk.Detector, programs program.ProgramRegistry) {
+// Run launches the stable controller; accepted code executes in the memory host.
+func Run() {
 	broker.RunValidationChild()
-	if err := RunWithOptions(context.Background(), detectors, RuntimeOptions{Programs: programs}); err != nil {
+	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) (runErr error) {
+func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) error {
 	// The typed launch path fills options.Client itself; that is still a
 	// production client and must receive the metadata transport below.
 	clientInjected := options.Client != nil
@@ -101,12 +101,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if stderr == nil {
 		stderr = os.Stderr
 	}
-	defer func() {
-		if errors.Is(runErr, ErrControllerRolloutRestartRequired) {
-			_ = json.NewEncoder(stdout).Encode(map[string]any{"controller_rollout_restart": true})
-			runErr = nil
-		}
-	}()
 	var launchConfig *contractsv1alpha1.ControllerConfig
 	if len(args) > 0 && args[0] == LaunchConfigFlag {
 		// Launch from one typed ControllerConfig the launcher mounted, instead
@@ -131,11 +125,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		options.NativeBroker, options.Client = native, client
 		args = append(controllerConfigToArgs(config), args[2:]...)
 	}
-	if len(args) > 0 && args[0] == "--run-once" {
-		return core.RunWithOptions(ctx, detectors, core.RuntimeOptions{Args: args[1:], Stdout: stdout, Stderr: stderr})
-	}
 	if len(args) > 0 && args[0] == "--evaluate-once" {
-		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider)
+		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Traffic)
 	}
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
@@ -188,7 +179,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"maximum follow-up responders for health findings that stay active after a response; zero disables follow-ups",
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
-	memoryHost := flags.Bool("memory-host", false, "run detectors and programs in a memory host child")
 	memoryHostBinary := flags.String("memory-host-binary", "", "validated host binary")
 	memoryHostDigest := flags.String("memory-host-digest", "", "validated host digest")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
@@ -234,11 +224,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	leaseDuration := flags.Duration("lease-duration", 60*time.Second, "leader-election Lease duration")
 	identity := flags.String("identity", defaultIdentity(), "unique leader-election identity")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
-	restartAfterClosure := flags.Bool(
-		"restart-after-closure",
-		false,
-		"exit after each acknowledged closure in non-native mode",
-	)
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maintenanceConfigMap := flags.String(
 		"maintenance-configmap", MaintenanceConfigMapName, "maintenance ConfigMap in the control namespace",
@@ -248,18 +233,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"resume-sync-timeout", time.Minute, "maximum wait for a fresh application cache when maintenance ends",
 	)
 	syntheticTraffic := flags.Bool(
-		"synthetic-traffic", true, "run the health judge's synthetic-traffic workloads in an isolated prober",
+		"synthetic-traffic", true, "run accepted synthetic traffic in the memory host",
 	)
 	syntheticWarmup := flags.Duration(
 		"synthetic-traffic-warmup", 5*time.Second,
 		"maximum wait for a first sample of every synthetic scenario before the first evaluation after start or resume",
 	)
-	proberBinary := flags.String(
-		"prober-binary", "", "compiled routing and traffic prober on the shared repository volume; the controller runs it as an isolated pod",
-	)
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required in job mode)")
-	proberImage := flags.String("prober-image", "", "image that runs the prober binary; defaults to --responder-image")
-	proberURL := flags.String("prober-url", "", "use an already running prober at this URL instead of starting one")
 	metricsPublishURL := flags.String("metrics-publish-url", "", "SDO Prometheus publishing base URL")
 	metricsURL := flags.String(
 		"metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle",
@@ -281,7 +261,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	var hostManager *memoryhost.Manager
-	if *memoryHost {
+	if launchConfig != nil {
 		hostManager = memoryhost.NewManager(30 * time.Second)
 		defer hostManager.Close()
 		if err := hostManager.Publish(ctx, sdktest.Snapshot{NamespaceName: *namespace}); err != nil {
@@ -307,7 +287,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err := hostManager.Activate(ctx, child, launchConfig.GetControllerRevision(), *memoryHostDigest); err != nil {
 			return err
 		}
-		remote, err := NewRemoteMemory(ready, hostManager, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+		remote, err := NewRemoteMemory(ready, hostManager)
 		if err != nil {
 			return err
 		}
@@ -329,9 +309,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	if *programFastPath && *repairPolicy != "recorded-actions" {
 		return errors.New("program fast path requires recorded-actions repair policy")
-	}
-	if *exitAfterClosure && *restartAfterClosure {
-		return fmt.Errorf("--exit-after-closure and --restart-after-closure are mutually exclusive")
 	}
 	if *controlNamespace == "" {
 		*controlNamespace = *namespace
@@ -468,31 +445,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
 	}
 	trafficWorkloads := TrafficWorkloadNames(detectors)
-	var proberAPI ProberAPI
-	var proberAddress func(context.Context, bool) (string, error)
-	// Responders outlive prober pod IPs, so they get a stable address.
-	var responderProberAddress func(context.Context, bool) (string, error)
-	switch {
-	case hostManager != nil:
+	proberAPI := options.Traffic
+	if hostManager != nil {
 		proberAPI = MemoryTraffic{RPC: hostManager}
-	case *proberURL != "":
-		proberAddress = StaticProberURL(*proberURL)
-		proberAPI = HTTPProberClient{BaseURL: proberAddress}
-		responderProberAddress = proberAddress
-	case *proberBinary != "":
-		image := *proberImage
-		if image == "" {
-			image = *responderImage
-		}
-		pod := &ProberPod{
-			Client: bootstrapProvider.Client, Namespace: *controlNamespace, AppNamespace: *namespace, Image: image,
-			RepositoryPVC: *repositoryPVC, RepositoryMountPath: *repositoryMountPath,
-			RepositoryPVCSubPath: *repositoryPVCSubPath, Binary: *proberBinary,
-			DisableSyntheticTraffic: !*syntheticTraffic,
-		}
-		proberAddress = pod.Address
-		responderProberAddress = pod.ServiceAddress
-		proberAPI = HTTPProberClient{BaseURL: proberAddress}
 	}
 	var trafficObserver *TrafficObserver
 	if *syntheticTraffic && hostManager != nil {
@@ -503,24 +458,19 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// Service reachability is a routing probe, not a synthetic workload, so
 	// it runs whenever a prober exists and a detector consumes it.
 	var reachabilityObserver *ServiceReachabilityObserver
-	if (hostManager != nil || proberAddress != nil) && (*memoryHost || ConsumesServiceReachability(detectors)) {
-		identity := servicehealth.ProberIdentity{}
-		if hostManager != nil {
-			identity = servicehealth.ProberIdentity{Namespace: *controlNamespace, Labels: map[string]string{"app.kubernetes.io/name": "sdo-controller"}}
-		} else if *proberURL == "" {
-			identity = servicehealth.ProberIdentity{Namespace: *controlNamespace, Labels: proberPodLabels()}
+	if proberAPI != nil {
+		dialer, ok := proberAPI.(ReachabilityDialer)
+		if !ok {
+			return errors.New("traffic transport lacks host reachability RPC")
 		}
 		reachabilityObserver = NewServiceReachabilityObserver(ServiceReachabilityConfig{
-			Prober: func() ReachabilityDialer {
-				if hostManager != nil {
-					return MemoryTraffic{RPC: hostManager}
-				}
-				return HTTPProberClient{BaseURL: proberAddress}
-			}(), Snapshots: kubernetesCache, Identity: identity,
-			Notify: func() { kubernetesCache.Notify(servicehealth.ReachabilityWatch) },
+			Prober: dialer, Snapshots: kubernetesCache,
+			Identity: servicehealth.ProberIdentity{Namespace: *controlNamespace, Labels: map[string]string{"app.kubernetes.io/name": "sdo-controller"}},
+			Notify:   func() { kubernetesCache.Notify(servicehealth.ReachabilityWatch) },
 		})
 		defer reachabilityObserver.Stop()
 	}
+
 	var snapshotProvider SnapshotProvider = kubernetesCache
 	if trafficObserver != nil || reachabilityObserver != nil {
 		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver}
@@ -564,12 +514,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		defer stateTracker.Stop()
 	}
 	planSource := GitPlanSource{Repository: resolvedRoot, Images: stateTracker, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
-	var primitiveProber PrimitiveProber
-	if hostManager != nil {
-		primitiveProber = MemoryTraffic{RPC: hostManager}
-	} else if proberAddress != nil {
-		primitiveProber = HTTPProberClient{BaseURL: proberAddress}
-	}
+	primitiveProber, _ := proberAPI.(PrimitiveProber)
 	var memoryCatalogMu sync.RWMutex
 	var controller *Controller
 	dispatcher := options.Dispatcher
@@ -584,8 +529,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
-			Environment: jobEnvironment, DispatchEnvironment: ProberEnvironment(responderProberAddress),
-			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
+			Environment: jobEnvironment,
+			Catalog:     catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				memoryCatalogMu.RLock()
@@ -594,6 +539,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource,
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
+				if len(TrafficWorkloadNames(detectors)) > 0 {
+					loop.Traffic = proberAPI
+				}
 				loop.CurrentEvidence = func() *IncidentRequest {
 					if controller == nil {
 						return nil
@@ -669,9 +617,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 
 	var activation *memoryActivation
 	if hostManager != nil {
-		if options.NativeBroker != nil {
-			options.NativeBroker.MemoryHost = true
-		}
 		operatorRoot := builder.DefaultOperatorRoot()
 		activation = &memoryActivation{manager: hostManager, active: launchConfig.GetControllerRevision(), results: make(chan memoryCandidate, 1), notify: make(chan struct{}, 1)}
 		activation.build = func(buildCtx context.Context, commit string) memoryCandidate {
@@ -706,7 +651,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return err
 			}
-			remote, err := NewRemoteMemory(ready, hostManager, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+			remote, err := NewRemoteMemory(ready, hostManager)
 			if err != nil {
 				return err
 			}
@@ -880,16 +825,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 		}
 		if trafficObserver == nil {
-			// Routing capture has a short sampling budget, so create and await
-			// the isolated pod before detection, even without traffic consumers.
-			if proberAddress != nil {
-				readyCtx, cancel := context.WithTimeout(runCtx, defaultProberReadyAfter)
-				_, err := proberAddress(readyCtx, false)
-				cancel()
-				if err != nil {
-					fmt.Fprintf(stderr, "routing prober startup: %v\n", err)
-				}
-			}
 			if len(trafficWorkloads) > 0 {
 				if err := encoder.Encode(map[string]any{
 					"synthetic_traffic": "disabled", "synthetic_traffic_workloads": trafficWorkloads,
@@ -999,14 +934,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	persistControllerState()
-	// A controller launched during a maintenance pause must still complete its rollout handoff: the pause keeps
-	// the closure acknowledgment waiting on it, so deferring it until resume restarts the controller in a loop.
-	// The handoff verifies the build's provenance against the accepted tree, not an evaluation.
-	if options.NativeBroker != nil && hostManager == nil {
-		if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
-			return err
-		}
-	}
 	if err := reviewGate.check(controller); err != nil {
 		return err
 	}
@@ -1055,11 +982,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 		persistControllerState()
-		if options.NativeBroker != nil {
-			if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
-				return err
-			}
-		}
+
 		if err := reviewGate.check(controller); err != nil {
 			return err
 		}
@@ -1207,12 +1130,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return err
 			}
 			if *exitAfterClosure && completion.err == nil {
-				return nil
-			}
-			if *restartAfterClosure && options.NativeBroker == nil && completion.err == nil {
-				if err := encoder.Encode(map[string]any{"controller_closure_restart": controller.LastAcknowledgedIncidentID()}); err != nil {
-					fmt.Fprintln(stderr, err)
-				}
 				return nil
 			}
 		case renewErr := <-renewalErrors:
@@ -1438,13 +1355,16 @@ func evaluateOnce(
 	stdout io.Writer,
 	stderr io.Writer,
 	provider SnapshotProvider,
+	trafficAPI ProberAPI,
 ) error {
 	flags := flag.NewFlagSet("sdo-controller-evaluate-once", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	application := flags.String("application", "", "application identity")
 	flags.String("app-root", "", "application repository root")
-	proberURL := flags.String("prober-url", "", "live traffic prober URL for bounded health evaluation")
+	hostBinary := flags.String("memory-host-binary", "", "validated memory host binary")
+	hostDigest := flags.String("memory-host-digest", "", "validated memory host digest")
+	memoryCommit := flags.String("memory-commit", "", "accepted memory revision")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
 	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
 	if err := flags.Parse(args); err != nil {
@@ -1455,6 +1375,40 @@ func evaluateOnce(
 	}
 	if *application == "" {
 		*application = *namespace
+	}
+	if provider == nil {
+		manager := memoryhost.NewManager(30 * time.Second)
+		defer manager.Close()
+		if err := manager.Publish(ctx, sdktest.Snapshot{NamespaceName: *namespace}); err != nil {
+			return err
+		}
+		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, Binary: *hostBinary, Digest: *hostDigest, Commit: *memoryCommit, MemoryBytes: 512 << 20, Output: stderr})
+		if err != nil {
+			return err
+		}
+		defer child.Close()
+		readyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		ready, err := child.Ready(readyCtx)
+		cancel()
+		if err != nil {
+			return err
+		}
+		if err = manager.Prepare(ctx, child); err != nil {
+			return err
+		}
+		if err = manager.Activate(ctx, child, *memoryCommit, *hostDigest); err != nil {
+			return err
+		}
+		remote, err := NewRemoteMemory(ready, manager)
+		if err != nil {
+			return err
+		}
+		detectors = remote.Detectors
+		trafficAPI = MemoryTraffic{RPC: manager}
+		if err := (MemoryTraffic{RPC: manager}).Start(ctx); err != nil {
+			return err
+		}
+		defer (MemoryTraffic{RPC: manager}).Stop(ctx)
 	}
 	if provider == nil {
 		kubernetesProvider, err := core.NewKubernetesSnapshotProvider(*namespace)
@@ -1474,23 +1428,24 @@ func evaluateOnce(
 	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
-		if *proberURL == "" {
-			return errors.New("traffic health evaluation requires a live prober URL")
+		if trafficAPI == nil {
+			return errors.New("traffic health evaluation requires the active memory host")
 		}
-		observer := NewTrafficObserver(HTTPProberClient{BaseURL: StaticProberURL(*proberURL)}, workloads, nil, 0)
+		observer := NewTrafficObserver(trafficAPI, workloads, nil, 0)
 		if !observer.WaitWarm(ctx, 30*time.Second) {
 			return errors.New("traffic prober did not produce a complete bounded health window")
 		}
 		trafficProvider.Observer = observer
 	}
 	if ConsumesServiceReachability(detectors) {
-		if *proberURL == "" {
-			fmt.Fprintln(stderr, "service reachability skipped: evaluate-once has no --prober-url")
+		dialer, ok := trafficAPI.(ReachabilityDialer)
+		if !ok {
+			return errors.New("service reachability requires the active memory host")
 		} else {
 			// Gather the gate's history now: Failures rounds, a second apart,
 			// judged by the same observer and detector as the controller.
 			reachability := NewServiceReachabilityObserver(ServiceReachabilityConfig{
-				Prober: HTTPProberClient{BaseURL: StaticProberURL(*proberURL)}, Snapshots: provider,
+				Prober: dialer, Snapshots: provider,
 				Interval: evaluateOnceReachabilityInterval,
 			})
 			if err := reachability.Collect(ctx); err != nil {

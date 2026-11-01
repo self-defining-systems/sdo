@@ -10,9 +10,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/memory/layout"
 	"sync"
 	"time"
+
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/runtime/prober"
 
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
@@ -34,6 +36,8 @@ const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
 	Command       string           `json:"command"`
+	Workload      string           `json:"workload,omitempty"`
+	Scenarios     []string         `json:"scenarios,omitempty"`
 	Ref           *sdk.ObjectRef   `json:"ref,omitempty"`
 	ProgramID     string           `json:"program_id,omitempty"`
 	Bindings      program.Bindings `json:"bindings,omitempty"`
@@ -42,14 +46,15 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
-	Command       string         `json:"command"`
-	Source        map[string]any `json:"source,omitempty"`
-	Error         string         `json:"error,omitempty"`
-	Summary       string         `json:"summary"`
-	PlanID        string         `json:"plan_id,omitempty"`
-	ApplicationID string         `json:"application_id,omitempty"`
-	Patches       []PlanPatch    `json:"patches,omitempty"`
-	ProgramRuns   []ProgramRun   `json:"program_runs,omitempty"`
+	Command       string              `json:"command"`
+	Burst         *prober.BurstResult `json:"burst,omitempty"`
+	Source        map[string]any      `json:"source,omitempty"`
+	Error         string              `json:"error,omitempty"`
+	Summary       string              `json:"summary"`
+	PlanID        string              `json:"plan_id,omitempty"`
+	ApplicationID string              `json:"application_id,omitempty"`
+	Patches       []PlanPatch         `json:"patches,omitempty"`
+	ProgramRuns   []ProgramRun        `json:"program_runs,omitempty"`
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -100,6 +105,7 @@ type ResponderLoop struct {
 	CurrentEvidence                 func() *IncidentRequest
 	Request                         IncidentRequest
 	Programs                        program.ProgramRegistry
+	Traffic                         ProberAPI
 	Provider                        SnapshotProvider
 	Detectors                       []sdk.Detector
 	Executor                        PlanExecutor
@@ -364,7 +370,23 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		l.apply(ctx, request, &response)
 	case "verify":
+		if l.Traffic == nil && (request.Workload != "" || len(request.Scenarios) > 0) {
+			response.Error = "bounded traffic verification is unavailable"
+			break
+		}
+		if l.Traffic != nil {
+			burst, err := l.Traffic.Burst(ctx, prober.BurstRequest{Workload: request.Workload, Scenarios: request.Scenarios})
+			if err != nil {
+				response.Error = err.Error()
+				break
+			}
+			response.Burst = &burst
+		}
 		l.verify(ctx, nil, &response)
+		if response.Burst != nil && !response.Burst.Healthy {
+			response.Healthy = false
+			response.Summary = "bounded traffic verification is unhealthy"
+		}
 	case "rollback":
 		application, ok := l.applications[request.ApplicationID]
 		if !ok {

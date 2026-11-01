@@ -14,7 +14,7 @@
 | `operator/worker_registry/` | Go registration validation, capability selection, and generic Kubernetes worker execution. Unknown agents or task/result types fail closed. |
 | `operator/lifecycle/`, `operator/deployment/`, `operator/artifacts/` | Go lifecycle coordinator, trusted deployment strategies, and the physical bootstrap-artifact writer. |
 | `operator/broker/`, `operator/memory/`, `operator/outcome_derivation/` | Go commit authority, logical outcome interfaces and physical JSON repository adapter, and controller-derived outcome records. |
-| `operator/{sdk,core,runtime,builder,install}/` | Deterministic detector API and execution, long-running controller, build/supervision, and Kubernetes installation. |
+| `operator/{sdk,core,runtime,builder,install}/` | Deterministic detector API and execution, long-running controller, controller and memory-host builds, and Kubernetes installation. |
 
 ## Durable memory and ownership
 

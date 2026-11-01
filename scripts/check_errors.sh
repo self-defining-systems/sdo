@@ -52,6 +52,6 @@ echo "==> Go nondeterminism ratchet"
 # Functional Go core: dependency/API lint plus structural purity checks.
 "$SCRIPT_DIR/check_go_core.sh"
 
-# Go programs under benchmarks/ must still compile against the operator API.
-echo "==> go mains (benchmarks/)"
+# Build production packages without test declarations, then vet benchmark API consumers.
+echo "==> Go production packages and benchmark programs"
 "$SCRIPT_DIR/check_go_mains.sh"

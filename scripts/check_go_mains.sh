@@ -5,6 +5,12 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# A package's tests can accidentally supply declarations missing from production.
+# Build without test sources before any generated-workspace or integration suite.
+for module in "$root/sdo/operator" "$root/sdo/operator/runtime"; do
+    (cd "$module" && go build ./...)
+done
+
 # Standalone modules (own go.mod, fixtures and generated seeds excluded).
 while IFS= read -r mod; do
     (cd "$(dirname "$mod")" && go vet ./...)

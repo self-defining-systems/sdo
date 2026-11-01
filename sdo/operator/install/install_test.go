@@ -683,7 +683,7 @@ func TestControllerSecretGrantsOnlyAllowMetadataListWatch(t *testing.T) {
 	}
 }
 
-func TestControllerRetainsNetworkPolicyObservationAndProberGrants(t *testing.T) {
+func TestControllerObservesPoliciesWithoutProberMutationGrants(t *testing.T) {
 	for _, split := range []bool{false, true} {
 		config := testConfig()
 		if !split {
@@ -704,7 +704,7 @@ func TestControllerRetainsNetworkPolicyObservationAndProberGrants(t *testing.T) 
 				}
 			}
 			for _, verb := range []string{"create", "update", "delete"} {
-				want := role.Namespace == config.controlNamespace()
+				want := false
 				if roleAllows(role, "networkpolicies", verb) != want {
 					t.Fatalf("split=%v namespace=%s prober NetworkPolicy %s grant, want %v", split, role.Namespace, verb, want)
 				}

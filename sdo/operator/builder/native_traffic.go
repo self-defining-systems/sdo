@@ -52,7 +52,7 @@ func generateTraffic(root, module string) (bool, error) {
 		if err := os.WriteFile(filepath.Join(root, "generated", "traffic.go"), []byte(source), 0o644); err != nil {
 			return false, err
 		}
-		return generateProber(root, module)
+		return false, nil
 	}
 	if err := validateGeneratorSources(base, module); err != nil {
 		return false, err
@@ -85,17 +85,7 @@ func generateTraffic(root, module string) (bool, error) {
 	if err := os.WriteFile(filepath.Join(root, "generated", "traffic_test.go"), []byte(trafficTest), 0o644); err != nil {
 		return false, err
 	}
-	return generateProber(root, module)
-}
-
-// Routing primitives need the isolated prober even without synthetic traffic.
-func generateProber(root, module string) (bool, error) {
-	mainDir := filepath.Join(root, "cmd", "prober")
-	if err := os.MkdirAll(mainDir, 0o755); err != nil {
-		return false, err
-	}
-	main := "package main\n\nimport (\n\t\"sdo.dev/operator/runtime/prober\"\n\t" + strconv.Quote(module+"/generated") + "\n)\n\nfunc main() { prober.Main(generated.TrafficCatalog(), generated.TrafficWorkloads) }\n"
-	return true, os.WriteFile(filepath.Join(mainDir, "main.go"), []byte(main), 0o644)
+	return false, nil
 }
 
 func goSourceFiles(dir string) ([]string, error) {

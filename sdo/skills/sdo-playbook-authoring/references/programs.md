@@ -59,7 +59,7 @@ or other ambiguity should remain Unknown or NeedsJudgement.
 
 The controller records real TCP results even before a program exists, for finding
 Services and up to two healthy peers. It uses the phase snapshot's Pod IP through
-the isolated prober. Sampling is limited to 24 probes, two Pods per Service, four
+the read-only memory host. Sampling is limited to 24 probes, two Pods per Service, four
 backend ports per Pod, 200 ms per probe and two seconds per phase. Capped or
 unavailable observations are not negative evidence. Copy the phase recordings
 byte-for-byte, including fixed observations; choose a peer with recorded evidence.

@@ -143,9 +143,7 @@ class FakeOps:
                 state["last_acknowledged_incident_id"] = incident_id
                 self.logs[control_namespace].extend(
                     [
-                        json.dumps({"controller_closure_restart": incident_id}),
-                        json.dumps({"controller_supervisor": "relaunch", "launches": 1}),
-                        json.dumps({"controller_maintenance": "active", "maintenance_generation": "relaunched"}),
+                        json.dumps({"controller_maintenance": "active", "maintenance_generation": "active-memory"}),
                     ]
                 )
                 if incident_id == "incident-1" and self.second_incident:
@@ -411,12 +409,7 @@ def test_composite_agent_recovers_single_incident_times_from_durable_outcome(tmp
         ) -> dict[str, float]:
             inject()
             self.states[control_namespace]["last_acknowledged_incident_id"] = "incident-1"
-            self.logs[control_namespace].extend(
-                [
-                    json.dumps({"controller_closure_restart": "incident-1"}),
-                    json.dumps({"controller_supervisor": "relaunch", "launches": 1}),
-                ]
-            )
+            self.logs[control_namespace].extend([])
             return {}
 
         def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:

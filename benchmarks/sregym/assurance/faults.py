@@ -371,7 +371,7 @@ _README = """# {title}
 
 This playbook was learned from an incident whose cause the controller confirmed: the incident detector
 `{detector_id}` encodes the cause, the health detectors that fired at dispatch cleared after the repair, and
-`python3 -m sdo.agents.responder.status_cli` reported healthy before the responder returned.
+`sdo verify` reported healthy before the responder returned.
 """
 
 _NP_DETECT = """
@@ -465,10 +465,10 @@ Repair:
 sh {playbook_dir}/scripts/repair.sh <NAMESPACE> <NETWORK_POLICY>
 ```
 
-Then run the verification and `python3 -m sdo.agents.responder.status_cli` together:
+Then run the verification and `sdo verify` together:
 
 ```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && python3 -m sdo.agents.responder.status_cli
+sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && sdo verify
 ```
 """
 
@@ -611,10 +611,10 @@ Repair (`-` finds the missing ConfigMap from the Deployment's volumes):
 sh {playbook_dir}/scripts/repair.sh <NAMESPACE> <DEPLOYMENT> <CONFIGMAP>
 ```
 
-Then verify together with `python3 -m sdo.agents.responder.status_cli`:
+Then verify together with `sdo verify`:
 
 ```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && python3 -m sdo.agents.responder.status_cli
+sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && sdo verify
 ```
 """
 

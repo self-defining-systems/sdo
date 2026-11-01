@@ -2,11 +2,11 @@ package runtime
 
 import (
 	"context"
-	"errors"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sync"
 	"testing"
 	"time"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
@@ -19,7 +19,7 @@ type rolloutRecordingBroker struct {
 
 func (b *rolloutRecordingBroker) RolloutPending(ClosureReceipt) (bool, error) { return b.pending, nil }
 
-func TestAcknowledgmentWaitsForRestartedDetectorRevision(t *testing.T) {
+func TestAcknowledgmentWaitsForActivatedMemoryRevision(t *testing.T) {
 	start := time.Unix(0, 0)
 	controller, err := NewController(testControllerConfig(), []sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestAcknowledgmentWaitsForRestartedDetectorRevision(t *testing.T) {
 	if !ok {
 		t.Fatal("durable ACK was not pending")
 	}
-	if err := controller.ExecuteClosureAcknowledgmentEffect(context.Background(), effect); !errors.Is(err, ErrControllerRolloutRestartRequired) {
+	if err := controller.ExecuteClosureAcknowledgmentEffect(context.Background(), effect); err != nil {
 		t.Fatalf("expected restart handoff, got %v", err)
 	}
 	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || len(broker.calls()) != 0 {

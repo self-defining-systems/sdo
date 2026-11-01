@@ -29,7 +29,7 @@ func Run(detectors []sdk.Detector) {
 
 // RunWithOptions serves the controller's --run-once mode. It has no prober,
 // so synthetic-traffic and Service reachability detectors see no
-// observations and report nothing here; `--evaluate-once --prober-url` is the
+// observations and report nothing here; `--evaluate-once` through the memory host is the
 // bounded mode that dials and judges them.
 func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) error {
 	args := options.Args

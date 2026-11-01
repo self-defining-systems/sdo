@@ -9,13 +9,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
 	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
-	"strings"
-	"syscall"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -77,7 +78,6 @@ func (f ReflectionWorkerFunc) Reflect(ctx context.Context, closure IncidentClosu
 // safe to select when a full OutcomeDeriver and ReflectionWorker are configured;
 // no partial closure can be acknowledged.
 type NativeIncidentBroker struct {
-	MemoryHost           bool // Activation provenance replaces controller restart when enabled.
 	Now                  func() time.Time
 	Repository           *broker.Broker
 	LedgerRoot           string
@@ -654,11 +654,11 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 			return errors.New("controller rollout verification time is required")
 		}
 		if receipt.Success {
-			if n.MemoryHost && receipt.ControllerRevision != receipt.Expectation.ReflectionCommit {
+			if receipt.ControllerRevision != receipt.Expectation.ReflectionCommit {
 				return errors.New("host activation revision differs from accepted memory")
 			}
 			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint {
-				return errors.New("successful rollout lacks matching build and restarted detector fingerprint")
+				return errors.New("successful rollout lacks matching host artifact and activated detector fingerprint")
 			}
 			if successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 				return errors.New("controller rollout already succeeded")
@@ -666,10 +666,7 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 		}
 		ledger.RolloutReceipts = append(ledger.RolloutReceipts, rolloutReceiptContract(receipt))
 		if receipt.Success {
-			phase := "controller_restart_relaunch"
-			if n.MemoryHost {
-				phase = "memory_host_activation"
-			}
+			phase := "memory_host_activation"
 			if err := n.recordPhase(ledger, phase); err != nil {
 				return err
 			}

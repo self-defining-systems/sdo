@@ -160,12 +160,12 @@ func TestParseResponderEnvironmentRejectsReservedAndMalformedValues(t *testing.T
 	}
 }
 
-func TestRunRejectsExitAndRestartAfterClosureTogether(t *testing.T) {
+func TestRunRejectsRemovedRestartFlag(t *testing.T) {
 	err := RunWithOptions(context.Background(), nil, RuntimeOptions{Args: []string{
 		"--namespace", "demo", "--app-root", t.TempDir(),
 		"--exit-after-closure", "--restart-after-closure",
 	}, Stderr: &bytes.Buffer{}})
-	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
 		t.Fatalf("expected mutually exclusive closure modes, got %v", err)
 	}
 }

@@ -347,15 +347,15 @@ def test_every_path_verifies_with_incident_status_before_submitting(tmp_path: Pa
     cold = _request()
 
     for prompt in (_responder_prompt(cold), _responder_prompt(_warm_request(tmp_path))):
-        assert "`python3 -m sdo.agents.responder.status_cli`" in prompt
+        assert "`sdo verify`" in prompt
         assert "same synthetic traffic the controller requires before it closes this incident" in prompt
         assert "other health detectors still fire" in prompt
-        assert "changed after this request was taken" in prompt
+        assert "`sdo status`" in prompt
         assert "Do not submit mitigation through any channel, and do not return a completed result" in prompt
         assert "reports unavailable" in prompt
-        assert "`sdo-incident-status`" in prompt
+        assert "`sdo-verify`" in prompt
     warm = _responder_prompt(_warm_request(tmp_path))
-    assert "Run the playbook's verification and `python3 -m sdo.agents.responder.status_cli`" in warm
+    assert "Run the playbook's verification and `sdo verify`" in warm
 
 
 def test_every_path_prefers_one_blocking_wait_over_manual_poll_turns(tmp_path: Path) -> None:

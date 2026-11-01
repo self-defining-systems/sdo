@@ -66,14 +66,17 @@ that covers it.
 
 The memory-host tests do not model OS process isolation, Unix socket permissions,
 memory limits or actual compiler latency. Staged compilation is checked by
-the integration-tagged `TestBuildMemoryHostUsesStagedMemory` in PR CI.
+the integration-tagged `TestBuildMemoryHostUsesStagedMemory` in the nightly/local
+integration tier. That test also launches a real host with a synthetic kubeconfig
+and checks Ready identity; it does not exercise Kubernetes networking, OS limit
+enforcement or a live activation swap.
 `TestSimMemoryTwoAcceptedCommits` uses bufconn and injected accepted revisions;
 `TestHostActivationGatesAcknowledgment` checks durable ledger activation and ACK
 gating separately. These are boundary simulations, not a complete native broker
 and controller driver run. The modeled build delay is 50 ms of virtual time;
 it is not a production latency measurement. Runtime activation logs report actual
-build-to-activation latency. `BenchmarkMemoryHostEvaluation` compares flag-off
-execution with mirror/adapter/bufconn overhead, excluding OS startup and compiler
+build-to-activation latency. `BenchmarkMemoryHostEvaluation` compares direct SDK
+execution as a reference with mirror/adapter/bufconn overhead, excluding OS startup and compiler
 cost. No live Kubernetes hot-activation experiment has been performed.
 
 `TestSimMemoryTrafficTwoRevisions` compares the real traffic engine directly
@@ -90,3 +93,9 @@ and a traffic RPC disconnect at the manager boundary. Failed candidates preserve
 the serving revision; crash recovery restores that revision and scheduler intent.
 It does not model an OS crash. MemoryObservation no longer carries an inline
 snapshot: transport parity tests use the same mirror capture barriers as production.
+
+Installed controllers have no accepted-memory imports or restart-on-memory path.
+Embedded tests may inject synthetic SDK implementations and traffic adapters;
+those seams do not compile accepted repository memory into the controller.
+Bounded responder verification uses incident tool transport and the host Traffic
+RPC; no agent-to-host connection or prober pod is modeled or deployed.

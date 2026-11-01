@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/lifecyclecore"
 )
@@ -230,7 +231,7 @@ func (c *Controller) ExecuteClosureAcknowledgmentEffect(
 		if pending {
 			c.mu.Unlock()
 			cancel()
-			return ErrControllerRolloutRestartRequired
+			return nil
 		}
 	}
 	effects, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Drive, At: c.clock(), EffectID: effect.Identity})

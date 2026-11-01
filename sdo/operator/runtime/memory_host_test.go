@@ -5,17 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"reflect"
+	"strings"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"net"
-	"reflect"
 	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/runtime/sim"
 	"sdo.dev/operator/sdk/generichealth"
 	"sdo.dev/operator/sdk/servicehealth"
-	"strings"
+
+	"testing"
+	"time"
 
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memoryhost"
@@ -26,27 +30,14 @@ import (
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/usage"
-	"testing"
-	"time"
 )
 
-type remoteFailure struct{}
-
-func (remoteFailure) Evaluate(context.Context, *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
-	return nil, errors.New("socket closed")
-}
-func (remoteFailure) Diagnose(context.Context, *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
-	return nil, errors.New("socket closed")
-}
-func (remoteFailure) Mitigate(context.Context, *pb.MitigateRequest) (*pb.MitigateResponse, error) {
-	return nil, errors.New("socket closed")
-}
 func TestRemoteMemoryUnavailableFailsClosed(t *testing.T) {
 	s, _ := memoryhost.NewServer("c", "d", []sdk.Detector{timingDetector{DetectorSpec: sdk.DetectorSpec{ID: "test"}}})
 	ready, _ := s.Ready(context.Background(), nil)
 	ready.Programs = []*pb.ProgramSpec{{Id: "p"}}
 	ready.MitigatorIds = []string{"p"}
-	remote, err := NewRemoteMemory(ready, remoteFailure{}, func(sdk.DetectionContext) (uint64, error) { return 1, nil })
+	remote, err := NewRemoteMemory(ready, memoryhost.NewManager(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +138,7 @@ func TestRemoteMemoryPreservesInputsAndCorpusReceipts(t *testing.T) {
 
 		ready, _ := s.Ready(ctx, nil)
 		rpc, stop := memoryTestRPC(t, s)
-		remote, err := NewRemoteMemory(ready, mirroredTestHost(t, ctx, rpc, "c", "d", "toy"), func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+		remote, err := NewRemoteMemory(ready, mirroredTestHost(t, ctx, rpc, "c", "d", "toy"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -253,7 +244,7 @@ func TestSimMemoryHostParityAndCrash(t *testing.T) {
 		})
 		rpc, stop := memoryTestRPC(t, host)
 		ready, _ := host.Ready(ctx, nil)
-		remote, err := NewRemoteMemory(ready, mirroredTestHost(t, ctx, rpc, "accepted", "sha256:test", "app"), func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+		remote, err := NewRemoteMemory(ready, mirroredTestHost(t, ctx, rpc, "accepted", "sha256:test", "app"))
 		if err != nil {
 			t.Fatal(err)
 		}

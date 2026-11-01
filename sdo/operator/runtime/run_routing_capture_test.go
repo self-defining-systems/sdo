@@ -14,13 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/runtime/internal/testprober"
+
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
-	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -44,7 +42,7 @@ func noTrafficProberHandler(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return prober.Handler(p)
+	return testprober.Handler(p)
 }
 
 // noTrafficRoutingProber serves that API on a real loopback socket.
@@ -91,7 +89,7 @@ func TestRunCapturesRoutingWithoutTrafficWorkloads(t *testing.T) {
 			}
 			ledgerRoot := t.TempDir()
 			launch := &contracts.ControllerConfig{Namespace: "app", ControlNamespace: "app-sdo", AppRoot: root,
-				Application: "routing", ProberUrl: address, SyntheticTraffic: proto.Bool(synthetic), StateBaseline: proto.Bool(false),
+				Application: "routing", SyntheticTraffic: proto.Bool(synthetic), StateBaseline: proto.Bool(false),
 				CleanResponderHelpers: proto.Bool(false), LeaseDuration: durationpb.New(3 * time.Second)}
 			dispatcher := routingCaptureDispatcher{requests: make(chan IncidentRequest, 1)}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -99,7 +97,7 @@ func TestRunCapturesRoutingWithoutTrafficWorkloads(t *testing.T) {
 			exited := make(chan error, 1)
 			go func() {
 				exited <- RunWithOptions(ctx, []sdk.Detector{detector}, RuntimeOptions{
-					Args: controllerConfigToArgs(launch), Client: client, Dispatcher: dispatcher, Stdout: io.Discard, Stderr: io.Discard,
+					Args: controllerConfigToArgs(launch), Traffic: HTTPProberClient{BaseURL: StaticProberURL(address)}, Client: client, Dispatcher: dispatcher, Stdout: io.Discard, Stderr: io.Discard,
 					NativeBroker: &NativeIncidentBroker{Repository: repository, LedgerRoot: ledgerRoot, SessionRoot: sessionRoot},
 				})
 			}()
@@ -142,39 +140,5 @@ func TestRunCapturesRoutingWithoutTrafficWorkloads(t *testing.T) {
 				t.Fatalf("finding Service observation missing: %+v %v", result, err)
 			}
 		})
-	}
-}
-
-func TestRunStartsRoutingProberWithoutTrafficWorkloads(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	podConfig := proberPodConfig(t, client)
-	podConfig.AppNamespace = "app"
-	_, pod, err := podConfig.Manifests()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Only the fake API marks it ready: no process, cluster or image is started.
-	client.PrependReactor("create", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
-		created := action.(ktesting.CreateAction).GetObject().(*corev1.Pod)
-		created.Status = corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.7", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}
-		return false, nil, nil
-	})
-	config := &contracts.ControllerConfig{Namespace: "app", ControlNamespace: pod.Namespace, AppRoot: gitRepository(t),
-		ProberBinary: podConfig.Binary, ProberImage: podConfig.Image, RepositoryPvc: podConfig.RepositoryPVC,
-		RepositoryMountPath: podConfig.RepositoryMountPath, StateBaseline: proto.Bool(false), CleanResponderHelpers: proto.Bool(false),
-		Duration: durationpb.New(2 * time.Second)}
-	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{Args: controllerConfigToArgs(config), Client: client,
-		Dispatcher: routingCaptureDispatcher{}, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
-		t.Fatal(err)
-	}
-	actual, err := client.CoreV1().Pods(pod.Namespace).Get(context.Background(), ProberName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("no-traffic startup did not deploy isolated prober: %v", err)
-	}
-	if actual.Labels[proberFingerprintLabel] != pod.Labels[proberFingerprintLabel] {
-		t.Fatalf("wrong prober deployed: %+v", actual)
-	}
-	if _, err := client.NetworkingV1().NetworkPolicies(pod.Namespace).Get(context.Background(), ProberName, metav1.GetOptions{}); err != nil {
-		t.Fatalf("prober deployed without isolation: %v", err)
 	}
 }

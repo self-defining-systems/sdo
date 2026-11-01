@@ -2,12 +2,13 @@ package runtime
 
 import (
 	"context"
+	"testing"
+	"time"
+
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
-	"testing"
-	"time"
 )
 
 // This isolates per-evaluation adapter, delta and bufconn costs. OS process
@@ -16,7 +17,7 @@ func BenchmarkMemoryHostEvaluation(b *testing.B) {
 	ctx := context.Background()
 	snapshot := sdktest.Snapshot{NamespaceName: "toy"}
 	local := servicehealth.NewReadyEndpointsDetector(sdk.DetectorSpec{ID: "endpoints"})
-	b.Run("flag-off", func(b *testing.B) {
+	b.Run("direct-sdk-reference", func(b *testing.B) {
 		for b.Loop() {
 			if _, err := local.Detect(ctx, snapshot); err != nil {
 				b.Fatal(err)
@@ -45,7 +46,7 @@ func BenchmarkMemoryHostEvaluation(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		remote, err := NewRemoteMemory(ready, manager, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+		remote, err := NewRemoteMemory(ready, manager)
 		if err != nil {
 			b.Fatal(err)
 		}

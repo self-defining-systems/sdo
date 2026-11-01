@@ -15,12 +15,6 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 )
 
-// PathDials serves one bounded round of Service reachability dials. The
-// prober keeps no reachability state and lists nothing: the controller
-// derives the targets from its namespace snapshot, sends them each round,
-// and keeps the history. The pod therefore needs no Kubernetes credentials.
-const PathDials = "/v1/dials"
-
 const (
 	// MaxDialConcurrency bounds simultaneous dials in one round, so a round
 	// of MaxReachabilityTargets blocked targets lasts at most four timeouts.

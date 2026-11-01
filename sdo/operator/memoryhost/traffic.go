@@ -6,6 +6,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"time"
 )
 
 // TrafficRPC never exposes a cluster mutation capability.
@@ -30,7 +31,13 @@ func (m *Manager) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.Traffi
 	case pb.TrafficRequest_OPERATION_STOP:
 		m.trafficRunning = false
 	}
-	ctx, cancel := context.WithTimeout(ctx, m.timeout)
+	timeout := m.timeout
+	// Accepted verification workloads may run for sixty seconds. Keep their
+	// transport budget separate from short detector RPCs, while honoring caller cancellation.
+	if r.GetOperation() == pb.TrafficRequest_OPERATION_BURST {
+		timeout = max(timeout, 90*time.Second)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	response, err := rpc.Traffic(ctx, r)
 	cancel()
 	m.mu.RUnlock()

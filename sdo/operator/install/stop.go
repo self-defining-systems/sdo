@@ -30,7 +30,7 @@ type stopObject struct {
 
 func runtimeLabels(labels map[string]string) bool {
 	name := labels["app.kubernetes.io/name"]
-	return slices.Contains([]string{"sdo-controller", "sdo-operate", "sdo-worker", "sdo-prober"}, name) ||
+	return slices.Contains([]string{"sdo-controller", "sdo-operate", "sdo-worker"}, name) ||
 		labels["sdo.dev/component"] == "image-build"
 }
 

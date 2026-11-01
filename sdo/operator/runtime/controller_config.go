@@ -97,7 +97,6 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	if config.GetMaxResponseLoops() > 0 {
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
 	}
-	boolFlag("--memory-host", config.GetMemoryHost())
 	str("--memory-host-binary", config.GetMemoryHostBinary())
 	str("--memory-host-digest", config.GetMemoryHostDigest())
 	boolFlag("--program-fast-path", config.GetProgramFastPath())
@@ -123,17 +122,13 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--identity", config.GetIdentity())
 
 	boolFlag("--exit-after-closure", config.GetExitAfterClosure())
-	boolFlag("--restart-after-closure", config.GetRestartAfterClosure())
 	boolFlag("--force-reflection", config.GetForceReflection())
 	str("--maintenance-configmap", config.GetMaintenanceConfigmap())
 	dur("--maintenance-poll-interval", config.GetMaintenancePollInterval())
 	dur("--resume-sync-timeout", config.GetResumeSyncTimeout())
 	optBool("--synthetic-traffic", config.SyntheticTraffic)
 	dur("--synthetic-traffic-warmup", config.GetSyntheticTrafficWarmup())
-	str("--prober-binary", config.GetProberBinary())
 	str("--toolchain-image", config.GetToolchainImage())
-	str("--prober-image", config.GetProberImage())
-	str("--prober-url", config.GetProberUrl())
 	str("--metrics-url", config.GetMetricsUrl())
 	str("--metrics-publish-url", config.GetMetricsPublishUrl())
 	str("--metrics-token-file", config.GetMetricsTokenFile())

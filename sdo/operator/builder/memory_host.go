@@ -37,8 +37,7 @@ import (
  "sdo.dev/operator/memoryhost"
  "sdo.dev/operator/runtime/prober"
  "sdo.dev/operator/memoryhost/hostio"
- "k8s.io/client-go/rest"
- "k8s.io/client-go/kubernetes"
+ "sdo.dev/operator/core"
  "sdo.dev/operator/sdk/program"
  "sdo.dev/operator/sdk/sdktest"
  %q
@@ -62,8 +61,7 @@ func main(){
  engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads});if err!=nil{log.Fatal(err)}
  trafficHost:=prober.NewHost(engine);defer trafficHost.Close()
  server.WithTraffic(trafficHost)
- config,err:=rest.InClusterConfig();if err!=nil{log.Fatal(err)}
- reader,err:=kubernetes.NewForConfig(config);if err!=nil{log.Fatal(err)}
+ reader,err:=core.NewKubernetesClient();if err!=nil{log.Fatal(err)}
  server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,reader),nil})
  ctx,cancel:=signal.NotifyContext(context.Background(),syscall.SIGTERM,syscall.SIGINT);defer cancel()
  if err=hostio.Serve(ctx,*socket,*capBytes,server);err!=nil{log.Fatal(err)}

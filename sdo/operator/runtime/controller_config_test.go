@@ -53,7 +53,6 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		MaxFollowUps:               3,
 		MaxResponseLoops:           4,
 		ProgramFastPath:            true,
-		MemoryHost:                 true,
 		MemoryHostBinary:           "/tmp/sdo-memory-host",
 		MemoryHostDigest:           "sha256:test",
 		ProgramTrustThreshold:      3,
@@ -64,16 +63,12 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		LeaseDuration:              durationpb.New(60000000000), // 60s
 		Identity:                   "controller-0",
 		ExitAfterClosure:           true,
-		RestartAfterClosure:        false,
 		MaintenanceConfigmap:       "sdo-maintenance",
 		MaintenancePollInterval:    durationpb.New(1000000000), // 1s
 		ResumeSyncTimeout:          durationpb.New(60000000000),
 		SyntheticTraffic:           &syntheticTraffic,
 		SyntheticTrafficWarmup:     durationpb.New(5000000000),
-		ProberBinary:               "/workspace/prober",
-		ProberImage:                "registry/prober:latest",
 		ToolchainImage:             "registry/controller:compiler",
-		ProberUrl:                  "http://prober:8080",
 		MetricsUrl:                 "http://prometheus:9090",
 		MetricsTokenFile:           "/var/run/secrets/metrics/token",
 		CleanResponderHelpers:      &cleanHelpers,
@@ -142,7 +137,7 @@ func TestLoadControllerConfigRejectsInvalid(t *testing.T) {
 // against.
 func assertFlagsDefined(t *testing.T, args []string) {
 	t.Helper()
-	guarded := append(append([]string{}, args...), "--exit-after-closure", "--restart-after-closure")
+	guarded := append(append([]string{}, args...), "--control-namespace", "Not_Valid")
 	var stderr bytes.Buffer
 	err := RunWithOptions(context.Background(), nil, RuntimeOptions{Args: guarded, Stderr: &stderr})
 	if err == nil {

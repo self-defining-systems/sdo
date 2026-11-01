@@ -184,7 +184,7 @@ func (s *Server) snapshot(sequence uint64) (sdktest.Snapshot, error) {
 	return snapshot, err
 }
 func (s *Server) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
-	snapshot, err := s.requestSnapshot(request.GetMirrorSequence(), request.GetObservation())
+	snapshot, err := s.snapshot(request.GetMirrorSequence())
 	if err != nil {
 		return nil, err
 	}
@@ -308,11 +308,6 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 		}
 	}
 	return nil
-}
-
-// requestSnapshot accepts only the completed mirror selected by the request.
-func (s *Server) requestSnapshot(sequence uint64, _ *pb.MemoryObservation) (sdktest.Snapshot, error) {
-	return s.snapshot(sequence)
 }
 
 // WithTraffic installs the immutable revision's host-owned traffic executor.

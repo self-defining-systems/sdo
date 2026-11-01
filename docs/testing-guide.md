@@ -22,6 +22,19 @@ scheduler-start rejection and disconnect recovery) and
 
 ## Core commands
 
+The temporary memory-host, restart-after-closure, supervise and prober launch flags
+are rejected. Builder tests assert that generated controllers import runtime only.
+AcceptedDetectorProbe passes the validated host artifact and accepted revision to
+bounded health evaluation. Synthetic embedded tests inject their transport;
+production always uses the active host manager. Responder verification tests cover
+`verify --workload ... --scenario ...` through incident transport and host RPC.
+
+The static Go compilation gate builds production packages without test files before
+benchmark vet, catching production declarations accidentally moved into tests.
+
+The integration host build test also checks real-process Ready startup with a
+synthetic kubeconfig, preserving bounded health evaluation outside a pod.
+
 ```bash
 # Format and static checks
 bash scripts/format_code.sh
@@ -460,7 +473,7 @@ uv run pytest -q tests/unit/benchmarks/sregym/fastloop/test_fast_image_delivery.
 ```
 
 Direct controller launches require `--toolchain-image <controller-image>`;
-`install-existing` supplies it automatically. The traffic prober image is
+`install-existing` supplies it automatically. The accepted memory host is
 independent. Missing compiler configuration fails at startup.
 
 CI checks out the immutable event commit (`github.sha`), so retargeting a PR
@@ -782,7 +795,7 @@ reports failures. It retains the following extended checks:
 | Additional nightly test | Reason | PR replacement |
 | --- | --- | --- |
 | `TestHermeticRoutingCaptureCompilesReplayableMitigator` | Recompiles captured routing programs through the complete validator: 64.38 s on #664 | `TestRoutingCaptureWaitsForSlowHealthyProber` records/replays TCP evidence; capture count/time budgets; `TestTargetPortFixtureCandidateClearsAfterRepair`; `TestSimTrustedFastPathNeverRollsBackACorrectFix` |
-| `TestBuildWorkspaceAcceptsValidMetricsDetectors` | Repeats successful controller/prober compilation: 8.64 s on #664 | `TestBuildWorkspaceCompilesApplicationDetectors` plus `TestBuildWorkspaceRejectsInvalidMetricsDetectors`, and SDK metrics detector unit tests |
+| `TestBuildWorkspaceAcceptsValidMetricsDetectors` | Repeats successful controller/host compilation: 8.64 s on #664 | `TestBuildWorkspaceCompilesApplicationDetectors` plus `TestBuildWorkspaceRejectsInvalidMetricsDetectors`, and SDK metrics detector unit tests |
 | `TestBuildMemoryHostUsesStagedMemory` | Repeated host compilation took 69.52 s on the first #666 run | `TestMemoryHostWorkspaceStagesAcceptedMemory` checks staging and host/controller isolation; `TestRemoteMemoryPreservesInputsAndCorpusReceipts` and memory-host simulation check real in-memory RPC parity |
 | `TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder` | Repeated source-program compilation took 19.93 s on the first #666 run | `TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields`, source render/reconcile contracts, deterministic trusted fast-path simulation and validator/broker tests |
 | `TestCompileReportsTheFailingStage` | Vet/test fixtures each rebuilt the generated controller for ~51 s on the second #666 run before failing at the intended stage | `TestCompileStageDiagnostics` drives build/vet/test failures through the existing Go process seam and checks rule, path and line; real builder syntax, registration and invalid-metrics rejection still run |
@@ -795,7 +808,7 @@ The exact repeated end-to-end compile tests moved to nightly are listed in
 `scripts/ci_nightly_go_tests.txt`. They cover assurance seed compilation,
 CLI/broker parity across every fixture, duplicate CLI clean-tree/JSON and
 scaffold compilations, toy-seed and isolated program validation, and repeated
-builder program/prober/baseline builds, plus compile-through-controller fastloop,
+builder program/host/baseline builds, plus compile-through-controller fastloop,
 foreign-policy repeat and direct-files/learned-program CLI/broker integration. The assurance-seed test alone took
 303 seconds locally. PRs retain `TestBuildWorkspaceCompilesApplicationDetectors`,
 compiler rejection tests, validator rule tests, broker ownership/acceptance

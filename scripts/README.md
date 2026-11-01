@@ -2,7 +2,7 @@
 
 - `format_code.sh`: Python formatting (use `--check` in CI).
 - `check_errors.sh`: static gate: Ruff, Tach, Python ownership/import contracts,
-  types, proto drift, Go core purity, Go nondeterminism, benchmark compilation.
+  types, proto drift, Go core purity, Go nondeterminism, production and benchmark compilation.
 - `check_go_core.sh`, `go_pure_packages.txt`, `.golangci.yml`: declared pure Go
   cores; structural tests in `sdo/operator/internal/purity`.
 - `check_go_determinism.sh`, `go_determinism_allowlist.txt`: codebase Go API
@@ -13,3 +13,5 @@
 
 Extend the owning gate when adding a check. Keep policy fixtures alongside its
 implementation; wire mandatory static checks through `check_errors.sh`.
+
+- `check_go_mains.sh`: test-free production package builds plus benchmark Go vet; catches declarations accidentally supplied only by tests before integration builds.

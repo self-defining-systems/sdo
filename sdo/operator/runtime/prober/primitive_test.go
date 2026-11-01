@@ -11,6 +11,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"sdo.dev/operator/runtime/internal/testprober"
+
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -24,13 +26,13 @@ func TestPrimitiveProbeStaysInConfiguredNamespaceAndUsesProberNetwork(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := httptest.NewServer(prober.Handler(p))
+	api := httptest.NewServer(testprober.Handler(p))
 	defer api.Close()
 	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
 	call := func(ref sdk.ObjectRef, request *program.HTTPProbe) int {
 		t.Helper()
 		body, _ := json.Marshal(prober.PrimitiveRequest{To: ref, Port: 80, HTTP: request})
-		response, err := http.Post(api.URL+prober.PathPrimitive, "application/json", bytes.NewReader(body))
+		response, err := http.Post(api.URL+testprober.PathPrimitive, "application/json", bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
