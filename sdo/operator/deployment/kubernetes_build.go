@@ -16,11 +16,11 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/deployment/internal/deploymentio"
 )
 
 const buildMetadataPrefix = "SDO_BUILD_METADATA="
@@ -46,6 +46,7 @@ type KubernetesBuildBackend struct {
 	ServiceAccount       string
 	PollInterval         time.Duration
 	Timeout              time.Duration
+	JobSuffix            func() string
 	ReadJobLogs          func(context.Context, string, string) ([]byte, error)
 }
 
@@ -80,7 +81,11 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 	}
 	bounded, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	name := "sdo-image-build-" + rand.String(8)
+	suffix := b.JobSuffix
+	if suffix == nil {
+		suffix = deploymentio.JobSuffix
+	}
+	name := "sdo-image-build-" + suffix()
 	job := b.job(name, subPath, contextRel, dockerfileRel, build.GetImage(), limit)
 	if _, err := b.Client.BatchV1().Jobs(b.Namespace).Create(bounded, job, metav1.CreateOptions{}); err != nil {
 		return "", fmt.Errorf("create BuildKit Job: %w", err)
@@ -89,8 +94,6 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 	if interval <= 0 {
 		interval = time.Second
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	for {
 		observed, err := b.Client.BatchV1().Jobs(b.Namespace).Get(bounded, name, metav1.GetOptions{})
 		if err != nil {
@@ -119,10 +122,8 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 				return imageRepository(build.GetImage()) + "@" + digest, nil
 			}
 		}
-		select {
-		case <-bounded.Done():
-			return "", fmt.Errorf("BuildKit Job %s did not complete: %w", name, bounded.Err())
-		case <-ticker.C:
+		if err := b.wait(bounded, interval); err != nil {
+			return "", fmt.Errorf("BuildKit Job %s did not complete: %w", name, err)
 		}
 	}
 }
