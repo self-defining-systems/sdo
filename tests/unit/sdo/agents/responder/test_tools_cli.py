@@ -2,6 +2,7 @@ import json
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -69,6 +70,19 @@ def test_cli_help_shows_concrete_source_and_named_binding_examples(command, caps
         assert "sdo source Deployment/app/api" in output
     if command != ["source"]:
         assert "sdo plan targetport --bind service=Service/app/api" in output
+
+
+def test_status_and_apply_help_point_at_stage_results(capsys):
+    for command in ("status", "apply"):
+        with pytest.raises(SystemExit):
+            tools_cli.main([command, "--help"])
+        assert "prior_stages" in capsys.readouterr().out
+
+
+def test_skill_explains_prior_stages():
+    skill = (Path(__file__).resolve().parents[5] / "sdo" / "skills" / "sdo-memory" / "SKILL.md").read_text()
+
+    assert "prior_stages" in skill
 
 
 def test_documented_cli_examples_send_valid_requests(monkeypatch):
