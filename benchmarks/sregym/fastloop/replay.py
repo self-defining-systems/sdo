@@ -399,7 +399,7 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
     """Validate a newly re-executed worker result with the real Go broker."""
     if checkpoint.result is None:
         raise CheckpointError("broker replay requires a recorded worker result")
-    program = Path(__file__).with_name("replay_go") / "main.go"
+    program = Path(__file__).with_name("replay_go").resolve()
     with tempfile.TemporaryDirectory(prefix="sdo-fastloop-replay-") as temporary:
         directory = Path(temporary)
         _write(directory / "request.json", checkpoint.request.encode())
@@ -410,10 +410,24 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
         capture_dir.mkdir(mode=0o700)
         for name, data in checkpoint.captures.items():
             _write(capture_dir / name, data)
+        # A private workspace pins replay to the requested frozen operator,
+        # regardless of the caller's GOWORK or the driver's checkout location.
+        modules = {"sdo.dev/operator": operator_root.resolve()}
+        for name in ("core", "sdk", "runtime", "contracts"):
+            modules[f"sdo.dev/operator/{name}"] = (operator_root / name).resolve()
+        workspace = directory / "go.work"
+        workspace.write_text(
+            "go 1.26.8\nuse "
+            + json.dumps(str(program), ensure_ascii=False)
+            + "\nreplace (\n"
+            + "".join(f" {name} => {json.dumps(str(path), ensure_ascii=False)}\n" for name, path in modules.items())
+            + ")\n",
+            encoding="utf-8",
+        )
         command = [
             "go",
             "run",
-            str(program),
+            ".",
             "--checkpoint",
             str(directory),
             "--source",
@@ -422,7 +436,13 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
             str(operator_root),
         ]
         completed = subprocess.run(
-            command, cwd=operator_root / "runtime", capture_output=True, text=True, timeout=300, check=False
+            command,
+            cwd=program,
+            env={**os.environ, "GOWORK": str(workspace)},
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
         )
         if completed.returncode:
             raise CheckpointError(f"broker replay failed: {completed.stderr.strip()[-4096:]}")

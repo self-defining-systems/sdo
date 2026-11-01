@@ -213,3 +213,25 @@ The live kubelet logs and proxy-usage checks also require real cluster sockets
 and retain their existing opt-in environment gates under `integration`.
 `scripts/test_go_ci.sh` supplies `-tags=integration` for these tests; this move
 changes no CI selections or opt-in prerequisites.
+
+### Protocol wire conformance boundary (2026-11-01)
+
+Link protocol handshakes and malformed/authentication/status replies now run over
+buffered in-memory connections inside synctest, including context deadlines and
+a fixed one-millisecond establishment delay for positive duration evidence.
+This preserves actual HTTP/2, Redis, MongoDB, PostgreSQL, MySQL and memcached wire
+parsers rather than substituting precomputed probe results.
+
+Kernel TCP reset delivery (`SetLinger(0)`) is outside that transport's model;
+`TestLinkProtocolsSocketReset` retains the reset classification for every
+application protocol against real TCP sockets. Default TLS certificate rejection
+and the opt-in real Redis smoke also retain real sockets in
+`prober/link_socket_integration_test.go`. These are accepted network-stack and
+certificate-store bounds; `scripts/test_go_ci.sh` runs them with
+`-tags=integration` (the Redis smoke still requires its endpoint environment).
+
+Repeated race runs also exposed HTTP/2's unconfigured `ServeConn` fallback sharing
+error channels across independent synctest bubbles. The fixture now calls
+`http2.ConfigureServer` to obtain a per-server channel pool before `ServeConn`;
+the full protocol matrix passes twenty race-enabled repetitions. This closes a
+fixture ownership gap without changing the production protocol client.

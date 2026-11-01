@@ -56,6 +56,13 @@ uv run pytest tests/ --cov=sdo
 (cd benchmarks/sregym/protocol/submission_go && go test -race ./...)
 ```
 
+The Go commands above run the deterministic unit tier. Real Git, compiler and
+socket contracts require `-tags=integration`. Both PR and nightly
+`scripts/test_go_ci.sh` select that tag; `scripts/run_tests.sh` and
+`scripts/test_fastloop_hermetic.sh` also retain it so their full/smoke selections
+continue to execute migrated process tests. The benchmark replay module is
+included in the full runner and both CI modes.
+
 `scripts/check_errors.sh` runs Ruff, Tach, the AST import and ownership checks in
 `tests/unit/test_architecture.py` (including facade imports), Pyright, Go core
 architecture checks, and benchmark Go compilation. It also checks proto drift

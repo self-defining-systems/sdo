@@ -225,3 +225,34 @@ def test_go_runner_keeps_integration_coverage_in_one_package_scheduler(tmp_path:
     else:
         skip = invocations[0][invocations[0].index("-skip") + 1]
         assert all(not re.search(skip, name) for name in nightly_names)
+
+
+@pytest.mark.parametrize("script", ["test_fastloop_hermetic.sh", "run_tests.sh"])
+def test_full_and_hermetic_runners_retain_integration_tests(tmp_path: Path, script: str) -> None:
+    calls = tmp_path / "calls"
+    for name, body in {
+        "go": '#!/bin/sh\nprintf "%s|%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n',
+        "uv": "#!/bin/sh\nexit 0\n",
+    }.items():
+        command = tmp_path / name
+        command.write_text(body)
+        command.chmod(0o755)
+    subprocess.run(
+        ["bash", str(ROOT / "scripts" / script)],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        check=True,
+    )
+    invocations = [line.split("|", 1) for line in calls.read_text().splitlines()]
+    assert invocations
+    for _, command in invocations:
+        assert "-tags=integration" in shlex.split(command), "full runners must not silently omit process contracts"
+    if script == "run_tests.sh":
+        assert any(Path(directory).name == "replay_go" for directory, _ in invocations)
+    else:
+        # Stale alternatives silently match nothing in go test -run.
+        selected = shlex.split(invocations[0][1])
+        names = set(re.findall(r"Test\w+", selected[selected.index("-run") + 1]))
+        available = set()
+        for path in (ROOT / "sdo/operator/runtime").glob("*_test.go"):
+            available.update(re.findall(r"^func (Test\w+)\(", path.read_text(), re.MULTILINE))
+        assert names <= available, f"retired hermetic selectors: {sorted(names - available)}"

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/benchmarks/fastloop/replay/internal/replayio"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -104,16 +104,16 @@ func run(ctx context.Context) error {
 	}
 	defer os.RemoveAll(root)
 	accepted := filepath.Join(root, "accepted")
-	if err := git(ctx, "", "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", *source, accepted); err != nil {
+	if err := replayio.Git(ctx, "", "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", *source, accepted); err != nil {
 		return err
 	}
-	if err := git(ctx, accepted, "reset", "--quiet", "--hard", request.GetOutcomeCommit()); err != nil {
+	if err := replayio.Git(ctx, accepted, "reset", "--quiet", "--hard", request.GetOutcomeCommit()); err != nil {
 		return err
 	}
-	if err := git(ctx, accepted, "config", "user.name", "Fastloop Replay"); err != nil {
+	if err := replayio.Git(ctx, accepted, "config", "user.name", "Fastloop Replay"); err != nil {
 		return err
 	}
-	if err := git(ctx, accepted, "config", "user.email", "fastloop-replay@example.invalid"); err != nil {
+	if err := replayio.Git(ctx, accepted, "config", "user.email", "fastloop-replay@example.invalid"); err != nil {
 		return err
 	}
 	validator := (broker.SubprocessValidator{OperatorRoot: *operatorRoot}).Validator()
@@ -170,18 +170,6 @@ func run(ctx context.Context) error {
 		return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "rejected", "error": fmt.Sprintf("validate recorded result: %v", err)})
 	}
 	return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "accepted", "commit": receipt.Commit})
-}
-
-func git(ctx context.Context, root string, args ...string) error {
-	argv := append([]string{}, args...)
-	if root != "" {
-		argv = append([]string{"-C", root}, args...)
-	}
-	command := exec.CommandContext(ctx, "git", argv...)
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
-	}
-	return nil
 }
 
 type recordedEdit struct {

@@ -128,7 +128,15 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
 def test_respond_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     env = dict(os.environ, SDO_SCRIPTED_TOOL_RESPONSES=str(tmp_path))
     subprocess.run(
-        ["go", "test", "-run", "^TestHermeticResponderProgramReuseThroughRealToolTransport$", "-count=1", "."],
+        [
+            "go",
+            "test",
+            "-tags=integration",
+            "-run",
+            "^TestHermeticResponderProgramReuseThroughRealToolTransport$",
+            "-count=1",
+            ".",
+        ],
         cwd=OPERATOR / "runtime",
         env=env,
         check=True,
