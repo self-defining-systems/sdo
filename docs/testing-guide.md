@@ -905,3 +905,7 @@ source /mnt/data/shli/cache/env.sh
 The traffic parity test uses two immutable revisions and checks stop/reset and
 failed samples without OS sockets. It remains in the ordinary PR selection;
 compiler and process coverage retains the integration tag and existing CI budget.
+
+Core snapshot observation-time tests inject a fixed clock and compare the exact
+observed timestamp. Core retains its Go 1.24 floor and uses no synctest; no tests
+are integration-tagged for this migration.

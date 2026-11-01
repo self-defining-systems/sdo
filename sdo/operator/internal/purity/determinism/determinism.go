@@ -27,6 +27,7 @@ var Edges = map[string]bool{
 	"sdo/operator/runtime/sim":                      true, // simulation world: virtual time inside synctest bubbles, seed replay, in-memory transport; tests only
 	"sdo/operator/deployment/internal/deploymentio": true, // Deployment process, socket and wait adapter
 
+	"sdo/operator/core/internal/kubeio": true, // Kubernetes configuration and default clock
 }
 
 func integrationOnly(file *ast.File) (bool, error) {

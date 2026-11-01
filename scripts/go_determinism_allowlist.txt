@@ -24,10 +24,6 @@ sdo/operator/builder/native.go:os/exec
 sdo/operator/builder/native_runner.go:os/exec
 sdo/operator/builder/native_test.go:os.Getenv
 sdo/operator/cmd/sdo-operator/main.go:os.Getenv
-sdo/operator/core/kubernetes_snapshot.go:os.Getenv
-sdo/operator/core/kubernetes_snapshot.go:os.LookupEnv
-sdo/operator/core/kubernetes_snapshot.go:time.Now
-sdo/operator/core/kubernetes_snapshot_test.go:time.Now
 sdo/operator/install/install.go:os/exec
 sdo/operator/install/install.go:time.NewTimer
 sdo/operator/install/install.go:time.Now
