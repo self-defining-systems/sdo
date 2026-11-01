@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	kclock "k8s.io/utils/clock"
 	"strings"
 	"time"
 
@@ -44,6 +45,8 @@ func (state MaintenanceState) Record() map[string]any {
 }
 
 type MaintenanceWatcher struct {
+	// Clock controls polling; nil uses production timers.
+	Clock     kclock.WithTicker
 	Client    kubernetes.Interface
 	Namespace string
 	Name      string
@@ -90,13 +93,13 @@ func (w MaintenanceWatcher) Watch(
 	go func() {
 		defer close(changes)
 		last := initial
-		ticker := time.NewTicker(interval)
+		ticker := timerClock(w.Clock).NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-ticker.C():
 			}
 			state, err := w.Read(ctx)
 			if err != nil {

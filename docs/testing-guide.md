@@ -993,3 +993,9 @@ outside the synctest bubble, preventing virtual timers from advancing.
 `KubernetesCacheConfig.ResyncPeriod` leaves production's disabled-resync default
 unchanged while allowing that scheduling boundary to remain in-bubble. This
 does not add client-go watch streams to the simulation world's model.
+
+Maintenance, traffic, Service reachability, rollout and informer-observation
+polling accept client-go clock interfaces. Lease timestamps and expiry callbacks
+share an injected clock via `NewLeaseElectorWithClock`; the default constructor
+keeps production time. An expiry callback retires its fired timer handle before
+revoking authority, so it never tries to stop the timer currently firing.

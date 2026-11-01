@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	kclock "k8s.io/utils/clock"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,7 +31,8 @@ type LeaseElector struct {
 	mu            sync.Mutex
 	session       context.Context
 	cancelSession context.CancelFunc
-	expiryTimer   *time.Timer
+	expiryTimer   kclock.Timer
+	timerClock    kclock.WithDelayedExecution
 }
 
 func NewLeaseElector(
@@ -39,10 +42,15 @@ func NewLeaseElector(
 	identity string,
 	leaseDuration time.Duration,
 ) *LeaseElector {
-	return &LeaseElector{
-		client: client, namespace: namespace, name: name, identity: identity,
-		leaseDuration: leaseDuration, now: time.Now,
+	return NewLeaseElectorWithClock(client, namespace, name, identity, leaseDuration, lifecycleio.Clock())
+}
+
+// NewLeaseElectorWithClock binds lease timestamps and expiry callbacks to one clock.
+func NewLeaseElectorWithClock(client kubernetes.Interface, namespace, name, identity string, leaseDuration time.Duration, clock kclock.WithDelayedExecution) *LeaseElector {
+	if clock == nil {
+		clock = lifecycleio.Clock()
 	}
+	return &LeaseElector{client: client, namespace: namespace, name: name, identity: identity, leaseDuration: leaseDuration, now: clock.Now, timerClock: clock}
 }
 
 func (e *LeaseElector) TryAcquireOrRenew(ctx context.Context) (leader bool, err error) {
@@ -181,11 +189,20 @@ func (e *LeaseElector) activate(validUntil time.Time) {
 	if delay < 0 {
 		delay = 0
 	}
-	e.expiryTimer = time.AfterFunc(delay, func() { e.expire(generation) })
+	e.expiryTimer = e.timerClock.AfterFunc(delay, func() { e.expire(generation) })
 }
 
 func (e *LeaseElector) expire(generation uint64) {
-	e.deactivateGeneration(generation)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.generation.Load() != generation {
+		return
+	}
+	// This callback's timer has fired. Retire its handle before cancelling the
+	// session; there is no pending timer to stop, and clocks may invoke callbacks
+	// while advancing their timer queue.
+	e.expiryTimer = nil
+	e.deactivateLocked()
 }
 
 func (e *LeaseElector) deactivate() {

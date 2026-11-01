@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	kclock "k8s.io/utils/clock"
 	"sort"
 	"sync"
 	"time"
@@ -48,6 +49,8 @@ const DefaultTrafficPollInterval = 500 * time.Millisecond
 // failed iteration, so detection and clearing do not wait for detector
 // intervals. A healthy application causes no extra evaluations.
 type TrafficObserver struct {
+	// Clock controls polling and warmup; set it before Start. Nil uses production timers.
+	Clock     kclock.WithTicker
 	api       ProberAPI
 	workloads []string
 	notify    func()
@@ -150,7 +153,7 @@ func (o *TrafficObserver) Start(ctx context.Context) {
 	o.wait.Add(1)
 	go func() {
 		defer o.wait.Done()
-		ticker := time.NewTicker(o.interval)
+		ticker := timerClock(o.Clock).NewTicker(o.interval)
 		defer ticker.Stop()
 		for {
 			if o.Poll(running) && o.notify != nil {
@@ -159,7 +162,7 @@ func (o *TrafficObserver) Start(ctx context.Context) {
 			select {
 			case <-running.Done():
 				return
-			case <-ticker.C:
+			case <-ticker.C():
 			}
 		}
 	}()
@@ -189,9 +192,9 @@ func (o *TrafficObserver) Reset(ctx context.Context) error {
 // sample, so the next evaluation, which may be the all-clear that precedes a
 // fault, judges observed traffic. It reports whether that happened in time.
 func (o *TrafficObserver) WaitWarm(ctx context.Context, timeout time.Duration) bool {
-	deadline := time.NewTimer(timeout)
+	deadline := timerClock(o.Clock).NewTimer(timeout)
 	defer deadline.Stop()
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := timerClock(o.Clock).NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		o.Poll(ctx)
@@ -201,9 +204,9 @@ func (o *TrafficObserver) WaitWarm(ctx context.Context, timeout time.Duration) b
 		select {
 		case <-ctx.Done():
 			return false
-		case <-deadline.C:
+		case <-deadline.C():
 			return o.warm()
-		case <-ticker.C:
+		case <-ticker.C():
 		}
 	}
 }

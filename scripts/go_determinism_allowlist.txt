@@ -3,7 +3,6 @@ sdo/operator/runtime/chaos_clock_skew_test.go:time.After
 sdo/operator/runtime/chaos_harness_test.go:os.Getenv
 sdo/operator/runtime/chaos_harness_test.go:time.Now
 sdo/operator/runtime/configmap_budget_test.go:time.After
-sdo/operator/runtime/controller.go:math/rand/v2.Float64
 sdo/operator/runtime/controller_closure_health_cleared_test.go:time.After
 sdo/operator/runtime/controller_closure_state_diff_test.go:time.After
 sdo/operator/runtime/fastloop_real_gate_test.go:os/exec
@@ -21,8 +20,6 @@ sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.After
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.NewTimer
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.Now
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.Sleep
-sdo/operator/runtime/leader_election.go:time.AfterFunc
-sdo/operator/runtime/leader_election.go:time.Now
 sdo/operator/runtime/leader_election_test.go:time.After
 sdo/operator/runtime/leader_election_test.go:time.Now
 sdo/operator/runtime/leader_election_test.go:time.Sleep
@@ -34,7 +31,6 @@ sdo/operator/runtime/link_observer_test.go:net.Listen
 sdo/operator/runtime/link_observer_test.go:time.Sleep
 sdo/operator/runtime/logs_kubelet_test.go:os.Getenv
 sdo/operator/runtime/logs_kubelet_test.go:time.NewTicker
-sdo/operator/runtime/maintenance.go:time.NewTicker
 sdo/operator/runtime/maintenance_test.go:time.After
 sdo/operator/runtime/native_broker_test.go:os/exec
 sdo/operator/runtime/native_broker_test.go:time.Now
@@ -45,12 +41,10 @@ sdo/operator/runtime/new_inputs_hermetic_test.go:os/exec
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.After
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Now
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Since
-sdo/operator/runtime/plan_executor_observe.go:time.NewTicker
 sdo/operator/runtime/plan_executor_observe_test.go:time.After
 sdo/operator/runtime/plan_git_source.go:os/exec
 sdo/operator/runtime/plan_git_source_test.go:os.Getenv
 sdo/operator/runtime/plan_git_source_test.go:os/exec
-sdo/operator/runtime/plan_kubernetes.go:time.NewTicker
 sdo/operator/runtime/playbook_controller_broker_test.go:time.After
 sdo/operator/runtime/playbook_controller_broker_test.go:time.Now
 sdo/operator/runtime/playbook_fastloop_test.go:os.Environ
@@ -88,9 +82,6 @@ sdo/operator/runtime/run_state_baseline_test.go:time.After
 sdo/operator/runtime/run_state_baseline_test.go:time.Sleep
 sdo/operator/runtime/run_test.go:os/exec
 sdo/operator/runtime/run_test.go:time.NewTimer
-sdo/operator/runtime/service_reachability.go:time.After
-sdo/operator/runtime/service_reachability.go:time.NewTicker
-sdo/operator/runtime/service_reachability.go:time.Now
 sdo/operator/runtime/service_reachability_test.go:net.Dialer
 sdo/operator/runtime/service_reachability_test.go:net.Listen
 sdo/operator/runtime/service_reachability_test.go:net/http/httptest.NewServer
@@ -104,8 +95,6 @@ sdo/operator/runtime/step_latency_test.go:time.After
 sdo/operator/runtime/step_latency_test.go:time.Now
 sdo/operator/runtime/step_latency_test.go:time.Since
 sdo/operator/runtime/step_latency_test.go:time.Sleep
-sdo/operator/runtime/traffic_observer.go:time.NewTicker
-sdo/operator/runtime/traffic_observer.go:time.NewTimer
 sdo/operator/runtime/traffic_observer_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/usage_live_test.go:os.Getenv
 sdo/operator/runtime/usage_live_test.go:time.Now

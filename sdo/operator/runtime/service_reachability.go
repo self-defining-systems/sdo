@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	kclock "k8s.io/utils/clock"
 	"sort"
 	"sync"
 	"time"
@@ -37,6 +38,8 @@ func ConsumesServiceReachability(detectors []sdk.Detector) bool {
 
 // ServiceReachabilityConfig configures a ServiceReachabilityObserver.
 type ServiceReachabilityConfig struct {
+	// Clock controls observation time and polling; nil uses production time.
+	Clock  kclock.WithTicker
 	Prober ReachabilityDialer
 	// Snapshots is the namespace view targets are derived from: the informer
 	// cache itself, never a provider that wraps this observer.
@@ -89,6 +92,7 @@ func NewServiceReachabilityObserver(config ServiceReachabilityConfig) *ServiceRe
 	if config.Capacity < config.Failures+1 {
 		config.Capacity = 2 * config.Failures
 	}
+	config.Clock = timerClock(config.Clock)
 	return &ServiceReachabilityObserver{config: config, history: map[string]*reachabilityHistory{}}
 }
 
@@ -118,7 +122,7 @@ func (o *ServiceReachabilityObserver) Cycle(ctx context.Context) bool {
 		}
 		return false
 	}
-	o.failure, o.omitted, o.observed = "", omitted, time.Now().UTC()
+	o.failure, o.omitted, o.observed = "", omitted, timerClock(o.config.Clock).Now().UTC()
 	current := make(map[string]bool, len(targets))
 	for _, target := range targets {
 		current[target.ID()] = true
@@ -168,7 +172,7 @@ func (o *ServiceReachabilityObserver) Collect(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(o.config.Interval):
+			case <-o.config.Clock.After(o.config.Interval):
 			}
 		}
 		o.Cycle(ctx)
@@ -195,7 +199,7 @@ func (o *ServiceReachabilityObserver) Start(ctx context.Context) {
 	o.wait.Add(1)
 	go func() {
 		defer o.wait.Done()
-		ticker := time.NewTicker(o.config.Interval)
+		ticker := o.config.Clock.NewTicker(o.config.Interval)
 		defer ticker.Stop()
 		for {
 			if o.Cycle(running) && o.config.Notify != nil {
@@ -204,7 +208,7 @@ func (o *ServiceReachabilityObserver) Start(ctx context.Context) {
 			select {
 			case <-running.Done():
 				return
-			case <-ticker.C:
+			case <-ticker.C():
 			}
 		}
 	}()
@@ -235,7 +239,7 @@ func (o *ServiceReachabilityObserver) Window() (servicehealth.ReachabilityWindow
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	window := servicehealth.ReachabilityWindow{
-		ObservedAt: time.Now().UTC(), Interval: o.config.Interval, Timeout: o.config.Timeout, Failures: o.config.Failures,
+		ObservedAt: timerClock(o.config.Clock).Now().UTC(), Interval: o.config.Interval, Timeout: o.config.Timeout, Failures: o.config.Failures,
 		Omitted: o.omitted, Prober: o.config.Identity, Targets: make([]servicehealth.TargetObservations, 0, len(o.history)),
 	}
 	if o.failure != "" {
