@@ -962,3 +962,10 @@ Program and responder receipts share `PlanExecutor.Now`; candidate diagnosis
 duration accepts `CandidateOptions.Clock`. Retained-drift evaluations use the
 caller's evaluation time, and baseline diffs use their snapshot's observation
 time. These clock seams remain in the default test tier.
+
+Prober traffic, primitive-handler, link and reachability tests run with virtual
+clock time, handler-backed HTTP and injected in-memory dial outcomes. Real
+connection-pool/listener-closure contracts remain in
+`prober/socket_integration_test.go`; PR and nightly `scripts/test_go_ci.sh`
+already include `-tags=integration`, retaining both tests and the five-minute
+PR budget.
