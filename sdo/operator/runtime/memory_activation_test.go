@@ -290,3 +290,26 @@ func TestActivationSupersededDuringBuildStartsLatest(t *testing.T) {
 		}
 	})
 }
+
+func TestCandidatePreparationIsBounded(t *testing.T) {
+	sim.Run(t, 19, func(t *testing.T, w *sim.World) {
+		ctx := context.Background()
+		a := &memoryActivation{active: "initial", results: make(chan memoryCandidate, 1), notify: make(chan struct{}, 1)}
+		a.build = func(ctx context.Context, commit string) memoryCandidate {
+			<-ctx.Done()
+			return memoryCandidate{commit: commit, err: ctx.Err()}
+		}
+		defer a.close()
+		if ready, err := a.refresh(ctx, "next"); ready || err != nil {
+			t.Fatal(ready, err)
+		}
+		w.Sleep(ctx, 10*time.Minute)
+		synctest.Wait()
+		if ready, err := a.refresh(ctx, "next"); ready || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatal("candidate readiness is unbounded", ready, err)
+		}
+		if a.active != "initial" {
+			t.Fatal("timed-out candidate replaced active memory")
+		}
+	})
+}

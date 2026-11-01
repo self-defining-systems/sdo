@@ -672,7 +672,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				_ = workspace.Close()
 				return memoryCandidate{commit: commit, err: err}
 			}
-			if _, err = child.Ready(buildCtx); err != nil {
+			readyCtx, cancelReady := context.WithTimeout(buildCtx, 30*time.Second)
+			defer cancelReady()
+			if _, err = child.Ready(readyCtx); err != nil {
 				_ = child.Close()
 				_ = workspace.Close()
 				return memoryCandidate{commit: commit, err: err}

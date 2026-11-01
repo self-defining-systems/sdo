@@ -119,7 +119,7 @@ func (a *memoryActivation) refresh(ctx context.Context, commit string) (bool, er
 		return true, nil
 	}
 	a.pending = commit
-	buildCtx, cancel := context.WithCancel(ctx)
+	buildCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	a.cancel = cancel
 	done := make(chan struct{})
 	a.done = done
@@ -133,7 +133,7 @@ func (a *memoryActivation) refresh(ctx context.Context, commit string) (bool, er
 			case a.notify <- struct{}{}:
 			default:
 			}
-		case <-buildCtx.Done():
+		case <-ctx.Done():
 			if candidate.host != nil {
 				_ = candidate.host.Close()
 			}
