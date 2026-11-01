@@ -17,6 +17,7 @@ import (
 // Edges are exact repository-relative package directories, never subtree globs.
 // Existing mixed orchestration packages remain on the ratchet, not exempted.
 var Edges = map[string]bool{
+	"sdo/operator/runtime/internal/h2testio":        true, // In-memory HTTP/2 conformance peer configuration; tests only
 	"sdo/operator/memory/internal/memoryio":         true, // Git and shell syntax subprocesses
 	"sdo/operator/install/internal/installio":       true, // Repository processes, configuration environment and timer adapter
 	"sdo/operator/runtime/internal/lifecycleio":     true, // Kubernetes driver
