@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,11 +24,13 @@ import (
 // test_go_contract_fixtures.py, the broker and the SREGym receipt tests).
 // Any Go encoding change fails here until the fixtures are regenerated with
 //
-//	SDO_UPDATE_GO_CONTRACT_FIXTURES=1 go test -run TestGoContractFixtures ./...
+//	go test . -run TestGoContractFixtures -update-go-contract-fixtures
 //
 // and then has to pass the Python side too.
 
-const updateGoContractFixtures = "SDO_UPDATE_GO_CONTRACT_FIXTURES"
+const updateGoContractFixtures = "-update-go-contract-fixtures"
+
+var updateGoContractFixturesFlag = flag.Bool("update-go-contract-fixtures", false, "regenerate cross-language contract fixtures")
 
 var goContractFixtureDir = filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "contracts", "go")
 
@@ -43,7 +46,7 @@ func checkGoContractFixture(t *testing.T, name string, message proto.Message) {
 	}
 	encoded := append(indented.Bytes(), '\n')
 	path := filepath.Join(goContractFixtureDir, name)
-	if os.Getenv(updateGoContractFixtures) == "1" {
+	if *updateGoContractFixturesFlag {
 		if err := os.MkdirAll(goContractFixtureDir, 0o755); err != nil {
 			t.Fatalf("create fixture dir: %v", err)
 		}
@@ -54,10 +57,10 @@ func checkGoContractFixture(t *testing.T, name string, message proto.Message) {
 	}
 	golden, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s (regenerate with %s=1): %v", path, updateGoContractFixtures, err)
+		t.Fatalf("read %s (regenerate with %s): %v", path, updateGoContractFixtures, err)
 	}
 	if !bytes.Equal(golden, encoded) {
-		t.Fatalf("%s differs from the Go encoding; regenerate with %s=1 and rerun the Python contract tests.\n"+
+		t.Fatalf("%s differs from the Go encoding; regenerate with %s and rerun the Python contract tests.\n"+
 			"got:\n%s", path, updateGoContractFixtures, encoded)
 	}
 }

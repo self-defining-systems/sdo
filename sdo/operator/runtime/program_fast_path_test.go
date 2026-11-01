@@ -404,7 +404,7 @@ func TestSuccessfulFastPathAddsBoundTrustCredit(t *testing.T) {
 	if !attempt.Resolved {
 		t.Fatalf("fast path failed: %+v", attempt)
 	}
-	result := fastPathResult(loop.Request, loop, attempt, time.Now())
+	result := fastPathResult(loop.Request, loop, attempt, time.Unix(1700000000, 0))
 	fillProgramRevisions(context.Background(), result.ProgramRuns, loop.Request.RepositoryWorktree, loop.Request.SourceCommit)
 	message, err := incidentResultContract(result)
 	if err != nil {

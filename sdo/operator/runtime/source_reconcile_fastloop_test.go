@@ -225,7 +225,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 		}
 		record := equivalentRepairOutcome(t, loop)
 		fillProgramRevisions(ctx, loop.runs, request.RepositoryWorktree, request.SourceCommit)
-		record.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Now().Add(time.Duration(index) * time.Second))}
+		record.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Unix(1700000000, 0).Add(time.Duration(index) * time.Second))}
 		outcomes = append(outcomes, memory.Outcome{IncidentID: record.IncidentId, Record: record})
 		deployment.Spec.Template.Spec.Containers[0].Image = "missing:v1"
 		if _, err := client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
@@ -284,7 +284,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	failure := equivalentRepairOutcome(t, failedLoop)
 	failure.Classification = "failure"
 	failure.ProgramFailureSignals = failedLoop.FailureSignals()
-	failure.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Now().Add(time.Hour))}
+	failure.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Unix(1700000000, 0).Add(time.Hour))}
 	dispatcher.Outcomes = priorOutcomeReader{outcomes: append(outcomes, memory.Outcome{IncidentID: failure.IncidentId, Record: failure})}
 	blocked, err := dispatcher.programTrust(ctx, request)
 	if err != nil {

@@ -58,7 +58,7 @@ func canonicalJSON(t *testing.T, raw []byte) []byte {
 func checkProtoContractFixture(t *testing.T, name string, encoded []byte) {
 	t.Helper()
 	path := filepath.Join(protoContractFixtureDir, name)
-	if os.Getenv(updateGoContractFixtures) == "1" {
+	if *updateGoContractFixturesFlag {
 		if err := os.MkdirAll(protoContractFixtureDir, 0o755); err != nil {
 			t.Fatalf("create fixture dir: %v", err)
 		}
@@ -69,10 +69,10 @@ func checkProtoContractFixture(t *testing.T, name string, encoded []byte) {
 	}
 	golden, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s (regenerate with %s=1): %v", path, updateGoContractFixtures, err)
+		t.Fatalf("read %s (regenerate with %s): %v", path, updateGoContractFixtures, err)
 	}
 	if !bytes.Equal(golden, encoded) {
-		t.Fatalf("%s differs from the Go protojson encoding; regenerate with %s=1 and rerun the Python contract tests.\n"+
+		t.Fatalf("%s differs from the Go protojson encoding; regenerate with %s and rerun the Python contract tests.\n"+
 			"got:\n%s", path, updateGoContractFixtures, encoded)
 	}
 }

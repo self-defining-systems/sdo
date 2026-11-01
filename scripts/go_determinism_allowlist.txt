@@ -7,8 +7,6 @@ sdo/operator/runtime/chaos_clock_skew_test.go:time.After
 sdo/operator/runtime/chaos_harness_test.go:os.Getenv
 sdo/operator/runtime/chaos_harness_test.go:time.Now
 sdo/operator/runtime/configmap_budget_test.go:time.After
-sdo/operator/runtime/contract_golden_test.go:os.Getenv
-sdo/operator/runtime/contract_proto_test.go:os.Getenv
 sdo/operator/runtime/controller.go:math/rand/v2.Float64
 sdo/operator/runtime/controller_closure_health_cleared_test.go:time.After
 sdo/operator/runtime/controller_closure_state_diff_test.go:time.After
@@ -17,7 +15,6 @@ sdo/operator/runtime/controller_test.go:time.After
 sdo/operator/runtime/controller_test.go:time.Now
 sdo/operator/runtime/controller_test.go:time.Sleep
 sdo/operator/runtime/effect_durability_test.go:time.After
-sdo/operator/runtime/extended_kinds_test.go:time.Now
 sdo/operator/runtime/fastloop_real_gate_test.go:os/exec
 sdo/operator/runtime/fastloop_real_gate_test.go:time.After
 sdo/operator/runtime/fastloop_real_gate_test.go:time.Now
@@ -33,7 +30,6 @@ sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.After
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.NewTimer
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.Now
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.Sleep
-sdo/operator/runtime/late_findings_sink_test.go:time.Now
 sdo/operator/runtime/leader_election.go:time.AfterFunc
 sdo/operator/runtime/leader_election.go:time.Now
 sdo/operator/runtime/leader_election_test.go:time.After
@@ -97,8 +93,6 @@ sdo/operator/runtime/prober/reachability_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/prober/reachability_test.go:time.Now
 sdo/operator/runtime/prober/reachability_test.go:time.Since
 sdo/operator/runtime/program_fast_path.go:time.NewTimer
-sdo/operator/runtime/program_fast_path_test.go:time.Now
-sdo/operator/runtime/program_repair_receipts_test.go:time.Now
 sdo/operator/runtime/program_revision.go:os/exec
 sdo/operator/runtime/prometheus/client_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/prometheus/client_test.go:time.Now
@@ -113,7 +107,6 @@ sdo/operator/runtime/responder_loop_mitigator_test.go:time.Since
 sdo/operator/runtime/responder_loop_test.go:time.After
 sdo/operator/runtime/responder_tools_transport.go:crypto/rand.Text
 sdo/operator/runtime/responder_tools_transport.go:time.NewTicker
-sdo/operator/runtime/responder_verification_failure_test.go:time.Now
 sdo/operator/runtime/routing_capture_test.go:net/http.Client
 sdo/operator/runtime/routing_capture_test.go:time.Sleep
 sdo/operator/runtime/routing_capture_test.go:time.Until
@@ -137,7 +130,6 @@ sdo/operator/runtime/service_reachability.go:time.Now
 sdo/operator/runtime/service_reachability_test.go:net.Dialer
 sdo/operator/runtime/service_reachability_test.go:net.Listen
 sdo/operator/runtime/service_reachability_test.go:net/http/httptest.NewServer
-sdo/operator/runtime/source_reconcile_fastloop_test.go:time.Now
 sdo/operator/runtime/state_baseline_secret_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/state_baseline_secret_test.go:time.Now
 sdo/operator/runtime/state_baseline_test.go:time.Now

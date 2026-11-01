@@ -213,7 +213,7 @@ func responderRetryOutcome(t *testing.T, loop *ResponderLoop) *contracts.Outcome
 	if err != nil {
 		t.Fatal(err)
 	}
-	completed := time.Now().UTC()
+	completed := time.Unix(1700000000, 0).UTC()
 	closure := &contracts.IncidentClosure{
 		Request: &contracts.IncidentRequest{
 			IncidentId: loop.Request.IncidentID, SourceCommit: loop.Request.SourceCommit,
