@@ -80,14 +80,14 @@ func TestKubernetesSnapshotProviderListsNamespaceState(t *testing.T) {
 }
 
 func TestKubernetesSnapshotProviderRecordsObservationTime(t *testing.T) {
-	before := time.Now()
-	snapshot, err := KubernetesSnapshotProvider{Namespace: "demo", Client: fake.NewSimpleClientset()}.Snapshot(context.Background())
+	before := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	snapshot, err := KubernetesSnapshotProvider{Clock: func() time.Time { return before }, Namespace: "demo", Client: fake.NewSimpleClientset()}.Snapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	observed := sdk.ObservationTime(snapshot)
-	if observed.Before(before) || observed.After(time.Now()) {
-		t.Fatalf("observation time %v outside the snapshot call", observed)
+	if !observed.Equal(before) {
+		t.Fatalf("observation time %v differs from the injected clock", observed)
 	}
 }
 
