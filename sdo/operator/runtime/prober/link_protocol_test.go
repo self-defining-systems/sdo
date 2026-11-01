@@ -46,6 +46,12 @@ func TestLinkProtocols(t *testing.T) {
 			}
 			t.Run(protocol+"/"+mode, func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
+					// Configure a per-bubble server: unconfigured ServeConn shares error
+					// channels globally, which cannot cross synctest bubbles.
+					server := &http2.Server{}
+					if err := http2.ConfigureServer(&http.Server{}, server); err != nil {
+						t.Fatal(err)
+					}
 					listener := bufconn.Listen(4096)
 					defer listener.Close()
 					if mode != "refused" {
@@ -64,7 +70,7 @@ func TestLinkProtocols(t *testing.T) {
 								c.Write([]byte("wrong\r\n"))
 								return
 							}
-							serveLinkProtocol(t, protocol, mode, c)
+							serveLinkProtocol(t, protocol, mode, c, server)
 						}()
 					}
 					checkLinkProtocol(t, protocol, mode, func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -81,15 +87,8 @@ func TestLinkProtocols(t *testing.T) {
 	}
 }
 
-func serveLinkProtocol(t *testing.T, protocol, mode string, c net.Conn) {
+func serveLinkProtocol(t *testing.T, protocol, mode string, c net.Conn, server *http2.Server) {
 	if protocol == "grpc" {
-		server := &http2.Server{}
-		// ConfigureServer owns error-channel pools per server; the unconfigured
-		// ServeConn fallback shares channels across unrelated synctest bubbles.
-		if err := http2.ConfigureServer(&http.Server{}, server); err != nil {
-			t.Error(err)
-			return
-		}
 		server.ServeConn(c, &http2.ServeConnOpts{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, _ := io.ReadAll(r.Body)
 			if r.Method != "POST" || r.URL.Path != "/grpc.health.v1.Health/Check" || !bytes.Equal(body, []byte{0, 0, 0, 0, 0}) {
