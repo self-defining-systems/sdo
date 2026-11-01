@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/utils/clock"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/devmount"
@@ -89,7 +90,9 @@ type KubernetesExecutor struct {
 	CredentialsSecret      string
 	LateFindingsConfigMap  string
 	Environment            map[string]string
-	PollInterval           time.Duration
+	// Clock controls polling; nil uses the Kubernetes wall clock.
+	Clock        clock.WithTicker
+	PollInterval time.Duration
 }
 
 type JobFailedError struct{ JobName string }
@@ -163,7 +166,11 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 			return nil, err
 		}
 	}
-	ticker := time.NewTicker(e.PollInterval)
+	pollClock := e.Clock
+	if pollClock == nil {
+		pollClock = clock.RealClock{}
+	}
+	ticker := pollClock.NewTicker(e.PollInterval)
 	defer ticker.Stop()
 	observed := map[string]bool{}
 	for {
@@ -234,7 +241,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-ticker.C:
+		case <-ticker.C():
 		}
 	}
 }
