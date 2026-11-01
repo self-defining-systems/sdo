@@ -90,6 +90,8 @@ type StateTrackerConfig struct {
 	Namespace      string
 	// Settle defaults to DefaultStateSettle.
 	Settle time.Duration
+	// ResyncPeriod optionally schedules informer resyncs; zero disables them.
+	ResyncPeriod time.Duration
 }
 
 type objectState map[string]string
@@ -136,9 +138,12 @@ func NewStateTracker(config StateTrackerConfig) *StateTracker {
 // bounds only the probes and the initial sync: the informers keep observing
 // after it ends, until Stop, so a caller may pass a startup deadline.
 func (t *StateTracker) Start(ctx context.Context) error {
+	if t.config.ResyncPeriod < 0 {
+		return fmt.Errorf("state tracker resync period must not be negative")
+	}
 	t.Stop()
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	factory := informers.NewSharedInformerFactoryWithOptions(t.config.Client, 0, informers.WithNamespace(t.config.Namespace))
+	factory := informers.NewSharedInformerFactoryWithOptions(t.config.Client, t.config.ResyncPeriod, informers.WithNamespace(t.config.Namespace))
 	started := map[string]cache.SharedIndexInformer{}
 	unobserved := []string{}
 	for _, kind := range trackedKinds {

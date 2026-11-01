@@ -188,3 +188,28 @@ The final clean-run in-Pod benchmark repeated at **0.590–0.614 ms/evaluation**
 The earlier 0.86–1.24 ms trials above were taken amid the failed-run cleanup.
 Both measurements demonstrate scheduling-dependent cost; the final repeat is
 close to, but above, the historical approximately 0.57 ms figure.
+
+### Remaining host adapter and CPU bounds (2026-11-01 determinism migration)
+
+The state-baseline and restart-storm correctness cases use synctest virtual time,
+including informer propagation, rate limiting and state-write counts. State
+tracker tests opt into a one-hour informer resync so client-go's disabled-resync
+channel, allocated outside the bubble, cannot pin virtual time. Production keeps
+resync disabled. Negative resync intervals are rejected at Start.
+
+Virtual time does not measure CPU consumed by `StateTracker.Changes`. The original
+one-second host-process budget remains in `TestStateChangesStayFastAndBounded`
+under `integration`; `TestStateChangesBounded` separately checks all truncation,
+omission and removal invariants in virtual time. The optional restart-storm host
+latency report also remains integration-only. These are accepted host-scheduler
+bounds, not simulated duration measurements.
+
+`state_baseline_secret_test.go` deliberately exercises the production kubeconfig
+factory, real HTTP list/watch streaming and metadata-only decoder together. Its
+socket test stays under `integration`; the canary, no typed Secret reads, strict
+Accept headers, failed discovery and Secret identity assertions are unchanged.
+The simulation does not model OS kubeconfig discovery or HTTP streaming framing.
+The live kubelet logs and proxy-usage checks also require real cluster sockets
+and retain their existing opt-in environment gates under `integration`.
+`scripts/test_go_ci.sh` supplies `-tags=integration` for these tests; this move
+changes no CI selections or opt-in prerequisites.
