@@ -41,6 +41,13 @@ must not contain them. Use `sdo-operator memory ls` to turn an ID into a file yo
 4. Report a playbook you applied by its logical ID, and a script by its name, in the structured result field your
    task defines.
 
+## Automatic stages before you
+
+When an incident opens, the controller may already have applied a saved playbook program. Your task then carries
+`prior_stages`: per attempt, what it did, what it cleared and why it skipped, and `findings` lists only what
+remains. An applied attempt already wrote to the cluster, so check live state first and do not repeat it. A skipped
+attempt wrote nothing. Treat "cleared" as a claim until `sdo verify` confirms it.
+
 ## Commands
 
 ```

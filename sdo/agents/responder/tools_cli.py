@@ -32,7 +32,12 @@ def _parser() -> argparse.ArgumentParser:
         epilog="Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("status")
+    commands.add_parser(
+        "status",
+        help="Show current incident findings",
+        description="Show current incident findings. The task's prior_stages lists what automatic stages "
+        "already applied.",
+    )
     for name in ("diagnose", "plan"):
         command = commands.add_parser(name, epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2])
         command.add_argument("program_id", nargs="?" if name == "diagnose" else None)
@@ -44,7 +49,12 @@ def _parser() -> argparse.ArgumentParser:
             metavar="NAME=Kind/namespace/name",
             help="named program parameter; repeat for each binding",
         )
-    commands.add_parser("apply").add_argument("plan_ids", nargs="+")
+    commands.add_parser(
+        "apply",
+        help="Apply plans returned by sdo plan",
+        description="Apply plans returned by sdo plan. An attempt recorded as applied in prior_stages already wrote: "
+        "re-check live state before applying it again.",
+    ).add_argument("plan_ids", nargs="+")
     commands.add_parser("source", epilog="Example: " + CLI_EXAMPLES[0]).add_argument(
         "ref", metavar="Kind/namespace/name"
     )
