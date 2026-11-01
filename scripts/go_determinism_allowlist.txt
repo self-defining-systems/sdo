@@ -265,5 +265,3 @@ sdo/operator/sdk/traffic/engine.go:time.After
 sdo/operator/sdk/traffic/engine.go:time.Now
 sdo/operator/sdk/traffic/engine_test.go:net/http.Client
 sdo/operator/sdk/traffic/engine_test.go:net/http/httptest.NewServer
-sdo/operator/worker_registry/kubernetes.go:time.NewTicker
-sdo/operator/worker_registry/kubernetes_test.go:time.NewTimer
