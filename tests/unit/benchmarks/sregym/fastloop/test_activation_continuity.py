@@ -38,3 +38,23 @@ def test_continuity_records_activation_and_identity():
 def test_continuity_fails_closed(log, after):
     _, error = check_activations(log, {"uid": "one"}, after, max_gap=1, expected_commits={"abc"})
     assert error
+
+
+@pytest.mark.parametrize("field", ["uid", "start_time", "containers"])
+def test_each_controller_identity_field_is_enforced(field):
+    before = {
+        "uid": "one",
+        "start_time": "2026-01-01T00:00:00Z",
+        "containers": [{"name": "controller", "restart_count": 0, "started_at": "2026-01-01T00:00:01Z"}],
+    }
+    after = {**before, field: "changed"}
+    rows, error = check_activations(trace(), before, after, max_gap=1)
+    assert error
+    assert not rows[0].controller_unchanged
+
+
+def test_missing_post_activation_evaluations_fail():
+    logs = "\n".join(line for line in trace().splitlines() if "memory_host_activation" in line or "00:00:00+" in line)
+    rows, error = check_activations(logs, {"uid": "one"}, {"uid": "one"}, max_gap=1)
+    assert error
+    assert rows[0].evaluations_after == 0
