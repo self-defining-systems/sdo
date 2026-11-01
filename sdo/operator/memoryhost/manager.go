@@ -23,12 +23,15 @@ type Host interface {
 // Manager keeps the old host serving while a candidate is prepared. Calls hold
 // a read lease so retirement cannot kill an evaluation already in flight.
 type Manager struct {
+	mirror     mirrorState
 	swap       sync.Mutex
 	mu         sync.RWMutex
 	active     Host
+	revision   string
 	timeout    time.Duration
 	closed     bool
 	generation uint64
+	recovering bool
 	recovery   func(context.Context) (Host, string, string, uint64, error)
 }
 
@@ -66,6 +69,7 @@ func (m *Manager) Swap(ctx context.Context, h Host, commit, digest string, seque
 	}
 	old := m.active
 	m.active = h
+	m.revision = commit
 	m.generation++
 	accepted = true
 	m.mu.Unlock()
@@ -88,6 +92,10 @@ func (m *Manager) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*p
 	if err == nil {
 		return response, nil
 	}
+	m.failed(h)
+	return unavailable(request, err), nil
+}
+func (m *Manager) failed(h Host) {
 	// An old connection's late failure must never evict a newer accepted host.
 	m.mu.Lock()
 	failed := m.active == h
@@ -95,13 +103,11 @@ func (m *Manager) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*p
 		m.active = nil
 		_ = h.Close()
 	}
-	generation := m.generation
 	recovery := m.recovery
 	m.mu.Unlock()
 	if failed && recovery != nil {
-		go m.recover(generation, recovery)
+		go m.retryRecovery()
 	}
-	return unavailable(request, err), nil
 }
 func unavailable(request *pb.EvaluateRequest, err error) *pb.EvaluateResponse {
 	response := &pb.EvaluateResponse{}
@@ -111,6 +117,16 @@ func unavailable(request *pb.EvaluateRequest, err error) *pb.EvaluateResponse {
 	return response
 }
 func (m *Manager) Close() error {
+	m.mirror.mu.Lock()
+	defer m.mirror.mu.Unlock()
+	defer func() {
+		for host := range m.mirror.hosts {
+			if host != m.active {
+				_ = host.Close()
+			}
+		}
+		m.mirror.hosts = nil
+	}()
 	m.swap.Lock()
 	defer m.swap.Unlock()
 	m.mu.Lock()
@@ -132,11 +148,15 @@ func (m *Manager) SetRecovery(prepare func(context.Context) (Host, string, strin
 	m.recovery = prepare
 }
 func (m *Manager) recover(generation uint64, prepare func(context.Context) (Host, string, string, uint64, error)) {
+	defer func() { m.mu.Lock(); m.recovering = false; m.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)
 	defer cancel()
 	h, commit, digest, sequence, err := prepare(ctx)
 	if err != nil {
 		if h != nil {
+			m.mirror.mu.Lock()
+			delete(m.mirror.hosts, h)
+			m.mirror.mu.Unlock()
 			_ = h.Close()
 		}
 		return
@@ -144,20 +164,28 @@ func (m *Manager) recover(generation uint64, prepare func(context.Context) (Host
 	if h == nil {
 		return
 	}
+	m.mirror.mu.Lock()
+	defer m.mirror.mu.Unlock()
+	if seq, ok := m.mirror.hosts[h]; ok {
+		sequence = seq
+	}
 	m.swap.Lock()
 	defer m.swap.Unlock()
 	identity, err := h.Ready(ctx)
 	if err != nil || identity.GetMemoryCommit() != commit || identity.GetBinaryDigest() != digest || !identity.GetMirrorComplete() || identity.GetMirrorSequence() != sequence {
+		delete(m.mirror.hosts, h)
 		_ = h.Close()
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || m.generation != generation || m.active != nil {
+		delete(m.mirror.hosts, h)
 		_ = h.Close()
 		return
 	}
 	m.active = h
+	m.revision = commit
 	m.generation++
 }
 
@@ -188,4 +216,18 @@ func (m *Manager) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.Miti
 	ctx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 	return h.Mitigate(ctx, r)
+}
+
+// retryRecovery retries a failed restart on the next demand, without spinning
+// or introducing a wall-clock retry loop in the controller.
+func (m *Manager) retryRecovery() {
+	m.mu.Lock()
+	if m.closed || m.active != nil || m.recovering || m.recovery == nil {
+		m.mu.Unlock()
+		return
+	}
+	m.recovering = true
+	generation, prepare := m.generation, m.recovery
+	m.mu.Unlock()
+	m.recover(generation, prepare)
 }

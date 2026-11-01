@@ -110,6 +110,10 @@ func Supervise(ctx context.Context, config RunConfig) error {
 		return errors.New("supervision cannot be combined with exit_after_closure or duration")
 	}
 	config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
+	if config.Controller.MemoryHost {
+		config.Controller.RestartAfterClosure = false
+		return RunOnce(ctx, config)
+	}
 	config.Controller.RestartAfterClosure = true
 	return supervise(ctx, config, RunOnce, os.Stdout)
 }

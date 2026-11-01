@@ -75,7 +75,14 @@ func (c testMemoryRPC) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb
 func (c testMemoryRPC) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.MitigateResponse, error) {
 	return c.client.Mitigate(ctx, r)
 }
-func memoryTestRPC(t *testing.T, s *memoryhost.Server) (testMemoryRPC, func()) {
+
+type memoryTesting interface {
+	Helper()
+	Cleanup(func())
+	Fatal(...any)
+}
+
+func memoryTestRPC(t memoryTesting, s *memoryhost.Server) (testMemoryRPC, func()) {
 	t.Helper()
 	listener := bufconn.Listen(16 << 20)
 	server := grpc.NewServer()

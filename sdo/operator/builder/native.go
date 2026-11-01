@@ -325,3 +325,12 @@ func moduleRequired(content, path string) bool {
 	pattern := regexp.MustCompile(`(?m)^\s*(?:require\s+)?` + regexp.QuoteMeta(path) + `\s+\S+`)
 	return pattern.MatchString(content)
 }
+
+// DefaultOperatorRoot resolves the installed toolchain modules at the process edge.
+func DefaultOperatorRoot() string {
+	root := os.Getenv("SDO_OPERATOR_ROOT")
+	if root == "" {
+		return "/opt/sdo/sdo/operator"
+	}
+	return root
+}

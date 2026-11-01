@@ -33,6 +33,9 @@ type usageSnapshotProvider struct {
 func withUsage(base SnapshotProvider, detectors []sdk.Detector, client kubernetes.Interface, clock func() time.Time) SnapshotProvider {
 	consumed, throttling := false, false
 	for _, d := range detectors {
+		if optional, ok := d.(interface{ ConsumesUsage() bool }); ok && !optional.ConsumesUsage() {
+			continue
+		}
 		if c, ok := d.(usage.Consumer); ok {
 			consumed = true
 			throttling = throttling || c.UsageRequirements().Throttling

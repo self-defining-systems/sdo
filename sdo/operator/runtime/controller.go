@@ -75,6 +75,7 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
+	memoryRefresh       func(context.Context) (bool, error)
 	config              ControllerConfig
 	startedAt           time.Time
 	scheduler           *Scheduler
