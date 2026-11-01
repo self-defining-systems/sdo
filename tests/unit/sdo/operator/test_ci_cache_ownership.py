@@ -25,3 +25,16 @@ def test_go_cache_writes_belong_only_to_durable_base_pushes() -> None:
                     and restore["with"]["path"] == step["with"]["path"]
                     for restore in steps
                 )
+
+
+def test_checks_restore_current_compiler_cache_across_fixture_hash_changes() -> None:
+    configuration = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    restore = next(
+        step
+        for step in configuration["jobs"]["checks"]["steps"]
+        if step.get("uses", "").startswith("actions/cache/restore@")
+    )
+    prefix = "ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-"
+    fallbacks = restore["with"]["restore-keys"].splitlines()
+    assert prefix in fallbacks, "submodule go.sum discovery must not force an obsolete compiler cache"
+    assert fallbacks.index(prefix) < next(i for i, key in enumerate(fallbacks) if key.startswith("ci-go-"))

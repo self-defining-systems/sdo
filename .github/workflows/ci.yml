@@ -43,12 +43,14 @@ jobs:
           key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
         with:
           version: "0.9.24"
           python-version: "3.12"
           enable-cache: true
+          prune-cache: false
       - run: uv sync --locked --all-extras
       - name: Check out optional harness fixtures
         run: |
@@ -58,8 +60,10 @@ jobs:
         id: proto-tools
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
-          path: ~/go/bin
-          key: proto-tools-${{ runner.os }}-${{ runner.arch }}-buf1.73.0-go1.26.8-protobuf1.36.12-protoc33.4-grpc1.6.2
+          path: |
+            ~/go/bin
+            ~/.cache/sdo-tools
+          key: proto-lint-tools-v2-golangci2.11.4-${{ runner.os }}-${{ runner.arch }}-buf1.73.0-go1.26.8-protobuf1.36.12-protoc33.4-grpc1.6.2
       - name: Install pinned proto tools
         if: steps.proto-tools.outputs.cache-hit != 'true'
         run: |
@@ -81,9 +85,9 @@ jobs:
           bwrap --ro-bind / / --dev /dev --proc /proc true
       - name: Static contracts and Python unit tests
         run: |
-          bash ./scripts/format_code.sh --check
-          bash ./scripts/check_errors.sh > /tmp/checks.log 2>&1 &
+          bash ./scripts/check_errors.sh --python-suite > /tmp/checks.log 2>&1 &
           checks=$!
+          bash ./scripts/format_code.sh --check
           status=0
           bash ./scripts/test_python.sh --durations=30 \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
