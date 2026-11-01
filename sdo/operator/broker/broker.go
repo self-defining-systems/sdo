@@ -9,9 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sdo.dev/operator/broker/internal/processio"
 	"strings"
 	"syscall"
 
@@ -541,16 +541,7 @@ func runGit(ctx context.Context, cwd string, args ...string) ([]byte, error) {
 }
 
 func runGitEnv(ctx context.Context, cwd string, env []string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
-	cmd.Env = append(os.Environ(), env...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return out, nil
+	return processio.RunGitEnv(ctx, cwd, env, args...)
 }
 
 func gitText(ctx context.Context, cwd string, args ...string) (string, error) {

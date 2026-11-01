@@ -1,3 +1,5 @@
+//go:build integration
+
 package broker
 
 import (
@@ -5,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/broker/internal/processio"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,7 +24,7 @@ func TestValidationSubprocessLimits(t *testing.T) {
 		{"memory", "python3 -c 'import time; x=bytearray(100*1024*1024); time.sleep(30)' & wait", "memory limit", 5 * time.Second, 32 << 20},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := runValidationProcess(context.Background(), "/bin/sh", []string{"-c", tc.script}, t.TempDir(), tc.timeout, tc.memory)
+			err := processio.RunValidationProcess(context.Background(), "/bin/sh", []string{"-c", tc.script}, t.TempDir(), tc.timeout, tc.memory)
 			if err == nil || !strings.Contains(err.Error(), tc.diagnostic) {
 				t.Fatalf("expected infrastructure %s: %v", tc.diagnostic, err)
 			}
@@ -35,7 +38,7 @@ func TestValidationSubprocessLimits(t *testing.T) {
 func TestValidationTimeoutKillsDescendants(t *testing.T) {
 	scratch := t.TempDir()
 	pidFile := filepath.Join(scratch, "descendant")
-	err := runValidationProcess(context.Background(), "/bin/sh", []string{"-c", `sleep 30 & echo $! > "$1"; wait`, "validation", pidFile}, scratch, 200*time.Millisecond, 1<<30)
+	err := processio.RunValidationProcess(context.Background(), "/bin/sh", []string{"-c", `sleep 30 & echo $! > "$1"; wait`, "validation", pidFile}, scratch, 200*time.Millisecond, 1<<30)
 	if err == nil {
 		t.Fatal("timeout accepted")
 	}
