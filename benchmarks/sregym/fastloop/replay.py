@@ -418,9 +418,9 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
         workspace = directory / "go.work"
         workspace.write_text(
             "go 1.26.8\nuse "
-            + json.dumps(str(program))
+            + json.dumps(str(program), ensure_ascii=False)
             + "\nreplace (\n"
-            + "".join(f" {name} => {json.dumps(str(path))}\n" for name, path in modules.items())
+            + "".join(f" {name} => {json.dumps(str(path), ensure_ascii=False)}\n" for name, path in modules.items())
             + ")\n",
             encoding="utf-8",
         )

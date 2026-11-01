@@ -558,9 +558,10 @@ def test_capture_exports_script_actions_from_live_recording(tmp_path: Path) -> N
 def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.fastloop.replay import StageCheckpoint, replay_broker_result
 
-    operator = tmp_path / 'frozen operator "revision"'
+    operator = tmp_path / 'frozen operator "revision" 💾'
     source = tmp_path / "accepted source"
     observed: list[Path] = []
+    real_run = subprocess.run
 
     def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         environment = kwargs["env"]
@@ -572,7 +573,19 @@ def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monke
         # The replay driver and all production modules must come from the
         # explicit operator-root, even when replay runs outside that checkout.
         for module in ("", "core", "sdk", "runtime", "contracts"):
-            assert json.dumps(str(operator / module)) in contents
+            assert json.dumps(str(operator / module), ensure_ascii=False) in contents
+        # Parse with Go itself: JSON surrogate escapes are not valid Go
+        # string literals for paths containing characters outside the BMP.
+        parsed = real_run(
+            ["go", "work", "edit", "-json", str(workspace)],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        replacements = {item["Old"]["Path"]: Path(item["New"]["Path"]) for item in json.loads(parsed.stdout)["Replace"]}
+        assert replacements["sdo.dev/operator"] == operator
+        assert replacements["sdo.dev/operator/runtime"] == operator / "runtime"
         assert Path(str(kwargs["cwd"])).name == "replay_go"
         assert command[:3] == ["go", "run", "."]
         assert command[command.index("--operator-root") + 1] == str(operator)
