@@ -262,6 +262,13 @@ attempt that did not happen (`skipped`/`apply_error`), never clearance and never
 an authorized empty plan. A swap mid-stage fails the remaining calls the same
 way, and the agent then starts from the report.
 
+An applied attempt whose target findings all stay open on a fresh observation,
+with its program still diagnosing the fault, is restored from the executor's
+preimages before handoff (`reverted_ineffective`); partial progress, a restart
+(no preimage) and a failed restore are kept and typed by `kept_reason`.
+Each apply waits for its own rollout inside the plan executor; the stage adds
+no separate settle budget.
+
 A stage never closes an incident by its own claim. When its post-write
 observation completes without error and finds nothing open, the incident result
 has `resolution_path: deterministic`, no responder session, and no reflection.

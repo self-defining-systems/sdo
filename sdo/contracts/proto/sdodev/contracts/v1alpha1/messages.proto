@@ -518,7 +518,7 @@ message StageMitigation {
   repeated Binding bindings = 3;
   string plan_id = 4;
   PlanApplication apply_receipt = 5;
-  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "reverted_ineffective", "rollout_pending_at_handoff", "apply_error", "skipped"]}];
+  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "reverted_ineffective", "apply_error", "skipped"]}];
   string skip_reason = 7 [(buf.validate.field).string = {in: ["", "multiple_entry_points", "no_mitigation", "unbound_parameter", "diagnose_no_longer_matches", "diagnose_unavailable", "already_attempted", "repair_policy", "plan_not_executable", "ineffective"]}];
   ProgramRun post_apply_diagnose = 8;
   repeated string cleared_finding_fingerprints = 9;
