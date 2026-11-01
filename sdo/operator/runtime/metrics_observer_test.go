@@ -3,14 +3,13 @@ package runtime
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -35,13 +34,12 @@ type fakePrometheus struct {
 	release  chan struct{}
 }
 
-func newFakePrometheus(t *testing.T) (*fakePrometheus, *httptest.Server) {
+func newFakePrometheus(t *testing.T) (*fakePrometheus, prometheus.Client) {
 	t.Helper()
 	fake := &fakePrometheus{queries: map[string]string{}, hang: map[string]bool{}, release: make(chan struct{})}
-	server := httptest.NewServer(fake)
+	server := prometheus.Client{BaseURL: "http://prometheus", HTTPClient: handlerTransport{handler: fake}}
 	t.Cleanup(func() {
 		close(fake.release)
-		server.Close()
 	})
 	return fake, server
 }
@@ -151,109 +149,117 @@ func snapshotWith(t *testing.T, api MetricsAPI, detectors []sdk.Detector, option
 func fixedClock() func() time.Time { return func() time.Time { return metricsNow } }
 
 func TestMetricsObserverFreezesInstantRangeAndAlertResults(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.queries[errorQuery.Expr] = vector(`{"metric":{"deployment":"web"},"value":[1790856000,"0.4"]}`)
-	fake.queries[queueQuery.Expr] = `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"service":"q"},"values":[[1790855940,"1"],[1790856000,"3"]]}]}}`
-	fake.alerts = `{"status":"success","data":{"alerts":[{"labels":{"alertname":"A","namespace":"shop"},"state":"firing","activeAt":"2026-10-01T11:00:00Z"}]}}`
-	detectors := []sdk.Detector{
-		metricsDetector("thresholds", errorQuery, queueQuery),
-		alertReader{spec: metricsSpec("alerts")},
-	}
-	snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL}, detectors, MetricsObserverOptions{Clock: fixedClock()})
+	synctest.Test(t, func(t *testing.T) {
+		fake, server := newFakePrometheus(t)
+		fake.queries[errorQuery.Expr] = vector(`{"metric":{"deployment":"web"},"value":[1790856000,"0.4"]}`)
+		fake.queries[queueQuery.Expr] = `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"service":"q"},"values":[[1790855940,"1"],[1790856000,"3"]]}]}}`
+		fake.alerts = `{"status":"success","data":{"alerts":[{"labels":{"alertname":"A","namespace":"shop"},"state":"firing","activeAt":"2026-10-01T11:00:00Z"}]}}`
+		detectors := []sdk.Detector{
+			metricsDetector("thresholds", errorQuery, queueQuery),
+			alertReader{spec: metricsSpec("alerts")},
+		}
+		snapshot, _ := snapshotWith(t, server, detectors, MetricsObserverOptions{Clock: fixedClock()})
 
-	instant, ok := metrics.ResultFrom(snapshot, "error-rate")
-	if !ok || instant.Error != "" || !instant.ObservedAt.Equal(metricsNow) || len(instant.Series) != 1 || instant.Series[0].Samples[0].Value != 0.4 {
-		t.Fatalf("instant result: %+v", instant)
-	}
-	ranged, ok := metrics.ResultFrom(snapshot, "queue")
-	if !ok || ranged.Error != "" || len(ranged.Series) != 1 || len(ranged.Series[0].Samples) != 2 {
-		t.Fatalf("range result: %+v", ranged)
-	}
-	alerts, ok := metrics.AlertsFrom(snapshot)
-	if !ok || alerts.Error != "" || len(alerts.Alerts) != 1 || alerts.Alerts[0].Name() != "A" || !alerts.ObservedAt.Equal(metricsNow) {
-		t.Fatalf("alerts: %+v", alerts)
-	}
-	paths := strings.Join(fake.paths(), ",")
-	for _, want := range []string{"/api/v1/query", "/api/v1/query_range", "/api/v1/alerts"} {
-		if !strings.Contains(paths, want) {
-			t.Errorf("missing request to %s: %s", want, paths)
+		instant, ok := metrics.ResultFrom(snapshot, "error-rate")
+		if !ok || instant.Error != "" || !instant.ObservedAt.Equal(metricsNow) || len(instant.Series) != 1 || instant.Series[0].Samples[0].Value != 0.4 {
+			t.Fatalf("instant result: %+v", instant)
 		}
-	}
-	for _, detector := range detectors {
-		if _, err := detector.Detect(context.Background(), snapshot); err != nil {
-			t.Fatalf("%s: %v", detector.Spec().ID, err)
+		ranged, ok := metrics.ResultFrom(snapshot, "queue")
+		if !ok || ranged.Error != "" || len(ranged.Series) != 1 || len(ranged.Series[0].Samples) != 2 {
+			t.Fatalf("range result: %+v", ranged)
 		}
-	}
+		alerts, ok := metrics.AlertsFrom(snapshot)
+		if !ok || alerts.Error != "" || len(alerts.Alerts) != 1 || alerts.Alerts[0].Name() != "A" || !alerts.ObservedAt.Equal(metricsNow) {
+			t.Fatalf("alerts: %+v", alerts)
+		}
+		paths := strings.Join(fake.paths(), ",")
+		for _, want := range []string{"/api/v1/query", "/api/v1/query_range", "/api/v1/alerts"} {
+			if !strings.Contains(paths, want) {
+				t.Errorf("missing request to %s: %s", want, paths)
+			}
+		}
+		for _, detector := range detectors {
+			if _, err := detector.Detect(context.Background(), snapshot); err != nil {
+				t.Fatalf("%s: %v", detector.Spec().ID, err)
+			}
+		}
+	})
 }
 
 func TestMetricsObserverEvaluatesEachQueryOncePerCycleAtOneTimestamp(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.queries[errorQuery.Expr] = vector(`{"metric":{"deployment":"web"},"value":[1790856000,"0.4"]}`)
-	detectors := []sdk.Detector{metricsDetector("a", errorQuery), metricsDetector("b", errorQuery)}
-	snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL}, detectors, MetricsObserverOptions{Clock: fixedClock()})
-	for round := 0; round < 3; round++ {
-		for _, detector := range detectors {
-			findings, err := detector.Detect(context.Background(), snapshot)
-			if err != nil || len(findings) != 1 {
-				t.Fatalf("round %d %s: %+v %v", round, detector.Spec().ID, findings, err)
+	synctest.Test(t, func(t *testing.T) {
+		fake, server := newFakePrometheus(t)
+		fake.queries[errorQuery.Expr] = vector(`{"metric":{"deployment":"web"},"value":[1790856000,"0.4"]}`)
+		detectors := []sdk.Detector{metricsDetector("a", errorQuery), metricsDetector("b", errorQuery)}
+		snapshot, _ := snapshotWith(t, server, detectors, MetricsObserverOptions{Clock: fixedClock()})
+		for round := 0; round < 3; round++ {
+			for _, detector := range detectors {
+				findings, err := detector.Detect(context.Background(), snapshot)
+				if err != nil || len(findings) != 1 {
+					t.Fatalf("round %d %s: %+v %v", round, detector.Spec().ID, findings, err)
+				}
 			}
 		}
-	}
-	if len(fake.requests) != 1 {
-		t.Fatalf("a shared query must be evaluated once per cycle, got %d requests", len(fake.requests))
-	}
-	if got := fake.requests[0].URL.Query().Get("time"); got != "1790856000" {
-		t.Fatalf("query time %q", got)
-	}
+		if len(fake.requests) != 1 {
+			t.Fatalf("a shared query must be evaluated once per cycle, got %d requests", len(fake.requests))
+		}
+		if got := fake.requests[0].URL.Query().Get("time"); got != "1790856000" {
+			t.Fatalf("query time %q", got)
+		}
+	})
 }
 
 func TestMetricsObserverDoesNotQueryUntilADetectorReadsAndRefreshesEachCycle(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.queries[errorQuery.Expr] = vector()
-	times := []time.Time{metricsNow, metricsNow.Add(30 * time.Second)}
-	clock := func() time.Time {
-		next := times[0]
-		if len(times) > 1 {
-			times = times[1:]
+	synctest.Test(t, func(t *testing.T) {
+		fake, server := newFakePrometheus(t)
+		fake.queries[errorQuery.Expr] = vector()
+		times := []time.Time{metricsNow, metricsNow.Add(30 * time.Second)}
+		clock := func() time.Time {
+			next := times[0]
+			if len(times) > 1 {
+				times = times[1:]
+			}
+			return next
 		}
-		return next
-	}
-	detectors := []sdk.Detector{metricsDetector("a", errorQuery)}
-	observer, err := NewMetricsObserver(prometheus.Client{BaseURL: server.URL}, detectors, MetricsObserverOptions{Clock: clock})
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider := MetricsSnapshotProvider{Base: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "shop"}}, Observer: observer}
-	first, _ := provider.Snapshot(context.Background())
-	second, _ := provider.Snapshot(context.Background())
-	if len(fake.requests) != 0 {
-		t.Fatalf("a cycle whose detectors do not read metrics must not query: %d requests", len(fake.requests))
-	}
-	for _, snapshot := range []sdk.DetectionContext{first, second} {
-		if _, err := detectors[0].Detect(context.Background(), snapshot); err != nil {
+		detectors := []sdk.Detector{metricsDetector("a", errorQuery)}
+		observer, err := NewMetricsObserver(server, detectors, MetricsObserverOptions{Clock: clock})
+		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	if len(fake.requests) != 2 || fake.requests[0].URL.Query().Get("time") == fake.requests[1].URL.Query().Get("time") {
-		t.Fatalf("each cycle must query once at its own timestamp: %d requests", len(fake.requests))
-	}
+		provider := MetricsSnapshotProvider{Base: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "shop"}}, Observer: observer}
+		first, _ := provider.Snapshot(context.Background())
+		second, _ := provider.Snapshot(context.Background())
+		if len(fake.requests) != 0 {
+			t.Fatalf("a cycle whose detectors do not read metrics must not query: %d requests", len(fake.requests))
+		}
+		for _, snapshot := range []sdk.DetectionContext{first, second} {
+			if _, err := detectors[0].Detect(context.Background(), snapshot); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(fake.requests) != 2 || fake.requests[0].URL.Query().Get("time") == fake.requests[1].URL.Query().Get("time") {
+			t.Fatalf("each cycle must query once at its own timestamp: %d requests", len(fake.requests))
+		}
+	})
 }
 
 func TestMetricsObserverFetchesOnlyDeclaredInputs(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.queries[errorQuery.Expr] = vector()
-	snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL}, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{Clock: fixedClock()})
-	if _, ok := metrics.AlertsFrom(snapshot); ok {
-		t.Fatal("alerts were not declared and must not be fetched")
-	}
-	if _, ok := metrics.ResultFrom(snapshot, "undeclared"); ok {
-		t.Fatal("undeclared queries have no result")
-	}
-	for _, path := range fake.paths() {
-		if path == "/api/v1/alerts" {
-			t.Fatal("alerts endpoint was called")
+	synctest.Test(t, func(t *testing.T) {
+		fake, server := newFakePrometheus(t)
+		fake.queries[errorQuery.Expr] = vector()
+		snapshot, _ := snapshotWith(t, server, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{Clock: fixedClock()})
+		if _, ok := metrics.AlertsFrom(snapshot); ok {
+			t.Fatal("alerts were not declared and must not be fetched")
 		}
-	}
+		if _, ok := metrics.ResultFrom(snapshot, "undeclared"); ok {
+			t.Fatal("undeclared queries have no result")
+		}
+		for _, path := range fake.paths() {
+			if path == "/api/v1/alerts" {
+				t.Fatal("alerts endpoint was called")
+			}
+		}
+	})
 }
 
 func TestMetricsObserverUnavailableSourceIsADetectorErrorNeverClear(t *testing.T) {
@@ -270,46 +276,50 @@ func TestMetricsObserverUnavailableSourceIsADetectorErrorNeverClear(t *testing.T
 	}
 	for name, arrange := range cases {
 		t.Run(name, func(t *testing.T) {
-			// A timed-out fetch may leave its HTTP handler running. Keep each
-			// case's configuration unchanged until its server cleanup joins it.
-			fake, server := newFakePrometheus(t)
-			fake.queries[errorQuery.Expr] = vector()
-			fake.alerts = `{"status":"success","data":{"alerts":[]}}`
-			arrange(fake)
-			detectors := []sdk.Detector{
-				metricsDetector("thresholds", errorQuery),
-				alertReader{spec: metricsSpec("alerts")},
-			}
-			snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL}, detectors, MetricsObserverOptions{Clock: fixedClock(), QueryTimeout: 200 * time.Millisecond})
-			for _, detector := range detectors {
-				findings, err := detector.Detect(context.Background(), snapshot)
-				if err == nil || len(findings) != 0 || !strings.Contains(err.Error(), "unavailable") {
-					t.Errorf("%s: unavailable metrics must be a detector error, got %+v %v", detector.Spec().ID, findings, err)
+			synctest.Test(t, func(t *testing.T) {
+				// A timed-out fetch may leave its HTTP handler running. Keep each
+				// case's configuration unchanged until its server cleanup joins it.
+				fake, server := newFakePrometheus(t)
+				fake.queries[errorQuery.Expr] = vector()
+				fake.alerts = `{"status":"success","data":{"alerts":[]}}`
+				arrange(fake)
+				detectors := []sdk.Detector{
+					metricsDetector("thresholds", errorQuery),
+					alertReader{spec: metricsSpec("alerts")},
 				}
-			}
+				snapshot, _ := snapshotWith(t, server, detectors, MetricsObserverOptions{Clock: fixedClock(), QueryTimeout: 200 * time.Millisecond})
+				for _, detector := range detectors {
+					findings, err := detector.Detect(context.Background(), snapshot)
+					if err == nil || len(findings) != 0 || !strings.Contains(err.Error(), "unavailable") {
+						t.Errorf("%s: unavailable metrics must be a detector error, got %+v %v", detector.Spec().ID, findings, err)
+					}
+				}
+			})
 		})
 	}
 }
 
 func TestMetricsObserverTimeoutBoundsTheCycleAndSparesOtherQueries(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.hang[errorQuery.Expr] = true
-	fake.queries[`queue_depth`] = vector(`{"metric":{},"value":[1790856000,"1"]}`)
-	other := metrics.Query{ID: "queue", Expr: `queue_depth`}
-	snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL},
-		[]sdk.Detector{metricsDetector("a", errorQuery, other)}, MetricsObserverOptions{Clock: fixedClock(), QueryTimeout: 150 * time.Millisecond})
-	started := time.Now()
-	slow, _ := metrics.ResultFrom(snapshot, "error-rate")
-	if time.Since(started) > 3*time.Second {
-		t.Fatalf("the per-query timeout did not bound the cycle: %s", time.Since(started))
-	}
-	if slow.Error == "" || len(slow.Series) != 0 {
-		t.Fatalf("a timed out query is unavailable: %+v", slow)
-	}
-	fast, _ := metrics.ResultFrom(snapshot, "queue")
-	if fast.Error != "" || len(fast.Series) != 1 {
-		t.Fatalf("one slow query must not poison the others: %+v", fast)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		fake, server := newFakePrometheus(t)
+		fake.hang[errorQuery.Expr] = true
+		fake.queries[`queue_depth`] = vector(`{"metric":{},"value":[1790856000,"1"]}`)
+		other := metrics.Query{ID: "queue", Expr: `queue_depth`}
+		snapshot, _ := snapshotWith(t, server,
+			[]sdk.Detector{metricsDetector("a", errorQuery, other)}, MetricsObserverOptions{Clock: fixedClock(), QueryTimeout: 150 * time.Millisecond})
+		started := time.Now()
+		slow, _ := metrics.ResultFrom(snapshot, "error-rate")
+		if time.Since(started) > 3*time.Second {
+			t.Fatalf("the per-query timeout did not bound the cycle: %s", time.Since(started))
+		}
+		if slow.Error == "" || len(slow.Series) != 0 {
+			t.Fatalf("a timed out query is unavailable: %+v", slow)
+		}
+		fast, _ := metrics.ResultFrom(snapshot, "queue")
+		if fast.Error != "" || len(fast.Series) != 1 {
+			t.Fatalf("one slow query must not poison the others: %+v", fast)
+		}
+	})
 }
 
 type ignoringContextAPI struct{ release chan struct{} }
@@ -325,127 +335,143 @@ func (a ignoringContextAPI) Alerts(context.Context) ([]metrics.Alert, error) {
 }
 
 func TestMetricsObserverTimeoutHoldsEvenWhenTheSourceIgnoresItsContext(t *testing.T) {
-	api := ignoringContextAPI{release: make(chan struct{})}
-	t.Cleanup(func() { close(api.release) })
-	snapshot, _ := snapshotWith(t, api, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{QueryTimeout: 100 * time.Millisecond})
-	started := time.Now()
-	result, _ := metrics.ResultFrom(snapshot, "error-rate")
-	if time.Since(started) > 3*time.Second || result.Error == "" {
-		t.Fatalf("result %+v after %s", result, time.Since(started))
-	}
+	synctest.Test(t, func(t *testing.T) {
+		api := ignoringContextAPI{release: make(chan struct{})}
+		t.Cleanup(func() { close(api.release) })
+		snapshot, _ := snapshotWith(t, api, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{QueryTimeout: 100 * time.Millisecond})
+		started := time.Now()
+		result, _ := metrics.ResultFrom(snapshot, "error-rate")
+		if time.Since(started) > 3*time.Second || result.Error == "" {
+			t.Fatalf("result %+v after %s", result, time.Since(started))
+		}
+	})
 }
 
 func TestMetricsObserverWithoutASourceIsUnavailableNotClear(t *testing.T) {
-	detector := metricsDetector("a", errorQuery)
-	snapshot, _ := snapshotWith(t, nil, []sdk.Detector{detector, alertReader{spec: metricsSpec("alerts")}}, MetricsObserverOptions{})
-	if findings, err := detector.Detect(context.Background(), snapshot); err == nil || !strings.Contains(err.Error(), "not configured") {
-		t.Fatalf("an unconfigured source must be an error, got %+v %v", findings, err)
-	}
-	alerts, _ := metrics.AlertsFrom(snapshot)
-	if alerts.Error == "" {
-		t.Fatalf("unconfigured alerts must carry an error: %+v", alerts)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		detector := metricsDetector("a", errorQuery)
+		snapshot, _ := snapshotWith(t, nil, []sdk.Detector{detector, alertReader{spec: metricsSpec("alerts")}}, MetricsObserverOptions{})
+		if findings, err := detector.Detect(context.Background(), snapshot); err == nil || !strings.Contains(err.Error(), "not configured") {
+			t.Fatalf("an unconfigured source must be an error, got %+v %v", findings, err)
+		}
+		alerts, _ := metrics.AlertsFrom(snapshot)
+		if alerts.Error == "" {
+			t.Fatalf("unconfigured alerts must carry an error: %+v", alerts)
+		}
+	})
 }
 
 func TestMetricsObserverRejectsOversizedResults(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	items := make([]string, metrics.MaxSeries+1)
-	for index := range items {
-		items[index] = `{"metric":{"i":"` + strings.Repeat("x", index%7) + string(rune('a'+index%26)) + string(rune('a'+index/26%26)) + string(rune('a'+index/676)) + `"},"value":[1790856000,"1"]}`
-	}
-	fake.queries[errorQuery.Expr] = vector(items...)
-	snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL}, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{Clock: fixedClock()})
-	result, _ := metrics.ResultFrom(snapshot, "error-rate")
-	if result.Error == "" || !strings.Contains(result.Error, "series") || len(result.Series) != 0 {
-		t.Fatalf("a result above the bound must be unavailable, not truncated: %d series, error %q", len(result.Series), result.Error)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		fake, server := newFakePrometheus(t)
+		items := make([]string, metrics.MaxSeries+1)
+		for index := range items {
+			items[index] = `{"metric":{"i":"` + strings.Repeat("x", index%7) + string(rune('a'+index%26)) + string(rune('a'+index/26%26)) + string(rune('a'+index/676)) + `"},"value":[1790856000,"1"]}`
+		}
+		fake.queries[errorQuery.Expr] = vector(items...)
+		snapshot, _ := snapshotWith(t, server, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{Clock: fixedClock()})
+		result, _ := metrics.ResultFrom(snapshot, "error-rate")
+		if result.Error == "" || !strings.Contains(result.Error, "series") || len(result.Series) != 0 {
+			t.Fatalf("a result above the bound must be unavailable, not truncated: %d series, error %q", len(result.Series), result.Error)
+		}
+	})
 }
 
 func TestMetricsObserverRejectsTooManyAlerts(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	alerts := make([]string, metrics.MaxAlerts+1)
-	for index := range alerts {
-		alerts[index] = `{"labels":{"alertname":"A","namespace":"shop"},"state":"pending"}`
-	}
-	fake.alerts = `{"status":"success","data":{"alerts":[` + strings.Join(alerts, ",") + `]}}`
-	snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL}, []sdk.Detector{alertReader{spec: metricsSpec("alerts")}}, MetricsObserverOptions{})
-	frozen, _ := metrics.AlertsFrom(snapshot)
-	if frozen.Error == "" || len(frozen.Alerts) != 0 {
-		t.Fatalf("too many alerts must be unavailable, not truncated: %d alerts, error %q", len(frozen.Alerts), frozen.Error)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		fake, server := newFakePrometheus(t)
+		alerts := make([]string, metrics.MaxAlerts+1)
+		for index := range alerts {
+			alerts[index] = `{"labels":{"alertname":"A","namespace":"shop"},"state":"pending"}`
+		}
+		fake.alerts = `{"status":"success","data":{"alerts":[` + strings.Join(alerts, ",") + `]}}`
+		snapshot, _ := snapshotWith(t, server, []sdk.Detector{alertReader{spec: metricsSpec("alerts")}}, MetricsObserverOptions{})
+		frozen, _ := metrics.AlertsFrom(snapshot)
+		if frozen.Error == "" || len(frozen.Alerts) != 0 {
+			t.Fatalf("too many alerts must be unavailable, not truncated: %d alerts, error %q", len(frozen.Alerts), frozen.Error)
+		}
+	})
 }
 
 func TestMetricsResultsAreSortedForDeterminism(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.queries[errorQuery.Expr] = vector(
-		`{"metric":{"deployment":"b"},"value":[1790856000,"1"]}`,
-		`{"metric":{"deployment":"a"},"value":[1790856000,"1"]}`,
-	)
-	snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL}, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{Clock: fixedClock()})
-	result, _ := metrics.ResultFrom(snapshot, "error-rate")
-	if len(result.Series) != 2 || result.Series[0].Labels["deployment"] != "a" {
-		t.Fatalf("series must be sorted by labels: %+v", result.Series)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		fake, server := newFakePrometheus(t)
+		fake.queries[errorQuery.Expr] = vector(
+			`{"metric":{"deployment":"b"},"value":[1790856000,"1"]}`,
+			`{"metric":{"deployment":"a"},"value":[1790856000,"1"]}`,
+		)
+		snapshot, _ := snapshotWith(t, server, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{Clock: fixedClock()})
+		result, _ := metrics.ResultFrom(snapshot, "error-rate")
+		if len(result.Series) != 2 || result.Series[0].Labels["deployment"] != "a" {
+			t.Fatalf("series must be sorted by labels: %+v", result.Series)
+		}
+	})
 }
 
 func TestNewMetricsObserverValidatesDeclaredInputs(t *testing.T) {
-	if observer, err := NewMetricsObserver(nil, []sdk.Detector{trafficDetector("t", "health")}, MetricsObserverOptions{}); observer != nil || err != nil {
-		t.Fatalf("no metrics consumer needs no observer: %v %v", observer, err)
-	}
-	conflicting := metrics.Query{ID: "error-rate", Expr: "different"}
-	if _, err := NewMetricsObserver(nil, []sdk.Detector{metricsDetector("a", errorQuery), metricsDetector("b", conflicting)}, MetricsObserverOptions{}); err == nil {
-		t.Fatal("conflicting query definitions must be rejected")
-	}
-	invalid := metrics.NewThresholdDetector(metricsSpec("bad"), []metrics.ThresholdRule{{Query: metrics.Query{ID: "x"}, Op: metrics.Greater}})
-	if _, err := NewMetricsObserver(nil, []sdk.Detector{invalid}, MetricsObserverOptions{}); err == nil {
-		t.Fatal("a misconfigured detector must be rejected at startup")
-	}
-	many := make([]sdk.Detector, 0, metrics.MaxQueries+1)
-	for index := 0; index <= metrics.MaxQueries; index++ {
-		query := metrics.Query{ID: string(rune('a'+index%26)) + string(rune('a'+index/26)), Expr: "up"}
-		many = append(many, metricsDetector("d"+query.ID, query))
-	}
-	if _, err := NewMetricsObserver(nil, many, MetricsObserverOptions{}); err == nil {
-		t.Fatal("more than the bounded number of queries must be rejected")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		if observer, err := NewMetricsObserver(nil, []sdk.Detector{trafficDetector("t", "health")}, MetricsObserverOptions{}); observer != nil || err != nil {
+			t.Fatalf("no metrics consumer needs no observer: %v %v", observer, err)
+		}
+		conflicting := metrics.Query{ID: "error-rate", Expr: "different"}
+		if _, err := NewMetricsObserver(nil, []sdk.Detector{metricsDetector("a", errorQuery), metricsDetector("b", conflicting)}, MetricsObserverOptions{}); err == nil {
+			t.Fatal("conflicting query definitions must be rejected")
+		}
+		invalid := metrics.NewThresholdDetector(metricsSpec("bad"), []metrics.ThresholdRule{{Query: metrics.Query{ID: "x"}, Op: metrics.Greater}})
+		if _, err := NewMetricsObserver(nil, []sdk.Detector{invalid}, MetricsObserverOptions{}); err == nil {
+			t.Fatal("a misconfigured detector must be rejected at startup")
+		}
+		many := make([]sdk.Detector, 0, metrics.MaxQueries+1)
+		for index := 0; index <= metrics.MaxQueries; index++ {
+			query := metrics.Query{ID: string(rune('a'+index%26)) + string(rune('a'+index/26)), Expr: "up"}
+			many = append(many, metricsDetector("d"+query.ID, query))
+		}
+		if _, err := NewMetricsObserver(nil, many, MetricsObserverOptions{}); err == nil {
+			t.Fatal("more than the bounded number of queries must be rejected")
+		}
+	})
 }
 
 func TestMetricsSnapshotProviderKeepsTrafficAndOptionalViews(t *testing.T) {
-	base := sdktest.Snapshot{
-		NamespaceName:   "shop",
-		StatefulSetList: []appsv1.StatefulSet{{}},
-		Traffic:         map[string]traffic.Window{"health": {LoadError: "boom"}},
-	}
-	observer, err := NewMetricsObserver(nil, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := MetricsSnapshotProvider{Base: staticProvider{snapshot: base}, Observer: observer}.Snapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if window, ok := traffic.WindowFrom(snapshot, "health"); !ok || window.LoadError != "boom" {
-		t.Fatalf("traffic windows must survive wrapping: %+v %v", window, ok)
-	}
-	extended, ok := snapshot.(interface{ StatefulSets() []appsv1.StatefulSet })
-	if !ok || len(extended.StatefulSets()) != 1 {
-		t.Fatal("optional workload views must survive wrapping")
-	}
-	if snapshot.Namespace() != "shop" {
-		t.Fatalf("namespace: %s", snapshot.Namespace())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		base := sdktest.Snapshot{
+			NamespaceName:   "shop",
+			StatefulSetList: []appsv1.StatefulSet{{}},
+			Traffic:         map[string]traffic.Window{"health": {LoadError: "boom"}},
+		}
+		observer, err := NewMetricsObserver(nil, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := MetricsSnapshotProvider{Base: staticProvider{snapshot: base}, Observer: observer}.Snapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if window, ok := traffic.WindowFrom(snapshot, "health"); !ok || window.LoadError != "boom" {
+			t.Fatalf("traffic windows must survive wrapping: %+v %v", window, ok)
+		}
+		extended, ok := snapshot.(interface{ StatefulSets() []appsv1.StatefulSet })
+		if !ok || len(extended.StatefulSets()) != 1 {
+			t.Fatal("optional workload views must survive wrapping")
+		}
+		if snapshot.Namespace() != "shop" {
+			t.Fatalf("namespace: %s", snapshot.Namespace())
+		}
+	})
 }
 
 func TestMetricsSnapshotProviderWithoutObserverIsTransparent(t *testing.T) {
-	base := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "shop"}}
-	snapshot, err := MetricsSnapshotProvider{Base: base}.Snapshot(context.Background())
-	if err != nil || snapshot.Namespace() != "shop" {
-		t.Fatalf("snapshot %v err %v", snapshot, err)
-	}
-	if _, ok := snapshot.(metrics.Source); !ok {
-		// sdktest snapshots are sources; the wrapper must not hide that either.
-		t.Fatal("snapshot must remain a metrics source")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		base := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "shop"}}
+		snapshot, err := MetricsSnapshotProvider{Base: base}.Snapshot(context.Background())
+		if err != nil || snapshot.Namespace() != "shop" {
+			t.Fatalf("snapshot %v err %v", snapshot, err)
+		}
+		if _, ok := snapshot.(metrics.Source); !ok {
+			// sdktest snapshots are sources; the wrapper must not hide that either.
+			t.Fatal("snapshot must remain a metrics source")
+		}
+	})
 }
 
 func evaluateOnceWithMetrics(t *testing.T, detectors []sdk.Detector, args ...string) (string, error) {
@@ -459,60 +485,23 @@ func evaluateOnceWithMetrics(t *testing.T, detectors []sdk.Detector, args ...str
 	return stdout.String(), err
 }
 
-func TestEvaluateOnceWithMetricsURLReportsAFiringThreshold(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.queries[errorQuery.Expr] = vector(`{"metric":{"deployment":"checkout","namespace":"shop"},"value":[1790856000,"0.4"]}`)
-	output, err := evaluateOnceWithMetrics(t, []sdk.Detector{metricsDetector("thresholds", errorQuery)}, "--metrics-url", server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var evaluation struct {
-		Status   string        `json:"status"`
-		Findings []sdk.Finding `json:"findings"`
-	}
-	if err := json.Unmarshal([]byte(output), &evaluation); err != nil {
-		t.Fatalf("decode %q: %v", output, err)
-	}
-	if evaluation.Status != "firing" || len(evaluation.Findings) != 1 || evaluation.Findings[0].PrimaryResource.Name != "checkout" ||
-		evaluation.Findings[0].Metadata["query_id"] != "error-rate" {
-		t.Fatalf("evaluation: %s", output)
-	}
-}
-
-func TestEvaluateOnceWithMetricsURLReportsClearOnlyWhenTheQueryAnswered(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.queries[errorQuery.Expr] = vector(`{"metric":{"deployment":"checkout"},"value":[1790856000,"0.01"]}`)
-	output, err := evaluateOnceWithMetrics(t, []sdk.Detector{metricsDetector("thresholds", errorQuery)}, "--metrics-url", server.URL)
-	if err != nil || !strings.Contains(output, `"status":"clear"`) {
-		t.Fatalf("an answered healthy query is clear: %q %v", output, err)
-	}
-}
-
-func TestEvaluateOnceFailsClosedWhenTheMetricsSourceIsUnavailable(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.status = http.StatusServiceUnavailable
-	output, err := evaluateOnceWithMetrics(t, []sdk.Detector{metricsDetector("thresholds", errorQuery)}, "--metrics-url", server.URL)
-	if err == nil || !strings.Contains(err.Error(), "unavailable") || strings.Contains(output, `"clear"`) {
-		t.Fatalf("an unavailable source must fail evaluation, not clear it: %q %v", output, err)
-	}
-	if _, err := evaluateOnceWithMetrics(t, []sdk.Detector{alertReader{spec: metricsSpec("alerts")}}, "--metrics-url", server.URL); err == nil {
-		t.Fatal("unavailable alerts must fail evaluation")
-	}
-}
-
 func TestEvaluateOnceRequiresAMetricsURLForMetricsDetectors(t *testing.T) {
-	output, err := evaluateOnceWithMetrics(t, []sdk.Detector{metricsDetector("thresholds", errorQuery)})
-	if err == nil || !strings.Contains(err.Error(), "--metrics-url") || output != "" {
-		t.Fatalf("metrics health evaluation without a source must fail: %q %v", output, err)
-	}
-	if _, err := evaluateOnceWithMetrics(t, []sdk.Detector{metricsDetector("thresholds", errorQuery)}, "--metrics-url", "ftp://nowhere"); err == nil {
-		t.Fatal("a metrics URL must be http or https")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		output, err := evaluateOnceWithMetrics(t, []sdk.Detector{metricsDetector("thresholds", errorQuery)})
+		if err == nil || !strings.Contains(err.Error(), "--metrics-url") || output != "" {
+			t.Fatalf("metrics health evaluation without a source must fail: %q %v", output, err)
+		}
+		if _, err := evaluateOnceWithMetrics(t, []sdk.Detector{metricsDetector("thresholds", errorQuery)}, "--metrics-url", "ftp://nowhere"); err == nil {
+			t.Fatal("a metrics URL must be http or https")
+		}
+	})
 }
 
 func TestEvaluateOnceWithoutMetricsDetectorsIgnoresTheMetricsURL(t *testing.T) {
-	output, err := evaluateOnceWithMetrics(t, []sdk.Detector{trafficDetector("none", "health")}, "--metrics-url", "http://127.0.0.1:1")
-	if err == nil && !strings.Contains(output, "clear") {
-		t.Fatalf("unexpected output %q", output)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		output, err := evaluateOnceWithMetrics(t, []sdk.Detector{trafficDetector("none", "health")}, "--metrics-url", "http://127.0.0.1:1")
+		if err == nil && !strings.Contains(output, "clear") {
+			t.Fatalf("unexpected output %q", output)
+		}
+	})
 }

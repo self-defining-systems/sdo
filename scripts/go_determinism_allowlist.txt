@@ -43,10 +43,6 @@ sdo/operator/runtime/logs_kubelet_test.go:os.Getenv
 sdo/operator/runtime/logs_kubelet_test.go:time.NewTicker
 sdo/operator/runtime/maintenance.go:time.NewTicker
 sdo/operator/runtime/maintenance_test.go:time.After
-sdo/operator/runtime/metrics_observer_test.go:net/http/httptest.NewServer
-sdo/operator/runtime/metrics_observer_test.go:net/http/httptest.Server
-sdo/operator/runtime/metrics_observer_test.go:time.Now
-sdo/operator/runtime/metrics_observer_test.go:time.Since
 sdo/operator/runtime/native_broker_test.go:os/exec
 sdo/operator/runtime/native_broker_test.go:time.Now
 sdo/operator/runtime/native_path_integration_test.go:os/exec
@@ -73,9 +69,6 @@ sdo/operator/runtime/prober/link_protocol_test.go:net/http/httptest.NewUnstarted
 sdo/operator/runtime/prober/link_protocol_test.go:os.Getenv
 sdo/operator/runtime/prober/link_protocol_test.go:time.Now
 sdo/operator/runtime/program_revision.go:os/exec
-sdo/operator/runtime/prometheus/client_test.go:net/http/httptest.NewServer
-sdo/operator/runtime/prometheus/client_test.go:time.Now
-sdo/operator/runtime/prometheus/client_test.go:time.Since
 sdo/operator/runtime/registered_reflection_integration_test.go:os.Environ
 sdo/operator/runtime/registered_reflection_integration_test.go:os/exec
 sdo/operator/runtime/responder_loop.go:crypto/rand.Read

@@ -974,3 +974,9 @@ Responder diagnosis settling and trusted fast-path settling share
 `PlanExecutor.Sleep`; resource-version retry jitter accepts `PlanExecutor.Jitter`.
 Tests can advance one simulation clock and seeded RNG through these seams.
 Cancellation still prevents the post-settle diagnosis or apply.
+
+Metrics observer and Prometheus adapter unit tests use injected handler-backed
+HTTP and virtual deadlines, including a source that ignores cancellation.
+The three real CLI metrics-URL wiring tests and default-client redirect wiring
+run with `integration` in the existing PR/nightly `scripts/test_go_ci.sh`
+invocations; unit fixtures do not claim real HTTP transport coverage.
