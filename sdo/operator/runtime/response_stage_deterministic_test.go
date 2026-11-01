@@ -244,3 +244,44 @@ func TestRevertRestoresPreimageOnlyForFieldWrites(t *testing.T) {
 		t.Fatal("no recorded patch, no preimage")
 	}
 }
+
+// Several findings bound to the same program are applied independently, each
+// with its own application receipt, and clear together.
+func TestDeterministicStageAppliesEveryMatchedBinding(t *testing.T) {
+	sim.Sweep(t, func(t *testing.T, w *sim.World) {
+		loop, kube := simFastPathLoop(t, w)
+		second := simService(9999)
+		second.SetName("api2")
+		kube.Put(second)
+		w.Cache.CatchUp()
+		view, err := w.Cache.Snapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		findings, err := (fastloopDetector{}).Detect(context.Background(), view)
+		if err != nil || len(findings) != 2 {
+			t.Fatalf("fixture must start with two faults: %v %v", findings, err)
+		}
+		loop.Request.Findings, loop.findings = findings, findings
+		loop.runs = nil
+		loop.InitialDiagnose(context.Background())
+		state := stageState(loop)
+		if err := RunResponseStages(context.Background(), state, []ResponseStage{&DeterministicStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}}); err != nil {
+			t.Fatal(err)
+		}
+		report := state.PriorStages[0]
+		if len(report.GetMitigations()) != 2 || len(state.Findings) != 0 || !state.Healthy {
+			t.Fatalf("findings=%v healthy=%v report=%v", state.Findings, state.Healthy, report)
+		}
+		receipts := map[string]bool{}
+		for _, attempt := range report.GetMitigations() {
+			if attempt.GetResult() != "applied_cleared" {
+				t.Fatalf("attempt = %v", attempt)
+			}
+			receipts[attempt.GetApplyReceipt().GetApplicationId()] = true
+		}
+		if len(receipts) != 2 || len(loop.PlanApplications()) != 2 {
+			t.Fatalf("receipts=%v applications=%d", receipts, len(loop.PlanApplications()))
+		}
+	})
+}
