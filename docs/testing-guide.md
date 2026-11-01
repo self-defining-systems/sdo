@@ -885,3 +885,7 @@ the allowlist, so no coverage silently disappears. Before retagging a legacy
 file, change the relevant CI invocation to retain its coverage. Tests newly
 marked integration must likewise run in the owning integration job; tagging is
 not a way to remove tests from CI. PR jobs retain their five-minute deadlines.
+
+Memory Git-backed snapshot, inventory, ownership and validator checks require
+`integration`; PR and nightly `scripts/test_go_ci.sh` already pass that tag.
+Filesystem-only helpers and static checks remain available without it.

@@ -8,22 +8,19 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
 func git(ctx context.Context, root string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, stderr, err := memoryio.GitWithDiagnostics(ctx, root, args...)
 	if err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr))
 	}
 	return out, nil
 }

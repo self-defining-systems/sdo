@@ -413,3 +413,9 @@ execution path and deletes the flag, in-controller accepted-memory compilation,
 rebuild/relaunch supervisor, prober pod/publication/install wiring and legacy
 per-request full-snapshot protocol field. That field remains only for slice-1
 adapter compatibility; the mirrored production path never sends it.
+
+The memory component owns a private `memory/internal/memoryio` edge for Git
+reads, isolated-index whitespace checks, shell syntax and toolchain lookup.
+It exposes bytes and errors, never process handles. The artifact ownership
+matrix and repository scope matrix above remain unchanged: this production
+adapter belongs to memory and has no benchmark dependencies.

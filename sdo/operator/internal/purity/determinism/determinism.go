@@ -17,6 +17,7 @@ import (
 // Edges are exact repository-relative package directories, never subtree globs.
 // Existing mixed orchestration packages remain on the ratchet, not exempted.
 var Edges = map[string]bool{
+	"sdo/operator/memory/internal/memoryio":     true, // Git and shell syntax subprocesses
 	"sdo/operator/runtime/internal/lifecycleio": true, // Kubernetes driver
 	"sdo/operator/runtime/prober":               true, // protocol dial adapter
 	"sdo/operator/runtime/prometheus":           true, // Prometheus HTTP adapter

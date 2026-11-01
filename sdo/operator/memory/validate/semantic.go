@@ -1,17 +1,16 @@
 package validate
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"regexp"
 	"sort"
 	"strings"
 
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -235,14 +234,11 @@ func (f *syntaxFailure) Error() string { return f.message }
 var bashLine = regexp.MustCompile(`line (\d+):`)
 
 func bashSyntax(ctx context.Context, script []byte) error {
-	cmd := exec.CommandContext(ctx, "bash", "-n")
-	cmd.Stdin = bytes.NewReader(script)
-	output, err := cmd.CombinedOutput()
+	output, err := memoryio.BashSyntax(ctx, script)
 	if err == nil {
 		return nil
 	}
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) {
+	if !memoryio.Exited(err) {
 		return fmt.Errorf("bash -n: %w", err)
 	}
 	failure := &syntaxFailure{message: strings.TrimSpace(string(output))}

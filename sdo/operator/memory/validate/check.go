@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -91,7 +91,7 @@ func CompileCandidate(ctx context.Context, request Request) ([]Diagnostic, error
 			return nil, fmt.Errorf("memory check operator sources: %w", err)
 		}
 	}
-	if _, err := exec.LookPath("go"); err != nil {
+	if err := memoryio.GoAvailable(); err != nil {
 		return nil, fmt.Errorf("memory check Go toolchain: %w", err)
 	}
 	if request.HealthyBaseline != "" {

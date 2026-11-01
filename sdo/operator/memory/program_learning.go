@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -32,7 +32,7 @@ func ReadProgramLearningEvidence(ctx context.Context, repository, commit string)
 		return nil, nil
 	}
 	git := func(args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, "git", append([]string{"-C", repository}, args...)...).Output()
+		return memoryio.Git(ctx, repository, false, nil, args...)
 	}
 	listing, err := git("ls-tree", "-r", "--name-only", commit, "--", layout.CorpusDir+"/")
 	if err != nil {
