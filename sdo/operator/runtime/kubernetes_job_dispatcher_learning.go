@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strconv"
 	"strings"
 	"time"
@@ -38,7 +38,7 @@ func (d KubernetesJobDispatcher) learningReplayCredit(ctx context.Context, reque
 		return nil, nil
 	}
 	git := func(args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, "git", append([]string{"-C", request.RepositoryWorktree}, args...)...).Output()
+		return lifecycleio.GitOutput(ctx, request.RepositoryWorktree, args...)
 	}
 	listing, err := git("ls-tree", "-r", "--name-only", learned.AcceptedCommit, "--", layout.CorpusDir+"/")
 	if err != nil {

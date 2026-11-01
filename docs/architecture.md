@@ -468,3 +468,8 @@ Offline compiler-test cache preparation delegates bounded module downloads to
 handle. CLI memory defaults read the environment through the existing CLI
 process adapter; explicit environment injection remains supported. Runtime
 time-scale parsing consumes a string from its lifecycle edge.
+
+Runtime accepted-manifest reads, program dependency revisions and learning
+corpus reads keep their policy in runtime while repository subprocesses live
+in `runtime/internal/lifecycleio`. The edge returns bytes/errors and interprets
+Git diff status 1 as a confirmed difference; process handles remain private.

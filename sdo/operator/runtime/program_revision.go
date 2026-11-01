@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
-	"os/exec"
 	"path"
 	"regexp"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,7 +39,7 @@ func fillProgramRevisions(ctx context.Context, runs []ProgramRun, repository, co
 // this program's import closure participate, including dependencies of helpers.
 func programDependencyRevision(ctx context.Context, repository, commit, id string) (string, error) {
 	git := func(args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, "git", append([]string{"-C", repository}, args...)...).Output()
+		return lifecycleio.GitOutput(ctx, repository, args...)
 	}
 	module := "app-diagnostics"
 	if data, err := git("show", commit+":.sdo/diagnostics/go.mod"); err == nil {

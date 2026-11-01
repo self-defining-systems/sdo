@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -1325,8 +1324,7 @@ func parseResponderEnvironment(entries []string) (map[string]string, error) {
 func resolveRepositoryCommits(repository string, sourceCommit string, deployedCommit string) (string, string, error) {
 	resolvedSource := strings.TrimSpace(sourceCommit)
 	if resolvedSource == "" {
-		completed := exec.Command("git", "-C", repository, "rev-parse", "HEAD")
-		output, err := completed.CombinedOutput()
+		output, err := lifecycleio.GitCombined(context.Background(), repository, "rev-parse", "HEAD")
 		if err != nil {
 			return "", "", fmt.Errorf("resolve source commit: %w: %s", err, strings.TrimSpace(string(output)))
 		}

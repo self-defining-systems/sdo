@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
-	"time"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
@@ -22,8 +21,7 @@ func completeNativeRolloutHandoffs(ctx context.Context, native NativeIncidentBro
 	if launch == nil || launch.DiagnosticsFingerprint == "" || launch.ControllerArtifactDigest == "" || launch.ControllerRevision == "" {
 		return errors.New("pending controller rollout requires trusted build provenance")
 	}
-	command := exec.CommandContext(ctx, "git", "-C", appRoot, "rev-parse", "HEAD")
-	output, err := command.CombinedOutput()
+	output, err := lifecycleio.GitCombined(ctx, appRoot, "rev-parse", "HEAD")
 	if err != nil {
 		return fmt.Errorf("verify accepted controller revision: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -47,7 +45,7 @@ func completeNativeRolloutHandoffs(ctx context.Context, native NativeIncidentBro
 			ControllerRevision:          launch.ControllerRevision,
 			ObservedDetectorFingerprint: fingerprint,
 			Success:                     true,
-			VerifiedAt:                  time.Now().UTC(),
+			VerifiedAt:                  native.clock(),
 		}); err != nil {
 			return fmt.Errorf("record controller rollout for incident %s: %w", handoff.Expectation.IncidentID, err)
 		}

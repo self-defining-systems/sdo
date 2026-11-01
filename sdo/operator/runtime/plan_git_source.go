@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"regexp"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -51,7 +51,7 @@ func (s GitPlanSource) manifests(ctx context.Context, revision, namespace string
 	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
 		return nil, fmt.Errorf("accepted repository, full commit revision, and namespace are required")
 	}
-	files, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "ls-tree", "-r", "--name-only", revision).Output()
+	files, err := lifecycleio.GitOutput(ctx, s.Repository, "ls-tree", "-r", "--name-only", revision)
 	if err != nil {
 		return nil, fmt.Errorf("list manifests at %s: %w", revision, err)
 	}
@@ -67,7 +67,7 @@ func (s GitPlanSource) manifests(ctx context.Context, revision, namespace string
 	var renderErrors []error
 	seen := map[sdk.ObjectRef]bool{}
 	for _, path := range paths {
-		data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "show", revision+":"+path).Output()
+		data, err := lifecycleio.GitOutput(ctx, s.Repository, "show", revision+":"+path)
 		if err != nil {
 			return nil, fmt.Errorf("read accepted manifest %s: %w", path, err)
 		}
@@ -199,7 +199,7 @@ func (s GitPlanSource) renderDocument(ctx context.Context, document map[string]a
 }
 
 func (s GitPlanSource) sourceTree(ctx context.Context, revision string) (string, error) {
-	data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "rev-parse", revision+"^{tree}").Output()
+	data, err := lifecycleio.GitOutput(ctx, s.Repository, "rev-parse", revision+"^{tree}")
 	if err != nil {
 		return "", fmt.Errorf("source tree at %s: %w", revision, err)
 	}
@@ -215,13 +215,9 @@ func (s GitPlanSource) sameImageSource(ctx context.Context, deployedTree, accept
 	if deployedTree == acceptedTree {
 		return true, nil
 	}
-	err := exec.CommandContext(ctx, "git", "-C", s.Repository, "diff", "--quiet", deployedTree, acceptedTree, "--", ".", ":(exclude).sdo").Run()
-	if err == nil {
-		return true, nil
+	equal, err := lifecycleio.GitEqual(ctx, s.Repository, "diff", "--quiet", deployedTree, acceptedTree, "--", ".", ":(exclude).sdo")
+	if err != nil {
+		return false, fmt.Errorf("compare deployed source tree %s: %w", deployedTree, err)
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 {
-		return false, nil
-	}
-	return false, fmt.Errorf("compare deployed source tree %s: %w", deployedTree, err)
+	return equal, nil
 }
