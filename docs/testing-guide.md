@@ -894,3 +894,14 @@ Deployment Git-backed registry, raw-strategy, health and BuildKit checks
 require `integration` and retain their PR/nightly invocation. BuildKit fake
 clients admit a completed Job synchronously or through an injected wait.
 Command-observation tests inject commands and waits and run in the default tier.
+
+Memory-host traffic contracts use virtual time and bufconn:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+(cd sdo/operator/runtime && go test . ./prober ./sim -run 'TestSimMemory|TestHostTrafficLifecycle' -count=20 -race -timeout=5m)
+```
+
+The traffic parity test uses two immutable revisions and checks stop/reset and
+failed samples without OS sockets. It remains in the ordinary PR selection;
+compiler and process coverage retains the integration tag and existing CI budget.

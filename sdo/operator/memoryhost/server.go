@@ -28,6 +28,9 @@ import (
 // the host never receives a controller callback or mutation capability.
 type Server struct {
 	pb.UnimplementedMemoryHostServiceServer
+	traffic interface {
+		Traffic(context.Context, *pb.TrafficRequest) (*pb.TrafficResponse, error)
+	}
 	mu          sync.RWMutex
 	identity    *pb.ReadyResponse
 	programs    program.ProgramRegistry
@@ -320,4 +323,15 @@ func (s *Server) requestSnapshot(sequence uint64, o *pb.MemoryObservation) (sdkt
 		return *snapshot, nil
 	}
 	return s.snapshot(sequence)
+}
+
+// WithTraffic installs the immutable revision's host-owned traffic executor.
+func (s *Server) WithTraffic(executor interface {
+	Traffic(context.Context, *pb.TrafficRequest) (*pb.TrafficResponse, error)
+}) { s.traffic = executor }
+func (s *Server) Traffic(ctx context.Context, request *pb.TrafficRequest) (*pb.TrafficResponse, error) {
+	if s.traffic == nil {
+		return nil, errors.New("memory host traffic unavailable")
+	}
+	return s.traffic.Traffic(ctx, request)
 }

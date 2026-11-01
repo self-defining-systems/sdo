@@ -35,6 +35,7 @@ import (
  "os/signal"
  "syscall"
  "sdo.dev/operator/memoryhost"
+ "sdo.dev/operator/runtime/prober"
  "sdo.dev/operator/memoryhost/hostio"
  "k8s.io/client-go/rest"
  "k8s.io/client-go/kubernetes"
@@ -45,6 +46,8 @@ import (
 func main(){
  socket:=flag.String("socket","","Unix socket")
  commit:=flag.String("commit","","accepted memory commit")
+ namespace:=flag.String("namespace","","application namespace")
+ synthetic:=flag.Bool("synthetic-traffic",true,"run accepted traffic")
  capBytes:=flag.Uint64("memory-bytes",512<<20,"memory cap")
  flag.Parse()
  if err:=hostio.SetMemoryLimit(*capBytes);err!=nil{log.Fatal(err)}
@@ -53,6 +56,12 @@ func main(){
  server,err:=memoryhost.NewServer(*commit,digest,generated.All());if err!=nil{log.Fatal(err)}
  programs,err:=generated.Programs();if err!=nil{log.Fatal(err)}
  server.WithPrograms(programs)
+ catalog,documents:=generated.TrafficCatalog(),generated.TrafficWorkloads
+ if !*synthetic {catalog,documents=nil,nil}
+ workloads,err:=prober.ParseWorkloads(documents);if err!=nil{log.Fatal(err)}
+ engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads});if err!=nil{log.Fatal(err)}
+ trafficHost:=prober.NewHost(engine);defer trafficHost.Close()
+ server.WithTraffic(trafficHost)
  config,err:=rest.InClusterConfig();if err!=nil{log.Fatal(err)}
  reader,err:=kubernetes.NewForConfig(config);if err!=nil{log.Fatal(err)}
  server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,reader),nil})

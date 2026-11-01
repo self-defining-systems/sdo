@@ -23,12 +23,14 @@ import (
 )
 
 type LaunchConfig struct {
-	Binary          string
-	Commit          string
-	Digest          string
-	SocketDirectory string
-	MemoryBytes     uint64
-	Output          io.Writer
+	Namespace               string
+	DisableSyntheticTraffic bool
+	Binary                  string
+	Commit                  string
+	Digest                  string
+	SocketDirectory         string
+	MemoryBytes             uint64
+	Output                  io.Writer
 }
 
 // Process is independent of the controller's context: candidate preparation
@@ -70,7 +72,7 @@ func Launch(config LaunchConfig) (*Process, error) {
 		return nil, err
 	}
 	socket := filepath.Join(directory, "host.sock")
-	command := exec.Command(config.Binary, "--socket", socket, "--commit", config.Commit, "--memory-bytes", strconv.FormatUint(config.MemoryBytes, 10))
+	command := exec.Command(config.Binary, "--namespace", config.Namespace, "--synthetic-traffic="+strconv.FormatBool(!config.DisableSyntheticTraffic), "--socket", socket, "--commit", config.Commit, "--memory-bytes", strconv.FormatUint(config.MemoryBytes, 10))
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Env = append(os.Environ(), "GOMEMLIMIT="+strconv.FormatUint(config.MemoryBytes*3/4, 10))
 	command.Stdout = config.Output
@@ -186,4 +188,8 @@ func (p *Process) MirrorFrame(ctx context.Context, frame *pb.MirrorRequest) erro
 		return errors.New("mirror acknowledgment sequence mismatch")
 	}
 	return nil
+}
+
+func (p *Process) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.TrafficResponse, error) {
+	return p.client.Traffic(ctx, r)
 }

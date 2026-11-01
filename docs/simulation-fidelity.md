@@ -75,3 +75,12 @@ it is not a production latency measurement. Runtime activation logs report actua
 build-to-activation latency. `BenchmarkMemoryHostEvaluation` compares flag-off
 execution with mirror/adapter/bufconn overhead, excluding OS startup and compiler
 cost. No live Kubernetes hot-activation experiment has been performed.
+
+`TestSimMemoryTrafficTwoRevisions` compares the real traffic engine directly
+against host-owned execution over bufconn in one virtual-time world. It covers
+changed scenario catalogs, failed HTTP samples, scheduler stop/join, reset and
+active-revision replacement. The HTTP application is an injected credential-free
+Doer; it does not model cluster networking or DNS. `TestHostTrafficLifecycle`
+checks duplicate start/stop, closed-host rejection and invalid primitive and
+burst requests. These tests do not exercise the native controller driver or OS
+scheduler/process isolation.
