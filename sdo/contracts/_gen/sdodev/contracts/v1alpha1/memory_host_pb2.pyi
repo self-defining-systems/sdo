@@ -75,7 +75,7 @@ class MirrorResponse(_message.Message):
     def __init__(self, sequence: _Optional[int] = ...) -> None: ...
 
 class MemoryObservation(_message.Message):
-    __slots__ = ("snapshot", "observed_at", "traffic", "reachability", "metrics", "alerts", "usage", "logs")
+    __slots__ = ("observed_at", "traffic", "reachability", "metrics", "alerts", "usage", "logs")
     class TrafficEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -97,7 +97,6 @@ class MemoryObservation(_message.Message):
         key: str
         value: _struct_pb2.Struct
         def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
-    SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
     TRAFFIC_FIELD_NUMBER: _ClassVar[int]
     REACHABILITY_FIELD_NUMBER: _ClassVar[int]
@@ -105,7 +104,6 @@ class MemoryObservation(_message.Message):
     ALERTS_FIELD_NUMBER: _ClassVar[int]
     USAGE_FIELD_NUMBER: _ClassVar[int]
     LOGS_FIELD_NUMBER: _ClassVar[int]
-    snapshot: _struct_pb2.Struct
     observed_at: _timestamp_pb2.Timestamp
     traffic: _containers.MessageMap[str, _struct_pb2.Struct]
     reachability: _struct_pb2.Struct
@@ -113,7 +111,7 @@ class MemoryObservation(_message.Message):
     alerts: _struct_pb2.Struct
     usage: _struct_pb2.Struct
     logs: _containers.MessageMap[str, _struct_pb2.Struct]
-    def __init__(self, snapshot: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ...) -> None: ...
+    def __init__(self, observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ...) -> None: ...
 
 class EvaluateRequest(_message.Message):
     __slots__ = ("detector_ids", "mirror_sequence", "observation")

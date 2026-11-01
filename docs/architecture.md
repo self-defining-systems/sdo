@@ -430,8 +430,8 @@ workloads. Each revision starts with fresh observations.
 
 The remaining slice-3 removal makes the host the sole memory execution path and
 deletes the flag, in-controller accepted-memory compilation, rebuild/relaunch
-supervisor, prober pod/publication/install wiring and legacy per-request
-full-snapshot field. The mirrored production path never sends that field.
+supervisor and prober pod/publication/install wiring. The legacy per-request
+full-snapshot field is deleted; every call selects a completed mirror sequence.
 
 The memory component owns a private `memory/internal/memoryio` edge for Git
 reads, isolated-index whitespace checks, shell syntax and toolchain lookup.

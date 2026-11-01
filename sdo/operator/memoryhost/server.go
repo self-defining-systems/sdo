@@ -310,25 +310,17 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 	return nil
 }
 
-// requestSnapshot binds every call to its frozen view until mirror fan-out lands.
-func (s *Server) requestSnapshot(sequence uint64, o *pb.MemoryObservation) (sdktest.Snapshot, error) {
-	if o != nil && o.Snapshot != nil {
-		snapshot, err := decode[sdktest.Snapshot](o.Snapshot)
-		if err != nil {
-			return sdktest.Snapshot{}, err
-		}
-		if snapshot.Namespace() == "" {
-			return sdktest.Snapshot{}, errors.New("snapshot namespace required")
-		}
-		return *snapshot, nil
-	}
+// requestSnapshot accepts only the completed mirror selected by the request.
+func (s *Server) requestSnapshot(sequence uint64, _ *pb.MemoryObservation) (sdktest.Snapshot, error) {
 	return s.snapshot(sequence)
 }
 
 // WithTraffic installs the immutable revision's host-owned traffic executor.
 func (s *Server) WithTraffic(executor interface {
 	Traffic(context.Context, *pb.TrafficRequest) (*pb.TrafficResponse, error)
-}) { s.traffic = executor }
+}) {
+	s.traffic = executor
+}
 func (s *Server) Traffic(ctx context.Context, request *pb.TrafficRequest) (*pb.TrafficResponse, error) {
 	if s.traffic == nil {
 		return nil, errors.New("memory host traffic unavailable")

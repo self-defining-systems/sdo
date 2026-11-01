@@ -4,6 +4,12 @@ SDO spans Python agents, Go operator modules, generated detector workspaces, and
 
 ## Test organization
 
+Memory-host RPC tests must prepare and activate a host through Manager and capture
+its mirror barrier. Inline MemoryObservation snapshots are unsupported. Traffic
+failure checks include `TestTrafficActivationFailureAndCrashRecovery` (manager
+scheduler-start rejection and disconnect recovery) and
+`TestSimMemoryTrafficTwoRevisions` (bufconn engine parity).
+
 - `tests/unit/sdo/` — agent and contract behavior.
 - `tests/unit/benchmarks/sregym/adapter/` — benchmark-adapter transport and receipt behavior.
 - `tests/unit/libs/` — shared-library contracts.

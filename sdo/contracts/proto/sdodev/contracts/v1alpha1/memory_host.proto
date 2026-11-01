@@ -56,8 +56,8 @@ message MemoryObject {
 message MirrorResponse { uint64 sequence = 1; }
 
 message MemoryObservation {
-  // Slice 1 frozen SDK snapshot; mirror fan-out replaces this in slice 2.
-  google.protobuf.Struct snapshot = 8;
+  reserved 8;
+  reserved "snapshot";
   google.protobuf.Timestamp observed_at = 1;
   // Frozen SDK input windows. Absent input remains unavailable, never empty.
   map<string, google.protobuf.Struct> traffic = 2;

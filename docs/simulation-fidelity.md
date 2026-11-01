@@ -84,3 +84,9 @@ Doer; it does not model cluster networking or DNS. `TestHostTrafficLifecycle`
 checks duplicate start/stop, closed-host rejection and invalid primitive and
 burst requests. These tests do not exercise the native controller driver or OS
 scheduler/process isolation.
+
+`TestTrafficActivationFailureAndCrashRecovery` injects scheduler-start rejection
+and a traffic RPC disconnect at the manager boundary. Failed candidates preserve
+the serving revision; crash recovery restores that revision and scheduler intent.
+It does not model an OS crash. MemoryObservation no longer carries an inline
+snapshot: transport parity tests use the same mirror capture barriers as production.

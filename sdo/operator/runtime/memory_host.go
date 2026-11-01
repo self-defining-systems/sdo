@@ -155,12 +155,7 @@ func (r *RemoteMemory) observation(view sdk.DetectionContext) (*pb.MemoryObserva
 		}
 	}
 	var err error
-	if _, mirrored := r.rpc.(memorySnapshotRPC); !mirrored {
-		out.Snapshot, err = wireStruct(memoryhost.Freeze(view))
-		if err != nil {
-			return nil, err
-		}
-	}
+
 	if v, ok := source.ServiceReachability(); ok {
 		out.Reachability, err = wireStruct(v)
 		if err != nil {

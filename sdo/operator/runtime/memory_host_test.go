@@ -144,12 +144,10 @@ func TestRemoteMemoryPreservesInputsAndCorpusReceipts(t *testing.T) {
 		s.WithReadFactory(func(_ context.Context, snapshot sdktest.Snapshot) (program.ReadView, error) {
 			return &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}, nil
 		})
-		if err := s.Apply(&pb.MirrorRequest{Sequence: 1, ResetMirror: true, Complete: true, Namespace: "toy"}); err != nil {
-			t.Fatal(err)
-		}
+
 		ready, _ := s.Ready(ctx, nil)
 		rpc, stop := memoryTestRPC(t, s)
-		remote, err := NewRemoteMemory(ready, rpc, func(sdk.DetectionContext) (uint64, error) { return 1, nil })
+		remote, err := NewRemoteMemory(ready, mirroredTestHost(t, ctx, rpc, "c", "d", "toy"), func(sdk.DetectionContext) (uint64, error) { return 0, nil })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -255,7 +253,7 @@ func TestSimMemoryHostParityAndCrash(t *testing.T) {
 		})
 		rpc, stop := memoryTestRPC(t, host)
 		ready, _ := host.Ready(ctx, nil)
-		remote, err := NewRemoteMemory(ready, rpc, func(sdk.DetectionContext) (uint64, error) { return 0, nil })
+		remote, err := NewRemoteMemory(ready, mirroredTestHost(t, ctx, rpc, "accepted", "sha256:test", "app"), func(sdk.DetectionContext) (uint64, error) { return 0, nil })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -321,4 +319,21 @@ func TestSimMemoryHostParityAndCrash(t *testing.T) {
 			}
 		}
 	})
+}
+
+func mirroredTestHost(t *testing.T, ctx context.Context, rpc testMemoryRPC, commit, digest, namespace string) *memoryhost.Manager {
+	t.Helper()
+	m := memoryhost.NewManager(time.Second)
+	t.Cleanup(func() { _ = m.Close() })
+	if err := m.Publish(ctx, sdktest.Snapshot{NamespaceName: namespace}); err != nil {
+		t.Fatal(err)
+	}
+	h := &simActivationHost{testMemoryRPC: rpc, stop: func() {}}
+	if err := m.Prepare(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Activate(ctx, h, commit, digest); err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
