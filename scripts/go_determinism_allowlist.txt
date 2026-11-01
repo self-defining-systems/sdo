@@ -1,7 +1,4 @@
 benchmarks/sregym/fastloop/replay_go/main.go:os/exec
-sdo/operator/runtime/chaos_clock_skew_test.go:time.After
-sdo/operator/runtime/chaos_harness_test.go:os.Getenv
-sdo/operator/runtime/chaos_harness_test.go:time.Now
 sdo/operator/runtime/fastloop_real_gate_test.go:os/exec
 sdo/operator/runtime/fastloop_real_gate_test.go:time.After
 sdo/operator/runtime/fastloop_real_gate_test.go:time.Now
@@ -15,8 +12,6 @@ sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.After
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.NewTimer
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.Now
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.Sleep
-sdo/operator/runtime/lifecyclecore/explorer_test.go:time.Now
-sdo/operator/runtime/lifecyclecore/reflection_explorer_test.go:time.Now
 sdo/operator/runtime/link_observer_test.go:net.Dialer
 sdo/operator/runtime/link_observer_test.go:net.Listen
 sdo/operator/runtime/link_observer_test.go:time.Sleep

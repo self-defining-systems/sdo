@@ -1014,3 +1014,11 @@ Closure health/state-diff and firing telemetry, lifecycle events, maintenance,
 lease timing, responder settle/mitigator deadlines and cache write observation
 run in synctest bubbles. Their positive timeout and mutex-release assertions
 retain virtual deadlines; the fake informer uses a positive virtual resync.
+
+Chaos replay controls are explicit test flags: from the runtime module, use
+`go test . -run '^TestChaos' -chaos-seed=17 -timeout=5m`, or set
+`-chaos-runs=128` for a fixed sweep. These replace `SDO_CHAOS_SEED` and
+`SDO_CHAOS_RUNS`. Sweeps always run their configured seeds; they no longer
+silently truncate coverage based on machine speed. Closure/reflection explorers
+retain their state bounds, and campaign invocations (including nightly CI) use
+`-timeout=5m` as the wall-clock cap.

@@ -73,11 +73,7 @@ func explore(step transition) (int, int, error) {
 	terminals := []int{}
 	effectPayloads := map[string][]byte{}
 	edges := 0
-	deadline := time.Now().Add(2 * time.Minute)
 	for cursor := 0; cursor < len(nodes); cursor++ {
-		if cursor%1024 == 0 && time.Now().After(deadline) {
-			return len(nodes), edges, fmt.Errorf("explorer exceeded 2 minute budget")
-		}
 		if len(nodes) > 200000 {
 			return len(nodes), edges, fmt.Errorf("explorer exceeded state bound")
 		}

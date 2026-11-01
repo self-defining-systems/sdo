@@ -11,9 +11,9 @@
 // and a seeded RNG. The controller's two nondeterministic seams -- its wall
 // clock (`now`) and its dispatch-retry jitter (`dispatchJitter`) -- are pinned
 // to the harness clock and RNG, so a failing seed replays the exact schedule.
-// Set SDO_CHAOS_SEED=<n> to replay one seed; SDO_CHAOS_RUNS=<n> to change the
-// number of seeds swept (default chaosDefaultRuns). The sweep is additionally
-// bounded by chaosWallBudget so no profile exceeds the project's 5-minute cap.
+// Pass -chaos-seed=<n> to replay one seed or -chaos-runs=<n> to change the
+// fixed seed count. Run campaigns with -timeout=5m, as nightly CI does.
+// Fixed seed/step/state bounds avoid machine-speed-dependent coverage.
 //
 // This file is test-only. It adds no production control flow and reuses the
 // in-package fakes defined in controller_test.go (recordingDispatcher,
@@ -22,8 +22,10 @@ package runtime
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"math/rand/v2"
-	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -34,14 +36,10 @@ import (
 )
 
 const (
-	// chaosDefaultRuns is the seed sweep per dimension when SDO_CHAOS_SEED is
+	// chaosDefaultRuns is the seed sweep per dimension when -chaos-seed is
 	// unset. Kept small enough that the whole suite stays well under the
 	// 5-minute property/fuzz cap even under -race.
 	chaosDefaultRuns = 128
-	// chaosWallBudget caps one dimension's seed sweep. A sweep stops early once
-	// this elapses, reporting how many seeds it actually ran, so a slow machine
-	// or -race never pushes the suite past the cap.
-	chaosWallBudget = 45 * time.Second
 	// chaosMaxSteps bounds the evaluation steps of a single scheduled incident
 	// so a wedged schedule fails loudly instead of hanging.
 	chaosMaxSteps = 80
@@ -53,29 +51,35 @@ const (
 var chaosStart = time.Unix(0, 0).UTC()
 
 // chaosSeeds returns the seeds to sweep for one dimension. A single explicit
-// seed (SDO_CHAOS_SEED) replays a reported failure; otherwise seeds 1..runs.
+// seed (-chaos-seed) replays a reported failure; otherwise seeds 1..runs.
+var chaosSeedFlag = flag.String("chaos-seed", "", "replay one chaos seed")
+var chaosRunsFlag = flag.Int("chaos-runs", chaosDefaultRuns, "fixed chaos seed count")
+
 func chaosSeeds(t *testing.T) []uint64 {
 	t.Helper()
-	if raw := os.Getenv("SDO_CHAOS_SEED"); raw != "" {
+	seeds, err := parseChaosSeeds(*chaosSeedFlag, *chaosRunsFlag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seeds
+}
+
+func parseChaosSeeds(raw string, runs int) ([]uint64, error) {
+	if raw != "" {
 		seed, err := strconv.ParseUint(raw, 10, 64)
 		if err != nil {
-			t.Fatalf("invalid SDO_CHAOS_SEED %q: %v", raw, err)
+			return nil, fmt.Errorf("invalid -chaos-seed %q: %w", raw, err)
 		}
-		return []uint64{seed}
+		return []uint64{seed}, nil
 	}
-	runs := chaosDefaultRuns
-	if raw := os.Getenv("SDO_CHAOS_RUNS"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 {
-			t.Fatalf("invalid SDO_CHAOS_RUNS %q", raw)
-		}
-		runs = parsed
+	if runs < 1 {
+		return nil, fmt.Errorf("-chaos-runs must be positive, got %d", runs)
 	}
 	seeds := make([]uint64, runs)
 	for i := range seeds {
 		seeds[i] = uint64(i) + 1
 	}
-	return seeds
+	return seeds, nil
 }
 
 // newChaosRNG builds a deterministic RNG for one seed. Two streams are derived
@@ -84,19 +88,14 @@ func newChaosRNG(seed uint64) *rand.Rand {
 	return rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 }
 
-// sweepChaosSeeds runs body for each seed until the seeds are exhausted or the
-// wall budget elapses, so every dimension shares one bounded, replayable loop.
+// sweepChaosSeeds runs every configured seed in a bounded, replayable loop.
 // body receives the seed; a failing subtest names the seed, so the exact
-// schedule replays with SDO_CHAOS_SEED=<n>.
+// schedule replays with -chaos-seed=<n>.
 func sweepChaosSeeds(t *testing.T, body func(t *testing.T, seed uint64)) {
 	t.Helper()
 	seeds := chaosSeeds(t)
-	deadline := time.Now().Add(chaosWallBudget)
 	ran := 0
 	for _, seed := range seeds {
-		if ran > 0 && time.Now().After(deadline) {
-			break
-		}
 		ran++
 		seed := seed
 		t.Run("seed="+strconv.FormatUint(seed, 10), func(t *testing.T) {
@@ -358,4 +357,24 @@ func TestChaosExactlyOnceDispatchUnderRandomizedCadence(t *testing.T) {
 			t.Fatalf("replay diverged: first=%+v second=%+v", first, second)
 		}
 	})
+}
+
+func TestChaosSeedSelectionIsExplicitAndBounded(t *testing.T) {
+	for _, tc := range []struct {
+		seed string
+		runs int
+		want []uint64
+		bad  bool
+	}{
+		{"", 3, []uint64{1, 2, 3}, false}, {"0", 0, []uint64{0}, false}, {"17", 128, []uint64{17}, false},
+		{"", 0, nil, true}, {"", -1, nil, true}, {"bad", 128, nil, true}, {"-1", 128, nil, true},
+	} {
+		seeds, err := parseChaosSeeds(tc.seed, tc.runs)
+		if (err != nil) != tc.bad {
+			t.Fatalf("seed %q runs %d: %v", tc.seed, tc.runs, err)
+		}
+		if !slices.Equal(seeds, tc.want) {
+			t.Fatalf("seed %q runs %d: %v, want %v", tc.seed, tc.runs, seeds, tc.want)
+		}
+	}
 }
