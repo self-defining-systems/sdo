@@ -2,14 +2,10 @@ benchmarks/sregym/fastloop/replay_go/main.go:os/exec
 sdo/operator/runtime/chaos_clock_skew_test.go:time.After
 sdo/operator/runtime/chaos_harness_test.go:os.Getenv
 sdo/operator/runtime/chaos_harness_test.go:time.Now
-sdo/operator/runtime/configmap_budget_test.go:time.After
-sdo/operator/runtime/controller_closure_health_cleared_test.go:time.After
-sdo/operator/runtime/controller_closure_state_diff_test.go:time.After
 sdo/operator/runtime/fastloop_real_gate_test.go:os/exec
 sdo/operator/runtime/fastloop_real_gate_test.go:time.After
 sdo/operator/runtime/fastloop_real_gate_test.go:time.Now
 sdo/operator/runtime/fastloop_real_gate_test.go:time.Sleep
-sdo/operator/runtime/firing_telemetry_test.go:time.After
 sdo/operator/runtime/foreign_drift_test.go:os/exec
 sdo/operator/runtime/foreign_invariant_test.go:os/exec
 sdo/operator/runtime/internal/testprotocol/dial.go:time.Now
@@ -19,10 +15,6 @@ sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.After
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.NewTimer
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.Now
 sdo/operator/runtime/kubernetes_job_dispatcher_test.go:time.Sleep
-sdo/operator/runtime/leader_election_test.go:time.After
-sdo/operator/runtime/leader_election_test.go:time.Now
-sdo/operator/runtime/leader_election_test.go:time.Sleep
-sdo/operator/runtime/lifecycle_events_test.go:time.After
 sdo/operator/runtime/lifecyclecore/explorer_test.go:time.Now
 sdo/operator/runtime/lifecyclecore/reflection_explorer_test.go:time.Now
 sdo/operator/runtime/link_observer_test.go:net.Dialer
@@ -30,7 +22,6 @@ sdo/operator/runtime/link_observer_test.go:net.Listen
 sdo/operator/runtime/link_observer_test.go:time.Sleep
 sdo/operator/runtime/logs_kubelet_test.go:os.Getenv
 sdo/operator/runtime/logs_kubelet_test.go:time.NewTicker
-sdo/operator/runtime/maintenance_test.go:time.After
 sdo/operator/runtime/native_broker_test.go:os/exec
 sdo/operator/runtime/native_broker_test.go:time.Now
 sdo/operator/runtime/native_path_integration_test.go:os/exec
@@ -38,7 +29,6 @@ sdo/operator/runtime/new_inputs_hermetic_test.go:os/exec
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.After
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Now
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Since
-sdo/operator/runtime/plan_executor_observe_test.go:time.After
 sdo/operator/runtime/plan_git_source_test.go:os.Getenv
 sdo/operator/runtime/plan_git_source_test.go:os/exec
 sdo/operator/runtime/playbook_controller_broker_test.go:time.After
@@ -53,10 +43,6 @@ sdo/operator/runtime/prober/link_protocol_test.go:os.Getenv
 sdo/operator/runtime/prober/link_protocol_test.go:time.Now
 sdo/operator/runtime/registered_reflection_integration_test.go:os.Environ
 sdo/operator/runtime/registered_reflection_integration_test.go:os/exec
-sdo/operator/runtime/responder_loop_mitigator_test.go:time.After
-sdo/operator/runtime/responder_loop_mitigator_test.go:time.Now
-sdo/operator/runtime/responder_loop_mitigator_test.go:time.Since
-sdo/operator/runtime/responder_loop_test.go:time.After
 sdo/operator/runtime/routing_capture_test.go:net/http.Client
 sdo/operator/runtime/routing_capture_test.go:time.Sleep
 sdo/operator/runtime/routing_capture_test.go:time.Until

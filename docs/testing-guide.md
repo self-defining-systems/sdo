@@ -1009,3 +1009,8 @@ real HTTP wiring remains in the existing integration CI tier.
 validating its 32-character lowercase hex namespace. Session tool polling and
 temporary reply IDs can be injected; collision tests retain exclusive file
 creation and prove an existing reply temporary cannot be overwritten.
+
+Closure health/state-diff and firing telemetry, lifecycle events, maintenance,
+lease timing, responder settle/mitigator deadlines and cache write observation
+run in synctest bubbles. Their positive timeout and mutex-release assertions
+retain virtual deadlines; the fake informer uses a positive virtual resync.

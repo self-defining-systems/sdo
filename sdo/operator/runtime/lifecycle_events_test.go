@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -106,91 +107,93 @@ func lifecycleHealthDetector(id string, samples ...bool) *sequenceDetector {
 // well-formed event with a stable content-addressed id, and that the emitted
 // streams reconstruct the incident's full timeline in order.
 func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
-	health := lifecycleHealthDetector("health", true, true, false, false, false, false)
-	controller, dispatcher, _, lifecycle, firing, step := lifecycleController(t, health)
-	closed := make(chan IncidentClosure, 1)
-	controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
+	synctest.Test(t, func(t *testing.T) {
+		health := lifecycleHealthDetector("health", true, true, false, false, false, false)
+		controller, dispatcher, _, lifecycle, firing, step := lifecycleController(t, health)
+		closed := make(chan IncidentClosure, 1)
+		controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
 
-	step(0)
-	step(1) // health reaches its firing threshold and opens the incident
-	drainWorkspace(t, controller)
-	executePendingEffect(t, controller)
-	request := awaitRequest(t, dispatcher.requests)
-	awaitDispatchCompletionQueued(t, controller)
-	for second := int64(2); second <= 5; second++ {
-		step(second) // health clears, verification succeeds, closure is cut
-	}
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("incident never closed")
-	}
-	// Commit and acknowledge the closure through the broker.
-	closureEffect, ok := controller.PendingClosureEffect()
-	if !ok {
-		t.Fatal("closure was not pending after the incident closed")
-	}
-	if err := controller.ExecuteClosureEffect(context.Background(), closureEffect); err != nil {
-		t.Fatalf("execute closure: %v", err)
-	}
-	awaitBrokerResult(t, controller.closureResults)
-	controller.processBrokerCompletions()
-	ack, ok := controller.PendingClosureAcknowledgmentEffect()
-	if !ok {
-		t.Fatal("acknowledgment was not pending after the closure committed")
-	}
-	if err := controller.ExecuteClosureAcknowledgmentEffect(context.Background(), ack); err != nil {
-		t.Fatalf("execute acknowledgment: %v", err)
-	}
-	awaitBrokerResult(t, controller.acknowledgmentResults)
-	controller.processBrokerCompletions()
+		step(0)
+		step(1) // health reaches its firing threshold and opens the incident
+		drainWorkspace(t, controller)
+		executePendingEffect(t, controller)
+		request := awaitRequest(t, dispatcher.requests)
+		awaitDispatchCompletionQueued(t, controller)
+		for second := int64(2); second <= 5; second++ {
+			step(second) // health clears, verification succeeds, closure is cut
+		}
+		select {
+		case <-closed:
+		case <-time.After(time.Second):
+			t.Fatal("incident never closed")
+		}
+		// Commit and acknowledge the closure through the broker.
+		closureEffect, ok := controller.PendingClosureEffect()
+		if !ok {
+			t.Fatal("closure was not pending after the incident closed")
+		}
+		if err := controller.ExecuteClosureEffect(context.Background(), closureEffect); err != nil {
+			t.Fatalf("execute closure: %v", err)
+		}
+		awaitBrokerResult(t, controller.closureResults)
+		controller.processBrokerCompletions()
+		ack, ok := controller.PendingClosureAcknowledgmentEffect()
+		if !ok {
+			t.Fatal("acknowledgment was not pending after the closure committed")
+		}
+		if err := controller.ExecuteClosureAcknowledgmentEffect(context.Background(), ack); err != nil {
+			t.Fatalf("execute acknowledgment: %v", err)
+		}
+		awaitBrokerResult(t, controller.acknowledgmentResults)
+		controller.processBrokerCompletions()
 
-	wantPhases := []string{
-		PhaseOpened, PhaseWorkspacePrepared, PhaseDispatched, PhaseResponderCompleted,
-		PhaseClosed, PhaseClosureCommitted, PhaseAcknowledged,
-	}
-	for _, phase := range wantPhases {
-		got := lifecycle.byPhase(phase)
-		if len(got) != 1 {
-			t.Fatalf("phase %q emitted %d times, want exactly 1: %#v", phase, len(got), lifecycle.events)
+		wantPhases := []string{
+			PhaseOpened, PhaseWorkspacePrepared, PhaseDispatched, PhaseResponderCompleted,
+			PhaseClosed, PhaseClosureCommitted, PhaseAcknowledged,
 		}
-		event := got[0]
-		if event.SchemaVersion != LifecycleSchemaVersion || event.EventId == "" ||
-			event.IncidentId != request.IncidentID || event.Application != "demo" || event.Namespace != "demo" {
-			t.Fatalf("phase %q is not well-formed: %#v", phase, event)
+		for _, phase := range wantPhases {
+			got := lifecycle.byPhase(phase)
+			if len(got) != 1 {
+				t.Fatalf("phase %q emitted %d times, want exactly 1: %#v", phase, len(got), lifecycle.events)
+			}
+			event := got[0]
+			if event.SchemaVersion != LifecycleSchemaVersion || event.EventId == "" ||
+				event.IncidentId != request.IncidentID || event.Application != "demo" || event.Namespace != "demo" {
+				t.Fatalf("phase %q is not well-formed: %#v", phase, event)
+			}
+			if want := lifecycleEventID(request.IncidentID, string(phase)); event.EventId != want {
+				t.Fatalf("phase %q id %q is not the content-addressed id %q", phase, event.EventId, want)
+			}
 		}
-		if want := lifecycleEventID(request.IncidentID, string(phase)); event.EventId != want {
-			t.Fatalf("phase %q id %q is not the content-addressed id %q", phase, event.EventId, want)
+		if committed := lifecycle.byPhase(PhaseClosureCommitted)[0]; committed.OutcomeCommit != "outcome-sha" ||
+			committed.ProposalCommit != "repair-sha" || committed.ReflectionCommit != "reflect-sha" {
+			t.Fatalf("closure_committed did not link the outcome commits: %#v", committed)
 		}
-	}
-	if committed := lifecycle.byPhase(PhaseClosureCommitted)[0]; committed.OutcomeCommit != "outcome-sha" ||
-		committed.ProposalCommit != "repair-sha" || committed.ReflectionCommit != "reflect-sha" {
-		t.Fatalf("closure_committed did not link the outcome commits: %#v", committed)
-	}
-	if prepared := lifecycle.byPhase(PhaseWorkspacePrepared)[0]; prepared.Worktree != "/worktrees/incident" ||
-		prepared.BaseCommit != "base-sha" {
-		t.Fatalf("workspace_prepared did not record the prepared worktree: %#v", prepared)
-	}
+		if prepared := lifecycle.byPhase(PhaseWorkspacePrepared)[0]; prepared.Worktree != "/worktrees/incident" ||
+			prepared.BaseCommit != "base-sha" {
+			t.Fatalf("workspace_prepared did not record the prepared worktree: %#v", prepared)
+		}
 
-	// Reconstruct the incident's full timeline from the emitted streams and
-	// assert the lifecycle phases appear in order.
-	timeline := ReconstructIncidentTimeline(request.IncidentID, lifecycle.events, firing.records)
-	var phaseOrder []string
-	for _, entry := range timeline {
-		if entry.Source == "lifecycle" {
-			phaseOrder = append(phaseOrder, entry.Lifecycle.Event)
+		// Reconstruct the incident's full timeline from the emitted streams and
+		// assert the lifecycle phases appear in order.
+		timeline := ReconstructIncidentTimeline(request.IncidentID, lifecycle.events, firing.records)
+		var phaseOrder []string
+		for _, entry := range timeline {
+			if entry.Source == "lifecycle" {
+				phaseOrder = append(phaseOrder, entry.Lifecycle.Event)
+			}
 		}
-	}
-	if !equalPhases(phaseOrder, wantPhases) {
-		t.Fatalf("reconstructed lifecycle order = %v, want %v", phaseOrder, wantPhases)
-	}
-	if timeline[0].Kind != string(PhaseOpened) {
-		t.Fatalf("reconstructed timeline does not start at incident_opened: %#v", timeline[0])
-	}
-	if last := timeline[len(timeline)-1]; last.Kind != string(PhaseAcknowledged) {
-		t.Fatalf("reconstructed timeline does not end at incident_acknowledged: %#v", last)
-	}
-	assertLifecycleTransportNeutral(t, lifecycle.events)
+		if !equalPhases(phaseOrder, wantPhases) {
+			t.Fatalf("reconstructed lifecycle order = %v, want %v", phaseOrder, wantPhases)
+		}
+		if timeline[0].Kind != string(PhaseOpened) {
+			t.Fatalf("reconstructed timeline does not start at incident_opened: %#v", timeline[0])
+		}
+		if last := timeline[len(timeline)-1]; last.Kind != string(PhaseAcknowledged) {
+			t.Fatalf("reconstructed timeline does not end at incident_acknowledged: %#v", last)
+		}
+		assertLifecycleTransportNeutral(t, lifecycle.events)
+	})
 }
 
 // TestLifecycleStreamRecordsSupersedeAndRelease drives a follow-up that
@@ -200,91 +203,95 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 // fully observable: the parent is superseded once, the follow-up opens once with
 // its parent linked, and the stranded worktree is released once.
 func TestLifecycleStreamRecordsSupersedeAndRelease(t *testing.T) {
-	controller, dispatcher := newFollowUpController(t, 2, healthBPersistent())
-	broker := &recordingIncidentBroker{workspace: IncidentWorkspace{Worktree: "/worktrees/incident", BaseCommit: "base"}}
-	if err := controller.SetIncidentBroker(broker); err != nil {
-		t.Fatalf("set broker: %v", err)
-	}
-	lifecycle := &memoryLifecycleSink{}
-	controller.SetLifecycleSink(lifecycle)
-
-	first := completeFirstResponderWithBroker(t, controller, dispatcher)
-	stepAt(t, controller, 3) // the residual health finding supersedes the parent
-	drainRelease(t, controller)
-
-	superseded := lifecycle.byPhase(PhaseSuperseded)
-	if len(superseded) != 1 || superseded[0].IncidentId != first.IncidentID || superseded[0].SupersededBy == "" {
-		t.Fatalf("parent supersede not recorded exactly once: %#v", lifecycle.events)
-	}
-	childID := superseded[0].SupersededBy
-	if superseded[0].EventId != lifecycleEventID(first.IncidentID, string(PhaseSuperseded), childID) {
-		t.Fatalf("supersede id is not content-addressed over the parent and child: %#v", superseded[0])
-	}
-	released := lifecycle.byPhase(PhaseWorktreeReleased)
-	if len(released) != 1 || released[0].IncidentId != first.IncidentID {
-		t.Fatalf("stranded parent worktree release not recorded exactly once: %#v", lifecycle.events)
-	}
-	var childOpened *contracts.LifecycleEvent
-	for index := range lifecycle.events {
-		event := lifecycle.events[index]
-		if event.Event == PhaseOpened && event.IncidentId == childID {
-			childOpened = event
+	synctest.Test(t, func(t *testing.T) {
+		controller, dispatcher := newFollowUpController(t, 2, healthBPersistent())
+		broker := &recordingIncidentBroker{workspace: IncidentWorkspace{Worktree: "/worktrees/incident", BaseCommit: "base"}}
+		if err := controller.SetIncidentBroker(broker); err != nil {
+			t.Fatalf("set broker: %v", err)
 		}
-	}
-	if childOpened == nil || childOpened.ParentIncidentId != first.IncidentID || childOpened.FollowUpAttempt != 1 {
-		t.Fatalf("follow-up open did not link its superseded parent: %#v", lifecycle.events)
-	}
-	// The parent's timeline reconstructs through its supersede; the child's is a
-	// separate incident id reachable via ParentIncidentID / SupersededBy.
-	parentTimeline := ReconstructIncidentTimeline(first.IncidentID, lifecycle.events, nil)
-	if last := parentTimeline[len(parentTimeline)-1]; last.Kind != string(PhaseWorktreeReleased) {
-		t.Fatalf("parent timeline does not end at worktree_released: %#v", last)
-	}
-	assertLifecycleTransportNeutral(t, lifecycle.events)
+		lifecycle := &memoryLifecycleSink{}
+		controller.SetLifecycleSink(lifecycle)
+
+		first := completeFirstResponderWithBroker(t, controller, dispatcher)
+		stepAt(t, controller, 3) // the residual health finding supersedes the parent
+		drainRelease(t, controller)
+
+		superseded := lifecycle.byPhase(PhaseSuperseded)
+		if len(superseded) != 1 || superseded[0].IncidentId != first.IncidentID || superseded[0].SupersededBy == "" {
+			t.Fatalf("parent supersede not recorded exactly once: %#v", lifecycle.events)
+		}
+		childID := superseded[0].SupersededBy
+		if superseded[0].EventId != lifecycleEventID(first.IncidentID, string(PhaseSuperseded), childID) {
+			t.Fatalf("supersede id is not content-addressed over the parent and child: %#v", superseded[0])
+		}
+		released := lifecycle.byPhase(PhaseWorktreeReleased)
+		if len(released) != 1 || released[0].IncidentId != first.IncidentID {
+			t.Fatalf("stranded parent worktree release not recorded exactly once: %#v", lifecycle.events)
+		}
+		var childOpened *contracts.LifecycleEvent
+		for index := range lifecycle.events {
+			event := lifecycle.events[index]
+			if event.Event == PhaseOpened && event.IncidentId == childID {
+				childOpened = event
+			}
+		}
+		if childOpened == nil || childOpened.ParentIncidentId != first.IncidentID || childOpened.FollowUpAttempt != 1 {
+			t.Fatalf("follow-up open did not link its superseded parent: %#v", lifecycle.events)
+		}
+		// The parent's timeline reconstructs through its supersede; the child's is a
+		// separate incident id reachable via ParentIncidentID / SupersededBy.
+		parentTimeline := ReconstructIncidentTimeline(first.IncidentID, lifecycle.events, nil)
+		if last := parentTimeline[len(parentTimeline)-1]; last.Kind != string(PhaseWorktreeReleased) {
+			t.Fatalf("parent timeline does not end at worktree_released: %#v", last)
+		}
+		assertLifecycleTransportNeutral(t, lifecycle.events)
+	})
 }
 
 // TestLifecycleFileSinkIsIdempotentAcrossReopen pins the crash-replay contract:
 // re-emitting every event after reopening the durable sink is a no-op, so the
 // stream is byte-for-byte unchanged, exactly as a restarted controller relies on.
 func TestLifecycleFileSinkIsIdempotentAcrossReopen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "telemetry", "lifecycle-events.jsonl")
-	sink, err := NewFileLifecycleSink(path, DefaultLifecycleStreamBytes)
-	if err != nil {
-		t.Fatalf("new sink: %v", err)
-	}
-	events := []*contracts.LifecycleEvent{
-		testLifecycleEvent(PhaseOpened, "inc", 1),
-		testLifecycleEvent(PhaseDispatched, "inc", 2),
-		testLifecycleEvent(PhaseAcknowledged, "inc", 3),
-	}
-	for _, event := range events {
-		if err := sink.RecordLifecycle(event); err != nil {
-			t.Fatalf("record: %v", err)
+	synctest.Test(t, func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "telemetry", "lifecycle-events.jsonl")
+		sink, err := NewFileLifecycleSink(path, DefaultLifecycleStreamBytes)
+		if err != nil {
+			t.Fatalf("new sink: %v", err)
 		}
-	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read durable stream: %v", err)
-	}
-	reopened, err := NewFileLifecycleSink(path, DefaultLifecycleStreamBytes)
-	if err != nil {
-		t.Fatalf("reopen sink: %v", err)
-	}
-	for _, event := range events {
-		if err := reopened.RecordLifecycle(event); err != nil {
-			t.Fatalf("re-record after reopen: %v", err)
+		events := []*contracts.LifecycleEvent{
+			testLifecycleEvent(PhaseOpened, "inc", 1),
+			testLifecycleEvent(PhaseDispatched, "inc", 2),
+			testLifecycleEvent(PhaseAcknowledged, "inc", 3),
 		}
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read durable stream after reopen: %v", err)
-	}
-	if string(before) != string(after) {
-		t.Fatalf("re-emitting after reopen mutated the durable stream (%d -> %d bytes)", len(before), len(after))
-	}
-	if got := readLifecycleStream(t, path); len(got) != len(events) {
-		t.Fatalf("durable stream has %d events, want %d", len(got), len(events))
-	}
+		for _, event := range events {
+			if err := sink.RecordLifecycle(event); err != nil {
+				t.Fatalf("record: %v", err)
+			}
+		}
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read durable stream: %v", err)
+		}
+		reopened, err := NewFileLifecycleSink(path, DefaultLifecycleStreamBytes)
+		if err != nil {
+			t.Fatalf("reopen sink: %v", err)
+		}
+		for _, event := range events {
+			if err := reopened.RecordLifecycle(event); err != nil {
+				t.Fatalf("re-record after reopen: %v", err)
+			}
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read durable stream after reopen: %v", err)
+		}
+		if string(before) != string(after) {
+			t.Fatalf("re-emitting after reopen mutated the durable stream (%d -> %d bytes)", len(before), len(after))
+		}
+		if got := readLifecycleStream(t, path); len(got) != len(events) {
+			t.Fatalf("durable stream has %d events, want %d", len(got), len(events))
+		}
+	})
 }
 
 // TestReconstructIncidentTimelineOrdersBothStreams is the deterministic unit
@@ -293,36 +300,38 @@ func TestLifecycleFileSinkIsIdempotentAcrossReopen(t *testing.T) {
 // tie-break, drops other incidents, and interleaves firings between opened and
 // closed.
 func TestReconstructIncidentTimelineOrdersBothStreams(t *testing.T) {
-	at := func(sec int64) time.Time { return time.Unix(sec, 0).UTC() }
-	lifecycle := []*contracts.LifecycleEvent{
-		testLifecycleEvent(PhaseAcknowledged, "inc", 3),
-		testLifecycleEvent(PhaseOpened, "inc", 1),
-		testLifecycleEvent(PhaseClosed, "inc", 3),
-		testLifecycleEvent(PhaseDispatched, "inc", 1), // same tick as opened
-		testLifecycleEvent(PhaseOpened, "other", 1),   // different incident, dropped
-	}
-	firings := []*contracts.FiringRecord{
-		{Event: string(FiringBatched), IncidentId: "inc", RecordedAt: contractTimestamp(at(2))},
-		{Event: string(FiringActivated), IncidentId: "other", RecordedAt: contractTimestamp(at(2))}, // dropped
-	}
-	timeline := ReconstructIncidentTimeline("inc", lifecycle, firings)
-	var kinds []string
-	for _, entry := range timeline {
-		if entry.Lifecycle != nil && entry.Lifecycle.IncidentId != "inc" {
-			t.Fatalf("reconstruction leaked another incident: %#v", entry.Lifecycle)
+	synctest.Test(t, func(t *testing.T) {
+		at := func(sec int64) time.Time { return time.Unix(sec, 0).UTC() }
+		lifecycle := []*contracts.LifecycleEvent{
+			testLifecycleEvent(PhaseAcknowledged, "inc", 3),
+			testLifecycleEvent(PhaseOpened, "inc", 1),
+			testLifecycleEvent(PhaseClosed, "inc", 3),
+			testLifecycleEvent(PhaseDispatched, "inc", 1), // same tick as opened
+			testLifecycleEvent(PhaseOpened, "other", 1),   // different incident, dropped
 		}
-		if entry.Firing != nil && entry.Firing.IncidentId != "inc" {
-			t.Fatalf("reconstruction leaked another incident's firing: %#v", entry.Firing)
+		firings := []*contracts.FiringRecord{
+			{Event: string(FiringBatched), IncidentId: "inc", RecordedAt: contractTimestamp(at(2))},
+			{Event: string(FiringActivated), IncidentId: "other", RecordedAt: contractTimestamp(at(2))}, // dropped
 		}
-		kinds = append(kinds, entry.Kind)
-	}
-	want := []string{
-		string(PhaseOpened), string(PhaseDispatched), string(FiringBatched),
-		string(PhaseClosed), string(PhaseAcknowledged),
-	}
-	if strings.Join(kinds, ",") != strings.Join(want, ",") {
-		t.Fatalf("reconstructed order = %v, want %v", kinds, want)
-	}
+		timeline := ReconstructIncidentTimeline("inc", lifecycle, firings)
+		var kinds []string
+		for _, entry := range timeline {
+			if entry.Lifecycle != nil && entry.Lifecycle.IncidentId != "inc" {
+				t.Fatalf("reconstruction leaked another incident: %#v", entry.Lifecycle)
+			}
+			if entry.Firing != nil && entry.Firing.IncidentId != "inc" {
+				t.Fatalf("reconstruction leaked another incident's firing: %#v", entry.Firing)
+			}
+			kinds = append(kinds, entry.Kind)
+		}
+		want := []string{
+			string(PhaseOpened), string(PhaseDispatched), string(FiringBatched),
+			string(PhaseClosed), string(PhaseAcknowledged),
+		}
+		if strings.Join(kinds, ",") != strings.Join(want, ",") {
+			t.Fatalf("reconstructed order = %v, want %v", kinds, want)
+		}
+	})
 }
 
 // testLifecycleEvent is the smallest event the LifecycleEvent contract accepts.
