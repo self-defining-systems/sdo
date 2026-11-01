@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"sdo.dev/operator/sdk/inputs"
 	"strings"
 	"sync"
@@ -65,13 +64,13 @@ func TestLiveReadViewIgnoresKubernetesDefaultsAbsentFromSource(t *testing.T) {
 func TestLiveReadViewNormalizesSourceWithServerSideDryRun(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	called := false
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newHandlerTransport(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		called = request.Method == http.MethodPatch && request.URL.Query().Get("fieldManager") == "sdo-deployer" && request.URL.Query().Get("dryRun") == metav1.DryRunAll && request.URL.Query().Get("force") == "true" && request.Header.Get("Content-Type") == "application/apply-patch+yaml"
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(&corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}})
 	}))
-	defer server.Close()
-	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: "http://in-memory", Transport: server})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,12 +83,12 @@ func TestLiveReadViewNormalizesSourceWithServerSideDryRun(t *testing.T) {
 
 func TestLiveReadViewDiffsDeclaredLabelsAgainstSource(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newHandlerTransport(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app", Labels: map[string]string{"app": "accepted"}}})
 	}))
-	defer server.Close()
-	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: "http://in-memory", Transport: server})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,12 +101,12 @@ func TestLiveReadViewDiffsDeclaredLabelsAgainstSource(t *testing.T) {
 
 func TestLiveReadViewIgnoresDeploymentRevisionStamp(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := newHandlerTransport(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app"}})
 	}))
-	defer server.Close()
-	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: "http://in-memory", Transport: server})
 	if err != nil {
 		t.Fatal(err)
 	}

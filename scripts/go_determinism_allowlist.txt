@@ -17,7 +17,6 @@ sdo/operator/runtime/controller_integration_test.go:time.After
 sdo/operator/runtime/controller_test.go:time.After
 sdo/operator/runtime/controller_test.go:time.Now
 sdo/operator/runtime/controller_test.go:time.Sleep
-sdo/operator/runtime/drift_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/drift_verification.go:time.Now
 sdo/operator/runtime/effect_durability_test.go:time.After
 sdo/operator/runtime/extended_kinds_test.go:time.Now
@@ -29,7 +28,6 @@ sdo/operator/runtime/firing_telemetry_test.go:time.After
 sdo/operator/runtime/foreign_drift_test.go:os/exec
 sdo/operator/runtime/foreign_invariant_test.go:os/exec
 sdo/operator/runtime/internal/testprotocol/dial.go:time.Now
-sdo/operator/runtime/kubernetes_cache.go:time.Now
 sdo/operator/runtime/kubernetes_cache_test.go:time.After
 sdo/operator/runtime/kubernetes_cache_test.go:time.Now
 sdo/operator/runtime/kubernetes_fast_path.go:time.Now
@@ -52,10 +50,8 @@ sdo/operator/runtime/link_observer_test.go:net.Listen
 sdo/operator/runtime/link_observer_test.go:time.Sleep
 sdo/operator/runtime/logs_kubelet_test.go:os.Getenv
 sdo/operator/runtime/logs_kubelet_test.go:time.NewTicker
-sdo/operator/runtime/logs_observer.go:time.Now
 sdo/operator/runtime/maintenance.go:time.NewTicker
 sdo/operator/runtime/maintenance_test.go:time.After
-sdo/operator/runtime/metrics_observer.go:time.Now
 sdo/operator/runtime/metrics_observer_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/metrics_observer_test.go:net/http/httptest.Server
 sdo/operator/runtime/metrics_observer_test.go:time.Now
@@ -70,7 +66,6 @@ sdo/operator/runtime/new_inputs_hermetic_test.go:os/exec
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.After
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Now
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Since
-sdo/operator/runtime/ownership_adoption_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/plan_executor.go:time.Now
 sdo/operator/runtime/plan_executor_observe.go:time.NewTicker
 sdo/operator/runtime/plan_executor_observe_test.go:time.After
@@ -114,7 +109,6 @@ sdo/operator/runtime/program_fast_path.go:time.Now
 sdo/operator/runtime/program_fast_path_result.go:time.Now
 sdo/operator/runtime/program_fast_path_test.go:time.Now
 sdo/operator/runtime/program_read_view.go:time.Now
-sdo/operator/runtime/program_read_view_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/program_repair_receipts_test.go:time.Now
 sdo/operator/runtime/program_revision.go:os/exec
 sdo/operator/runtime/prometheus/client_test.go:net/http/httptest.NewServer
@@ -175,7 +169,5 @@ sdo/operator/runtime/traffic_observer.go:time.NewTimer
 sdo/operator/runtime/traffic_observer_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/usage_live_test.go:os.Getenv
 sdo/operator/runtime/usage_live_test.go:time.Now
-sdo/operator/runtime/usage_observer.go:time.Now
-sdo/operator/runtime/usage_observer_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/watch_evaluation_test.go:time.Now
 sdo/operator/runtime/watch_evaluation_test.go:time.Sleep

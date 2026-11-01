@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sync"
 	"time"
 
@@ -30,6 +31,8 @@ import (
 )
 
 type KubernetesCacheConfig struct {
+	// Clock supplies snapshot observation time; nil uses the production clock.
+	Clock              func() time.Time
 	Namespace          string
 	Client             kubernetes.Interface
 	StateConfigMapName string
@@ -288,7 +291,11 @@ func (c *KubernetesCache) enqueue(watch sdk.WatchKind) {
 }
 
 func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
-	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC()}
+	clock := c.config.Clock
+	if clock == nil {
+		clock = lifecycleio.Now
+	}
+	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: clock().UTC()}
 	c.informerMu.RLock()
 	defer c.informerMu.RUnlock()
 	for key, informer := range c.informers {

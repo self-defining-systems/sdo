@@ -9,7 +9,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"net/http"
-	"net/http/httptest"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/usage"
@@ -25,7 +24,7 @@ func (usageDetector) UsageRequirements() usage.Requirements {
 func TestUsageCollection(t *testing.T) {
 	calls := 0
 	fail := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHandlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if fail {
 			http.Error(w, "denied", 403)
@@ -41,8 +40,8 @@ func TestUsageCollection(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	defer server.Close()
-	client, _ := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+
+	client, _ := kubernetes.NewForConfig(&rest.Config{Host: "http://in-memory", Transport: server})
 	now := time.Date(2026, 1, 1, 0, 1, 0, 0, time.UTC)
 	base := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "app", UID: types.UID("uid")}, Spec: corev1.PodSpec{NodeName: "node", Containers: []corev1.Container{{Name: "web"}}}}}}}
 	p := withUsage(base, nil, client, func() time.Time { return now })
@@ -121,15 +120,15 @@ type summaryUsageDetector struct{ usageDetector }
 func (summaryUsageDetector) UsageRequirements() usage.Requirements { return usage.Requirements{} }
 func TestUsageSummaryOnlyOnceForMultipleConsumers(t *testing.T) {
 	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHandlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if r.URL.Path != "/api/v1/nodes/node/proxy/stats/summary" {
 			t.Error(r.URL.Path)
 		}
 		w.Write([]byte(`{"pods":[]}`))
 	}))
-	defer server.Close()
-	client, _ := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+
+	client, _ := kubernetes.NewForConfig(&rest.Config{Host: "http://in-memory", Transport: server})
 	base := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Namespace: "app", UID: "uid"}, Spec: corev1.PodSpec{NodeName: "node"}}}}}
 	p := withUsage(base, []sdk.Detector{summaryUsageDetector{}, summaryUsageDetector{}}, client, nil)
 	ctx, err := p.Snapshot(context.Background())
