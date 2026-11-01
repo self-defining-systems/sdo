@@ -1,8 +1,9 @@
+//go:build integration
+
 package validate
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,18 +17,6 @@ const (
 	healthManifest = ".sdo/diagnostics/detectors/health/health/manifest.yaml"
 	healthDetector = ".sdo/diagnostics/detectors/health/health/detector.go"
 )
-
-func edit(t *testing.T, root, rel, from, to string) {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, rel))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), from) {
-		t.Fatalf("%s does not contain %q", rel, from)
-	}
-	write(t, root, rel, strings.Replace(string(data), from, to, 1))
-}
 
 func incidentManifest(id string, firing string, origin string) string {
 	return "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: " + id + "\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: " + firing + "\n  clearing: 1\nbatching:\n  severity: warn\n  debounce: \"0\"\npossiblePlaybooks:\n  - base\noriginatingIncident: " + origin + "\noriginatingCommit: abc\n"

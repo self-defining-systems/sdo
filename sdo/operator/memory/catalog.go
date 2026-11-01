@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -37,8 +37,7 @@ func (s *JSONStore) Snapshot(ctx context.Context) (*contracts.OperationalMemoryS
 		return nil, fmt.Errorf("resolve accepted repository: %w", err)
 	}
 	git := func(args ...string) (string, error) {
-		command := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-		output, err := command.CombinedOutput()
+		output, err := memoryio.Git(ctx, root, true, nil, args...)
 		if err != nil {
 			return "", fmt.Errorf("accepted memory git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 		}

@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -30,8 +30,7 @@ func AcceptedDiagnostics(ctx context.Context, repository string) (DiagnosticsPro
 	}
 	root := filepath.Dir(filepath.Dir(directory))
 	git := func(args ...string) (string, error) {
-		command := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-		output, err := command.CombinedOutput()
+		output, err := memoryio.Git(ctx, root, true, nil, args...)
 		if err != nil {
 			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 		}
@@ -61,8 +60,7 @@ func ControllerFingerprint(ctx context.Context, repository, revision string) (st
 	if revision == "" {
 		return "", errors.New("controller revision is required")
 	}
-	command := exec.CommandContext(ctx, "git", "-C", repository, "ls-tree", "-z", revision, "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir)
-	output, err := command.CombinedOutput()
+	output, err := memoryio.Git(ctx, repository, true, nil, "ls-tree", "-z", revision, "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir)
 	if err != nil {
 		return "", fmt.Errorf("read accepted controller source trees: %w: %s", err, strings.TrimSpace(string(output)))
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -93,32 +92,6 @@ func remove(t *testing.T, root, rel string) {
 	}
 }
 
-func gitIn(t *testing.T, root string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// commit initializes root as a repository, optionally adds app.txt, and commits
-// everything, so later edits are a diff against "HEAD".
-func commit(t *testing.T, root, message string) {
-	t.Helper()
-	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
-		gitIn(t, root, "init", "-q")
-		gitIn(t, root, "config", "user.name", "Test")
-		gitIn(t, root, "config", "user.email", "test@example.com")
-	}
-	if _, err := os.Stat(filepath.Join(root, "app.txt")); err != nil {
-		write(t, root, "app.txt", "base\n")
-	}
-	gitIn(t, root, "add", "-A")
-	gitIn(t, root, "commit", "-q", "--allow-empty", "-m", message)
-}
-
 func diagnose(t *testing.T, request Request) []Diagnostic {
 	t.Helper()
 	diagnostics, err := Validate(context.Background(), request)
@@ -145,4 +118,16 @@ func same(got, want []string) bool {
 	want = append([]string{}, want...)
 	sort.Strings(want)
 	return strings.Join(got, ",") == strings.Join(want, ",")
+}
+
+func edit(t *testing.T, root, rel, from, to string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), from) {
+		t.Fatalf("%s does not contain %q", rel, from)
+	}
+	write(t, root, rel, strings.Replace(string(data), from, to, 1))
 }
