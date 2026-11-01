@@ -1,20 +1,21 @@
+//go:build integration
+
 package runtime
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
-	"testing"
-	"time"
-
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"path/filepath"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"strings"
+	"testing"
+	"time"
 )
 
 // Infrastructure failures preserve the completed reflection across broker restart.

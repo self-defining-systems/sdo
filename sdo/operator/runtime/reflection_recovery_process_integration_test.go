@@ -1,18 +1,19 @@
+//go:build integration
+
 package runtime
 
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
-	"testing"
-	"time"
-
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"os"
+	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"testing"
+	"time"
 )
 
 func TestReflectionRetryReusesFrozenTaskDespiteChangedClockAndMemory(t *testing.T) {

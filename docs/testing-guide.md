@@ -1022,3 +1022,11 @@ Chaos replay controls are explicit test flags: from the runtime module, use
 silently truncate coverage based on machine speed. Closure/reflection explorers
 retain their state bounds, and campaign invocations (including nightly CI) use
 `-timeout=5m` as the wall-clock cap.
+
+Runtime accepted-Git, broker/CLI/compiler/Python-process and recorded worker
+fixtures require `integration`; their shared pure detectors, read views and
+non-process tests stay in the default suite. PR and nightly `test_go_ci.sh`
+already include `-tags=integration`, with the existing nightly-only compiler
+selection and five-minute PR budget unchanged. `split_go_integration.sh` reports
+AST dependency candidates and moves explicitly selected declarations, preserving
+embedded Go strings; review candidates and compile both build selections.
