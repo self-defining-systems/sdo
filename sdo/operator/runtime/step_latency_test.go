@@ -3,11 +3,12 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"os"
+	kclock "k8s.io/utils/clock"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -37,12 +38,13 @@ type absenceProbe struct {
 	configMapPresenceDetector
 	once     *sync.Once
 	observed chan time.Time
+	clock    kclock.Clock
 }
 
 func (d absenceProbe) Detect(ctx context.Context, snapshot sdk.DetectionContext) ([]sdk.Finding, error) {
 	findings, err := d.configMapPresenceDetector.Detect(ctx, snapshot)
 	if len(findings) > 0 {
-		d.once.Do(func() { d.observed <- time.Now() })
+		d.once.Do(func() { d.observed <- d.clock.Now() })
 	}
 	return findings, err
 }
@@ -60,7 +62,7 @@ type stormResult struct {
 // StepEvents, PersistState) against a fake API server whose non-watch requests
 // pass through a client-go token bucket, then measures how long a ConfigMap
 // delete that follows a Pod event storm waits for its watching detector.
-func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacing time.Duration) stormResult {
+func runRestartStorm(t *testing.T, clock kclock.WithTicker, qps float32, burst int, podEvents int, spacing time.Duration) stormResult {
 	t.Helper()
 	client := fake.NewSimpleClientset(&corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "mongo-geo-script", Namespace: "demo"},
@@ -77,13 +79,13 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 	})
 	probe := absenceProbe{
 		configMapPresenceDetector: configMapPresenceDetector{spec: incidentSpec(configMapWatch), configMap: "mongo-geo-script"},
-		once:                      &sync.Once{}, observed: make(chan time.Time, 1),
+		once:                      &sync.Once{}, observed: make(chan time.Time, 1), clock: clock,
 	}
 	podHealth := healthSpec(podWatch)
 	podHealth.Batching.Debounce = 0
 	detectors := []sdk.Detector{clearDetector{spec: podHealth}, probe}
 	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{
-		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
+		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state", ResyncPeriod: time.Hour,
 	}, detectors)
 	if err != nil {
 		t.Fatalf("new cache: %v", err)
@@ -97,7 +99,7 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 	drainWatchEvents(informerCache)
 	controller, err := NewController(
 		testControllerConfig(), detectors, informerCache,
-		&recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Now().UTC(),
+		&recordingDispatcher{requests: make(chan IncidentRequest, 1)}, clock.Now().UTC(),
 	)
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
@@ -105,7 +107,7 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 	if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "demo", "sdo-controller-state")); err != nil {
 		t.Fatalf("attach state store: %v", err)
 	}
-	if err := controller.Step(ctx, time.Now().UTC(), nil); err != nil {
+	if err := controller.Step(ctx, clock.Now().UTC(), nil); err != nil {
 		t.Fatalf("baseline step: %v", err)
 	}
 	if err := controller.PersistState(ctx); err != nil {
@@ -123,8 +125,8 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 			case <-ctx.Done():
 				return
 			case <-informerCache.Notifications():
-				stepStart := time.Now()
-				if err := controller.StepEvents(ctx, time.Now().UTC(), informerCache.TakeEvents()); err != nil {
+				stepStart := clock.Now()
+				if err := controller.StepEvents(ctx, clock.Now().UTC(), informerCache.TakeEvents()); err != nil {
 					loopErrors <- err
 					return
 				}
@@ -135,7 +137,7 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 					return
 				}
 				steps.Add(1)
-				maxStep = max(maxStep, time.Since(stepStart))
+				maxStep = max(maxStep, clock.Since(stepStart))
 			}
 		}
 	}()
@@ -151,9 +153,9 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 		}, "demo"); err != nil {
 			t.Fatalf("create pod: %v", err)
 		}
-		time.Sleep(spacing)
+		clock.Sleep(spacing)
 	}
-	deletedAt := time.Now()
+	deletedAt := clock.Now()
 	if err := client.Tracker().Delete(configMaps, "demo", "mongo-geo-script"); err != nil {
 		t.Fatalf("delete ConfigMap: %v", err)
 	}
@@ -163,7 +165,7 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 		detection = observedAt.Sub(deletedAt)
 	case err := <-loopErrors:
 		t.Fatalf("controller loop: %v", err)
-	case <-time.After(30 * time.Second):
+	case <-clock.After(30 * time.Second):
 		t.Fatal("ConfigMap watcher was never evaluated after the delete")
 	}
 	cancel()
@@ -175,41 +177,16 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 // Get plus Update per step, steps were spaced 400 ms apart and a ConfigMap
 // delete waited behind them.
 func TestRestartStormEvaluatesConfigMapWatcherPromptly(t *testing.T) {
-	result := runRestartStorm(
-		t, core.DefaultKubernetesClientQPS, core.DefaultKubernetesClientBurst, 300, 5*time.Millisecond,
-	)
-	if result.detection > 100*time.Millisecond {
-		t.Fatalf("ConfigMap watcher evaluated %s after the delete, want at most 100ms", result.detection)
-	}
-	// Baseline Load and create, then at most one state write per loop step.
-	if result.apiCalls > result.steps+3 {
-		t.Fatalf("state persistence made %d rate-limited API calls over %d steps", result.apiCalls, result.steps)
-	}
-}
-
-// TestRestartStormStepLatencyReport compares client rate limits. Run it with
-// SDO_STEP_LATENCY_REPORT=1 go test -run TestRestartStormStepLatencyReport -v.
-func TestRestartStormStepLatencyReport(t *testing.T) {
-	if os.Getenv("SDO_STEP_LATENCY_REPORT") == "" {
-		t.Skip("set SDO_STEP_LATENCY_REPORT=1 to run the timed restart-storm comparison")
-	}
-	for _, scenario := range []struct {
-		qps       float32
-		burst     int
-		podEvents int
-		spacing   time.Duration
-	}{
-		{5, 10, 50, 20 * time.Millisecond},
-		{50, 100, 50, 20 * time.Millisecond},
-		{5, 10, 300, 5 * time.Millisecond},
-		{50, 100, 300, 5 * time.Millisecond},
-	} {
-		result := runRestartStorm(t, scenario.qps, scenario.burst, scenario.podEvents, scenario.spacing)
-		t.Logf(
-			"qps=%v burst=%d pods=%d every %s: ConfigMap delete evaluated after %s; %d steps, longest %s, %d rate-limited API calls",
-			scenario.qps, scenario.burst, scenario.podEvents, scenario.spacing,
-			result.detection.Round(100*time.Microsecond), result.steps, result.maxStep.Round(100*time.Microsecond),
-			result.apiCalls,
+	synctest.Test(t, func(t *testing.T) {
+		result := runRestartStorm(
+			t, lifecycleio.Clock(), core.DefaultKubernetesClientQPS, core.DefaultKubernetesClientBurst, 300, 5*time.Millisecond,
 		)
-	}
+		if result.detection > 100*time.Millisecond {
+			t.Fatalf("ConfigMap watcher evaluated %s after the delete, want at most 100ms", result.detection)
+		}
+		// Baseline Load and create, then at most one state write per loop step.
+		if result.apiCalls > result.steps+3 {
+			t.Fatalf("state persistence made %d rate-limited API calls over %d steps", result.apiCalls, result.steps)
+		}
+	})
 }
