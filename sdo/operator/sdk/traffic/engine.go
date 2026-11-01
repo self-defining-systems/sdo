@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sdo.dev/operator/sdk/internal/clockio"
 	"sort"
 	"strings"
 	"sync"
@@ -73,10 +74,7 @@ type Clock interface {
 	After(time.Duration) <-chan time.Time
 }
 
-type realClock struct{}
-
-func (realClock) Now() time.Time                         { return time.Now() }
-func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+type realClock struct{ clockio.Clock }
 
 // RealClock is the wall clock.
 var RealClock Clock = realClock{}
@@ -174,7 +172,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample)
 	state := State{}
 	started := e.clock.Now()
 	sample := Sample{At: started.UTC(), Iteration: iteration, Outcome: OutcomeOK}
-	iterationCtx, cancel := context.WithTimeout(ctx, e.workload.IterationTimeout.Duration())
+	iterationCtx, cancel := e.withTimeout(ctx, e.workload.IterationTimeout.Duration())
 	defer cancel()
 	base := e.baseURL(scenario.normalizedTarget())
 	for _, step := range scenario.Steps {
@@ -191,7 +189,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample)
 	}
 	sample.Latency = e.since(started)
 	if scenario.SideEffect == SideEffectWriteWithCleanup && sample.Requests > 0 {
-		cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), e.workload.IterationTimeout.Duration())
+		cleanupCtx, cancelCleanup := e.withTimeout(context.WithoutCancel(ctx), e.workload.IterationTimeout.Duration())
 		defer cancelCleanup()
 		for _, step := range scenario.Cleanup {
 			result := e.step(cleanupCtx, scenario, step, rng, state, base, true)
@@ -222,7 +220,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 	if err := checkRequest(scenario, request, cleanup); err != nil {
 		return stepResult{outcome: OutcomeInvalid, request: line, err: bounded(err.Error())}
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, e.workload.Timeout.Duration())
+	requestCtx, cancel := e.withTimeout(ctx, e.workload.Timeout.Duration())
 	defer cancel()
 	built, err := BuildHTTPRequest(requestCtx, base, request)
 	if err != nil {
@@ -408,4 +406,16 @@ func bounded(text string) string {
 		return text
 	}
 	return text[:MaxErrorExcerpt] + "…"
+}
+
+// withTimeout lets an injected clock drive request, cleanup and iteration
+// deadlines as well as rate timers. Existing Clock implementations retain
+// the wall-clock deadline default.
+func (e *Engine) withTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if c, ok := e.clock.(interface {
+		WithTimeout(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	}); ok {
+		return c.WithTimeout(ctx, d)
+	}
+	return (clockio.Clock{}).WithTimeout(ctx, d)
 }

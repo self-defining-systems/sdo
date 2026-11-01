@@ -914,3 +914,8 @@ compiler and process coverage retains the integration tag and existing CI budget
 Core snapshot observation-time tests inject a fixed clock and compare the exact
 observed timestamp. Core retains its Go 1.24 floor and uses no synctest; no tests
 are integration-tagged for this migration.
+SDK traffic tests use HTTP recorders, a fake transport and an injected clock,
+including virtual request-deadline cancellation. The SDK retains Go 1.24 and
+does not use synctest. Only the shell-based generated-reference check gains an
+`integration` tag; both PR and nightly `scripts/test_go_ci.sh` run it with
+`-tags=integration` within the existing five-minute PR budget.

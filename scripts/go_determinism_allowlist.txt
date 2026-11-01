@@ -222,8 +222,3 @@ sdo/operator/runtime/usage_observer.go:time.Now
 sdo/operator/runtime/usage_observer_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/watch_evaluation_test.go:time.Now
 sdo/operator/runtime/watch_evaluation_test.go:time.Sleep
-sdo/operator/sdk/skill_reference_test.go:os/exec
-sdo/operator/sdk/traffic/engine.go:time.After
-sdo/operator/sdk/traffic/engine.go:time.Now
-sdo/operator/sdk/traffic/engine_test.go:net/http.Client
-sdo/operator/sdk/traffic/engine_test.go:net/http/httptest.NewServer
