@@ -27,3 +27,21 @@ func TestScaleDetectorTimingKeepsIdentityAndScalesWindows(t *testing.T) {
 		t.Fatalf("original detector changed: %+v", original)
 	}
 }
+
+func TestDevelopmentTimeScaleValidation(t *testing.T) {
+	for _, tc := range []struct {
+		value   string
+		want    float64
+		invalid bool
+	}{
+		{"", 1, false}, {"0.1", .1, false}, {"2", 2, false},
+		{"0", 0, true}, {"-1", 0, true}, {"NaN", 0, true}, {"Inf", 0, true}, {"bad", 0, true},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			got, err := parseDevelopmentTimeScale(tc.value)
+			if (err != nil) != tc.invalid || (!tc.invalid && got != tc.want) {
+				t.Fatalf("scale %q: %v, %v", tc.value, got, err)
+			}
+		})
+	}
+}

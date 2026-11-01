@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -58,8 +59,12 @@ const (
 )
 
 // RunMemory runs "sdo-operator memory <args>" and returns the process exit
-// code. getenv supplies SDO_ACTOR, SDO_PHASE, and the other defaults.
+// code. getenv supplies SDO_ACTOR, SDO_PHASE, and the other defaults; nil
+// reads the process environment through the CLI adapter.
 func RunMemory(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	if getenv == nil {
+		getenv = processio.Environment
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, MemoryUsage)
 		return exitInfra

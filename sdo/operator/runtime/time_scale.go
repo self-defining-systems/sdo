@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strconv"
 	"time"
 
@@ -12,7 +12,10 @@ import (
 )
 
 func developmentTimeScale() (float64, error) {
-	raw := os.Getenv("SDO_TIME_SCALE")
+	return parseDevelopmentTimeScale(lifecycleio.TimeScaleEnvironment())
+}
+
+func parseDevelopmentTimeScale(raw string) (float64, error) {
 	if raw == "" {
 		return 1, nil
 	}
