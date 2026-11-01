@@ -28,6 +28,7 @@ var Edges = map[string]bool{
 	"sdo/operator/deployment/internal/deploymentio": true, // Deployment process, socket and wait adapter
 
 	"sdo/operator/core/internal/kubeio": true, // Kubernetes configuration and default clock
+	"sdo/operator/sdk/internal/clockio": true, // SDK default wall clock
 }
 
 func integrationOnly(file *ast.File) (bool, error) {

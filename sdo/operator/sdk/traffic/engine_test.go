@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,11 +60,80 @@ func (r *recorder) count() int {
 	return len(r.requests)
 }
 
+// handlerDoer executes the application handler in memory.
+type handlerDoer struct{ handler http.Handler }
+
+func (d handlerDoer) Do(r *http.Request) (*http.Response, error) {
+	w := httptest.NewRecorder()
+	d.handler.ServeHTTP(w, r)
+	return w.Result(), nil
+}
+
+var applications sync.Map
+var applicationID atomic.Uint64
+
 func serve(t *testing.T, handler http.Handler) func(traffic.Target) string {
 	t.Helper()
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	return func(traffic.Target) string { return server.URL }
+	address := fmt.Sprintf("http://app-%d.invalid", applicationID.Add(1))
+	applications.Store(address, handlerDoer{handler})
+	t.Cleanup(func() { applications.Delete(address) })
+	return func(traffic.Target) string { return address }
+}
+
+type routedDoer struct{}
+
+func (routedDoer) Do(r *http.Request) (*http.Response, error) {
+	d, ok := applications.Load(r.URL.Scheme + "://" + r.URL.Host)
+	if !ok {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+	}
+	return d.(traffic.Doer).Do(r)
+}
+
+type stepClock struct {
+	now       time.Time
+	deadlines []fakeDeadline
+}
+type fakeDeadline struct {
+	at     time.Time
+	cancel context.CancelCauseFunc
+}
+type deadlineContext struct {
+	context.Context
+	at time.Time
+}
+
+func (c deadlineContext) Deadline() (time.Time, bool) { return c.at, true }
+func (c deadlineContext) Err() error {
+	if context.Cause(c.Context) == context.DeadlineExceeded {
+		return context.DeadlineExceeded
+	}
+	return c.Context.Err()
+}
+func (c *stepClock) WithTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	child, cancel := context.WithCancelCause(ctx)
+	at := c.now.Add(d)
+	if parent, ok := ctx.Deadline(); ok && parent.Before(at) {
+		at = parent
+	}
+	c.deadlines = append(c.deadlines, fakeDeadline{at, cancel})
+	return deadlineContext{child, at}, func() { cancel(context.Canceled) }
+}
+func (c *stepClock) advance(d time.Duration) {
+	c.now = c.now.Add(d)
+	for _, timer := range c.deadlines {
+		if !c.now.Before(timer.at) {
+			timer.cancel(context.DeadlineExceeded)
+		}
+	}
+}
+
+func (c *stepClock) Now() time.Time { c.advance(time.Millisecond); return c.now }
+func (c *stepClock) After(d time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	c.advance(d)
+	ch <- c.now
+	return ch
 }
 
 func search() traffic.Scenario {
@@ -90,7 +160,7 @@ func workload(t *testing.T, name string, purpose traffic.Purpose, scenarios ...t
 
 func engine(t *testing.T, w traffic.Workload, catalog traffic.Catalog, base func(traffic.Target) string) *traffic.Engine {
 	t.Helper()
-	e, err := traffic.NewEngine(w, catalog, &http.Client{}, base, nil)
+	e, err := traffic.NewEngine(w, catalog, routedDoer{}, base, &stepClock{now: time.Unix(0, 0)})
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
 	}
@@ -127,7 +197,7 @@ func TestIterationSendsMarkedRequestsAndMeasuresThem(t *testing.T) {
 	e := engine(t, workload(t, "health", traffic.PurposeHealthProbe, traffic.WorkloadScenario{ID: "search"}),
 		traffic.Catalog{search()}, serve(t, app))
 	id, sample := e.Iterate(context.Background(), 3)
-	if id != "search" || sample.Outcome != traffic.OutcomeOK || sample.Status != 200 || sample.Requests != 1 || sample.Latency <= 0 {
+	if id != "search" || sample.Outcome != traffic.OutcomeOK || sample.Status != 200 || sample.Requests != 1 || sample.Latency != time.Millisecond {
 		t.Fatalf("healthy iteration: %s %+v", id, sample)
 	}
 	if app.requests[0].Header.Get(traffic.SyntheticHeader) != "1" || app.requests[0].URL.Path != "/hotels" {
@@ -190,24 +260,43 @@ func TestEngineRefusesUnsafeRequestsWithoutSendingThem(t *testing.T) {
 }
 
 func TestEngineClassifiesTimeoutsAndConnectionRefused(t *testing.T) {
-	release := make(chan struct{})
-	slow := &recorder{handle: func(http.ResponseWriter, *http.Request) { <-release }}
-	base := serve(t, slow)
-	// Cleanups run last-in first-out: release the handler before the server closes.
-	t.Cleanup(func() { close(release) })
+	// A timed-out response is returned by the injected transport, without
+	// waiting for an operating-system deadline.
+	base := serve(t, http.NotFoundHandler())
+	clock := &stepClock{now: time.Unix(0, 0)}
+	applications.Store(base(traffic.Target{}), deadlineDoer{t: t, clock: clock})
 	w := workload(t, "health", traffic.PurposeHealthProbe, traffic.WorkloadScenario{ID: "search"})
 	w.Timeout = traffic.Duration(50 * time.Millisecond)
-	_, sample := engine(t, w, traffic.Catalog{search()}, base).Iterate(context.Background(), 0)
+	e, err := traffic.NewEngine(w, traffic.Catalog{search()}, routedDoer{}, base, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sample := e.Iterate(context.Background(), 0)
 	if sample.Outcome != traffic.OutcomeTimeout || sample.DialFailed {
 		t.Fatalf("a hung response must time out without being classified as a dial failure, got %+v", sample)
 	}
-	closed := httptest.NewServer(http.NotFoundHandler())
-	address := closed.URL
-	closed.Close()
-	_, sample = engine(t, w, traffic.Catalog{search()}, func(traffic.Target) string { return address }).Iterate(context.Background(), 0)
+	_, sample = engine(t, w, traffic.Catalog{search()}, func(traffic.Target) string { return "http://closed.invalid" }).Iterate(context.Background(), 0)
 	if sample.Outcome != traffic.OutcomeError || !strings.Contains(sample.Error, "refused") || !sample.DialFailed {
 		t.Fatalf("a closed port must fail with a classified dial failure, got %+v", sample)
 	}
+}
+
+type deadlineDoer struct {
+	t     *testing.T
+	clock *stepClock
+}
+
+func (d deadlineDoer) Do(r *http.Request) (*http.Response, error) {
+	if _, ok := r.Context().Deadline(); !ok {
+		d.t.Fatal("request has no timeout")
+	}
+	d.clock.advance(50 * time.Millisecond)
+	select {
+	case <-r.Context().Done():
+	default:
+		d.t.Fatal("request deadline did not cancel the hung response")
+	}
+	return nil, r.Context().Err()
 }
 
 // stubDoer lets a test hand the engine a synthetic transport error without
@@ -261,7 +350,7 @@ func TestEngineClassifiesDialFailuresSeparatelyFromOtherTransportErrors(t *testi
 		t.Run(testCase.name, func(t *testing.T) {
 			w := workload(t, "health", traffic.PurposeHealthProbe, traffic.WorkloadScenario{ID: "search"})
 			e, err := traffic.NewEngine(w, traffic.Catalog{search()}, stubDoer{err: testCase.err},
-				func(traffic.Target) string { return "http://x" }, nil)
+				func(traffic.Target) string { return "http://x" }, &stepClock{now: time.Unix(0, 0)})
 			if err != nil {
 				t.Fatalf("new engine: %v", err)
 			}

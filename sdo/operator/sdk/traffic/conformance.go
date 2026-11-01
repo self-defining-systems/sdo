@@ -22,8 +22,7 @@ func (d faultDoer) Do(request *http.Request) (*http.Response, error) {
 	case FaultWrongBody:
 		return stubResponse(request, http.StatusOK, ""), nil
 	case FaultSlow:
-		<-request.Context().Done()
-		return nil, request.Context().Err()
+		return nil, context.DeadlineExceeded
 	default:
 		return nil, fmt.Errorf("unknown fault class %q", d.class)
 	}
