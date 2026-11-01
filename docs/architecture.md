@@ -46,6 +46,7 @@ The controller captures the application namespace's detection view at detection,
 
 | Package | Responsibility |
 |---|---|
+| `benchmarks/sregym/fastloop/replay_go/`, `internal/replayio/` | Benchmark-only replay driver and private Git process adapter; a temporary workspace selects the requested frozen operator modules. It cannot publish production artifacts. |
 | `sdo/operator/sdk/usage`, `runtime/usage_observer.go` | Deterministic resource usage windows and helpers; bounded namespace-filtered kubelet Summary API collection through the API server, with opt-in cAdvisor CFS counters and no observability service. |
 | `sdo/agents/{source_deployment,health_judge,responder}/` | Built-in agent sessions, prompts, local provider adapters, worker entry points, and typed task/result contracts; reflection and the judge author final files in their private checkouts |
 | `sdo/agents/lifecycle/` | Health judge prompts and DTOs |
@@ -61,6 +62,7 @@ The controller captures the application namespace's detection view at detection,
 | `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector and program SDK with canonical object-ref text parsing, deterministic execution, drift admission to responders, revision-bound trusted plans, controller state and its typed projection, stable controller and host builds, and Kubernetes installation |
 | `sdo/operator/memoryhost/`, `memoryhost/hostio/` | Sole accepted-memory execution path: mirror barriers, immutable activation, read-only execution and host process transport; no publication authority |
 | `benchmarks/sregym/` | First-party benchmark adapter, Go receipt checker and submission guard, protocol, runner, experiments, and analysis |
+| `benchmarks/sregym/fastloop/replay_go/internal/replayio/` | Benchmark-only private Git subprocess edge; replay compiles against the requested frozen operator through an isolated Go workspace. |
 | `third_party/sregym/` | External benchmark harness Git submodule |
 
 Production packages do not import SREGym code. Benchmark-only image stages live in `benchmarks/sregym/Dockerfile.worker`, extending the built production responder; development mounts expose only production sources, examples and the operator binary. Benchmark adapters may call production APIs; strict receipts and submission relays remain in the benchmark boundary. The native path passed an end-to-end kind smoke with real goal/source/architecture/judge artifacts, concrete deployment and health evidence, provider credentials, and controller installation. Detector SDK staleness/dependency interface changes are outside this refactor.
@@ -317,6 +319,7 @@ ownership matrix remain unchanged. Process handles never cross the edge.
 | Artifact | May author | May update | Validation rule |
 |---|---|---|---|
 | `apps/toy/seed/.sdo/` | Test fixture author | Test fixture author | Hand-authored goal, architecture and health diagnostics; no model lifecycle attestation. Once installed, normal production broker ownership governs accepted changes and outcomes. |
+| Benchmark replay temporary checkout | Benchmark-only replay driver | Replay Git edge and validated recorded edits | Validates recorded proposals through production broker APIs; never publishes to the live operational branch. |
 | `.sdo/goal.md` | Human | Human | Optional free text; agent proposals cannot change it. |
 | `.sdo/arch.md` | Go after accepted source | Go upkeep | Deterministic manifest inventory: resources, kinds, selectors, images and declared dependency edges; readers inspect source for application semantics. |
 | Private toolchain emptyDir | Trusted controller-image init container | Read-only worker consumers | Ephemeral build dependency; outside operational memory, with no candidate or provider credentials in the init container. |
@@ -355,6 +358,7 @@ Source-absent drift admission also covers reviewed foreign NetworkPolicy creates
 | `libs/agent_cli/` | Production-neutral agent turn runner. |
 | `apps/` | Deployment and evaluation inputs. `apps/toy/` owns the reusable tiny Kubernetes app, seed and cluster-state fault injectors/oracles; it has no SREGym dependency. |
 | `benchmarks/sregym/{adapter,agent_script,fastloop,protocol,runner,experiments,analysis}/` | First-party benchmark integration, including launcher-owned helper lifetime and registry-backed abort; the runner binds the process registry to the result-state path through `adapter.processes`; `protocol/native_receipt_go` owns typed receipt decisions and `protocol/submission_go` owns phase and acknowledgment decisions from generated contracts; Python transports/persists the results; scripted restore reads controller-rendered source through `sdo source`. Baseline recovery uses server-side apply as `sdo-deployer` and waits for application rollouts before the benchmark residue check; fastloop rows retain responder usage and mitigation timing from verified stage evidence if learning fails, and expose closure phase intervals, resolution path, and fast-path programs from the native ledger. |
+| `benchmarks/sregym/fastloop/replay_go/` | Benchmark-only replay module; its private `internal/replayio` owns Git subprocesses, and its workspace pins the selected operator revision. |
 | `third_party/sregym/` | External benchmark harness Git submodule. |
 | Historical bounded operator, shell health checks, trajectory recorder, UI, prompt stack, standalone fault injection | Excluded from production scope. |
 

@@ -17,7 +17,7 @@ while IFS= read -r mod; do
 done < <(find "$root/benchmarks" -name go.mod -not -path '*/seeds/*' -not -path '*/operational_memory/*' | sort)
 
 # Programs with no module of their own run via `go run` inside the operator
-# runtime module (for example fastloop replay), so vet them in that context.
+# runtime module, so vet them in that context.
 while IFS= read -r program; do
     dir="$(dirname "$program")"
     while [[ "$dir" != "$root" && ! -f "$dir/go.mod" ]]; do dir="$(dirname "$dir")"; done

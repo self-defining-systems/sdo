@@ -55,7 +55,7 @@ not just calls. Dot imports are forbidden. Use event time and injected clocks,
 explicitly seeded RNGs, dialers and launchers. Seeded RNG construction is allowed;
 `crypto/rand` is conservatively forbidden regardless of purpose.
 
-The exact production edge-package list is:
+The exact declared edge-package list is:
 
 - `sdo/operator/core/internal/kubeio`: Kubernetes configuration discovery and default observation clock.
 - `sdo/operator/sdk/internal/clockio`: SDK default wall clock; engines accept an injected clock.
@@ -77,10 +77,9 @@ The exact production edge-package list is:
   virtual time, its one environment read is the `SDO_SIM_SEED` replay seed, and its HTTP client runs over an
   in-memory transport. Only test code may import it.
 
-These are exact directories, not recursive exemptions. Mixed packages containing
-existing kubelet, logs, dial, process, git and clock code are grandfathered only
-at their recorded file/symbol pairs; they are not blanket edges. Extract such
-adapters before adding new nondeterministic APIs. Edge packages do not exempt tests.
+These are exact directories, not recursive exemptions. Mixed packages are not
+blanket edges. The legacy file/symbol allowances have all been removed; extract
+a narrow adapter before adding nondeterministic APIs. Edge packages do not exempt tests.
 
 Tests may use real clocks, subprocesses or sockets only when a `//go:build`
 expression *requires* `integration` (e.g. `integration && linux`, never
@@ -110,3 +109,13 @@ require changing the policy, not regeneration.
 This gate runs its negative fixtures before scanning, is wired into
 `scripts/check_errors.sh`, and takes about one second with a warm compiler cache.
 
+The benchmark-only `benchmarks/sregym/fastloop/replay_go/internal/replayio`
+edge owns replay Git subprocesses. Its driver has a standalone Go module;
+Python constructs a private workspace that pins all production module paths to
+the requested `operator_root`. This keeps replay process I/O outside production
+and prevents a parent `GOWORK` or a different driver checkout from selecting
+unfrozen operator code. No process handles escape the edge.
+
+The determinism allowlist is now empty. The same shrink-only check still scans
+all operator and benchmark Go sources, including inactive build variants; new
+nondeterminism must use explicit inputs or a documented, narrow edge.

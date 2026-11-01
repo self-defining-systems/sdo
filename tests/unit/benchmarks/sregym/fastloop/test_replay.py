@@ -553,3 +553,36 @@ def test_capture_exports_script_actions_from_live_recording(tmp_path: Path) -> N
     )
     capture_checkpoints(CheckpointStore(tmp_path), 0, "incident-1", tmp_path / "incident", [])
     assert load(exported / "script.json").select("responder", "incident-1", 0).result == {"summary": "synthetic"}
+
+
+def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop.replay import StageCheckpoint, replay_broker_result
+
+    operator = tmp_path / 'frozen operator "revision"'
+    source = tmp_path / "accepted source"
+    observed: list[Path] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        workspace = Path(environment["GOWORK"])
+        assert workspace.is_file()
+        assert workspace != Path("/unrelated/parent/go.work")
+        contents = workspace.read_text()
+        # The replay driver and all production modules must come from the
+        # explicit operator-root, even when replay runs outside that checkout.
+        for module in ("", "core", "sdk", "runtime", "contracts"):
+            assert json.dumps(str(operator / module)) in contents
+        assert Path(str(kwargs["cwd"])).name == "replay_go"
+        assert command[:3] == ["go", "run", "."]
+        assert command[command.index("--operator-root") + 1] == str(operator)
+        assert command[command.index("--source") + 1] == str(source)
+        observed.append(workspace)
+        return subprocess.CompletedProcess(command, 0, '{"status":"no_change"}', "")
+
+    monkeypatch.setenv("GOWORK", "/unrelated/parent/go.work")
+    monkeypatch.setattr(subprocess, "run", run)
+    checkpoint = StageCheckpoint(request="{}", result="{}")
+    assert replay_broker_result(checkpoint, source=source, operator_root=operator) == {"status": "no_change"}
+    assert len(observed) == 1
+    assert not observed[0].exists()
