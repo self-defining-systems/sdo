@@ -969,3 +969,8 @@ connection-pool/listener-closure contracts remain in
 `prober/socket_integration_test.go`; PR and nightly `scripts/test_go_ci.sh`
 already include `-tags=integration`, retaining both tests and the five-minute
 PR budget.
+
+Responder diagnosis settling and trusted fast-path settling share
+`PlanExecutor.Sleep`; resource-version retry jitter accepts `PlanExecutor.Jitter`.
+Tests can advance one simulation clock and seeded RNG through these seams.
+Cancellation still prevents the post-settle diagnosis or apply.

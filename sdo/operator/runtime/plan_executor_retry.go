@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -54,7 +54,7 @@ func (e PlanExecutor) patchWithRetry(ctx context.Context, index int, patch *Plan
 		if patch.Patch, err = conditionalPlanPatch(patch.Patch, fresh); err != nil {
 			return err
 		}
-		if err = e.sleep(ctx, applyBackoff(attempt)); err != nil {
+		if err = e.sleep(ctx, e.applyBackoff(attempt)); err != nil {
 			return err
 		}
 	}
@@ -63,23 +63,20 @@ func (e PlanExecutor) patchWithRetry(ctx context.Context, index int, patch *Plan
 
 // applyBackoff grows linearly with the attempt and carries jitter so concurrent
 // executors do not retry in step.
-func applyBackoff(attempt int) time.Duration {
+func (e PlanExecutor) applyBackoff(attempt int) time.Duration {
 	base := time.Duration(attempt) * applyBackoffBase
-	return base + time.Duration(rand.Int64N(int64(base)))
+	jitter := e.Jitter
+	if jitter == nil {
+		jitter = lifecycleio.Jitter
+	}
+	return base + time.Duration(jitter(int64(base)))
 }
 
 func (e PlanExecutor) sleep(ctx context.Context, d time.Duration) error {
 	if e.Sleep != nil {
 		return e.Sleep(ctx, d)
 	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return lifecycleio.Wait(ctx, d)
 }
 
 // planFieldChange names a field the plan owns whose live value left its pre-image.

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -171,12 +170,8 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if delay <= 0 {
 		delay = DefaultDiagnosisSettleDelay
 	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
+	if err := l.Executor.sleep(ctx, delay); err != nil {
 		return skip(FastPathSkipSettleCancelled)
-	case <-timer.C:
 	}
 	l.capturePhase = "open@settle"
 	findings, runs, refreshError := l.refresh(ctx)

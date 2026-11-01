@@ -58,8 +58,6 @@ sdo/operator/runtime/new_inputs_hermetic_test.go:time.Now
 sdo/operator/runtime/new_inputs_hermetic_test.go:time.Since
 sdo/operator/runtime/plan_executor_observe.go:time.NewTicker
 sdo/operator/runtime/plan_executor_observe_test.go:time.After
-sdo/operator/runtime/plan_executor_retry.go:math/rand/v2.Int64N
-sdo/operator/runtime/plan_executor_retry.go:time.NewTimer
 sdo/operator/runtime/plan_git_source.go:os/exec
 sdo/operator/runtime/plan_git_source_test.go:os.Getenv
 sdo/operator/runtime/plan_git_source_test.go:os/exec
@@ -74,7 +72,6 @@ sdo/operator/runtime/prober/link_protocol_test.go:net.Listen
 sdo/operator/runtime/prober/link_protocol_test.go:net/http/httptest.NewUnstartedServer
 sdo/operator/runtime/prober/link_protocol_test.go:os.Getenv
 sdo/operator/runtime/prober/link_protocol_test.go:time.Now
-sdo/operator/runtime/program_fast_path.go:time.NewTimer
 sdo/operator/runtime/program_revision.go:os/exec
 sdo/operator/runtime/prometheus/client_test.go:net/http/httptest.NewServer
 sdo/operator/runtime/prometheus/client_test.go:time.Now
@@ -82,7 +79,6 @@ sdo/operator/runtime/prometheus/client_test.go:time.Since
 sdo/operator/runtime/registered_reflection_integration_test.go:os.Environ
 sdo/operator/runtime/registered_reflection_integration_test.go:os/exec
 sdo/operator/runtime/responder_loop.go:crypto/rand.Read
-sdo/operator/runtime/responder_loop.go:time.NewTimer
 sdo/operator/runtime/responder_loop_mitigator_test.go:time.After
 sdo/operator/runtime/responder_loop_mitigator_test.go:time.Now
 sdo/operator/runtime/responder_loop_mitigator_test.go:time.Since
