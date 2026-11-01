@@ -142,3 +142,8 @@ host executable provenance in this mode; it does not prove a controller rollout.
 Never infer that a learned detector is live from acceptance alone: candidate
 build/catch-up failures leave the previous host active and closure unacknowledged.
 Flag-off runs retain the existing restart receipts and supervisor behavior.
+
+Memory-host observations contain optional input windows only. Kubernetes object
+state is selected by the completed mirror sequence; no inline snapshot fallback
+exists. A failed scheduler start leaves the previous revision serving, and crash
+recovery restores the accepted immutable revision with its requested traffic state.
