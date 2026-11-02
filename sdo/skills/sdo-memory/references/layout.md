@@ -20,11 +20,11 @@ Schema version: 3. Paths are repository-relative and used only while editing a p
 | `.sdo/lifecycle-provenance.yaml` | `lifecycle-provenance` | `—` | no agent may change this file; the controller owns it |
 | `.sdo/diagnostics/go.mod` | `diagnostics-module` | `go.mod` | changeable by upkeep in the initial phase |
 | `.sdo/diagnostics/go.sum` | `diagnostics-module` | `go.sum` | changeable by upkeep in the initial phase |
-| `.sdo/diagnostics/manifest.yaml` | `legacy-detector-manifest` | `—` | no agent may change this file; the controller owns it |
-| `.sdo/diagnostics/detectors/health/<detector-id>/manifest.yaml` | `health-detector-manifest` | `detector-id` | changeable by health_judge in the initial phase |
-| `.sdo/diagnostics/detectors/health/<detector-id>/detector.go` | `health-detector-source` | `detector-id` | changeable by health_judge in the initial phase |
-| `.sdo/diagnostics/detectors/incidents/<detector-id>/manifest.yaml` | `incident-detector-manifest` | `detector-id` | changeable by human in the import phase or responder in the reflection phase |
-| `.sdo/diagnostics/detectors/incidents/<detector-id>/detector.go` | `incident-detector-source` | `detector-id` | changeable by human in the import phase or responder in the reflection phase |
+| `.sdo/diagnostics/manifest.yaml` | `legacy-detector-manifest` | `—` | changeable by upkeep in the initial phase |
+| `.sdo/diagnostics/detectors/health/<detector-id>/manifest.yaml` | `health-detector-manifest` | `detector-id` | changeable by health_judge in the initial phase or upkeep in the initial phase |
+| `.sdo/diagnostics/detectors/health/<detector-id>/detector.go` | `health-detector-source` | `detector-id` | changeable by health_judge in the initial phase or upkeep in the initial phase |
+| `.sdo/diagnostics/detectors/incidents/<detector-id>/manifest.yaml` | `incident-detector-manifest` | `detector-id` | changeable by human in the import phase or responder in the reflection phase or upkeep in the initial phase |
+| `.sdo/diagnostics/detectors/incidents/<detector-id>/detector.go` | `incident-detector-source` | `detector-id` | changeable by human in the import phase or responder in the reflection phase or upkeep in the initial phase |
 | `.sdo/diagnostics/traffic/generators/application/generator.go` | `traffic-generator` | `application` | changeable by health_judge in the initial phase |
 | `.sdo/diagnostics/traffic/generators/incident/generator.go` | `traffic-generator` | `incident` | changeable by responder in the reflection phase |
 | `.sdo/diagnostics/traffic/workloads/application.yaml` | `traffic-workload` | `application` | changeable by health_judge in the initial phase |

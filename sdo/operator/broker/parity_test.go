@@ -302,9 +302,9 @@ func testCLIAndBrokerAgreeOnAcceptanceCases(t *testing.T, shard int, real bool) 
 		{name: "protected health registration", actor: validate.Responder, phase: validate.ReflectionPhase, edit: func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/diagnostics/detectors/health/health/manifest.yaml", "interval: 30s", "interval: 20s")
 		}, want: []string{validate.RuleOwnershipDenied, validate.RuleProtectedDetector}},
-		{name: "upkeep cannot change detectors", actor: validate.Upkeep, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
+		{name: "upkeep cannot change detectors without schema migration", actor: validate.Upkeep, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", "package detector", "package detector\n// changed")
-		}, want: []string{validate.RuleOwnershipDenied}},
+		}, want: []string{validate.RuleUpkeepMigration}},
 		{name: "unknown phase", actor: validate.Responder, phase: "unknown", edit: func(t *testing.T, r string) {
 			put(t, r, "app.txt", "change\n", 0o644)
 		}, want: []string{validate.RuleUnknownPhase}},
