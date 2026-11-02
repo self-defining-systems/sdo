@@ -239,3 +239,22 @@ def test_respond_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: py
     }
     assert actual.verification_evidence[0].passed
     assert not actual.repair_actions
+
+
+def test_tool_reads_json_and_follows_a_capped_reply_to_its_details_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop import responder_steps
+
+    details = tmp_path / "0001-diagnose.json"
+    details.write_text(json.dumps({"command": "diagnose", "program_runs": [{"program_id": "p"}]}))
+    calls: list[list[str]] = []
+
+    def command(argv: list[str], **_kwargs: object) -> str:
+        calls.append(argv)
+        reply = {"command": "diagnose", "summarized": True, "details_file": str(details)}
+        return json.dumps(reply) + "\nhuman summary\n"
+
+    monkeypatch.setattr(responder_steps, "_command", command)
+    assert responder_steps._tool("diagnose")["program_runs"] == [{"program_id": "p"}]
+    assert calls == [["sdo", "diagnose", "--json"]]
