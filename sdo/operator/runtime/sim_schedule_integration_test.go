@@ -249,6 +249,8 @@ func TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure(t *testing.
 					}})
 					c.dispatcher = simDriftDispatch{world: w}
 				}
+				// The health detector is a stub: both faults are drift only.
+				w.driftOnly = map[string]bool{simServiceName(0): true, simServiceName(1): true}
 				w.restart()
 				inject := func(index int) {
 					w.setPort(simServiceName(index), 9999)
