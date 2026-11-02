@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
 COPY --from=submission-guard-build /usr/local/bin/sdo-submission-guard /usr/local/bin/sdo-submission-guard
 COPY --from=sregym-responder /opt/sdo/benchmarks /opt/sdo/benchmarks
 COPY benchmarks/sregym/agent_script/synthetic_health_judge.py benchmarks/sregym/agent_script/template.py benchmarks/sregym/agent_script/model.py benchmarks/sregym/agent_script/invocation.py benchmarks/sregym/agent_script/__init__.py benchmarks/sregym/agent_script/judge_example.py benchmarks/sregym/agent_script/runner.py benchmarks/sregym/agent_script/converter.py benchmarks/sregym/agent_script/cli.py benchmarks/sregym/agent_script/wire.py benchmarks/sregym/agent_script/__main__.py /opt/sdo/benchmarks/sregym/agent_script/
-COPY benchmarks/sregym/fastloop/generated_worker.py benchmarks/sregym/fastloop/responder_script.py benchmarks/sregym/fastloop/responder_steps.py benchmarks/sregym/fastloop/reflection_script.py /opt/sdo/benchmarks/sregym/fastloop/
+COPY benchmarks/sregym/fastloop/generated_worker.py benchmarks/sregym/fastloop/responder_script.py benchmarks/sregym/fastloop/responder_steps.py benchmarks/sregym/fastloop/reflection_script.py benchmarks/sregym/fastloop/judge_script.py /opt/sdo/benchmarks/sregym/fastloop/
 COPY benchmarks/sregym/fastloop/scripted_program /opt/sdo/benchmarks/sregym/fastloop/scripted_program
 COPY benchmarks/sregym/fastloop/scripted_networkpolicy_program /opt/sdo/benchmarks/sregym/fastloop/scripted_networkpolicy_program
 RUN chmod -R a+rX /opt/sdo/benchmarks

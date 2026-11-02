@@ -134,7 +134,7 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
         *(str(path.relative_to(REPO_ROOT)) for path in (REPO_ROOT / "benchmarks/sregym/agent_script").glob("*.py")),
         *(
             f"benchmarks/sregym/fastloop/{name}.py"
-            for name in ("generated_worker", "responder_script", "responder_steps", "reflection_script")
+            for name in ("generated_worker", "responder_script", "responder_steps", "reflection_script", "judge_script")
         ),
         *SCRIPTED_PROGRAM_FILES,
     }
@@ -231,7 +231,7 @@ def test_scripts_stage_contains_only_its_entry_point_and_program() -> None:
         *(str(path.relative_to(REPO_ROOT)) for path in (REPO_ROOT / "benchmarks/sregym/agent_script").glob("*.py")),
         *(
             f"benchmarks/sregym/fastloop/{name}.py"
-            for name in ("generated_worker", "responder_script", "responder_steps", "reflection_script")
+            for name in ("generated_worker", "responder_script", "responder_steps", "reflection_script", "judge_script")
         ),
         "benchmarks/sregym/fastloop/scripted_program/README.md",
         "benchmarks/sregym/fastloop/scripted_program/diagnose.go",

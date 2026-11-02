@@ -20,6 +20,7 @@ var benchmarkFiles = []string{
 	"benchmarks/sregym/fastloop/responder_script.py",
 	"benchmarks/sregym/fastloop/responder_steps.py",
 	"benchmarks/sregym/fastloop/reflection_script.py",
+	"benchmarks/sregym/fastloop/judge_script.py",
 	"benchmarks/sregym/agent_script/template.py",
 	"benchmarks/sregym/agent_script/model.py",
 	"benchmarks/sregym/agent_script/invocation.py",
