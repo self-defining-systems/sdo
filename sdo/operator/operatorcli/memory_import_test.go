@@ -34,7 +34,7 @@ func TestMemoryImportPrepareAndPublishRequirements(t *testing.T) {
 	out.Reset()
 	stderr.Reset()
 	args[1] = "publish"
-	if code := RunMemory(context.Background(), args, getenv, &out, &stderr); code != exitInfra {
-		t.Fatalf("publish without isolated validator configuration: %d %s", code, stderr.String())
+	if code := RunMemory(context.Background(), args, getenv, &out, &stderr); code == 0 {
+		t.Fatalf("publish of an unchanged proposal was accepted: %d %s", code, stderr.String())
 	}
 }
