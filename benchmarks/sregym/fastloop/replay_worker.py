@@ -96,6 +96,8 @@ class CapturedKubernetesAPI:
         raise CheckpointError(f"uncaptured Kubernetes command: {argv[:6]}")
 
     def tool(self, *args: str) -> dict[str, Any]:
+        # Replies are always JSON here; the flag only selects the real CLI's output form.
+        args = tuple(arg for arg in args if arg != "--json")
         if args[0] == "source":
             if len(args) != 2:
                 raise CheckpointError(f"invalid source reference: {args[1:]}")
