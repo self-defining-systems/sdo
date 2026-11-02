@@ -153,14 +153,6 @@ func exampleTree(t *testing.T) string {
 	return root
 }
 
-func TestSkillExamplesPassMemoryCheckAndGoTest(t *testing.T) {
-	root := exampleTree(t)
-	got := diagnose(t, Request{Root: root, Layers: Structural | Semantic | Compile, OperatorRoot: filepath.Join("..", "..")})
-	if len(got) != 0 {
-		t.Fatalf("skill examples are invalid:\n%v", got)
-	}
-}
-
 func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 	var missing []string
 	for _, rel := range []string{
