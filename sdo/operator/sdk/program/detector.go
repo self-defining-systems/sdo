@@ -3,11 +3,7 @@ package program
 import (
 	"fmt"
 	"sdo.dev/operator/sdk"
-<<<<<<< HEAD
-	"sdo.dev/operator/sdk/inputs"
-=======
 	"time"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 )
 
 type snapshotReadView struct {
@@ -15,46 +11,6 @@ type snapshotReadView struct {
 	sdk.ScopedObservationSource
 }
 
-<<<<<<< HEAD
-// DetectorFromProgram promotes a snapshot-only diagnoser to a detector.
-func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector {
-	return programDetector{program: p, locate: locate, spec: spec}
-}
-
-func (d programDetector) Spec() sdk.DetectorSpec { return d.spec }
-
-func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionContext) ([]sdk.Finding, error) {
-	findings := make([]sdk.Finding, 0)
-	for _, bindings := range d.locate(snapshot) {
-		verdict := RunDiagnose(ctx, d.program, snapshotReadView{inputs.New(snapshot)}, bindings, 10*time.Second)
-		if verdict.Result != Match {
-			continue
-		}
-		var primary sdk.ObjectRef
-		for _, param := range d.program.Spec().Params {
-			if param.Required {
-				primary = bindings[param.Name]
-				break
-			}
-		}
-		parts := make([]string, 0, len(verdict.Evidence))
-		for _, evidence := range verdict.Evidence {
-			parts = append(parts, fmt.Sprintf("%s %s/%s %s: observed %s; expected %s", evidence.Resource.Kind, evidence.Resource.Namespace, evidence.Resource.Name, evidence.Fact, evidence.Observed, evidence.Expected))
-		}
-		findings = append(findings, sdk.Finding{
-			DetectorID: d.spec.ID, RuleID: d.spec.ID, Status: sdk.FindingActive,
-			Severity: d.spec.Batching.Severity, Summary: d.program.Spec().ID,
-			Evidence: strings.Join(parts, "; "), PrimaryResource: primary,
-			Playbooks: []string{d.spec.ID}, ParameterBindings: bindings,
-		})
-	}
-	return findings, nil
-}
-
-type snapshotReadView struct{ inputs.Carrier }
-
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func (snapshotReadView) Logs(sdk.ObjectRef, string, time.Duration) (string, error) {
 	return "", fmt.Errorf("logs unavailable in detector context")
 }

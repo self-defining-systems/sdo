@@ -1,11 +1,8 @@
 package sdktest
 
 import (
-<<<<<<< HEAD
 	batchv1 "k8s.io/api/batch/v1"
-=======
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sort"
 	"time"
 
@@ -18,20 +15,15 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"sdo.dev/operator/sdk"
-<<<<<<< HEAD
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
-=======
-	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
 )
 
 type Snapshot struct {
-<<<<<<< HEAD
 	Reachability *servicehealth.ReachabilityWindow `json:"-"`
 	// Usage holds a synthetic resource usage window.
 	Usage              *usage.Result                  `json:"-"`
@@ -45,13 +37,11 @@ type Snapshot struct {
 	DaemonSetList      []appsv1.DaemonSet             `json:"daemonSets"`
 	// Logs holds synthetic bounded log windows by query ID.
 	Logs map[string]logs.Result `json:"-"`
-=======
 	// ObjectSnapshotVersion 1 stores namespace-local objects in Objects and in
 	// the typed lists; ObjectsOnlySnapshotVersion stores them in Objects only.
 	ObjectSnapshotVersion int                         `json:"object_snapshot_version,omitempty"`
 	Admission             *sdk.PodAdmissionResult     `json:"pod_admission,omitempty"`
 	Objects               []unstructured.Unstructured `json:"objects,omitempty"`
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName         string `json:"-"`
 	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
@@ -299,7 +289,6 @@ func lessObject(leftNamespace string, leftName string, rightNamespace string, ri
 	return leftName < rightName
 }
 
-<<<<<<< HEAD
 // UsageResult implements usage.Source with isolated synthetic windows.
 func (s Snapshot) UsageResult() (usage.Result, bool) {
 	if s.Usage == nil {
@@ -399,7 +388,6 @@ func (s Snapshot) Secrets() []sdk.SecretMetadata {
 // LogResult implements logs.Source.
 func (s Snapshot) LogResult(id string) (logs.Result, bool) { r, ok := s.Logs[id]; return r, ok }
 
-=======
 func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result {
 	if err := q.Validate(); err != nil {
 		return metrics.Result{Query: q, Error: err.Error()}
@@ -419,15 +407,12 @@ func (s Snapshot) RuntimeReadView() program.ReadView {
 	return &ReplayReadView{Snapshot: s, Calls: s.Readings}
 }
 
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
 	if s.Reachability == nil {
 		return servicehealth.ReachabilityWindow{}, false
 	}
 	return *s.Reachability, true
 }
-<<<<<<< HEAD
-=======
 
 func (s Snapshot) PodAdmission() (sdk.PodAdmissionResult, bool) {
 	if s.Admission == nil {
@@ -449,4 +434,3 @@ func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructu
 func (s Snapshot) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error) {
 	return (&ReplayReadView{Snapshot: s, Calls: s.Readings}).DiffAgainstSource(ref)
 }
->>>>>>> origin/vic-lsh/dev/sdo-improve

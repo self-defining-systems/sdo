@@ -124,11 +124,8 @@ func validObjectAPIVersion(version string) bool {
 }
 
 var objectKinds = map[string]string{
-<<<<<<< HEAD
 	"node": "Node", "nodes": "Node", "pdb": "PodDisruptionBudget", "poddisruptionbudget": "PodDisruptionBudget", "poddisruptionbudgets": "PodDisruptionBudget",
-=======
 	"clusterrole": "ClusterRole", "clusterroles": "ClusterRole", "clusterrolebinding": "ClusterRoleBinding", "clusterrolebindings": "ClusterRoleBinding",
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"cm": "ConfigMap", "configmap": "ConfigMap", "configmaps": "ConfigMap",
 	"cj": "CronJob", "cronjob": "CronJob", "cronjobs": "CronJob",
 	"ds": "DaemonSet", "daemonset": "DaemonSet", "daemonsets": "DaemonSet",

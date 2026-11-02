@@ -16,11 +16,8 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
-<<<<<<< HEAD
 	"sdo.dev/operator/sdk/inputs"
-=======
 	"sdo.dev/operator/sdk/metrics"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 )
 
 type Kind string
@@ -143,15 +140,12 @@ type Mitigator interface {
 // ReadView is a program's frozen, recorded read access to the incident
 // namespace; every read is replayed from the corpus at check time.
 type ReadView interface {
-<<<<<<< HEAD
 	inputs.Sources
-=======
 	// WebhookCAMatchesSecret reports whether one webhook's caBundle equals a Secret key without exposing either value.
 	WebhookCAMatchesSecret(WebhookCA) (bool, error)
 	// AdmissionWebhooksFor lists the webhook entries that admit Pod creation for a Namespace or workload; cluster webhook names need no observation grant.
 	AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)
 	sdk.ObjectReader
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	sdk.DetectionContext
 	sdk.ScopedObservationSource
 	sdk.ObservationClock
@@ -462,10 +456,9 @@ func (v *checkedReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error) {
 	return result, err
 }
 
-<<<<<<< HEAD
 // UnderlyingReadView preserves evidence sinks across the fail-closed wrapper.
 func (v *checkedReadView) UnderlyingReadView() ReadView { return v.ReadView }
-=======
+
 func (v *checkedReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
 	result, err := sdk.ScopedSource(v.ReadView).ScopedDeployments(namespace)
 	v.check(err)
@@ -503,13 +496,6 @@ func (v *checkedReadView) ObservationGeneration() string {
 	return sdk.ScopedSource(v.ReadView).ObservationGeneration()
 }
 
-func (v *checkedReadView) ObservedAt() time.Time {
-	if clock, ok := v.ReadView.(sdk.ObservationClock); ok {
-		return clock.ObservedAt()
-	}
-	return time.Time{}
-}
-
 func (v *checkedReadView) TrafficWindow(name string) (traffic.Window, bool) {
 	if source, ok := v.ReadView.(traffic.Source); ok {
 		r, ok := source.TrafficWindow(name)
@@ -523,13 +509,6 @@ func (v *checkedReadView) TrafficWindow(name string) (traffic.Window, bool) {
 	return traffic.Window{}, false
 }
 
-func (v *checkedReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
-	if source, ok := v.ReadView.(servicehealth.ReachabilitySource); ok {
-		return source.ServiceReachability()
-	}
-	return servicehealth.ReachabilityWindow{}, false
-}
-
 func (v *checkedReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfiguration(name)
 	v.check(err)
@@ -541,4 +520,3 @@ func (v *checkedReadView) ValidatingWebhookConfiguration(name string) (*admissio
 	v.check(err)
 	return result, err
 }
->>>>>>> origin/vic-lsh/dev/sdo-improve

@@ -7,11 +7,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"regexp"
 
-<<<<<<< HEAD
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sdo.dev/operator/sdk"
 )
 
@@ -43,55 +38,6 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		observed := clock.ObservedAt().UTC()
 		s.ObservedAtTime = &observed
 	}
-<<<<<<< HEAD
-	for _, object := range view.ConfigMaps() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.ConfigMapList = append(s.ConfigMapList, copy)
-		}
-	}
-	for _, object := range view.Services() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.ServiceList = append(s.ServiceList, copy)
-		}
-	}
-	for _, object := range view.Pods() {
-		if object.Namespace != namespace {
-			continue
-		}
-		copy := *object.DeepCopy()
-		compactMeta(&copy.ObjectMeta)
-		redactPodSpec(&copy.Spec)
-		s.PodList = append(s.PodList, copy)
-	}
-	for _, object := range view.Deployments() {
-		if object.Namespace != namespace {
-			continue
-		}
-		copy := *object.DeepCopy()
-		compactMeta(&copy.ObjectMeta)
-		compactMeta(&copy.Spec.Template.ObjectMeta)
-		redactPodSpec(&copy.Spec.Template.Spec)
-		s.DeploymentList = append(s.DeploymentList, copy)
-	}
-	for _, object := range view.StatefulSets() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			compactMeta(&copy.Spec.Template.ObjectMeta)
-			redactPodSpec(&copy.Spec.Template.Spec)
-			s.StatefulSetList = append(s.StatefulSetList, copy)
-		}
-	}
-	for _, object := range view.HorizontalPodAutoscalers() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.HPAList = append(s.HPAList, copy)
-=======
 	if scoped, ok := view.(sdk.ScopedObservationSource); ok {
 		s.ScopedSnapshot.Version = 1
 		s.ScopedSnapshot.Generation = scoped.ObservationGeneration()
@@ -140,24 +86,15 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 				}
 				s.ScopedSnapshot.Endpoints = append(s.ScopedSnapshot.Endpoints, objects...)
 			}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 
 	}
-<<<<<<< HEAD
-	for _, object := range view.PodDisruptionBudgets() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.PDBList = append(s.PDBList, copy)
-=======
 	objects := sdk.TypedObjects(view)
 	if source, ok := view.(sdk.ObjectCaptureSource); ok {
 		var err error
 		objects, err = source.CaptureObjects(refs)
 		if err != nil {
 			return Snapshot{}, err
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 	}
 	seen := map[sdk.ObjectRef]bool{}
@@ -187,55 +124,6 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 	sdk.SortObjects(s.Objects)
 	if err := sdk.DecodeTypedObjects(&s, local); err != nil {
 		return Snapshot{}, err
-	}
-	for _, object := range view.DaemonSets() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			compactMeta(&copy.Spec.Template.ObjectMeta)
-			redactPodSpec(&copy.Spec.Template.Spec)
-			s.DaemonSetList = append(s.DaemonSetList, copy)
-		}
-	}
-	for _, object := range view.Jobs() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			compactMeta(&copy.Spec.Template.ObjectMeta)
-			redactPodSpec(&copy.Spec.Template.Spec)
-			s.JobList = append(s.JobList, copy)
-		}
-	}
-	for _, object := range view.CronJobs() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			compactMeta(&copy.Spec.JobTemplate.ObjectMeta)
-			compactMeta(&copy.Spec.JobTemplate.Spec.Template.ObjectMeta)
-			redactPodSpec(&copy.Spec.JobTemplate.Spec.Template.Spec)
-			s.CronJobList = append(s.CronJobList, copy)
-		}
-	}
-	for _, object := range view.PersistentVolumeClaims() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.PVCList = append(s.PVCList, copy)
-		}
-	}
-	for _, object := range view.ServiceAccounts() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.ServiceAccountList = append(s.ServiceAccountList, copy)
-		}
-	}
-	for _, object := range view.Ingresses() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.IngressList = append(s.IngressList, copy)
-		}
 	}
 	for _, object := range view.Nodes() {
 		copy := *object.DeepCopy()

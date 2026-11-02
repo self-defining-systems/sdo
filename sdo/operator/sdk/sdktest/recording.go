@@ -560,7 +560,6 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 	return recorder.Calls, nil
 }
 
-<<<<<<< HEAD
 // SnapshotCalls copies recorded evidence while timed-out readers may still finish.
 func (v *RecordingReadView) SnapshotCalls() []PrimitiveCall {
 	v.mu.Lock()
@@ -583,7 +582,7 @@ func (v *RecordingReadView) RecordExternalCalls(calls []PrimitiveCall) {
 
 // UnderlyingReadView preserves frozen optional inputs across recording.
 func (v *RecordingReadView) UnderlyingReadView() program.ReadView { return v.ReadView }
-=======
+
 func (v *RecordingReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
 	result, err := sdk.ScopedSource(v.ReadView).ScopedDeployments(namespace)
 	v.record("ScopedDeployments", []any{namespace}, result, err)
@@ -708,4 +707,3 @@ func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured
 	}
 	return sdk.TypedObjects(v.ReadView), nil
 }
->>>>>>> origin/vic-lsh/dev/sdo-improve

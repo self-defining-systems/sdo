@@ -219,7 +219,6 @@ func (d SourceDiff) PresentButNotInSource() bool { return d.Changed && d.SourceA
 // DetectionContext is the frozen snapshot read by detectors and, through
 // ReadView, by programs.
 type DetectionContext interface {
-<<<<<<< HEAD
 	StatefulSets() []appsv1.StatefulSet
 	DaemonSets() []appsv1.DaemonSet
 	Jobs() []batchv1.Job
@@ -232,14 +231,12 @@ type DetectionContext interface {
 	Nodes() []corev1.Node
 	Secrets() []SecretMetadata
 
-=======
 	// DiffAgainstSource compares a captured resource with accepted source, including
 	// source absence. Runtime reads are frozen per snapshot and recorded for replay.
 	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
 	DiffAgainstSource(ref ObjectRef) (SourceDiff, error)
 	// PodAdmission returns the frozen dry-run result, false when unobserved.
 	PodAdmission() (PodAdmissionResult, bool)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	Namespace() string
 	ConfigMaps() []corev1.ConfigMap
 	Services() []corev1.Service
