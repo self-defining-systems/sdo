@@ -262,7 +262,6 @@ def test_sweep_stream_models_an_unowned_service_without_changing_controller():
         fault_spec("toy_readiness_unowned_backend")
 
 
-<<<<<<< HEAD
 @pytest.mark.parametrize("custom", [True, False])
 def test_toy_controller_publishes_selected_registrations(tmp_path, monkeypatch, custom):
     from dataclasses import dataclass
@@ -292,69 +291,6 @@ def test_toy_controller_publishes_selected_registrations(tmp_path, monkeypatch, 
     monkeypatch.setattr(toy, "wait_for_baseline", lambda *args: None)
     assert toy.install_controller(environment, config) is config
     assert published[0][0] == (selected or ROOT / "benchmarks/sregym/fastloop/agent_registrations")
-=======
-@pytest.mark.parametrize(
-    "change", ["none", "source-repair", "namespace", "objective", "topology", "missing-detector", "changed-detector"]
-)
-def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypatch, change):
-    import shutil
-
-    import yaml
-
-    from benchmarks.sregym.adapter import scripted_worker
-    from sdo.contracts import HealthJudgeRequest, IncidentRequest, SourceResource
-
-    monkeypatch.delenv("SDO_SCRIPTED_REPLAY_SLOT", raising=False)
-    seed = ROOT / "apps/toy/seed/.sdo"
-    shutil.copytree(seed, tmp_path / ".sdo")
-    body = (seed / "goal.md").read_text().split("---\n", 2)[2].strip()
-    source = tmp_path / "kubernetes"
-    shutil.copytree(ROOT / "apps/toy/kubernetes", source)
-    if change == "source-repair":
-        monkeypatch.setenv("SDO_SCRIPTED_SOURCE_REPAIR", "1")
-        monkeypatch.setattr(
-            scripted_worker, "_tool", lambda *args: {"program_runs": []} if args[0] == "diagnose" else {"healthy": True}
-        )
-        monkeypatch.setattr(scripted_worker, "_command", lambda *_args, **_kwargs: "")
-        result = scripted_worker.scripted_responder(
-            IncidentRequest(incident_id="synthetic", namespace="sdo-toy", repository_worktree=str(tmp_path))
-        )
-        assert len(result.repair_actions) == 1
-    resources = []
-    for path in sorted(source.glob("*.yaml")):
-        resources.extend(
-            SourceResource(
-                kind=obj["kind"],
-                namespace=obj["metadata"].get("namespace", "sdo-toy"),
-                name=obj["metadata"]["name"],
-                source=f"kubernetes/{path.name}",
-            )
-            for obj in yaml.safe_load_all(path.read_text())
-        )
-    request = HealthJudgeRequest(
-        namespace="other" if change == "namespace" else "sdo-toy",
-        health_objective="changed" if change == "objective" else body,
-        accepted_source_commit="a" * 40,
-        source_resources=resources,
-    )
-    detector = tmp_path / ".sdo/diagnostics/detectors/health/toy-endpoints/detector.go"
-    if change == "topology":
-        request.source_resources.add(
-            kind="Deployment", namespace="sdo-toy", name="unexpected", source="kubernetes/new.yaml"
-        )
-    if change == "missing-detector":
-        detector.unlink()
-    if change == "changed-detector":
-        detector.write_text("package toy\n")
-    if change in {"none", "source-repair"}:
-        result = scripted_worker.scripted_health_judge(request, tmp_path)
-        assert result.authored
-        assert "toy-endpoints" in result.detector_ids
-        assert "health-objective" in result.detector_ids
-        assert (tmp_path / ".sdo/diagnostics/detectors/health/health-objective/detector.go").is_file()
-    else:
-        with pytest.raises(ValueError, match="scripted toy health refresh"):
-            scripted_worker.scripted_health_judge(request, tmp_path)
 
 
 def test_toy_recovery_writes_only_committed_source(tmp_path, monkeypatch):
@@ -379,4 +315,3 @@ def test_toy_recovery_writes_only_committed_source(tmp_path, monkeypatch):
     )
     ToyWorker(SimpleNamespace(kubeconfig=tmp_path / "config", namespace="toy", workspace=tmp_path)).request("recover")
     assert written == list(source.manifests)
->>>>>>> origin/vic-lsh/dev/sdo-improve
