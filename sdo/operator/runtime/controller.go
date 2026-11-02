@@ -1547,6 +1547,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		finalStates = nil
 	}
 	if verified && c.config.CorpusSessionRoot != "" {
+		// Detection does not run while these captures do, so their cost is reported.
+		captureStart := c.clock()
 		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, c.currentIncidentRequest.IncidentID, "fixed", snapshot, c.config.Namespace, findingCaptureRefs(c.currentIncidentRequest.Findings)...); err != nil {
 			c.mu.Unlock()
 			c.reportBrokerError("capture verified snapshot", err)
@@ -1557,14 +1559,19 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			c.reportBrokerError("bind closure healthy baseline", err)
 			return
 		}
+		snapshotMs := c.clock().Sub(captureStart).Milliseconds()
 		if c.drift != nil && c.drift.View != nil {
 			incidentID := c.currentIncidentRequest.IncidentID
 			findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)
 			c.mu.Unlock()
+			readsStart := c.clock()
 			err := memory.CaptureRepairedProgramReads(c.config.CorpusSessionRoot, incidentID, c.drift.View(snapshot))
+			readsMs := c.clock().Sub(readsStart).Milliseconds()
+			routingStart := c.clock()
 			if err == nil {
 				err = captureRoutingEvidence(ctx, c.config.CorpusSessionRoot, incidentID, "fixed", findings, c.drift.View(snapshot))
 			}
+			slog.Info("verified_capture_timing", "incident_id", incidentID, "snapshot_ms", snapshotMs, "program_reads_ms", readsMs, "routing_ms", c.clock().Sub(routingStart).Milliseconds())
 			c.mu.Lock()
 			if err != nil {
 				c.mu.Unlock()
