@@ -20,7 +20,7 @@ import (
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/runtime/sim"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -72,19 +72,10 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 					testutil.CloneGit(t, remoteURL, laneRoots[lane], "--branch", branch)
 				}
 			}
-			operatorRoot, err := filepath.Abs("..")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var compiles atomic.Int32
-			compile := func(ctx context.Context, stage string, _ []string) error {
-				compiles.Add(1)
-				ds, err := validate.CompileCandidate(ctx, validate.Request{Root: stage, OperatorRoot: operatorRoot})
-				if err != nil {
-					return err
-				}
-				return validate.Err(ds)
-			}
+			// The subject is conflict handling across lanes; the compile gate is a
+			// simulated edge (see sim.Compiler). Real compilation has its own tests.
+			var compiler sim.Compiler
+			compile := compiler.Compile
 			started := make(chan int, 2)
 			releases := []chan struct{}{make(chan struct{}), make(chan struct{})}
 			controllers := make([]*Controller, 2)
@@ -308,7 +299,7 @@ func TestHermeticSharedMemoryControllers(t *testing.T) {
 					}
 				}
 			}
-			if compiles.Load() < 4 {
+			if len(compiler.Calls()) < 4 {
 				t.Fatal("independent compiler was bypassed")
 			}
 		})
