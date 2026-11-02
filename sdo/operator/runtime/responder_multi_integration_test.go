@@ -141,7 +141,13 @@ func TestMultiMitigationTransportServesReadsWhilePending(t *testing.T) {
 	transport := func(payload string) map[string]any {
 		t.Helper()
 		name := fmt.Sprintf("scripted-%d.json", time.Now().UnixNano())
-		if err := os.WriteFile(filepath.Join(directory, "requests", name), []byte(payload), 0600); err != nil {
+		// Publish atomically, as the production client does: the server skips dot-prefixed
+		// names, so it never reads a half-written request.
+		hidden := filepath.Join(directory, "requests", "."+name)
+		if err := os.WriteFile(hidden, []byte(payload), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(hidden, filepath.Join(directory, "requests", name)); err != nil {
 			t.Fatal(err)
 		}
 		timeout := time.After(time.Second)
