@@ -27,7 +27,10 @@ import (
 // outcome, not just successfully compile the one authored program.
 func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 	ctx := context.Background()
-	binary := operatorCLIFixture(t)
+	binary := operatorCLIFixture(t) // built with the real compiler, before the fake is installed
+	// The coverage gap is a static reflection rule; both validators reach the
+	// same rule over a synthetic compiler.
+	testutil.FakeGo(t)
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
