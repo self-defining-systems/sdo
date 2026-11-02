@@ -48,13 +48,6 @@ message OutcomeRecord {
   int32 response_loops_used = 27;
   bool response_loop_exhausted = 28;
   repeated DriftEvent drift_events = 29;
-<<<<<<< HEAD
-  string resolution_path = 30 [(buf.validate.field).string = {in: ["", "fast_path", "deterministic", "responder"]}];
-  repeated string fast_path_programs = 31;
-  string fast_path_skipped_reason = 32;
-  repeated RelationCoveredFinding fast_path_relation_covered_findings = 33;
-  repeated StageReport prior_stages = 34;
-=======
   string resolution_path = 30 [(buf.validate.field).string = {in: ["", "responder", "deterministic"]}];
   reserved 31;
   reserved 32;
@@ -76,7 +69,6 @@ message OutcomeRecord {
   DriftReprompt drift_reprompt = 39;
   repeated DisabledSetupDetector disabled_setup_detectors = 40;
   StatePersistenceFailure state_persistence_failure = 41;
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 message OutcomeTimestamps {

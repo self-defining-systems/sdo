@@ -37,8 +37,8 @@ const (
 
 type ControllerConfig struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	MemoryHostBinary string                 `protobuf:"bytes,75,opt,name=memory_host_binary,json=memoryHostBinary,proto3" json:"memory_host_binary,omitempty"`
-	MemoryHostDigest string                 `protobuf:"bytes,76,opt,name=memory_host_digest,json=memoryHostDigest,proto3" json:"memory_host_digest,omitempty"`
+	MemoryHostBinary string                 `protobuf:"bytes,82,opt,name=memory_host_binary,json=memoryHostBinary,proto3" json:"memory_host_binary,omitempty"`
+	MemoryHostDigest string                 `protobuf:"bytes,83,opt,name=memory_host_digest,json=memoryHostDigest,proto3" json:"memory_host_digest,omitempty"`
 	// Observation and identity.
 	Namespace        string `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	ControlNamespace string `protobuf:"bytes,2,opt,name=control_namespace,json=controlNamespace,proto3" json:"control_namespace,omitempty"`
@@ -125,7 +125,7 @@ type ControllerConfig struct {
 	// token and requires metrics_url.
 	MetricsUrl string `protobuf:"bytes,70,opt,name=metrics_url,json=metricsUrl,proto3" json:"metrics_url,omitempty"`
 	// SDO-owned publishing base, independent of an overridden query URL.
-	MetricsPublishUrl string `protobuf:"bytes,73,opt,name=metrics_publish_url,json=metricsPublishUrl,proto3" json:"metrics_publish_url,omitempty"`
+	MetricsPublishUrl string `protobuf:"bytes,81,opt,name=metrics_publish_url,json=metricsPublishUrl,proto3" json:"metrics_publish_url,omitempty"`
 	MetricsTokenFile  string `protobuf:"bytes,71,opt,name=metrics_token_file,json=metricsTokenFile,proto3" json:"metrics_token_file,omitempty"`
 	// Trusted controller image supplying Go to compiler-free workers and validators.
 	// Required at startup, independently of the optional traffic prober image.
@@ -823,15 +823,10 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-<<<<<<< HEAD
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\x8c\x1e\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xcf\x1f\n" +
 	"\x10ControllerConfig\x12,\n" +
-	"\x12memory_host_binary\x18K \x01(\tR\x10memoryHostBinary\x12,\n" +
-	"\x12memory_host_digest\x18L \x01(\tR\x10memoryHostDigest\x12%\n" +
-=======
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\x9d\x1f\n" +
-	"\x10ControllerConfig\x12%\n" +
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
+	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
 	"\bapp_root\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aappRoot\x12 \n" +
@@ -892,7 +887,7 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x17deployed_manifest_paths\x18? \x03(\tR\x15deployedManifestPaths\x12\x1f\n" +
 	"\vmetrics_url\x18F \x01(\tR\n" +
 	"metricsUrl\x12.\n" +
-	"\x13metrics_publish_url\x18I \x01(\tR\x11metricsPublishUrl\x12,\n" +
+	"\x13metrics_publish_url\x18Q \x01(\tR\x11metricsPublishUrl\x12,\n" +
 	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFile\x12'\n" +
 	"\x0ftoolchain_image\x18K \x01(\tR\x0etoolchainImage\x12S\n" +
 	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12O\n" +
@@ -903,12 +898,9 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePathB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
-<<<<<<< HEAD
-	"\x0f_state_baselineJ\x04\bJ\x10KJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>R\vmemory_hostR\x06brokerR\vbroker_argsR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
-	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourB\x88\x02\n" +
-=======
 	"\x0f_state_baselineB\x14\n" +
-	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_json\"e\n" +
+	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\vmemory_hostR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
+	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_json\"e\n" +
 	"\x0eMemoryUpstream\x12\x19\n" +
 	"\x03url\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x03url\x12\x1f\n" +
 	"\x06branch\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06branch\x12\x17\n" +
@@ -925,7 +917,6 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"activation\x18\x05 \x01(\tR\n" +
 	"activation\x12%\n" +
 	"\x0eagent_guidance\x18\x06 \x01(\tR\ragentGuidanceB\x88\x02\n" +
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"\x1dcom.sdodev.contracts.v1alpha1B\x15ControllerConfigProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

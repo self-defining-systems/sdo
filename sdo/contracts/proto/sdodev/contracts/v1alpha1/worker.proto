@@ -82,7 +82,7 @@ message AgentResult {
 // Reflection runs only after the broker has committed an authoritative
 // outcome. Its worker may propose file edits, but cannot publish them.
 message ReflectionRequest {
-  MetricsSource metrics_source = 13;
+  MetricsSource metrics_source = 17;
   option (buf.validate.message).cel = {
     id: "reflection_request.diagnostics_only_on_retry"
     message: "previous_diagnostics are carried exactly by a retry (validation_attempt > 1)"

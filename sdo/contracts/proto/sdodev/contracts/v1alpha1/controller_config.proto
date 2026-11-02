@@ -19,10 +19,9 @@ import "google/protobuf/duration.proto";
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 message ControllerConfig {
-  reserved 74;
   reserved "memory_host";
-  string memory_host_binary = 75;
-  string memory_host_digest = 76;
+  string memory_host_binary = 82;
+  string memory_host_digest = 83;
   // Observation and identity.
   string namespace = 1 [(buf.validate.field).string.min_len = 1];
   string control_namespace = 2;
@@ -145,7 +144,7 @@ message ControllerConfig {
   // token and requires metrics_url.
   string metrics_url = 70;
   // SDO-owned publishing base, independent of an overridden query URL.
-  string metrics_publish_url = 73;
+  string metrics_publish_url = 81;
   string metrics_token_file = 71;
   reserved 72, 73, 74;
   reserved "plan_safety_policy_json", "plan_safety_policy_sha256", "plan_source_policy_json";

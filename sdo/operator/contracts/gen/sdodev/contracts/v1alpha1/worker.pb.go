@@ -565,7 +565,7 @@ func (x *AgentResult) GetFailureReason() string {
 // outcome. Its worker may propose file edits, but cannot publish them.
 type ReflectionRequest struct {
 	state          protoimpl.MessageState     `protogen:"open.v1"`
-	MetricsSource  *MetricsSource             `protobuf:"bytes,13,opt,name=metrics_source,json=metricsSource,proto3" json:"metrics_source,omitempty"`
+	MetricsSource  *MetricsSource             `protobuf:"bytes,17,opt,name=metrics_source,json=metricsSource,proto3" json:"metrics_source,omitempty"`
 	Closure        *IncidentClosure           `protobuf:"bytes,1,opt,name=closure,proto3" json:"closure,omitempty"`
 	ProposalCommit string                     `protobuf:"bytes,4,opt,name=proposal_commit,json=proposalCommit,proto3" json:"proposal_commit,omitempty"`
 	OutcomeCommit  string                     `protobuf:"bytes,5,opt,name=outcome_commit,json=outcomeCommit,proto3" json:"outcome_commit,omitempty"`
@@ -862,15 +862,10 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\bresponse\x18\x04 \x01(\v2\x14.google.protobuf.AnyR\bresponse\x12\x1f\n" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
-<<<<<<< HEAD
-	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\x80\b\n" +
-	"\x11ReflectionRequest\x12O\n" +
-	"\x0emetrics_source\x18\r \x01(\v2(.sdodev.contracts.v1alpha1.MetricsSourceR\rmetricsSource\x12D\n" +
-=======
 	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\x12\xc8\x01\n" +
-	"\x0efailure_reason\x18\a \x01(\tB\xa0\x01\xbaH\x9c\x01r\x99\x01R\x00R\ragent_timeoutR\fagent_failedR\frate_limitedR\x11account_exhaustedR\x17session_handoff_timeoutR\x17session_handoff_invalidR\x13session_unavailableR\x10result_too_largeR\rfailureReason\"\x83\t\n" +
-	"\x11ReflectionRequest\x12D\n" +
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	"\x0efailure_reason\x18\a \x01(\tB\xa0\x01\xbaH\x9c\x01r\x99\x01R\x00R\ragent_timeoutR\fagent_failedR\frate_limitedR\x11account_exhaustedR\x17session_handoff_timeoutR\x17session_handoff_invalidR\x13session_unavailableR\x10result_too_largeR\rfailureReason\"\xd4\t\n" +
+	"\x11ReflectionRequest\x12O\n" +
+	"\x0emetrics_source\x18\x11 \x01(\v2(.sdodev.contracts.v1alpha1.MetricsSourceR\rmetricsSource\x12D\n" +
 	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +
 	"\x0eoutcome_commit\x18\x05 \x01(\tR\routcomeCommit\x12]\n" +
@@ -924,28 +919,17 @@ var file_sdodev_contracts_v1alpha1_worker_proto_goTypes = []any{
 	(*AgentResult)(nil),                 // 6: sdodev.contracts.v1alpha1.AgentResult
 	(*ReflectionRequest)(nil),           // 7: sdodev.contracts.v1alpha1.ReflectionRequest
 	(*ReflectionResult)(nil),            // 8: sdodev.contracts.v1alpha1.ReflectionResult
-<<<<<<< HEAD
-	(*SdkGap)(nil),                      // 9: sdodev.contracts.v1alpha1.SdkGap
-	(*anypb.Any)(nil),                   // 10: google.protobuf.Any
-	(*timestamppb.Timestamp)(nil),       // 11: google.protobuf.Timestamp
-	(*MetricsSource)(nil),               // 12: sdodev.contracts.v1alpha1.MetricsSource
-	(*IncidentClosure)(nil),             // 13: sdodev.contracts.v1alpha1.IncidentClosure
-	(*OperationalMemorySnapshot)(nil),   // 14: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	(*OutcomeRecord)(nil),               // 15: sdodev.contracts.v1alpha1.OutcomeRecord
-	(*MemoryDiagnostic)(nil),            // 16: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*OperationalArtifactProposal)(nil), // 17: sdodev.contracts.v1alpha1.OperationalArtifactProposal
-=======
 	(*anypb.Any)(nil),                   // 9: google.protobuf.Any
 	(*timestamppb.Timestamp)(nil),       // 10: google.protobuf.Timestamp
-	(*IncidentClosure)(nil),             // 11: sdodev.contracts.v1alpha1.IncidentClosure
-	(*OperationalMemorySnapshot)(nil),   // 12: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	(*OutcomeRecord)(nil),               // 13: sdodev.contracts.v1alpha1.OutcomeRecord
-	(*MemoryDiagnostic)(nil),            // 14: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*ReflectionCauseWork)(nil),         // 15: sdodev.contracts.v1alpha1.ReflectionCauseWork
-	(*ReflectionWorkItem)(nil),          // 16: sdodev.contracts.v1alpha1.ReflectionWorkItem
-	(*OperationalArtifactProposal)(nil), // 17: sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	(*SdkGap)(nil),                      // 18: sdodev.contracts.v1alpha1.SdkGap
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	(*MetricsSource)(nil),               // 11: sdodev.contracts.v1alpha1.MetricsSource
+	(*IncidentClosure)(nil),             // 12: sdodev.contracts.v1alpha1.IncidentClosure
+	(*OperationalMemorySnapshot)(nil),   // 13: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
+	(*OutcomeRecord)(nil),               // 14: sdodev.contracts.v1alpha1.OutcomeRecord
+	(*MemoryDiagnostic)(nil),            // 15: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*ReflectionCauseWork)(nil),         // 16: sdodev.contracts.v1alpha1.ReflectionCauseWork
+	(*ReflectionWorkItem)(nil),          // 17: sdodev.contracts.v1alpha1.ReflectionWorkItem
+	(*OperationalArtifactProposal)(nil), // 18: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*SdkGap)(nil),                      // 19: sdodev.contracts.v1alpha1.SdkGap
 }
 var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	1,  // 0: sdodev.contracts.v1alpha1.AgentRegistration.capabilities:type_name -> sdodev.contracts.v1alpha1.AgentCapability
@@ -953,40 +937,23 @@ var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	3,  // 2: sdodev.contracts.v1alpha1.AgentRegistration.local_process:type_name -> sdodev.contracts.v1alpha1.LocalProcessLaunch
 	9,  // 3: sdodev.contracts.v1alpha1.AgentTask.request:type_name -> google.protobuf.Any
 	4,  // 4: sdodev.contracts.v1alpha1.AgentTask.workspace:type_name -> sdodev.contracts.v1alpha1.ProposalWorkspace
-<<<<<<< HEAD
-	11, // 5: sdodev.contracts.v1alpha1.AgentTask.deadline:type_name -> google.protobuf.Timestamp
-	10, // 6: sdodev.contracts.v1alpha1.AgentResult.response:type_name -> google.protobuf.Any
-	12, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
-	13, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
-	14, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	15, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	15, // 11: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	16, // 12: sdodev.contracts.v1alpha1.ReflectionRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	17, // 13: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	9,  // 14: sdodev.contracts.v1alpha1.ReflectionResult.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
-=======
 	10, // 5: sdodev.contracts.v1alpha1.AgentTask.deadline:type_name -> google.protobuf.Timestamp
 	9,  // 6: sdodev.contracts.v1alpha1.AgentResult.response:type_name -> google.protobuf.Any
-	11, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
-	12, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	13, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	13, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	14, // 11: sdodev.contracts.v1alpha1.ReflectionRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	15, // 12: sdodev.contracts.v1alpha1.ReflectionRequest.cause_work:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
-	16, // 13: sdodev.contracts.v1alpha1.ReflectionRequest.unassigned_work:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
-	17, // 14: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	18, // 15: sdodev.contracts.v1alpha1.ReflectionResult.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	11, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
+	12, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
+	13, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
+	14, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	14, // 11: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	15, // 12: sdodev.contracts.v1alpha1.ReflectionRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	16, // 13: sdodev.contracts.v1alpha1.ReflectionRequest.cause_work:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
+	17, // 14: sdodev.contracts.v1alpha1.ReflectionRequest.unassigned_work:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
+	18, // 15: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	19, // 16: sdodev.contracts.v1alpha1.ReflectionResult.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_worker_proto_init() }
