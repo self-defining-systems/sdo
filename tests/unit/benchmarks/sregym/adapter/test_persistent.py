@@ -1636,6 +1636,8 @@ def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(
     argument = "incident" if reflection else set()
     with pytest.raises(PersistentControllerError, match="within 60s"):
         wait(SlowRead(), "demo", argument, 60, clock)
+
+
 def test_verified_early_report_leaves_controller_active_until_outcome_recorded(tmp_path: Path) -> None:
     ops = FakeOps()
     _run(tmp_path, ops, "s0", [])

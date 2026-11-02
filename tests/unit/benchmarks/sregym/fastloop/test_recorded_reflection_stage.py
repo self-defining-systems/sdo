@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -253,7 +254,7 @@ def test_recorded_covered_reflection_finishes_in_one_request(tmp_path: Path, unr
         check_prompt=check_prompt,
     )
     assert len(list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))) == 1
-    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    result = replay_script_worker(store, 0, "reflection", source=source)
     assert result["status"] == "completed"
 
 

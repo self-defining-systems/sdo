@@ -31,7 +31,7 @@ from benchmarks.sregym.repository_git import host_clone_command
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-SCRIPTED_REGISTRATIONS = Path(__file__).resolve().parents[1] / "adapter/scripted_registrations"
+SCRIPTED_REGISTRATIONS = Path(__file__).resolve().parents[1] / "fastloop/agent_registrations"
 #: Stage names of a real-app problem, in order. ``lane-ready`` is the guarded reset the next problem starts from.
 REAL_STAGES = ("admission", "inject", "detect", "responder", "closure", "recovery", "cleanup", "lane-ready")
 COORD = "/mnt/data/shli/coord/coord"

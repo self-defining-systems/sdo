@@ -142,6 +142,8 @@ def test_go_secret_metadata_snapshot_is_replayed_without_values() -> None:
         status, secret = server.read("/api/v1/namespaces/app/secrets/auth")
         assert status == 200
         assert secret["data"] == {"password": ""}
+
+
 def test_fake_api_serves_objects_only_capture() -> None:
     snapshot = {
         "object_snapshot_version": 2,

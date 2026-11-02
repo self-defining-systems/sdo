@@ -159,13 +159,6 @@ def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypat
     assert len(agent.requests) == 1
 
 
-def test_responder_prompt_preserves_the_assurance_role_marker() -> None:
-    from benchmarks.sregym.assurance.scripted_codex.cli import RESPONDER_MARKER
-    from tests.unit.sdo.agents.prompts.cases import incident, responder_prompt
-
-    assert RESPONDER_MARKER in responder_prompt(incident())[:200]
-
-
 def test_actual_benchmark_transport_and_pull_guidance_fit_the_instruction_cap(monkeypatch) -> None:
     from benchmarks.sregym.adapter.runtime import _responder_instructions
     from sdo.agents.responder.codex import _responder_prompt

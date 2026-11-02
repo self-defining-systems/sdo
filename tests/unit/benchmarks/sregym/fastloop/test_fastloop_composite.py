@@ -69,6 +69,8 @@ def synchronous_fault_sampling(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("benchmarks.sregym.fastloop.composite.BackgroundPoller", Poller)
     yield
     assert not _ACTIVE_TRACKERS
+
+
 @pytest.fixture(autouse=True)
 def registered_faults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(

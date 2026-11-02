@@ -701,6 +701,8 @@ def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monke
     assert replay_broker_result(checkpoint, source=source, operator_root=operator) == {"status": "no_change"}
     assert len(observed) == 1
     assert not observed[0].exists()
+
+
 def test_checkpoint_preserves_controller_healthy_reference(tmp_path: Path) -> None:
     import hashlib
 

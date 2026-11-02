@@ -55,45 +55,6 @@ def test_matched_program_runs_use_the_real_tool_binding_shape(monkeypatch: pytes
     assert calls == [("plan", "service-targetport-mismatch", "--bind", "service=Service/hotel/front")]
 
 
-def test_scripted_gate_publishes_source_without_changing_topology(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    request = from_dict(IncidentRequest, json.loads((FIXTURES / "incident_request.json").read_text()))
-    request.repository_worktree = str(tmp_path)
-    (tmp_path / "kubernetes").mkdir()
-    path = tmp_path / "kubernetes/frontend.yaml"
-    original = {
-        "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": {"name": "frontend", "namespace": request.namespace},
-        "spec": {"ports": [{"port": 80}]},
-    }
-    path.write_text(json.dumps(original))
-    monkeypatch.setenv("SDO_SCRIPTED_SOURCE_REPAIR", "1")
-    monkeypatch.setattr(
-        scripted_worker, "_tool", lambda *args: {"program_runs": []} if args[0] == "diagnose" else {"healthy": True}
-    )
-    commands: list[list[str]] = []
-    monkeypatch.setattr(scripted_worker, "_command", lambda args, **kwargs: commands.append(args) or "")
-    result = scripted_worker.scripted_responder(request)
-    import yaml
-
-    documents = [
-        obj for file in (tmp_path / "kubernetes").glob("*.yaml") for obj in yaml.safe_load_all(file.read_text())
-    ]
-    assert [(obj["kind"], obj["metadata"]["name"]) for obj in documents] == [("Service", "frontend")]
-    assert (
-        yaml.safe_load(path.read_text())["metadata"]["annotations"]["sdo.dev/scripted-verification"]
-        == "independent-health"
-    )
-    assert commands == [["kubectl", "-n", request.namespace, "apply", "-f", str(path)]]
-    assert any(action.resources[0].name == "frontend" for action in result.repair_actions)
-    assert result.usage.llm_calls == 0
-    repeated = scripted_worker.scripted_responder(request)
-    assert len(commands) == 1
-    assert not repeated.repair_actions
-
-
 @pytest.mark.parametrize("seed_source", SEED_SOURCES)
 @pytest.mark.parametrize("proposal_encoding", ["snake_case", "camel_case"])
 @pytest.mark.parametrize(
@@ -110,11 +71,6 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
 ) -> None:
     seed = tmp_path / "seed"
     shutil.copytree(seed_source, seed, ignore=shutil.ignore_patterns(".git"))
-    diagnostics = seed / ".sdo/diagnostics"
-    diagnostics.mkdir(parents=True, exist_ok=True)
-    (diagnostics / "go.mod").write_text(
-        "module fixture-diagnostics\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
-    )
     raw = json.loads((FIXTURES / "incident_request.json").read_text(encoding="utf-8"))
     raw["repository_worktree"] = str(seed)
     raw["namespace"] = "hotel"
@@ -202,11 +158,11 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     assert api.objects["Deployment", "rate"]["spec"]["template"]["spec"]["containers"][0]["image"] == "built:source"
     capture = tmp_path / "capture"
     capture.mkdir()
-    (capture / "open@detect.json").write_text(
+    (capture / "open@pre-apply.json").write_text(
         json.dumps({"services": [{"metadata": {"name": "reservation"}, "spec": {"ports": [{"targetPort": 9999}]}}]}),
         encoding="utf-8",
     )
-    (capture / "open@detect-recordings.json").write_text("[]")
+    (capture / "open@pre-apply-recordings.json").write_text("[]")
     (capture / "fixed.json").write_text(
         json.dumps(
             {
@@ -228,7 +184,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
         encoding="utf-8",
     )
     # Native captures can omit empty collections or retain legacy JSON null.
-    for filename, policies in (("open@detect.json", opened_policies), ("fixed.json", fixed_policies)):
+    for filename, policies in (("open@pre-apply.json", opened_policies), ("fixed.json", fixed_policies)):
         if policies == "null":
             snapshot_path = capture / filename
             snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -279,18 +235,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     assert not decision.HasField("artifact_proposal")
 
 
-def _objects_only(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """The controller's objects-only capture form of a typed-list snapshot."""
-    objects = [
-        {"apiVersion": "v1", "kind": kind, **item, "metadata": {**item["metadata"], "namespace": "app"}}
-        for kind, section in (("Service", "services"), ("Pod", "pods"))
-        for item in snapshot.get(section, [])
-    ]
-    return {"object_snapshot_version": 2, "namespace": "app", "objects": objects}
-
-
-@pytest.mark.parametrize("form", ["typed-lists", "objects-only"])
-def test_captured_pair_selects_changed_service_and_healthy_peer(tmp_path: Path, form: str) -> None:
+def test_captured_pair_selects_changed_service_and_healthy_peer(tmp_path: Path) -> None:
     open_snapshot = {"services": [{"metadata": {"name": "front"}, "spec": {"ports": [{"targetPort": 9999}]}}]}
     fixed_snapshot = {
         "services": [
@@ -305,9 +250,7 @@ def test_captured_pair_selects_changed_service_and_healthy_peer(tmp_path: Path, 
             }
         ],
     }
-    if form == "objects-only":
-        open_snapshot, fixed_snapshot = _objects_only(open_snapshot), _objects_only(fixed_snapshot)
-    (tmp_path / "open@detect.json").write_text(json.dumps(open_snapshot), encoding="utf-8")
+    (tmp_path / "open@pre-apply.json").write_text(json.dumps(open_snapshot), encoding="utf-8")
     (tmp_path / "fixed.json").write_text(json.dumps(fixed_snapshot), encoding="utf-8")
     assert scripts._captured_pair(tmp_path) == ("front", "peer")
 
@@ -408,236 +351,3 @@ def test_respond_repairs_changed_service_behind_deployment_finding(monkeypatch: 
     result = scripts.respond(request)
     assert {"front", "back"} <= set(repairs)
     assert {"front", "back"} <= {resource.name for action in result.repair_actions for resource in action.resources}
-
-
-def test_scripted_responder_removes_added_objects_and_restores_config_from_source(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    request = from_dict(IncidentRequest, json.loads((FIXTURES / "incident_request.json").read_text()))
-    request = evolve(
-        request,
-        namespace="hotel",
-        findings=[],
-        drift_events=[],
-        state_changes=from_dict(
-            StateChanges,
-            {
-                "baseline_at": request.response_deadline,
-                "observed_at": request.response_deadline,
-                "changes": [
-                    {"kind": "ResourceQuota", "name": "tight", "change": "added"},
-                    {"kind": "ValidatingWebhookConfiguration", "name": "deny", "change": "added"},
-                    {"kind": "ConfigMap", "name": "cfg", "change": "modified"},
-                ],
-            },
-        ),
-    )
-    calls: list[list[str]] = []
-    verifies = 0
-
-    def tool(*args: str) -> dict[str, Any]:
-        nonlocal verifies
-        if args[0] == "diagnose":
-            return {"program_runs": []}
-        if args[0] == "source":
-            return {"source": {"data": {"k": "v"}}}
-        verifies += 1
-        return {"healthy": verifies >= 2, "summary": "clear"}
-
-    monkeypatch.setattr(scripted_worker, "_tool", tool)
-    monkeypatch.setattr(scripted_worker, "_command", lambda argv, **_kwargs: calls.append(argv) or "")
-    result = scripted_worker.scripted_responder(request)
-    assert ["kubectl", "-n", "hotel", "delete", "resourcequota", "tight", "--ignore-not-found"] in calls
-    assert ["kubectl", "delete", "validatingwebhookconfiguration", "deny", "--ignore-not-found"] in calls
-    patch = next(argv for argv in calls if "patch" in argv)
-    assert patch[:6] == ["kubectl", "-n", "hotel", "patch", "configmap", "cfg"]
-    assert "--type=merge" in patch
-    assert {action.kind for action in result.repair_actions} == {"kubectl-delete", "kubectl-patch"}
-
-
-@pytest.mark.parametrize("change", ["empty", "corpus", "playbook", "committed", "staged"])
-def test_existing_scripted_program_reports_actual_checkout_diff(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
-) -> None:
-    import subprocess
-
-    def git(*args: str) -> str:
-        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True)
-
-    git("init", "-q")
-    git("config", "user.email", "fixture@example.invalid")
-    git("config", "user.name", "Synthetic fixture")
-    program = tmp_path / ".sdo/playbooks" / scripted_worker.PROGRAM_ID / "diagnose.go"
-    program.parent.mkdir(parents=True)
-    program.write_text("package fixture\n")
-    git("add", ".")
-    git("commit", "-qm", "synthetic accepted program")
-    base = git("rev-parse", "HEAD").strip()
-    monkeypatch.setenv("SDO_BASE_COMMIT", base)
-    monkeypatch.delenv("SDO_SCRIPTED_REPLAY_SLOT", raising=False)
-    if change != "empty":
-        path = program if change == "playbook" else tmp_path / ".sdo/corpus/repeat/labels.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("{}\n")
-        if change in {"committed", "staged"}:
-            git("add", ".")
-        if change == "committed":
-            git("commit", "-qm", "synthetic prepared corpus")
-    checked: list[dict[str, object]] = []
-    original_command = scripted_worker._command
-
-    def command(argv: list[str], **kwargs: Any) -> str:
-        if argv[:3] == ["sdo-operator", "memory", "check"]:
-            checked.append(json.loads(Path(argv[argv.index("--decision") + 1]).read_text()))
-            return ""
-        return original_command(argv, **kwargs)
-
-    monkeypatch.setattr(scripted_worker, "_command", command)
-    turn = scripted_worker.ScriptedReflector().resume(worktree=tmp_path, incident_id="synthetic-repeat")
-    assert turn.learning_decision == ("no_change" if change == "empty" else "updated")
-    expected_ids = [scripted_worker.PROGRAM_ID] if change == "playbook" else []
-    assert turn.playbook_ids == expected_ids
-    assert len(checked) == (0 if change == "empty" else 1)
-    if checked:
-        assert json_format.ParseDict(checked[0], ReflectionResult()) == turn.to_result()
-
-
-@pytest.mark.parametrize("health", ["drift-only", "same-object", "selecting-service", "other-service"])
-def test_scripted_health_repair_is_not_suppressed_by_unsure_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, health: str
-) -> None:
-    ref = {"api_version": "apps/v1", "kind": "Deployment", "namespace": "demo", "name": "catalog"}
-    service = {"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "catalog"}
-    findings = [{"detector_id": "drift.unexplained", "primary_resource": ref}]
-    if health == "same-object":
-        findings.append({"detector_id": "workload-health", "primary_resource": ref})
-    elif health != "drift-only":
-        # The usual first signal: the Service has no ready endpoints before the Pod reports its image error.
-        findings.append({"detector_id": "health-objective", "primary_resource": service})
-    selector = {"app": "other" if health == "other-service" else "catalog"}
-    accepted = {
-        "Service/demo/catalog": {"kind": "Service", "spec": {"selector": selector}},
-        "Deployment/demo/catalog": {
-            "kind": "Deployment",
-            "spec": {"template": {"metadata": {"labels": {"app": "catalog"}}}},
-        },
-    }
-    request = from_dict(
-        IncidentRequest,
-        {
-            "incident_id": "synthetic-image-fault",
-            "namespace": "demo",
-            "repository_worktree": str(tmp_path),
-            "findings": findings,
-            "drift_events": [
-                {
-                    "ref": ref,
-                    "fields": [
-                        {"path": "spec.template.spec.containers[0].image", "old": "accepted:v1", "new": "missing:v1"}
-                    ],
-                }
-            ],
-        },
-    )
-    patches: list[dict[str, str]] = []
-    monkeypatch.delenv("SDO_SCRIPTED_SOURCE_REPAIR", raising=False)
-    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, resource: patches.append(resource))
-
-    def tool(op: str, *args: str) -> dict[str, object]:
-        if op == "diagnose":
-            return {"program_runs": []}
-        if op == "source":
-            return {"source": accepted[args[0]]}
-        # Only restoring the faulted Deployment returns health; patching the Service alone does not.
-        return {"healthy": ref in patches}
-
-    monkeypatch.setattr(scripted_worker, "_tool", tool)
-    response = scripted_worker.scripted_responder(request)
-    authorized = health in {"same-object", "selecting-service"}
-    assert (ref in patches) == authorized
-    assert response.status == ("completed" if authorized else "failed")
-    assert response.drift_events[0].investigation_verdict == "unsure"
-
-
-@pytest.mark.parametrize("classification", ["failed", "success"])
-def test_scripted_notes_require_eligible_learning_on_failed_closure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, classification: str
-) -> None:
-    import subprocess
-
-    from sdo.contracts import OutcomeRecord
-
-    for args in (
-        ["init", "-q"],
-        [
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.invalid",
-            "commit",
-            "--allow-empty",
-            "-qm",
-            "synthetic outcome",
-        ],
-    ):
-        subprocess.run(["git", "-C", str(tmp_path), *args], check=True)
-    monkeypatch.setenv("SDO_BASE_COMMIT", "HEAD")
-    monkeypatch.setenv("SDO_SCRIPTED_MEMORY_CHANGE", "1")
-    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "no-capture"))
-    monkeypatch.setattr(scripted_worker, "_check_reflection", lambda _root, turn: turn)
-    turn = scripted_worker.ScriptedReflector().resume(
-        worktree=tmp_path,
-        incident_id="synthetic-outcome",
-        outcome=OutcomeRecord(classification=classification),
-        cause_work=[],
-    )
-    assert turn.learning_decision == ("no_change" if classification == "failed" else "updated")
-    assert (tmp_path / ".sdo/playbooks/verified-repair-notes/README.md").exists() == (classification == "success")
-
-
-def test_tool_reads_the_complete_response_behind_a_capped_reply(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The real context cap spills large `sdo --json` replies to a file; the scripted consumer follows it."""
-    from sdo.agents import context_output
-
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    full = {
-        "command": "source",
-        "source": {"kind": "Service", "spec": {"ports": [{"port": 80}]}, "padding": "x" * 4000},
-    }
-    envelope = context_output.cap_text(json.dumps(full), 512, json_output=True)
-    assert json.loads(envelope)["summarized"] is True
-    monkeypatch.setattr(scripted_worker, "_command", lambda *_args, **_kwargs: envelope + "\n")
-    assert scripted_worker._tool("source", "Service/app/api") == full
-
-
-@pytest.mark.parametrize("status", ["awaiting_responder_completion", "", "waiting_for_observation"])
-def test_scripted_responder_finishes_only_on_controller_completion_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
-) -> None:
-    request = IncidentRequest(
-        incident_id="synthetic-pending-proof", namespace="demo", repository_worktree=str(tmp_path)
-    )
-    monkeypatch.delenv("SDO_SCRIPTED_SOURCE_REPAIR", raising=False)
-    calls: list[tuple[str, ...]] = []
-
-    def tool(*args: str) -> dict[str, Any]:
-        calls.append(args)
-        if args[0] == "diagnose":
-            return {"program_runs": []}
-        return {
-            "healthy": False,
-            "verification_status": status,
-            "findings": [],
-            "detector_states": [{"status": "clear"}],
-            "summary": "controller recovery proof pending",
-        }
-
-    monkeypatch.setattr(scripted_worker, "_tool", tool)
-    monkeypatch.setattr(scripted_worker.time, "sleep", lambda _seconds: None)
-    result = scripted_worker.scripted_responder(request)
-    assert result.status == ("completed" if status == "awaiting_responder_completion" else "failed")
-    assert result.verification_evidence[0].passed is False
-    if status == "awaiting_responder_completion":
-        assert sum(call[0] == "verify" for call in calls) == 2

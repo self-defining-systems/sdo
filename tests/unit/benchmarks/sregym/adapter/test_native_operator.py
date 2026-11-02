@@ -345,6 +345,8 @@ def test_host_accepts_optional_goal_and_absent_goal_commit(tmp_path: Path, monke
     receipt.update(dict.fromkeys(("schema_commit", "source_commit", "architecture_commit", "judge_commit"), "a" * 40))
     monkeypatch.setattr(native_operator, "_run", lambda *args, **kwargs: receipt)
     assert launch_host(host) == receipt
+
+
 def test_adapter_agent_efforts_match_the_production_provider() -> None:
     # The adapter reads the shared manifest so SREGym's venv can import it without agentshim.
     from benchmarks.sregym.adapter import native_operator

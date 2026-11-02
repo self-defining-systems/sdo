@@ -5,7 +5,7 @@ import json
 import pytest
 
 from benchmarks.sregym.adapter.context_preflight import check_context_shapes
-from benchmarks.sregym.assurance.scripted_codex.wire import Rollout
+from benchmarks.sregym.agent_script.wire import Rollout
 from sdo.agents.context_output import budget_for
 from sdo.agents.session_context import measure_session
 

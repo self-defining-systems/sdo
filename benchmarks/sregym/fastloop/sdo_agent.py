@@ -15,7 +15,6 @@ verifies, and the loop grades the cluster with the problem's own oracle.
 from __future__ import annotations
 
 import json
-import os
 import logging
 import subprocess
 from dataclasses import dataclass, replace

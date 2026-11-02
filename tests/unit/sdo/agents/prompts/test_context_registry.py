@@ -152,11 +152,8 @@ def test_every_registered_capability_has_a_production_render_fixture():
 
     cases = rendered_cases()
     fixtures = {
-        ("sdo-deployer", "source-deployment", ("python3", "-m", "sdo.agents.deployer.worker")): cases[
-            "deployer_source"
-        ],
-        ("sdo-deployer", "source-architecture", ("python3", "-m", "sdo.agents.deployer.worker")): cases[
-            "lifecycle_DeployerDraft"
+        ("sdo-source-deployment", "source-deployment", ("python3", "-m", "sdo.agents.source_deployment.worker")): cases[
+            "source_deployment"
         ],
         ("sdo-health-judge", "health-judgment-direct-v1", ("python3", "-m", "sdo.agents.health_judge.worker")): cases[
             "lifecycle_HealthJudgeDraft"

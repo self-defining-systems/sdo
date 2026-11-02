@@ -80,7 +80,7 @@ def main() -> None:
             "sdo",
             "--no-checkpoints",
             "--agent-registrations",
-            "benchmarks/sregym/adapter/scripted_registrations",
+            "benchmarks/sregym/fastloop/agent_registrations",
         ]
     )
     # The row-start wipe deletes the control namespace, which this fake API cannot model (test_wipe.py covers

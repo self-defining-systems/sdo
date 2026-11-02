@@ -488,17 +488,28 @@ class Controller(FakeOps):
                 labels = json.loads((corpus / "labels.json").read_text())
                 assert labels["provenance"]["open_at"] == "pre-apply"
                 assert (
-                    labels["provenance"]["open_sha256"] == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
+                    labels["provenance"]["open_sha256"]
+                    == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
                 )
                 assert (
-                    labels["provenance"]["fixed_sha256"] == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
+                    labels["provenance"]["fixed_sha256"]
+                    == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
                 )
                 assert (corpus / "recordings.json").read_bytes() == (
                     self.capture / "open@pre-apply-recordings.json"
                 ).read_bytes()
                 subprocess.run(["git", "add", ".sdo/playbooks", ".sdo/corpus"], cwd=self.app.workspace, check=True)
                 subprocess.run(
-                    ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "reflection"],
+                    [
+                        "git",
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.invalid",
+                        "commit",
+                        "-qm",
+                        "reflection",
+                    ],
                     cwd=self.app.workspace,
                     check=True,
                 )

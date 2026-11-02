@@ -229,7 +229,7 @@ def _seed(workspace, *, onboarded=True):
 def test_scripted_preflight_rejects_seed_without_health_bundle(tmp_path):
     commit = _seed(tmp_path, onboarded=False)
     with pytest.raises(ValueError, match="full bundle") as error:
-        dry_run.assert_seed_supports_scripted_judge(tmp_path, commit)
+        dry_run.assert_seed_has_accepted_health_bundle(tmp_path, commit)
     message = str(error.value)
     assert commit[:12] in message
     assert "production admission" in message
@@ -240,12 +240,12 @@ def test_scripted_preflight_reads_the_seed_commit_not_the_working_tree(tmp_path)
     commit = _seed(tmp_path, onboarded=False)
     _seed_health_detectors(tmp_path / ".sdo")
     with pytest.raises(ValueError, match="full bundle"):
-        dry_run.assert_seed_supports_scripted_judge(tmp_path, commit)
+        dry_run.assert_seed_has_accepted_health_bundle(tmp_path, commit)
 
 
 def test_scripted_preflight_accepts_an_onboarded_seed(tmp_path):
     commit = _seed(tmp_path)
-    evidence = dry_run.assert_seed_supports_scripted_judge(tmp_path, commit)
+    evidence = dry_run.assert_seed_has_accepted_health_bundle(tmp_path, commit)
     assert evidence["seed_commit"] == commit
     assert "workload-health" in evidence["detector_ids"]
     assert evidence["seconds"] < 30

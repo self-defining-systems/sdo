@@ -84,32 +84,6 @@ def test_detector_status_validation_includes_unconfirmed_pending() -> None:
     assert set(permitted) == {"firing", "clear", "error", "pending"}
 
 
-def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> None:
-    schema = _incident_result_schema()
-
-    _assert_schema_fields_exist(schema, IncidentResult.DESCRIPTOR, "$")
-    # The model supplies everything except what the worker owns: schema version, usage, session, error, late pull.
-    owned = {
-        "schema_version",
-        "usage",
-        "responder_session_id",
-        "error",
-        "late_findings_pull",
-        "program_tool_calls",
-        "program_runs",
-        "plan_applications",
-        "program_failure_signals",
-        "response_loops_used",
-        "response_loop_exhausted",
-        "resolution_path",
-        "fast_path_programs",
-        "fast_path_skipped_reason",
-        "fast_path_relation_covered_findings",
-        "prior_stages",
-    }
-    unrequested = set(IncidentResult.DESCRIPTOR.fields_by_name) - set(schema["properties"]) - owned
-    assert unrequested == {"final_detector_states", "proposed_artifact_ids"}
-    assert set(schema["required"]) == set(schema["properties"])
 def test_install_environment_observations_round_trip_as_typed_contracts() -> None:
     observation = contract_proto.InstallEnvironmentObject(
         ref=contract_proto.ObjectRef(api_version="v1", kind="ConfigMap", namespace="app", name="environment"),

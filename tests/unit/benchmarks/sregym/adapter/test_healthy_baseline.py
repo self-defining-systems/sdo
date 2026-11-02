@@ -220,6 +220,8 @@ def test_secret_baseline_contains_only_metadata_and_sorted_keys() -> None:
     ]
     assert "c2VjcmV0" not in json.dumps(document)
     assert "last-applied" not in json.dumps(document)
+
+
 @pytest.mark.parametrize("count", [0, 17])
 def test_publish_rejects_invalid_snapshot_count_before_remote_exec(count: int) -> None:
     kubectl = _Kubectl()

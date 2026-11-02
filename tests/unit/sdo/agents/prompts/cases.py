@@ -11,13 +11,9 @@ import pytest
 from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.runtime import _responder_instructions
-from sdo.agents.deployer import worker
 from sdo.agents.lifecycle import agents as lifecycle_agents
 from sdo.agents.lifecycle.agents import (
-    ActiveTopologyResourceDTO,
     CodexLifecycleBackend,
-    DeployerAssessment,
-    DeployerDraft,
     HealthJudgeDraft,
     TopologyResourceDTO,
 )
@@ -30,6 +26,7 @@ from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn,
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.session_recovery import SessionRecovery
 from sdo.agents.responder.session_turn import branch_correction, branch_instruction
+from sdo.agents.source_deployment import worker
 from sdo.contracts import (
     DetectorEvaluation,
     Finding,
@@ -576,7 +573,7 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
             prompts[f"branch_correction_{branch}"] = branch_correction(branch)
 
         def source_turn(_provider: str, prompt: str, **_kwargs: object) -> SimpleNamespace:
-            prompts["deployer_source"] = prompt
+            prompts["source_deployment"] = prompt
             return SimpleNamespace(
                 session_id="toy-source",
                 output_json=json.dumps(
@@ -601,33 +598,18 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
             Path("/application"),
         )
         backend = CodexLifecycleBackend()
-        assessment = DeployerAssessment(
-            source_commit="a" * 40,
-            topology_fingerprint="b" * 64,
-            architecture_summary_markdown="Toy API depends on the store.",
-            session_id="toy-architecture",
-            resources=[
-                TopologyResourceDTO(
-                    kind="Service", name="api", namespace="default", source="deploy/api.yaml", dependencies=[]
-                )
-            ],
-        )
+        architecture = "Toy API depends on the store."
+        resources = [
+            TopologyResourceDTO(
+                kind="Service", name="api", namespace="default", source="deploy/api.yaml", dependencies=[]
+            )
+        ]
 
         def execute(_repository: Path, prompt: str, output_type: type, **_kwargs: object) -> tuple:
             prompts[f"lifecycle_{output_type.__name__}"] = prompt
-            if output_type is DeployerDraft:
-                return DeployerDraft(**assessment.model_dump(exclude={"resources", "session_id"})), "toy-architecture"
-            return HealthJudgeDraft(
-                round=1,
-                objective_digest="c" * 64,
-                source_commit="a" * 40,
-                covered_resources=[],
-                failure_patterns=["toy"],
-                detector_ids=["health-objective"],
-            ), "toy-judge"
+            return HealthJudgeDraft(failure_patterns=["toy"], detector_ids=["toy-endpoints"]), "toy-judge"
 
         patch.setattr(backend, "_execute", execute)
-        backend.run_deployer(repository=Path("/application"), application="toy", correction_feedback=None)
         # SEEDBUDGET1: measured fresh seed goals are 866/101/972 characters;
         # worker rejection diagnostics are 793/788. Astronomy did not dispatch,
         # so use the observed maximum there. Construct synthetic text only.
@@ -646,9 +628,8 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
                     repository=Path("/application"),
                     application=app,
                     health_objective=goal,
-                    deployer=assessment,
-                    round_index=1,
-                    previous=None,
+                    architecture=architecture,
+                    resources=resources,
                     correction_feedback=feedback,
                 )
                 prompt = prompts.pop("lifecycle_HealthJudgeDraft")
@@ -659,11 +640,9 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
             repository=Path("/application"),
             application="toy",
             health_objective="Keep toy healthy.",
-            deployer=assessment,
-            round_index=1,
-            previous=None,
+            architecture=architecture,
+            resources=resources,
             correction_feedback=None,
-            active_resources=[ActiveTopologyResourceDTO(kind="Service", name="api")],
         )
     from sdo.agents.prompt_templates import render_prompt
 

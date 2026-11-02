@@ -232,6 +232,8 @@ def test_unit_tests_synchronize_without_wall_clock_sleeps() -> None:
             if (relative, function) not in allowed:
                 violations.append(f"{relative}:{line}: {function}: replace sleep with readiness or an injected clock")
     assert not violations, "\n".join(violations)
+
+
 def _adapter_import_errors(files: list[Path]) -> list[str]:
     """Resolve actual import statements, including Python's submodule fallback."""
     errors = []

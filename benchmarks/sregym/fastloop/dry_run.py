@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
-SCRIPTED_REGISTRATIONS = Path(__file__).resolve().parents[1] / "adapter/scripted_registrations"
+SCRIPTED_REGISTRATIONS = Path(__file__).resolve().parent / "agent_registrations"
 
 
 def code_revision() -> str:
@@ -163,7 +163,7 @@ def assert_responder_runs_registrations(
 ) -> dict[str, Any]:
     """Fail in seconds when the responder image cannot import the registered workers.
 
-    Production responder images omit the scripted worker; without this check every
+    Production responder images omit the benchmark script launcher; without this check every
     controller-launched Job fails on import and setup burns its whole budget.
     """
     from benchmarks.sregym.adapter import assert_image_entrypoints
@@ -176,26 +176,23 @@ def assert_responder_runs_registrations(
         tag = image.rpartition(":")[2] if ":" in image.rpartition("/")[2] else "latest"
         raise ValueError(
             f"eval: responder image {image} cannot run the scripted registrations ({exc}). "
-            "Production responder images omit the scripted worker; build the scripted variant from the same "
+            "Production responder images omit the benchmark script launcher; build the benchmark variant from the same "
             f"commit (SDO_SCRIPTED_WORKER=1 SDO_IMAGES=benchmark SDO_IMAGE_TAG={tag}-scripted "
             "bash scripts/build_sdo_images.sh) and point the lane's responder image at it"
         ) from exc
     return {"image": image, "modules": modules, "seconds": round(time.monotonic() - started, 3)}
 
 
-def assert_seed_supports_scripted_judge(workspace: Path, seed_commit: str | None) -> dict[str, Any]:
-    """Fail in seconds when the seed lacks what the scripted health judge reads.
+def assert_seed_has_accepted_health_bundle(workspace: Path, seed_commit: str | None) -> dict[str, Any]:
+    """Fail in seconds when the seed lacks an accepted goal and judge-owned health detectors.
 
-    The scripted judge only retains an accepted bundle (goal and judge-owned
-    detectors). A fresh, un-onboarded seed needs a real judge, so
-    the rehearsal would otherwise burn its whole setup budget. Reads the seed
-    commit the reset restores, never the lane.
+    The no-fault rehearsal runs no model. A fresh, un-onboarded seed would need the
+    production health judge, so the rehearsal would otherwise burn its whole setup
+    budget. Reads the seed commit the reset restores, never the lane.
     """
     import io
     import tarfile
     import tempfile
-
-    from benchmarks.sregym.adapter import scripted_judge_seed
 
     started = time.monotonic()
     label = seed_commit[:12] if seed_commit else f"{workspace} working tree"
@@ -214,18 +211,24 @@ def assert_seed_supports_scripted_judge(workspace: Path, seed_commit: str | None
                     tar.extractall(checkout, filter="data")
             else:
                 checkout = workspace
-            seed = scripted_judge_seed(checkout)
+            accepted = checkout / ".sdo"
+            if not (accepted / "goal.md").is_file():
+                raise ValueError("an accepted goal document is required")
+            detector_ids = sorted(
+                path.parent.name for path in (accepted / "diagnostics/detectors/health").glob("*/manifest.yaml")
+            )
+            if not detector_ids:
+                raise ValueError("the full bundle of judge-owned health detectors is missing")
     except ValueError as exc:
         raise ValueError(
-            f"eval: seed {label} cannot pass the scripted no-fault rehearsal: {exc}. "
-            "The scripted health judge only retains an accepted bundle; a fresh, un-onboarded seed needs the "
+            f"eval: seed {label} cannot pass the no-fault rehearsal: {exc}. "
+            "The rehearsal runs no model, so it needs an accepted full bundle; a fresh, un-onboarded seed needs the "
             "real judge. Skip eval-dry-run for this seed and let the first live row run the production admission "
             "proof (results/<run>/setup-proof.json)"
         ) from exc
     return {
         "seed_commit": seed_commit,
-        "toy": seed.toy,
-        "detector_ids": list(seed.detector_ids),
+        "detector_ids": detector_ids,
         "seconds": round(time.monotonic() - started, 3),
     }
 
@@ -340,8 +343,8 @@ def run_lane(run_dir: Path, timeout: int, setup_timeout: int = int(wait_for(Wait
             return 0
         # A reused receipt already bound these image digests and accepted memory; a
         # fresh install must not spend its setup budget on Jobs that cannot import
-        # their worker or a seed the scripted judge cannot retain.
-        report.seed = assert_seed_supports_scripted_judge(environment.workspace, environment.seed_commit)
+        # their worker or a seed that needs the production health judge.
+        report.seed = assert_seed_has_accepted_health_bundle(environment.workspace, environment.seed_commit)
         report.save(report_path)
         report.responder_image = assert_responder_runs_registrations(
             environment.images.responder, SCRIPTED_REGISTRATIONS, source_root=environment.dev_mount

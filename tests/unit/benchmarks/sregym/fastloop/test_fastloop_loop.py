@@ -910,6 +910,8 @@ def test_continuity_learning_precedes_recovery_and_survives_row_export(tmp_path:
     assert loaded.memory_host_activations == records[0].memory_host_activations
     assert loaded.memory_host_activations[0].passed is not failed
     assert bool(loaded.error) is failed
+
+
 def test_grade_is_persisted_before_failed_reflection_and_never_changed(tmp_path: Path) -> None:
     clock = FakeClock()
     config = _config(tmp_path, 1)
