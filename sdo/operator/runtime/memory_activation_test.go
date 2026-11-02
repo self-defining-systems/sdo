@@ -407,12 +407,12 @@ func TestReconfigureMemoryKeepsTheOnboardingReachabilityReference(t *testing.T) 
 	config := testControllerConfig()
 	config.Namespace = "toy"
 	provider := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "toy"}}
-	controller, err := NewController(config, remote.Detectors, provider, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Now())
+	controller, err := NewController(config, remote.Detectors, provider, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(10, 0).UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
 	controller.onboardingReachability = &onboardingReachabilityState{}
-	if err = controller.ReconfigureMemory(remote, provider, time.Now()); err != nil {
+	if err = controller.ReconfigureMemory(remote, provider, time.Unix(11, 0).UTC()); err != nil {
 		t.Fatal(err)
 	}
 	if wrapped, ok := controller.provider.(onboardingSnapshotProvider); !ok || wrapped.State != controller.onboardingReachability {
