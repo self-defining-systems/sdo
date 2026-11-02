@@ -147,10 +147,7 @@ func (t *StateTracker) Start(ctx context.Context) error {
 	}
 	t.Stop()
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-<<<<<<< HEAD
 	factory := informers.NewSharedInformerFactoryWithOptions(t.config.Client, t.config.ResyncPeriod, informers.WithNamespace(t.config.Namespace))
-=======
-	factory := informers.NewSharedInformerFactoryWithOptions(t.config.Client, 0, informers.WithNamespace(t.config.Namespace))
 	var secretRuns sync.WaitGroup
 	// Every exit path, including a failed sync, ends with the informer
 	// goroutines gone: a leaked reflector keeps reading process-wide state.
@@ -159,7 +156,6 @@ func (t *StateTracker) Start(ctx context.Context) error {
 		factory.Shutdown()
 		secretRuns.Wait()
 	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	started := map[string]cache.SharedIndexInformer{}
 	unobserved := []string{}
 	for _, kind := range trackedKinds {

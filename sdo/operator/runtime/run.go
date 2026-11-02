@@ -7,24 +7,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
-<<<<<<< HEAD
 	kclock "k8s.io/utils/clock"
-=======
 	"log/slog"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"os"
 	"path/filepath"
 	"regexp"
-<<<<<<< HEAD
-=======
 	"slices"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-<<<<<<< HEAD
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/contracts/wire"
@@ -35,28 +28,19 @@ import (
 	"k8s.io/client-go/rest"
 
 	"google.golang.org/protobuf/proto"
-=======
 	"sdo.dev/operator/contracts/settings"
-	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 
 	"sdo.dev/operator/apihistory"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
-<<<<<<< HEAD
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/memoryhost/hostio"
-=======
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/onboarding"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -68,25 +52,16 @@ import (
 )
 
 type RuntimeOptions struct {
-<<<<<<< HEAD
 	// Clock controls driver timers and observer timestamps; nil uses production time.
 	Clock    kclock.WithTickerAndDelayedExecution
+	ShellReportReader shellpath.Reader
+
+	GenericCapture *core.GenericCapture
 	Programs program.ProgramRegistry
 	Args     []string
 	Stdout   io.Writer
 	Stderr   io.Writer
 	Provider SnapshotProvider
-=======
-	ShellReportReader shellpath.Reader
-
-	GenericCapture *core.GenericCapture
-	Programs       program.ProgramRegistry
-	Args           []string
-	Stdout         io.Writer
-	Stderr         io.Writer
-	Provider       SnapshotProvider
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	// Client, when set, replaces the kubeconfig clients of the long-running
 	// controller (observation, state, dispatch, and leader election), so the
 	// production wiring can run against a fake API server.
@@ -155,16 +130,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if stderr == nil {
 		stderr = os.Stderr
 	}
-<<<<<<< HEAD
-=======
-	defer func() {
-		reportControllerError(runErr, stdout, options.TerminationLogPath)
-		if errors.Is(runErr, ErrControllerRolloutRestartRequired) {
-			_ = json.NewEncoder(stdout).Encode(map[string]any{"controller_rollout_restart": true})
-			runErr = nil
-		}
-	}()
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	defer func() { reportControllerError(runErr, stdout, options.TerminationLogPath) }()
 	var launchConfig *contractsv1alpha1.ControllerConfig
 	if len(args) > 0 && args[0] == LaunchConfigFlag {
 		// Launch from one typed ControllerConfig the launcher mounted, instead
@@ -246,20 +212,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		5*time.Minute,
 		"maximum wait for independent health detectors to clear after a response; the incident then closes as failed",
 	)
-<<<<<<< HEAD
-	maxFollowUps := flags.Int(
-		"max-follow-ups",
-		0,
-		"maximum follow-up responders for health findings that stay active after a response; zero disables follow-ups",
-	)
-	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
+	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	memoryHostBinary := flags.String("memory-host-binary", "", "validated host binary")
 	memoryHostDigest := flags.String("memory-host-digest", "", "validated host digest")
-	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
-	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-=======
-	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
 	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
 	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy: commit or recorded-actions")
@@ -284,18 +239,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"synthetic-traffic-warmup", 5*time.Second,
 		"maximum wait for a first sample of every synthetic scenario before the first evaluation after start or resume",
 	)
-<<<<<<< HEAD
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required in job mode)")
-	metricsPublishURL := flags.String("metrics-publish-url", "", "SDO Prometheus publishing base URL")
-=======
-	proberBinary := flags.String(
-		"prober-binary", "", "compiled routing and traffic prober on the shared repository volume; the controller runs it as an isolated pod",
-	)
-	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers and validators (required in job mode)")
 	scriptImage := flags.String("script-image", "", "fixed script-tools image; defaults to the trusted toolchain image")
-	proberImage := flags.String("prober-image", "", "image that runs the prober binary; defaults to --responder-image")
-	proberURL := flags.String("prober-url", "", "use an already running prober at this URL instead of starting one")
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	metricsPublishURL := flags.String("metrics-publish-url", "", "SDO Prometheus publishing base URL")
 	metricsURL := flags.String(
 		"metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle",
 	)
@@ -316,7 +262,22 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
+	if codePathFlagConfig.Overrides.ResponseStages != nil {
+		selectedPathConfig.Overrides.ResponseStages = codePathFlagConfig.Overrides.ResponseStages
+	}
+	codePathRegistry := NewCodePathRegistry()
+	selectedCodePath, err := codePathRegistry.Resolve(selectedPathConfig)
+	if err != nil {
+		return err
+	}
+	if selectedCodePath.Selection.Coverage == "none" {
+		options.Programs = nil
+	}
+	menuEnabled := os.Getenv("SDO_RESPONDER_MENU")
+	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
+		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
+	}
+
 	var hostManager *memoryhost.Manager
 	if launchConfig != nil {
 		hostManager = memoryhost.NewManager(30 * time.Second)
@@ -354,38 +315,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	detectors = scaleDetectors(detectors, timeScale)
 	*diagnosisSettleDelay = scaledDuration(*diagnosisSettleDelay, timeScale)
 	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
-	*followUpCooldown = scaledDuration(*followUpCooldown, timeScale)
-=======
-	if codePathFlagConfig.Overrides.ResponseStages != nil {
-		selectedPathConfig.Overrides.ResponseStages = codePathFlagConfig.Overrides.ResponseStages
-	}
-	codePathRegistry := NewCodePathRegistry()
-	selectedCodePath, err := codePathRegistry.Resolve(selectedPathConfig)
-	if err != nil {
-		return err
-	}
-	if selectedCodePath.Selection.Coverage == "none" {
-		options.Programs = nil
-	}
-	menuEnabled := os.Getenv("SDO_RESPONDER_MENU")
-	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
-		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
-	}
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true
 	}
 	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftBatchWindow <= 0 {
 		return errors.New("response loops, diagnosis deadline and drift batch window must be positive")
 	}
-<<<<<<< HEAD
-=======
-
-	if *exitAfterClosure && *restartAfterClosure {
-		return fmt.Errorf("--exit-after-closure and --restart-after-closure are mutually exclusive")
-	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if *controlNamespace == "" {
 		*controlNamespace = *namespace
 	}
@@ -537,13 +472,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
-<<<<<<< HEAD
-		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, Clock: clock.Now, TimerClock: clock,
-=======
 		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
 			return observation.Accepted(ctx, resolvedRoot)
-		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, Clock: clock.Now, TimerClock: clock,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -649,16 +580,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
-<<<<<<< HEAD
-	planSource := GitPlanSource{Repository: resolvedRoot, Images: stateTracker, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
+	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths}
 	primitiveProber, _ := proberAPI.(PrimitiveProber)
 	var memoryCatalogMu sync.RWMutex
-=======
-	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths}
-	var primitiveProber PrimitiveProber
-	if proberAddress != nil {
-		primitiveProber = HTTPProberClient{BaseURL: proberAddress}
-	}
 	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)
 	if err != nil {
 		return err
@@ -674,7 +598,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if scriptJobImage == "" {
 		scriptJobImage = *responderImage
 	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {
@@ -703,29 +626,19 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
-<<<<<<< HEAD
 			Environment: jobEnvironment,
 			Catalog:     catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
-			ProgramFastPath: *programFastPath, ResponseStages: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
-=======
-			Environment: jobEnvironment, DispatchEnvironment: ProberEnvironment(responderProberAddress),
-			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				memoryCatalogMu.RLock()
 				defer memoryCatalogMu.RUnlock()
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-<<<<<<< HEAD
-					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource,
-					Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
+					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage}, Objects: genericCapture}, Source: planSource,
+
+					Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: time.Second}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
 				if len(TrafficWorkloadNames(detectors)) > 0 {
 					loop.Traffic = proberAPI
-=======
-					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage}, Objects: genericCapture}, Source: planSource,
-
-					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: time.Second}, Observer: kubernetesCache,
-				}, *maxResponseLoops)
+				}
 				loop.WorkingProgramRoot = request.RepositoryWorktree
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
@@ -784,7 +697,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
 					}
 					return controller.responderResultVerification(ctx, request.IncidentID, &result)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 				}
 				loop.CurrentEvidence = func() *IncidentRequest {
 					if controller == nil {
@@ -802,11 +714,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					}
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-<<<<<<< HEAD
-					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
-=======
-					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
->>>>>>> origin/vic-lsh/dev/sdo-improve
+					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
 						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
 				controller.mu.Lock()
@@ -837,31 +745,23 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			dispatcher = d
 		}
 	}
-<<<<<<< HEAD
-	start := clock.Now().UTC()
-=======
 
 	// Detectors and plan verification read through the same capped runtime view.
 	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
+		return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
 			if controller != nil {
 				return controller.CurrentAcceptedCommit()
 			}
 			return resolvedSourceCommit
 		}, BaselineSource: stateTracker}
 	}}
-	start := time.Now().UTC()
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	start := clock.Now().UTC()
 	corpusSessionRoot := ""
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
-<<<<<<< HEAD
 	controller, err = NewController(ControllerConfig{MetricsSource: configuredMetricsSource(*metricsURL, *metricsPublishURL),
-=======
-	controller, err = NewController(ControllerConfig{
 		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
@@ -885,16 +785,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	defer controller.Wait()
 	controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
-<<<<<<< HEAD
-			return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
-				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker}
-=======
 			if cycle, ok := snapshot.(*CycleReadView); ok {
 				return cycle
 			}
-			return NewCycleReadView(LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
+			return NewCycleReadView(LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
 				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker})
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		},
 	})
 	if options.NativeBroker != nil {
@@ -1280,16 +1175,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			return fmt.Errorf("sync Kubernetes informer cache: %w", err)
 		}
-<<<<<<< HEAD
-		waitState := startState()
-		startTraffic()
-		startReachability()
-		waitState()
-		if err := controller.Step(runCtx, clock.Now().UTC(), nil); err != nil {
-=======
 		acceptBaseline(acceptStartupReachabilityBaseline)
-		if err := controller.Step(runCtx, time.Now().UTC(), nil); err != nil {
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		if err := controller.Step(runCtx, clock.Now().UTC(), nil); err != nil {
 			if runCtx.Err() != nil {
 				return nil
 			}
@@ -1300,12 +1187,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	persistControllerState()
-<<<<<<< HEAD
-	if err := reviewGate.check(controller); err != nil {
-		return err
-	}
-	if err := executePendingEffects(runCtx, controller); err != nil {
-=======
 	// A controller launched during a maintenance pause must still complete its rollout handoff: the pause keeps
 	// the closure acknowledgment waiting on it, so deferring it until resume restarts the controller in a loop.
 	// The handoff verifies the build's provenance against the accepted tree, not an evaluation.
@@ -1315,7 +1196,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	if err := executeStartupEffects(runCtx, controller, desired.Paused); err != nil {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		if runCtx.Err() != nil {
 			return nil
 		}
@@ -1356,31 +1236,21 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err := encoder.Encode(applied.Record()); err != nil {
 			fmt.Fprintln(stderr, err)
 		}
-<<<<<<< HEAD
-		if err := controller.EvaluateAll(runCtx, clock.Now().UTC()); err != nil {
-=======
 		evaluate := controller.EvaluateAll
 		if wasPaused {
 			evaluate = controller.ResumeObservation
 		}
-		if err := evaluate(runCtx, time.Now().UTC()); err != nil {
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		if err := evaluate(runCtx, clock.Now().UTC()); err != nil {
 			if runCtx.Err() != nil {
 				return nil
 			}
 			return err
 		}
 		persistControllerState()
-<<<<<<< HEAD
-
-		if err := reviewGate.check(controller); err != nil {
-			return err
-=======
 		if options.NativeBroker != nil {
 			if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
 				return err
 			}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 		if err := executePendingEffects(runCtx, controller); err != nil {
 			if runCtx.Err() != nil {
@@ -1408,14 +1278,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				delay = wake.Sub(clock.Now())
 			}
 		default:
-<<<<<<< HEAD
 			delay = controller.NextWake().Sub(clock.Now())
-=======
-			delay = time.Until(controller.NextWake())
 			if retry := reachabilityReference.retryAt(); !retry.IsZero() {
-				delay = min(delay, time.Until(retry))
+				delay = min(delay, retry.Sub(clock.Now()))
 			}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 		if delay < 0 {
 			delay = 0
@@ -1466,15 +1332,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				continue
 			}
-<<<<<<< HEAD
-			if err := controller.StepEvents(runCtx, clock.Now().UTC(), kubernetesCache.TakeEvents()); err != nil {
-=======
 			events := kubernetesCache.TakeEvents()
 			if reachabilityObserver != nil && slices.ContainsFunc(events, func(event sdk.WatchKind) bool { return event.APIVersion == "v1" && event.Kind == "Pod" }) {
 				reachabilityObserver.Wake()
 			}
-			if err := controller.StepEvents(runCtx, time.Now().UTC(), events); err != nil {
->>>>>>> origin/vic-lsh/dev/sdo-improve
+			if err := controller.StepEvents(runCtx, clock.Now().UTC(), events); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1545,14 +1407,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if *exitAfterClosure && completion.err == nil && !controller.reflectionWorkOpen() {
 				return nil
 			}
-<<<<<<< HEAD
-=======
-			if *restartAfterClosure && options.NativeBroker == nil && completion.err == nil {
-				if err := encoder.Encode(map[string]any{"controller_closure_restart": controller.LastAcknowledgedIncidentID()}); err != nil {
-					fmt.Fprintln(stderr, err)
-				}
-				return nil
-			}
 		case completion := <-controller.reflectionResults:
 			if stopTimerForRuntimeEvent(runCtx, timer) {
 				return nil
@@ -1566,7 +1420,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if *exitAfterClosure && completion.err == nil && !controller.reflectionWorkOpen() {
 				return nil
 			}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		case renewErr := <-renewalErrors:
 			if stopTimerForRuntimeEvent(runCtx, timer) {
 				return nil
@@ -1654,38 +1507,7 @@ func attachLifecycleTelemetry(controller *Controller, path string, defaultEnable
 	return nil
 }
 
-<<<<<<< HEAD
-// detectorReviewGate ends a one-shot run when health did not clear after the
-// responder. A persistent controller keeps observing instead and reports the
-// review once: its Job restarts it on exit, so exiting crash-looped it past
-// the backoff limit and stopped detection for every later incident. The
-// incident still closes, marked late-verified, if health clears.
-type detectorReviewGate struct {
-	exit     bool
-	log      io.Writer
-	reported string
-}
-
-func (gate *detectorReviewGate) check(controller *Controller) error {
-	required, reason := controller.DetectorReviewStatus()
-	if !required {
-		gate.reported = ""
-		return nil
-	}
-	if gate.exit {
-		return fmt.Errorf("detector review required: %s", reason)
-	}
-	if gate.reported != reason {
-		gate.reported = reason
-		fmt.Fprintf(gate.log, "detector review required (controller keeps observing): %s\n", reason)
-	}
-	return nil
-}
-
 func stopTimerForRuntimeEvent(ctx context.Context, timer kclock.Timer) bool {
-=======
-func stopTimerForRuntimeEvent(ctx context.Context, timer *time.Timer) bool {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if !timer.Stop() {
 		select {
 		case <-timer.C():
@@ -1818,12 +1640,6 @@ func evaluateOnce(
 	flags.SetOutput(stderr)
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	application := flags.String("application", "", "application identity")
-<<<<<<< HEAD
-	flags.String("app-root", "", "application repository root")
-	hostBinary := flags.String("memory-host-binary", "", "validated memory host binary")
-	hostDigest := flags.String("memory-host-digest", "", "validated memory host digest")
-	memoryCommit := flags.String("memory-commit", "", "accepted memory revision")
-=======
 	var deployedManifestPaths repeatedFlag
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "accepted deployed manifest path; repeat for each selection")
 	appRoot := flags.String("app-root", "", "accepted application repository root")
@@ -1831,7 +1647,9 @@ func evaluateOnce(
 	sourceDriftAcknowledgement := flags.String("source-drift-acknowledgement", "", "installer onboarding acknowledgement ProtoJSON file for the read-only source inventory check")
 	sourceDriftReport := flags.String("source-drift-report", "", "read-only accepted-source inventory check; write full JSON to this path and print a summary")
 	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	hostBinary := flags.String("memory-host-binary", "", "validated memory host binary")
+	hostDigest := flags.String("memory-host-digest", "", "validated memory host digest")
+	memoryCommit := flags.String("memory-commit", "", "accepted memory revision")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
 	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
 	if err := flags.Parse(args); err != nil {
@@ -1978,19 +1796,9 @@ func evaluateOnce(
 	}
 	var unavailable []unavailableEvaluation
 	if ConsumesServiceReachability(detectors) {
-<<<<<<< HEAD
 		dialer, ok := trafficAPI.(ReachabilityDialer)
 		if !ok {
 			return errors.New("service reachability requires the active memory host")
-=======
-		if *proberURL == "" {
-			for _, detector := range detectors {
-				if ConsumesServiceReachability([]sdk.Detector{detector}) {
-					unavailable = append(unavailable, unavailableEvaluation{DetectorID: detector.Spec().ID, Reason: "service reachability requires --prober-url"})
-				}
-			}
-			fmt.Fprintln(stderr, "service reachability unavailable: evaluate-once requires --prober-url")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		} else {
 			// Gather the gate's history now: Failures rounds, a second apart,
 			// judged by the same observer and detector as the controller.
@@ -2012,9 +1820,6 @@ func evaluateOnce(
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
-	start := clock.Now().UTC()
-=======
 	provider = ReadSnapshotProvider{Base: provider, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		if readClient == nil && readSource == nil && *proberURL == "" {
 			return program.ReadFrom(snapshot)
@@ -2025,8 +1830,7 @@ func evaluateOnce(
 		}
 		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: readClient, Prober: probe, Source: readSource, SourceCommit: readCommit}
 	}}
-	start := time.Now().UTC()
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	start := clock.Now().UTC()
 	controller, err := NewController(ControllerConfig{
 		Application: *application, Namespace: *namespace,
 		SourceCommit: "evaluation", DeployedCommit: "evaluation",
@@ -2160,7 +1964,6 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 	return nil
 }
 
-<<<<<<< HEAD
 func configuredMetricsSource(queryURL, publishURL string) *contractsv1alpha1.MetricsSource {
 	source := &contractsv1alpha1.MetricsSource{QueryUrl: queryURL}
 	if publishURL != "" {
@@ -2168,9 +1971,9 @@ func configuredMetricsSource(queryURL, publishURL string) *contractsv1alpha1.Met
 		source.OtlpMetricsUrl = strings.TrimRight(publishURL, "/") + "/api/v1/otlp/v1/metrics"
 	}
 	return source
-=======
+}
+
 // Existing responder-env configuration also provides a cold-only rollout switch.
 func standbyEnabled(environment map[string]string) bool {
 	return environment["SDO_RESPONDER_STANDBY"] != "0"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }

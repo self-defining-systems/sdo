@@ -4,14 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-<<<<<<< HEAD
-
-=======
 	"google.golang.org/protobuf/proto"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"log/slog"
 	"net"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"

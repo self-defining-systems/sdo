@@ -52,15 +52,7 @@ type KubernetesJobDispatcher struct {
 	Outcomes              memory.Reader
 	RequireMemorySnapshot bool
 	LoopFactory           func(IncidentRequest) *ResponderLoop
-<<<<<<< HEAD
-	ProgramFastPath       bool
-	// ResponseStages runs the deterministic response stage (no trust gate)
-	// before the agent instead of the trusted-program fast path.
-	ResponseStages        bool
-	ProgramTrustThreshold int
-=======
 	beforeClaim           func()
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // PrepareDispatch freezes the worker task before the controller records its
@@ -249,60 +241,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 	if err := d.Registry.ValidateTask(task); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate agent task: %w", err)
 	}
-<<<<<<< HEAD
-	if d.ProgramFastPath && d.ResponseStages && loop != nil {
-		stageResult, staged, resolved, err := d.runDeterministicStage(ctx, request, loop)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		if resolved {
-			return stageResult, nil
-		}
-		if len(staged.PriorStages) > 0 {
-			request = staged
-			if task, request, err = d.handoffTask(request, task); err != nil {
-				return IncidentResult{}, err
-			}
-			if err := d.Registry.ValidateTask(task); err != nil {
-				return IncidentResult{}, fmt.Errorf("validate stage handoff task: %w", err)
-			}
-		}
-	} else if d.ProgramFastPath && loop != nil {
-		fastResult, summary, resolved, err := d.tryFastPath(ctx, request, loop)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		if resolved {
-			return fastResult, nil
-		}
-		if summary != "" {
-			request.FastPathSummary = summary
-			prepared := new(contracts.IncidentRequest)
-			if err := task.GetRequest().UnmarshalTo(prepared); err != nil {
-				return IncidentResult{}, fmt.Errorf("decode prepared incident for fast-path handoff: %w", err)
-			}
-			prepared.FastPathSummary = summary
-			task.Request, err = anypb.New(prepared)
-			if err != nil {
-				return IncidentResult{}, err
-			}
-			payload, err := wire.Canonical(task)
-			if err != nil {
-				return IncidentResult{}, err
-			}
-			request.PreparedAgentTask = string(payload)
-			task = new(contracts.AgentTask)
-			if err := protojson.Unmarshal(payload, task); err != nil {
-				return IncidentResult{}, fmt.Errorf("decode fast-path handoff task: %w", err)
-			}
-			if err := d.Registry.ValidateTask(task); err != nil {
-				return IncidentResult{}, fmt.Errorf("validate fast-path handoff task: %w", err)
-			}
-		}
-	}
-=======
 
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	environment := make(map[string]string, len(d.Environment))
 	for name, value := range d.Environment {
 		environment[name] = value
@@ -440,15 +379,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		attempts := loop.continuationAttempts()
 		result.ResponseLoopsUsed = attempts
 		result.ResolutionPath = "responder"
-<<<<<<< HEAD
-		result.PriorStages = cloneStageReports(request.PriorStages)
-		result.FastPathPrograms = append([]string(nil), loop.fastPathPrograms...)
-		result.FastPathSkippedReason = loop.fastPathSkippedReason
-		result.FastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), loop.fastPathRelationCoveredFindings...)
-		result.ResponseLoopExhausted = loop.Exhausted()
-=======
 		result.ResponseLoopExhausted = result.ResponseLoopExhausted || (loop.Exhausted() && result.Status != IncidentCompleted)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		if result.ResponseLoopExhausted {
 			result.Status = IncidentFailed
 			result.Error = "response loop budget exhausted with unresolved findings"

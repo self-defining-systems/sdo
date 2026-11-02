@@ -6,12 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"google.golang.org/protobuf/proto"
-<<<<<<< HEAD
-	"maps"
-=======
 	"log/slog"
-	"math/rand/v2"
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	"maps"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory"
@@ -38,20 +34,7 @@ type Dispatcher interface {
 }
 
 type ControllerConfig struct {
-<<<<<<< HEAD
-	MetricsSource       *contracts.MetricsSource
-	Application         string
-	Namespace           string
-	SourceCommit        string
-	DeployedCommit      string
-	RepositoryWorktree  string
-	CorpusSessionRoot   string
-	ResponseTimeout     time.Duration
-	VerificationTimeout time.Duration
-	FiringThreshold     int
-	ClearThreshold      int
-	BatchDebounce       time.Duration
-=======
+	MetricsSource *contracts.MetricsSource
 	Replay           string
 	CodePath         CodePathConfig
 	CodePathRegistry *CodePathRegistry
@@ -69,7 +52,6 @@ type ControllerConfig struct {
 	FiringThreshold        int
 	ClearThreshold         int
 	BatchDebounce          time.Duration
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	// ConfirmationInterval bounds how long a detector with a finding below its
 	// firing threshold waits for its next evaluation. Zero leaves confirmation
 	// to watch events and the detector's own interval.
@@ -93,26 +75,7 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
-<<<<<<< HEAD
-	memoryRefresh       func(context.Context) (bool, error)
-	config              ControllerConfig
-	startedAt           time.Time
-	scheduler           *Scheduler
-	detectors           map[string]sdk.Detector
-	tracker             *FindingStateTracker
-	batcher             *Batcher
-	provider            SnapshotProvider
-	dispatcher          Dispatcher
-	history             []DetectorEvaluation
-	drift               *DriftControllerConfig
-	driftEvents         []sdk.DriftEvent
-	driftAdmission      *contracts.DriftAdmissionState
-	programSweepCursors map[string]string
-	ownershipAdoption   OwnershipAdoptionStatus
-	adoptionNeeded      bool
-	nextDriftSweep      time.Time
-	results             chan dispatchCompletion
-=======
+	memoryRefresh func(context.Context) (bool, error)
 	config ControllerConfig
 	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
 	closureRecheckIdentity      string
@@ -160,7 +123,6 @@ type Controller struct {
 	acceptanceSettleWaits int
 	adoptionNeeded        bool
 	results               chan dispatchCompletion
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	// gateClears and gateProbes hold the submit gate's confirmation of active
 	// findings (GateConfirmationPolicy); they are never persisted, so a
 	// restarted controller confirms again from fresh evaluations.
@@ -370,13 +332,8 @@ func NewController(
 		detectorSpecs:    detectorSpecs,
 		workspaceResults: make(chan workspaceCompletion, 1), closureResults: make(chan closureCompletion, 1),
 		acknowledgmentResults: make(chan acknowledgmentCompletion, 1),
-<<<<<<< HEAD
-		releaseResults:        make(chan releaseCompletion, 1),
-		dispatchJitter:        lifecycleio.DispatchJitter,
-=======
 		reflectionResults:     make(chan reflectionCompletion, 1), reflections: reflectionQueueState{rescan: true},
-		dispatchJitter: rand.Float64,
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		dispatchJitter: lifecycleio.DispatchJitter,
 	}, nil
 }
 

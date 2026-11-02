@@ -9,13 +9,10 @@ import (
 	kclock "k8s.io/utils/clock"
 	"os"
 	"path/filepath"
-<<<<<<< HEAD
 	"sdo.dev/operator/runtime/internal/lifecycleio"
-=======
 	"sdo.dev/operator/sdk"
 	"slices"
 	"sort"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"strings"
 	"syscall"
 	"time"

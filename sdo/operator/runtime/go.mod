@@ -17,13 +17,7 @@ require (
 )
 
 require (
-<<<<<<< HEAD
 	google.golang.org/grpc v1.79.3
-	sigs.k8s.io/yaml v1.3.0
-)
-
-require github.com/prometheus/client_model v0.6.1 // indirect
-=======
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/go-errors/errors v1.4.2 // indirect
@@ -41,7 +35,8 @@ require github.com/prometheus/client_model v0.6.1 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.17.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )
->>>>>>> origin/vic-lsh/dev/sdo-improve
+
+require github.com/prometheus/client_model v0.6.1 // indirect
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
@@ -60,11 +55,7 @@ require (
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
-<<<<<<< HEAD
 	github.com/google/uuid v1.6.0 // indirect
-=======
-	github.com/google/uuid v1.3.1 // indirect
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	github.com/imdario/mergo v0.3.6 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

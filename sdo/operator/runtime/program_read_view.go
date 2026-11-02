@@ -24,11 +24,8 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	policyv1 "k8s.io/api/policy/v1"
 	"sdo.dev/operator/sdk"
-<<<<<<< HEAD
 	"sdo.dev/operator/sdk/inputs"
-=======
 	"sdo.dev/operator/sdk/metrics"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -42,15 +39,7 @@ type PrimitiveProber interface {
 // LiveReadView adds read-only primitives to one detector snapshot. Its
 // dependencies expose reads only; no program receives a Kubernetes writer.
 type LiveReadView struct {
-<<<<<<< HEAD
 	inputs.Carrier
-	Context        context.Context
-	Client         kubernetes.Interface
-	Prober         PrimitiveProber
-	Source         PlanSource
-	SourceCommit   string
-=======
-	sdk.DetectionContext
 	Context            context.Context
 	Client             kubernetes.Interface
 	DatabaseExecConfig *rest.Config
@@ -60,7 +49,6 @@ type LiveReadView struct {
 	SourceCommit       string
 	// SourceRevision resolves lazily, after snapshot acquisition has released controller locks.
 	SourceRevision func() string
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	Baseline       *StateChanges
 	BaselineSource StateBaseline
 }
@@ -420,11 +408,6 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 	return program.Diff{}, nil
 }
 
-<<<<<<< HEAD
-func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	if ref.Namespace != v.Namespace() && !(ref.Kind == "Node" && ref.APIVersion == "v1" && ref.Namespace == "") {
-		return nil, errors.New("object is outside snapshot namespace")
-=======
 func (v LiveReadView) Object(ref sdk.ObjectRef) (object *unstructured.Unstructured, err error) {
 	defer func() {
 		if err == nil && object != nil && (ref.Kind == "ValidatingWebhookConfiguration" || ref.Kind == "MutatingWebhookConfiguration") {
@@ -485,7 +468,6 @@ func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructure
 	}
 	if !matched {
 		return nil, errors.New("scoped observation undeclared")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	var object any
 	switch ref.Kind {
@@ -524,84 +506,6 @@ func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructure
 		if err != nil {
 			return nil, err
 		}
-<<<<<<< HEAD
-	case "StatefulSet":
-		for _, item := range v.StatefulSets() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "DaemonSet":
-		for _, item := range v.DaemonSets() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Job":
-		for _, item := range v.Jobs() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "CronJob":
-		for _, item := range v.CronJobs() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "PersistentVolumeClaim":
-		for _, item := range v.PersistentVolumeClaims() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "ServiceAccount":
-		for _, item := range v.ServiceAccounts() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "HorizontalPodAutoscaler":
-		for _, item := range v.HorizontalPodAutoscalers() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "PodDisruptionBudget":
-		for _, item := range v.PodDisruptionBudgets() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Ingress":
-		for _, item := range v.Ingresses() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Node":
-		for _, item := range v.Nodes() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "NetworkPolicy":
-		for _, item := range v.NetworkPolicies() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-=======
 		if item != nil {
 			object = item
 		}
@@ -612,7 +516,6 @@ func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructure
 		}
 		if item != nil {
 			object = item
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 	}
 	if object == nil {

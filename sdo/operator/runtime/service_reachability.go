@@ -3,12 +3,9 @@ package runtime
 import (
 	"context"
 	"fmt"
-<<<<<<< HEAD
 	kclock "k8s.io/utils/clock"
-=======
 	"net/http"
 	"slices"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sort"
 	"sync"
 	"time"
@@ -65,8 +62,6 @@ type ServiceReachabilityConfig struct {
 	// CatchUpSpacing spaces the extra dials of targets whose clearing window
 	// a readiness transition restarted.
 	CatchUpSpacing time.Duration
-	// Now is the observer's clock; nil selects time.Now.
-	Now func() time.Time
 }
 
 type reachabilityHistory struct {
@@ -118,18 +113,11 @@ func NewServiceReachabilityObserver(config ServiceReachabilityConfig) *ServiceRe
 	if config.Capacity < config.Failures+1 {
 		config.Capacity = 2 * config.Failures
 	}
-<<<<<<< HEAD
-	config.Clock = timerClock(config.Clock)
-	return &ServiceReachabilityObserver{config: config, history: map[string]*reachabilityHistory{}}
-=======
 	if config.CatchUpSpacing <= 0 {
 		config.CatchUpSpacing = reachabilityCatchUpSpacing
 	}
-	if config.Now == nil {
-		config.Now = time.Now
-	}
+	config.Clock = timerClock(config.Clock)
 	return &ServiceReachabilityObserver{config: config, wake: make(chan struct{}, 1), history: map[string]*reachabilityHistory{}}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // Cycle runs one round: derive the targets from the current snapshot, dial
@@ -165,9 +153,6 @@ func (o *ServiceReachabilityObserver) renewCatchUps() {
 	for _, state := range o.history {
 		state.catchUps = 0
 	}
-<<<<<<< HEAD
-	o.failure, o.omitted, o.observed = "", omitted, timerClock(o.config.Clock).Now().UTC()
-=======
 }
 
 func (o *ServiceReachabilityObserver) catchingUp(snapshot sdk.DetectionContext) []servicehealth.ReachabilityTarget {
@@ -187,7 +172,6 @@ func (o *ServiceReachabilityObserver) round(ctx context.Context, catchUp bool) (
 		return false, false // the controller's own evaluation reports an unreadable namespace
 	}
 	targets, omitted := servicehealth.ReachabilityTargets(snapshot)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	current := make(map[string]bool, len(targets))
 	for _, target := range targets {
 		current[target.ID()] = true
@@ -226,7 +210,7 @@ func (o *ServiceReachabilityObserver) round(ctx context.Context, catchUp bool) (
 }
 
 func (o *ServiceReachabilityObserver) unheld(targets []servicehealth.ReachabilityTarget) []servicehealth.ReachabilityTarget {
-	now := o.config.Now()
+	now := timerClock(o.config.Clock).Now()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	dial := make([]servicehealth.ReachabilityTarget, 0, len(targets))
@@ -241,7 +225,7 @@ func (o *ServiceReachabilityObserver) unheld(targets []servicehealth.Reachabilit
 
 // record stores a round's samples; o.mu is held.
 func (o *ServiceReachabilityObserver) record(response prober.DialResponse, current map[string]bool, omitted int, catchUp bool) bool {
-	o.failure, o.omitted, o.observed = "", omitted, o.config.Now().UTC()
+	o.failure, o.omitted, o.observed = "", omitted, timerClock(o.config.Clock).Now().UTC()
 	for id := range o.history {
 		if !current[id] {
 			delete(o.history, id)
@@ -331,43 +315,37 @@ func (o *ServiceReachabilityObserver) Start(ctx context.Context) {
 	o.wait.Add(1)
 	go func() {
 		defer o.wait.Done()
-		ticker := o.config.Clock.NewTicker(o.config.Interval)
+		clock := timerClock(o.config.Clock)
+		ticker := clock.NewTicker(o.config.Interval)
 		defer ticker.Stop()
 		catchUp := false
 		var last time.Time
 		for {
 			notify, pending := o.round(running, catchUp)
 			if catchUp {
-				last = o.config.Now()
+				last = clock.Now()
 			}
 			if notify && o.config.Notify != nil {
 				o.config.Notify()
 			}
-<<<<<<< HEAD
-			select {
-			case <-running.Done():
-				return
-			case <-ticker.C():
-=======
 			var next <-chan time.Time
 			if pending {
-				next = time.After(max(0, last.Add(o.config.CatchUpSpacing).Sub(o.config.Now())))
+				next = clock.After(max(0, last.Add(o.config.CatchUpSpacing).Sub(clock.Now())))
 			}
 			for waiting := true; waiting; {
 				select {
 				case <-running.Done():
 					return
-				case <-ticker.C:
+				case <-ticker.C():
 					catchUp, waiting = false, false
 				case <-next:
 					catchUp, waiting = true, false
 				case <-o.wake:
 					o.renewCatchUps()
 					if next == nil {
-						next = time.After(max(0, last.Add(o.config.CatchUpSpacing).Sub(o.config.Now())))
+						next = clock.After(max(0, last.Add(o.config.CatchUpSpacing).Sub(clock.Now())))
 					}
 				}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
 		}
 	}()
@@ -398,11 +376,7 @@ func (o *ServiceReachabilityObserver) Window() (servicehealth.ReachabilityWindow
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	window := servicehealth.ReachabilityWindow{
-<<<<<<< HEAD
 		ObservedAt: timerClock(o.config.Clock).Now().UTC(), Interval: o.config.Interval, Timeout: o.config.Timeout, Failures: o.config.Failures,
-=======
-		ObservedAt: o.config.Now().UTC(), Interval: o.config.Interval, Timeout: o.config.Timeout, Failures: o.config.Failures,
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		Omitted: o.omitted, Prober: o.config.Identity, Targets: make([]servicehealth.TargetObservations, 0, len(o.history)),
 	}
 	if o.failure != "" {

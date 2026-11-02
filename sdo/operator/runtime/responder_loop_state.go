@@ -29,17 +29,6 @@ type recordedRepairEvidence struct {
 // independently of continuation feedback. Legacy execution fields in version 1
 // journals are deliberately ignored.
 type responderToolState struct {
-<<<<<<< HEAD
-	Version        int
-	IncidentID     string
-	SourceCommit   string
-	FailureSignals []string
-	Batches        int
-	MaxBatches     int
-	// StageWrites counts writes the automatic stage began. A restart never
-	// replays them; it re-observes instead.
-	StageWrites int `json:",omitempty"`
-=======
 	ApplicationBindings map[string][]recoveryBinding
 	StageProgress       map[string]responseStageProgress
 	PendingWrites       map[string]pendingMitigation
@@ -60,16 +49,12 @@ type responderToolState struct {
 	LoopOpen            bool
 	ApplySeq            int
 	MaxBatches          int
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	if l.saveToolState == nil {
 		return nil
 	}
-<<<<<<< HEAD
-	payload, err := json.Marshal(responderToolState{Version: 2, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches, StageWrites: l.stageWrites})
-=======
 	var evidence []applicationEvidence
 	for _, application := range l.applicationEvidenceLocked() {
 		projected, err := incidentResultContract(IncidentResult{PlanApplications: []RecordedPlanApplication{application}})
@@ -87,7 +72,6 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 		repairs = append(repairs, recordedRepairEvidence{continuationRepair: repair, Owners: repair.Receipt.Owners})
 	}
 	payload, err := json.Marshal(responderToolState{ApplicationBindings: l.applicationBindings, ApplicationEvidence: evidence, StageProgress: l.stageProgress, PendingWrites: l.pendingWrites, CompletedRepairs: repairs, Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, LoopOpen: l.loopOpen, ApplySeq: l.applySeq, MaxBatches: l.MaxBatches})
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -157,12 +141,8 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	l.menuRepairs = state.MenuRepairs
 	l.menuExecutions = state.MenuExecutions
 	l.batches = state.Batches
-<<<<<<< HEAD
-	l.stageWrites = state.StageWrites
-=======
 	l.loopOpen = state.LoopOpen
 	l.applySeq = max(state.ApplySeq, state.Batches)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if state.MaxBatches > 0 && state.MaxBatches < l.MaxBatches {
 		l.MaxBatches = state.MaxBatches
 	}

@@ -7,11 +7,7 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
-<<<<<<< HEAD
-=======
 	"os"
-	"os/exec"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"path"
 	"path/filepath"
 	"regexp"

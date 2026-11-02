@@ -205,14 +205,10 @@ func stateChangesContract(state *StateChanges) *contracts.StateChanges {
 }
 
 func incidentRequestContract(request IncidentRequest) (*contracts.IncidentRequest, error) {
-<<<<<<< HEAD
-	result := &contracts.IncidentRequest{MetricsSource: request.MetricsSource,
-		SchemaVersion: request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
-=======
 	result := &contracts.IncidentRequest{
+		MetricsSource: request.MetricsSource,
 		ObservationGeneration: request.ObservationGeneration,
 		SchemaVersion:         request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		IncidentId: request.IncidentID, Findings: make([]*contracts.Finding, 0, len(request.Findings)),
 		DetectorHistory: evaluationsContract(request.DetectorHistory), SurfacedPlaybooks: make([]*contracts.SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)),
 		RelevantOutcomes: make([]*contracts.PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)),
@@ -222,15 +218,11 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
-<<<<<<< HEAD
-		FastPathSummary: request.FastPathSummary, PriorStages: cloneStageReports(request.PriorStages),
-=======
 		PriorResponseProgress:  cloneResponseProgress(request.PriorResponseProgress),
 		PlaybookCoverage:       cloneCoverage(request.PlaybookCoverage),
 		PriorStages:            cloneStageReports(request.PriorStages),
 		NamespaceOnboarding:    cloneNamespaceOnboarding(request.NamespaceOnboarding),
 		DisabledSetupDetectors: cloneDisabledSetupDetectors(request.DisabledSetupDetectors),
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
@@ -273,15 +265,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		Timing:               &contracts.TimingMetrics{StartedAt: optionalTimestamp(result.Timing.StartedAt), CompletedAt: optionalTimestamp(result.Timing.CompletedAt)},
 		ResponseLoopsUsed:    int32(result.ResponseLoopsUsed), ResponseLoopExhausted: result.ResponseLoopExhausted,
 		ProgramFailureSignals: append([]string(nil), result.ProgramFailureSignals...),
-<<<<<<< HEAD
-		ResolutionPath:        result.ResolutionPath, FastPathPrograms: append([]string(nil), result.FastPathPrograms...), FastPathSkippedReason: string(result.FastPathSkippedReason),
-		PriorStages: cloneStageReports(result.PriorStages),
-	}
-	for _, covered := range result.FastPathRelationCoveredFindings {
-		message.FastPathRelationCoveredFindings = append(message.FastPathRelationCoveredFindings, relationCoveredFindingContract(covered))
-=======
 		ResolutionPath:        result.ResolutionPath,
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	for _, call := range result.ProgramToolCalls {
 		message.ProgramToolCalls = append(message.ProgramToolCalls, toolCallContract(call))
@@ -384,15 +368,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		ResponderSessionID:   message.GetResponderSessionId(), Error: message.GetError(),
 		ResponseLoopsUsed: int(message.GetResponseLoopsUsed()), ResponseLoopExhausted: message.GetResponseLoopExhausted(),
 		ProgramFailureSignals: append([]string(nil), message.GetProgramFailureSignals()...),
-<<<<<<< HEAD
-		ResolutionPath:        message.GetResolutionPath(), FastPathPrograms: append([]string(nil), message.GetFastPathPrograms()...), FastPathSkippedReason: FastPathSkipReason(message.GetFastPathSkippedReason()),
-		PriorStages: cloneStageReports(message.GetPriorStages()),
-	}
-	for _, covered := range message.GetFastPathRelationCoveredFindings() {
-		result.FastPathRelationCoveredFindings = append(result.FastPathRelationCoveredFindings, relationCoveredFindingState(covered))
-=======
 		ResolutionPath:        message.GetResolutionPath(),
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	for _, call := range message.GetProgramToolCalls() {
 		result.ProgramToolCalls = append(result.ProgramToolCalls, toolCallState(call))
@@ -566,18 +542,14 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 	if message == nil {
 		return nil
 	}
-<<<<<<< HEAD
-	result := &IncidentRequest{MetricsSource: message.GetMetricsSource(),
-		SchemaVersion: message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
-=======
 	result := &IncidentRequest{
+		MetricsSource: message.GetMetricsSource(),
 		PriorResponseProgress:  cloneResponseProgress(message.GetPriorResponseProgress()),
 		ObservationGeneration:  message.GetObservationGeneration(),
 		NamespaceOnboarding:    cloneNamespaceOnboarding(message.GetNamespaceOnboarding()),
 		DisabledSetupDetectors: cloneDisabledSetupDetectors(message.GetDisabledSetupDetectors()),
 		PriorStages:            cloneStageReports(message.GetPriorStages()),
 		SchemaVersion:          message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		IncidentID: message.GetIncidentId(), Findings: findingsState(message.GetFindings()),
 		DetectorHistory:   evaluationsState(message.GetDetectorHistory()),
 		SurfacedPlaybooks: make([]SurfacedPlaybook, 0, len(message.GetSurfacedPlaybooks())),
@@ -586,12 +558,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		RepositoryWorktree: message.GetRepositoryWorktree(), RepositoryBaseCommit: message.GetRepositoryBaseCommit(),
 		ResponseDeadline: controllerTime(message.GetResponseDeadline()), CancellationToken: message.GetCancellationToken(),
 		RepairPolicy: message.GetRepairPolicy(), StateChanges: stateChangesState(message.GetStateChanges()),
-<<<<<<< HEAD
-		DriftEvents: driftEventsState(message.GetDriftEvents()), FastPathSummary: message.GetFastPathSummary(), MaxResponseLoops: int(message.GetMaxResponseLoops()), PreparedAgentTask: message.GetPreparedAgentTask(),
-		PriorStages: cloneStageReports(message.GetPriorStages()),
-=======
 		DriftEvents: driftEventsState(message.GetDriftEvents()), PlaybookCoverage: cloneCoverage(message.GetPlaybookCoverage()), MaxResponseLoops: int(message.GetMaxResponseLoops()), PreparedAgentTask: message.GetPreparedAgentTask(),
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	for _, run := range message.GetInitialProgramRuns() {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunState(run))

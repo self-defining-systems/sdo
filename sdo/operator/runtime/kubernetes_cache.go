@@ -3,13 +3,10 @@ package runtime
 import (
 	"context"
 	"fmt"
-<<<<<<< HEAD
 	kclock "k8s.io/utils/clock"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
-=======
 	"sort"
 	"strings"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sync"
 	"time"
 
@@ -39,7 +36,6 @@ import (
 )
 
 type KubernetesCacheConfig struct {
-<<<<<<< HEAD
 	// TimerClock controls waits for informer observation; nil uses production timers.
 	TimerClock kclock.WithTicker
 	// ResyncPeriod controls informer resyncs. Zero disables resync; simulations
@@ -47,13 +43,10 @@ type KubernetesCacheConfig struct {
 	ResyncPeriod time.Duration
 	// Clock supplies snapshot observation time; nil uses the production clock.
 	Clock              func() time.Time
-=======
 	GenericCapture     *controllercore.GenericCapture
-	Now                func() time.Time
 	AcceptedScope      func(context.Context) (sdk.ObservationScope, string, error)
 	Scope, Ceiling     sdk.ObservationScope
 	Generation         string
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	Namespace          string
 	Client             kubernetes.Interface
 	StateConfigMapName string
@@ -134,7 +127,9 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 				// Synthetic-traffic and reachability results arrive through Notify, not an informer.
 				continue
 			}
-<<<<<<< HEAD
+			if watch.Namespace != "" && watch.Namespace != config.Namespace || (sdk.ObservationTarget{Kind: watch.Kind}).Cluster() {
+				continue
+			}
 			if watch.APIVersion == usage.Watch.APIVersion && watch.Kind == usage.Watch.Kind || watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
 				// Metrics detectors run on their interval; no informer backs the watch.
 				continue
@@ -143,20 +138,8 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 				declared["v1/Pod"] = sdk.WatchKind{APIVersion: "v1", Kind: "Pod", Namespace: config.Namespace}
 				continue
 			}
-			watch.Namespace = config.Namespace
-			if watch.Kind == "Node" && watch.APIVersion == "v1" {
-				watch.Namespace = ""
-=======
-			if watch.Namespace != "" && watch.Namespace != config.Namespace || (sdk.ObservationTarget{Kind: watch.Kind}).Cluster() {
-				continue
-			}
-			if watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
-				// Metrics detectors run on their interval; no informer backs the watch.
-				continue
-			}
 			if !inventoryClusterKind(watch.Kind) {
 				watch.Namespace = config.Namespace
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
 			declared[watch.APIVersion+"/"+watch.Kind] = watch
 		}
@@ -190,10 +173,7 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 }
 
 func (c *KubernetesCache) build() (informers.SharedInformerFactory, map[string]cache.SharedIndexInformer, error) {
-<<<<<<< HEAD
 	factory := informers.NewSharedInformerFactoryWithOptions(c.config.Client, c.config.ResyncPeriod, informers.WithNamespace(c.config.Namespace))
-=======
-	factory := informers.NewSharedInformerFactoryWithOptions(c.config.Client, 0, informers.WithNamespace(c.config.Namespace))
 	// RoleBindings in other namespaces may reference an application-relevant
 	// ClusterRole. Observe them for ownership checks, without admitting foreign
 	// objects to the application inventory or detector snapshots.
@@ -202,7 +182,6 @@ func (c *KubernetesCache) build() (informers.SharedInformerFactory, map[string]c
 			return rbacinformers.NewRoleBindingInformer(client, metav1.NamespaceAll, resync, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 		})
 	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	built := make(map[string]cache.SharedIndexInformer, len(c.declared))
 	for key, watch := range c.declared {
 		informer, err := informerFor(factory, key)
@@ -443,11 +422,10 @@ func (c *KubernetesCache) enqueue(watch sdk.WatchKind) {
 }
 
 func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
-<<<<<<< HEAD
 	clock := c.config.Clock
 	if clock == nil {
 		clock = lifecycleio.Now
-=======
+	}
 	c.scopedMu.Lock()
 	defer c.scopedMu.Unlock()
 	if c.config.AcceptedScope != nil {
@@ -465,14 +443,11 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 		return nil, err
 	}
 	c.observeScoped(scoped)
-	snapshot := controllercore.DetectionSnapshot{GenericCapture: c.config.GenericCapture, NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC(), ScopedSnapshot: scoped}
-	statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list statefulsets: %w", err)
->>>>>>> origin/vic-lsh/dev/sdo-improve
-	}
-	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: clock().UTC()}
+	snapshot := controllercore.DetectionSnapshot{GenericCapture: c.config.GenericCapture, NamespaceName: c.config.Namespace, ObservedAtTime: clock().UTC(), ScopedSnapshot: scoped}
 	c.informerMu.RLock()
+	_, statefulSetInformer := c.informers["apps/v1/StatefulSet"]
+	_, hpaInformer := c.informers["autoscaling/v2/HorizontalPodAutoscaler"]
+	_, pdbInformer := c.informers["policy/v1/PodDisruptionBudget"]
 	for key, informer := range c.informers {
 		for _, object := range informer.GetStore().List() {
 			switch key {
@@ -513,8 +488,6 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 				snapshot.PDBList = append(snapshot.PDBList, *object.(*policyv1.PodDisruptionBudget).DeepCopy())
 			case "networking.k8s.io/v1/Ingress":
 				snapshot.IngressList = append(snapshot.IngressList, *object.(*networkingv1.Ingress).DeepCopy())
-			case "v1/Node":
-				snapshot.NodeList = append(snapshot.NodeList, *object.(*corev1.Node).DeepCopy())
 			case "v1/Secret":
 				snapshot.SecretList = append(snapshot.SecretList, sdk.SecretMetadataFrom(*object.(*corev1.Secret)))
 			case "v1/Event":
@@ -523,6 +496,28 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 		}
 	}
 	c.informerMu.RUnlock()
+	// Kinds no detector watches are still read for diagnosis.
+	if !statefulSetInformer {
+		statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("list statefulsets: %w", err)
+		}
+		snapshot.StatefulSetList = append([]appsv1.StatefulSet(nil), statefulSets.Items...)
+	}
+	if !hpaInformer {
+		hpas, err := c.config.Client.AutoscalingV2().HorizontalPodAutoscalers(c.config.Namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("list horizontalpodautoscalers: %w", err)
+		}
+		snapshot.HPAList = append([]autoscalingv2.HorizontalPodAutoscaler(nil), hpas.Items...)
+	}
+	if !pdbInformer {
+		pdbs, err := c.config.Client.PolicyV1().PodDisruptionBudgets(c.config.Namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("list poddisruptionbudgets: %w", err)
+		}
+		snapshot.PDBList = append([]policyv1.PodDisruptionBudget(nil), pdbs.Items...)
+	}
 	if c.podAdmission {
 		r := controllercore.ObservePodAdmission(ctx, c.config.Client, c.config.Namespace, snapshot.PodList)
 		snapshot.Admission = &r

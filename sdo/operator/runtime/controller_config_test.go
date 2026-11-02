@@ -53,15 +53,8 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		ResponseTimeout:            durationpb.New(1800000000000), // 30m
 		VerificationTimeout:        durationpb.New(120000000000),  // 2m
 		MaxResponseLoops:           4,
-<<<<<<< HEAD
-		ProgramFastPath:            true,
 		MemoryHostBinary:           "/tmp/sdo-memory-host",
 		MemoryHostDigest:           "sha256:test",
-		ProgramTrustThreshold:      3,
-		ProgramMinDuration:         durationpb.New(3000000000),
-		FollowUpCooldown:           durationpb.New(30000000000), // 30s
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		RepairPolicy:               "recorded-actions",
 		LeaseName:                  "sdo-controller",
 		LeaseDuration:              durationpb.New(60000000000), // 60s

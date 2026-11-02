@@ -9,21 +9,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-<<<<<<< HEAD
-	"strings"
-	"syscall"
-	"time"
-
-	outcomeclass "sdo.dev/operator/contracts/outcome"
-	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
-	"sdo.dev/operator/runtime/lifecyclecore"
-=======
 	"slices"
 	"strings"
 	"syscall"
 	"time"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sdo.dev/operator/contracts/wire"
@@ -354,15 +343,6 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
 			ledger.OutcomeDocument.CodePath = codePathContract(n.CodePath)
 			ledger.RequiresReflection = derived.RequiresReflection
-<<<<<<< HEAD
-			switch derived.Record.GetResolutionPath() {
-			case "fast_path":
-				ledger.RequiresReflection = false
-				ledger.ReflectionSkippedReason = "trusted program fast path"
-			case "deterministic":
-				ledger.RequiresReflection = false
-				ledger.ReflectionSkippedReason = "deterministic response stage"
-=======
 			if n.SessionRoot != "" {
 				capture, captureErr := memory.IncidentCorpusDir(n.SessionRoot, id)
 				if captureErr == nil {
@@ -370,7 +350,6 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 					validate.DropReplacedOwnedPods(ledger.OutcomeDocument, capture)
 					ledger.OutcomeDocument.UndetectedCauses = validate.CaptureUndetectedCauses(ledger.OutcomeDocument, capture)
 				}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
 			// Every verified closure settles current evidence before committing its
 			// authoritative outcome. Prior repair text is never an eligibility proof.
@@ -980,19 +959,11 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 			return errors.New("controller rollout verification time is required")
 		}
 		if receipt.Success {
-<<<<<<< HEAD
-			if receipt.ControllerRevision != receipt.Expectation.ReflectionCommit {
-				return errors.New("host activation revision differs from accepted memory")
-			}
-			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint {
-				return errors.New("successful rollout lacks matching host artifact and activated detector fingerprint")
-=======
 			// A later accepted revision carries its own diagnostics tree; the
-			// trusted startup check has already verified it contains the reflection.
+			// trusted host activation has already verified it contains the reflection.
 			exact := receipt.ControllerRevision == receipt.Expectation.ReflectionCommit
 			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint == "" || (exact && receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint) {
-				return errors.New("successful rollout lacks matching build and restarted detector fingerprint")
->>>>>>> origin/vic-lsh/dev/sdo-improve
+				return errors.New("successful rollout lacks matching host artifact and activated detector fingerprint")
 			}
 			if successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 				return errors.New("controller rollout already succeeded")

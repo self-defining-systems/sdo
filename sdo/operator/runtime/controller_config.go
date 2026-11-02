@@ -100,15 +100,8 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	if config.GetMaxResponseLoops() > 0 {
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
 	}
-<<<<<<< HEAD
 	str("--memory-host-binary", config.GetMemoryHostBinary())
 	str("--memory-host-digest", config.GetMemoryHostDigest())
-	boolFlag("--program-fast-path", config.GetProgramFastPath())
-	if config.GetProgramTrustThreshold() > 0 {
-		args = append(args, "--program-trust-threshold", strconv.Itoa(int(config.GetProgramTrustThreshold())))
-	}
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
 	dur("--drift-batch-window", config.GetDriftBatchWindow())
 	str("--repair-policy", config.GetRepairPolicy())
@@ -125,12 +118,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	optBool("--synthetic-traffic", config.SyntheticTraffic)
 	dur("--synthetic-traffic-warmup", config.GetSyntheticTrafficWarmup())
 	str("--toolchain-image", config.GetToolchainImage())
-<<<<<<< HEAD
-=======
-	str("--prober-image", config.GetProberImage())
 	str("--script-image", config.GetScriptImage())
-	str("--prober-url", config.GetProberUrl())
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	str("--metrics-url", config.GetMetricsUrl())
 	str("--metrics-publish-url", config.GetMetricsPublishUrl())
 	str("--metrics-token-file", config.GetMetricsTokenFile())

@@ -59,28 +59,16 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if controlNamespace == "" {
 		controlNamespace = config.GetNamespace()
 	}
-<<<<<<< HEAD
 	validation := broker.SubprocessValidator{}
 	if config.GetHealthyBaseline() {
 		validation.HealthyBaseline = filepath.Join(config.GetRepositoryMountPath(), ".sdo-baseline/healthy")
-	}
-	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), validation.Validator())
-=======
-	job := broker.KubernetesValidationJobClient{
-		ToolchainImage: config.GetToolchainImage(),
-		Client:         client, Namespace: controlNamespace, Image: config.GetValidatorImage(),
-		RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
-		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
-		HealthyBaseline: config.GetHealthyBaseline(),
-		OnPhase:         recordClosurePhase,
-		IsolationProof:  &broker.IsolationProof{},
 	}
 	ceiling, policyErr := observation.CeilingFromEnvironment()
 	if policyErr != nil {
 		return nil, nil, policyErr
 	}
 
-	selectedCodePath, err := NewCodePathRegistryWithDependencies(CodePathDependencies{ValidateGo: broker.JobValidator(job)}).Resolve(codePathConfigFromContract(config.GetCodePath()))
+	selectedCodePath, err := NewCodePathRegistryWithDependencies(CodePathDependencies{ValidateGo: validation.Validator()}).Resolve(codePathConfigFromContract(config.GetCodePath()))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -89,19 +77,8 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		memoryCodePath = "shell"
 	}
 	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{Replay: config.GetReplay(), CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
-	}
-	// Reuse only immutable validation inputs. Mutable dev mounts or image tags
-	// retain today's full validation rather than trusting a stale attestation.
-	if memoryCodePath != "shell" && !devmount.Enabled() && immutableValidationImage(config.GetValidatorImage()) && immutableValidationImage(config.GetToolchainImage()) {
-		repository.ValidationToolchain = config.GetSchemaIdentity() + ":" + config.GetValidatorImage() + ":" + config.GetToolchainImage()
-	}
-	if upstream := config.GetMemoryUpstream(); upstream != nil {
-		if err := repository.SetUpstream(broker.Upstream{URL: upstream.GetUrl(), Branch: upstream.GetBranch(), Env: broker.SSHEnv(upstream.GetSshDir())}); err != nil {
-			return nil, nil, fmt.Errorf("native repository broker: %w", err)
-		}
 	}
 	ledgerRoot, err := broker.NativeLedgerRoot(config.GetBrokerWorktreeRoot())
 	if err != nil {

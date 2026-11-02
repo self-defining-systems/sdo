@@ -7,27 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-<<<<<<< HEAD
-	"maps"
-	"os"
-	"path/filepath"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
-=======
 	"strings"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sync"
 	"time"
 
 	"sdo.dev/operator/memory/layout"
-<<<<<<< HEAD
-	"sdo.dev/operator/runtime/prober"
-
-=======
 
 	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -47,16 +37,8 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
-<<<<<<< HEAD
-	Command       string           `json:"command"`
 	Workload      string           `json:"workload,omitempty"`
 	Scenarios     []string         `json:"scenarios,omitempty"`
-	Ref           *sdk.ObjectRef   `json:"ref,omitempty"`
-	ProgramID     string           `json:"program_id,omitempty"`
-	Bindings      program.Bindings `json:"bindings,omitempty"`
-	PlanIDs       []string         `json:"plan_ids,omitempty"`
-	ApplicationID string           `json:"application_id,omitempty"`
-=======
 	SelectionSet        *contracts.MitigationSelectionSet      `json:"-"`
 	WaitSeconds         float64                                `json:"wait_seconds,omitempty"`
 	PreviousFindings    []sdk.Finding                          `json:"previous_findings,omitempty"`
@@ -81,7 +63,6 @@ type ToolRequest struct {
 	// rolloutTimeout bounds a stage apply's rollout wait; it is not decodable
 	// either, and an agent call keeps the executor's own timeout.
 	rolloutTimeout time.Duration
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // VerificationBlocker names observation work that cannot yet establish health.
@@ -95,17 +76,7 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
-<<<<<<< HEAD
-	Command       string              `json:"command"`
 	Burst         *prober.BurstResult `json:"burst,omitempty"`
-	Source        map[string]any      `json:"source,omitempty"`
-	Error         string              `json:"error,omitempty"`
-	Summary       string              `json:"summary"`
-	PlanID        string              `json:"plan_id,omitempty"`
-	ApplicationID string              `json:"application_id,omitempty"`
-	Patches       []PlanPatch         `json:"patches,omitempty"`
-	ProgramRuns   []ProgramRun        `json:"program_runs,omitempty"`
-=======
 	VerificationStatus  VerificationStatus `json:"verification_status,omitempty"`
 	MemoryCheckReport   json.RawMessage    `json:"memory_check_report,omitempty"`
 	MemoryCheckTimedOut bool               `json:"memory_check_timed_out,omitempty"`
@@ -147,7 +118,6 @@ type ToolResponse struct {
 	// each once, in the vocabulary of the incident's prior_stages.
 	PriorStages []StageNote `json:"prior_stages,omitempty"`
 
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -199,47 +169,6 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-<<<<<<< HEAD
-	CurrentEvidence                 func() *IncidentRequest
-	Request                         IncidentRequest
-	Programs                        program.ProgramRegistry
-	Traffic                         ProberAPI
-	Provider                        SnapshotProvider
-	Detectors                       []sdk.Detector
-	Executor                        PlanExecutor
-	ReadView                        func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline               time.Duration
-	DiagnosisSettleDelay            time.Duration
-	CandidateSweepLimit             int
-	MaxBatches                      int
-	Trust                           map[string]ProgramTrust
-	CorpusReplayPassed              bool
-	BeforeFastPathApply             func(context.Context, []ProgramRun) error
-	CorpusSessionRoot               string
-	capturePhase                    string
-	timing                          toolTiming
-	preApplyCaptured                bool
-	saveToolState                   func(context.Context, []byte) error
-	operationMu                     sync.Mutex
-	mu                              sync.Mutex
-	sessionID                       string
-	plans                           map[string]selectedPlan
-	applications                    map[string]PlanApplicationResult
-	applicationsLog                 []RecordedPlanApplication
-	failureSignals                  []string
-	calls                           []ToolCall
-	runs                            []ProgramRun
-	matchedViews                    map[string]program.ReadView
-	matchedPlans                    map[string]PlanApplicationResult
-	matchedPlanErrors               map[string]error
-	lastDiagnosisView               program.ReadView
-	findings                        []sdk.Finding
-	batches                         int
-	stageWrites                     int
-	fastPathPrograms                []string
-	fastPathRelationCoveredFindings []RelationCoveredFinding
-	fastPathSkippedReason           FastPathSkipReason
-=======
 	scriptRefusals map[string]error
 
 	stageProgress       map[string]responseStageProgress
@@ -270,6 +199,7 @@ type ResponderLoop struct {
 	CurrentEvidence    func() *IncidentRequest
 	Request            IncidentRequest
 	Programs           program.ProgramRegistry
+	Traffic ProberAPI
 	Provider           SnapshotProvider
 	Detectors          []sdk.Detector
 	Executor           PlanExecutor
@@ -315,7 +245,6 @@ type ResponderLoop struct {
 	batches  int
 	loopOpen bool
 	applySeq int
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // ResponderLoopOptions supplies sources that must replay across simulated runs.
@@ -342,7 +271,6 @@ func NewResponderLoopWithOptions(request IncidentRequest, programs program.Progr
 	if source == nil {
 		source = lifecycleio.NewSessionID
 	}
-<<<<<<< HEAD
 	session, err := source()
 	if err != nil {
 		return nil, fmt.Errorf("create responder session ID: %w", err)
@@ -351,10 +279,8 @@ func NewResponderLoopWithOptions(request IncidentRequest, programs program.Progr
 	if err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != session {
 		return nil, fmt.Errorf("responder session ID must be 32 lowercase hexadecimal characters")
 	}
-	return &ResponderLoop{sessionID: session, Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}, nil
-=======
 	detectors = withoutDisabledSetupDetectors(detectors, request.SourceCommit, request.DisabledSetupDetectors)
-	loop := &ResponderLoop{sessionID: fmt.Sprintf("%x", session), Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
+	loop := &ResponderLoop{sessionID: session, Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
 	priorRecorder := executor.RecordPrimitive
 	loop.Executor.RecordPrimitive = func(call sdktest.PrimitiveCall) error {
 		if priorRecorder != nil {
@@ -374,7 +300,7 @@ func NewResponderLoopWithOptions(request IncidentRequest, programs program.Progr
 		}
 		return memory.AppendCapturedRecording(loop.CorpusSessionRoot, loop.Request.IncidentID, phase, call)
 	}
-	return loop
+	return loop, nil
 }
 
 // initializeDispatch may run after LoopFactory has published this loop to the
@@ -418,7 +344,6 @@ func (l *ResponderLoop) observeMutations() (*apihistory.MutationObservation, err
 		err = errors.New("responder mutation observation is unavailable")
 	}
 	return observation, err
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func (l *ResponderLoop) ToolCalls() []ToolCall {
@@ -483,43 +408,6 @@ func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
 	return l.diagnose(ctx, l.findings)
 }
 
-<<<<<<< HEAD
-// RetryInitialDiagnose refreshes inconclusive initial verdicts after the cluster settles.
-// The caller starts this while the responder Job is being dispatched.
-func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
-	l.mu.Lock()
-	inconclusive := false
-	for _, run := range l.runs {
-		if run.Verdict.Result == program.NoMatch || run.Verdict.Result == program.Unknown {
-			inconclusive = true
-			break
-		}
-	}
-	delay := l.DiagnosisSettleDelay
-	l.mu.Unlock()
-	if delay <= 0 {
-		delay = DefaultDiagnosisSettleDelay
-	}
-	if err := l.Executor.sleep(ctx, delay); err != nil {
-		return
-	}
-	l.operationMu.Lock()
-	defer l.operationMu.Unlock()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.batches == 0 {
-		l.capturePhase = "open@settle"
-	}
-	if inconclusive {
-		_, _, _ = l.refresh(ctx)
-	} else {
-		_, _ = l.snapshotView(ctx)
-	}
-	l.capturePhase = ""
-}
-
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func (l *ResponderLoop) LoopsUsed() int { l.mu.Lock(); defer l.mu.Unlock(); return l.batches }
 func (l *ResponderLoop) Exhausted() bool {
 	l.mu.Lock()
@@ -537,16 +425,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-<<<<<<< HEAD
 	started := l.clock()
-=======
-	started := time.Now()
 	mutating := request.Command == "rollback" || request.Command == "apply" || request.Command == "mitigate" || request.Command == "act-result"
 	var before []sdk.Finding
 	if mutating && l.CachedFindings != nil {
 		before = l.CachedFindings().Findings
 	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	l.timing = toolTiming{}
 	defer func() {
 		slog.Info("responder_tool_timing", "incident_id", l.Request.IncidentID, "command", request.Command,
@@ -631,7 +515,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				if response.Error == "incident_verified" {
 					response.FailureReason = "incident_verified"
 				}
-				response.Receipt = &contracts.RepairActionReceipt{FailureReason: response.FailureReason, ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(time.Now().UTC())}
+				response.Receipt = &contracts.RepairActionReceipt{FailureReason: response.FailureReason, ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
 				return response
 			}
 			defer func() {
@@ -642,7 +526,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		} else if l.IncidentStatus != nil && l.IncidentStatus() != nil {
 			response.Error = "incident_verified"
 			response.FailureReason = "incident_verified"
-			response.Receipt = &contracts.RepairActionReceipt{FailureReason: "incident_verified", ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(time.Now().UTC())}
+			response.Receipt = &contracts.RepairActionReceipt{FailureReason: "incident_verified", ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
 			return response
 		}
 	}
@@ -716,11 +600,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			started := l.clock()
 			verdict := program.RunDiagnose(ctx, p, view, request.Bindings, l.deadline())
 			_, canMitigate := l.Programs.Mitigator(request.ProgramID)
-<<<<<<< HEAD
-			run := ProgramRun{CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: l.clock().Sub(started)}
-=======
-			run := ProgramRun{ProgramRevision: l.programRevision(request.ProgramID), CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: time.Since(started)}
->>>>>>> origin/vic-lsh/dev/sdo-improve
+			run := ProgramRun{ProgramRevision: l.programRevision(request.ProgramID), CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: l.clock().Sub(started)}
 			response.ProgramRuns = []ProgramRun{run}
 			l.runs = append(l.runs, run)
 		}
@@ -767,37 +647,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
 		l.apply(ctx, request, &response)
-<<<<<<< HEAD
-	case "verify":
-		if l.Traffic == nil && (request.Workload != "" || len(request.Scenarios) > 0) {
-			response.Error = "bounded traffic verification is unavailable"
-			break
-		}
-		if l.Traffic != nil {
-			burst, err := l.Traffic.Burst(ctx, prober.BurstRequest{Workload: request.Workload, Scenarios: request.Scenarios})
-			if err != nil {
-				response.Error = err.Error()
-				break
-			}
-			response.Burst = &burst
-		}
-		l.verify(ctx, nil, &response)
-		if response.Burst != nil && !response.Burst.Healthy {
-			response.Healthy = false
-			response.Summary = "bounded traffic verification is unhealthy"
-		}
-	case "rollback":
-		application, ok := l.applications[request.ApplicationID]
-		if !ok {
-			response.Error = fmt.Sprintf("unknown application %q", request.ApplicationID)
-=======
 		if result, ok := l.applications[response.ApplicationID]; ok {
 			response.MitigationHealth = result.MitigationHealth
 			response.TargetedHealthy = result.VerificationPassed
 		}
 	case "pre-apply":
 		if l.pendingConflict(ctx, request.Refs, &response) {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			break
 		}
 		if l.CachedFindings != nil {
@@ -809,6 +664,19 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		response.Summary = "first-mutation snapshot captured"
 	case "verify":
+		if l.Traffic == nil && (request.Workload != "" || len(request.Scenarios) > 0) {
+			response.Error = "bounded traffic verification is unavailable"
+			break
+		}
+		var burst *prober.BurstResult
+		if l.Traffic != nil {
+			result, err := l.Traffic.Burst(ctx, prober.BurstRequest{Workload: request.Workload, Scenarios: request.Scenarios})
+			if err != nil {
+				response.Error = err.Error()
+				break
+			}
+			burst = &result
+		}
 		if l.VerifyClosure != nil {
 			// The controller may persist continuation state while observing.
 			// A read-only closure check must not hold responder locks while
@@ -835,6 +703,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.LoopsAllowed = l.batchLimit()
 		} else {
 			l.verify(ctx, nil, &response, request.stage)
+		}
+		if burst != nil {
+			response.Burst = burst
+			if !burst.Healthy {
+				response.Healthy = false
+				response.Summary = "bounded traffic verification is unhealthy"
+			}
 		}
 		if response.Error == "" {
 			l.closeLoop()
@@ -977,9 +852,6 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 			_ = memory.AppendCapturedRecording(l.CorpusSessionRoot, l.Request.IncidentID, phase, call)
 		}}, nil
 	}
-	if _, remote := l.Programs.(*remoteProgramRegistry); remote {
-		return &sdktest.RecordingReadView{ReadView: view}, nil
-	}
 	return view, nil
 }
 
@@ -999,12 +871,8 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	if err != nil {
 		return nil
 	}
-<<<<<<< HEAD
-	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Clock: l.clock, Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
-=======
 	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 	l.stampProgramRuns(runs)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
@@ -1014,15 +882,9 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	return runs
 }
 
-<<<<<<< HEAD
-func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, string) {
+func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, []DetectorEvaluation, string) {
 	started := l.clock()
 	defer func() { l.timing.refresh += l.clock().Sub(started) }()
-=======
-func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, []DetectorEvaluation, string) {
-	started := time.Now()
-	defer func() { l.timing.refresh += time.Since(started) }()
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	view, err := l.snapshotView(ctx)
 	if err != nil {
 		return nil, nil, nil, err.Error()
@@ -1049,18 +911,10 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 		}
 		states = append(states, state)
 	}
-<<<<<<< HEAD
-	drift, _, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil, l.clock())
-	findings = append(findings, drift...)
-	l.runs = append(l.runs, driftRuns...)
-	l.findings = findings
-	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Clock: l.clock, Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
-=======
 	l.drift = retainedDrift(l.Request.Findings, view)
 	l.findings = findings
 	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 	l.stampProgramRuns(runs)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
@@ -1215,11 +1069,6 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		selected = append(selected, plan)
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
 	}
-<<<<<<< HEAD
-	l.batches++
-	started := l.clock().UTC()
-	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.batches)
-=======
 
 	refs, refErr := l.menuPlanWriteRefs(batch)
 	if l.heldPendingWrites() > 0 && refErr != nil {
@@ -1235,9 +1084,8 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if !request.stage {
 		l.spendLoop()
 	}
-	started := time.Now().UTC()
+	started := l.clock().UTC()
 	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.applySeq)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	programIDs := make([]string, 0, len(selected))
 	for _, plan := range selected {
 		programIDs = append(programIDs, plan.programID)
@@ -1257,10 +1105,6 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		return
 	}
 	executor := l.Executor
-<<<<<<< HEAD
-	result, err := executor.Apply(ctx, l.Request, batch, false)
-	completed := l.clock().UTC()
-=======
 	executor.ApplicationID = id
 	// Both automatic and responder applications observe once. A rollout may
 	// depend on another matched binding that has not been written yet.
@@ -1270,11 +1114,10 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
 	response.ActionReports = result.ActionReports
-	completed := time.Now().UTC()
+	completed := l.clock().UTC()
 	if result.RolloutPending != nil {
 		l.reservePending(id, result, "", "", program.Bindings{}, request.FindingFingerprints)
 	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
 		response.ApplicationID = id
@@ -1349,27 +1192,18 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 		started := l.clock()
 		verdict := program.RunDiagnose(ctx, p, view, plan.bindings, l.deadline())
-<<<<<<< HEAD
-		run := ProgramRun{ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: l.clock().Sub(started)}
-=======
-		run := ProgramRun{ProgramRevision: plan.revision, ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: time.Since(started)}
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		run := ProgramRun{ProgramRevision: plan.revision, ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: l.clock().Sub(started)}
 		response.ProgramRuns = append(response.ProgramRuns, run)
 		l.runs = append(l.runs, run)
 	}
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	for _, detector := range l.Detectors {
-<<<<<<< HEAD
-		observed, err := detector.Detect(ctx, view)
-		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear}
-=======
 		observed, err := sdk.DetectObserved(ctx, detector, view)
-		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
+		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending
 		}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		if err != nil {
 			state.Status, state.Error = DetectorEvaluationError, err.Error()
 			response.Error = err.Error()
@@ -1382,31 +1216,11 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 		states = append(states, state)
 	}
-<<<<<<< HEAD
-	drift, driftStates, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil, l.clock())
-	findings = append(findings, drift...)
-	states = append(states, driftStates...)
-	response.ProgramRuns = append(response.ProgramRuns, driftRuns...)
-	l.runs = append(l.runs, driftRuns...)
-	l.findings = findings
-	if len(applied) > 0 {
-		old := map[string]bool{}
-		for _, finding := range previous {
-			old[FindingFingerprint(finding)] = true
-		}
-		for _, finding := range findings {
-			if !old[FindingFingerprint(finding)] {
-				l.addFailureSignal("new_finding_after_apply:" + FindingFingerprint(finding))
-			}
-		}
-	} else if l.batches == 0 && l.stageWrites == 0 && len(previous) > 0 && len(findings) == 0 {
-=======
 	l.drift = retainedDrift(l.Request.Findings, view)
 	l.findings = findings
 	// Typed diagnoses and findings retain observation history. They are not
 	// durable execution failures; only actual ad hoc work needs a novelty flag.
 	if len(applied) == 0 && !stage && !l.appliedAny() && len(previous) > 0 && len(findings) == 0 {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		matched := false
 		for _, run := range l.runs {
 			if run.Verdict.Result == program.Match {
@@ -1423,12 +1237,8 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
 	response.Drift = append([]sdk.Finding(nil), l.drift...)
 	if len(findings) > 0 {
-<<<<<<< HEAD
-		runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Clock: l.clock, Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
-=======
 		runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 		l.stampProgramRuns(runs)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		response.ProgramRuns = append(response.ProgramRuns, runs...)
 		l.runs = append(l.runs, runs...)
 	}
@@ -1474,14 +1284,6 @@ func boundPlansNoMatch(selected []selectedPlan, runs []ProgramRun) bool {
 	return true
 }
 
-<<<<<<< HEAD
-// clock shares the executor's injected clock across diagnosis and apply receipts.
-func (l *ResponderLoop) clock() time.Time {
-	if l.Executor.Now != nil {
-		return l.Executor.Now()
-	}
-	return lifecycleio.Now()
-=======
 func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolRequest, response *ToolResponse) {
 	application, ok := l.applications[request.ApplicationID]
 	if !ok {
@@ -1557,10 +1359,13 @@ func (l *ResponderLoop) loopsRemaining() int {
 	return remaining
 }
 
+// clock shares the injected clock across diagnosis, apply receipts and timing.
 func (l *ResponderLoop) clock() time.Time {
 	if l.Now != nil {
 		return l.Now()
 	}
-	return time.Now()
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	if l.Executor.Now != nil {
+		return l.Executor.Now()
+	}
+	return lifecycleio.Now()
 }

@@ -12,11 +12,6 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/metrics"
-<<<<<<< HEAD
-=======
-	"sdo.dev/operator/sdk/servicehealth"
-	"sdo.dev/operator/sdk/traffic"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 )
 
 // DefaultMetricsQueryTimeout bounds each metric query, and the alerts read,
@@ -255,42 +250,28 @@ func (p MetricsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	if err != nil || p.Observer == nil {
 		return base, err
 	}
-<<<<<<< HEAD
 	frozen := p.Observer.freeze(ctx)
-	return inputs.New(base).WithMetrics(frozen).WithAlerts(frozen), nil
+	return metricsContext{Carrier: inputs.New(base).WithMetrics(frozen).WithAlerts(frozen), ScopedObservationSource: sdk.ScopedSource(base), frozen: frozen}, nil
 }
 
-func (f *frozenMetrics) MetricResult(id string) (metrics.Result, bool) {
-	f.load()
-	r, ok := f.results[id]
-	return r, ok
-}
-func (f *frozenMetrics) AlertsResult() (metrics.AlertsResult, bool) {
-	f.load()
-	if f.alerts == nil {
-		return metrics.AlertsResult{}, false
-=======
-	return metricsContext{DetectionContext: base, frozen: p.Observer.freeze(ctx), ScopedObservationSource: sdk.ScopedSource(base)}, nil
-}
-
-// metricsContext wraps a snapshot with the cycle's frozen metrics. It keeps
-// the wrapped snapshot's other optional views visible, so wrapping never
+// metricsContext wraps a snapshot with the cycle's frozen metrics. The carrier
+// keeps the wrapped snapshot's other optional inputs visible, so wrapping never
 // hides what capture and replay read.
 type metricsContext struct {
-	sdk.DetectionContext
+	inputs.Carrier
 	sdk.ScopedObservationSource
 	frozen *frozenMetrics
 }
 
-func (c metricsContext) MetricResult(id string) (metrics.Result, bool) {
-	c.frozen.load()
-	result, ok := c.frozen.results[id]
+func (f *frozenMetrics) MetricResult(id string) (metrics.Result, bool) {
+	f.load()
+	result, ok := f.results[id]
 	if ok {
 		return result, true
 	}
-	c.frozen.dynamicMu.Lock()
-	defer c.frozen.dynamicMu.Unlock()
-	for q, r := range c.frozen.dynamic {
+	f.dynamicMu.Lock()
+	defer f.dynamicMu.Unlock()
+	for q, r := range f.dynamic {
 		if q.ID == id {
 			return r, true
 		}
@@ -298,12 +279,11 @@ func (c metricsContext) MetricResult(id string) (metrics.Result, bool) {
 	return metrics.Result{}, false
 }
 
-func (c metricsContext) AlertsResult() (metrics.AlertsResult, bool) {
-	c.frozen.load()
-	if c.frozen.alerts == nil {
-		c.frozen.alertOnce.Do(func() { c.frozen.onDemandAlerts = c.frozen.observer.fetchAlerts(c.frozen.ctx, c.frozen.at) })
-		return c.frozen.onDemandAlerts, true
->>>>>>> origin/vic-lsh/dev/sdo-improve
+func (f *frozenMetrics) AlertsResult() (metrics.AlertsResult, bool) {
+	f.load()
+	if f.alerts == nil {
+		f.alertOnce.Do(func() { f.onDemandAlerts = f.observer.fetchAlerts(f.ctx, f.at) })
+		return f.onDemandAlerts, true
 	}
 	return *f.alerts, true
 }
@@ -352,19 +332,6 @@ func (c metricsContext) QueryMetrics(q metrics.Query) metrics.Result {
 	result := f.observer.fetchQuery(f.ctx, q, f.at)
 	f.dynamic[q] = result
 	return result
-}
-
-func (c metricsContext) ObservedAt() time.Time {
-	if clock, ok := c.DetectionContext.(sdk.ObservationClock); ok {
-		return clock.ObservedAt()
-	}
-	return time.Time{}
-}
-func (c metricsContext) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
-	if source, ok := c.DetectionContext.(servicehealth.ReachabilitySource); ok {
-		return source.ServiceReachability()
-	}
-	return servicehealth.ReachabilityWindow{}, false
 }
 
 func metricReadKey(q metrics.Query) metrics.Query { q.ID = ""; q.Step = q.EffectiveStep(); return q }

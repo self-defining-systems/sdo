@@ -5,11 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-<<<<<<< HEAD
 	"sdo.dev/operator/runtime/internal/lifecycleio"
-=======
 	"strings"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -132,15 +129,20 @@ type PlanExecutor struct {
 	// show the application's writes before verifying.
 	Observer WriteObserver
 	Now      func() time.Time
-<<<<<<< HEAD
 	// Jitter draws a value in [0, bound); nil uses the production RNG.
 	Jitter func(bound int64) int64
 	// Sleep waits between conflict retries and diagnosis settling; nil uses the production timer.
 	Sleep func(context.Context, time.Duration) error
-=======
 	Values   program.ValueInputs
 	report   *PlanActionReport
->>>>>>> origin/vic-lsh/dev/sdo-improve
+}
+
+// clock returns the injected time source, or the production clock at the edge.
+func (e PlanExecutor) clock() func() time.Time {
+	if e.Now != nil {
+		return e.Now
+	}
+	return lifecycleio.Now
 }
 
 // Apply writes the plan and reports. A version conflict before anything was
@@ -150,16 +152,9 @@ type PlanExecutor struct {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
-<<<<<<< HEAD
-	now := e.Now
-	if now == nil {
-		now = lifecycleio.Now
-	}
+	now := e.clock()
 	started := now()
-	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
-=======
-	started := time.Now()
-	defer func() { result.Duration = time.Since(started) }()
+	defer func() { result.Duration = now().Sub(started) }()
 	var admissionRetries []program.Action
 	var admissionRecoveryErr error
 	if !e.deferConvergence {
@@ -266,11 +261,11 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	if hasObjectActions(plan) {
 		return e.applyObjectPlan(ctx, incident, plan, dryRun)
 	}
-	started := time.Now()
+	now := e.clock()
+	started := now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun, ActionReports: newPlanReports(plan)}
 	defer func() { settlePlanReports(&result, err) }()
 	writesLanded := false
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	defer func() {
 		result.Duration = now().Sub(started)
 		if err != nil && result.PendingAction != nil {
@@ -865,10 +860,7 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if len(program.AdmissionFailedCreate(set)) == 0 {
 			return nil, errors.New("RetryAdmission requires live admission FailedCreate and missing Pods")
 		}
-		now := time.Now
-		if e.Now != nil {
-			now = e.Now
-		}
+		now := e.clock()
 		// The version makes every retry an update even with a fixed clock.
 		token := now().UTC().Format(time.RFC3339Nano) + "/" + current.GetResourceVersion()
 		if err := unstructured.SetNestedField(next.Object, token, "metadata", "annotations", admissionRetryAnnotation); err != nil {

@@ -169,11 +169,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		sort.SliceStable(history, func(i, j int) bool { return verifiedTime(history[i]).Before(verifiedTime(history[j])) })
 		history = history[max(0, len(history)-maxReflectionHistory):]
 		trimReflectionClosure(closed)
-<<<<<<< HEAD
-		request := &contracts.ReflectionRequest{MetricsSource: closed.GetRequest().GetMetricsSource(), Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics}
-=======
-		request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		request := &contracts.ReflectionRequest{MetricsSource: closed.GetRequest().GetMetricsSource(), Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
 		if w.Catalog != nil {
 			snapshot, err := memory.SnapshotAt(ctx, w.Catalog, workspace.BaseCommit)
 			if err != nil {

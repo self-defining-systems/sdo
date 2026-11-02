@@ -15,21 +15,7 @@ import (
 
 const DefaultDiagnosisDeadline = 10 * time.Second
 
-<<<<<<< HEAD
-type CandidateOptions struct {
-	// Clock measures diagnosis duration; nil uses the production clock.
-	Clock      func() time.Time
-	Deadline   time.Duration
-	SweepLimit int
-	Affected   []sdk.ObjectRef
-	// SweepCursors stores the next mixed-radix assignment per program.
-	SweepCursors map[string]string
-}
-
-// ProgramRun is one diagnosis for a concrete finding, hint, or sweep binding.
-=======
 // ProgramRun is one diagnosis for a concrete finding or hint binding.
->>>>>>> origin/vic-lsh/dev/sdo-improve
 type ProgramRun struct {
 	CanMitigate        *bool            `json:"can_mitigate,omitempty"`
 	FindingFingerprint string           `json:"finding_fingerprint,omitempty"`
@@ -150,166 +136,11 @@ func findingProgramBindings(spec program.ProgramSpec, finding sdk.Finding) (prog
 	for _, param := range spec.Params {
 		hasObjectRoles = hasObjectRoles || param.Kind != ""
 	}
-<<<<<<< HEAD
-	var objects []metav1.Object
-	apiVersion := "v1"
-	switch kind {
-	case "Service":
-		items := view.Services()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "ConfigMap":
-		items := view.ConfigMaps()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Pod":
-		items := view.Pods()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Endpoints":
-		items := view.Endpoints()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Event":
-		items := view.Events()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Deployment":
-		apiVersion = "apps/v1"
-		items := view.Deployments()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "ReplicaSet":
-		apiVersion = "apps/v1"
-		items := view.ReplicaSets()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "EndpointSlice":
-		apiVersion = "discovery.k8s.io/v1"
-		items := view.EndpointSlices()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "StatefulSet":
-		apiVersion = "apps/v1"
-		items := view.StatefulSets()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "DaemonSet":
-		apiVersion = "apps/v1"
-		items := view.DaemonSets()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Job":
-		apiVersion = "batch/v1"
-		items := view.Jobs()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "CronJob":
-		apiVersion = "batch/v1"
-		items := view.CronJobs()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "PersistentVolumeClaim":
-		apiVersion = "v1"
-		items := view.PersistentVolumeClaims()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "ServiceAccount":
-		apiVersion = "v1"
-		items := view.ServiceAccounts()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "HorizontalPodAutoscaler":
-		apiVersion = "autoscaling/v2"
-		items := view.HorizontalPodAutoscalers()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "PodDisruptionBudget":
-		apiVersion = "policy/v1"
-		items := view.PodDisruptionBudgets()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Ingress":
-		apiVersion = "networking.k8s.io/v1"
-		items := view.Ingresses()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Node":
-		apiVersion = "v1"
-		items := view.Nodes()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	case "Secret":
-		for _, item := range view.Secrets() {
-			metadata := item.ObjectMeta()
-			objects = append(objects, &metadata)
-		}
-	case "NetworkPolicy":
-		apiVersion = "networking.k8s.io/v1"
-		items := view.NetworkPolicies()
-		for i := range items {
-			objects = append(objects, &items[i])
-		}
-	default:
-		return nil
-	}
-	refs := make([]sdk.ObjectRef, 0, len(objects))
-	for _, object := range objects {
-		if (object.GetNamespace() == view.Namespace() || kind == "Node" && object.GetNamespace() == "") && object.GetName() != "" {
-			refs = append(refs, sdk.ObjectRefFrom(string(kind), apiVersion, object))
-		}
-	}
-	sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
-	return refs
-}
-
-func candidateBindings(spec program.ProgramSpec, finding sdk.Finding) []program.Bindings {
-	refs := append([]sdk.ObjectRef{finding.PrimaryResource}, finding.RelatedResources...)
-	for _, ref := range finding.ParameterBindings {
-		refs = append(refs, ref)
-	}
-	unique := make([]sdk.ObjectRef, 0, len(refs))
-	seen := map[sdk.ObjectRef]bool{}
-	for _, ref := range refs {
-		if ref.Kind != "" && !seen[ref] {
-			seen[ref] = true
-			unique = append(unique, ref)
-		}
-	}
-	var result []program.Bindings
-	var bind func(int, program.Bindings)
-	bind = func(index int, current program.Bindings) {
-		if len(result) >= maxCandidateAssignments {
-			return
-		}
-		if index == len(spec.Params) {
-			if program.ValidateBindings(spec, current) == nil {
-				result = append(result, current)
-=======
 	if err == nil && (!hasObjectRoles || len(bound.Objects) > 0) {
 		source := "finding"
 		for name, ref := range bound.Objects {
 			if finding.ParameterBindings[name] == ref && ref.Kind != "" {
 				source = "hint"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
 		}
 		return bound, source, true

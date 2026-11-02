@@ -2,15 +2,12 @@ package runtime
 
 import (
 	"context"
-<<<<<<< HEAD
 	kclock "k8s.io/utils/clock"
-=======
 	"encoding/json"
 	"fmt"
 	"io"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"net/http"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sort"
 	"sync"
 	"time"
@@ -318,31 +315,20 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 		p.Reference.bind(&window)
 		reachability = &window
 	}
-<<<<<<< HEAD
 	carrier := inputs.New(base)
 	if p.Observer != nil {
 		carrier = carrier.WithTraffic(trafficWindows(windows))
-=======
-	return trafficContext{ScopedObservationSource: scopedSource(base), DetectionContext: base, windows: windows, reachability: reachability}, nil
-}
-
-type trafficContext struct {
-	sdk.ScopedObservationSource
-	sdk.DetectionContext
-	windows      map[string]traffic.Window
-	reachability *servicehealth.ReachabilityWindow
-}
-
-// ServiceReachability implements servicehealth.ReachabilitySource.
-func (c trafficContext) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
-	if c.reachability == nil {
-		return servicehealth.ReachabilityWindow{}, false
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	if reachability != nil {
 		carrier = carrier.WithReachability(reachabilityWindow{reachability})
 	}
-	return carrier, nil
+	return trafficContext{Carrier: carrier, ScopedObservationSource: sdk.ScopedSource(base)}, nil
+}
+
+// trafficContext keeps the carrier's inputs and the base snapshot's scoped reads visible.
+type trafficContext struct {
+	inputs.Carrier
+	sdk.ScopedObservationSource
 }
 
 type trafficWindows map[string]traffic.Window

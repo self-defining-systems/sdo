@@ -54,36 +54,7 @@ type PriorOutcomeEvidence struct {
 }
 
 type IncidentRequest struct {
-<<<<<<< HEAD
-	MetricsSource        *contracts.MetricsSource
-	SchemaVersion        string
-	Application          string
-	Namespace            string
-	IncidentID           string
-	Findings             []sdk.Finding
-	DriftEvents          []sdk.DriftEvent
-	DetectorHistory      []DetectorEvaluation
-	SurfacedPlaybooks    []SurfacedPlaybook
-	RelevantOutcomes     []PriorOutcomeEvidence
-	SourceCommit         string
-	DeployedCommit       string
-	RepositoryWorktree   string
-	RepositoryBaseCommit string
-	ResponseDeadline     time.Time
-	CancellationToken    string
-	RepairPolicy         string
-	// StateChanges is the application's configuration diff against its last
-	// healthy baseline when the incident opened; nil without a baseline.
-	StateChanges *StateChanges
-	// FollowUp is set only on a follow-up incident dispatched for findings that
-	// stayed active after an earlier responder completed.
-	FollowUp           *FollowUpContext
-	InitialProgramRuns []ProgramRun
-	FastPathSummary    string
-	// PriorStages is what earlier automatic stages did, in order.
-	PriorStages      []*contracts.StageReport
-	MaxResponseLoops int
-=======
+	MetricsSource          *contracts.MetricsSource
 	DisabledSetupDetectors []*contracts.DisabledSetupDetector
 	NamespaceOnboarding    *contracts.NamespaceOnboarding
 	// ObservationGeneration binds the incident to accepted scope and installer policy.
@@ -112,7 +83,6 @@ type IncidentRequest struct {
 	PriorResponseProgress []*contracts.ResponseProgress
 	PriorStages           []*contracts.StageReport
 	MaxResponseLoops      int
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string
 }
@@ -185,35 +155,6 @@ type ResourceOwners struct {
 }
 
 type IncidentResult struct {
-<<<<<<< HEAD
-	DriftEvents                     []sdk.DriftEvent
-	SchemaVersion                   string
-	IncidentID                      string
-	Status                          IncidentStatus
-	ConfirmedRootCauses             []ConfirmedRootCause
-	AppliedPlaybooks                []AppliedPlaybook
-	RepairChanges                   []string
-	RepairActions                   []RepairActionReceipt
-	FinalDetectorStates             []DetectorEvaluation
-	ProposedArtifactIDs             []string
-	VerificationEvidence            []VerificationEvidence
-	Usage                           UsageMetrics
-	Timing                          TimingMetrics
-	ResponderSessionID              string
-	LateFindingsPull                *LateFindingsPull
-	Error                           string
-	ProgramToolCalls                []ToolCall
-	ProgramRuns                     []ProgramRun
-	PlanApplications                []RecordedPlanApplication
-	ProgramFailureSignals           []string
-	ResponseLoopsUsed               int
-	ResponseLoopExhausted           bool
-	ResolutionPath                  string
-	FastPathPrograms                []string
-	FastPathSkippedReason           FastPathSkipReason
-	FastPathRelationCoveredFindings []RelationCoveredFinding
-	PriorStages                     []*contracts.StageReport
-=======
 	// automaticStages carries an in-process pre-claim observation back to the
 	// pipeline. Durable evidence remains in request stage reports and receipts.
 	automaticStages       []*contracts.StageReport
@@ -242,7 +183,6 @@ type IncidentResult struct {
 	ResponseLoopsUsed     int
 	ResponseLoopExhausted bool
 	ResolutionPath        string
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // LateFindingsPull is a worker's claim that it consumed a controller-authored

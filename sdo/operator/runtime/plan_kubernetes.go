@@ -157,13 +157,8 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 		}
 		select {
 		case <-ctx.Done():
-<<<<<<< HEAD
-			return ctx.Err()
-		case <-ticker.C():
-=======
 			return &rolloutBlockedError{blockers: blockers, cause: ctx.Err()}
-		case <-ticker.C:
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		case <-ticker.C():
 		}
 	}
 }

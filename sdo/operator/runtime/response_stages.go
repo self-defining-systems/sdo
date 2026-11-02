@@ -10,44 +10,13 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-<<<<<<< HEAD
-// ResponseStage acts on the incident's current evidence and reports what it
-// did. It neither chooses a later stage nor grants authority to close the
-// incident: remaining findings are always re-observed by the controller.
-=======
 // ResponseStage operates on current evidence and reports its own actions. It
 // neither chooses a later stage nor grants authority to close an incident.
->>>>>>> origin/vic-lsh/dev/sdo-improve
 type ResponseStage interface {
 	Name() string
 	Run(context.Context, *IncidentState) (*contracts.StageReport, error)
 }
 
-<<<<<<< HEAD
-// IncidentState is local to one ordered response attempt. Request keeps the
-// opening evidence; Findings is what is still open after the stages so far.
-type IncidentState struct {
-	Request     IncidentRequest
-	Findings    []sdk.Finding
-	PriorStages []*contracts.StageReport
-	// DetectorStates and Healthy come from the latest independent observation
-	// an automatic stage made after a write. Healthy is true only when that
-	// observation completed without error and found nothing open.
-	DetectorStates []DetectorEvaluation
-	Healthy        bool
-	// Result is set by the agent stage.
-	Result *IncidentResult
-	// RepairActions and ProgramToolCalls are the evidence automatic stages
-	// produced through the ordinary plan/apply boundary.
-	RepairActions    []RepairActionReceipt
-	ProgramToolCalls []ToolCall
-}
-
-// RunResponseStages runs stages in order and stops once no findings remain.
-// Every attempted stage leaves a report, including on error, so a later worker
-// never infers success from silence.
-func RunResponseStages(ctx context.Context, state *IncidentState, stages []ResponseStage) error {
-=======
 // IncidentState is local to one ordered response attempt. Request retains the
 // opening evidence; Findings and UnexplainedFindings describe remaining work.
 type IncidentState struct {
@@ -69,7 +38,6 @@ type IncidentState struct {
 // report, including errors, so subsequent workers never infer success by silence.
 func RunResponseStages(ctx context.Context, state *IncidentState, stages []ResponseStage) error {
 	state.refreshUnexplained()
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	for _, stage := range stages {
 		if len(state.Findings) == 0 {
 			break
@@ -79,21 +47,6 @@ func RunResponseStages(ctx context.Context, state *IncidentState, stages []Respo
 		if report == nil {
 			report = &contracts.StageReport{}
 		}
-<<<<<<< HEAD
-		report.Stage = stage.Name()
-		remaining := map[string]bool{}
-		report.RemainingFindingFingerprints = nil
-		for _, fingerprint := range findingFingerprints(state.Findings) {
-			remaining[fingerprint] = true
-			report.RemainingFindingFingerprints = append(report.RemainingFindingFingerprints, fingerprint)
-		}
-		report.ClearedFindingFingerprints = nil
-		for _, fingerprint := range before {
-			if !remaining[fingerprint] {
-				report.ClearedFindingFingerprints = append(report.ClearedFindingFingerprints, fingerprint)
-			}
-		}
-=======
 		state.refreshUnexplained()
 		report.Stage = stage.Name()
 		remaining := map[string]bool{}
@@ -110,7 +63,6 @@ func RunResponseStages(ctx context.Context, state *IncidentState, stages []Respo
 		for _, finding := range state.Findings {
 			report.RemainingFindingFingerprints = append(report.RemainingFindingFingerprints, FindingFingerprint(finding))
 		}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		if err != nil {
 			report.Error = err.Error()
 		}
@@ -122,17 +74,6 @@ func RunResponseStages(ctx context.Context, state *IncidentState, stages []Respo
 	return nil
 }
 
-<<<<<<< HEAD
-func findingFingerprints(findings []sdk.Finding) []string {
-	var result []string
-	for _, finding := range findings {
-		if finding.Status == sdk.FindingActive {
-			result = append(result, FindingFingerprint(finding))
-		}
-	}
-	sort.Strings(result)
-	return result
-=======
 // RunStageAgain runs a stage a second (or later) time over an incident whose
 // earlier pass is already in state.PriorStages. The stage's one report is
 // updated in place of the earlier one: its attempts keep their order and
@@ -186,7 +127,6 @@ func RunStageAgain(ctx context.Context, state *IncidentState, stage ResponseStag
 		return report, fmt.Errorf("response stage %s: %w", stage.Name(), err)
 	}
 	return report, nil
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func cloneStageReports(reports []*contracts.StageReport) []*contracts.StageReport {
@@ -196,8 +136,6 @@ func cloneStageReports(reports []*contracts.StageReport) []*contracts.StageRepor
 	}
 	return result
 }
-<<<<<<< HEAD
-=======
 
 // AgentResponseStage adapts the current responder without changing its tool or
 // continuation semantics. Earlier actions arrive before its first model turn.
@@ -250,4 +188,3 @@ func (state *IncidentState) refreshUnexplained() {
 		}
 	}
 }
->>>>>>> origin/vic-lsh/dev/sdo-improve
