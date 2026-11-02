@@ -12,11 +12,11 @@ from typing import Any, cast
 import pytest
 import yaml
 
+pytestmark = pytest.mark.requires_sregym
+
 
 def _worker_infra() -> Any:
     path = Path(__file__).resolve().parents[5] / "third_party" / "sregym" / "sregym" / "worker_infra.py"
-    if not path.is_file():
-        pytest.skip("requires the optional external SREGym worker fixture")
     spec = importlib.util.spec_from_file_location("test_worker_infra_module", path)
     assert spec is not None
     assert spec.loader is not None

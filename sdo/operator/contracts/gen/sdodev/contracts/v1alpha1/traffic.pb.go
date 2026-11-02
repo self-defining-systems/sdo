@@ -60,7 +60,10 @@ type TrafficSLO struct {
 	MaxTimeoutRate    *float64 `protobuf:"fixed64,5,opt,name=max_timeout_rate,json=maxTimeoutRate,proto3,oneof" json:"max_timeout_rate,omitempty"`
 	LatencyPercentile *int32   `protobuf:"varint,6,opt,name=latency_percentile,json=latencyPercentile,proto3,oneof" json:"latency_percentile,omitempty"`
 	// Go-duration string; positivity is host-checked.
-	MaxLatency    *string `protobuf:"bytes,7,opt,name=max_latency,json=maxLatency,proto3,oneof" json:"max_latency,omitempty"`
+	MaxLatency *string `protobuf:"bytes,7,opt,name=max_latency,json=maxLatency,proto3,oneof" json:"max_latency,omitempty"`
+	// Minimum timeouts contributing to rate violations; unset defaults to two.
+	// Host evaluation caps this at the effective window size.
+	MinTimeouts   *int32 `protobuf:"varint,8,opt,name=min_timeouts,json=minTimeouts,proto3,oneof" json:"min_timeouts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -142,6 +145,13 @@ func (x *TrafficSLO) GetMaxLatency() string {
 		return *x.MaxLatency
 	}
 	return ""
+}
+
+func (x *TrafficSLO) GetMinTimeouts() int32 {
+	if x != nil && x.MinTimeouts != nil {
+		return *x.MinTimeouts
+	}
+	return 0
 }
 
 // TrafficWorkloadScenario selects one catalog scenario with a weight and an
@@ -593,7 +603,7 @@ var File_sdodev_contracts_v1alpha1_traffic_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/traffic.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\"\xe8\x03\n" +
+	"'sdodev/contracts/v1alpha1/traffic.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\"\xac\x04\n" +
 	"\n" +
 	"TrafficSLO\x12&\n" +
 	"\x06window\x18\x01 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x01H\x00R\x06window\x88\x01\x01\x12-\n" +
@@ -604,7 +614,8 @@ const file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc = "" +
 	"\x10max_timeout_rate\x18\x05 \x01(\x01B\x17\xbaH\x14\x12\x12\x19\x00\x00\x00\x00\x00\x00\xf0?!\x00\x00\x00\x00\x00\x00\x00\x00H\x04R\x0emaxTimeoutRate\x88\x01\x01\x12=\n" +
 	"\x12latency_percentile\x18\x06 \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x01H\x05R\x11latencyPercentile\x88\x01\x01\x12$\n" +
 	"\vmax_latency\x18\a \x01(\tH\x06R\n" +
-	"maxLatency\x88\x01\x01B\t\n" +
+	"maxLatency\x88\x01\x01\x121\n" +
+	"\fmin_timeouts\x18\b \x01(\x05B\t\xbaH\x06\x1a\x04\x18d(\x01H\aR\vminTimeouts\x88\x01\x01B\t\n" +
 	"\a_windowB\x0e\n" +
 	"\f_min_samplesB\n" +
 	"\n" +
@@ -612,7 +623,8 @@ const file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc = "" +
 	"\x0f_max_error_rateB\x13\n" +
 	"\x11_max_timeout_rateB\x15\n" +
 	"\x13_latency_percentileB\x0e\n" +
-	"\f_max_latency\"\x8f\x02\n" +
+	"\f_max_latencyB\x0f\n" +
+	"\r_min_timeouts\"\x8f\x02\n" +
 	"\x17TrafficWorkloadScenario\x122\n" +
 	"\x02id\x18\x01 \x01(\tB\"\xbaH\x1fr\x1d2\x1b^[a-z0-9][a-z0-9_.-]{0,62}$R\x02id\x12z\n" +
 	"\x06weight\x18\x02 \x01(\x05Bb\xbaH_\xba\x01\\\n" +

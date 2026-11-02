@@ -23,7 +23,9 @@ import (
 )
 
 type LaunchConfig struct {
-	Namespace               string
+	Namespace string
+	// ProtectedNamespace is the SDO control namespace; generic reads refuse it.
+	ProtectedNamespace      string
 	DisableSyntheticTraffic bool
 	Binary                  string
 	Commit                  string
@@ -72,7 +74,8 @@ func Launch(config LaunchConfig) (*Process, error) {
 		return nil, err
 	}
 	socket := filepath.Join(directory, "host.sock")
-	command := exec.Command(config.Binary, "--namespace", config.Namespace, "--synthetic-traffic="+strconv.FormatBool(!config.DisableSyntheticTraffic), "--socket", socket, "--commit", config.Commit, "--memory-bytes", strconv.FormatUint(config.MemoryBytes, 10))
+	args := []string{"--namespace", config.Namespace, "--protected-namespace", config.ProtectedNamespace, "--synthetic-traffic=" + strconv.FormatBool(!config.DisableSyntheticTraffic), "--socket", socket, "--commit", config.Commit, "--memory-bytes", strconv.FormatUint(config.MemoryBytes, 10)}
+	command := exec.Command(config.Binary, args...)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Env = append(os.Environ(), "GOMEMLIMIT="+strconv.FormatUint(config.MemoryBytes*3/4, 10))
 	command.Stdout = config.Output

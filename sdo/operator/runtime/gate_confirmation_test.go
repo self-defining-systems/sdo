@@ -46,6 +46,7 @@ func gateHealthDetector(world func() []sdk.Finding) *worldDetector {
 
 func gateConfig() ControllerConfig {
 	config := testControllerConfig()
+	config.ResponseTimeout = 2 * time.Minute
 	config.ConfirmationInterval = time.Second
 	config.GateConfirmation = GateConfirmationPolicy{Evaluations: 3, Window: 2 * time.Second, Interval: time.Second}
 	return config
@@ -60,8 +61,9 @@ type gateHarness struct {
 	now        time.Time
 }
 
-// openGateIncident fires the detector on two watch events and dispatches the
-// responder, which stays running until released.
+// openGateIncident fires the detector on two watch events and queues the
+// responder work. Gate-only tests leave that work queued: running closure
+// intentionally takes extra health samples and advances clearing persistence.
 func openGateIncident(t *testing.T, world func() []sdk.Finding) *gateHarness {
 	t.Helper()
 	return openGateIncidentWith(t, gateConfig(), world)
@@ -79,8 +81,7 @@ func openGateIncidentWith(t *testing.T, config ControllerConfig, world func() []
 	h := &gateHarness{t: t, controller: controller, dispatcher: dispatcher, detector: detector, now: time.Unix(0, 0)}
 	h.event(0)
 	h.event(500 * time.Millisecond)
-	executePendingEffect(t, controller)
-	h.request = awaitRequest(t, dispatcher.requests)
+	h.request = *cloneIncidentRequest(controller.currentIncidentRequest)
 	t.Cleanup(func() {
 		select {
 		case <-dispatcher.release:
@@ -313,18 +314,36 @@ func TestGateConfirmationLeavesClosureHysteresisUnchanged(t *testing.T) {
 	fixedAt := h.now.Add(time.Second)
 	h.now = fixedAt
 	h.event(0)
-	close(h.dispatcher.release)
-	awaitDispatchCompletionQueued(t, h.controller)
 	h.advance(fixedAt.Add(5*time.Second), nil)
 	if len(h.view().BlockingFindings) != 0 {
 		t.Fatalf("setup: the gate opens: %#v", h.view())
 	}
-	if !h.controller.IncidentOpen() {
-		t.Fatal("closure must still wait for the detector's own second clear evaluation")
+	for _, state := range h.controller.tracker.Snapshot() {
+		if !state.Active || state.ClearCount != 1 {
+			t.Fatalf("gate probes advanced closure persistence: %#v", state)
+		}
 	}
-	h.advance(fixedAt.Add(31*time.Second), nil)
+	// Running closure deliberately takes fresh recovery samples. Those samples
+	// share the health judge's persistence; unlike gate-only probes, they may
+	// clear the tracker before its next scheduled 30 s evaluation.
+	executePendingEffect(t, h.controller)
+	awaitRequest(t, h.dispatcher.requests)
+	close(h.dispatcher.release)
+	awaitDispatchCompletionQueued(t, h.controller)
+	h.event(0)
+	for _, state := range h.controller.tracker.Snapshot() {
+		if state.Active {
+			t.Fatalf("fresh recovery observation did not satisfy clearing persistence: %#v", state)
+		}
+	}
+	started := h.now
+	h.advance(started.Add(h.controller.config.ClosureStabilityWindow-time.Millisecond), nil)
+	if !h.controller.IncidentOpen() {
+		t.Fatal("a success must hold for the closure stability window before it commits")
+	}
+	h.advance(started.Add(h.controller.config.ClosureStabilityWindow), nil)
 	if h.controller.IncidentOpen() {
-		t.Fatal("the scheduled evaluation 30 s after the fix confirms closure")
+		t.Fatal("shared recovery observations must close after stability without a second scheduled-clear wait")
 	}
 }
 

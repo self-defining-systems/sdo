@@ -1,0 +1,10 @@
+{
+  "last_acknowledged_incident_id": "demo-0",
+  "ownership_adoption": {},
+  "pending_batch": {},
+  "scheduler_deadlines": {
+    "fault": "1970-01-01T00:00:00Z",
+    "health": "1970-01-01T00:00:00Z"
+  },
+  "version": "sdo.controller/v1"
+}

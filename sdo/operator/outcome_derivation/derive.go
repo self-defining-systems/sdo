@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	outcomeclass "sdo.dev/operator/contracts/outcome"
 
 	"google.golang.org/protobuf/proto"
@@ -18,8 +19,8 @@ type Result struct {
 	RequiresReflection bool
 }
 
-// Derive classifies a controller closure and checks each claimed root cause
-// against detector observations and timely, recorded responder actions.
+// Derive classifies a controller closure by what the controller observed: the
+// Job's own status and whether the health detectors cleared.
 func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, repairCommit, backend, model string) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -41,7 +42,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			return Result{}, fmt.Errorf("%s is required", label)
 		}
 	}
-	healthVerified := closure.GetDetectorReviewRequiredAt() == nil && len(closure.GetFinalDetectorStates()) > 0
+	healthVerified := len(closure.GetFinalDetectorStates()) > 0
 	for _, evaluation := range closure.GetFinalDetectorStates() {
 		if evaluation.GetStatus() != "clear" {
 			healthVerified = false
@@ -52,7 +53,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		return Result{}, errors.New("verified_at is required when health is verified")
 	}
 	ordered := []*timestamppb.Timestamp{closure.GetDetectedAt(), closure.GetDispatchedAt(), closure.GetResponderCompletedAt()}
-	if healthVerified {
+	if healthVerified && !closure.GetVerifiedWhileResponderRunning() {
 		ordered = append(ordered, closure.GetVerifiedAt())
 	}
 	for index := 1; index < len(ordered); index++ {
@@ -60,8 +61,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			return Result{}, errors.New("outcome timestamps must be chronological")
 		}
 	}
-	verifications := verifyDiagnosis(closure)
-	classification := classify(closure, repairCommit, healthVerified, verifications)
+	classification := classify(closure, repairCommit, healthVerified)
 	request, result := closure.GetRequest(), closure.GetResult()
 
 	usage := &contractsv1alpha1.UsageMetrics{}
@@ -83,34 +83,36 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		completedAt = closure.GetVerifiedAt()
 		verifiedAt = closure.GetVerifiedAt()
 	}
+	// Mitigation is the latest successful repair action's completion, else
+	// the responder's completion.
 	var mitigatedAt *timestamppb.Timestamp
 	if result != nil {
 		mitigatedAt = closure.GetResponderCompletedAt()
-		if healthVerified {
-			clearedAt := repairClearAt(closure)
-			cutoff := timestamppb.New(*clearedAt)
-			for _, action := range result.GetRepairActions() {
-				completed := action.GetCompletedAt()
-				if !action.GetSuccess() || completed == nil || !completed.IsValid() ||
-					completed.AsTime().After(cutoff.AsTime()) {
-					continue
-				}
-				if mitigatedAt == closure.GetResponderCompletedAt() || completed.AsTime().After(mitigatedAt.AsTime()) {
-					mitigatedAt = completed
-				}
-			}
-			if mitigatedAt == closure.GetResponderCompletedAt() && clearedAt != nil {
-				mitigatedAt = cutoff
+		var latest *timestamppb.Timestamp
+		for _, action := range result.GetRepairActions() {
+			completed := action.GetCompletedAt()
+			if action.GetSuccess() && completed != nil && completed.IsValid() &&
+				!completed.AsTime().After(completedAt.AsTime()) &&
+				(latest == nil || completed.AsTime().After(latest.AsTime())) {
+				latest = completed
 			}
 		}
+		if latest != nil {
+			mitigatedAt = latest
+		}
+	}
+	if healthVerified && closure.GetVerifiedWhileResponderRunning() {
+		mitigatedAt = closure.GetVerifiedAt()
 	}
 	var commit *string
 	if repairCommit != "" {
 		commit = &repairCommit
 	}
 	record := &contractsv1alpha1.OutcomeRecord{
-		SchemaVersion: 1, IncidentId: request.GetIncidentId(), SourceCommit: request.GetSourceCommit(), DeployedCommit: request.GetDeployedCommit(),
-		DetectorHistory: cloneMessages(request.GetDetectorHistory()), Findings: cloneMessages(request.GetFindings()),
+		DriftReprompt:           cloneMessage(result.GetDriftReprompt()),
+		StatePersistenceFailure: cloneMessage(closure.GetStatePersistenceFailure()),
+		SchemaVersion:           1, IncidentId: request.GetIncidentId(), SourceCommit: request.GetSourceCommit(), DeployedCommit: request.GetDeployedCommit(),
+		DetectorHistory: append(append(cloneMessages(request.GetDetectorHistory()), cloneMessages(closure.GetIncidentDetectorStates())...), cloneMessages(closure.GetPartialDetectorStates())...), Findings: cloneMessages(request.GetFindings()),
 		DriftEvents:       cloneMessages(request.GetDriftEvents()),
 		SurfacedPlaybooks: surfaced, InspectedPlaybooks: append([]string(nil), surfaced...), ConfirmedPlaybooks: append([]string(nil), applied...),
 		RejectedPlaybooks: rejected, AppliedPlaybooks: applied,
@@ -121,12 +123,12 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			DetectedAt: cloneTimestamp(closure.GetDetectedAt()), DispatchedAt: cloneTimestamp(closure.GetDispatchedAt()),
 			MitigatedAt: cloneTimestamp(mitigatedAt), VerifiedAt: cloneTimestamp(verifiedAt), CompletedAt: cloneTimestamp(completedAt),
 		},
-		DiagnosisVerification: verifications,
-		ProgramToolCalls:      cloneMessages(result.GetProgramToolCalls()), ProgramRuns: cloneMessages(result.GetProgramRuns()),
+		ProgramToolCalls: cloneMessages(result.GetProgramToolCalls()), ProgramRuns: cloneMessages(result.GetProgramRuns()),
 		PlanApplications: cloneMessages(result.GetPlanApplications()), ProgramFailureSignals: append([]string(nil), result.GetProgramFailureSignals()...),
 		ResponseLoopsUsed: result.GetResponseLoopsUsed(), ResponseLoopExhausted: result.GetResponseLoopExhausted(),
-		ResolutionPath: result.GetResolutionPath(), FastPathPrograms: append([]string(nil), result.GetFastPathPrograms()...), FastPathSkippedReason: result.GetFastPathSkippedReason(), FastPathRelationCoveredFindings: cloneMessages(result.GetFastPathRelationCoveredFindings()),
-		PriorStages: cloneMessages(result.GetPriorStages()),
+		ResolutionPath: result.GetResolutionPath(), PlaybookCoverage: cloneMessage(request.GetPlaybookCoverage()),
+		DisabledSetupDetectors: cloneMessages(request.GetDisabledSetupDetectors()),
+		PriorStages:            cloneMessages(request.GetPriorStages()), SourceCheckNotes: append([]string(nil), closure.GetSourceCheckNotes()...),
 	}
 	for _, label := range CheckedDriftAssessments(request.GetDriftEvents(), result.GetDriftEvents()) {
 		for i, event := range record.DriftEvents {
@@ -135,16 +137,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			}
 		}
 	}
-	reflect := false
-	if classification == outcomeclass.Success {
-		for _, verification := range verifications {
-			if verification.Verdict == "confirmed" {
-				reflect = true
-				break
-			}
-		}
-	}
-	return Result{Record: record, RequiresReflection: reflect}, nil
+	return Result{Record: record, RequiresReflection: classification == outcomeclass.Success}, nil
 }
 
 func cloneMessages[T proto.Message](items []T) []T {
@@ -177,58 +170,36 @@ func difference(left, right []string) []string {
 	return result
 }
 
-func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool, verifications []*contractsv1alpha1.DiagnosisVerification) string {
+// classify reduces the closure to four outcomes: the responder Job failed or
+// health never verified (failed), health cleared with no repair mutation
+// (cleared_without_action), a verified repair whose closure recheck window never
+// completed (unconfirmed), or anything else that cleared (success).
+func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool) string {
 	result := closure.GetResult()
-	if closure.GetRequest() == nil {
+	if closure.GetStatePersistenceFailure() != nil || closure.GetRequest() == nil || closure.GetDispatchError() != "" || result == nil ||
+		result.GetStatus() == "failed" {
 		return outcomeclass.Failed
 	}
-	// The controller owns the missed-fault flag in prior Python closures. This
-	// proto does not carry it; no negative claim is inferred from its absence.
-	if closure.GetDispatchError() != "" || result == nil || result.GetStatus() == "failed" {
-		return outcomeclass.Failed
+	if closure.GetUnconfirmedReason() != contractsv1alpha1.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
+		return outcomeclass.Unconfirmed
 	}
 	if !healthVerified {
-		if result.GetStatus() == "cancelled" {
-			return outcomeclass.Cancelled
-		}
-		return outcomeclass.Partial
+		return outcomeclass.Failed
 	}
-	if repairCommit == "" && (result.GetStatus() == "completed" || result.GetStatus() == "cancelled") {
-		hadSuccessfulAction := false
+	if repairCommit == "" {
 		for _, action := range result.GetRepairActions() {
 			if action.GetSuccess() {
-				hadSuccessfulAction = true
-				break
+				return outcomeclass.Success
 			}
 		}
-		if !hadSuccessfulAction {
-			return outcomeclass.ClearedWithoutAction
-		}
-	}
-	if result.GetStatus() == "cancelled" {
-		return outcomeclass.Cancelled
-	}
-	if len(result.GetConfirmedRootCauses()) == 0 {
-		return outcomeclass.FalsePositive
-	}
-	if len(verifications) > 0 {
-		attributed := false
-		confirmed := false
-		for _, verification := range verifications {
-			if verification.GetVerdict() == "contradicted" {
-				return "partial"
-			}
-			confirmed = confirmed || verification.GetVerdict() == "confirmed"
-			if verification.Repair.Attributed {
-				attributed = true
-			}
-		}
-		if !attributed {
-			return outcomeclass.ExternalRecovery
-		}
-		if !confirmed {
-			return "partial"
-		}
+		return outcomeclass.ClearedWithoutAction
 	}
 	return outcomeclass.Success
+}
+
+func cloneMessage[T proto.Message](value T) T {
+	if !value.ProtoReflect().IsValid() {
+		return value
+	}
+	return proto.Clone(value).(T)
 }

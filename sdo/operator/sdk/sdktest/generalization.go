@@ -27,11 +27,11 @@ func CheckGeneralization(t testing.TB, p program.Diagnoser, c CorpusCase, peer p
 	}
 }
 
-// CheckNoMatchCase exercises a recorded synthetic near miss used to tighten a
-// program. The reason in labels.json makes this exception explicit.
+// CheckNoMatchCase exercises an explicit synthetic near miss or a controller
+// fixed capture labeled as observed negative evidence.
 func CheckNoMatchCase(t testing.TB, p program.Diagnoser, c CorpusCase) {
 	t.Helper()
-	if c.SyntheticNoMatchReason == "" {
+	if c.SyntheticNoMatchReason == "" && c.Provenance.OpenAt != CapturedFixedNoMatchPhase {
 		t.Fatal("synthetic NoMatch case needs a recorded reason")
 	}
 	verdict := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings, 10*time.Second)

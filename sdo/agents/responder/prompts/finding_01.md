@@ -1,0 +1,1 @@
+- [${severity}] ${detector_id} / ${rule_id} (${status}): ${summary}

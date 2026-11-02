@@ -5,3 +5,5 @@
 ## Overlap with the benchmark grader's probe
 
 The composite grader (`ENTRY_POINTS["Hotel Reservation"]`) requests `/hotels`, `/recommendations?require=rate` and `/recommendations?require=dis`. `hotel-search` (`/hotels`) and `hotel-recommendations` (`/recommendations?require=dis`) overlap with these paths; `user-login-check` (`/user`) does not.
+
+The generic `pod-admission` detector requires successful server-side dry-run Pod creation in the application namespace, even while existing Pods are Ready. API rejection is unhealthy; transport failure is an observation error.

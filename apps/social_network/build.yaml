@@ -1,0 +1,97 @@
+version: 1
+app:
+  name: Social Network
+  filter: social_network
+source:
+  path: ../deathstarbench/socialNetwork
+  url: git@gitlab.cs.washington.edu:shli/deathstarbench.git
+  ref: c29e5b264fc242b077cfec199fa7fe16c962d469
+image_tag: '{tag}'
+images:
+- name: deathstarbench/social-network-microservices
+  context: .
+  dockerfile: Dockerfile
+  helm_image_keys:
+  - compose-post-service.container.image
+  - home-timeline-service.container.image
+  - media-service.container.image
+  - post-storage-service.container.image
+  - social-graph-service.container.image
+  - text-service.container.image
+  - unique-id-service.container.image
+  - url-shorten-service.container.image
+  - user-mention-service.container.image
+  - user-service.container.image
+  - user-timeline-service.container.image
+  helm_tag_keys:
+  - compose-post-service.container.imageVersion
+  - home-timeline-service.container.imageVersion
+  - media-service.container.imageVersion
+  - post-storage-service.container.imageVersion
+  - social-graph-service.container.imageVersion
+  - text-service.container.imageVersion
+  - unique-id-service.container.imageVersion
+  - url-shorten-service.container.imageVersion
+  - user-mention-service.container.imageVersion
+  - user-service.container.imageVersion
+  - user-timeline-service.container.imageVersion
+- name: yg397/openresty-thrift
+  context: docker/openresty-thrift
+  dockerfile: docker/openresty-thrift/xenial/Dockerfile
+  helm_image_keys:
+  - nginx-thrift.container.image
+  helm_tag_keys:
+  - nginx-thrift.container.imageVersion
+  downloads:
+  - url: https://www.openssl.org/source/old/1.1.0/openssl-1.1.0j.tar.gz
+    sha256: 31bec6c203ce1a8e93d5994f4ed304c63ccf07676118b6634edded12ad1b3246
+    replace: https://www.openssl.org/source/openssl-${RESTY_OPENSSL_VERSION}.tar.gz
+  - url: https://ftp.exim.org/pub/pcre/pcre-8.42.tar.gz
+    sha256: 69acbc2fbdefb955d42a4c606dfde800c2885711d2979e356c0636efde9ec3b5
+    replace: http://ftp.cs.stanford.edu/pub/exim/pcre/pcre-${RESTY_PCRE_VERSION}.tar.gz
+  - url: https://github.com/opentracing/opentracing-cpp/archive/v1.5.1.tar.gz
+    sha256: 015c4187f7a6426a2b5196f0ccd982aa87f010cf61f507ae3ce5c90523f92301
+    replace: https://github.com/opentracing/opentracing-cpp/archive/v${OPENTRACING_CPP_VERSION}.tar.gz
+  - url: https://github.com/jaegertracing/jaeger-client-cpp/archive/refs/tags/v0.4.2.tar.gz
+    sha256: 21257af93a64fee42c04ca6262d292b2e4e0b7b0660c511db357b32fd42ef5d3
+    replace: https://github.com/jaegertracing/jaeger-client-cpp/archive/refs/tags/v${JAEGER_TRACING_VERSION}.tar.gz
+  - url: https://github.com/opentracing-contrib/nginx-opentracing/archive/v0.8.0.tar.gz
+    sha256: b2159297814d5df153cf45f355bcd8ffdb71f2468e8149ad549d4f9c0cdc81ad
+    replace: https://github.com/opentracing-contrib/nginx-opentracing/archive/v${NGINX_OPENTRACING_VERSION}.tar.gz
+  - url: https://openresty.org/download/openresty-1.15.8.1rc1.tar.gz
+    sha256: dfbb0038fd5829014efaf1ab7f269e60ebcf7d53220262a96b4c2b9e42ea7226
+    replace: https://openresty.org/download/openresty-${RESTY_VERSION}.tar.gz
+  - url: https://luarocks.github.io/luarocks/releases/luarocks-3.5.0.tar.gz
+    sha256: 701d0cc0c7e97cc2cf2c2f4068fce45e52a8854f5dc6c9e49e2014202eec9a4f
+    replace: https://luarocks.github.io/luarocks/releases/luarocks-${RESTY_LUAROCKS_VERSION}.tar.gz
+- name: yg397/media-frontend
+  context: docker/media-frontend
+  dockerfile: docker/media-frontend/xenial/Dockerfile
+  dockerfile_arm64: docker/media-frontend/xenial/Dockerfile.arm64
+  helm_image_keys:
+  - media-frontend.container.image
+  helm_tag_keys:
+  - media-frontend.container.imageVersion
+  downloads:
+  - url: https://www.openssl.org/source/old/1.0.2/openssl-1.0.2k.tar.gz
+    sha256: 6b3977c61f2aedf0f96367dcfb5c6e578cf37e7b8d913b4ecb6643c3cb88d8c0
+    replace: https://www.openssl.org/source/openssl-${RESTY_OPENSSL_VERSION}.tar.gz
+  - url: https://ftp.exim.org/pub/pcre/pcre-8.41.tar.gz
+    sha256: 244838e1f1d14f7e2fa7681b857b3a8566b74215f28133f14a8f5e59241b682c
+    replace: http://ftp.cs.stanford.edu/pub/exim/pcre/pcre-${RESTY_PCRE_VERSION}.tar.gz
+  - url: https://openresty.org/download/openresty-1.13.6.1.tar.gz
+    sha256: d1246e6cfa81098eea56fb88693e980d3e6b8752afae686fab271519b81d696b
+    replace: https://openresty.org/download/openresty-${RESTY_VERSION}.tar.gz
+  - url: https://luarocks.github.io/luarocks/releases/luarocks-3.5.0.tar.gz
+    sha256: 701d0cc0c7e97cc2cf2c2f4068fce45e52a8854f5dc6c9e49e2014202eec9a4f
+    replace: https://luarocks.github.io/luarocks/releases/luarocks-${RESTY_LUAROCKS_VERSION}.tar.gz
+  - url: https://github.com/mongodb/mongo-c-driver/releases/download/1.9.3/mongo-c-driver-1.9.3.tar.gz
+    sha256: c2c94ef63aaa09efabcbadc4ac3c8740faa102266bdd2559d550f1955b824398
+    replace: https://github.com/mongodb/mongo-c-driver/releases/download/1.9.3/mongo-c-driver-1.9.3.tar.gz
+deployment:
+  kind: helm
+  root: harness
+  path: socialNetwork/helm-chart/socialnetwork
+  namespace: social-network
+  url: https://github.com/vic-lsh/SREGym-applications.git
+  ref: d1a7e02eb873520d2df3eea9f81f54eda5eb149d

@@ -36,7 +36,7 @@ func TestNativeBrokerRetriesValidationWithoutRedispatchingReflection(t *testing.
 			workspaceRoot := filepath.Dir(filepath.Dir(filepath.Dir(h.workspace.Worktree)))
 			dispatches := 0
 			h.native.Reflector = RegisteredReflectionWorker{
-				AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute,
+				AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh",
 				Executor: reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 					dispatches++
 					if reflectionTask != nil && !proto.Equal(reflectionTask, task) {

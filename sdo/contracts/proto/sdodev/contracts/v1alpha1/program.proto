@@ -18,21 +18,21 @@ message ProgramSpec {
 }
 
 message ParamSpec {
+  option (buf.validate.message).cel = {id: "parameter.exactly_one_kind" message: "parameter requires an object kind or value kind; defaults require a value kind" expression: "(this.kind != '') != (this.value_kind != '') && (this.value_kind != '' || !has(this.default))"};
   string name = 1 [(buf.validate.field).string.min_len = 1];
-  string kind = 2 [(buf.validate.field).string.min_len = 1];
+  string kind = 2;
   bool required = 3;
+  string value_kind = 4 [(buf.validate.field).string = {in: ["", "string", "int", "quantity", "duration", "bool"]}];
+  google.protobuf.Value default = 5;
 }
 
 message Binding {
   string name = 1 [(buf.validate.field).string.min_len = 1];
-  ObjectRef object = 2 [(buf.validate.field).required = true];
+  option (buf.validate.message).cel = {id: "binding.exactly_one" message: "binding requires an object or a value" expression: "has(this.object) != has(this.value)"};
+  ObjectRef object = 2;
+  google.protobuf.Value value = 3;
 }
 
-message RelationCoveredFinding {
-  string finding_fingerprint = 1;
-  string program_id = 2;
-  repeated Binding bindings = 3;
-}
 
 message Verdict {
   option (buf.validate.message).cel = {
@@ -73,7 +73,47 @@ message Action {
     Rollback rollback = 2;
     SetField set_field = 3;
     RestartRollout restart_rollout = 4;
+    CreateFromSource create_from_source = 5;
+    DeleteObject delete_object = 6;
+    DeletePod delete_pod = 7;
+    ScaleWorkload scale_workload = 8;
+    Exec exec = 9;
+    RemoveServicePort remove_service_port = 10;
+    EnsureDatabaseUser ensure_database_user = 11;
+    PatchObject patch_object = 12;
+    ApplyObject apply_object = 13;
+    KubernetesRequest kubernetes_request = 14;
+    WaitFor wait_for = 15;
+    EnsureExec ensure_exec = 16;
+    EnsureHttp ensure_http = 17;
+    RunJob run_job = 18;
+    RunScript run_script = 19;
+    SyncWebhookCA sync_webhook_ca = 20;
+    RetireOldRevision retire_old_revision = 21;
+    RetryAdmission retry_admission = 22;
   }
+}
+
+message CreateFromSource {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string reason = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// Irreversible; its preimage is evidence, never recreation authority.
+message DeleteObject {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string reason = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+message PlanObjectEffect {
+  string operation = 1 [(buf.validate.field).string = {in: ["create", "delete", "patch"]}];
+  ObjectRef ref = 2 [(buf.validate.field).required = true];
+  string uid = 3;
+  string state = 4 [(buf.validate.field).string = {in: ["not_applied", "applied", "unknown"]}];
+  bool confirmed = 5;
+  bool irreversible = 6;
+  // Read-only nonsecret evidence. Never replay or auto-recreate from it.
+  google.protobuf.Struct deleted_pre_image = 7;
 }
 
 message ReconcileFromSource {
@@ -88,8 +128,97 @@ message Rollback {
 message SetField {
   ObjectRef ref = 1 [(buf.validate.field).required = true];
   string path = 2 [(buf.validate.field).string.min_len = 1];
-  google.protobuf.Value value = 3 [(buf.validate.field).required = true];
+  reserved 3, 5;
+  reserved "value_from_source";
+  PlanValue value = 8 [(buf.validate.field).required = true];
   string reason = 4 [(buf.validate.field).string.min_len = 1];
+  string document_format = 6 [(buf.validate.field).string = {in: ["", "json", "yaml"]}];
+  repeated string document_path = 7;
+}
+
+// Values describe authority; resolved data never crosses this contract.
+message PlanValue {
+  oneof origin {
+    option (buf.validate.oneof).required = true;
+    ValueField source = 1;
+    ValueField observed = 2;
+    string parameter = 3 [(buf.validate.field).string.min_len = 1];
+  }
+}
+
+message ValueField {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string path = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+message ValueProvenance {
+  string origin = 1 [(buf.validate.field).string = {in: ["source", "observed", "parameter"]}];
+  ObjectRef ref = 2;
+  string path = 3;
+  string source_commit = 4;
+  string resource_version = 5;
+  string parameter = 6;
+}
+
+message ActionReport {
+  // Digest only; the action carries the Secret reference.
+  string webhook_ca_digest = 11;
+  uint32 action_index = 1;
+  string status = 2 [(buf.validate.field).string = {in: ["prepared", "applied", "partial", "refused", "unknown"]}];
+  repeated ValueProvenance values = 3;
+  optional int32 exit_code = 4;
+  // Measured effects remain outcome evidence even when capture I/O fails.
+  bytes external_effect_json = 5;
+  bytes kubernetes_effect_json = 6;
+  string recording_error = 7;
+  bytes job_status_json = 8;
+  bytes script_result_json = 10;
+  SourceReconcileResult source_reconcile = 12;
+  string failure_reason = 9 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "source_residual"]}];
+}
+
+// Direct readback of the fields this accepted-source action owns. No payload
+// values are included: paths name remaining work without exposing object data.
+message SourceReconcileResult {
+  ObjectRef ref = 1;
+  bool converged = 2;
+  repeated string residual_paths = 3;
+  string observation_error = 4;
+  bool additions_known = 5;
+  repeated SourceRolloutStep rollout_steps = 6;
+}
+
+message SourceRolloutStep {
+  ObjectRef workload = 4;
+  ObjectRef ref = 1;
+  string status = 2;
+  string error = 3;
+}
+
+message DeletePod {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+}
+
+message ScaleWorkload {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  PlanValue replicas = 2 [(buf.validate.field).required = true];
+}
+
+// Requeue one admission-blocked ReplicaSet within the incident namespace.
+message RetryAdmission {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+}
+
+// Scales one old-revision ReplicaSet of its controlling Deployment to zero.
+// Refused for a current revision or a ReplicaSet without an observed owner.
+message RetireOldRevision {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+}
+
+message Exec {
+  ObjectRef pod = 1 [(buf.validate.field).required = true];
+  string container = 2 [(buf.validate.field).string.min_len = 1];
+  repeated PlanValue command = 3 [(buf.validate.field).repeated.min_items = 1];
 }
 
 message RestartRollout {
@@ -108,6 +237,63 @@ message ProgramRun {
   string binding_source = 8 [(buf.validate.field).string = {in: ["", "finding", "hint", "sweep"]}];
   // Registry capability, not plan validity or trust. Absent on older runs.
   optional bool can_mitigate = 9;
+}
+
+// A landed mutation whose rollout is blocked. This never supplies repair credit.
+message RolloutPending {
+  string reason_code = 3 [(buf.validate.field).string = {in: ["", "admission_blocked", "rollout_stalled"]}];
+  repeated ObjectRef admission_configurations = 4;
+  repeated string admission_webhooks = 5;
+  string reason = 1;
+  repeated RolloutBlocker blockers = 2;
+}
+
+message RolloutBlocker {
+  ObjectRef ref = 1;
+  string reason = 2;
+  repeated string warning_events = 3;
+  // The standard release of a rollout whose replacement cannot be placed
+  // beside its old revision. SDO never applies it on its own; the responder
+  // or a learned program does.
+  repeated Action release = 4;
+}
+
+// Closure attribution veto, independent of earlier positive execution facts.
+enum SettlementRejectionReason {
+  SETTLEMENT_REJECTION_REASON_UNSPECIFIED = 0;
+  SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE = 1;
+  SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE = 2;
+  SETTLEMENT_REJECTION_REASON_NOT_APPLIED = 3;
+  SETTLEMENT_REJECTION_REASON_DRY_RUN = 4;
+  SETTLEMENT_REJECTION_REASON_ROLLED_BACK = 5;
+  SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION = 6;
+  SETTLEMENT_REJECTION_REASON_SUPERSEDED = 7;
+  SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN = 8;
+  SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED = 9;
+  SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH = 10;
+  SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE = 11;
+  SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN = 12;
+  SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING = 13;
+  SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED = 14;
+  SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL = 15;
+  SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR = 16;
+  SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR = 17;
+  SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED = 18;
+  SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE = 19;
+}
+
+// Shared recovery observation telemetry. This never grants mutation or repair credit.
+message RecoveryWait {
+  enum ExitReason {
+    EXIT_REASON_UNSPECIFIED = 0;
+    EXIT_REASON_CLEARED = 1;
+    EXIT_REASON_DEADLINE = 2;
+    EXIT_REASON_BLOCKER = 3;
+    EXIT_REASON_FAILED = 4;
+    EXIT_REASON_UNCOVERED = 5;
+  }
+  ExitReason exit_reason = 1 [(buf.validate.field).enum.defined_only = true];
+  google.protobuf.Duration duration = 2 [(buf.validate.field).duration.gte = {}];
 }
 
 message PlanApplication {
@@ -129,6 +315,17 @@ message PlanApplication {
   google.protobuf.Timestamp completed_at = 15;
   bool verification_completed = 16;
   bool verification_passed = 17;
+  // Final exact plan equivalence. False means no credit, not a program failure.
+  optional bool final_equivalence_verified = 18;
+  repeated PlanObjectEffect object_effects = 19;
+  repeated ActionReport action_reports = 20;
+  RolloutPending rollout_pending = 21;
+  // observed-transition proves opaque script recovery, never exact effects.
+  // recovery-settled proves the exact application/revision/binding after
+  // independently cleared targeted health and no superseding causal write.
+  RecoveryWait recovery_wait = 24;
+  string final_verification_basis = 22 [(buf.validate.field).string = {in: ["", "observed-transition", "recovery-settled"]}];
+  SettlementRejectionReason settlement_rejection_reason = 23 [(buf.validate.field).enum.defined_only = true];
 }
 
 message ProgramToolCall {
@@ -147,4 +344,186 @@ message PlanPreImage {
 message PlanPatch {
   reserved 1, 2;
   reserved "ref", "patch_json";
+}
+
+// Go-owned per-cause work; grouping is exactly the responder's confirmed resources.
+message ReflectionCauseWork {
+  uint32 cause_index = 1;
+  repeated ObjectRef resources = 2;
+  repeated ReflectionWorkItem items = 3;
+  string learning_basis = 4 [(buf.validate.field).string = {in: ["", "observed_transition"]}];
+}
+
+message ReflectionWorkItem {
+  string program_id = 1;
+  repeated Binding bindings = 2;
+  string disposition = 3 [(buf.validate.field).string = {in: ["covered", "false_match", "question"]}];
+  string question = 4;
+  string reason = 5 [(buf.validate.field).string = {in: ["verified_equivalent_repair", "fixed_capture_match", "binding_not_written", "repair_equivalence_question", "unbound_write", "uncertain", "no_recorded_repair", "program_refinement"]}];
+  repeated ObjectRef resources = 6;
+  string evidence_phase = 7 [(buf.validate.field).string = {in: ["", "open", "fixed"]}];
+  string program_revision = 8;
+  string capture_open_phase = 9 [(buf.validate.field).string = {in: ["", "detect", "pre-apply"]}];
+  // The observed abstention motivating a program_refinement question. This is
+  // evidence for review, not a settled positive corpus case or success credit.
+  ProgramRun evaluation = 10;
+}
+
+// Controller-settled learning evidence, persisted before the outcome commit.
+// Absence on historical outcomes is unproven and never supplies success credit.
+message ReflectionEligibility {
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  repeated ReflectionCauseWork causes = 2;
+  repeated ReflectionWorkItem unassigned = 3;
+  optional uint32 no_repair_count = 4;
+}
+
+// Incident-open diagnosis coverage. This is information, never apply authority.
+message PlaybookCoverage {
+  repeated PlaybookMatch matches = 1;
+  repeated string unexplained_finding_fingerprints = 2;
+}
+message PlaybookMatch {
+  string playbook_id = 1;
+  string program_revision = 2;
+  repeated Binding bindings = 3;
+  repeated string explained_finding_fingerprints = 4;
+  bool can_mitigate = 5;
+  // Logical program selection for a fresh menu at these bindings.
+  string mitigation_selection = 6;
+  int32 verified_successes = 7;
+  int32 verified_failures = 8;
+}
+
+message RemoveServicePort {
+  option (buf.validate.message).cel = {id: "service_port.identity" message: "select exactly one name or port; protocol requires a numeric port" expression: "(this.name != '') != (this.port != 0) && (this.name == '' || this.protocol == '')"};
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string name = 2;
+  int32 port = 3 [(buf.validate.field).int32 = {gte: 0, lte: 65535}];
+  string protocol = 4 [(buf.validate.field).string = {in: ["", "TCP", "UDP", "SCTP"]}];
+  bool allow_empty = 5;
+  string reason = 6;
+}
+message ConfigMapCredentialRef {
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  string key = 2 [(buf.validate.field).string.min_len = 1];
+  string assignment = 3 [(buf.validate.field).string.pattern = "^([A-Za-z_][A-Za-z0-9_]*)?$"];
+}
+message CredentialRef {
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+    string env = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[A-Za-z_][A-Za-z0-9_]*$"}];
+    ConfigMapCredentialRef config_map = 2;
+  }
+}
+message DatabaseAuth {
+  string database = 1 [(buf.validate.field).string.min_len = 1];
+  CredentialRef username = 2 [(buf.validate.field).required = true];
+  CredentialRef password = 3 [(buf.validate.field).required = true];
+}
+message DatabaseTarget {
+  string engine = 1 [(buf.validate.field).string = {in: ["mongodb"]}];
+  ObjectRef pod = 2 [(buf.validate.field).required = true];
+  string container = 3 [(buf.validate.field).string.min_len = 1];
+  string database = 4 [(buf.validate.field).string.min_len = 1];
+  DatabaseAuth auth = 5;
+  string shell = 6 [(buf.validate.field).string = {in: ["", "mongo", "mongosh"]}];
+}
+message DatabaseRole {
+  string database = 1 [(buf.validate.field).string.min_len = 1];
+  string name = 2 [(buf.validate.field).string.min_len = 1];
+}
+message EnsureDatabaseUser {
+  DatabaseTarget target = 1 [(buf.validate.field).required = true];
+  string user = 2 [(buf.validate.field).string.min_len = 1];
+  repeated DatabaseRole roles = 3;
+  CredentialRef password = 4 [(buf.validate.field).required = true];
+  string reason = 5;
+}
+
+// General Kubernetes actions retain JSON number tokens in document payloads.
+message PatchObject {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string type = 2;
+  bytes patch_json = 3;
+  repeated ListEdit edits = 4;
+  string reason = 5;
+}
+message ListEdit {
+  string path = 1;
+  bytes match_json = 2;
+  string op = 3;
+  bytes value_json = 4;
+}
+message ApplyObject {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  bytes object_json = 2;
+  string mode = 3;
+  string reason = 4;
+}
+message KubernetesRequest {
+  ObjectRef ref = 1;
+  string method = 2;
+  string path = 3;
+  map<string, string> query = 4;
+  string content_type = 5;
+  bytes body = 6;
+  string reason = 7;
+}
+message WaitFor {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string path = 2;
+  bytes equals_json = 3;
+  google.protobuf.Duration timeout = 4;
+  google.protobuf.Duration interval = 5;
+}
+message Command {
+  ObjectRef pod = 1 [(buf.validate.field).required = true];
+  string container = 2;
+  repeated string args = 3;
+  string stdin = 4;
+}
+message HttpRequest {
+  ObjectRef pod = 1 [(buf.validate.field).required = true];
+  string container = 2;
+  string method = 3;
+  string url = 4;
+  map<string, string> headers = 5;
+  string body = 6;
+  CredentialRef bearer = 7;
+  map<string, CredentialRef> header_env = 8;
+}
+message EnsureExec {
+  Command observe = 1 [(buf.validate.field).required = true];
+  Command ensure = 2 [(buf.validate.field).required = true];
+  int32 expect = 3;
+  string reason = 4;
+}
+message EnsureHttp {
+  HttpRequest observe = 1 [(buf.validate.field).required = true];
+  HttpRequest ensure = 2 [(buf.validate.field).required = true];
+  int32 expect = 3;
+  string reason = 4;
+}
+message RunJob {
+  ApplyObject object = 1 [(buf.validate.field).required = true];
+  WaitFor completion = 2 [(buf.validate.field).required = true];
+}
+
+// Opaque bash effects use recorded open/fixed diagnosis, never invented effects.
+message RunScript {
+  string script = 1 [(buf.validate.field).string = {min_len: 1, max_bytes: 65536}];
+  map<string, PlanValue> env = 2;
+  google.protobuf.Duration timeout = 3;
+  string reason = 4;
+}
+
+// References only. CA bytes never cross the runtime boundary.
+message SyncWebhookCA {
+ ObjectRef ref = 1 [(buf.validate.field).required = true];
+ string webhook = 2 [(buf.validate.field).string.min_len = 1];
+ string secret_namespace = 3 [(buf.validate.field).string.min_len = 1];
+ string secret_name = 4 [(buf.validate.field).string.min_len = 1];
+ string secret_key = 5 [(buf.validate.field).string.min_len = 1];
+ string reason = 6 [(buf.validate.field).string.min_len = 1];
 }

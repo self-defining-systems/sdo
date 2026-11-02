@@ -45,6 +45,9 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 	if err := writeGenericDetector(root, endpoint, endpointSource()); err != nil {
 		return err
 	}
+	if err := writeGenericDetector(root, genericManifest("pod-admission", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Pod"}}), podAdmissionSource()); err != nil {
+		return err
+	}
 	if err := writeGenericDetector(root, workloadManifest(), workloadSource()); err != nil {
 		return err
 	}
@@ -152,6 +155,13 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 		return err
 	}
 	for _, entry := range entries {
+		if filepath.Join(base, entry.Name()) == filepath.Join(root, LegacyReachabilityBaselinePath) && !entry.IsDir() {
+			// A pre-move cluster capture: strip it, never require or decode it.
+			if err := os.Remove(filepath.Join(base, entry.Name())); err != nil {
+				return err
+			}
+			continue
+		}
 		if entry.Name() != layout.ManifestFileName && entry.Name() != layout.DetectorFileName && entry.Name() != layout.DetectorTestFileName {
 			return fmt.Errorf("generic health package %s contains unexpected file %s", manifest.ID, entry.Name())
 		}
@@ -177,6 +187,8 @@ func genericPackage(id string) string {
 		return "servicereachability"
 	case MetricsAlertsDetectorID:
 		return "metricsalerts"
+	case "pod-admission":
+		return "podadmission"
 	case workloadHealthID:
 		return "workloads"
 	}
@@ -345,4 +357,23 @@ func New() sdk.Detector {
  }%s)
 }
 `, constructor, spec, kind, extra)
+}
+
+func podAdmissionSource() string {
+	return fmt.Sprintf(`package podadmission
+
+import (
+    "time"
+    "sdo.dev/operator/sdk"
+    "sdo.dev/operator/sdk/workloadhealth"
+)
+
+func New() sdk.Detector {
+    return workloadhealth.NewPodAdmissionDetector(sdk.DetectorSpec{
+        %s
+        Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},
+        Interval: 15 * time.Second,
+    })
+}
+`, genericSpec("pod-admission"))
 }

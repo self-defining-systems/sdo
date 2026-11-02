@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -21,7 +22,13 @@ func (s *Server) WithPrograms(registry program.ProgramRegistry) *Server {
 		for _, spec := range registry.List() {
 			out := &pb.ProgramSpec{Id: spec.ID}
 			for _, param := range spec.Params {
-				out.Params = append(out.Params, &pb.ParamSpec{Name: param.Name, Kind: string(param.Kind), Required: param.Required})
+				wire := &pb.ParamSpec{Name: param.Name, Kind: string(param.Kind), Required: param.Required, ValueKind: string(param.ValueKind)}
+				if param.Default != nil {
+					if value, err := structpb.NewValue(param.Default); err == nil {
+						wire.Default = value
+					}
+				}
+				out.Params = append(out.Params, wire)
 			}
 			s.identity.Programs = append(s.identity.Programs, out)
 			if _, ok := registry.Mitigator(spec.ID); ok {
@@ -33,46 +40,56 @@ func (s *Server) WithPrograms(registry program.ProgramRegistry) *Server {
 }
 func (s *Server) programView(ctx context.Context, input *pb.MemoryProgramInput) (*sdktest.RecordingReadView, program.Bindings, error) {
 	if input == nil {
-		return nil, nil, errors.New("program input required")
+		return nil, program.Bindings{}, errors.New("program input required")
 	}
 	snapshot, err := s.snapshot(input.MirrorSequence)
 	if err != nil {
-		return nil, nil, err
+		return nil, program.Bindings{}, err
 	}
 	if err = observe(&snapshot, input.Observation); err != nil {
-		return nil, nil, err
+		return nil, program.Bindings{}, err
 	}
-	bindings := program.Bindings{}
+	bindings := program.Bindings{Objects: program.ObjectBindings{}}
 	for _, b := range input.Bindings {
-		if b.Object == nil {
-			return nil, nil, errors.New("binding object required")
+		if _, exists := bindings.Objects[b.Name]; exists {
+			return nil, program.Bindings{}, errors.New("duplicate binding")
 		}
-		if _, exists := bindings[b.Name]; exists {
-			return nil, nil, errors.New("duplicate binding")
+		if _, exists := bindings.Values[b.Name]; exists {
+			return nil, program.Bindings{}, errors.New("duplicate binding")
 		}
-		bindings[b.Name] = sdk.ObjectRef{APIVersion: b.Object.ApiVersion, Kind: b.Object.Kind, Namespace: b.Object.Namespace, Name: b.Object.Name}
+		switch {
+		case b.Object != nil && b.Value == nil:
+			bindings.Objects[b.Name] = sdk.ObjectRef{APIVersion: b.Object.ApiVersion, Kind: b.Object.Kind, Namespace: b.Object.Namespace, Name: b.Object.Name}
+		case b.Value != nil && b.Object == nil:
+			if bindings.Values == nil {
+				bindings.Values = map[string]any{}
+			}
+			bindings.Values[b.Name] = b.Value.AsInterface()
+		default:
+			return nil, program.Bindings{}, errors.New("binding requires exactly one of object or value")
+		}
 	}
 	var view program.ReadView
 	if s.readFactory != nil {
 		view, err = s.readFactory(ctx, snapshot)
 		if err != nil {
-			return nil, nil, err
+			return nil, program.Bindings{}, err
 		}
 	} else {
 		calls, err := DecodeReceipts(input.Reads)
 		if err != nil {
-			return nil, nil, err
+			return nil, program.Bindings{}, err
 		}
 		view = &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
 	}
 	if len(input.Reads) > 0 && s.readFactory != nil {
 		calls, err := DecodeReceipts(input.Reads)
 		if err != nil {
-			return nil, nil, err
+			return nil, program.Bindings{}, err
 		}
 		view = diffReadView{ReadView: view, diffs: &sdktest.ReplayReadView{Calls: calls}}
 	}
-	recorder := &sdktest.RecordingReadView{ReadView: view}
+	recorder := &sdktest.RecordingReadView{ReadView: s.programObjects(view, snapshot)}
 
 	return recorder, bindings, nil
 }
@@ -172,39 +189,7 @@ func (s *Server) Mitigate(ctx context.Context, request *pb.MitigateRequest) (res
 	}
 	return response, nil
 }
-func actionProto(action program.Action) (*pb.Action, error) {
-	switch a := action.(type) {
-	case program.ReconcileFromSource:
-		return &pb.Action{Kind: &pb.Action_ReconcileFromSource{ReconcileFromSource: &pb.ReconcileFromSource{Ref: ref(a.Ref)}}}, nil
-	case program.Rollback:
-		return &pb.Action{Kind: &pb.Action_Rollback{Rollback: &pb.Rollback{Ref: ref(a.Ref), ToRevision: a.ToRevision}}}, nil
-	case program.RestartRollout:
-		return &pb.Action{Kind: &pb.Action_RestartRollout{RestartRollout: &pb.RestartRollout{Ref: ref(a.Ref), Reason: a.Reason}}}, nil
-	case program.SetField:
-		value, err := structpb.NewValue(a.Value)
-		if err != nil {
-			return nil, err
-		}
-		return &pb.Action{Kind: &pb.Action_SetField{SetField: &pb.SetField{Ref: ref(a.Ref), Path: a.Path, Value: value, Reason: a.Reason}}}, nil
-	case *program.ReconcileFromSource:
-		if a != nil {
-			return actionProto(*a)
-		}
-	case *program.Rollback:
-		if a != nil {
-			return actionProto(*a)
-		}
-	case *program.RestartRollout:
-		if a != nil {
-			return actionProto(*a)
-		}
-	case *program.SetField:
-		if a != nil {
-			return actionProto(*a)
-		}
-	}
-	return nil, fmt.Errorf("unsupported plan action %T", action)
-}
+func actionProto(action program.Action) (*pb.Action, error) { return planwire.ActionProto(action) }
 
 // WithReadFactory installs host-owned readers before serving; no writer is exposed.
 func (s *Server) WithReadFactory(factory func(context.Context, sdktest.Snapshot) (program.ReadView, error)) *Server {

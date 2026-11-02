@@ -50,3 +50,36 @@ def test_reflection_attempts_are_counted_from_scripted_reflection_turns() -> Non
     turns = [{"kind": "responder"}, {"kind": "reflection-fresh"}, {"kind": "reflection-retry"}]
     assert _reflection_attempts(turns) == 2
     assert _reflection_attempts([{"kind": "responder-warm"}]) == 0
+
+
+def test_settle_uses_the_shared_closure_rule(monkeypatch) -> None:
+    """A permanently failed or acknowledged closure is settled; an open closure is not."""
+    import pytest
+
+    import benchmarks.sregym.adapter as adapter
+    from benchmarks.sregym.assurance import harness
+
+    failed = {
+        "closure_state": "CLOSURE_STATE_FAILED",
+        "pending_closure": {"request": {"incident_id": "row-008"}},
+        "closure_failure": {"incident_id": "row-008", "permanent": True},
+    }
+    acknowledged = {
+        "closure_state": "CLOSURE_STATE_ACKNOWLEDGED",
+        "closure_receipt": {"incident_id": "row-008"},
+        "last_acknowledged_incident_id": "row-008",
+    }
+    agent = harness.ScriptedAgent.__new__(harness.ScriptedAgent)
+    agent._control = "app-sdo"
+
+    def never_sleep(_seconds: float) -> None:
+        pytest.fail("a terminal closure was treated as unsettled")
+
+    monkeypatch.setattr(harness.time, "sleep", never_sleep)
+    for state in (failed, acknowledged):
+        monkeypatch.setattr(
+            adapter,
+            "KubectlClusterOps",
+            lambda state=state: type("Ops", (), {"runtime_state": lambda self, _c: state})(),
+        )
+        assert agent._wait_idle() is state

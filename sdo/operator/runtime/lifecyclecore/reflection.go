@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -47,6 +48,8 @@ type ReflectionEvent struct {
 	Commit      string
 	Decision    *contracts.ReflectionDecision
 	Diagnostics []*contracts.MemoryDiagnostic
+	// CoverageGaps are the accepted commit's non-blocking notes.
+	CoverageGaps []*contracts.MemoryDiagnostic
 }
 
 type ReflectionEffect struct {
@@ -63,6 +66,10 @@ type ReflectionEffect struct {
 	Diagnostics    []*contracts.MemoryDiagnostic
 	Paths          []string
 	DispatchAt     *timestamppb.Timestamp
+	NoRepairCount  uint32
+	// Final marks a reset after the last allowed rejection. A non-final reset
+	// keeps the rejected work for the correction attempt.
+	Final bool
 }
 
 func ReflectionFeedback(ledger *contracts.BrokerLedger) (uint32, []*contracts.MemoryDiagnostic) {
@@ -92,6 +99,12 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		next = proto.Clone(state).(*contracts.BrokerLedger)
 	}
 	if event.Kind == ReflectionBegin {
+		eligibility := next.GetOutcomeDocument().GetReflectionEligibility()
+		if next.ReflectionNoRepairCount == nil && eligibility != nil && eligibility.NoRepairCount != nil {
+			count := eligibility.GetNoRepairCount()
+			next.ReflectionNoRepairCount = &count
+		}
+
 		if next.ReflectionCommit != "" {
 			next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_DONE
 			return next, nil
@@ -126,7 +139,7 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 	identity := reflectionIdentity(next, kind)
 	if event.Kind == ReflectionDrive {
 		attempt, diagnostics := ReflectionFeedback(next)
-		effect := ReflectionEffect{IncidentID: next.GetIncidentId(), ProposalCommit: next.GetProposalCommit(), OutcomeCommit: next.GetOutcomeCommit(), Kind: kind, ID: identity, Attempt: attempt, Diagnostics: diagnostics, Paths: slices.Clone(next.ReflectionPaths)}
+		effect := ReflectionEffect{IncidentID: next.GetIncidentId(), ProposalCommit: next.GetProposalCommit(), OutcomeCommit: next.GetOutcomeCommit(), Kind: kind, ID: identity, Attempt: attempt, Diagnostics: diagnostics, Paths: slices.Clone(next.ReflectionPaths), NoRepairCount: next.GetReflectionNoRepairCount(), Final: next.GetReflectionRejected()}
 		if next.ReflectionWorkspace != nil {
 			effect.Workspace = proto.Clone(next.ReflectionWorkspace).(*contracts.ProposalWorkspace)
 		}
@@ -182,16 +195,20 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		if kind != ReviewReflection {
 			return next, nil
 		}
+		// Even an empty diff must reach the broker's complete decision and
+		// accepted-outcome checks. The broker returns a commit-free receipt
+		// for a valid no-op; it also owns rejection and retry diagnostics.
 		next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_PUBLISH
-		if len(next.ReflectionPaths) == 0 {
-			next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_DONE
-		}
 	case ReflectionPublished:
 		if kind != PublishReflection {
 			return next, nil
 		}
 		next.ReflectionCommit = event.Commit
 		next.ReflectionPaths = slices.Clone(event.Paths)
+		next.ReflectionCoverageGaps = nil
+		for _, gap := range event.CoverageGaps {
+			next.ReflectionCoverageGaps = append(next.ReflectionCoverageGaps, proto.Clone(gap).(*contracts.MemoryDiagnostic))
+		}
 		next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_DONE
 	case ReflectionRejected:
 		if (kind != ReviewReflection && kind != PublishReflection) || len(event.Diagnostics) == 0 {
@@ -203,6 +220,15 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 			rejection.Diagnostics = append(rejection.Diagnostics, proto.Clone(diagnostic).(*contracts.MemoryDiagnostic))
 		}
 		next.ReflectionRejections = append(next.ReflectionRejections, rejection)
+		// Once a memory conflict occurs, all publication/correction attempts
+		// share a three-attempt cap, including invalid corrections. Persist
+		// the tightened bound so restart cannot grant another attempt.
+		for _, diagnostic := range event.Diagnostics {
+			if diagnostic.GetMemoryConflict() != nil {
+				next.ReflectionMaxRetries = min(next.ReflectionMaxRetries, 2)
+				break
+			}
+		}
 		next.ReflectionRejected = uint32(len(next.ReflectionRejections)) > next.ReflectionMaxRetries
 		next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_RESET
 	case ReflectionReset:
@@ -213,6 +239,19 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		next.ReflectionPaths = nil
 		next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_INSPECT
 		if next.ReflectionRejected {
+			// Cleanup revokes the rejected proposal, not the terminal evidence.
+			// Consumers need a failed decision even when no correction was
+			// publishable; original worker decisions stay in ReflectionResults.
+			var reasons []string
+			if count := len(next.ReflectionRejections); count > 0 {
+				for _, diagnostic := range next.ReflectionRejections[count-1].GetDiagnostics() {
+					reasons = append(reasons, diagnostic.GetRule()+": "+diagnostic.GetMessage())
+				}
+			}
+			next.ReflectionDecision = &contracts.ReflectionDecision{
+				LearningDecision: "failed",
+				Error:            fmt.Sprintf("reflection validation exhausted after %d rejected attempts: %s", len(next.ReflectionRejections), strings.Join(reasons, "; ")),
+			}
 			next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_DONE
 		}
 	case ReflectionCleaned:

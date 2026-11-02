@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,13 +84,22 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 		now := time.Unix(1000, 0).UTC()
 		root := t.TempDir()
 		client := fake.NewSimpleClientset()
-		created := make(chan *batchv1.Job, 1)
-		client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, k8sruntime.Object, error) {
-			created <- action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
-			return false, nil, nil
-		})
 		sizes := recordConfigMapWrites(client)
 		controller := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 1}, mountedBroker{&rejectingIncidentBroker{rejections: 10}, root}, &now)
+		// Onboarding retains object identities, including in the incident view. It
+		// must fit alongside a large task without copying live object contents.
+		controller.namespaceOnboarding = &contracts.NamespaceOnboarding{
+			Namespace: "demo", AcceptedCommit: strings.Repeat("a", 40), EstablishedAt: timestamppb.New(now),
+		}
+		for i := range 1000 {
+			controller.namespaceOnboarding.Objects = append(controller.namespaceOnboarding.Objects,
+				&contracts.ObjectRef{ApiVersion: "v1", Kind: "ConfigMap", Namespace: "demo", Name: fmt.Sprintf("settings-%04d", i)})
+		}
+		created := make(chan *batchv1.Job, 1)
+		client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, k8sruntime.Object, error) {
+			created <- action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+			return false, nil, nil
+		})
 		controller.dispatcher = KubernetesJobDispatcher{
 			Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
 			ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root,
@@ -128,8 +139,10 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 		if !ok {
 			t.Fatal("next responder not ready")
 		}
-		if len(controller.currentIncidentRequest.PreparedAgentTask) < 5<<20 {
-			t.Fatalf("prepared task did not carry the memory snapshot: %d bytes", len(controller.currentIncidentRequest.PreparedAgentTask))
+		// A snapshot far past the transport limit is degraded before the task is frozen, and the step is recorded on it.
+		prepared := controller.currentIncidentRequest.PreparedAgentTask
+		if len(prepared) > worker_registry.MaxRequestBytes || !strings.Contains(prepared, "clip_memory_documents") {
+			t.Fatalf("prepared task is %d bytes and did not record clipping the memory snapshot", len(prepared))
 		}
 		if err := controller.ExecuteDispatchEffect(ctx, dispatch); err != nil {
 			t.Fatal(err)
@@ -139,7 +152,7 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 			t.Fatalf("dispatch ended before a Job was created: %v", completion.err)
 		case job := <-created:
 			if job.Name != IncidentJobName(dispatch.Request.IncidentID) {
-				t.Fatalf("wrong Job: %s", job.Name)
+				t.Fatalf("created Job %q for another incident", job.Name)
 			}
 		case <-time.After(30 * time.Second):
 			t.Fatal("dispatcher did not publish its Job")
@@ -167,8 +180,13 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, configMap := range maps.Items {
-			if strings.HasSuffix(configMap.Name, "-request") {
-				t.Errorf("an oversized worker request used a ConfigMap: %s", configMap.Name)
+			if !strings.HasSuffix(configMap.Name, "-request") {
+				continue
+			}
+			for key, value := range configMap.Data {
+				if len(value) > worker_registry.MaxRequestBytes {
+					t.Errorf("worker request %s/%s is %d bytes after degrading, over the %d byte limit", configMap.Name, key, len(value), worker_registry.MaxRequestBytes)
+				}
 			}
 		}
 	})

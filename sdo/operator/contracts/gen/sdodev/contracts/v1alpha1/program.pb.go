@@ -28,6 +28,107 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Closure attribution veto, independent of earlier positive execution facts.
+type SettlementRejectionReason int32
+
+const (
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED            SettlementRejectionReason = 0
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE SettlementRejectionReason = 1
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE   SettlementRejectionReason = 2
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_NOT_APPLIED            SettlementRejectionReason = 3
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DRY_RUN                SettlementRejectionReason = 4
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLED_BACK            SettlementRejectionReason = 5
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION   SettlementRejectionReason = 6
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SUPERSEDED             SettlementRejectionReason = 7
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN        SettlementRejectionReason = 8
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED       SettlementRejectionReason = 9
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH      SettlementRejectionReason = 10
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE  SettlementRejectionReason = 11
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN    SettlementRejectionReason = 12
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING        SettlementRejectionReason = 13
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED         SettlementRejectionReason = 14
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL        SettlementRejectionReason = 15
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR    SettlementRejectionReason = 16
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR       SettlementRejectionReason = 17
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED   SettlementRejectionReason = 18
+	SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE     SettlementRejectionReason = 19
+)
+
+// Enum value maps for SettlementRejectionReason.
+var (
+	SettlementRejectionReason_name = map[int32]string{
+		0:  "SETTLEMENT_REJECTION_REASON_UNSPECIFIED",
+		1:  "SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE",
+		2:  "SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE",
+		3:  "SETTLEMENT_REJECTION_REASON_NOT_APPLIED",
+		4:  "SETTLEMENT_REJECTION_REASON_DRY_RUN",
+		5:  "SETTLEMENT_REJECTION_REASON_ROLLED_BACK",
+		6:  "SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION",
+		7:  "SETTLEMENT_REJECTION_REASON_SUPERSEDED",
+		8:  "SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN",
+		9:  "SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED",
+		10: "SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH",
+		11: "SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE",
+		12: "SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN",
+		13: "SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING",
+		14: "SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED",
+		15: "SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL",
+		16: "SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR",
+		17: "SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR",
+		18: "SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED",
+		19: "SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE",
+	}
+	SettlementRejectionReason_value = map[string]int32{
+		"SETTLEMENT_REJECTION_REASON_UNSPECIFIED":            0,
+		"SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE": 1,
+		"SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE":   2,
+		"SETTLEMENT_REJECTION_REASON_NOT_APPLIED":            3,
+		"SETTLEMENT_REJECTION_REASON_DRY_RUN":                4,
+		"SETTLEMENT_REJECTION_REASON_ROLLED_BACK":            5,
+		"SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION":   6,
+		"SETTLEMENT_REJECTION_REASON_SUPERSEDED":             7,
+		"SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN":        8,
+		"SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED":       9,
+		"SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH":      10,
+		"SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE":  11,
+		"SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN":    12,
+		"SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING":        13,
+		"SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED":         14,
+		"SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL":        15,
+		"SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR":    16,
+		"SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR":       17,
+		"SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED":   18,
+		"SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE":     19,
+	}
+)
+
+func (x SettlementRejectionReason) Enum() *SettlementRejectionReason {
+	p := new(SettlementRejectionReason)
+	*p = x
+	return p
+}
+
+func (x SettlementRejectionReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SettlementRejectionReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_sdodev_contracts_v1alpha1_program_proto_enumTypes[0].Descriptor()
+}
+
+func (SettlementRejectionReason) Type() protoreflect.EnumType {
+	return &file_sdodev_contracts_v1alpha1_program_proto_enumTypes[0]
+}
+
+func (x SettlementRejectionReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SettlementRejectionReason.Descriptor instead.
+func (SettlementRejectionReason) EnumDescriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{0}
+}
+
 type Verdict_Result int32
 
 const (
@@ -67,11 +168,11 @@ func (x Verdict_Result) String() string {
 }
 
 func (Verdict_Result) Descriptor() protoreflect.EnumDescriptor {
-	return file_sdodev_contracts_v1alpha1_program_proto_enumTypes[0].Descriptor()
+	return file_sdodev_contracts_v1alpha1_program_proto_enumTypes[1].Descriptor()
 }
 
 func (Verdict_Result) Type() protoreflect.EnumType {
-	return &file_sdodev_contracts_v1alpha1_program_proto_enumTypes[0]
+	return &file_sdodev_contracts_v1alpha1_program_proto_enumTypes[1]
 }
 
 func (x Verdict_Result) Number() protoreflect.EnumNumber {
@@ -80,7 +181,65 @@ func (x Verdict_Result) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Verdict_Result.Descriptor instead.
 func (Verdict_Result) EnumDescriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{4, 0}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{3, 0}
+}
+
+type RecoveryWait_ExitReason int32
+
+const (
+	RecoveryWait_EXIT_REASON_UNSPECIFIED RecoveryWait_ExitReason = 0
+	RecoveryWait_EXIT_REASON_CLEARED     RecoveryWait_ExitReason = 1
+	RecoveryWait_EXIT_REASON_DEADLINE    RecoveryWait_ExitReason = 2
+	RecoveryWait_EXIT_REASON_BLOCKER     RecoveryWait_ExitReason = 3
+	RecoveryWait_EXIT_REASON_FAILED      RecoveryWait_ExitReason = 4
+	RecoveryWait_EXIT_REASON_UNCOVERED   RecoveryWait_ExitReason = 5
+)
+
+// Enum value maps for RecoveryWait_ExitReason.
+var (
+	RecoveryWait_ExitReason_name = map[int32]string{
+		0: "EXIT_REASON_UNSPECIFIED",
+		1: "EXIT_REASON_CLEARED",
+		2: "EXIT_REASON_DEADLINE",
+		3: "EXIT_REASON_BLOCKER",
+		4: "EXIT_REASON_FAILED",
+		5: "EXIT_REASON_UNCOVERED",
+	}
+	RecoveryWait_ExitReason_value = map[string]int32{
+		"EXIT_REASON_UNSPECIFIED": 0,
+		"EXIT_REASON_CLEARED":     1,
+		"EXIT_REASON_DEADLINE":    2,
+		"EXIT_REASON_BLOCKER":     3,
+		"EXIT_REASON_FAILED":      4,
+		"EXIT_REASON_UNCOVERED":   5,
+	}
+)
+
+func (x RecoveryWait_ExitReason) Enum() *RecoveryWait_ExitReason {
+	p := new(RecoveryWait_ExitReason)
+	*p = x
+	return p
+}
+
+func (x RecoveryWait_ExitReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RecoveryWait_ExitReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_sdodev_contracts_v1alpha1_program_proto_enumTypes[2].Descriptor()
+}
+
+func (RecoveryWait_ExitReason) Type() protoreflect.EnumType {
+	return &file_sdodev_contracts_v1alpha1_program_proto_enumTypes[2]
+}
+
+func (x RecoveryWait_ExitReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RecoveryWait_ExitReason.Descriptor instead.
+func (RecoveryWait_ExitReason) EnumDescriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{28, 0}
 }
 
 type ProgramSpec struct {
@@ -140,6 +299,8 @@ type ParamSpec struct {
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
 	Required      bool                   `protobuf:"varint,3,opt,name=required,proto3" json:"required,omitempty"`
+	ValueKind     string                 `protobuf:"bytes,4,opt,name=value_kind,json=valueKind,proto3" json:"value_kind,omitempty"`
+	Default       *structpb.Value        `protobuf:"bytes,5,opt,name=default,proto3" json:"default,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -195,10 +356,25 @@ func (x *ParamSpec) GetRequired() bool {
 	return false
 }
 
+func (x *ParamSpec) GetValueKind() string {
+	if x != nil {
+		return x.ValueKind
+	}
+	return ""
+}
+
+func (x *ParamSpec) GetDefault() *structpb.Value {
+	if x != nil {
+		return x.Default
+	}
+	return nil
+}
+
 type Binding struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Object        *ObjectRef             `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
+	Value         *structpb.Value        `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -247,62 +423,9 @@ func (x *Binding) GetObject() *ObjectRef {
 	return nil
 }
 
-type RelationCoveredFinding struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	FindingFingerprint string                 `protobuf:"bytes,1,opt,name=finding_fingerprint,json=findingFingerprint,proto3" json:"finding_fingerprint,omitempty"`
-	ProgramId          string                 `protobuf:"bytes,2,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
-	Bindings           []*Binding             `protobuf:"bytes,3,rep,name=bindings,proto3" json:"bindings,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
-}
-
-func (x *RelationCoveredFinding) Reset() {
-	*x = RelationCoveredFinding{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *RelationCoveredFinding) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RelationCoveredFinding) ProtoMessage() {}
-
-func (x *RelationCoveredFinding) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[3]
+func (x *Binding) GetValue() *structpb.Value {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RelationCoveredFinding.ProtoReflect.Descriptor instead.
-func (*RelationCoveredFinding) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *RelationCoveredFinding) GetFindingFingerprint() string {
-	if x != nil {
-		return x.FindingFingerprint
-	}
-	return ""
-}
-
-func (x *RelationCoveredFinding) GetProgramId() string {
-	if x != nil {
-		return x.ProgramId
-	}
-	return ""
-}
-
-func (x *RelationCoveredFinding) GetBindings() []*Binding {
-	if x != nil {
-		return x.Bindings
+		return x.Value
 	}
 	return nil
 }
@@ -318,7 +441,7 @@ type Verdict struct {
 
 func (x *Verdict) Reset() {
 	*x = Verdict{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[4]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -330,7 +453,7 @@ func (x *Verdict) String() string {
 func (*Verdict) ProtoMessage() {}
 
 func (x *Verdict) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[4]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -343,7 +466,7 @@ func (x *Verdict) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Verdict.ProtoReflect.Descriptor instead.
 func (*Verdict) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{4}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Verdict) GetResult() Verdict_Result {
@@ -379,7 +502,7 @@ type Evidence struct {
 
 func (x *Evidence) Reset() {
 	*x = Evidence{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[5]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -391,7 +514,7 @@ func (x *Evidence) String() string {
 func (*Evidence) ProtoMessage() {}
 
 func (x *Evidence) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[5]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -404,7 +527,7 @@ func (x *Evidence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Evidence.ProtoReflect.Descriptor instead.
 func (*Evidence) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{5}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Evidence) GetResource() *ObjectRef {
@@ -445,7 +568,7 @@ type Plan struct {
 
 func (x *Plan) Reset() {
 	*x = Plan{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[6]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -457,7 +580,7 @@ func (x *Plan) String() string {
 func (*Plan) ProtoMessage() {}
 
 func (x *Plan) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[6]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -470,7 +593,7 @@ func (x *Plan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Plan.ProtoReflect.Descriptor instead.
 func (*Plan) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{6}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Plan) GetActions() []*Action {
@@ -495,6 +618,24 @@ type Action struct {
 	//	*Action_Rollback
 	//	*Action_SetField
 	//	*Action_RestartRollout
+	//	*Action_CreateFromSource
+	//	*Action_DeleteObject
+	//	*Action_DeletePod
+	//	*Action_ScaleWorkload
+	//	*Action_Exec
+	//	*Action_RemoveServicePort
+	//	*Action_EnsureDatabaseUser
+	//	*Action_PatchObject
+	//	*Action_ApplyObject
+	//	*Action_KubernetesRequest
+	//	*Action_WaitFor
+	//	*Action_EnsureExec
+	//	*Action_EnsureHttp
+	//	*Action_RunJob
+	//	*Action_RunScript
+	//	*Action_SyncWebhookCa
+	//	*Action_RetireOldRevision
+	//	*Action_RetryAdmission
 	Kind          isAction_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -502,7 +643,7 @@ type Action struct {
 
 func (x *Action) Reset() {
 	*x = Action{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -514,7 +655,7 @@ func (x *Action) String() string {
 func (*Action) ProtoMessage() {}
 
 func (x *Action) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -527,7 +668,7 @@ func (x *Action) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Action.ProtoReflect.Descriptor instead.
 func (*Action) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{7}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Action) GetKind() isAction_Kind {
@@ -573,6 +714,168 @@ func (x *Action) GetRestartRollout() *RestartRollout {
 	return nil
 }
 
+func (x *Action) GetCreateFromSource() *CreateFromSource {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_CreateFromSource); ok {
+			return x.CreateFromSource
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetDeleteObject() *DeleteObject {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_DeleteObject); ok {
+			return x.DeleteObject
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetDeletePod() *DeletePod {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_DeletePod); ok {
+			return x.DeletePod
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetScaleWorkload() *ScaleWorkload {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_ScaleWorkload); ok {
+			return x.ScaleWorkload
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetExec() *Exec {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_Exec); ok {
+			return x.Exec
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetRemoveServicePort() *RemoveServicePort {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_RemoveServicePort); ok {
+			return x.RemoveServicePort
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetEnsureDatabaseUser() *EnsureDatabaseUser {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_EnsureDatabaseUser); ok {
+			return x.EnsureDatabaseUser
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetPatchObject() *PatchObject {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_PatchObject); ok {
+			return x.PatchObject
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetApplyObject() *ApplyObject {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_ApplyObject); ok {
+			return x.ApplyObject
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetKubernetesRequest() *KubernetesRequest {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_KubernetesRequest); ok {
+			return x.KubernetesRequest
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetWaitFor() *WaitFor {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_WaitFor); ok {
+			return x.WaitFor
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetEnsureExec() *EnsureExec {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_EnsureExec); ok {
+			return x.EnsureExec
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetEnsureHttp() *EnsureHttp {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_EnsureHttp); ok {
+			return x.EnsureHttp
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetRunJob() *RunJob {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_RunJob); ok {
+			return x.RunJob
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetRunScript() *RunScript {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_RunScript); ok {
+			return x.RunScript
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetSyncWebhookCa() *SyncWebhookCA {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_SyncWebhookCa); ok {
+			return x.SyncWebhookCa
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetRetireOldRevision() *RetireOldRevision {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_RetireOldRevision); ok {
+			return x.RetireOldRevision
+		}
+	}
+	return nil
+}
+
+func (x *Action) GetRetryAdmission() *RetryAdmission {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_RetryAdmission); ok {
+			return x.RetryAdmission
+		}
+	}
+	return nil
+}
+
 type isAction_Kind interface {
 	isAction_Kind()
 }
@@ -593,6 +896,78 @@ type Action_RestartRollout struct {
 	RestartRollout *RestartRollout `protobuf:"bytes,4,opt,name=restart_rollout,json=restartRollout,proto3,oneof"`
 }
 
+type Action_CreateFromSource struct {
+	CreateFromSource *CreateFromSource `protobuf:"bytes,5,opt,name=create_from_source,json=createFromSource,proto3,oneof"`
+}
+
+type Action_DeleteObject struct {
+	DeleteObject *DeleteObject `protobuf:"bytes,6,opt,name=delete_object,json=deleteObject,proto3,oneof"`
+}
+
+type Action_DeletePod struct {
+	DeletePod *DeletePod `protobuf:"bytes,7,opt,name=delete_pod,json=deletePod,proto3,oneof"`
+}
+
+type Action_ScaleWorkload struct {
+	ScaleWorkload *ScaleWorkload `protobuf:"bytes,8,opt,name=scale_workload,json=scaleWorkload,proto3,oneof"`
+}
+
+type Action_Exec struct {
+	Exec *Exec `protobuf:"bytes,9,opt,name=exec,proto3,oneof"`
+}
+
+type Action_RemoveServicePort struct {
+	RemoveServicePort *RemoveServicePort `protobuf:"bytes,10,opt,name=remove_service_port,json=removeServicePort,proto3,oneof"`
+}
+
+type Action_EnsureDatabaseUser struct {
+	EnsureDatabaseUser *EnsureDatabaseUser `protobuf:"bytes,11,opt,name=ensure_database_user,json=ensureDatabaseUser,proto3,oneof"`
+}
+
+type Action_PatchObject struct {
+	PatchObject *PatchObject `protobuf:"bytes,12,opt,name=patch_object,json=patchObject,proto3,oneof"`
+}
+
+type Action_ApplyObject struct {
+	ApplyObject *ApplyObject `protobuf:"bytes,13,opt,name=apply_object,json=applyObject,proto3,oneof"`
+}
+
+type Action_KubernetesRequest struct {
+	KubernetesRequest *KubernetesRequest `protobuf:"bytes,14,opt,name=kubernetes_request,json=kubernetesRequest,proto3,oneof"`
+}
+
+type Action_WaitFor struct {
+	WaitFor *WaitFor `protobuf:"bytes,15,opt,name=wait_for,json=waitFor,proto3,oneof"`
+}
+
+type Action_EnsureExec struct {
+	EnsureExec *EnsureExec `protobuf:"bytes,16,opt,name=ensure_exec,json=ensureExec,proto3,oneof"`
+}
+
+type Action_EnsureHttp struct {
+	EnsureHttp *EnsureHttp `protobuf:"bytes,17,opt,name=ensure_http,json=ensureHttp,proto3,oneof"`
+}
+
+type Action_RunJob struct {
+	RunJob *RunJob `protobuf:"bytes,18,opt,name=run_job,json=runJob,proto3,oneof"`
+}
+
+type Action_RunScript struct {
+	RunScript *RunScript `protobuf:"bytes,19,opt,name=run_script,json=runScript,proto3,oneof"`
+}
+
+type Action_SyncWebhookCa struct {
+	SyncWebhookCa *SyncWebhookCA `protobuf:"bytes,20,opt,name=sync_webhook_ca,json=syncWebhookCa,proto3,oneof"`
+}
+
+type Action_RetireOldRevision struct {
+	RetireOldRevision *RetireOldRevision `protobuf:"bytes,21,opt,name=retire_old_revision,json=retireOldRevision,proto3,oneof"`
+}
+
+type Action_RetryAdmission struct {
+	RetryAdmission *RetryAdmission `protobuf:"bytes,22,opt,name=retry_admission,json=retryAdmission,proto3,oneof"`
+}
+
 func (*Action_ReconcileFromSource) isAction_Kind() {}
 
 func (*Action_Rollback) isAction_Kind() {}
@@ -600,6 +975,240 @@ func (*Action_Rollback) isAction_Kind() {}
 func (*Action_SetField) isAction_Kind() {}
 
 func (*Action_RestartRollout) isAction_Kind() {}
+
+func (*Action_CreateFromSource) isAction_Kind() {}
+
+func (*Action_DeleteObject) isAction_Kind() {}
+
+func (*Action_DeletePod) isAction_Kind() {}
+
+func (*Action_ScaleWorkload) isAction_Kind() {}
+
+func (*Action_Exec) isAction_Kind() {}
+
+func (*Action_RemoveServicePort) isAction_Kind() {}
+
+func (*Action_EnsureDatabaseUser) isAction_Kind() {}
+
+func (*Action_PatchObject) isAction_Kind() {}
+
+func (*Action_ApplyObject) isAction_Kind() {}
+
+func (*Action_KubernetesRequest) isAction_Kind() {}
+
+func (*Action_WaitFor) isAction_Kind() {}
+
+func (*Action_EnsureExec) isAction_Kind() {}
+
+func (*Action_EnsureHttp) isAction_Kind() {}
+
+func (*Action_RunJob) isAction_Kind() {}
+
+func (*Action_RunScript) isAction_Kind() {}
+
+func (*Action_SyncWebhookCa) isAction_Kind() {}
+
+func (*Action_RetireOldRevision) isAction_Kind() {}
+
+func (*Action_RetryAdmission) isAction_Kind() {}
+
+type CreateFromSource struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateFromSource) Reset() {
+	*x = CreateFromSource{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateFromSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateFromSource) ProtoMessage() {}
+
+func (x *CreateFromSource) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateFromSource.ProtoReflect.Descriptor instead.
+func (*CreateFromSource) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CreateFromSource) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *CreateFromSource) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// Irreversible; its preimage is evidence, never recreation authority.
+type DeleteObject struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteObject) Reset() {
+	*x = DeleteObject{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteObject) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteObject) ProtoMessage() {}
+
+func (x *DeleteObject) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteObject.ProtoReflect.Descriptor instead.
+func (*DeleteObject) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *DeleteObject) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *DeleteObject) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type PlanObjectEffect struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Operation    string                 `protobuf:"bytes,1,opt,name=operation,proto3" json:"operation,omitempty"`
+	Ref          *ObjectRef             `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
+	Uid          string                 `protobuf:"bytes,3,opt,name=uid,proto3" json:"uid,omitempty"`
+	State        string                 `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
+	Confirmed    bool                   `protobuf:"varint,5,opt,name=confirmed,proto3" json:"confirmed,omitempty"`
+	Irreversible bool                   `protobuf:"varint,6,opt,name=irreversible,proto3" json:"irreversible,omitempty"`
+	// Read-only nonsecret evidence. Never replay or auto-recreate from it.
+	DeletedPreImage *structpb.Struct `protobuf:"bytes,7,opt,name=deleted_pre_image,json=deletedPreImage,proto3" json:"deleted_pre_image,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *PlanObjectEffect) Reset() {
+	*x = PlanObjectEffect{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanObjectEffect) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanObjectEffect) ProtoMessage() {}
+
+func (x *PlanObjectEffect) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanObjectEffect.ProtoReflect.Descriptor instead.
+func (*PlanObjectEffect) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *PlanObjectEffect) GetOperation() string {
+	if x != nil {
+		return x.Operation
+	}
+	return ""
+}
+
+func (x *PlanObjectEffect) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *PlanObjectEffect) GetUid() string {
+	if x != nil {
+		return x.Uid
+	}
+	return ""
+}
+
+func (x *PlanObjectEffect) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *PlanObjectEffect) GetConfirmed() bool {
+	if x != nil {
+		return x.Confirmed
+	}
+	return false
+}
+
+func (x *PlanObjectEffect) GetIrreversible() bool {
+	if x != nil {
+		return x.Irreversible
+	}
+	return false
+}
+
+func (x *PlanObjectEffect) GetDeletedPreImage() *structpb.Struct {
+	if x != nil {
+		return x.DeletedPreImage
+	}
+	return nil
+}
 
 type ReconcileFromSource struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -610,7 +1219,7 @@ type ReconcileFromSource struct {
 
 func (x *ReconcileFromSource) Reset() {
 	*x = ReconcileFromSource{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -622,7 +1231,7 @@ func (x *ReconcileFromSource) String() string {
 func (*ReconcileFromSource) ProtoMessage() {}
 
 func (x *ReconcileFromSource) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -635,7 +1244,7 @@ func (x *ReconcileFromSource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReconcileFromSource.ProtoReflect.Descriptor instead.
 func (*ReconcileFromSource) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{8}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ReconcileFromSource) GetRef() *ObjectRef {
@@ -655,7 +1264,7 @@ type Rollback struct {
 
 func (x *Rollback) Reset() {
 	*x = Rollback{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -667,7 +1276,7 @@ func (x *Rollback) String() string {
 func (*Rollback) ProtoMessage() {}
 
 func (x *Rollback) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -680,7 +1289,7 @@ func (x *Rollback) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rollback.ProtoReflect.Descriptor instead.
 func (*Rollback) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{9}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Rollback) GetRef() *ObjectRef {
@@ -698,18 +1307,20 @@ func (x *Rollback) GetToRevision() string {
 }
 
 type SetField struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Value         *structpb.Value        `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
-	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Ref            *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Path           string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Value          *PlanValue             `protobuf:"bytes,8,opt,name=value,proto3" json:"value,omitempty"`
+	Reason         string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	DocumentFormat string                 `protobuf:"bytes,6,opt,name=document_format,json=documentFormat,proto3" json:"document_format,omitempty"`
+	DocumentPath   []string               `protobuf:"bytes,7,rep,name=document_path,json=documentPath,proto3" json:"document_path,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SetField) Reset() {
 	*x = SetField{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[10]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -721,7 +1332,7 @@ func (x *SetField) String() string {
 func (*SetField) ProtoMessage() {}
 
 func (x *SetField) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[10]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -734,7 +1345,7 @@ func (x *SetField) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetField.ProtoReflect.Descriptor instead.
 func (*SetField) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{10}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SetField) GetRef() *ObjectRef {
@@ -751,7 +1362,7 @@ func (x *SetField) GetPath() string {
 	return ""
 }
 
-func (x *SetField) GetValue() *structpb.Value {
+func (x *SetField) GetValue() *PlanValue {
 	if x != nil {
 		return x.Value
 	}
@@ -765,6 +1376,790 @@ func (x *SetField) GetReason() string {
 	return ""
 }
 
+func (x *SetField) GetDocumentFormat() string {
+	if x != nil {
+		return x.DocumentFormat
+	}
+	return ""
+}
+
+func (x *SetField) GetDocumentPath() []string {
+	if x != nil {
+		return x.DocumentPath
+	}
+	return nil
+}
+
+// Values describe authority; resolved data never crosses this contract.
+type PlanValue struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Origin:
+	//
+	//	*PlanValue_Source
+	//	*PlanValue_Observed
+	//	*PlanValue_Parameter
+	Origin        isPlanValue_Origin `protobuf_oneof:"origin"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlanValue) Reset() {
+	*x = PlanValue{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanValue) ProtoMessage() {}
+
+func (x *PlanValue) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanValue.ProtoReflect.Descriptor instead.
+func (*PlanValue) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PlanValue) GetOrigin() isPlanValue_Origin {
+	if x != nil {
+		return x.Origin
+	}
+	return nil
+}
+
+func (x *PlanValue) GetSource() *ValueField {
+	if x != nil {
+		if x, ok := x.Origin.(*PlanValue_Source); ok {
+			return x.Source
+		}
+	}
+	return nil
+}
+
+func (x *PlanValue) GetObserved() *ValueField {
+	if x != nil {
+		if x, ok := x.Origin.(*PlanValue_Observed); ok {
+			return x.Observed
+		}
+	}
+	return nil
+}
+
+func (x *PlanValue) GetParameter() string {
+	if x != nil {
+		if x, ok := x.Origin.(*PlanValue_Parameter); ok {
+			return x.Parameter
+		}
+	}
+	return ""
+}
+
+type isPlanValue_Origin interface {
+	isPlanValue_Origin()
+}
+
+type PlanValue_Source struct {
+	Source *ValueField `protobuf:"bytes,1,opt,name=source,proto3,oneof"`
+}
+
+type PlanValue_Observed struct {
+	Observed *ValueField `protobuf:"bytes,2,opt,name=observed,proto3,oneof"`
+}
+
+type PlanValue_Parameter struct {
+	Parameter string `protobuf:"bytes,3,opt,name=parameter,proto3,oneof"`
+}
+
+func (*PlanValue_Source) isPlanValue_Origin() {}
+
+func (*PlanValue_Observed) isPlanValue_Origin() {}
+
+func (*PlanValue_Parameter) isPlanValue_Origin() {}
+
+type ValueField struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ValueField) Reset() {
+	*x = ValueField{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValueField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValueField) ProtoMessage() {}
+
+func (x *ValueField) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValueField.ProtoReflect.Descriptor instead.
+func (*ValueField) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ValueField) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *ValueField) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+type ValueProvenance struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Origin          string                 `protobuf:"bytes,1,opt,name=origin,proto3" json:"origin,omitempty"`
+	Ref             *ObjectRef             `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
+	Path            string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	SourceCommit    string                 `protobuf:"bytes,4,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
+	ResourceVersion string                 `protobuf:"bytes,5,opt,name=resource_version,json=resourceVersion,proto3" json:"resource_version,omitempty"`
+	Parameter       string                 `protobuf:"bytes,6,opt,name=parameter,proto3" json:"parameter,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ValueProvenance) Reset() {
+	*x = ValueProvenance{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValueProvenance) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValueProvenance) ProtoMessage() {}
+
+func (x *ValueProvenance) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValueProvenance.ProtoReflect.Descriptor instead.
+func (*ValueProvenance) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ValueProvenance) GetOrigin() string {
+	if x != nil {
+		return x.Origin
+	}
+	return ""
+}
+
+func (x *ValueProvenance) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *ValueProvenance) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *ValueProvenance) GetSourceCommit() string {
+	if x != nil {
+		return x.SourceCommit
+	}
+	return ""
+}
+
+func (x *ValueProvenance) GetResourceVersion() string {
+	if x != nil {
+		return x.ResourceVersion
+	}
+	return ""
+}
+
+func (x *ValueProvenance) GetParameter() string {
+	if x != nil {
+		return x.Parameter
+	}
+	return ""
+}
+
+type ActionReport struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Digest only; the action carries the Secret reference.
+	WebhookCaDigest string             `protobuf:"bytes,11,opt,name=webhook_ca_digest,json=webhookCaDigest,proto3" json:"webhook_ca_digest,omitempty"`
+	ActionIndex     uint32             `protobuf:"varint,1,opt,name=action_index,json=actionIndex,proto3" json:"action_index,omitempty"`
+	Status          string             `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Values          []*ValueProvenance `protobuf:"bytes,3,rep,name=values,proto3" json:"values,omitempty"`
+	ExitCode        *int32             `protobuf:"varint,4,opt,name=exit_code,json=exitCode,proto3,oneof" json:"exit_code,omitempty"`
+	// Measured effects remain outcome evidence even when capture I/O fails.
+	ExternalEffectJson   []byte                 `protobuf:"bytes,5,opt,name=external_effect_json,json=externalEffectJson,proto3" json:"external_effect_json,omitempty"`
+	KubernetesEffectJson []byte                 `protobuf:"bytes,6,opt,name=kubernetes_effect_json,json=kubernetesEffectJson,proto3" json:"kubernetes_effect_json,omitempty"`
+	RecordingError       string                 `protobuf:"bytes,7,opt,name=recording_error,json=recordingError,proto3" json:"recording_error,omitempty"`
+	JobStatusJson        []byte                 `protobuf:"bytes,8,opt,name=job_status_json,json=jobStatusJson,proto3" json:"job_status_json,omitempty"`
+	ScriptResultJson     []byte                 `protobuf:"bytes,10,opt,name=script_result_json,json=scriptResultJson,proto3" json:"script_result_json,omitempty"`
+	SourceReconcile      *SourceReconcileResult `protobuf:"bytes,12,opt,name=source_reconcile,json=sourceReconcile,proto3" json:"source_reconcile,omitempty"`
+	FailureReason        string                 `protobuf:"bytes,9,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *ActionReport) Reset() {
+	*x = ActionReport{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActionReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActionReport) ProtoMessage() {}
+
+func (x *ActionReport) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActionReport.ProtoReflect.Descriptor instead.
+func (*ActionReport) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ActionReport) GetWebhookCaDigest() string {
+	if x != nil {
+		return x.WebhookCaDigest
+	}
+	return ""
+}
+
+func (x *ActionReport) GetActionIndex() uint32 {
+	if x != nil {
+		return x.ActionIndex
+	}
+	return 0
+}
+
+func (x *ActionReport) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ActionReport) GetValues() []*ValueProvenance {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+func (x *ActionReport) GetExitCode() int32 {
+	if x != nil && x.ExitCode != nil {
+		return *x.ExitCode
+	}
+	return 0
+}
+
+func (x *ActionReport) GetExternalEffectJson() []byte {
+	if x != nil {
+		return x.ExternalEffectJson
+	}
+	return nil
+}
+
+func (x *ActionReport) GetKubernetesEffectJson() []byte {
+	if x != nil {
+		return x.KubernetesEffectJson
+	}
+	return nil
+}
+
+func (x *ActionReport) GetRecordingError() string {
+	if x != nil {
+		return x.RecordingError
+	}
+	return ""
+}
+
+func (x *ActionReport) GetJobStatusJson() []byte {
+	if x != nil {
+		return x.JobStatusJson
+	}
+	return nil
+}
+
+func (x *ActionReport) GetScriptResultJson() []byte {
+	if x != nil {
+		return x.ScriptResultJson
+	}
+	return nil
+}
+
+func (x *ActionReport) GetSourceReconcile() *SourceReconcileResult {
+	if x != nil {
+		return x.SourceReconcile
+	}
+	return nil
+}
+
+func (x *ActionReport) GetFailureReason() string {
+	if x != nil {
+		return x.FailureReason
+	}
+	return ""
+}
+
+// Direct readback of the fields this accepted-source action owns. No payload
+// values are included: paths name remaining work without exposing object data.
+type SourceReconcileResult struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Ref              *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Converged        bool                   `protobuf:"varint,2,opt,name=converged,proto3" json:"converged,omitempty"`
+	ResidualPaths    []string               `protobuf:"bytes,3,rep,name=residual_paths,json=residualPaths,proto3" json:"residual_paths,omitempty"`
+	ObservationError string                 `protobuf:"bytes,4,opt,name=observation_error,json=observationError,proto3" json:"observation_error,omitempty"`
+	AdditionsKnown   bool                   `protobuf:"varint,5,opt,name=additions_known,json=additionsKnown,proto3" json:"additions_known,omitempty"`
+	RolloutSteps     []*SourceRolloutStep   `protobuf:"bytes,6,rep,name=rollout_steps,json=rolloutSteps,proto3" json:"rollout_steps,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *SourceReconcileResult) Reset() {
+	*x = SourceReconcileResult{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceReconcileResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceReconcileResult) ProtoMessage() {}
+
+func (x *SourceReconcileResult) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourceReconcileResult.ProtoReflect.Descriptor instead.
+func (*SourceReconcileResult) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *SourceReconcileResult) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *SourceReconcileResult) GetConverged() bool {
+	if x != nil {
+		return x.Converged
+	}
+	return false
+}
+
+func (x *SourceReconcileResult) GetResidualPaths() []string {
+	if x != nil {
+		return x.ResidualPaths
+	}
+	return nil
+}
+
+func (x *SourceReconcileResult) GetObservationError() string {
+	if x != nil {
+		return x.ObservationError
+	}
+	return ""
+}
+
+func (x *SourceReconcileResult) GetAdditionsKnown() bool {
+	if x != nil {
+		return x.AdditionsKnown
+	}
+	return false
+}
+
+func (x *SourceReconcileResult) GetRolloutSteps() []*SourceRolloutStep {
+	if x != nil {
+		return x.RolloutSteps
+	}
+	return nil
+}
+
+type SourceRolloutStep struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Workload      *ObjectRef             `protobuf:"bytes,4,opt,name=workload,proto3" json:"workload,omitempty"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceRolloutStep) Reset() {
+	*x = SourceRolloutStep{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceRolloutStep) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceRolloutStep) ProtoMessage() {}
+
+func (x *SourceRolloutStep) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourceRolloutStep.ProtoReflect.Descriptor instead.
+func (*SourceRolloutStep) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SourceRolloutStep) GetWorkload() *ObjectRef {
+	if x != nil {
+		return x.Workload
+	}
+	return nil
+}
+
+func (x *SourceRolloutStep) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *SourceRolloutStep) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *SourceRolloutStep) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type DeletePod struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeletePod) Reset() {
+	*x = DeletePod{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeletePod) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeletePod) ProtoMessage() {}
+
+func (x *DeletePod) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeletePod.ProtoReflect.Descriptor instead.
+func (*DeletePod) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *DeletePod) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+type ScaleWorkload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Replicas      *PlanValue             `protobuf:"bytes,2,opt,name=replicas,proto3" json:"replicas,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScaleWorkload) Reset() {
+	*x = ScaleWorkload{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScaleWorkload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScaleWorkload) ProtoMessage() {}
+
+func (x *ScaleWorkload) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScaleWorkload.ProtoReflect.Descriptor instead.
+func (*ScaleWorkload) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ScaleWorkload) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *ScaleWorkload) GetReplicas() *PlanValue {
+	if x != nil {
+		return x.Replicas
+	}
+	return nil
+}
+
+// Requeue one admission-blocked ReplicaSet within the incident namespace.
+type RetryAdmission struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetryAdmission) Reset() {
+	*x = RetryAdmission{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetryAdmission) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetryAdmission) ProtoMessage() {}
+
+func (x *RetryAdmission) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetryAdmission.ProtoReflect.Descriptor instead.
+func (*RetryAdmission) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *RetryAdmission) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+// Scales one old-revision ReplicaSet of its controlling Deployment to zero.
+// Refused for a current revision or a ReplicaSet without an observed owner.
+type RetireOldRevision struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetireOldRevision) Reset() {
+	*x = RetireOldRevision{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetireOldRevision) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetireOldRevision) ProtoMessage() {}
+
+func (x *RetireOldRevision) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetireOldRevision.ProtoReflect.Descriptor instead.
+func (*RetireOldRevision) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *RetireOldRevision) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+type Exec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pod           *ObjectRef             `protobuf:"bytes,1,opt,name=pod,proto3" json:"pod,omitempty"`
+	Container     string                 `protobuf:"bytes,2,opt,name=container,proto3" json:"container,omitempty"`
+	Command       []*PlanValue           `protobuf:"bytes,3,rep,name=command,proto3" json:"command,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Exec) Reset() {
+	*x = Exec{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Exec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Exec) ProtoMessage() {}
+
+func (x *Exec) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Exec.ProtoReflect.Descriptor instead.
+func (*Exec) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *Exec) GetPod() *ObjectRef {
+	if x != nil {
+		return x.Pod
+	}
+	return nil
+}
+
+func (x *Exec) GetContainer() string {
+	if x != nil {
+		return x.Container
+	}
+	return ""
+}
+
+func (x *Exec) GetCommand() []*PlanValue {
+	if x != nil {
+		return x.Command
+	}
+	return nil
+}
+
 type RestartRollout struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
@@ -775,7 +2170,7 @@ type RestartRollout struct {
 
 func (x *RestartRollout) Reset() {
 	*x = RestartRollout{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[11]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -787,7 +2182,7 @@ func (x *RestartRollout) String() string {
 func (*RestartRollout) ProtoMessage() {}
 
 func (x *RestartRollout) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[11]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -800,7 +2195,7 @@ func (x *RestartRollout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestartRollout.ProtoReflect.Descriptor instead.
 func (*RestartRollout) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{11}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *RestartRollout) GetRef() *ObjectRef {
@@ -835,7 +2230,7 @@ type ProgramRun struct {
 
 func (x *ProgramRun) Reset() {
 	*x = ProgramRun{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -847,7 +2242,7 @@ func (x *ProgramRun) String() string {
 func (*ProgramRun) ProtoMessage() {}
 
 func (x *ProgramRun) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -860,7 +2255,7 @@ func (x *ProgramRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgramRun.ProtoReflect.Descriptor instead.
 func (*ProgramRun) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{12}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ProgramRun) GetProgramId() string {
@@ -926,6 +2321,207 @@ func (x *ProgramRun) GetCanMitigate() bool {
 	return false
 }
 
+// A landed mutation whose rollout is blocked. This never supplies repair credit.
+type RolloutPending struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	ReasonCode              string                 `protobuf:"bytes,3,opt,name=reason_code,json=reasonCode,proto3" json:"reason_code,omitempty"`
+	AdmissionConfigurations []*ObjectRef           `protobuf:"bytes,4,rep,name=admission_configurations,json=admissionConfigurations,proto3" json:"admission_configurations,omitempty"`
+	AdmissionWebhooks       []string               `protobuf:"bytes,5,rep,name=admission_webhooks,json=admissionWebhooks,proto3" json:"admission_webhooks,omitempty"`
+	Reason                  string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	Blockers                []*RolloutBlocker      `protobuf:"bytes,2,rep,name=blockers,proto3" json:"blockers,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *RolloutPending) Reset() {
+	*x = RolloutPending{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RolloutPending) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RolloutPending) ProtoMessage() {}
+
+func (x *RolloutPending) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RolloutPending.ProtoReflect.Descriptor instead.
+func (*RolloutPending) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *RolloutPending) GetReasonCode() string {
+	if x != nil {
+		return x.ReasonCode
+	}
+	return ""
+}
+
+func (x *RolloutPending) GetAdmissionConfigurations() []*ObjectRef {
+	if x != nil {
+		return x.AdmissionConfigurations
+	}
+	return nil
+}
+
+func (x *RolloutPending) GetAdmissionWebhooks() []string {
+	if x != nil {
+		return x.AdmissionWebhooks
+	}
+	return nil
+}
+
+func (x *RolloutPending) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *RolloutPending) GetBlockers() []*RolloutBlocker {
+	if x != nil {
+		return x.Blockers
+	}
+	return nil
+}
+
+type RolloutBlocker struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	WarningEvents []string               `protobuf:"bytes,3,rep,name=warning_events,json=warningEvents,proto3" json:"warning_events,omitempty"`
+	// The standard release of a rollout whose replacement cannot be placed
+	// beside its old revision. SDO never applies it on its own; the responder
+	// or a learned program does.
+	Release       []*Action `protobuf:"bytes,4,rep,name=release,proto3" json:"release,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RolloutBlocker) Reset() {
+	*x = RolloutBlocker{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RolloutBlocker) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RolloutBlocker) ProtoMessage() {}
+
+func (x *RolloutBlocker) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RolloutBlocker.ProtoReflect.Descriptor instead.
+func (*RolloutBlocker) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *RolloutBlocker) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *RolloutBlocker) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *RolloutBlocker) GetWarningEvents() []string {
+	if x != nil {
+		return x.WarningEvents
+	}
+	return nil
+}
+
+func (x *RolloutBlocker) GetRelease() []*Action {
+	if x != nil {
+		return x.Release
+	}
+	return nil
+}
+
+// Shared recovery observation telemetry. This never grants mutation or repair credit.
+type RecoveryWait struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	ExitReason    RecoveryWait_ExitReason `protobuf:"varint,1,opt,name=exit_reason,json=exitReason,proto3,enum=sdodev.contracts.v1alpha1.RecoveryWait_ExitReason" json:"exit_reason,omitempty"`
+	Duration      *durationpb.Duration    `protobuf:"bytes,2,opt,name=duration,proto3" json:"duration,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecoveryWait) Reset() {
+	*x = RecoveryWait{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecoveryWait) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecoveryWait) ProtoMessage() {}
+
+func (x *RecoveryWait) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecoveryWait.ProtoReflect.Descriptor instead.
+func (*RecoveryWait) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *RecoveryWait) GetExitReason() RecoveryWait_ExitReason {
+	if x != nil {
+		return x.ExitReason
+	}
+	return RecoveryWait_EXIT_REASON_UNSPECIFIED
+}
+
+func (x *RecoveryWait) GetDuration() *durationpb.Duration {
+	if x != nil {
+		return x.Duration
+	}
+	return nil
+}
+
 type PlanApplication struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
 	Plan                  *Plan                  `protobuf:"bytes,1,opt,name=plan,proto3" json:"plan,omitempty"`
@@ -943,13 +2539,24 @@ type PlanApplication struct {
 	CompletedAt           *timestamppb.Timestamp `protobuf:"bytes,15,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
 	VerificationCompleted bool                   `protobuf:"varint,16,opt,name=verification_completed,json=verificationCompleted,proto3" json:"verification_completed,omitempty"`
 	VerificationPassed    bool                   `protobuf:"varint,17,opt,name=verification_passed,json=verificationPassed,proto3" json:"verification_passed,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Final exact plan equivalence. False means no credit, not a program failure.
+	FinalEquivalenceVerified *bool               `protobuf:"varint,18,opt,name=final_equivalence_verified,json=finalEquivalenceVerified,proto3,oneof" json:"final_equivalence_verified,omitempty"`
+	ObjectEffects            []*PlanObjectEffect `protobuf:"bytes,19,rep,name=object_effects,json=objectEffects,proto3" json:"object_effects,omitempty"`
+	ActionReports            []*ActionReport     `protobuf:"bytes,20,rep,name=action_reports,json=actionReports,proto3" json:"action_reports,omitempty"`
+	RolloutPending           *RolloutPending     `protobuf:"bytes,21,opt,name=rollout_pending,json=rolloutPending,proto3" json:"rollout_pending,omitempty"`
+	// observed-transition proves opaque script recovery, never exact effects.
+	// recovery-settled proves the exact application/revision/binding after
+	// independently cleared targeted health and no superseding causal write.
+	RecoveryWait              *RecoveryWait             `protobuf:"bytes,24,opt,name=recovery_wait,json=recoveryWait,proto3" json:"recovery_wait,omitempty"`
+	FinalVerificationBasis    string                    `protobuf:"bytes,22,opt,name=final_verification_basis,json=finalVerificationBasis,proto3" json:"final_verification_basis,omitempty"`
+	SettlementRejectionReason SettlementRejectionReason `protobuf:"varint,23,opt,name=settlement_rejection_reason,json=settlementRejectionReason,proto3,enum=sdodev.contracts.v1alpha1.SettlementRejectionReason" json:"settlement_rejection_reason,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *PlanApplication) Reset() {
 	*x = PlanApplication{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -961,7 +2568,7 @@ func (x *PlanApplication) String() string {
 func (*PlanApplication) ProtoMessage() {}
 
 func (x *PlanApplication) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -974,7 +2581,7 @@ func (x *PlanApplication) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanApplication.ProtoReflect.Descriptor instead.
 func (*PlanApplication) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{13}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *PlanApplication) GetPlan() *Plan {
@@ -1082,6 +2689,55 @@ func (x *PlanApplication) GetVerificationPassed() bool {
 	return false
 }
 
+func (x *PlanApplication) GetFinalEquivalenceVerified() bool {
+	if x != nil && x.FinalEquivalenceVerified != nil {
+		return *x.FinalEquivalenceVerified
+	}
+	return false
+}
+
+func (x *PlanApplication) GetObjectEffects() []*PlanObjectEffect {
+	if x != nil {
+		return x.ObjectEffects
+	}
+	return nil
+}
+
+func (x *PlanApplication) GetActionReports() []*ActionReport {
+	if x != nil {
+		return x.ActionReports
+	}
+	return nil
+}
+
+func (x *PlanApplication) GetRolloutPending() *RolloutPending {
+	if x != nil {
+		return x.RolloutPending
+	}
+	return nil
+}
+
+func (x *PlanApplication) GetRecoveryWait() *RecoveryWait {
+	if x != nil {
+		return x.RecoveryWait
+	}
+	return nil
+}
+
+func (x *PlanApplication) GetFinalVerificationBasis() string {
+	if x != nil {
+		return x.FinalVerificationBasis
+	}
+	return ""
+}
+
+func (x *PlanApplication) GetSettlementRejectionReason() SettlementRejectionReason {
+	if x != nil {
+		return x.SettlementRejectionReason
+	}
+	return SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED
+}
+
 type ProgramToolCall struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Command       string                 `protobuf:"bytes,1,opt,name=command,proto3" json:"command,omitempty"`
@@ -1096,7 +2752,7 @@ type ProgramToolCall struct {
 
 func (x *ProgramToolCall) Reset() {
 	*x = ProgramToolCall{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[14]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1108,7 +2764,7 @@ func (x *ProgramToolCall) String() string {
 func (*ProgramToolCall) ProtoMessage() {}
 
 func (x *ProgramToolCall) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[14]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1121,7 +2777,7 @@ func (x *ProgramToolCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgramToolCall.ProtoReflect.Descriptor instead.
 func (*ProgramToolCall) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{14}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ProgramToolCall) GetCommand() string {
@@ -1174,7 +2830,7 @@ type PlanPreImage struct {
 
 func (x *PlanPreImage) Reset() {
 	*x = PlanPreImage{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[15]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1186,7 +2842,7 @@ func (x *PlanPreImage) String() string {
 func (*PlanPreImage) ProtoMessage() {}
 
 func (x *PlanPreImage) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[15]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1199,7 +2855,7 @@ func (x *PlanPreImage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanPreImage.ProtoReflect.Descriptor instead.
 func (*PlanPreImage) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{15}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{31}
 }
 
 type PlanPatch struct {
@@ -1210,7 +2866,7 @@ type PlanPatch struct {
 
 func (x *PlanPatch) Reset() {
 	*x = PlanPatch{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1222,7 +2878,7 @@ func (x *PlanPatch) String() string {
 func (*PlanPatch) ProtoMessage() {}
 
 func (x *PlanPatch) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1235,7 +2891,1807 @@ func (x *PlanPatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanPatch.ProtoReflect.Descriptor instead.
 func (*PlanPatch) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{16}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{32}
+}
+
+// Go-owned per-cause work; grouping is exactly the responder's confirmed resources.
+type ReflectionCauseWork struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CauseIndex    uint32                 `protobuf:"varint,1,opt,name=cause_index,json=causeIndex,proto3" json:"cause_index,omitempty"`
+	Resources     []*ObjectRef           `protobuf:"bytes,2,rep,name=resources,proto3" json:"resources,omitempty"`
+	Items         []*ReflectionWorkItem  `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
+	LearningBasis string                 `protobuf:"bytes,4,opt,name=learning_basis,json=learningBasis,proto3" json:"learning_basis,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReflectionCauseWork) Reset() {
+	*x = ReflectionCauseWork{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReflectionCauseWork) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReflectionCauseWork) ProtoMessage() {}
+
+func (x *ReflectionCauseWork) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReflectionCauseWork.ProtoReflect.Descriptor instead.
+func (*ReflectionCauseWork) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *ReflectionCauseWork) GetCauseIndex() uint32 {
+	if x != nil {
+		return x.CauseIndex
+	}
+	return 0
+}
+
+func (x *ReflectionCauseWork) GetResources() []*ObjectRef {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+func (x *ReflectionCauseWork) GetItems() []*ReflectionWorkItem {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *ReflectionCauseWork) GetLearningBasis() string {
+	if x != nil {
+		return x.LearningBasis
+	}
+	return ""
+}
+
+type ReflectionWorkItem struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	ProgramId        string                 `protobuf:"bytes,1,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
+	Bindings         []*Binding             `protobuf:"bytes,2,rep,name=bindings,proto3" json:"bindings,omitempty"`
+	Disposition      string                 `protobuf:"bytes,3,opt,name=disposition,proto3" json:"disposition,omitempty"`
+	Question         string                 `protobuf:"bytes,4,opt,name=question,proto3" json:"question,omitempty"`
+	Reason           string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	Resources        []*ObjectRef           `protobuf:"bytes,6,rep,name=resources,proto3" json:"resources,omitempty"`
+	EvidencePhase    string                 `protobuf:"bytes,7,opt,name=evidence_phase,json=evidencePhase,proto3" json:"evidence_phase,omitempty"`
+	ProgramRevision  string                 `protobuf:"bytes,8,opt,name=program_revision,json=programRevision,proto3" json:"program_revision,omitempty"`
+	CaptureOpenPhase string                 `protobuf:"bytes,9,opt,name=capture_open_phase,json=captureOpenPhase,proto3" json:"capture_open_phase,omitempty"`
+	// The observed abstention motivating a program_refinement question. This is
+	// evidence for review, not a settled positive corpus case or success credit.
+	Evaluation    *ProgramRun `protobuf:"bytes,10,opt,name=evaluation,proto3" json:"evaluation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReflectionWorkItem) Reset() {
+	*x = ReflectionWorkItem{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReflectionWorkItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReflectionWorkItem) ProtoMessage() {}
+
+func (x *ReflectionWorkItem) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReflectionWorkItem.ProtoReflect.Descriptor instead.
+func (*ReflectionWorkItem) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *ReflectionWorkItem) GetProgramId() string {
+	if x != nil {
+		return x.ProgramId
+	}
+	return ""
+}
+
+func (x *ReflectionWorkItem) GetBindings() []*Binding {
+	if x != nil {
+		return x.Bindings
+	}
+	return nil
+}
+
+func (x *ReflectionWorkItem) GetDisposition() string {
+	if x != nil {
+		return x.Disposition
+	}
+	return ""
+}
+
+func (x *ReflectionWorkItem) GetQuestion() string {
+	if x != nil {
+		return x.Question
+	}
+	return ""
+}
+
+func (x *ReflectionWorkItem) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ReflectionWorkItem) GetResources() []*ObjectRef {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+func (x *ReflectionWorkItem) GetEvidencePhase() string {
+	if x != nil {
+		return x.EvidencePhase
+	}
+	return ""
+}
+
+func (x *ReflectionWorkItem) GetProgramRevision() string {
+	if x != nil {
+		return x.ProgramRevision
+	}
+	return ""
+}
+
+func (x *ReflectionWorkItem) GetCaptureOpenPhase() string {
+	if x != nil {
+		return x.CaptureOpenPhase
+	}
+	return ""
+}
+
+func (x *ReflectionWorkItem) GetEvaluation() *ProgramRun {
+	if x != nil {
+		return x.Evaluation
+	}
+	return nil
+}
+
+// Controller-settled learning evidence, persisted before the outcome commit.
+// Absence on historical outcomes is unproven and never supplies success credit.
+type ReflectionEligibility struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Causes        []*ReflectionCauseWork `protobuf:"bytes,2,rep,name=causes,proto3" json:"causes,omitempty"`
+	Unassigned    []*ReflectionWorkItem  `protobuf:"bytes,3,rep,name=unassigned,proto3" json:"unassigned,omitempty"`
+	NoRepairCount *uint32                `protobuf:"varint,4,opt,name=no_repair_count,json=noRepairCount,proto3,oneof" json:"no_repair_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReflectionEligibility) Reset() {
+	*x = ReflectionEligibility{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReflectionEligibility) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReflectionEligibility) ProtoMessage() {}
+
+func (x *ReflectionEligibility) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReflectionEligibility.ProtoReflect.Descriptor instead.
+func (*ReflectionEligibility) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *ReflectionEligibility) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *ReflectionEligibility) GetCauses() []*ReflectionCauseWork {
+	if x != nil {
+		return x.Causes
+	}
+	return nil
+}
+
+func (x *ReflectionEligibility) GetUnassigned() []*ReflectionWorkItem {
+	if x != nil {
+		return x.Unassigned
+	}
+	return nil
+}
+
+func (x *ReflectionEligibility) GetNoRepairCount() uint32 {
+	if x != nil && x.NoRepairCount != nil {
+		return *x.NoRepairCount
+	}
+	return 0
+}
+
+// Incident-open diagnosis coverage. This is information, never apply authority.
+type PlaybookCoverage struct {
+	state                          protoimpl.MessageState `protogen:"open.v1"`
+	Matches                        []*PlaybookMatch       `protobuf:"bytes,1,rep,name=matches,proto3" json:"matches,omitempty"`
+	UnexplainedFindingFingerprints []string               `protobuf:"bytes,2,rep,name=unexplained_finding_fingerprints,json=unexplainedFindingFingerprints,proto3" json:"unexplained_finding_fingerprints,omitempty"`
+	unknownFields                  protoimpl.UnknownFields
+	sizeCache                      protoimpl.SizeCache
+}
+
+func (x *PlaybookCoverage) Reset() {
+	*x = PlaybookCoverage{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlaybookCoverage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlaybookCoverage) ProtoMessage() {}
+
+func (x *PlaybookCoverage) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlaybookCoverage.ProtoReflect.Descriptor instead.
+func (*PlaybookCoverage) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *PlaybookCoverage) GetMatches() []*PlaybookMatch {
+	if x != nil {
+		return x.Matches
+	}
+	return nil
+}
+
+func (x *PlaybookCoverage) GetUnexplainedFindingFingerprints() []string {
+	if x != nil {
+		return x.UnexplainedFindingFingerprints
+	}
+	return nil
+}
+
+type PlaybookMatch struct {
+	state                        protoimpl.MessageState `protogen:"open.v1"`
+	PlaybookId                   string                 `protobuf:"bytes,1,opt,name=playbook_id,json=playbookId,proto3" json:"playbook_id,omitempty"`
+	ProgramRevision              string                 `protobuf:"bytes,2,opt,name=program_revision,json=programRevision,proto3" json:"program_revision,omitempty"`
+	Bindings                     []*Binding             `protobuf:"bytes,3,rep,name=bindings,proto3" json:"bindings,omitempty"`
+	ExplainedFindingFingerprints []string               `protobuf:"bytes,4,rep,name=explained_finding_fingerprints,json=explainedFindingFingerprints,proto3" json:"explained_finding_fingerprints,omitempty"`
+	CanMitigate                  bool                   `protobuf:"varint,5,opt,name=can_mitigate,json=canMitigate,proto3" json:"can_mitigate,omitempty"`
+	// Logical program selection for a fresh menu at these bindings.
+	MitigationSelection string `protobuf:"bytes,6,opt,name=mitigation_selection,json=mitigationSelection,proto3" json:"mitigation_selection,omitempty"`
+	VerifiedSuccesses   int32  `protobuf:"varint,7,opt,name=verified_successes,json=verifiedSuccesses,proto3" json:"verified_successes,omitempty"`
+	VerifiedFailures    int32  `protobuf:"varint,8,opt,name=verified_failures,json=verifiedFailures,proto3" json:"verified_failures,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *PlaybookMatch) Reset() {
+	*x = PlaybookMatch{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlaybookMatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlaybookMatch) ProtoMessage() {}
+
+func (x *PlaybookMatch) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlaybookMatch.ProtoReflect.Descriptor instead.
+func (*PlaybookMatch) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *PlaybookMatch) GetPlaybookId() string {
+	if x != nil {
+		return x.PlaybookId
+	}
+	return ""
+}
+
+func (x *PlaybookMatch) GetProgramRevision() string {
+	if x != nil {
+		return x.ProgramRevision
+	}
+	return ""
+}
+
+func (x *PlaybookMatch) GetBindings() []*Binding {
+	if x != nil {
+		return x.Bindings
+	}
+	return nil
+}
+
+func (x *PlaybookMatch) GetExplainedFindingFingerprints() []string {
+	if x != nil {
+		return x.ExplainedFindingFingerprints
+	}
+	return nil
+}
+
+func (x *PlaybookMatch) GetCanMitigate() bool {
+	if x != nil {
+		return x.CanMitigate
+	}
+	return false
+}
+
+func (x *PlaybookMatch) GetMitigationSelection() string {
+	if x != nil {
+		return x.MitigationSelection
+	}
+	return ""
+}
+
+func (x *PlaybookMatch) GetVerifiedSuccesses() int32 {
+	if x != nil {
+		return x.VerifiedSuccesses
+	}
+	return 0
+}
+
+func (x *PlaybookMatch) GetVerifiedFailures() int32 {
+	if x != nil {
+		return x.VerifiedFailures
+	}
+	return 0
+}
+
+type RemoveServicePort struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Port          int32                  `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
+	Protocol      string                 `protobuf:"bytes,4,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	AllowEmpty    bool                   `protobuf:"varint,5,opt,name=allow_empty,json=allowEmpty,proto3" json:"allow_empty,omitempty"`
+	Reason        string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveServicePort) Reset() {
+	*x = RemoveServicePort{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveServicePort) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveServicePort) ProtoMessage() {}
+
+func (x *RemoveServicePort) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveServicePort.ProtoReflect.Descriptor instead.
+func (*RemoveServicePort) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *RemoveServicePort) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *RemoveServicePort) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RemoveServicePort) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *RemoveServicePort) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *RemoveServicePort) GetAllowEmpty() bool {
+	if x != nil {
+		return x.AllowEmpty
+	}
+	return false
+}
+
+func (x *RemoveServicePort) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type ConfigMapCredentialRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	Assignment    string                 `protobuf:"bytes,3,opt,name=assignment,proto3" json:"assignment,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigMapCredentialRef) Reset() {
+	*x = ConfigMapCredentialRef{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigMapCredentialRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigMapCredentialRef) ProtoMessage() {}
+
+func (x *ConfigMapCredentialRef) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigMapCredentialRef.ProtoReflect.Descriptor instead.
+func (*ConfigMapCredentialRef) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *ConfigMapCredentialRef) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ConfigMapCredentialRef) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *ConfigMapCredentialRef) GetAssignment() string {
+	if x != nil {
+		return x.Assignment
+	}
+	return ""
+}
+
+type CredentialRef struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Kind:
+	//
+	//	*CredentialRef_Env
+	//	*CredentialRef_ConfigMap
+	Kind          isCredentialRef_Kind `protobuf_oneof:"kind"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CredentialRef) Reset() {
+	*x = CredentialRef{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CredentialRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CredentialRef) ProtoMessage() {}
+
+func (x *CredentialRef) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CredentialRef.ProtoReflect.Descriptor instead.
+func (*CredentialRef) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *CredentialRef) GetKind() isCredentialRef_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return nil
+}
+
+func (x *CredentialRef) GetEnv() string {
+	if x != nil {
+		if x, ok := x.Kind.(*CredentialRef_Env); ok {
+			return x.Env
+		}
+	}
+	return ""
+}
+
+func (x *CredentialRef) GetConfigMap() *ConfigMapCredentialRef {
+	if x != nil {
+		if x, ok := x.Kind.(*CredentialRef_ConfigMap); ok {
+			return x.ConfigMap
+		}
+	}
+	return nil
+}
+
+type isCredentialRef_Kind interface {
+	isCredentialRef_Kind()
+}
+
+type CredentialRef_Env struct {
+	Env string `protobuf:"bytes,1,opt,name=env,proto3,oneof"`
+}
+
+type CredentialRef_ConfigMap struct {
+	ConfigMap *ConfigMapCredentialRef `protobuf:"bytes,2,opt,name=config_map,json=configMap,proto3,oneof"`
+}
+
+func (*CredentialRef_Env) isCredentialRef_Kind() {}
+
+func (*CredentialRef_ConfigMap) isCredentialRef_Kind() {}
+
+type DatabaseAuth struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Database      string                 `protobuf:"bytes,1,opt,name=database,proto3" json:"database,omitempty"`
+	Username      *CredentialRef         `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
+	Password      *CredentialRef         `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseAuth) Reset() {
+	*x = DatabaseAuth{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseAuth) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseAuth) ProtoMessage() {}
+
+func (x *DatabaseAuth) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseAuth.ProtoReflect.Descriptor instead.
+func (*DatabaseAuth) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *DatabaseAuth) GetDatabase() string {
+	if x != nil {
+		return x.Database
+	}
+	return ""
+}
+
+func (x *DatabaseAuth) GetUsername() *CredentialRef {
+	if x != nil {
+		return x.Username
+	}
+	return nil
+}
+
+func (x *DatabaseAuth) GetPassword() *CredentialRef {
+	if x != nil {
+		return x.Password
+	}
+	return nil
+}
+
+type DatabaseTarget struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Engine        string                 `protobuf:"bytes,1,opt,name=engine,proto3" json:"engine,omitempty"`
+	Pod           *ObjectRef             `protobuf:"bytes,2,opt,name=pod,proto3" json:"pod,omitempty"`
+	Container     string                 `protobuf:"bytes,3,opt,name=container,proto3" json:"container,omitempty"`
+	Database      string                 `protobuf:"bytes,4,opt,name=database,proto3" json:"database,omitempty"`
+	Auth          *DatabaseAuth          `protobuf:"bytes,5,opt,name=auth,proto3" json:"auth,omitempty"`
+	Shell         string                 `protobuf:"bytes,6,opt,name=shell,proto3" json:"shell,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseTarget) Reset() {
+	*x = DatabaseTarget{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseTarget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseTarget) ProtoMessage() {}
+
+func (x *DatabaseTarget) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseTarget.ProtoReflect.Descriptor instead.
+func (*DatabaseTarget) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *DatabaseTarget) GetEngine() string {
+	if x != nil {
+		return x.Engine
+	}
+	return ""
+}
+
+func (x *DatabaseTarget) GetPod() *ObjectRef {
+	if x != nil {
+		return x.Pod
+	}
+	return nil
+}
+
+func (x *DatabaseTarget) GetContainer() string {
+	if x != nil {
+		return x.Container
+	}
+	return ""
+}
+
+func (x *DatabaseTarget) GetDatabase() string {
+	if x != nil {
+		return x.Database
+	}
+	return ""
+}
+
+func (x *DatabaseTarget) GetAuth() *DatabaseAuth {
+	if x != nil {
+		return x.Auth
+	}
+	return nil
+}
+
+func (x *DatabaseTarget) GetShell() string {
+	if x != nil {
+		return x.Shell
+	}
+	return ""
+}
+
+type DatabaseRole struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Database      string                 `protobuf:"bytes,1,opt,name=database,proto3" json:"database,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseRole) Reset() {
+	*x = DatabaseRole{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseRole) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseRole) ProtoMessage() {}
+
+func (x *DatabaseRole) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseRole.ProtoReflect.Descriptor instead.
+func (*DatabaseRole) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *DatabaseRole) GetDatabase() string {
+	if x != nil {
+		return x.Database
+	}
+	return ""
+}
+
+func (x *DatabaseRole) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type EnsureDatabaseUser struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Target        *DatabaseTarget        `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	User          string                 `protobuf:"bytes,2,opt,name=user,proto3" json:"user,omitempty"`
+	Roles         []*DatabaseRole        `protobuf:"bytes,3,rep,name=roles,proto3" json:"roles,omitempty"`
+	Password      *CredentialRef         `protobuf:"bytes,4,opt,name=password,proto3" json:"password,omitempty"`
+	Reason        string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnsureDatabaseUser) Reset() {
+	*x = EnsureDatabaseUser{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnsureDatabaseUser) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnsureDatabaseUser) ProtoMessage() {}
+
+func (x *EnsureDatabaseUser) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnsureDatabaseUser.ProtoReflect.Descriptor instead.
+func (*EnsureDatabaseUser) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *EnsureDatabaseUser) GetTarget() *DatabaseTarget {
+	if x != nil {
+		return x.Target
+	}
+	return nil
+}
+
+func (x *EnsureDatabaseUser) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
+}
+
+func (x *EnsureDatabaseUser) GetRoles() []*DatabaseRole {
+	if x != nil {
+		return x.Roles
+	}
+	return nil
+}
+
+func (x *EnsureDatabaseUser) GetPassword() *CredentialRef {
+	if x != nil {
+		return x.Password
+	}
+	return nil
+}
+
+func (x *EnsureDatabaseUser) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// General Kubernetes actions retain JSON number tokens in document payloads.
+type PatchObject struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	PatchJson     []byte                 `protobuf:"bytes,3,opt,name=patch_json,json=patchJson,proto3" json:"patch_json,omitempty"`
+	Edits         []*ListEdit            `protobuf:"bytes,4,rep,name=edits,proto3" json:"edits,omitempty"`
+	Reason        string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PatchObject) Reset() {
+	*x = PatchObject{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PatchObject) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PatchObject) ProtoMessage() {}
+
+func (x *PatchObject) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PatchObject.ProtoReflect.Descriptor instead.
+func (*PatchObject) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *PatchObject) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *PatchObject) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *PatchObject) GetPatchJson() []byte {
+	if x != nil {
+		return x.PatchJson
+	}
+	return nil
+}
+
+func (x *PatchObject) GetEdits() []*ListEdit {
+	if x != nil {
+		return x.Edits
+	}
+	return nil
+}
+
+func (x *PatchObject) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type ListEdit struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	MatchJson     []byte                 `protobuf:"bytes,2,opt,name=match_json,json=matchJson,proto3" json:"match_json,omitempty"`
+	Op            string                 `protobuf:"bytes,3,opt,name=op,proto3" json:"op,omitempty"`
+	ValueJson     []byte                 `protobuf:"bytes,4,opt,name=value_json,json=valueJson,proto3" json:"value_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListEdit) Reset() {
+	*x = ListEdit{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListEdit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListEdit) ProtoMessage() {}
+
+func (x *ListEdit) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListEdit.ProtoReflect.Descriptor instead.
+func (*ListEdit) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *ListEdit) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *ListEdit) GetMatchJson() []byte {
+	if x != nil {
+		return x.MatchJson
+	}
+	return nil
+}
+
+func (x *ListEdit) GetOp() string {
+	if x != nil {
+		return x.Op
+	}
+	return ""
+}
+
+func (x *ListEdit) GetValueJson() []byte {
+	if x != nil {
+		return x.ValueJson
+	}
+	return nil
+}
+
+type ApplyObject struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	ObjectJson    []byte                 `protobuf:"bytes,2,opt,name=object_json,json=objectJson,proto3" json:"object_json,omitempty"`
+	Mode          string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplyObject) Reset() {
+	*x = ApplyObject{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplyObject) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplyObject) ProtoMessage() {}
+
+func (x *ApplyObject) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplyObject.ProtoReflect.Descriptor instead.
+func (*ApplyObject) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *ApplyObject) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *ApplyObject) GetObjectJson() []byte {
+	if x != nil {
+		return x.ObjectJson
+	}
+	return nil
+}
+
+func (x *ApplyObject) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *ApplyObject) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type KubernetesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Method        string                 `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	Query         map[string]string      `protobuf:"bytes,4,rep,name=query,proto3" json:"query,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ContentType   string                 `protobuf:"bytes,5,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
+	Body          []byte                 `protobuf:"bytes,6,opt,name=body,proto3" json:"body,omitempty"`
+	Reason        string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KubernetesRequest) Reset() {
+	*x = KubernetesRequest{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KubernetesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KubernetesRequest) ProtoMessage() {}
+
+func (x *KubernetesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KubernetesRequest.ProtoReflect.Descriptor instead.
+func (*KubernetesRequest) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *KubernetesRequest) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *KubernetesRequest) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *KubernetesRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *KubernetesRequest) GetQuery() map[string]string {
+	if x != nil {
+		return x.Query
+	}
+	return nil
+}
+
+func (x *KubernetesRequest) GetContentType() string {
+	if x != nil {
+		return x.ContentType
+	}
+	return ""
+}
+
+func (x *KubernetesRequest) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+func (x *KubernetesRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type WaitFor struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	EqualsJson    []byte                 `protobuf:"bytes,3,opt,name=equals_json,json=equalsJson,proto3" json:"equals_json,omitempty"`
+	Timeout       *durationpb.Duration   `protobuf:"bytes,4,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	Interval      *durationpb.Duration   `protobuf:"bytes,5,opt,name=interval,proto3" json:"interval,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WaitFor) Reset() {
+	*x = WaitFor{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WaitFor) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WaitFor) ProtoMessage() {}
+
+func (x *WaitFor) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WaitFor.ProtoReflect.Descriptor instead.
+func (*WaitFor) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *WaitFor) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *WaitFor) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *WaitFor) GetEqualsJson() []byte {
+	if x != nil {
+		return x.EqualsJson
+	}
+	return nil
+}
+
+func (x *WaitFor) GetTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.Timeout
+	}
+	return nil
+}
+
+func (x *WaitFor) GetInterval() *durationpb.Duration {
+	if x != nil {
+		return x.Interval
+	}
+	return nil
+}
+
+type Command struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pod           *ObjectRef             `protobuf:"bytes,1,opt,name=pod,proto3" json:"pod,omitempty"`
+	Container     string                 `protobuf:"bytes,2,opt,name=container,proto3" json:"container,omitempty"`
+	Args          []string               `protobuf:"bytes,3,rep,name=args,proto3" json:"args,omitempty"`
+	Stdin         string                 `protobuf:"bytes,4,opt,name=stdin,proto3" json:"stdin,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Command) Reset() {
+	*x = Command{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Command) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Command) ProtoMessage() {}
+
+func (x *Command) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Command.ProtoReflect.Descriptor instead.
+func (*Command) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *Command) GetPod() *ObjectRef {
+	if x != nil {
+		return x.Pod
+	}
+	return nil
+}
+
+func (x *Command) GetContainer() string {
+	if x != nil {
+		return x.Container
+	}
+	return ""
+}
+
+func (x *Command) GetArgs() []string {
+	if x != nil {
+		return x.Args
+	}
+	return nil
+}
+
+func (x *Command) GetStdin() string {
+	if x != nil {
+		return x.Stdin
+	}
+	return ""
+}
+
+type HttpRequest struct {
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Pod           *ObjectRef                `protobuf:"bytes,1,opt,name=pod,proto3" json:"pod,omitempty"`
+	Container     string                    `protobuf:"bytes,2,opt,name=container,proto3" json:"container,omitempty"`
+	Method        string                    `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
+	Url           string                    `protobuf:"bytes,4,opt,name=url,proto3" json:"url,omitempty"`
+	Headers       map[string]string         `protobuf:"bytes,5,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Body          string                    `protobuf:"bytes,6,opt,name=body,proto3" json:"body,omitempty"`
+	Bearer        *CredentialRef            `protobuf:"bytes,7,opt,name=bearer,proto3" json:"bearer,omitempty"`
+	HeaderEnv     map[string]*CredentialRef `protobuf:"bytes,8,rep,name=header_env,json=headerEnv,proto3" json:"header_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpRequest) Reset() {
+	*x = HttpRequest{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpRequest) ProtoMessage() {}
+
+func (x *HttpRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpRequest.ProtoReflect.Descriptor instead.
+func (*HttpRequest) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *HttpRequest) GetPod() *ObjectRef {
+	if x != nil {
+		return x.Pod
+	}
+	return nil
+}
+
+func (x *HttpRequest) GetContainer() string {
+	if x != nil {
+		return x.Container
+	}
+	return ""
+}
+
+func (x *HttpRequest) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *HttpRequest) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *HttpRequest) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *HttpRequest) GetBody() string {
+	if x != nil {
+		return x.Body
+	}
+	return ""
+}
+
+func (x *HttpRequest) GetBearer() *CredentialRef {
+	if x != nil {
+		return x.Bearer
+	}
+	return nil
+}
+
+func (x *HttpRequest) GetHeaderEnv() map[string]*CredentialRef {
+	if x != nil {
+		return x.HeaderEnv
+	}
+	return nil
+}
+
+type EnsureExec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Observe       *Command               `protobuf:"bytes,1,opt,name=observe,proto3" json:"observe,omitempty"`
+	Ensure        *Command               `protobuf:"bytes,2,opt,name=ensure,proto3" json:"ensure,omitempty"`
+	Expect        int32                  `protobuf:"varint,3,opt,name=expect,proto3" json:"expect,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnsureExec) Reset() {
+	*x = EnsureExec{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnsureExec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnsureExec) ProtoMessage() {}
+
+func (x *EnsureExec) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnsureExec.ProtoReflect.Descriptor instead.
+func (*EnsureExec) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *EnsureExec) GetObserve() *Command {
+	if x != nil {
+		return x.Observe
+	}
+	return nil
+}
+
+func (x *EnsureExec) GetEnsure() *Command {
+	if x != nil {
+		return x.Ensure
+	}
+	return nil
+}
+
+func (x *EnsureExec) GetExpect() int32 {
+	if x != nil {
+		return x.Expect
+	}
+	return 0
+}
+
+func (x *EnsureExec) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type EnsureHttp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Observe       *HttpRequest           `protobuf:"bytes,1,opt,name=observe,proto3" json:"observe,omitempty"`
+	Ensure        *HttpRequest           `protobuf:"bytes,2,opt,name=ensure,proto3" json:"ensure,omitempty"`
+	Expect        int32                  `protobuf:"varint,3,opt,name=expect,proto3" json:"expect,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnsureHttp) Reset() {
+	*x = EnsureHttp{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnsureHttp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnsureHttp) ProtoMessage() {}
+
+func (x *EnsureHttp) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnsureHttp.ProtoReflect.Descriptor instead.
+func (*EnsureHttp) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *EnsureHttp) GetObserve() *HttpRequest {
+	if x != nil {
+		return x.Observe
+	}
+	return nil
+}
+
+func (x *EnsureHttp) GetEnsure() *HttpRequest {
+	if x != nil {
+		return x.Ensure
+	}
+	return nil
+}
+
+func (x *EnsureHttp) GetExpect() int32 {
+	if x != nil {
+		return x.Expect
+	}
+	return 0
+}
+
+func (x *EnsureHttp) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type RunJob struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Object        *ApplyObject           `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
+	Completion    *WaitFor               `protobuf:"bytes,2,opt,name=completion,proto3" json:"completion,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunJob) Reset() {
+	*x = RunJob{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunJob) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunJob) ProtoMessage() {}
+
+func (x *RunJob) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunJob.ProtoReflect.Descriptor instead.
+func (*RunJob) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *RunJob) GetObject() *ApplyObject {
+	if x != nil {
+		return x.Object
+	}
+	return nil
+}
+
+func (x *RunJob) GetCompletion() *WaitFor {
+	if x != nil {
+		return x.Completion
+	}
+	return nil
+}
+
+// Opaque bash effects use recorded open/fixed diagnosis, never invented effects.
+type RunScript struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Script        string                 `protobuf:"bytes,1,opt,name=script,proto3" json:"script,omitempty"`
+	Env           map[string]*PlanValue  `protobuf:"bytes,2,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Timeout       *durationpb.Duration   `protobuf:"bytes,3,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunScript) Reset() {
+	*x = RunScript{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunScript) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunScript) ProtoMessage() {}
+
+func (x *RunScript) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunScript.ProtoReflect.Descriptor instead.
+func (*RunScript) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *RunScript) GetScript() string {
+	if x != nil {
+		return x.Script
+	}
+	return ""
+}
+
+func (x *RunScript) GetEnv() map[string]*PlanValue {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *RunScript) GetTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.Timeout
+	}
+	return nil
+}
+
+func (x *RunScript) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// References only. CA bytes never cross the runtime boundary.
+type SyncWebhookCA struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Ref             *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Webhook         string                 `protobuf:"bytes,2,opt,name=webhook,proto3" json:"webhook,omitempty"`
+	SecretNamespace string                 `protobuf:"bytes,3,opt,name=secret_namespace,json=secretNamespace,proto3" json:"secret_namespace,omitempty"`
+	SecretName      string                 `protobuf:"bytes,4,opt,name=secret_name,json=secretName,proto3" json:"secret_name,omitempty"`
+	SecretKey       string                 `protobuf:"bytes,5,opt,name=secret_key,json=secretKey,proto3" json:"secret_key,omitempty"`
+	Reason          string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *SyncWebhookCA) Reset() {
+	*x = SyncWebhookCA{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncWebhookCA) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncWebhookCA) ProtoMessage() {}
+
+func (x *SyncWebhookCA) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncWebhookCA.ProtoReflect.Descriptor instead.
+func (*SyncWebhookCA) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *SyncWebhookCA) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *SyncWebhookCA) GetWebhook() string {
+	if x != nil {
+		return x.Webhook
+	}
+	return ""
+}
+
+func (x *SyncWebhookCA) GetSecretNamespace() string {
+	if x != nil {
+		return x.SecretNamespace
+	}
+	return ""
+}
+
+func (x *SyncWebhookCA) GetSecretName() string {
+	if x != nil {
+		return x.SecretName
+	}
+	return ""
+}
+
+func (x *SyncWebhookCA) GetSecretKey() string {
+	if x != nil {
+		return x.SecretKey
+	}
+	return ""
+}
+
+func (x *SyncWebhookCA) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
 }
 
 var File_sdodev_contracts_v1alpha1_program_proto protoreflect.FileDescriptor
@@ -1245,19 +4701,20 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"'sdodev/contracts/v1alpha1/program.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/common.proto\"d\n" +
 	"\vProgramSpec\x12\x17\n" +
 	"\x02id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\x12<\n" +
-	"\x06params\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ParamSpecR\x06params\"a\n" +
+	"\x06params\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ParamSpecR\x06params\"\xae\x03\n" +
 	"\tParamSpec\x12\x1b\n" +
-	"\x04name\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\x12\x1b\n" +
-	"\x04kind\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1a\n" +
-	"\brequired\x18\x03 \x01(\bR\brequired\"l\n" +
-	"\aBinding\x12\x1b\n" +
-	"\x04name\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\x12D\n" +
-	"\x06object\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x06object\"\xa8\x01\n" +
-	"\x16RelationCoveredFinding\x12/\n" +
-	"\x13finding_fingerprint\x18\x01 \x01(\tR\x12findingFingerprint\x12\x1d\n" +
+	"\x04name\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1a\n" +
+	"\brequired\x18\x03 \x01(\bR\brequired\x12M\n" +
 	"\n" +
-	"program_id\x18\x02 \x01(\tR\tprogramId\x12>\n" +
-	"\bbindings\x18\x03 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\"\xc5\x03\n" +
+	"value_kind\x18\x04 \x01(\tB.\xbaH+r)R\x00R\x06stringR\x03intR\bquantityR\bdurationR\x04boolR\tvalueKind\x120\n" +
+	"\adefault\x18\x05 \x01(\v2\x16.google.protobuf.ValueR\adefault:\xd2\x01\xbaH\xce\x01\x1a\xcb\x01\n" +
+	"\x1aparameter.exactly_one_kind\x12Nparameter requires an object kind or value kind; defaults require a value kind\x1a](this.kind != '') != (this.value_kind != '') && (this.value_kind != '' || !has(this.default))\"\xfa\x01\n" +
+	"\aBinding\x12\x1b\n" +
+	"\x04name\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\x12<\n" +
+	"\x06object\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x06object\x12,\n" +
+	"\x05value\x18\x03 \x01(\v2\x16.google.protobuf.ValueR\x05value:f\xbaHc\x1aa\n" +
+	"\x13binding.exactly_one\x12%binding requires an object or a value\x1a#has(this.object) != has(this.value)\"\xc5\x03\n" +
 	"\aVerdict\x12M\n" +
 	"\x06result\x18\x01 \x01(\x0e2).sdodev.contracts.v1alpha1.Verdict.ResultB\n" +
 	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06result\x12?\n" +
@@ -1277,24 +4734,120 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\bexpected\x18\x04 \x01(\tR\bexpected\"a\n" +
 	"\x04Plan\x12;\n" +
 	"\aactions\x18\x01 \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\aactions\x12\x1c\n" +
-	"\trationale\x18\x02 \x01(\tR\trationale\"\xda\x02\n" +
+	"\trationale\x18\x02 \x01(\tR\trationale\"\xf8\r\n" +
 	"\x06Action\x12d\n" +
 	"\x15reconcile_from_source\x18\x01 \x01(\v2..sdodev.contracts.v1alpha1.ReconcileFromSourceH\x00R\x13reconcileFromSource\x12A\n" +
 	"\brollback\x18\x02 \x01(\v2#.sdodev.contracts.v1alpha1.RollbackH\x00R\brollback\x12B\n" +
 	"\tset_field\x18\x03 \x01(\v2#.sdodev.contracts.v1alpha1.SetFieldH\x00R\bsetField\x12T\n" +
-	"\x0frestart_rollout\x18\x04 \x01(\v2).sdodev.contracts.v1alpha1.RestartRolloutH\x00R\x0erestartRolloutB\r\n" +
-	"\x04kind\x12\x05\xbaH\x02\b\x01\"U\n" +
+	"\x0frestart_rollout\x18\x04 \x01(\v2).sdodev.contracts.v1alpha1.RestartRolloutH\x00R\x0erestartRollout\x12[\n" +
+	"\x12create_from_source\x18\x05 \x01(\v2+.sdodev.contracts.v1alpha1.CreateFromSourceH\x00R\x10createFromSource\x12N\n" +
+	"\rdelete_object\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.DeleteObjectH\x00R\fdeleteObject\x12E\n" +
+	"\n" +
+	"delete_pod\x18\a \x01(\v2$.sdodev.contracts.v1alpha1.DeletePodH\x00R\tdeletePod\x12Q\n" +
+	"\x0escale_workload\x18\b \x01(\v2(.sdodev.contracts.v1alpha1.ScaleWorkloadH\x00R\rscaleWorkload\x125\n" +
+	"\x04exec\x18\t \x01(\v2\x1f.sdodev.contracts.v1alpha1.ExecH\x00R\x04exec\x12^\n" +
+	"\x13remove_service_port\x18\n" +
+	" \x01(\v2,.sdodev.contracts.v1alpha1.RemoveServicePortH\x00R\x11removeServicePort\x12a\n" +
+	"\x14ensure_database_user\x18\v \x01(\v2-.sdodev.contracts.v1alpha1.EnsureDatabaseUserH\x00R\x12ensureDatabaseUser\x12K\n" +
+	"\fpatch_object\x18\f \x01(\v2&.sdodev.contracts.v1alpha1.PatchObjectH\x00R\vpatchObject\x12K\n" +
+	"\fapply_object\x18\r \x01(\v2&.sdodev.contracts.v1alpha1.ApplyObjectH\x00R\vapplyObject\x12]\n" +
+	"\x12kubernetes_request\x18\x0e \x01(\v2,.sdodev.contracts.v1alpha1.KubernetesRequestH\x00R\x11kubernetesRequest\x12?\n" +
+	"\bwait_for\x18\x0f \x01(\v2\".sdodev.contracts.v1alpha1.WaitForH\x00R\awaitFor\x12H\n" +
+	"\vensure_exec\x18\x10 \x01(\v2%.sdodev.contracts.v1alpha1.EnsureExecH\x00R\n" +
+	"ensureExec\x12H\n" +
+	"\vensure_http\x18\x11 \x01(\v2%.sdodev.contracts.v1alpha1.EnsureHttpH\x00R\n" +
+	"ensureHttp\x12<\n" +
+	"\arun_job\x18\x12 \x01(\v2!.sdodev.contracts.v1alpha1.RunJobH\x00R\x06runJob\x12E\n" +
+	"\n" +
+	"run_script\x18\x13 \x01(\v2$.sdodev.contracts.v1alpha1.RunScriptH\x00R\trunScript\x12R\n" +
+	"\x0fsync_webhook_ca\x18\x14 \x01(\v2(.sdodev.contracts.v1alpha1.SyncWebhookCAH\x00R\rsyncWebhookCa\x12^\n" +
+	"\x13retire_old_revision\x18\x15 \x01(\v2,.sdodev.contracts.v1alpha1.RetireOldRevisionH\x00R\x11retireOldRevision\x12T\n" +
+	"\x0fretry_admission\x18\x16 \x01(\v2).sdodev.contracts.v1alpha1.RetryAdmissionH\x00R\x0eretryAdmissionB\r\n" +
+	"\x04kind\x12\x05\xbaH\x02\b\x01\"s\n" +
+	"\x10CreateFromSource\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
+	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"o\n" +
+	"\fDeleteObject\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
+	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xe3\x02\n" +
+	"\x10PlanObjectEffect\x12:\n" +
+	"\toperation\x18\x01 \x01(\tB\x1c\xbaH\x19r\x17R\x06createR\x06deleteR\x05patchR\toperation\x12>\n" +
+	"\x03ref\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x10\n" +
+	"\x03uid\x18\x03 \x01(\tR\x03uid\x12:\n" +
+	"\x05state\x18\x04 \x01(\tB$\xbaH!r\x1fR\vnot_appliedR\aappliedR\aunknownR\x05state\x12\x1c\n" +
+	"\tconfirmed\x18\x05 \x01(\bR\tconfirmed\x12\"\n" +
+	"\firreversible\x18\x06 \x01(\bR\firreversible\x12C\n" +
+	"\x11deleted_pre_image\x18\a \x01(\v2\x17.google.protobuf.StructR\x0fdeletedPreImage\"U\n" +
 	"\x13ReconcileFromSource\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"t\n" +
 	"\bRollback\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12(\n" +
 	"\vto_revision\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
-	"toRevision\"\xbe\x01\n" +
+	"toRevision\"\xce\x02\n" +
 	"\bSetField\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1b\n" +
-	"\x04path\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04path\x124\n" +
-	"\x05value\x18\x03 \x01(\v2\x16.google.protobuf.ValueB\x06\xbaH\x03\xc8\x01\x01R\x05value\x12\x1f\n" +
-	"\x06reason\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"q\n" +
+	"\x04path\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04path\x12B\n" +
+	"\x05value\x18\b \x01(\v2$.sdodev.contracts.v1alpha1.PlanValueB\x06\xbaH\x03\xc8\x01\x01R\x05value\x12\x1f\n" +
+	"\x06reason\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\x12<\n" +
+	"\x0fdocument_format\x18\x06 \x01(\tB\x13\xbaH\x10r\x0eR\x00R\x04jsonR\x04yamlR\x0edocumentFormat\x12#\n" +
+	"\rdocument_path\x18\a \x03(\tR\fdocumentPathJ\x04\b\x03\x10\x04J\x04\b\x05\x10\x06R\x11value_from_source\"\xcb\x01\n" +
+	"\tPlanValue\x12?\n" +
+	"\x06source\x18\x01 \x01(\v2%.sdodev.contracts.v1alpha1.ValueFieldH\x00R\x06source\x12C\n" +
+	"\bobserved\x18\x02 \x01(\v2%.sdodev.contracts.v1alpha1.ValueFieldH\x00R\bobserved\x12'\n" +
+	"\tparameter\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01H\x00R\tparameterB\x0f\n" +
+	"\x06origin\x12\x05\xbaH\x02\b\x01\"i\n" +
+	"\n" +
+	"ValueField\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1b\n" +
+	"\x04path\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04path\"\x87\x02\n" +
+	"\x0fValueProvenance\x12:\n" +
+	"\x06origin\x18\x01 \x01(\tB\"\xbaH\x1fr\x1dR\x06sourceR\bobservedR\tparameterR\x06origin\x126\n" +
+	"\x03ref\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12#\n" +
+	"\rsource_commit\x18\x04 \x01(\tR\fsourceCommit\x12)\n" +
+	"\x10resource_version\x18\x05 \x01(\tR\x0fresourceVersion\x12\x1c\n" +
+	"\tparameter\x18\x06 \x01(\tR\tparameter\"\xf3\x05\n" +
+	"\fActionReport\x12*\n" +
+	"\x11webhook_ca_digest\x18\v \x01(\tR\x0fwebhookCaDigest\x12!\n" +
+	"\faction_index\x18\x01 \x01(\rR\vactionIndex\x12K\n" +
+	"\x06status\x18\x02 \x01(\tB3\xbaH0r.R\bpreparedR\aappliedR\apartialR\arefusedR\aunknownR\x06status\x12B\n" +
+	"\x06values\x18\x03 \x03(\v2*.sdodev.contracts.v1alpha1.ValueProvenanceR\x06values\x12 \n" +
+	"\texit_code\x18\x04 \x01(\x05H\x00R\bexitCode\x88\x01\x01\x120\n" +
+	"\x14external_effect_json\x18\x05 \x01(\fR\x12externalEffectJson\x124\n" +
+	"\x16kubernetes_effect_json\x18\x06 \x01(\fR\x14kubernetesEffectJson\x12'\n" +
+	"\x0frecording_error\x18\a \x01(\tR\x0erecordingError\x12&\n" +
+	"\x0fjob_status_json\x18\b \x01(\fR\rjobStatusJson\x12,\n" +
+	"\x12script_result_json\x18\n" +
+	" \x01(\fR\x10scriptResultJson\x12[\n" +
+	"\x10source_reconcile\x18\f \x01(\v20.sdodev.contracts.v1alpha1.SourceReconcileResultR\x0fsourceReconcile\x12\x8e\x01\n" +
+	"\x0efailure_reason\x18\t \x01(\tBg\xbaHdrbR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x0fsource_residualR\rfailureReasonB\f\n" +
+	"\n" +
+	"_exit_code\"\xbd\x02\n" +
+	"\x15SourceReconcileResult\x126\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x1c\n" +
+	"\tconverged\x18\x02 \x01(\bR\tconverged\x12%\n" +
+	"\x0eresidual_paths\x18\x03 \x03(\tR\rresidualPaths\x12+\n" +
+	"\x11observation_error\x18\x04 \x01(\tR\x10observationError\x12'\n" +
+	"\x0fadditions_known\x18\x05 \x01(\bR\x0eadditionsKnown\x12Q\n" +
+	"\rrollout_steps\x18\x06 \x03(\v2,.sdodev.contracts.v1alpha1.SourceRolloutStepR\frolloutSteps\"\xbb\x01\n" +
+	"\x11SourceRolloutStep\x12@\n" +
+	"\bworkload\x18\x04 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\bworkload\x126\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"K\n" +
+	"\tDeletePod\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"\x99\x01\n" +
+	"\rScaleWorkload\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12H\n" +
+	"\breplicas\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.PlanValueB\x06\xbaH\x03\xc8\x01\x01R\breplicas\"P\n" +
+	"\x0eRetryAdmission\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"S\n" +
+	"\x11RetireOldRevision\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"\xb7\x01\n" +
+	"\x04Exec\x12>\n" +
+	"\x03pod\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03pod\x12%\n" +
+	"\tcontainer\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tcontainer\x12H\n" +
+	"\acommand\x18\x03 \x03(\v2$.sdodev.contracts.v1alpha1.PlanValueB\b\xbaH\x05\x92\x01\x02\b\x01R\acommand\"q\n" +
 	"\x0eRestartRollout\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
 	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xea\x03\n" +
@@ -1310,7 +4863,31 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x10program_revision\x18\a \x01(\tR\x0fprogramRevision\x12D\n" +
 	"\x0ebinding_source\x18\b \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\afindingR\x04hintR\x05sweepR\rbindingSource\x12&\n" +
 	"\fcan_mitigate\x18\t \x01(\bH\x00R\vcanMitigate\x88\x01\x01B\x0f\n" +
-	"\r_can_mitigate\"\xf5\x05\n" +
+	"\r_can_mitigate\"\xcd\x02\n" +
+	"\x0eRolloutPending\x12L\n" +
+	"\vreason_code\x18\x03 \x01(\tB+\xbaH(r&R\x00R\x11admission_blockedR\x0frollout_stalledR\n" +
+	"reasonCode\x12_\n" +
+	"\x18admission_configurations\x18\x04 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x17admissionConfigurations\x12-\n" +
+	"\x12admission_webhooks\x18\x05 \x03(\tR\x11admissionWebhooks\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\x12E\n" +
+	"\bblockers\x18\x02 \x03(\v2).sdodev.contracts.v1alpha1.RolloutBlockerR\bblockers\"\xc4\x01\n" +
+	"\x0eRolloutBlocker\x126\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12%\n" +
+	"\x0ewarning_events\x18\x03 \x03(\tR\rwarningEvents\x12;\n" +
+	"\arelease\x18\x04 \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\arelease\"\xd9\x02\n" +
+	"\fRecoveryWait\x12]\n" +
+	"\vexit_reason\x18\x01 \x01(\x0e22.sdodev.contracts.v1alpha1.RecoveryWait.ExitReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\n" +
+	"exitReason\x12?\n" +
+	"\bduration\x18\x02 \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\bduration\"\xa8\x01\n" +
+	"\n" +
+	"ExitReason\x12\x1b\n" +
+	"\x17EXIT_REASON_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13EXIT_REASON_CLEARED\x10\x01\x12\x18\n" +
+	"\x14EXIT_REASON_DEADLINE\x10\x02\x12\x17\n" +
+	"\x13EXIT_REASON_BLOCKER\x10\x03\x12\x16\n" +
+	"\x12EXIT_REASON_FAILED\x10\x04\x12\x19\n" +
+	"\x15EXIT_REASON_UNCOVERED\x10\x05\"\x87\v\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
@@ -1330,7 +4907,15 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"started_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12=\n" +
 	"\fcompleted_at\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x125\n" +
 	"\x16verification_completed\x18\x10 \x01(\bR\x15verificationCompleted\x12/\n" +
-	"\x13verification_passed\x18\x11 \x01(\bR\x12verificationPassedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
+	"\x13verification_passed\x18\x11 \x01(\bR\x12verificationPassed\x12A\n" +
+	"\x1afinal_equivalence_verified\x18\x12 \x01(\bH\x00R\x18finalEquivalenceVerified\x88\x01\x01\x12R\n" +
+	"\x0eobject_effects\x18\x13 \x03(\v2+.sdodev.contracts.v1alpha1.PlanObjectEffectR\robjectEffects\x12N\n" +
+	"\x0eaction_reports\x18\x14 \x03(\v2'.sdodev.contracts.v1alpha1.ActionReportR\ractionReports\x12R\n" +
+	"\x0frollout_pending\x18\x15 \x01(\v2).sdodev.contracts.v1alpha1.RolloutPendingR\x0erolloutPending\x12L\n" +
+	"\rrecovery_wait\x18\x18 \x01(\v2'.sdodev.contracts.v1alpha1.RecoveryWaitR\frecoveryWait\x12h\n" +
+	"\x18final_verification_basis\x18\x16 \x01(\tB.\xbaH+r)R\x00R\x13observed-transitionR\x10recovery-settledR\x16finalVerificationBasis\x12~\n" +
+	"\x1bsettlement_rejection_reason\x18\x17 \x01(\x0e24.sdodev.contracts.v1alpha1.SettlementRejectionReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x19settlementRejectionReasonB\x1d\n" +
+	"\x1b_final_equivalence_verifiedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
 	"pre_imagesR\apatches\"\xcf\x01\n" +
 	"\x0fProgramToolCall\x12\x18\n" +
 	"\acommand\x18\x01 \x01(\tR\acommand\x12*\n" +
@@ -1341,7 +4926,205 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\asummary\x18\x06 \x01(\tR\asummary\"'\n" +
 	"\fPlanPreImageJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\x03refR\x06object\"(\n" +
 	"\tPlanPatchJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\x03refR\n" +
-	"patch_jsonB\xff\x01\n" +
+	"patch_json\"\x84\x02\n" +
+	"\x13ReflectionCauseWork\x12\x1f\n" +
+	"\vcause_index\x18\x01 \x01(\rR\n" +
+	"causeIndex\x12B\n" +
+	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12C\n" +
+	"\x05items\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x05items\x12C\n" +
+	"\x0elearning_basis\x18\x04 \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x13observed_transitionR\rlearningBasis\"\xdd\x05\n" +
+	"\x12ReflectionWorkItem\x12\x1d\n" +
+	"\n" +
+	"program_id\x18\x01 \x01(\tR\tprogramId\x12>\n" +
+	"\bbindings\x18\x02 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12G\n" +
+	"\vdisposition\x18\x03 \x01(\tB%\xbaH\"r R\acoveredR\vfalse_matchR\bquestionR\vdisposition\x12\x1a\n" +
+	"\bquestion\x18\x04 \x01(\tR\bquestion\x12\xc5\x01\n" +
+	"\x06reason\x18\x05 \x01(\tB\xac\x01\xbaH\xa8\x01r\xa5\x01R\x1averified_equivalent_repairR\x13fixed_capture_matchR\x13binding_not_writtenR\x1brepair_equivalence_questionR\runbound_writeR\tuncertainR\x12no_recorded_repairR\x12program_refinementR\x06reason\x12B\n" +
+	"\tresources\x18\x06 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12;\n" +
+	"\x0eevidence_phase\x18\a \x01(\tB\x14\xbaH\x11r\x0fR\x00R\x04openR\x05fixedR\revidencePhase\x12)\n" +
+	"\x10program_revision\x18\b \x01(\tR\x0fprogramRevision\x12H\n" +
+	"\x12capture_open_phase\x18\t \x01(\tB\x1a\xbaH\x17r\x15R\x00R\x06detectR\tpre-applyR\x10captureOpenPhase\x12E\n" +
+	"\n" +
+	"evaluation\x18\n" +
+	" \x01(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\n" +
+	"evaluation\"\x92\x02\n" +
+	"\x15ReflectionEligibility\x12!\n" +
+	"\aversion\x18\x01 \x01(\rB\a\xbaH\x04*\x02\b\x01R\aversion\x12F\n" +
+	"\x06causes\x18\x02 \x03(\v2..sdodev.contracts.v1alpha1.ReflectionCauseWorkR\x06causes\x12M\n" +
+	"\n" +
+	"unassigned\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\n" +
+	"unassigned\x12+\n" +
+	"\x0fno_repair_count\x18\x04 \x01(\rH\x00R\rnoRepairCount\x88\x01\x01B\x12\n" +
+	"\x10_no_repair_count\"\xa0\x01\n" +
+	"\x10PlaybookCoverage\x12B\n" +
+	"\amatches\x18\x01 \x03(\v2(.sdodev.contracts.v1alpha1.PlaybookMatchR\amatches\x12H\n" +
+	" unexplained_finding_fingerprints\x18\x02 \x03(\tR\x1eunexplainedFindingFingerprints\"\x93\x03\n" +
+	"\rPlaybookMatch\x12\x1f\n" +
+	"\vplaybook_id\x18\x01 \x01(\tR\n" +
+	"playbookId\x12)\n" +
+	"\x10program_revision\x18\x02 \x01(\tR\x0fprogramRevision\x12>\n" +
+	"\bbindings\x18\x03 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12D\n" +
+	"\x1eexplained_finding_fingerprints\x18\x04 \x03(\tR\x1cexplainedFindingFingerprints\x12!\n" +
+	"\fcan_mitigate\x18\x05 \x01(\bR\vcanMitigate\x121\n" +
+	"\x14mitigation_selection\x18\x06 \x01(\tR\x13mitigationSelection\x12-\n" +
+	"\x12verified_successes\x18\a \x01(\x05R\x11verifiedSuccesses\x12+\n" +
+	"\x11verified_failures\x18\b \x01(\x05R\x10verifiedFailures\"\xad\x03\n" +
+	"\x11RemoveServicePort\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1f\n" +
+	"\x04port\x18\x03 \x01(\x05B\v\xbaH\b\x1a\x06\x18\xff\xff\x03(\x00R\x04port\x123\n" +
+	"\bprotocol\x18\x04 \x01(\tB\x17\xbaH\x14r\x12R\x00R\x03TCPR\x03UDPR\x04SCTPR\bprotocol\x12\x1f\n" +
+	"\vallow_empty\x18\x05 \x01(\bR\n" +
+	"allowEmpty\x12\x16\n" +
+	"\x06reason\x18\x06 \x01(\tR\x06reason:\xb4\x01\xbaH\xb0\x01\x1a\xad\x01\n" +
+	"\x15service_port.identity\x12Aselect exactly one name or port; protocol requires a numeric port\x1aQ(this.name != '') != (this.port != 0) && (this.name == '' || this.protocol == '')\"\x94\x01\n" +
+	"\x16ConfigMapCredentialRef\x12\x1b\n" +
+	"\x04name\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\x12\x19\n" +
+	"\x03key\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x03key\x12B\n" +
+	"\n" +
+	"assignment\x18\x03 \x01(\tB\"\xbaH\x1fr\x1d2\x1b^([A-Za-z_][A-Za-z0-9_]*)?$R\n" +
+	"assignment\"\xa9\x01\n" +
+	"\rCredentialRef\x125\n" +
+	"\x03env\x18\x01 \x01(\tB!\xbaH\x1er\x1c\x10\x012\x18^[A-Za-z_][A-Za-z0-9_]*$H\x00R\x03env\x12R\n" +
+	"\n" +
+	"config_map\x18\x02 \x01(\v21.sdodev.contracts.v1alpha1.ConfigMapCredentialRefH\x00R\tconfigMapB\r\n" +
+	"\x04kind\x12\x05\xbaH\x02\b\x01\"\xcf\x01\n" +
+	"\fDatabaseAuth\x12#\n" +
+	"\bdatabase\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bdatabase\x12L\n" +
+	"\busername\x18\x02 \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefB\x06\xbaH\x03\xc8\x01\x01R\busername\x12L\n" +
+	"\bpassword\x18\x03 \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefB\x06\xbaH\x03\xc8\x01\x01R\bpassword\"\xb0\x02\n" +
+	"\x0eDatabaseTarget\x12&\n" +
+	"\x06engine\x18\x01 \x01(\tB\x0e\xbaH\vr\tR\amongodbR\x06engine\x12>\n" +
+	"\x03pod\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03pod\x12%\n" +
+	"\tcontainer\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tcontainer\x12#\n" +
+	"\bdatabase\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bdatabase\x12;\n" +
+	"\x04auth\x18\x05 \x01(\v2'.sdodev.contracts.v1alpha1.DatabaseAuthR\x04auth\x12-\n" +
+	"\x05shell\x18\x06 \x01(\tB\x17\xbaH\x14r\x12R\x00R\x05mongoR\amongoshR\x05shell\"P\n" +
+	"\fDatabaseRole\x12#\n" +
+	"\bdatabase\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bdatabase\x12\x1b\n" +
+	"\x04name\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\"\xa1\x02\n" +
+	"\x12EnsureDatabaseUser\x12I\n" +
+	"\x06target\x18\x01 \x01(\v2).sdodev.contracts.v1alpha1.DatabaseTargetB\x06\xbaH\x03\xc8\x01\x01R\x06target\x12\x1b\n" +
+	"\x04user\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04user\x12=\n" +
+	"\x05roles\x18\x03 \x03(\v2'.sdodev.contracts.v1alpha1.DatabaseRoleR\x05roles\x12L\n" +
+	"\bpassword\x18\x04 \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefB\x06\xbaH\x03\xc8\x01\x01R\bpassword\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xd3\x01\n" +
+	"\vPatchObject\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1d\n" +
+	"\n" +
+	"patch_json\x18\x03 \x01(\fR\tpatchJson\x129\n" +
+	"\x05edits\x18\x04 \x03(\v2#.sdodev.contracts.v1alpha1.ListEditR\x05edits\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"l\n" +
+	"\bListEdit\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1d\n" +
+	"\n" +
+	"match_json\x18\x02 \x01(\fR\tmatchJson\x12\x0e\n" +
+	"\x02op\x18\x03 \x01(\tR\x02op\x12\x1d\n" +
+	"\n" +
+	"value_json\x18\x04 \x01(\fR\tvalueJson\"\x9a\x01\n" +
+	"\vApplyObject\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
+	"\vobject_json\x18\x02 \x01(\fR\n" +
+	"objectJson\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\"\xcf\x02\n" +
+	"\x11KubernetesRequest\x126\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x16\n" +
+	"\x06method\x18\x02 \x01(\tR\x06method\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12M\n" +
+	"\x05query\x18\x04 \x03(\v27.sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntryR\x05query\x12!\n" +
+	"\fcontent_type\x18\x05 \x01(\tR\vcontentType\x12\x12\n" +
+	"\x04body\x18\x06 \x01(\fR\x04body\x12\x16\n" +
+	"\x06reason\x18\a \x01(\tR\x06reason\x1a8\n" +
+	"\n" +
+	"QueryEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xea\x01\n" +
+	"\aWaitFor\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x1f\n" +
+	"\vequals_json\x18\x03 \x01(\fR\n" +
+	"equalsJson\x123\n" +
+	"\atimeout\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x125\n" +
+	"\binterval\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\binterval\"\x91\x01\n" +
+	"\aCommand\x12>\n" +
+	"\x03pod\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03pod\x12\x1c\n" +
+	"\tcontainer\x18\x02 \x01(\tR\tcontainer\x12\x12\n" +
+	"\x04args\x18\x03 \x03(\tR\x04args\x12\x14\n" +
+	"\x05stdin\x18\x04 \x01(\tR\x05stdin\"\xb4\x04\n" +
+	"\vHttpRequest\x12>\n" +
+	"\x03pod\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03pod\x12\x1c\n" +
+	"\tcontainer\x18\x02 \x01(\tR\tcontainer\x12\x16\n" +
+	"\x06method\x18\x03 \x01(\tR\x06method\x12\x10\n" +
+	"\x03url\x18\x04 \x01(\tR\x03url\x12M\n" +
+	"\aheaders\x18\x05 \x03(\v23.sdodev.contracts.v1alpha1.HttpRequest.HeadersEntryR\aheaders\x12\x12\n" +
+	"\x04body\x18\x06 \x01(\tR\x04body\x12@\n" +
+	"\x06bearer\x18\a \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefR\x06bearer\x12T\n" +
+	"\n" +
+	"header_env\x18\b \x03(\v25.sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntryR\theaderEnv\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1af\n" +
+	"\x0eHeaderEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12>\n" +
+	"\x05value\x18\x02 \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefR\x05value:\x028\x01\"\xc6\x01\n" +
+	"\n" +
+	"EnsureExec\x12D\n" +
+	"\aobserve\x18\x01 \x01(\v2\".sdodev.contracts.v1alpha1.CommandB\x06\xbaH\x03\xc8\x01\x01R\aobserve\x12B\n" +
+	"\x06ensure\x18\x02 \x01(\v2\".sdodev.contracts.v1alpha1.CommandB\x06\xbaH\x03\xc8\x01\x01R\x06ensure\x12\x16\n" +
+	"\x06expect\x18\x03 \x01(\x05R\x06expect\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\"\xce\x01\n" +
+	"\n" +
+	"EnsureHttp\x12H\n" +
+	"\aobserve\x18\x01 \x01(\v2&.sdodev.contracts.v1alpha1.HttpRequestB\x06\xbaH\x03\xc8\x01\x01R\aobserve\x12F\n" +
+	"\x06ensure\x18\x02 \x01(\v2&.sdodev.contracts.v1alpha1.HttpRequestB\x06\xbaH\x03\xc8\x01\x01R\x06ensure\x12\x16\n" +
+	"\x06expect\x18\x03 \x01(\x05R\x06expect\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\"\x9c\x01\n" +
+	"\x06RunJob\x12F\n" +
+	"\x06object\x18\x01 \x01(\v2&.sdodev.contracts.v1alpha1.ApplyObjectB\x06\xbaH\x03\xc8\x01\x01R\x06object\x12J\n" +
+	"\n" +
+	"completion\x18\x02 \x01(\v2\".sdodev.contracts.v1alpha1.WaitForB\x06\xbaH\x03\xc8\x01\x01R\n" +
+	"completion\"\x9c\x02\n" +
+	"\tRunScript\x12#\n" +
+	"\x06script\x18\x01 \x01(\tB\v\xbaH\br\x06\x10\x01(\x80\x80\x04R\x06script\x12?\n" +
+	"\x03env\x18\x02 \x03(\v2-.sdodev.contracts.v1alpha1.RunScript.EnvEntryR\x03env\x123\n" +
+	"\atimeout\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x1a\\\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
+	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.PlanValueR\x05value:\x028\x01\"\x99\x02\n" +
+	"\rSyncWebhookCA\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12!\n" +
+	"\awebhook\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\awebhook\x122\n" +
+	"\x10secret_namespace\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x0fsecretNamespace\x12(\n" +
+	"\vsecret_name\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"secretName\x12&\n" +
+	"\n" +
+	"secret_key\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tsecretKey\x12\x1f\n" +
+	"\x06reason\x18\x06 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason*\x80\b\n" +
+	"\x19SettlementRejectionReason\x12+\n" +
+	"'SETTLEMENT_REJECTION_REASON_UNSPECIFIED\x10\x00\x126\n" +
+	"2SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE\x10\x01\x124\n" +
+	"0SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE\x10\x02\x12+\n" +
+	"'SETTLEMENT_REJECTION_REASON_NOT_APPLIED\x10\x03\x12'\n" +
+	"#SETTLEMENT_REJECTION_REASON_DRY_RUN\x10\x04\x12+\n" +
+	"'SETTLEMENT_REJECTION_REASON_ROLLED_BACK\x10\x05\x124\n" +
+	"0SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION\x10\x06\x12*\n" +
+	"&SETTLEMENT_REJECTION_REASON_SUPERSEDED\x10\a\x12/\n" +
+	"+SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN\x10\b\x120\n" +
+	",SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED\x10\t\x121\n" +
+	"-SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH\x10\n" +
+	"\x125\n" +
+	"1SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE\x10\v\x123\n" +
+	"/SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN\x10\f\x12/\n" +
+	"+SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING\x10\r\x12.\n" +
+	"*SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED\x10\x0e\x12/\n" +
+	"+SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL\x10\x0f\x123\n" +
+	"/SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR\x10\x10\x120\n" +
+	",SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR\x10\x11\x124\n" +
+	"0SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED\x10\x12\x122\n" +
+	".SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE\x10\x13B\xff\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\fProgramProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -1356,64 +5139,204 @@ func file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP() []byte {
 	return file_sdodev_contracts_v1alpha1_program_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_program_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sdodev_contracts_v1alpha1_program_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_sdodev_contracts_v1alpha1_program_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_sdodev_contracts_v1alpha1_program_proto_msgTypes = make([]protoimpl.MessageInfo, 61)
 var file_sdodev_contracts_v1alpha1_program_proto_goTypes = []any{
-	(Verdict_Result)(0),            // 0: sdodev.contracts.v1alpha1.Verdict.Result
-	(*ProgramSpec)(nil),            // 1: sdodev.contracts.v1alpha1.ProgramSpec
-	(*ParamSpec)(nil),              // 2: sdodev.contracts.v1alpha1.ParamSpec
-	(*Binding)(nil),                // 3: sdodev.contracts.v1alpha1.Binding
-	(*RelationCoveredFinding)(nil), // 4: sdodev.contracts.v1alpha1.RelationCoveredFinding
-	(*Verdict)(nil),                // 5: sdodev.contracts.v1alpha1.Verdict
-	(*Evidence)(nil),               // 6: sdodev.contracts.v1alpha1.Evidence
-	(*Plan)(nil),                   // 7: sdodev.contracts.v1alpha1.Plan
-	(*Action)(nil),                 // 8: sdodev.contracts.v1alpha1.Action
-	(*ReconcileFromSource)(nil),    // 9: sdodev.contracts.v1alpha1.ReconcileFromSource
-	(*Rollback)(nil),               // 10: sdodev.contracts.v1alpha1.Rollback
-	(*SetField)(nil),               // 11: sdodev.contracts.v1alpha1.SetField
-	(*RestartRollout)(nil),         // 12: sdodev.contracts.v1alpha1.RestartRollout
-	(*ProgramRun)(nil),             // 13: sdodev.contracts.v1alpha1.ProgramRun
-	(*PlanApplication)(nil),        // 14: sdodev.contracts.v1alpha1.PlanApplication
-	(*ProgramToolCall)(nil),        // 15: sdodev.contracts.v1alpha1.ProgramToolCall
-	(*PlanPreImage)(nil),           // 16: sdodev.contracts.v1alpha1.PlanPreImage
-	(*PlanPatch)(nil),              // 17: sdodev.contracts.v1alpha1.PlanPatch
-	(*ObjectRef)(nil),              // 18: sdodev.contracts.v1alpha1.ObjectRef
-	(*structpb.Value)(nil),         // 19: google.protobuf.Value
-	(*durationpb.Duration)(nil),    // 20: google.protobuf.Duration
-	(*timestamppb.Timestamp)(nil),  // 21: google.protobuf.Timestamp
+	(SettlementRejectionReason)(0), // 0: sdodev.contracts.v1alpha1.SettlementRejectionReason
+	(Verdict_Result)(0),            // 1: sdodev.contracts.v1alpha1.Verdict.Result
+	(RecoveryWait_ExitReason)(0),   // 2: sdodev.contracts.v1alpha1.RecoveryWait.ExitReason
+	(*ProgramSpec)(nil),            // 3: sdodev.contracts.v1alpha1.ProgramSpec
+	(*ParamSpec)(nil),              // 4: sdodev.contracts.v1alpha1.ParamSpec
+	(*Binding)(nil),                // 5: sdodev.contracts.v1alpha1.Binding
+	(*Verdict)(nil),                // 6: sdodev.contracts.v1alpha1.Verdict
+	(*Evidence)(nil),               // 7: sdodev.contracts.v1alpha1.Evidence
+	(*Plan)(nil),                   // 8: sdodev.contracts.v1alpha1.Plan
+	(*Action)(nil),                 // 9: sdodev.contracts.v1alpha1.Action
+	(*CreateFromSource)(nil),       // 10: sdodev.contracts.v1alpha1.CreateFromSource
+	(*DeleteObject)(nil),           // 11: sdodev.contracts.v1alpha1.DeleteObject
+	(*PlanObjectEffect)(nil),       // 12: sdodev.contracts.v1alpha1.PlanObjectEffect
+	(*ReconcileFromSource)(nil),    // 13: sdodev.contracts.v1alpha1.ReconcileFromSource
+	(*Rollback)(nil),               // 14: sdodev.contracts.v1alpha1.Rollback
+	(*SetField)(nil),               // 15: sdodev.contracts.v1alpha1.SetField
+	(*PlanValue)(nil),              // 16: sdodev.contracts.v1alpha1.PlanValue
+	(*ValueField)(nil),             // 17: sdodev.contracts.v1alpha1.ValueField
+	(*ValueProvenance)(nil),        // 18: sdodev.contracts.v1alpha1.ValueProvenance
+	(*ActionReport)(nil),           // 19: sdodev.contracts.v1alpha1.ActionReport
+	(*SourceReconcileResult)(nil),  // 20: sdodev.contracts.v1alpha1.SourceReconcileResult
+	(*SourceRolloutStep)(nil),      // 21: sdodev.contracts.v1alpha1.SourceRolloutStep
+	(*DeletePod)(nil),              // 22: sdodev.contracts.v1alpha1.DeletePod
+	(*ScaleWorkload)(nil),          // 23: sdodev.contracts.v1alpha1.ScaleWorkload
+	(*RetryAdmission)(nil),         // 24: sdodev.contracts.v1alpha1.RetryAdmission
+	(*RetireOldRevision)(nil),      // 25: sdodev.contracts.v1alpha1.RetireOldRevision
+	(*Exec)(nil),                   // 26: sdodev.contracts.v1alpha1.Exec
+	(*RestartRollout)(nil),         // 27: sdodev.contracts.v1alpha1.RestartRollout
+	(*ProgramRun)(nil),             // 28: sdodev.contracts.v1alpha1.ProgramRun
+	(*RolloutPending)(nil),         // 29: sdodev.contracts.v1alpha1.RolloutPending
+	(*RolloutBlocker)(nil),         // 30: sdodev.contracts.v1alpha1.RolloutBlocker
+	(*RecoveryWait)(nil),           // 31: sdodev.contracts.v1alpha1.RecoveryWait
+	(*PlanApplication)(nil),        // 32: sdodev.contracts.v1alpha1.PlanApplication
+	(*ProgramToolCall)(nil),        // 33: sdodev.contracts.v1alpha1.ProgramToolCall
+	(*PlanPreImage)(nil),           // 34: sdodev.contracts.v1alpha1.PlanPreImage
+	(*PlanPatch)(nil),              // 35: sdodev.contracts.v1alpha1.PlanPatch
+	(*ReflectionCauseWork)(nil),    // 36: sdodev.contracts.v1alpha1.ReflectionCauseWork
+	(*ReflectionWorkItem)(nil),     // 37: sdodev.contracts.v1alpha1.ReflectionWorkItem
+	(*ReflectionEligibility)(nil),  // 38: sdodev.contracts.v1alpha1.ReflectionEligibility
+	(*PlaybookCoverage)(nil),       // 39: sdodev.contracts.v1alpha1.PlaybookCoverage
+	(*PlaybookMatch)(nil),          // 40: sdodev.contracts.v1alpha1.PlaybookMatch
+	(*RemoveServicePort)(nil),      // 41: sdodev.contracts.v1alpha1.RemoveServicePort
+	(*ConfigMapCredentialRef)(nil), // 42: sdodev.contracts.v1alpha1.ConfigMapCredentialRef
+	(*CredentialRef)(nil),          // 43: sdodev.contracts.v1alpha1.CredentialRef
+	(*DatabaseAuth)(nil),           // 44: sdodev.contracts.v1alpha1.DatabaseAuth
+	(*DatabaseTarget)(nil),         // 45: sdodev.contracts.v1alpha1.DatabaseTarget
+	(*DatabaseRole)(nil),           // 46: sdodev.contracts.v1alpha1.DatabaseRole
+	(*EnsureDatabaseUser)(nil),     // 47: sdodev.contracts.v1alpha1.EnsureDatabaseUser
+	(*PatchObject)(nil),            // 48: sdodev.contracts.v1alpha1.PatchObject
+	(*ListEdit)(nil),               // 49: sdodev.contracts.v1alpha1.ListEdit
+	(*ApplyObject)(nil),            // 50: sdodev.contracts.v1alpha1.ApplyObject
+	(*KubernetesRequest)(nil),      // 51: sdodev.contracts.v1alpha1.KubernetesRequest
+	(*WaitFor)(nil),                // 52: sdodev.contracts.v1alpha1.WaitFor
+	(*Command)(nil),                // 53: sdodev.contracts.v1alpha1.Command
+	(*HttpRequest)(nil),            // 54: sdodev.contracts.v1alpha1.HttpRequest
+	(*EnsureExec)(nil),             // 55: sdodev.contracts.v1alpha1.EnsureExec
+	(*EnsureHttp)(nil),             // 56: sdodev.contracts.v1alpha1.EnsureHttp
+	(*RunJob)(nil),                 // 57: sdodev.contracts.v1alpha1.RunJob
+	(*RunScript)(nil),              // 58: sdodev.contracts.v1alpha1.RunScript
+	(*SyncWebhookCA)(nil),          // 59: sdodev.contracts.v1alpha1.SyncWebhookCA
+	nil,                            // 60: sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
+	nil,                            // 61: sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
+	nil,                            // 62: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
+	nil,                            // 63: sdodev.contracts.v1alpha1.RunScript.EnvEntry
+	(*structpb.Value)(nil),         // 64: google.protobuf.Value
+	(*ObjectRef)(nil),              // 65: sdodev.contracts.v1alpha1.ObjectRef
+	(*structpb.Struct)(nil),        // 66: google.protobuf.Struct
+	(*durationpb.Duration)(nil),    // 67: google.protobuf.Duration
+	(*timestamppb.Timestamp)(nil),  // 68: google.protobuf.Timestamp
 }
 var file_sdodev_contracts_v1alpha1_program_proto_depIdxs = []int32{
-	2,  // 0: sdodev.contracts.v1alpha1.ProgramSpec.params:type_name -> sdodev.contracts.v1alpha1.ParamSpec
-	18, // 1: sdodev.contracts.v1alpha1.Binding.object:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	3,  // 2: sdodev.contracts.v1alpha1.RelationCoveredFinding.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	0,  // 3: sdodev.contracts.v1alpha1.Verdict.result:type_name -> sdodev.contracts.v1alpha1.Verdict.Result
-	6,  // 4: sdodev.contracts.v1alpha1.Verdict.evidence:type_name -> sdodev.contracts.v1alpha1.Evidence
-	18, // 5: sdodev.contracts.v1alpha1.Evidence.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	8,  // 6: sdodev.contracts.v1alpha1.Plan.actions:type_name -> sdodev.contracts.v1alpha1.Action
-	9,  // 7: sdodev.contracts.v1alpha1.Action.reconcile_from_source:type_name -> sdodev.contracts.v1alpha1.ReconcileFromSource
-	10, // 8: sdodev.contracts.v1alpha1.Action.rollback:type_name -> sdodev.contracts.v1alpha1.Rollback
-	11, // 9: sdodev.contracts.v1alpha1.Action.set_field:type_name -> sdodev.contracts.v1alpha1.SetField
-	12, // 10: sdodev.contracts.v1alpha1.Action.restart_rollout:type_name -> sdodev.contracts.v1alpha1.RestartRollout
-	18, // 11: sdodev.contracts.v1alpha1.ReconcileFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	18, // 12: sdodev.contracts.v1alpha1.Rollback.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	18, // 13: sdodev.contracts.v1alpha1.SetField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	19, // 14: sdodev.contracts.v1alpha1.SetField.value:type_name -> google.protobuf.Value
-	18, // 15: sdodev.contracts.v1alpha1.RestartRollout.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	3,  // 16: sdodev.contracts.v1alpha1.ProgramRun.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	5,  // 17: sdodev.contracts.v1alpha1.ProgramRun.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
-	20, // 18: sdodev.contracts.v1alpha1.ProgramRun.duration:type_name -> google.protobuf.Duration
-	7,  // 19: sdodev.contracts.v1alpha1.PlanApplication.plan:type_name -> sdodev.contracts.v1alpha1.Plan
-	5,  // 20: sdodev.contracts.v1alpha1.PlanApplication.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
-	20, // 21: sdodev.contracts.v1alpha1.PlanApplication.duration:type_name -> google.protobuf.Duration
-	8,  // 22: sdodev.contracts.v1alpha1.PlanApplication.actions_applied:type_name -> sdodev.contracts.v1alpha1.Action
-	21, // 23: sdodev.contracts.v1alpha1.PlanApplication.started_at:type_name -> google.protobuf.Timestamp
-	21, // 24: sdodev.contracts.v1alpha1.PlanApplication.completed_at:type_name -> google.protobuf.Timestamp
-	21, // 25: sdodev.contracts.v1alpha1.ProgramToolCall.at:type_name -> google.protobuf.Timestamp
-	26, // [26:26] is the sub-list for method output_type
-	26, // [26:26] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	4,   // 0: sdodev.contracts.v1alpha1.ProgramSpec.params:type_name -> sdodev.contracts.v1alpha1.ParamSpec
+	64,  // 1: sdodev.contracts.v1alpha1.ParamSpec.default:type_name -> google.protobuf.Value
+	65,  // 2: sdodev.contracts.v1alpha1.Binding.object:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	64,  // 3: sdodev.contracts.v1alpha1.Binding.value:type_name -> google.protobuf.Value
+	1,   // 4: sdodev.contracts.v1alpha1.Verdict.result:type_name -> sdodev.contracts.v1alpha1.Verdict.Result
+	7,   // 5: sdodev.contracts.v1alpha1.Verdict.evidence:type_name -> sdodev.contracts.v1alpha1.Evidence
+	65,  // 6: sdodev.contracts.v1alpha1.Evidence.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	9,   // 7: sdodev.contracts.v1alpha1.Plan.actions:type_name -> sdodev.contracts.v1alpha1.Action
+	13,  // 8: sdodev.contracts.v1alpha1.Action.reconcile_from_source:type_name -> sdodev.contracts.v1alpha1.ReconcileFromSource
+	14,  // 9: sdodev.contracts.v1alpha1.Action.rollback:type_name -> sdodev.contracts.v1alpha1.Rollback
+	15,  // 10: sdodev.contracts.v1alpha1.Action.set_field:type_name -> sdodev.contracts.v1alpha1.SetField
+	27,  // 11: sdodev.contracts.v1alpha1.Action.restart_rollout:type_name -> sdodev.contracts.v1alpha1.RestartRollout
+	10,  // 12: sdodev.contracts.v1alpha1.Action.create_from_source:type_name -> sdodev.contracts.v1alpha1.CreateFromSource
+	11,  // 13: sdodev.contracts.v1alpha1.Action.delete_object:type_name -> sdodev.contracts.v1alpha1.DeleteObject
+	22,  // 14: sdodev.contracts.v1alpha1.Action.delete_pod:type_name -> sdodev.contracts.v1alpha1.DeletePod
+	23,  // 15: sdodev.contracts.v1alpha1.Action.scale_workload:type_name -> sdodev.contracts.v1alpha1.ScaleWorkload
+	26,  // 16: sdodev.contracts.v1alpha1.Action.exec:type_name -> sdodev.contracts.v1alpha1.Exec
+	41,  // 17: sdodev.contracts.v1alpha1.Action.remove_service_port:type_name -> sdodev.contracts.v1alpha1.RemoveServicePort
+	47,  // 18: sdodev.contracts.v1alpha1.Action.ensure_database_user:type_name -> sdodev.contracts.v1alpha1.EnsureDatabaseUser
+	48,  // 19: sdodev.contracts.v1alpha1.Action.patch_object:type_name -> sdodev.contracts.v1alpha1.PatchObject
+	50,  // 20: sdodev.contracts.v1alpha1.Action.apply_object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
+	51,  // 21: sdodev.contracts.v1alpha1.Action.kubernetes_request:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest
+	52,  // 22: sdodev.contracts.v1alpha1.Action.wait_for:type_name -> sdodev.contracts.v1alpha1.WaitFor
+	55,  // 23: sdodev.contracts.v1alpha1.Action.ensure_exec:type_name -> sdodev.contracts.v1alpha1.EnsureExec
+	56,  // 24: sdodev.contracts.v1alpha1.Action.ensure_http:type_name -> sdodev.contracts.v1alpha1.EnsureHttp
+	57,  // 25: sdodev.contracts.v1alpha1.Action.run_job:type_name -> sdodev.contracts.v1alpha1.RunJob
+	58,  // 26: sdodev.contracts.v1alpha1.Action.run_script:type_name -> sdodev.contracts.v1alpha1.RunScript
+	59,  // 27: sdodev.contracts.v1alpha1.Action.sync_webhook_ca:type_name -> sdodev.contracts.v1alpha1.SyncWebhookCA
+	25,  // 28: sdodev.contracts.v1alpha1.Action.retire_old_revision:type_name -> sdodev.contracts.v1alpha1.RetireOldRevision
+	24,  // 29: sdodev.contracts.v1alpha1.Action.retry_admission:type_name -> sdodev.contracts.v1alpha1.RetryAdmission
+	65,  // 30: sdodev.contracts.v1alpha1.CreateFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 31: sdodev.contracts.v1alpha1.DeleteObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 32: sdodev.contracts.v1alpha1.PlanObjectEffect.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	66,  // 33: sdodev.contracts.v1alpha1.PlanObjectEffect.deleted_pre_image:type_name -> google.protobuf.Struct
+	65,  // 34: sdodev.contracts.v1alpha1.ReconcileFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 35: sdodev.contracts.v1alpha1.Rollback.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 36: sdodev.contracts.v1alpha1.SetField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	16,  // 37: sdodev.contracts.v1alpha1.SetField.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	17,  // 38: sdodev.contracts.v1alpha1.PlanValue.source:type_name -> sdodev.contracts.v1alpha1.ValueField
+	17,  // 39: sdodev.contracts.v1alpha1.PlanValue.observed:type_name -> sdodev.contracts.v1alpha1.ValueField
+	65,  // 40: sdodev.contracts.v1alpha1.ValueField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 41: sdodev.contracts.v1alpha1.ValueProvenance.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	18,  // 42: sdodev.contracts.v1alpha1.ActionReport.values:type_name -> sdodev.contracts.v1alpha1.ValueProvenance
+	20,  // 43: sdodev.contracts.v1alpha1.ActionReport.source_reconcile:type_name -> sdodev.contracts.v1alpha1.SourceReconcileResult
+	65,  // 44: sdodev.contracts.v1alpha1.SourceReconcileResult.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	21,  // 45: sdodev.contracts.v1alpha1.SourceReconcileResult.rollout_steps:type_name -> sdodev.contracts.v1alpha1.SourceRolloutStep
+	65,  // 46: sdodev.contracts.v1alpha1.SourceRolloutStep.workload:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 47: sdodev.contracts.v1alpha1.SourceRolloutStep.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 48: sdodev.contracts.v1alpha1.DeletePod.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 49: sdodev.contracts.v1alpha1.ScaleWorkload.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	16,  // 50: sdodev.contracts.v1alpha1.ScaleWorkload.replicas:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	65,  // 51: sdodev.contracts.v1alpha1.RetryAdmission.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 52: sdodev.contracts.v1alpha1.RetireOldRevision.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 53: sdodev.contracts.v1alpha1.Exec.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	16,  // 54: sdodev.contracts.v1alpha1.Exec.command:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	65,  // 55: sdodev.contracts.v1alpha1.RestartRollout.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	5,   // 56: sdodev.contracts.v1alpha1.ProgramRun.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	6,   // 57: sdodev.contracts.v1alpha1.ProgramRun.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
+	67,  // 58: sdodev.contracts.v1alpha1.ProgramRun.duration:type_name -> google.protobuf.Duration
+	65,  // 59: sdodev.contracts.v1alpha1.RolloutPending.admission_configurations:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	30,  // 60: sdodev.contracts.v1alpha1.RolloutPending.blockers:type_name -> sdodev.contracts.v1alpha1.RolloutBlocker
+	65,  // 61: sdodev.contracts.v1alpha1.RolloutBlocker.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	9,   // 62: sdodev.contracts.v1alpha1.RolloutBlocker.release:type_name -> sdodev.contracts.v1alpha1.Action
+	2,   // 63: sdodev.contracts.v1alpha1.RecoveryWait.exit_reason:type_name -> sdodev.contracts.v1alpha1.RecoveryWait.ExitReason
+	67,  // 64: sdodev.contracts.v1alpha1.RecoveryWait.duration:type_name -> google.protobuf.Duration
+	8,   // 65: sdodev.contracts.v1alpha1.PlanApplication.plan:type_name -> sdodev.contracts.v1alpha1.Plan
+	6,   // 66: sdodev.contracts.v1alpha1.PlanApplication.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
+	67,  // 67: sdodev.contracts.v1alpha1.PlanApplication.duration:type_name -> google.protobuf.Duration
+	9,   // 68: sdodev.contracts.v1alpha1.PlanApplication.actions_applied:type_name -> sdodev.contracts.v1alpha1.Action
+	68,  // 69: sdodev.contracts.v1alpha1.PlanApplication.started_at:type_name -> google.protobuf.Timestamp
+	68,  // 70: sdodev.contracts.v1alpha1.PlanApplication.completed_at:type_name -> google.protobuf.Timestamp
+	12,  // 71: sdodev.contracts.v1alpha1.PlanApplication.object_effects:type_name -> sdodev.contracts.v1alpha1.PlanObjectEffect
+	19,  // 72: sdodev.contracts.v1alpha1.PlanApplication.action_reports:type_name -> sdodev.contracts.v1alpha1.ActionReport
+	29,  // 73: sdodev.contracts.v1alpha1.PlanApplication.rollout_pending:type_name -> sdodev.contracts.v1alpha1.RolloutPending
+	31,  // 74: sdodev.contracts.v1alpha1.PlanApplication.recovery_wait:type_name -> sdodev.contracts.v1alpha1.RecoveryWait
+	0,   // 75: sdodev.contracts.v1alpha1.PlanApplication.settlement_rejection_reason:type_name -> sdodev.contracts.v1alpha1.SettlementRejectionReason
+	68,  // 76: sdodev.contracts.v1alpha1.ProgramToolCall.at:type_name -> google.protobuf.Timestamp
+	65,  // 77: sdodev.contracts.v1alpha1.ReflectionCauseWork.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	37,  // 78: sdodev.contracts.v1alpha1.ReflectionCauseWork.items:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
+	5,   // 79: sdodev.contracts.v1alpha1.ReflectionWorkItem.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	65,  // 80: sdodev.contracts.v1alpha1.ReflectionWorkItem.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	28,  // 81: sdodev.contracts.v1alpha1.ReflectionWorkItem.evaluation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	36,  // 82: sdodev.contracts.v1alpha1.ReflectionEligibility.causes:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
+	37,  // 83: sdodev.contracts.v1alpha1.ReflectionEligibility.unassigned:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
+	40,  // 84: sdodev.contracts.v1alpha1.PlaybookCoverage.matches:type_name -> sdodev.contracts.v1alpha1.PlaybookMatch
+	5,   // 85: sdodev.contracts.v1alpha1.PlaybookMatch.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	65,  // 86: sdodev.contracts.v1alpha1.RemoveServicePort.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	42,  // 87: sdodev.contracts.v1alpha1.CredentialRef.config_map:type_name -> sdodev.contracts.v1alpha1.ConfigMapCredentialRef
+	43,  // 88: sdodev.contracts.v1alpha1.DatabaseAuth.username:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	43,  // 89: sdodev.contracts.v1alpha1.DatabaseAuth.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	65,  // 90: sdodev.contracts.v1alpha1.DatabaseTarget.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	44,  // 91: sdodev.contracts.v1alpha1.DatabaseTarget.auth:type_name -> sdodev.contracts.v1alpha1.DatabaseAuth
+	45,  // 92: sdodev.contracts.v1alpha1.EnsureDatabaseUser.target:type_name -> sdodev.contracts.v1alpha1.DatabaseTarget
+	46,  // 93: sdodev.contracts.v1alpha1.EnsureDatabaseUser.roles:type_name -> sdodev.contracts.v1alpha1.DatabaseRole
+	43,  // 94: sdodev.contracts.v1alpha1.EnsureDatabaseUser.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	65,  // 95: sdodev.contracts.v1alpha1.PatchObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	49,  // 96: sdodev.contracts.v1alpha1.PatchObject.edits:type_name -> sdodev.contracts.v1alpha1.ListEdit
+	65,  // 97: sdodev.contracts.v1alpha1.ApplyObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 98: sdodev.contracts.v1alpha1.KubernetesRequest.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	60,  // 99: sdodev.contracts.v1alpha1.KubernetesRequest.query:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
+	65,  // 100: sdodev.contracts.v1alpha1.WaitFor.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	67,  // 101: sdodev.contracts.v1alpha1.WaitFor.timeout:type_name -> google.protobuf.Duration
+	67,  // 102: sdodev.contracts.v1alpha1.WaitFor.interval:type_name -> google.protobuf.Duration
+	65,  // 103: sdodev.contracts.v1alpha1.Command.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	65,  // 104: sdodev.contracts.v1alpha1.HttpRequest.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	61,  // 105: sdodev.contracts.v1alpha1.HttpRequest.headers:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
+	43,  // 106: sdodev.contracts.v1alpha1.HttpRequest.bearer:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	62,  // 107: sdodev.contracts.v1alpha1.HttpRequest.header_env:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
+	53,  // 108: sdodev.contracts.v1alpha1.EnsureExec.observe:type_name -> sdodev.contracts.v1alpha1.Command
+	53,  // 109: sdodev.contracts.v1alpha1.EnsureExec.ensure:type_name -> sdodev.contracts.v1alpha1.Command
+	54,  // 110: sdodev.contracts.v1alpha1.EnsureHttp.observe:type_name -> sdodev.contracts.v1alpha1.HttpRequest
+	54,  // 111: sdodev.contracts.v1alpha1.EnsureHttp.ensure:type_name -> sdodev.contracts.v1alpha1.HttpRequest
+	50,  // 112: sdodev.contracts.v1alpha1.RunJob.object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
+	52,  // 113: sdodev.contracts.v1alpha1.RunJob.completion:type_name -> sdodev.contracts.v1alpha1.WaitFor
+	63,  // 114: sdodev.contracts.v1alpha1.RunScript.env:type_name -> sdodev.contracts.v1alpha1.RunScript.EnvEntry
+	67,  // 115: sdodev.contracts.v1alpha1.RunScript.timeout:type_name -> google.protobuf.Duration
+	65,  // 116: sdodev.contracts.v1alpha1.SyncWebhookCA.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	43,  // 117: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry.value:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	16,  // 118: sdodev.contracts.v1alpha1.RunScript.EnvEntry.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	119, // [119:119] is the sub-list for method output_type
+	119, // [119:119] is the sub-list for method input_type
+	119, // [119:119] is the sub-list for extension type_name
+	119, // [119:119] is the sub-list for extension extendee
+	0,   // [0:119] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_program_proto_init() }
@@ -1422,20 +5345,50 @@ func file_sdodev_contracts_v1alpha1_program_proto_init() {
 		return
 	}
 	file_sdodev_contracts_v1alpha1_common_proto_init()
-	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[7].OneofWrappers = []any{
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[6].OneofWrappers = []any{
 		(*Action_ReconcileFromSource)(nil),
 		(*Action_Rollback)(nil),
 		(*Action_SetField)(nil),
 		(*Action_RestartRollout)(nil),
+		(*Action_CreateFromSource)(nil),
+		(*Action_DeleteObject)(nil),
+		(*Action_DeletePod)(nil),
+		(*Action_ScaleWorkload)(nil),
+		(*Action_Exec)(nil),
+		(*Action_RemoveServicePort)(nil),
+		(*Action_EnsureDatabaseUser)(nil),
+		(*Action_PatchObject)(nil),
+		(*Action_ApplyObject)(nil),
+		(*Action_KubernetesRequest)(nil),
+		(*Action_WaitFor)(nil),
+		(*Action_EnsureExec)(nil),
+		(*Action_EnsureHttp)(nil),
+		(*Action_RunJob)(nil),
+		(*Action_RunScript)(nil),
+		(*Action_SyncWebhookCa)(nil),
+		(*Action_RetireOldRevision)(nil),
+		(*Action_RetryAdmission)(nil),
 	}
-	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13].OneofWrappers = []any{
+		(*PlanValue_Source)(nil),
+		(*PlanValue_Observed)(nil),
+		(*PlanValue_Parameter)(nil),
+	}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[25].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[29].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[35].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[40].OneofWrappers = []any{
+		(*CredentialRef_Env)(nil),
+		(*CredentialRef_ConfigMap)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_program_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_program_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   17,
+			NumEnums:      3,
+			NumMessages:   61,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

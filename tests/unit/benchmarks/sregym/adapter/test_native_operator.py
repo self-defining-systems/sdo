@@ -45,7 +45,10 @@ def _install(tmp_path: Path) -> NativeInstallConfig:
     )
 
 
-def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("code_path", ["go", "shell"])
+def test_install_existing_invokes_go_cli_and_parses_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code_path: str
+) -> None:
     calls: list[list[str]] = []
     monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
 
@@ -62,15 +65,19 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
     receipt = install_existing(
         replace(
             _install(tmp_path),
+            code_path=code_path,
             healthy_baseline=True,
+            permissive_responder=True,
+            responder_namespaces=("policy-system",),
             max_response_loops=3,
             deployed_manifest_paths=("kubernetes",),
-            program_fast_path=True,
-            program_trust_threshold=4,
-            drift_tokens_per_hour=250000,
         )
     )
 
+    if code_path == "shell":
+        assert calls[0][calls[0].index("--code-path") + 1] == "shell"
+    else:
+        assert "--code-path" not in calls[0]
     assert receipt.reused
     assert receipt.accepted_commit == "a" * 40
     assert calls[0][0:2] == ["/tmp/sdo-operator", "install-existing"]
@@ -78,12 +85,12 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
     assert "recorded-actions" in calls[0]
     assert "--responder-env" in calls[0]
     assert "--late-findings" in calls[0]
+    assert "--permissive-responder" in calls[0]
+    assert calls[0][calls[0].index("--responder-namespace") + 1] == "policy-system"
     assert "--healthy-baseline" in calls[0]
     assert calls[0][calls[0].index("--max-response-loops") + 1] == "3"
     assert calls[0][calls[0].index("--deployed-manifest-path") + 1] == "kubernetes"
-    assert "--program-fast-path" in calls[0]
-    assert calls[0][calls[0].index("--program-trust-threshold") + 1] == "4"
-    assert calls[0][calls[0].index("--drift-tokens-per-hour") + 1] == "250000"
+    assert "--drift-tokens-per-hour" not in calls[0]
     assert "pull" in calls[0]
     assert calls[0][0] != "python3"
     assert "-m" not in calls[0]
@@ -158,6 +165,8 @@ def test_sync_and_maintenance_use_go_cli_without_python_broker(
         "--kubeconfig",
         str(config.kubeconfig),
     ]
+    set_maintenance(config.control_namespace, paused=True, generation="barrier", preserve_baseline=True)
+    assert "--preserve-baseline" in calls[2]
 
 
 def test_incident_evidence_requires_correlated_native_ledger(
@@ -202,9 +211,11 @@ def test_incident_evidence_requires_correlated_native_ledger(
         read_incident_evidence(_install(tmp_path), "")
 
 
-def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
+@pytest.mark.parametrize("job_name", ["sdo-incident-1-hash", "sdo-standby-bound-identity"])
+def test_collect_native_receipt_survives_retired_responder_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    job_name: str,
 ) -> None:
     from tests.unit.benchmarks.sregym.protocol.test_native_receipt import _ledger
 
@@ -216,11 +227,18 @@ def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
         if command[0] == "/tmp/sdo-operator":
             payload: object = {
                 "incident_id": "incident-1",
-                "responder_job_name": "sdo-incident-1-hash",
-                "ledger": _ledger(),
+                "responder_job_name": job_name,
+                "ledger": {
+                    **_ledger(),
+                    "closure": {
+                        **_ledger()["closure"],
+                        "dispatched_at": "2026-10-18T03:00:00Z",
+                        "responder_completed_at": "2026-10-18T03:01:00Z",
+                    },
+                },
             }
-        elif "job/sdo-incident-1-hash" in command:
-            payload = {"metadata": {"uid": "worker-uid"}, "status": {"succeeded": 1}}
+        elif f"job/{job_name}" in command:
+            raise AssertionError("receipt queried a retired responder Job")
         elif "job/sdo-controller-run" in command:
             payload = {"metadata": {"uid": "controller-job-uid"}}
         else:
@@ -242,84 +260,8 @@ def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
     receipt = collect_native_receipt(replace(_install(tmp_path), namespace="demo"), "incident-1")
     assert receipt["schema_version"] == "sdo.production-receipt/v2"
     assert receipt["controller_pod_uid"] == "controller-uid"
-    assert receipt["responder_job_evidence"] == [
-        {"incident_id": "incident-1", "job_name": "sdo-incident-1-hash", "job_uid": "worker-uid", "succeeded": True}
-    ]
-    assert any("job/sdo-incident-1-hash" in call for call in calls)
-
-
-def test_collect_native_fast_path_receipt_has_no_responder_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tests.unit.benchmarks.sregym.protocol.test_native_receipt import _ledger
-
-    ledger = _ledger()
-    ledger["proposal_commit"] = ""
-    ledger["receipt"]["proposal_commit"] = ""
-    ledger["receipt"]["reflection_commit"] = ""
-    ledger["reflection_commit"] = ""
-    ledger["reflection_decision"] = None
-    ledger["reflection_processed"] = False
-    ledger["reflection_skipped_reason"] = "trusted program fast path"
-    ledger["requires_reflection"] = False
-    ledger["outcome_document"]["repair_commit"] = ""
-    ledger["outcome_document"]["resolution_path"] = "fast_path"
-    ledger["outcome_document"]["fast_path_programs"] = ["targetport"]
-    ledger["closure"]["result"]["resolution_path"] = "fast_path"
-    ledger["closure"]["result"]["fast_path_programs"] = ["targetport"]
-    application = {"applied": True, "program_ids": ["targetport"], "verification": {"result": "RESULT_NO_MATCH"}}
-    ledger["closure"]["result"]["plan_applications"] = [application]
-    ledger["outcome_document"]["plan_applications"] = [application]
-    monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
-    calls: list[list[str]] = []
-
-    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append(command)
-        if command[0] == "/tmp/sdo-operator":
-            payload: object = {
-                "incident_id": "incident-1",
-                "responder_job_name": "sdo-incident-1-hash",
-                "ledger": ledger,
-            }
-        elif "job/sdo-controller-run" in command:
-            payload = {"metadata": {"uid": "controller-job-uid"}}
-        else:
-            payload = {
-                "items": [
-                    {
-                        "metadata": {"uid": "controller-uid", "ownerReferences": [{"uid": "controller-job-uid"}]},
-                        "status": {"phase": "Running"},
-                    }
-                ]
-            }
-        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
-
-    monkeypatch.setattr(subprocess, "run", run)
-    receipt = collect_native_receipt(replace(_install(tmp_path), namespace="demo"), "incident-1")
     assert receipt["responder_job_evidence"] == []
-    assert not any("job/sdo-incident-1-hash" in call for call in calls)
-
-
-def test_collect_native_receipt_rejects_missing_successful_worker_job(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from tests.unit.benchmarks.sregym.protocol.test_native_receipt import _ledger
-
-    monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
-
-    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        if command[0] == "/tmp/sdo-operator":
-            payload: object = {
-                "incident_id": "incident-1",
-                "responder_job_name": "sdo-incident-1-hash",
-                "ledger": _ledger(),
-            }
-        else:
-            payload = {"metadata": {"uid": "worker-uid"}, "status": {"failed": 1}}
-        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
-
-    monkeypatch.setattr(subprocess, "run", run)
-    with pytest.raises(NativeOperatorError, match="durably successful"):
-        collect_native_receipt(replace(_install(tmp_path), namespace="demo"), "incident-1")
+    assert not any(f"job/{job_name}" in call for call in calls)
 
 
 def test_runtime_artifacts_export_is_go_owned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -403,3 +345,61 @@ def test_host_accepts_optional_goal_and_absent_goal_commit(tmp_path: Path, monke
     receipt.update(dict.fromkeys(("schema_commit", "source_commit", "architecture_commit", "judge_commit"), "a" * 40))
     monkeypatch.setattr(native_operator, "_run", lambda *args, **kwargs: receipt)
     assert launch_host(host) == receipt
+
+
+def test_adapter_agent_efforts_match_the_production_provider() -> None:
+    # The adapter reads the shared manifest so SREGym's venv can import it without agentshim.
+    from benchmarks.sregym.adapter import native_operator
+    from sdo.agents import provider
+
+    assert native_operator.AGENT_EFFORTS == provider.AGENT_EFFORTS
+    assert native_operator.DEFAULT_AGENT_EFFORT == provider.DEFAULT_AGENT_EFFORT
+
+
+@pytest.mark.parametrize("failure", ["not_ready", "exec_failed", "timeout", "mismatch"])
+def test_shared_identity_distinguishes_transport_readiness_and_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from benchmarks.sregym.adapter import native_operator as native
+
+    config = replace(_install(tmp_path), shared_accepted_id="a" * 32)
+    identity = config.repository / ".git" / "sdo-shared-id"
+    identity.parent.mkdir(parents=True)
+    identity.write_text(config.shared_accepted_id)
+    monkeypatch.setattr(native, "refresh_memory_mirror", lambda *_: None)
+    monkeypatch.setattr(
+        native,
+        "_kubectl_json",
+        lambda *_: {
+            "items": [
+                {
+                    "metadata": {"name": "controller-pod"},
+                    "status": {
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "False" if failure == "not_ready" else "True"}],
+                    },
+                }
+            ]
+        },
+    )
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(args, 30)
+        return subprocess.CompletedProcess(args, 1 if failure == "exec_failed" else 0, "b" * 32, "SENSITIVE_CANARY")
+
+    monkeypatch.setattr(native.subprocess, "run", run)
+    expected = {
+        "not_ready": "SharedRepositoryControllerNotReady",
+        "exec_failed": "SharedRepositoryExecFailed",
+        "timeout": "SharedRepositoryExecFailed",
+        "mismatch": "SharedRepositoryIdentityMismatch",
+    }
+    with pytest.raises(NativeOperatorError) as caught:
+        native.assert_shared_repository(config)
+    assert type(caught.value).__name__ == expected[failure]
+    assert "hotel-sdo" in str(caught.value)
+    assert "CANARY" not in str(caught.value)
+    assert bool(calls) is (failure != "not_ready")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from typing import TYPE_CHECKING
 
 from agentshim import CommandResult, HostCommandExecutor
@@ -15,7 +16,8 @@ if TYPE_CHECKING:
 
     from agentshim import CommandExecutor, CommandHandle, CommandRequest, CommandStreamSink
 
-MAX_MODEL_IO_BYTES = 4 << 20
+# One turn's complete Codex JSONL, which carries every tool result the turn read.
+MAX_MODEL_IO_BYTES = 64 << 20
 
 
 class ModelRecorder:
@@ -58,21 +60,26 @@ class ModelRecorder:
                 sink.stderr(line)
 
         result = self.live.run(request, Tee())
+        # The streamed lines are the turn's whole output; replay joins them, so store them once.
         payload = {
             "turn_index": turn_index,
             "request_digest": self.request_digest,
             "prompt_digest": prompt_digest,
             "events": events,
             "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
         }
         wire = json.dumps(payload, separators=(",", ":")).encode()
         if len(wire) > MAX_MODEL_IO_BYTES:
-            raise ValueError(f"model I/O exceeds {MAX_MODEL_IO_BYTES} bytes")
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        temporary = path.with_suffix(".tmp")
-        with os.fdopen(os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600), "wb") as stream:
-            stream.write(wire)
-        temporary.replace(path)
+            # Benchmark evidence never discards the live turn; replay names the gap instead.
+            del payload["events"], payload["returncode"]
+            payload["unrecorded"] = f"model I/O exceeds {MAX_MODEL_IO_BYTES} bytes"
+            wire = json.dumps(payload, separators=(",", ":")).encode()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            temporary = path.with_suffix(".tmp")
+            with os.fdopen(os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600), "wb") as stream:
+                stream.write(wire)
+            temporary.replace(path)
+        except OSError as exc:
+            print(f"model turn not recorded: {exc}", file=sys.stderr)
         return result

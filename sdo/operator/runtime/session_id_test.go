@@ -21,7 +21,7 @@ func TestResponderSessionIDsCanReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 		loop.ReadView = original.ReadView
-		response := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": original.Request.Findings[0].PrimaryResource}})
+		response := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": original.Request.Findings[0].PrimaryResource}}})
 		if response.Error != "" {
 			t.Fatal(response.Error)
 		}

@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -16,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from benchmarks.sregym.agent_script.wire import EventStream
+from benchmarks.sregym.agent_script.wire import EventStream, ResumeError, Rollout
 
 from .converter import convert_recording
 from .invocation import Invocation
@@ -29,7 +30,21 @@ def load(path: Path) -> AgentScript:
     return AgentScript.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
-def _role(schema: dict[str, Any]) -> str:
+def _wrapper_branch(schema: dict[str, Any], prompt: str, *, resumed: bool) -> str | None:
+    """The branch a session-wrapper turn must answer in, or None for a plain role schema."""
+    properties = schema.get("properties", {})
+    if not {"incident_result", "reflection"} <= set(properties):
+        return None
+    # The branch instruction (and its correction) names the answered branch before the one left null.
+    named = re.findall(r"(?:Answer in the|Resubmit the same answer in) `(incident_result|reflection)`", prompt)
+    if named:
+        return named[-1]
+    return "reflection" if resumed else "incident_result"
+
+
+def _role(schema: dict[str, Any], branch: str | None = None) -> str:
+    if branch is not None:
+        return "responder" if branch == "incident_result" else "reflector"
     properties = schema.get("properties", {})
     for key, role in (
         ("learning_decision", "reflector"),
@@ -51,7 +66,9 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
     if prompt is None:
         prompt = sys.stdin.read() if stdin is None else stdin
     schema_path = Path(argv[argv.index("--output-schema") + 1])
-    role = _role(json.loads(schema_path.read_text(encoding="utf-8")))
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    branch = _wrapper_branch(schema, prompt, resumed=invocation.resume is not None)
+    role = _role(schema, branch)
     incident = os.environ.get("SDO_AGENT_SCRIPT_INCIDENT")
     task_path = Path(os.environ.get("SDO_TASK_PATH", "/sdo/request/agent-task.json"))
     request: dict[str, Any] = {}
@@ -75,6 +92,13 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
     turn = plan.select(role, incident, index)
     context = TemplateContext(request, Path.cwd(), incident=incident)
     session = invocation.resume or hashlib.sha256(f"{key}:{index}".encode()).hexdigest()[:32]
+    home = os.environ.get("CODEX_HOME")
+    if home:
+        # The production worker checkpoints the persisted transcript the moment the session starts.
+        try:
+            Rollout.resume(Path(home), session)
+        except ResumeError:
+            Rollout.create(Path(home), cwd=str(Path.cwd()), session_id=session)
     stream = EventStream()
     stream.thread_started(session)
     stream.turn_started()
@@ -87,6 +111,9 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
         result = execute(turn, Path.cwd(), stream, access=access, context=context)
     except ScriptExit as exc:
         return exc.code
+    if branch is not None:
+        other = "reflection" if branch == "incident_result" else "incident_result"
+        result = {branch: result, other: None}
     stream.agent_message(json.dumps(result, sort_keys=True))
     stream.turn_completed({})
     return 0

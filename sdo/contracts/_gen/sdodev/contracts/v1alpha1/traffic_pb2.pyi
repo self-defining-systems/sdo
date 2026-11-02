@@ -8,7 +8,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class TrafficSLO(_message.Message):
-    __slots__ = ("window", "min_samples", "max_age", "max_error_rate", "max_timeout_rate", "latency_percentile", "max_latency")
+    __slots__ = ("window", "min_samples", "max_age", "max_error_rate", "max_timeout_rate", "latency_percentile", "max_latency", "min_timeouts")
     WINDOW_FIELD_NUMBER: _ClassVar[int]
     MIN_SAMPLES_FIELD_NUMBER: _ClassVar[int]
     MAX_AGE_FIELD_NUMBER: _ClassVar[int]
@@ -16,6 +16,7 @@ class TrafficSLO(_message.Message):
     MAX_TIMEOUT_RATE_FIELD_NUMBER: _ClassVar[int]
     LATENCY_PERCENTILE_FIELD_NUMBER: _ClassVar[int]
     MAX_LATENCY_FIELD_NUMBER: _ClassVar[int]
+    MIN_TIMEOUTS_FIELD_NUMBER: _ClassVar[int]
     window: int
     min_samples: int
     max_age: str
@@ -23,7 +24,8 @@ class TrafficSLO(_message.Message):
     max_timeout_rate: float
     latency_percentile: int
     max_latency: str
-    def __init__(self, window: _Optional[int] = ..., min_samples: _Optional[int] = ..., max_age: _Optional[str] = ..., max_error_rate: _Optional[float] = ..., max_timeout_rate: _Optional[float] = ..., latency_percentile: _Optional[int] = ..., max_latency: _Optional[str] = ...) -> None: ...
+    min_timeouts: int
+    def __init__(self, window: _Optional[int] = ..., min_samples: _Optional[int] = ..., max_age: _Optional[str] = ..., max_error_rate: _Optional[float] = ..., max_timeout_rate: _Optional[float] = ..., latency_percentile: _Optional[int] = ..., max_latency: _Optional[str] = ..., min_timeouts: _Optional[int] = ...) -> None: ...
 
 class TrafficWorkloadScenario(_message.Message):
     __slots__ = ("id", "weight", "slo")

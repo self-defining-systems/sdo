@@ -8,17 +8,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
 	"testing"
 	"testing/synctest"
-	"time"
 )
 
 func TestResponderLoopApplyReturnsLogicalPlaybooksAndBoundedEvidence(t *testing.T) {
@@ -63,6 +59,7 @@ func TestResponderLoopStatusAndDiagnoseUseFreshFindings(t *testing.T) {
 		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 			return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
 		}
+		logs := captureSlog(t)
 		active = true
 		status := loop.Handle(context.Background(), ToolRequest{Command: "status"})
 		if len(status.Findings) != 1 || len(status.ProgramRuns) != 1 || status.ProgramRuns[0].Verdict.Result != program.Match {
@@ -72,6 +69,11 @@ func TestResponderLoopStatusAndDiagnoseUseFreshFindings(t *testing.T) {
 		diagnosis := loop.Handle(context.Background(), ToolRequest{Command: "diagnose"})
 		if len(diagnosis.Findings) != 0 || len(diagnosis.ProgramRuns) != 0 {
 			t.Fatalf("stale diagnosis: %+v", diagnosis)
+		}
+		for _, command := range []string{"status", "diagnose"} {
+			if !strings.Contains(logs.String(), "msg=responder_tool_timing incident_id=i command="+command+" capture_ms=") {
+				t.Fatalf("handler duration for %s is not logged:\n%s", command, logs.String())
+			}
 		}
 	})
 }
@@ -83,12 +85,12 @@ type snapshotDiagnoser struct{}
 type transientImageProgram struct{}
 
 func (transientImageProgram) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: "health-objective-failure", Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}}}
+	return program.ProgramSpec{ID: "health-objective-failure", Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}, {Name: "image", ValueKind: program.StringValue, Default: "search:healthy"}}}
 }
 
 func (transientImageProgram) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
 	for _, pod := range view.Pods() {
-		if pod.Labels["app"] != bindings["deployment"].Name {
+		if pod.Labels["app"] != bindings.Objects["deployment"].Name {
 			continue
 		}
 		for _, status := range pod.Status.ContainerStatuses {
@@ -105,7 +107,7 @@ func (p transientImageProgram) Mitigate(ctx context.Context, view program.ReadVi
 	if err != nil || verdict.Result != program.Match {
 		return program.Plan{}, err
 	}
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings["deployment"], Path: "spec.template.spec.containers[0].image", Value: "search:healthy", Reason: "restore pullable image"}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings.Objects["deployment"], Path: "spec.template.spec.containers[0].image", Value: program.FromParam("image"), Reason: "restore pullable image"}}}, nil
 }
 
 func TestResponderPlanUsesSettledMatchedImagePullView(t *testing.T) {
@@ -123,19 +125,18 @@ func TestResponderPlanUsesSettledMatchedImagePullView(t *testing.T) {
 		loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
 			return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 		}
-		loop.DiagnosisSettleDelay = time.Millisecond
 		if runs := loop.InitialDiagnose(context.Background()); len(runs) == 0 || runs[0].Verdict.Result != program.NoMatch {
 			t.Fatalf("initial diagnosis: %+v", runs)
 		}
 		snapshot.PodList = []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "search-pod", Namespace: ref.Namespace, Labels: map[string]string{"app": "search"}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}}}
 		provider.snapshot = snapshot
-		loop.RetryInitialDiagnose(context.Background())
+		loop.Handle(context.Background(), ToolRequest{Command: "status"})
 		if runs := loop.ProgramRuns(); runs[len(runs)-1].Verdict.Result != program.Match {
 			t.Fatalf("settled diagnosis: %+v", runs)
 		}
 		snapshot.PodList = nil
 		provider.snapshot = snapshot
-		planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{"deployment": ref}})
+		planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}})
 		if planned.Error != "" || planned.PlanID == "" || len(planned.Patches) != 1 {
 			t.Fatalf("plan after pod state changed: %+v", planned)
 		}
@@ -177,15 +178,15 @@ func TestResponderRestartPlansFromLiveViewInsteadOfCapturedMatch(t *testing.T) {
 			return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 		}
 		request.InitialProgramRuns = preparer.InitialDiagnose(context.Background())
-		if len(request.InitialProgramRuns) == 0 || request.InitialProgramRuns[0].Verdict.Result != program.Match {
-			t.Fatalf("dispatch diagnosis missed captured image-pull state: %+v", request.InitialProgramRuns)
+		if len(request.InitialProgramRuns) == 0 || request.InitialProgramRuns[0].Verdict.Result != program.NoMatch {
+			t.Fatalf("dispatch diagnosis reused captured image-pull state: %+v", request.InitialProgramRuns)
 		}
 		loop := NewResponderLoop(request, registry, staticProvider{snapshot: recovered}, nil, PlanExecutor{Client: client}, 5)
 		loop.CorpusSessionRoot = root
 		loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
 			return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 		}
-		planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{"deployment": ref}})
+		planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}})
 		if planned.Error == "" || planned.PlanID != "" {
 			t.Fatalf("stale captured diagnosis authorized a restart plan: %+v", planned)
 		}
@@ -207,104 +208,6 @@ func (d changingLoopDetector) Detect(context.Context, sdk.DetectionContext) ([]s
 	return d.find(), nil
 }
 
-func TestInitialNoMatchIsRediagnosedAfterSettle(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
-		active := false
-		registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(context.Context, program.Bindings) program.Verdict {
-			if active {
-				return program.Verdict{Result: program.Match}
-			}
-			return program.Verdict{Result: program.NoMatch}
-		}}}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		finding := sdk.Finding{Status: sdk.FindingActive, PrimaryResource: ref}
-		loop := NewResponderLoop(IncidentRequest{IncidentID: "i", Namespace: "app", Findings: []sdk.Finding{finding}}, registry, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, []sdk.Detector{loopDetector{finding: finding}}, PlanExecutor{}, 5)
-		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-			return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
-		}
-		loop.DiagnosisSettleDelay = time.Millisecond
-		if initial := loop.InitialDiagnose(context.Background()); len(initial) != 1 || initial[0].Verdict.Result != program.NoMatch {
-			t.Fatalf("initial: %+v", initial)
-		}
-		active = true
-		loop.RetryInitialDiagnose(context.Background())
-		if runs := loop.ProgramRuns(); len(runs) != 2 || runs[1].Verdict.Result != program.Match {
-			t.Fatalf("retry: %+v", runs)
-		}
-		status := loop.Handle(context.Background(), ToolRequest{Command: "status"})
-		if len(status.ProgramRuns) != 1 || status.ProgramRuns[0].Verdict.Result != program.Match {
-			t.Fatalf("settled status: %+v", status)
-		}
-	})
-}
-
-func TestSettleCaptureDoesNotBlockResponderAndMatchesRediagnosis(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		root := t.TempDir()
-		ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
-		view := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app", Annotations: map[string]string{"moment": "detect"}}}}}
-		provider := &responderTestSnapshotProvider{}
-		provider.Set(view)
-		if err := memory.CaptureIncidentSnapshot(root, "incident", "open@detect", view, "app"); err != nil {
-			t.Fatal(err)
-		}
-		finding := sdk.Finding{Status: sdk.FindingActive, PrimaryResource: ref}
-		registry, err := program.NewRegistry([]program.Diagnoser{snapshotDiagnoser{}}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Namespace: "app", Findings: []sdk.Finding{finding}}, registry, provider, []sdk.Detector{loopDetector{finding: finding}}, PlanExecutor{}, 5)
-		loop.CorpusSessionRoot = root
-		loop.DiagnosisSettleDelay = 250 * time.Millisecond
-		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-			return LiveReadView{Carrier: inputs.New(snapshot), Baseline: &StateChanges{}}
-		}
-		loop.InitialDiagnose(context.Background())
-		done := make(chan struct{})
-		go func() { loop.RetryInitialDiagnose(context.Background()); close(done) }()
-		select {
-		case <-done:
-			t.Fatal("settle returned before delay")
-		default:
-		}
-		statusDone := make(chan struct{})
-		go func() { loop.Handle(context.Background(), ToolRequest{Command: "status"}); close(statusDone) }()
-		select {
-		case <-statusDone:
-		case <-time.After(150 * time.Millisecond):
-			t.Fatal("settle blocked responder status")
-		}
-		view.ServiceList[0].Annotations["moment"] = "settle"
-		provider.Set(view)
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			t.Fatal("settle blocked responder work")
-		}
-		dir, err := memory.IncidentCorpusDir(root, "incident")
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := os.ReadFile(filepath.Join(dir, "open@settle.json"))
-		if err != nil || !strings.Contains(string(data), `"moment":"settle"`) {
-			t.Fatalf("settle snapshot: %s, %v", data, err)
-		}
-		if len(loop.ProgramRuns()) != 3 {
-			t.Fatal("settle diagnosis did not run")
-		}
-		if got := loop.ProgramRuns()[2].Verdict.Evidence[0].Observed; got != "settle" {
-			t.Fatalf("settle diagnosis saw %q", got)
-		}
-		recorded, err := os.ReadFile(filepath.Join(dir, "open@settle-recordings.json"))
-		if err != nil || !strings.Contains(string(recorded), "DiffAgainstBaseline") {
-			t.Fatalf("settle primitive recording: %s, %v", recorded, err)
-		}
-	})
-}
-
 type loopProgram struct {
 	candidateProgram
 	ref sdk.ObjectRef
@@ -321,8 +224,14 @@ func (d loopDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Findi
 	return nil, nil
 }
 
+func (p loopProgram) Spec() program.ProgramSpec {
+	spec := p.candidateProgram.Spec()
+	spec.Params = append(spec.Params, program.ParamSpec{Name: "port", ValueKind: program.IntValue, Default: 8080})
+	return spec
+}
+
 func (p loopProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: p.ref, Path: "spec.ports[0].targetPort", Value: 8080, Reason: "repair target port"}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: p.ref, Path: "spec.ports[0].targetPort", Value: program.FromParam("port"), Reason: "repair target port"}}}, nil
 }
 
 func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *testing.T) {
@@ -340,12 +249,12 @@ func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *t
 		if status := loop.Handle(context.Background(), ToolRequest{Command: "status"}); status.Trust["targetport"].VerifiedSuccesses != 2 {
 			t.Fatalf("status trust: %+v", status)
 		}
-		plan := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "targetport", Bindings: program.Bindings{"service": ref}})
+		plan := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "targetport", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}})
 		if plan.Error != "" || plan.PlanID == "" || len(plan.Patches) != 1 {
 			t.Fatalf("plan: %+v", plan)
 		}
 		applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{plan.PlanID}})
-		if applied.Error == "" || applied.ApplicationID == "" || len(applied.ProgramRuns) == 0 {
+		if applied.Error != "" || applied.ApplicationID == "" || len(applied.ProgramRuns) == 0 || applied.Healthy {
 			t.Fatalf("apply: %+v", applied)
 		}
 		if len(applied.Findings) != 1 || applied.Findings[0].Playbooks[0] != "health-objective" || strings.Contains(loop.ToolCalls()[2].ResponseJSON, ".sdo/") {
@@ -358,7 +267,7 @@ func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *t
 		if len(loop.ToolCalls()) != 4 || len(loop.PlanApplications()) != 1 || len(loop.ProgramRuns()) == 0 {
 			t.Fatalf("outcome evidence missing: calls=%d apps=%d runs=%d", len(loop.ToolCalls()), len(loop.PlanApplications()), len(loop.ProgramRuns()))
 		}
-		if signals := loop.FailureSignals(); len(signals) != 2 || !contains(signals, "applied_diagnosis_still_match:targetport") || !contains(signals, "application_verification_failure:targetport") {
+		if signals := loop.FailureSignals(); len(signals) != 0 {
 			t.Fatalf("failure signal: %v", signals)
 		}
 	})

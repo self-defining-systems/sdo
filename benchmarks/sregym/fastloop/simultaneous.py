@@ -36,16 +36,13 @@ class InjectBeforeResumeOps:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
-        if paused:
-            self._inner.set_maintenance(control_namespace, paused=True, generation=generation)
-        # The stage's resume is deferred to inject_after_resume, after the faults are in.
-
     def inject_after_resume(
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]:
         paused_generation = f"{generation}-presim"
-        self._inner.set_maintenance(control_namespace, paused=True, generation=paused_generation)
+        self._inner.set_maintenance(
+            control_namespace, paused=True, generation=paused_generation, preserve_baseline=True
+        )
         self._wait_for_pause(self._inner, control_namespace, paused_generation)
         inject()
         self._inner.set_maintenance(control_namespace, paused=False, generation=generation)

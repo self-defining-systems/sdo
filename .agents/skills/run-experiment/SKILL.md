@@ -1,6 +1,6 @@
 ---
 name: run-experiment
-description: Run live SDO experiments on SREGym with real LLM agents through fastloop, from frozen code and a warm lane to a per-incident report against a baseline, while keeping the feedback loop fast and unblocking it proactively. Use for every live SREGym run, smoke or full experiment; when rerunning or comparing a stream; when measuring playbook programs, the fast path or drift detection; or when a run is slow, stuck or blocked.
+description: Run live SDO experiments on SREGym with real LLM agents through fastloop, from frozen code and a warm lane to a per-incident report against a baseline, while keeping the feedback loop fast and unblocking it proactively. Use for every live SREGym run, smoke or full experiment; when rerunning or comparing a stream; when measuring playbook coverage, agent-selected mitigation or drift detection; or when a run is slow, stuck or blocked.
 ---
 
 # Run an experiment
@@ -26,11 +26,12 @@ Live runs spend real money and quota.
 5. **Reuse a warm lane.** Rebuild only when dependencies, OS tools or Dockerfiles change. Up delivers images through a lane-owned registry, preserving shared layers. Never flatten or manually load images.
    - Existing mounted lane: run `fastloop reset --dev-mount` and skip image work; production Python, live recording, reflection, scripted workers and the host-built operator come from the worktree.
    - No lane: run `fastloop up --dev-mount` with a unique cluster prefix, the image tag and a populated `--sregym-dir`. Mounts default to this worktree; a populated applications checkout is needed for grading.
-6. **Credentials.** Start the keeper for the lane and confirm the agent credentials Secret exists before `run`.
-7. **Run the stream** through the [detached launcher](../../../docs/testing-guide.md#detached-launches), wrapping `fastloop run` and reusing the lane record to adopt existing work. Add `--continue-on-error`, plus `--detection-timeout` for streams with latent faults.
-8. **Check early.** After the first incident of each kind, read its row and the controller log. On a plumbing failure, stop the run, save the evidence, and go back to "When something fails" in [test-sdo](../test-sdo/SKILL.md).
-9. **Report** image delivery mode and any fallback reason from the lane and every incident row; fallback warns on stderr at delivery and run startup. Report per incident against the baseline run of the same stream. The fields and their sources are in [report.md](references/report.md).
-10. **Clean up.** Kill only the processes you started, by exact PID; leave the cluster up when a rerun is planned.
+6. **Rehearse the eval.** Run `fastloop eval-dry-run --run-dir <lane>` before live slots. It uses scripted workers, injects no fault, and reports setup separately (at most15min), then each steady admission invariant under a shared five-minute cap. Resolve eval failures before spending a live slot.
+7. **Credentials.** Start the keeper for the lane and confirm the agent credentials Secret exists before `run`.
+8. **Run the stream** through the [detached launcher](../../../docs/testing-guide.md#detached-launches), wrapping `fastloop run` and reusing the lane record to adopt existing work. Add `--continue-on-error`, plus `--detection-timeout` for streams with latent faults.
+9. **Check early.** After the first incident of each kind, read its row and the controller log. On a plumbing failure, stop the run, save the evidence, and go back to "When something fails" in [test-sdo](../test-sdo/SKILL.md).
+10. **Report** image delivery mode and any fallback reason from the lane and every incident row; fallback warns on stderr at delivery and run startup. Report per incident against the baseline run of the same stream. The fields and their sources are in [report.md](references/report.md).
+11. **Clean up.** Kill only the processes you started, by exact PID; leave the cluster up when a rerun is planned.
 
 ## Keep the loop fast
 
@@ -52,8 +53,9 @@ The experiment is the incidents; everything else is overhead to remove.
 
 - Use only your own lanes; never touch other users' clusters or processes.
 - Stop a run as soon as it is known to run stale or broken code. Fix, refreeze, rebuild.
+- Suspect the eval before SDO. A bad or surprising result may be a benchmark or harness bug that measures the wrong thing. Before any injection, prove each precondition independently: the app serves real traffic, and SDO's own health signal rests on observed success, not just "clear". Confirm setup and restore leave the app as installed, and test every admission guard against real SDO behavior. Record eval bugs apart from SDO findings, and rerun before comparing.
 - Deliver one image set per lane, once. Scripted gates and live slots share it: switch agents with `fastloop reset` and run flags, never with a second image set.
-- Time scaling is for scripted-agent runs only; live LLM runs, including smokes, use `--time-scale 1`.
+- There is no time scaling: every run, scripted or live, runs in real time.
 - Source-only fixes use the mounted worktree and a warm reset; dependency fixes use a new frozen tag.
 - Each incident row must explain itself. A missing skip reason, verdict or learning decision is a bug to fix, not a gap to explain in the report.
 - Never print, copy or commit credentials. After a run, check the results tree has no provider auth files.

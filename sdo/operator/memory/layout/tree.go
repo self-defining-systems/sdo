@@ -53,7 +53,8 @@ type Playbook struct {
 
 // ReadTree parses the operational memory below root. It fails on schema
 // versions other than CurrentSchemaVersion, symlinks, oversized or unrecognized
-// files, and malformed manifests or documents. It does not require any
+// catalog files, and malformed manifests or documents. Corpus and outcome
+// contents are outside the logical catalog and are not inspected. It does not require any
 // particular artifact to be present beyond schema-version.
 func ReadTree(root string) (*Tree, error) {
 	version, err := readSchemaVersion(root)
@@ -305,7 +306,8 @@ func (c *collector) finish() (*Tree, error) {
 
 // scan visits every file below directory, whose repository-relative path is
 // prefix. It refuses symlinks and irregular files, and skips the outcomes
-// directory, which holds one document per incident.
+// and corpus directories: neither contributes to the logical catalog. The
+// shared validator separately owns corpus requirements when replay is enabled.
 func scan(directory, prefix string, visit func(rel string, kind Kind, id string, read func() ([]byte, error)) error) error {
 	if info, err := os.Lstat(directory); err != nil {
 		return err
@@ -321,7 +323,7 @@ func scan(directory, prefix string, visit func(rel string, kind Kind, id string,
 			return fmt.Errorf("symlink is forbidden in operational memory: %s", rel)
 		}
 		if entry.IsDir() {
-			if rel == OutcomesDir {
+			if rel == OutcomesDir || rel == CorpusDir {
 				return fs.SkipDir
 			}
 			return nil

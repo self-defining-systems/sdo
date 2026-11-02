@@ -1,3 +1,3 @@
-# Toy playbooks
+# Playbooks
 
-- [Health objective](health-objective/README.md)
+- [Toy health objective](health-objective/README.md)

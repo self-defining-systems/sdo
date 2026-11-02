@@ -1,0 +1,65 @@
+"""Byte goldens captured from production builders before template extraction."""
+
+import re
+import tempfile
+from pathlib import Path
+
+from tests.unit.sdo.agents.prompts.cases import rendered_cases
+
+GOLDENS = Path(__file__).resolve().parents[5] / "tests/fixtures/sdo/prompts"
+
+
+def normalize_prompt(prompt: str) -> str:
+    prompt = re.sub(
+        r"(?:\$SDO_SESSION_SCRATCH/context|\$SDO_SESSION_DIR/context|/tmp/sdo-context)/[0-9a-f]{24}\.txt",
+        "<context file>",
+        prompt,
+    )
+    prompt = re.sub(r'"/tmp/sdo/[^"\n]+-incident\.json"', '"<temporary incident facts file>"', prompt)
+    prompt = re.sub(r'"[^"\n]*/sdo-playbooks-[^/"\n]+/(\d+\.md)"', r'"<temporary playbook documents>/\1"', prompt)
+    prompt = re.sub(
+        r'("full_outcome_path": ")[^"]*/sdo-reflection-history-[^/"]+/([^"]+)(")',
+        r"\1<temporary reflection history>/\2\3",
+        prompt,
+    )
+    return re.sub(r"(?m)^Full incident facts: .+$", "Full incident facts: <temporary incident facts file>", prompt)
+
+
+def test_prompt_goldens() -> None:
+    prompts = rendered_cases()
+    assert set(prompts) == {path.stem for path in GOLDENS.glob("*.md")}
+    for name, prompt in prompts.items():
+        prompt = normalize_prompt(prompt)
+        assert prompt.encode("utf-8") == (GOLDENS / f"{name}.md").read_bytes(), name
+
+
+def test_prompt_goldens_are_independent_of_temp_root(monkeypatch, tmp_path: Path) -> None:
+    """Prompt size caps count temp-path characters, so the fixture owns the temp root."""
+    expected = {name: normalize_prompt(prompt) for name, prompt in rendered_cases().items()}
+    long_root = tmp_path / ("x" * 80)
+    long_root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(long_root))
+    assert {name: normalize_prompt(prompt) for name, prompt in rendered_cases().items()} == expected
+
+
+def test_fixture_skill_root_is_independent_of_checkout(monkeypatch, tmp_path: Path) -> None:
+    from sdo.agents.lifecycle import agents as lifecycle_agents
+    from sdo.agents.responder import codex, reflection
+
+    for module in (codex, reflection, lifecycle_agents):
+        monkeypatch.setattr(module, "SKILLS_ROOT", tmp_path / "other-checkout/skills")
+    prompts = rendered_cases()
+    assert "Read /opt/sdo/skills/sdo-incident-response/SKILL.md" in prompts["responder_cold_two"]
+    assert "/opt/sdo/skills/sdo-detector-authoring/references/sdk.md" in prompts["lifecycle_HealthJudgeDraft"]
+    assert "Authoring guide: /opt/sdo/skills/sdo-playbook-authoring/SKILL.md" in prompts["reflection_resume_2"]
+
+
+def test_production_instructions_never_spill_to_context_files() -> None:
+    """Instructions must fit their cap; only data sections may spill to referenced files.
+
+    A spilled opening part means the instruction text itself overflowed (for example
+    after a merge combined two edits under the lower of two caps), so the agent would
+    see a partial summary of its own instructions.
+    """
+    for name, prompt in rendered_cases().items():
+        assert not normalize_prompt(prompt).startswith("Full: <context file>\nSummary ("), name

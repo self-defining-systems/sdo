@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -17,6 +18,7 @@ import (
 // records the start of the final streak of clear evaluations.
 func TestIncidentClosureRecordsWhenHealthBeganItsFinalClearStreak(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		logs := captureSlog(t)
 		interval := time.Second
 		cause := controllerDetector(
 			"cause", interval, stateFinding("cause"), stateFinding("cause"),
@@ -50,7 +52,7 @@ func TestIncidentClosureRecordsWhenHealthBeganItsFinalClearStreak(t *testing.T) 
 		executePendingEffect(t, controller)
 		awaitRequest(t, dispatcher.requests)
 		awaitDispatchCompletionQueued(t, controller)
-		for sample := 2; sample < 6; sample++ {
+		for sample := 2; sample < 21; sample++ {
 			if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
 				t.Fatalf("step %d: %v", sample, err)
 			}
@@ -76,6 +78,11 @@ func TestIncidentClosureRecordsWhenHealthBeganItsFinalClearStreak(t *testing.T) 
 		}
 		if closure.HealthClearedAt.After(closure.VerifiedAt) {
 			t.Fatalf("health cannot clear after verification: %v > %v", closure.HealthClearedAt, closure.VerifiedAt)
+		}
+		for _, want := range []string{"incident_verified", "incident_id=" + closure.Request.IncidentID, "health_cleared_at=", "responder_completed_to_verified_ms="} {
+			if !strings.Contains(logs.String(), want) {
+				t.Fatalf("verification log lacks %q:\n%s", want, logs.String())
+			}
 		}
 	})
 }

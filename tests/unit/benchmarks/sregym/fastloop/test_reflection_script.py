@@ -43,7 +43,7 @@ def test_reflection_script_preserves_capture_provenance(tmp_path: Path) -> None:
     }
     assert labels["bindings"]["service"]["name"] == "front"
     assert labels["peer_bindings"]["service"]["name"] == "peer"
-    assert turn.result["playbook_ids"] == ["service-targetport-mismatch"]
+    assert turn.result["proposed_artifact_ids"] == ["service-targetport-mismatch"]
     assert isinstance(turn.steps[-2], Tool)
     assert turn.steps[-2].argv[:3] == ["sdo-operator", "memory", "check"]
     assert turn.steps[-2].timeout == 300.0
@@ -56,7 +56,7 @@ def test_reflection_script_without_pair_is_explicit_no_change(tmp_path: Path) ->
     turn = script.select("reflector", "incident", 0)
     assert turn.steps == []
     assert turn.result["learning_decision"] == "no_change"
-    assert turn.result["playbook_ids"] == []
+    assert turn.result["proposed_artifact_ids"] == []
     assert turn.result["no_change_reason"]
 
 
@@ -89,7 +89,7 @@ def test_policy_script_keeps_same_kind_peer_and_omits_mitigator(tmp_path: Path) 
         "name": "deny",
     }
     assert labels["peer_bindings"]["policy"]["name"] == "allow"
-    assert turn.result["playbook_ids"] == ["networkpolicy-service-isolation"]
+    assert turn.result["proposed_artifact_ids"] == ["networkpolicy-service-isolation"]
     assert not any(name.endswith("/mitigate.go") for name in writes)
     assert "--mitigate" not in turn.steps[0].argv
     assert "service-targetport-mismatch/README.md" in writes[".sdo/playbooks/README.md"]
@@ -105,7 +105,7 @@ def test_already_accepted_program_produces_no_edits(tmp_path: Path) -> None:
     turn = script.select("reflector", "incident", 0)
     assert turn.steps == []
     assert turn.result["learning_decision"] == "no_change"
-    assert turn.result["playbook_ids"] == []
+    assert turn.result["proposed_artifact_ids"] == []
     assert "already accepted" in turn.result["summary"]
 
 

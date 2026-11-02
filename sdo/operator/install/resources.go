@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sdo.dev/operator/contracts/settings"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,12 +24,15 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/devmount"
-	"sdo.dev/operator/install/internal/installio"
+	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/worker_registry"
 )
 
 const (
 	ControllerJobName            = "sdo-controller-run"
 	RepositorySyncPodName        = "sdo-repository-sync"
+	RuntimeExportPodName         = "sdo-runtime-export"
 	InstallFingerprintAnnotation = "sdo.dev/install-fingerprint"
 	WorkerMountPolicyAnnotation  = "sdo.dev/worker-mount-policy"
 	ApplicationNamespaceLabel    = "sdo.dev/application-namespace"
@@ -36,50 +40,58 @@ const (
 )
 
 type Config struct {
-	Namespace, ControlNamespace, Application                string
-	ControllerImage, ResponderImage                         string
-	RepositoryPVC, CredentialsSecret, Model                 string
-	AcceptedCommit                                          string
-	RepairPolicy, AgentProvider                             string
-	ReflectionSession, ReflectionGuidance                   string
-	ForceReflection                                         bool
-	ProgramFastPath                                         bool
-	ProgramTrustThreshold                                   int
-	DriftTokensPerHour                                      int64
-	LateFindings                                            string
-	MaxFollowUps, FollowUpCooldownSeconds, MaxResponseLoops int
-	HealthyBaseline                                         bool
-	MetricsURL                                              string
-	DisableObservability                                    bool
-	TimeoutSeconds, VerificationTimeoutSeconds              int
-	ControllerDurationSeconds                               int
-	ExitAfterClosure                                        bool
-	NativeCommand, NativeArgs                               []string
-	ExtraControllerArgs                                     []string
-	ResponderEnv                                            []string
-	Credentials                                             map[string][]byte
-	RegistrationConfigMap, RegistrationDirectory            string
-	RegistrationData                                        map[string]string
-	BuildKitImage, RegistryPushSecret                       string
-	RegistryHost                                            string
-	RegistryInsecure                                        bool
-	RegistryPushDockerConfig                                []byte
-	ReuseExisting, WaitForCompletion                        bool
+	CodePath *contracts.CodePathConfig
+
+	ResponderMenu                                bool
+	ObservationCeiling                           sdk.ObservationScope
+	Namespace, ControlNamespace, Application     string
+	ControllerImage, ResponderImage              string
+	ScriptImage                                  string
+	RepositoryPVC, CredentialsSecret, Model      string
+	AcceptedCommit                               string
+	RepairPolicy, AgentProvider, AgentEffort     string
+	Replay                                       string
+	ReflectionSession, ReflectionGuidance        string
+	ForceReflection                              bool
+	LateFindings                                 string
+	MaxResponseLoops                             int
+	HealthyBaseline                              bool
+	TimeoutSeconds, VerificationTimeoutSeconds   int
+	ControllerDurationSeconds                    int
+	ExitAfterClosure                             bool
+	NativeCommand, NativeArgs                    []string
+	ExtraControllerArgs                          []string
+	ResponderEnv                                 []string
+	DisableObservability                         bool
+	ResponderStandby                             *bool
+	Credentials                                  map[string][]byte
+	RegistrationConfigMap, RegistrationDirectory string
+	RegistrationData                             map[string]string
+	BuildKitImage, RegistryPushSecret            string
+	RegistryHost                                 string
+	RegistryInsecure                             bool
+	RegistryPushDockerConfig                     []byte
+	ReuseExisting, WaitForCompletion             bool
+	PermissiveResponder                          bool
+	ResponderNamespaces                          []string
+	MetricsURL                                   string
+	// MemoryUpstream replicates accepted memory through a shared remote
+	// branch. MemoryUpstreamSSHSecret names an existing Secret holding the
+	// ssh "identity" and "known_hosts", mounted read-only.
+	MemoryUpstreamURL, MemoryUpstreamBranch, MemoryUpstreamSSHSecret string
 }
 
 type Plan struct {
-	Prometheus                   *appsv1.Deployment
-	PrometheusConfig             *corev1.ConfigMap
-	PrometheusService            *corev1.Service
-	ClusterRoles                 []*rbacv1.ClusterRole
-	ClusterBindings              []*rbacv1.ClusterRoleBinding
-	Namespace                    *corev1.Namespace
-	PVC                          *corev1.PersistentVolumeClaim
-	ServiceAccounts              []*corev1.ServiceAccount
-	ControlRoles, AppRoles       []*rbacv1.Role
-	ControlBindings, AppBindings []*rbacv1.RoleBinding
-	SyncPod                      *corev1.Pod
-	Job                          *batchv1.Job
+	Prometheus        *appsv1.Deployment
+	PrometheusConfig  *corev1.ConfigMap
+	PrometheusService *corev1.Service
+	Namespace         *corev1.Namespace
+	PVC               *corev1.PersistentVolumeClaim
+	ServiceAccounts   []*corev1.ServiceAccount
+	ClusterRoles      []*rbacv1.ClusterRole
+	ClusterBindings   []*rbacv1.ClusterRoleBinding
+	SyncPod           *corev1.Pod
+	Job               *batchv1.Job
 }
 
 var namespaceName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
@@ -113,6 +125,10 @@ func (c Config) controlNamespace() string {
 	return c.Namespace
 }
 func (c Config) validate() error {
+
+	if err := c.ObservationCeiling.Validate(); err != nil {
+		return err
+	}
 	for name, value := range map[string]string{"namespace": c.Namespace, "control namespace": c.controlNamespace(), "application": c.Application, "repository PVC": c.RepositoryPVC, "credentials Secret": c.CredentialsSecret} {
 		if !namespaceName.MatchString(value) {
 			return fmt.Errorf("%s must be a Kubernetes DNS label: %q", name, value)
@@ -120,6 +136,12 @@ func (c Config) validate() error {
 	}
 	if c.ControllerImage == "" || c.ResponderImage == "" {
 		return errors.New("controller and responder images are required")
+	}
+	if (c.MemoryUpstreamURL == "") != (c.MemoryUpstreamBranch == "") || (c.MemoryUpstreamSSHSecret != "" && c.MemoryUpstreamURL == "") {
+		return errors.New("memory upstream requires both a URL and a branch")
+	}
+	if c.MemoryUpstreamSSHSecret != "" && !namespaceName.MatchString(c.MemoryUpstreamSSHSecret) {
+		return fmt.Errorf("memory upstream ssh Secret must be a Kubernetes DNS label: %q", c.MemoryUpstreamSSHSecret)
 	}
 	if strings.TrimSpace(c.Model) == "" {
 		return errors.New("agent model is required")
@@ -169,6 +191,12 @@ func (c Config) validate() error {
 	if c.AgentProvider != "" && c.AgentProvider != "codex" && c.AgentProvider != "claude" {
 		return errors.New("invalid agent provider")
 	}
+	if _, err := settings.Replay(c.Replay); err != nil {
+		return err
+	}
+	if c.AgentEffort != "" && !slices.Contains(worker_registry.AgentEfforts, c.AgentEffort) {
+		return fmt.Errorf("invalid agent effort %q", c.AgentEffort)
+	}
 	if c.ReflectionSession != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "reflection_session"), c.ReflectionSession) {
 		return errors.New("invalid reflection session")
 	}
@@ -178,18 +206,10 @@ func (c Config) validate() error {
 	if c.LateFindings != "" && c.LateFindings != "off" && c.LateFindings != "pull" {
 		return errors.New("invalid late findings mode")
 	}
-	if c.MaxFollowUps < 0 || c.FollowUpCooldownSeconds < 0 || c.MaxResponseLoops < 0 {
-		return errors.New("follow-up limits cannot be negative")
+	if c.MaxResponseLoops < 0 {
+		return errors.New("max response loops cannot be negative")
 	}
-	if c.ProgramTrustThreshold < 0 {
-		return errors.New("program trust threshold cannot be negative")
-	}
-	if c.DriftTokensPerHour < 0 {
-		return errors.New("drift responder token budget cannot be negative")
-	}
-	if c.ProgramFastPath && c.RepairPolicy != "recorded-actions" {
-		return errors.New("program fast path requires recorded-actions repair policy")
-	}
+
 	for _, arg := range c.ExtraControllerArgs {
 		if strings.Contains(arg, "broker-mode") || strings.Contains(arg, "worker-mount-mode") || strings.HasPrefix(arg, "--broker-arg") {
 			return errors.New("controller extension cannot change broker or worker mount mode")
@@ -200,9 +220,15 @@ func (c Config) validate() error {
 		if !found || !environmentName.MatchString(name) || strings.ContainsAny(content, "\r\n") {
 			return fmt.Errorf("invalid responder environment %q", value)
 		}
+		if name == observation.CeilingEnvironment {
+			return errors.New("observation ceiling is installer-owned")
+		}
 		if name == "SDO_LATE_FINDINGS" {
 			return errors.New("duplicate SDO_LATE_FINDINGS responder setting; use LateFindings")
 		}
+	}
+	if err := c.validatePermissive(); err != nil {
+		return err
 	}
 	if len(c.NativeCommand) == 0 || strings.TrimSpace(c.NativeCommand[0]) == "" {
 		return errors.New("native controller entrypoint is required")
@@ -228,78 +254,31 @@ func Resources(c Config) (Plan, error) {
 	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-image-builder"} {
 		plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control}})
 	}
-	controllerRules := []rbacv1.PolicyRule{
-		// Kubernetes RBAC cannot distinguish metadata-only reads from full objects.
-		// Informer transforms discard values; the baseline negotiates metadata strictly.
-		rule("", []string{"secrets"}, "list", "watch"),
-		rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "delete"),
-		rule("", []string{"services", "pods", "endpoints", "events", "persistentvolumeclaims", "serviceaccounts"}, "get", "list", "watch"),
-		rule("", []string{"pods/log"}, "get"),
-		rule("", []string{"pods"}, "delete"),
-		rule("apps", []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, "get", "list", "watch"),
-		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list", "watch"),
-		rule("policy", []string{"poddisruptionbudgets"}, "get", "list", "watch"),
-		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
-		rule("rbac.authorization.k8s.io", []string{"roles", "rolebindings"}, "get", "list", "watch"),
-		rule("coordination.k8s.io", []string{"leases"}, "get", "create", "update", "patch"),
-		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "delete"),
-		rule("batch", []string{"cronjobs"}, "get", "list", "watch"),
-		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "list", "watch"),
-		rule("networking.k8s.io", []string{"ingresses"}, "get", "list", "watch"),
-	}
-	clusterName := "sdo-cluster-" + control
-	plan.ClusterRoles = []*rbacv1.ClusterRole{{ObjectMeta: metav1.ObjectMeta{Name: clusterName}, Rules: []rbacv1.PolicyRule{rule("", []string{"nodes"}, "get", "list", "watch"), rule("", []string{"nodes/proxy"}, "get")}}}
-	plan.ClusterBindings = []*rbacv1.ClusterRoleBinding{{ObjectMeta: metav1.ObjectMeta{Name: clusterName}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: clusterName}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-controller", Namespace: control}, {Kind: "ServiceAccount", Name: "sdo-operate", Namespace: control}}}}
-	responderRules := []rbacv1.PolicyRule{
-		rule("", []string{"configmaps", "services", "pods", "persistentvolumeclaims"}, "get", "list", "watch", "create", "update", "patch", "delete"),
-		rule("", []string{"pods/log", "events", "endpoints"}, "get", "list", "watch"),
-		rule("", []string{"pods/exec", "pods/attach", "pods/portforward"}, "get", "create"),
-		rule("apps", []string{"deployments", "statefulsets", "daemonsets", "replicasets"}, "get", "list", "watch", "create", "update", "patch", "delete"),
-		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list", "watch"),
-		rule("policy", []string{"poddisruptionbudgets"}, "get", "list", "watch"),
-		rule("networking.k8s.io", []string{"networkpolicies", "ingresses"}, "get", "list", "watch", "create", "update", "patch", "delete"),
-		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
-		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "update", "patch", "delete"),
-	}
-	if split {
-		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerRules), role(control, "sdo-operate", controllerRules), role(control, "sdo-responder", []rbacv1.PolicyRule{rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "patch")}))
-		readRules := []rbacv1.PolicyRule{}
-		for _, r := range controllerRules {
-			if r.APIGroups[0] == "coordination.k8s.io" {
-				continue
-			}
-			if len(r.Resources) == 1 && r.Resources[0] == "secrets" {
-				readRules = append(readRules, r)
-				continue
-			}
-			readRules = append(readRules, rule(r.APIGroups[0], r.Resources, "get", "list", "watch"))
-		}
-		readRules = append(readRules, programApplyRules()...)
-		readRules = append(readRules, adoptionRules()...)
-		plan.AppRoles = append(plan.AppRoles, role(c.Namespace, "sdo-controller", readRules), role(c.Namespace, "sdo-operate", responderRules), role(c.Namespace, "sdo-responder", responderRules), role(c.Namespace, "sdo-controller-helper-cleanup", []rbacv1.PolicyRule{rule("", []string{"pods"}, "list", "delete"), rule("batch", []string{"jobs"}, "list", "delete")}))
-		for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-controller-helper-cleanup"} {
-			subject := name
-			if name == "sdo-controller-helper-cleanup" {
-				subject = "sdo-controller"
-			}
-			plan.AppBindings = append(plan.AppBindings, binding(c.Namespace, name, subject, control))
-		}
-	} else {
-		controllerWrites := append(append([]rbacv1.PolicyRule{}, controllerRules...), programApplyRules()...)
-		controllerWrites = append(controllerWrites, adoptionRules()...)
-		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerWrites), role(control, "sdo-operate", append(append([]rbacv1.PolicyRule{}, controllerRules...), responderRules...)), role(control, "sdo-responder", responderRules))
-	}
-	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder"} {
-		plan.ControlBindings = append(plan.ControlBindings, binding(control, name, name, control))
-	}
+	plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "sdo-script", Namespace: c.Namespace}})
+	addAdminGrant(c, &plan)
 	if !c.DisableObservability {
 		addObservability(&plan, c)
 	}
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
+	if err := worker_registry.ApplyProviderCapacity(&plan.Job.Spec.Template.Spec, worker_registry.ProviderCapacityEnvironment()); err != nil {
+		return Plan{}, err
+	}
 	if c.AcceptedCommit != "" {
 		plan.Job.Spec.Template.Annotations = map[string]string{"sdo.dev/accepted-commit": c.AcceptedCommit}
 	}
+	if c.PermissiveResponder {
+		settings, err := json.Marshal(c.ResponderNamespaces)
+		if err != nil {
+			return Plan{}, err
+		}
+		if plan.Job.Spec.Template.Annotations == nil {
+			plan.Job.Spec.Template.Annotations = map[string]string{}
+		}
+		plan.Job.Spec.Template.Annotations[PermissiveResponderAnnotation] = string(settings)
+	}
+
+	labelInstallPlan(c, &plan)
 	fingerprintJob := plan.Job.DeepCopy()
 	fingerprintJob.Annotations = nil
 	encoded, err := json.Marshal(fingerprintJob)
@@ -309,33 +288,6 @@ func Resources(c Config) (Plan, error) {
 	hash := sha256.Sum256(encoded)
 	plan.Job.Annotations = map[string]string{InstallFingerprintAnnotation: hex.EncodeToString(hash[:16]), WorkerMountPolicyAnnotation: "proposal-only"}
 	return plan, nil
-}
-
-func programApplyRules() []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{
-		rule("", []string{"services"}, "get", "patch"),
-		rule("apps", []string{"deployments", "statefulsets", "daemonsets"}, "get", "patch"),
-		rule("apps", []string{"replicasets", "controllerrevisions"}, "get", "list"),
-	}
-}
-
-func adoptionRules() []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{
-		rule("", []string{"configmaps", "pods", "endpoints"}, "get", "patch"),
-		rule("apps", []string{"replicasets"}, "get", "patch"),
-		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "patch"),
-		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "patch"),
-	}
-}
-
-func rule(group string, resources []string, verbs ...string) rbacv1.PolicyRule {
-	return rbacv1.PolicyRule{APIGroups: []string{group}, Resources: resources, Verbs: verbs}
-}
-func role(namespace, name string, rules []rbacv1.PolicyRule) *rbacv1.Role {
-	return &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}, Rules: rules}
-}
-func binding(namespace, name, subject, subjectNamespace string) *rbacv1.RoleBinding {
-	return &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: subject, Namespace: subjectNamespace}}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: name}}
 }
 
 func podSecurity() *corev1.PodSecurityContext {
@@ -357,7 +309,17 @@ func pvcVolume(name string) corev1.Volume {
 }
 func syncPod(c Config) *corev1.Pod {
 	no := false
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: RepositorySyncPodName, Namespace: c.controlNamespace()}, Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &no, SecurityContext: podSecurity(), Containers: []corev1.Container{{Name: "sync", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"sleep", "3600"}, SecurityContext: containerSecurity(), Resources: limits("50m", "64Mi", "250m", "256Mi"), VolumeMounts: []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}, {Name: "scratch", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{pvcVolume(c.RepositoryPVC), {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}}
+	zero := int64(0)
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: RepositorySyncPodName, Namespace: c.controlNamespace()}, Spec: corev1.PodSpec{TerminationGracePeriodSeconds: &zero, RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &no, SecurityContext: podSecurity(), Containers: []corev1.Container{{Name: "sync", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"sleep", "3600"}, SecurityContext: containerSecurity(), Resources: limits("50m", "64Mi", "250m", "256Mi"), VolumeMounts: []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}, {Name: "scratch", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{pvcVolume(c.RepositoryPVC), {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}}
+}
+
+// runtimeExportPod transports sealed evidence archives. It is independent of
+// the singleton sync Pod so delivery never blocks accepted-memory synchronization.
+func runtimeExportPod(c Config) *corev1.Pod {
+	pod := syncPod(c)
+	pod.Name = RuntimeExportPodName
+	pod.Spec.Containers[0].Name = "export"
+	return pod
 }
 
 func controllerJob(c Config) *batchv1.Job {
@@ -378,27 +340,26 @@ func controllerJob(c Config) *batchv1.Job {
 	if provider == "" {
 		provider = "codex"
 	}
+	args = append(args, codePathArgs(c)...)
+	if c.ScriptImage != "" {
+		args = append(args, "--script-image", c.ScriptImage)
+	}
 	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--model", c.Model, "--responder-backend", provider)
+	if c.Replay != "" {
+		args = append(args, "--replay", c.Replay)
+	}
+	if c.AgentEffort != "" {
+		args = append(args, "--agent-effort", c.AgentEffort)
+	}
 	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
 	if c.ForceReflection {
 		args = append(args, "--force-reflection")
 	}
-	if c.MaxFollowUps > 0 {
-		args = append(args, "--max-follow-ups", fmt.Sprint(c.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(c)))
-	}
 	if c.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(c.MaxResponseLoops))
 	}
-	if c.ProgramFastPath {
-		args = append(args, "--program-fast-path")
-	}
-	if c.ProgramTrustThreshold > 0 {
-		args = append(args, "--program-trust-threshold", fmt.Sprint(c.ProgramTrustThreshold))
-	}
-	if c.DriftTokensPerHour > 0 {
-		args = append(args, "--drift-tokens-per-hour", fmt.Sprint(c.DriftTokensPerHour))
-	}
+
 	if c.RepairPolicy != "" {
 		args = append(args, "--repair-policy", c.RepairPolicy)
 	}
@@ -407,6 +368,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.LateFindings == "pull" {
 		args = append(args, "--responder-env=SDO_LATE_FINDINGS=pull")
+	}
+	if c.ResponderStandby != nil {
+		args = append(args, fmt.Sprintf("--responder-standby=%t", *c.ResponderStandby))
 	}
 	args = append(args, c.NativeArgs...)
 	args = append(args, c.ExtraControllerArgs...)
@@ -427,6 +391,12 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-directory", c.registrationDirectory())
+	}
+	if c.MemoryUpstreamURL != "" {
+		args = append(args, "--memory-upstream-url", c.MemoryUpstreamURL, "--memory-upstream-branch", c.MemoryUpstreamBranch)
+		if c.MemoryUpstreamSSHSecret != "" {
+			args = append(args, "--memory-upstream-ssh-dir", MemoryUpstreamSSHDir)
+		}
 	}
 	ttl, backoff := int32(600), int32(6)
 	job := &batchv1.Job{
@@ -460,16 +430,20 @@ func controllerJob(c Config) *batchv1.Job {
 		Resources:       limits("10m", "16Mi", "100m", "64Mi"),
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}},
 	}}
+	policyJSON, _ := json.Marshal(c.ObservationCeiling)
+	menu := responderMenuValue(c.ResponderMenu)
 	pod.Containers = []corev1.Container{{
 		Name: "controller", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: command, Args: args,
 		EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: c.CredentialsSecret}}}},
 		Env: []corev1.EnvVar{
+			{Name: "SDO_RESPONDER_MENU", Value: menu},
 			{Name: "CODEX_HOME", Value: "/workspace/.sdo-runtime/codex"},
 			{Name: "CLAUDE_CONFIG_DIR", Value: "/workspace/.sdo-runtime/claude"},
 			{Name: "TMPDIR", Value: "/workspace/.sdo-runtime/build/tmp"},
 			{Name: "GOTMPDIR", Value: "/workspace/.sdo-runtime/build/go-tmp"},
 			{Name: "GOCACHE", Value: "/workspace/.sdo-runtime/build/go-cache"},
+			{Name: observation.CeilingEnvironment, Value: string(policyJSON)},
 			{Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
 			{Name: "SDO_TURN_USAGE_LOG", Value: "/workspace/.sdo-runtime/usage/controller-turns.jsonl"},
 			{Name: "SDO_CONTROLLER_JOB", Value: ControllerJobName},
@@ -490,15 +464,23 @@ func controllerJob(c Config) *batchv1.Job {
 	if c.RegistrationConfigMap != "" {
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: c.registrationDirectory(), ReadOnly: true})
 	}
+	if c.MemoryUpstreamURL != "" && c.MemoryUpstreamSSHSecret != "" {
+		// Readable by the non-root controller uid; ssh accepts a key it does not own.
+		mode := int32(0o444)
+		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "memory-upstream-ssh", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.MemoryUpstreamSSHSecret, DefaultMode: &mode}}})
+		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "memory-upstream-ssh", MountPath: MemoryUpstreamSSHDir, ReadOnly: true})
+	}
 	if devmount.Enabled() {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)
 	}
-	if scale := installio.TimeScale(); scale != "" {
-		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
-	}
 	return job
 }
+
+// MemoryUpstreamSSHDir is where the controller reads the memory remote's ssh
+// identity and known hosts.
+const MemoryUpstreamSSHDir = "/sdo/memory-upstream-ssh"
+
 func (c Config) registrationDirectory() string {
 	if c.RegistrationDirectory != "" {
 		return c.RegistrationDirectory
@@ -509,7 +491,7 @@ func verificationTimeout(c Config) int {
 	if c.VerificationTimeoutSeconds > 0 {
 		return c.VerificationTimeoutSeconds
 	}
-	return 120
+	return 300
 }
 func hasArg(args []string, want string) bool {
 	for _, arg := range args {

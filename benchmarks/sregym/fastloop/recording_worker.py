@@ -5,16 +5,24 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
-from benchmarks.sregym.fastloop.file_edits import MAX_FILE_EDITS_BYTES, encode_file_edits, record_file_edits
+from benchmarks.sregym.fastloop.checkpoint_limits import MAX_RESULT_BYTES, MAX_TASK_BYTES
+from benchmarks.sregym.fastloop.file_edits import (
+    MAX_FILE_EDITS_BYTES,
+    UNRECORDED_FILE_EDITS,
+    encode_file_edits,
+    record_file_edits,
+)
 from benchmarks.sregym.fastloop.model_recording import ModelRecorder
 from sdo.agents.responder import (
     AGENT_SKILLS,
     CodexSessionBackend,
     KubernetesResultPublisher,
     SessionReflector,
+    await_standby_claim,
     execute_incident,
     prepare_claude_home,
     prepare_codex_home,
@@ -44,7 +52,7 @@ def recording_registrations(results_dir: Path, image: str) -> Path:
     return directory
 
 
-def _record_payload(path: Path, payload: str, *, limit: int = 1 << 20) -> None:
+def _record_payload(path: Path, payload: str, *, limit: int = MAX_RESULT_BYTES) -> None:
     if len(payload.encode()) > limit:
         raise ValueError(f"worker checkpoint {path.name} exceeds {limit} bytes")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -54,7 +62,22 @@ def _record_payload(path: Path, payload: str, *, limit: int = 1 << 20) -> None:
     temporary.replace(path)
 
 
+def _record_result(directory: Path, wire: str, payload: str, *, reflection: bool) -> None:
+    if reflection and json.loads(payload).get("status") == "completed":
+        task = parse_json(wire, AgentTask())
+        try:
+            edits = record_file_edits(Path(task.workspace.checkout_path), task.workspace.base_commit)
+            _record_payload(
+                directory / "file_edits.json", encode_file_edits(edits).decode(), limit=MAX_FILE_EDITS_BYTES
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            # Replay reports this checkpoint as not replayable instead of losing the reflection.
+            _record_payload(directory / UNRECORDED_FILE_EDITS, json.dumps({"reason": str(exc)}))
+    _record_payload(directory / "result.json", payload)
+
+
 def main(argv: list[str] | None = None) -> int:
+    await_standby_claim()
     args = argv if argv is not None else sys.argv[1:]
     if len(args) != 1 or args[0] not in {"responder", "reflection"}:
         print("usage: recording_worker responder|reflection", file=sys.stderr)
@@ -72,20 +95,18 @@ def main(argv: list[str] | None = None) -> int:
     prepare_codex_home(skills=AGENT_SKILLS[role])
     prepare_claude_home(skills=AGENT_SKILLS[role])
     directory = scratch.parent / "checkpoints" / hashlib.sha256(wire.encode()).hexdigest()
-    _record_payload(directory / "request.json", wire)
+    _record_payload(directory / "request.json", wire, limit=MAX_TASK_BYTES)
     remote = KubernetesResultPublisher(namespace=namespace)
 
     class Publisher:
         def publish_payload(self, name: str, key: str, payload: str) -> None:
             if key != "agent-result.json":
                 raise ValueError(f"unexpected worker result key {key!r}")
-            if args[0] == "reflection" and json.loads(payload).get("status") == "completed":
-                task = parse_json(wire, AgentTask())
-                edits = record_file_edits(Path(task.workspace.checkout_path), task.workspace.base_commit)
-                _record_payload(
-                    directory / "file_edits.json", encode_file_edits(edits).decode(), limit=MAX_FILE_EDITS_BYTES
-                )
-            _record_payload(directory / "result.json", payload)
+            # Benchmark evidence never gates the production result.
+            try:
+                _record_result(directory, wire, payload, reflection=args[0] == "reflection")
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                print(f"benchmark recording incomplete: {exc}", file=sys.stderr)
             remote.publish_payload(name, key, payload)
 
     publisher = Publisher()

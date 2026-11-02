@@ -26,6 +26,28 @@ const (
 	Restart
 	ArchivesPersisted
 	AgentTimeout
+	Superseded
+	ResponseExpired
+	// Unconfirmed ends a closure-time recheck whose observation stayed
+	// incomplete or unavailable until its bound. The verified closure stays
+	// pending and commits unverified with a typed reason; never superseded.
+	Unconfirmed
+	// ObserverDenied ends a closure whose recheck was denied its observation
+	// scope. It fails terminally with a typed reason; the repair is not
+	// contradicted, so it is never recorded as superseded.
+	ObserverDenied
+	// OwnerLost ends an incident whose work no longer has a live owner (no
+	// responder execution, no closure begun) past its durable bound.
+	OwnerLost
+	// PersistenceInvalid replaces an uncommitted incident's invalid evidence
+	// with a validated failed closure. An accepted receipt is never replayed.
+	PersistenceInvalid
+	// Freeze folds the closure-time recheck's notes into the pending closure
+	// once, before its first broker attempt. The frozen closure is the
+	// incident's terminal identity; no later event rewrites its contents.
+	Freeze
+	// Reobserve returns an unpublished closure to its original incident budget.
+	Reobserve
 )
 
 type RetryPolicy struct {
@@ -43,6 +65,12 @@ type Event struct {
 	Error               string
 	Policy              RetryPolicy
 	ArchivedIncidentIDs []string
+	NonRetryable        bool
+	// UnconfirmedReason is required for Unconfirmed events.
+	UnconfirmedReason contracts.ClosureUnconfirmedReason
+	UnconfirmedStates []*contracts.DetectorEvaluation
+	// SourceCheckNotes are the recheck's notes a Freeze event records.
+	SourceCheckNotes []string
 }
 
 type EffectKind uint8
@@ -50,6 +78,10 @@ type EffectKind uint8
 const (
 	ProcessClosure EffectKind = iota + 1
 	AcknowledgeClosure
+	// FreezeClosure asks the driver to recheck an unfrozen pending closure and
+	// return a Freeze event. Only frozen closures reach ProcessClosure, so one
+	// ProcessClosure identity always carries one payload.
+	FreezeClosure
 )
 
 type Effect struct {
@@ -81,6 +113,16 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 	}
 	pending := next.GetPendingClosure()
 	phase := next.GetClosureState()
+	if event.Kind == PersistenceInvalid {
+		if event.Closure == nil || event.Closure.GetStatePersistenceFailure() == nil ||
+			event.Closure.GetRequest().GetIncidentId() == "" || phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED || phase == contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING {
+			return next, nil
+		}
+		next.PendingClosure = proto.Clone(event.Closure).(*contracts.IncidentClosure)
+		next.ClosureState = contracts.ClosureState_CLOSURE_STATE_PENDING
+		next.ClosureReceipt, next.ClosureFailure = nil, nil
+		return next, nil
+	}
 	if event.Kind == Begin {
 		if event.Closure == nil || event.Closure.GetRequest().GetIncidentId() == "" || BlocksNext(next.GetClosureState(), next.GetPendingClosure() != nil) {
 			return next, nil
@@ -109,6 +151,69 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		})
 		return next, nil
 	}
+	if (event.Kind == ResponseExpired || event.Kind == OwnerLost) && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
+		return next, nil
+	}
+	if event.Kind == Reobserve {
+		if pending == nil || pending.GetFrozen() || phase != contracts.ClosureState_CLOSURE_STATE_PENDING {
+			return next, nil
+		}
+		next.PendingClosure, next.ClosureReceipt, next.ClosureFailure = nil, nil, nil
+		next.ClosureState = contracts.ClosureState_CLOSURE_STATE_UNSPECIFIED
+		return next, nil
+	}
+	if event.Kind == Freeze {
+		if pending == nil || pending.GetFrozen() || phase != contracts.ClosureState_CLOSURE_STATE_PENDING ||
+			event.EffectID != Identity(pending.GetRequest().GetIncidentId(), pending.GetRequest().GetRepositoryBaseCommit(), FreezeClosure) {
+			return next, nil
+		}
+		if proof := event.Closure; proof != nil && proof.GetRequest().GetIncidentId() == pending.GetRequest().GetIncidentId() {
+			copy := proto.Clone(proof).(*contracts.IncidentClosure)
+			pending.FinalDetectorStates = copy.FinalDetectorStates
+			pending.VerifiedAt = copy.VerifiedAt
+			pending.HealthClearedAt = copy.HealthClearedAt
+		}
+		pending.SourceCheckNotes = append(pending.SourceCheckNotes, event.SourceCheckNotes...)
+		pending.Frozen = true
+		return next, nil
+	}
+	if event.Kind == Unconfirmed {
+		if pending == nil || pending.GetFrozen() || phase != contracts.ClosureState_CLOSURE_STATE_PENDING || len(pending.GetFinalDetectorStates()) == 0 ||
+			event.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
+			return next, nil
+		}
+		pending.PartialDetectorStates = append(pending.PartialDetectorStates, pending.FinalDetectorStates...)
+		for _, state := range event.UnconfirmedStates {
+			pending.PartialDetectorStates = append(pending.PartialDetectorStates, proto.Clone(state).(*contracts.DetectorEvaluation))
+		}
+		pending.FinalDetectorStates = nil
+		pending.UnconfirmedReason = event.UnconfirmedReason
+		pending.UnconfirmedDetail = event.Error
+		return next, nil
+	}
+	if event.Kind == Superseded || event.Kind == ResponseExpired || event.Kind == ObserverDenied || event.Kind == OwnerLost {
+		if pending == nil || phase == contracts.ClosureState_CLOSURE_STATE_FAILED {
+			return next, nil
+		}
+		failure := &contracts.ClosureFailure{IncidentId: pending.GetRequest().GetIncidentId(), Attempts: 1, MaxAttempts: 1, LastError: event.Error, FirstFailedAt: timestamppb.New(event.At), LastFailedAt: timestamppb.New(event.At), Permanent: true, Reason: contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR, Action: "obsolete health evidence archived; investigate with the adopted health policy"}
+		if event.Kind == ResponseExpired {
+			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_AGENT_TIMEOUT
+			failure.Action = "expired incident without live work archived; detect a fresh incident"
+		}
+		if event.Kind == OwnerLost {
+			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OWNER_LOST
+			failure.Action = "incident work without a live owner archived as failed; detect a fresh incident"
+		}
+		if event.Kind == ObserverDenied {
+			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED
+			failure.Action = "closure observation scope denied; fix the controller's read access or the detector's declared dependencies"
+		}
+		next.ClosureFailure = failure
+		next.ClosureReceipt = nil
+		next.ClosureState = contracts.ClosureState_CLOSURE_STATE_FAILED
+		next.FailedClosures = append(next.FailedClosures, &contracts.FailedIncidentClosure{Closure: proto.Clone(pending).(*contracts.IncidentClosure), Failure: proto.Clone(failure).(*contracts.ClosureFailure)})
+		return next, nil
+	}
 	receipt := next.GetClosureReceipt()
 	if pending == nil && (receipt == nil || (phase != contracts.ClosureState_CLOSURE_STATE_COMMITTED && phase != contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING)) {
 		return next, nil
@@ -132,6 +237,13 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 			failure := next.GetClosureFailure()
 			if failure.GetPermanent() || (failure.GetNextAttemptAt() != nil && event.At.Before(failure.NextAttemptAt.AsTime())) {
 				return next, nil
+			}
+			if !pending.GetFrozen() {
+				if event.EffectID != "" {
+					return next, nil
+				}
+				freezeID := Identity(id, pending.GetRequest().GetRepositoryBaseCommit(), FreezeClosure)
+				return next, []Effect{{Kind: FreezeClosure, ID: freezeID, Closure: proto.Clone(pending).(*contracts.IncidentClosure)}}
 			}
 			next.ClosureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
 			return next, []Effect{{Kind: ProcessClosure, ID: processID, Closure: proto.Clone(pending).(*contracts.IncidentClosure)}}
@@ -197,7 +309,7 @@ func reject(next *contracts.ControllerState, event Event, reason contracts.Closu
 	failure.Reason = reason
 	next.ClosureFailure = failure
 	next.ClosureState = contracts.ClosureState_CLOSURE_STATE_PENDING
-	if failure.Attempts < failure.MaxAttempts {
+	if !event.NonRetryable && failure.Attempts < failure.MaxAttempts {
 		delay := event.Policy.InitialBackoff
 		for attempt := int32(1); attempt < failure.Attempts; attempt++ {
 			if delay >= event.Policy.MaxBackoff/2 {
@@ -211,7 +323,9 @@ func reject(next *contracts.ControllerState, event Event, reason contracts.Closu
 	}
 	failure.NextAttemptAt = nil
 	failure.Permanent = true
-	failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED
+	if !event.NonRetryable {
+		failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED
+	}
 	failure.Action = "closure evidence is archived per incident; inspect the broker ledger and failed-closure ConfigMap; later incidents continue"
 	next.ClosureState = contracts.ClosureState_CLOSURE_STATE_FAILED
 	next.FailedClosures = append(next.FailedClosures, &contracts.FailedIncidentClosure{Closure: proto.Clone(next.PendingClosure).(*contracts.IncidentClosure), Failure: proto.Clone(failure).(*contracts.ClosureFailure)})

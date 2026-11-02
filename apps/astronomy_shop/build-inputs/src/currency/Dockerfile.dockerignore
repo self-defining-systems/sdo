@@ -1,0 +1,15 @@
+# Build context for the pinned currency Dockerfile. See apps/BUILD_INPUTS.md in SDO.
+**
+!src/
+src/*
+!src/currency/
+!src/currency/**
+!pb/
+!pb/**
+src/*/README.md
+src/*/Dockerfile
+src/*/*/Dockerfile
+src/currency/client.js
+src/currency/node_modules/
+src/frontend/node_modules/
+src/shipping/target/

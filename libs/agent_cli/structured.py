@@ -23,12 +23,15 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
+import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -44,17 +47,52 @@ from agentshim import (
     CliTimeoutError,
     CodexProvider,
     CodexSandboxConfig,
+    HostCommandExecutor,
     OutputSchema,
     SandboxConfig,
+    SessionStarted,
     TokenUsage,
     ToolCall,
     TurnRequest,
+    cost_usd,
+    default_pricing,
     normalized_usage,
+    price_for,
 )
+from agentshim.execution.host import ProcessCommandHandle
 from agentshim.providers.codex import install_rules
 
+from libs.agent_cli.claude_accounts import AccountRouter, is_claude_auth_failure
+from libs.agent_cli.claude_usage import ClaudeBill, ClaudeLedger, api_tokens, session_ledger, token_mapping
+from libs.agent_cli.errors import (
+    AccountAuthenticationFailed,
+    AccountExhausted,
+    ProviderRateLimited,
+    StructuredTurnError,
+)
+from libs.agent_cli.provider_capacity import ProviderCapacity, is_claude_rate_limit
+from libs.agent_cli.session_ownership import (
+    HANDOFF_TIMEOUT_SECONDS,
+    SessionOwnership,
+    WorkerIdentity,
+    WorkerTermination,
+)
+from libs.agent_cli.startup import StartupTelemetry
+
 if TYPE_CHECKING:
-    from agentshim import AgentEvent, CommandExecutor, McpServer, Provider, ProviderUsage
+    from typing import Any
+
+    from agentshim import (
+        AgentEvent,
+        CommandExecutor,
+        CommandHandle,
+        CommandRequest,
+        CommandResult,
+        CommandStreamSink,
+        McpServer,
+        Provider,
+        ProviderUsage,
+    )
 
 AgentProvider = Literal["codex", "claude"]
 logger = logging.getLogger(__name__)
@@ -75,6 +113,21 @@ MEMORY_CHECK_COMMAND = "sdo-operator memory check"
 #: ``$XDG_CACHE_HOME/sdo/codex-homes`` (``~/.cache/sdo/codex-homes``). It must
 #: be outside the workspace and the system temp dir.
 CODEX_HOME_ROOT_ENV = "SDO_CODEX_HOME_ROOT"
+#: Codex settings for every SDO turn. Codex otherwise lists its own bundled
+#: skills and synced remote plugins in the model context; SDO prompts point to
+#: the SDO skill files they need instead. Codex ignores unknown features, and a
+#: resumed turn passes the same settings so it never injects a new context.
+CODEX_SESSION_SETTINGS = (
+    "skills.include_instructions=false",
+    "skills.bundled.enabled=false",
+    "features.plugins=false",
+    "features.remote_plugin=false",
+    "features.recommended_plugins=false",
+    "features.plugin_sharing=false",
+    "features.apps=false",
+    "features.tool_suggest=false",
+    "features.skill_search=false",
+)
 # Optional JSONL file that receives one token-accounting record per turn.
 TURN_USAGE_LOG_ENV = "SDO_TURN_USAGE_LOG"
 
@@ -99,16 +152,24 @@ _CLI_CHECK_TIMEOUT_S = 60.0
 _SHELL_TOOLS = frozenset({"execute", "Bash"})
 
 
-class StructuredTurnError(RuntimeError):
-    """A structured turn failed or returned something unusable."""
-
-
 class StructuredTurnTimeout(StructuredTurnError):
     """A structured turn did not finish within its timeout."""
 
     def __init__(self, timeout_seconds: float) -> None:
         self.timeout_seconds = timeout_seconds
         super().__init__(f"agent turn timed out after {timeout_seconds:g}s")
+
+
+class StructuredTurnInterrupted(StructuredTurnError):
+    """The caller stopped a running turn; its session can be resumed.
+
+    ``usage`` holds the accounting the stopped turn had already spent.
+    """
+
+    def __init__(self, session_id: str, usage: dict[str, int | float]) -> None:
+        self.session_id = session_id
+        self.usage = usage
+        super().__init__(f"agent turn interrupted (session {session_id or 'unknown'})")
 
 
 @dataclass(frozen=True)
@@ -137,6 +198,10 @@ class StructuredTurn:
     model_requests_source: str | None = None
     resumed: bool = False
     skill_directory: Path | None = None
+    rate_limit_wait_seconds: float = 0.0
+    concurrency_wait_seconds: float = 0.0
+    usd_complete: bool | None = None
+    cache_write_ttl_complete: bool | None = None
 
 
 def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
@@ -172,8 +237,14 @@ def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
 class _ShellCommandRecorder:
     commands: list[str] = field(default_factory=list[str])
     tool_calls: int = 0
+    on_session_started: Callable[[str], None] | None = None
+    session_id: str | None = None
 
     def on_event(self, event: AgentEvent) -> None:
+        if isinstance(event, SessionStarted):
+            self.session_id = event.session_id
+            if self.on_session_started is not None:
+                self.on_session_started(event.session_id)
         if not isinstance(event, ToolCall):
             return
         self.tool_calls += 1
@@ -199,13 +270,227 @@ def run_structured_turn(
     executor: CommandExecutor | None = None,
     mcp_servers: Sequence[McpServer] = (),
     environment: Mapping[str, str] | None = None,
+    on_session_started: Callable[[str], None] | None = None,
+    on_usage: Callable[[dict[str, int | float], bool], None] | None = None,
+    session_ownership_directory: Path | None = None,
+    session_ownership_role: Literal["responder", "reflection"] = "responder",
+    session_ownership_worker: WorkerIdentity | None = None,
+    session_termination_observer: Callable[[WorkerIdentity, float], WorkerTermination | None] | None = None,
+    interrupt_when: Callable[[], bool] | None = None,
+    provider_capacity: ProviderCapacity | None = None,
+) -> StructuredTurn:
+    """Run a turn; Claude capacity waits never consume the active-turn budget.
+
+    Every attempt releases its Opus token before provider backoff. A named
+    session is resumed after throttling, preserving completed tools and history.
+    Capacity waits have a shared thirty-minute cap and durable separate records.
+    """
+    if timeout_seconds is not None and timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    capacity = provider_capacity or ProviderCapacity(environment={**os.environ, **(environment or {})})
+    account_mode = provider == "claude" and (
+        bool(capacity.environment.get("SDO_CLAUDE_ACCOUNTS_DIR"))
+        or capacity.environment.get("SDO_OPUS_POOL_MODE") == "per_account"
+    )
+    router = (
+        AccountRouter.from_environment(
+            capacity.environment, clock=lambda: capacity.now().timestamp(), record=capacity.record
+        )
+        if account_mode
+        else None
+    )
+    if router is not None:
+        workspace = Path(cwd).resolve()
+        if router.directory.is_relative_to(workspace) or router.pool_directory.is_relative_to(workspace):
+            raise AccountExhausted("account references and pool must be outside workspace", retryable=False)
+    started = capacity.monotonic()
+    session_id = resume_session_id
+    prior_usage: dict[str, int | float] = {}
+    attempt_usage: dict[str, int | float] = {}
+    prior_commands: tuple[str, ...] = ()
+    prior_tool_calls = 0
+
+    def checkpoint(usage: dict[str, int | float], complete: bool) -> None:
+        attempt_usage.clear()
+        attempt_usage.update(usage)
+        if on_usage is not None:
+            combined = dict(prior_usage)
+            for name, value in usage.items():
+                combined[name] = combined.get(name, 0) + value
+            on_usage(combined, complete)
+
+    attempt = 0
+    account_retries: dict[str, int] = {}
+    while True:
+        lease = None
+        remaining = timeout_seconds
+        if timeout_seconds is not None and attempt > 0:
+            assert remaining is not None
+            remaining -= capacity.monotonic() - started - capacity.wait_seconds
+            if remaining <= 0:
+                if capacity.wait_seconds:
+                    raise capacity.exhausted(
+                        "active turn budget ended after provider throttling", session_id=session_id or ""
+                    )
+                raise StructuredTurnTimeout(timeout_seconds)
+        try:
+            with ExitStack() as scope:
+                attempt_environment = environment
+                if provider == "claude":
+                    if router is not None:
+                        while lease is None:
+                            lease = router.try_acquire()
+                            if lease is None:
+                                if capacity.remaining_seconds <= 0:
+                                    raise AccountExhausted("account admission budget exhausted", retryable=False)
+                                with capacity.measured_wait("concurrency"):
+                                    capacity.sleep(min(1.0, capacity.remaining_seconds))
+                        scope.callback(lease.close)
+                        attempt_environment = router.environment(lease, {**capacity.environment, **(environment or {})})
+                        capacity.record(
+                            "account",
+                            "selected",
+                            account_alias=lease.alias,
+                            reason="primary" if lease.alias == router.primary else "fallback",
+                        )
+                    else:
+                        scope.enter_context(capacity.opus_session(model, workspace=Path(cwd)))
+                    if capacity.wait_deadline is not None:
+                        if capacity.remaining_seconds <= 0:
+                            raise capacity.exhausted("provider retry budget exhausted", session_id=session_id or "")
+                        remaining = (
+                            min(remaining, capacity.remaining_seconds)
+                            if remaining is not None
+                            else capacity.remaining_seconds
+                        )
+                turn = _run_structured_turn_once(
+                    provider,
+                    prompt,
+                    output_schema=output_schema,
+                    cwd=cwd,
+                    access=access,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                    timeout_seconds=remaining,
+                    resume_session_id=session_id,
+                    executor=executor,
+                    mcp_servers=mcp_servers,
+                    environment=attempt_environment,
+                    on_session_started=on_session_started,
+                    on_usage=checkpoint if provider == "claude" else on_usage,
+                    session_ownership_directory=session_ownership_directory,
+                    session_ownership_role=session_ownership_role,
+                    session_ownership_worker=session_ownership_worker,
+                    session_termination_observer=session_termination_observer,
+                    interrupt_when=interrupt_when,
+                )
+            turn = _with_prior_usage(turn, prior_usage)
+            completed = replace(
+                turn,
+                shell_commands=prior_commands + turn.shell_commands,
+                tool_calls=prior_tool_calls + turn.tool_calls,
+                rate_limit_wait_seconds=capacity.rate_limit_wait_seconds,
+                concurrency_wait_seconds=capacity.concurrency_wait_seconds,
+            )
+            _append_turn_usage(provider, model, Path(cwd).resolve(), completed, capacity.monotonic() - started)
+            return completed
+        except StructuredTurnTimeout as exc:
+            if capacity.wait_seconds:
+                raise capacity.exhausted(
+                    "turn deadline reached after provider throttling", session_id=session_id or ""
+                ) from exc
+            raise
+        except ProviderRateLimited as exc:
+            if isinstance(exc, AccountExhausted):
+                capacity.record("account", "exhausted", reason="account_exhausted")
+                raise exc from None
+            if provider != "claude" or not exc.retryable:
+                raise
+            session_id = exc.session_id or session_id
+            prior_commands += exc.shell_commands
+            prior_tool_calls += exc.tool_calls
+            for name, value in (exc.usage or attempt_usage).items():
+                prior_usage[name] = prior_usage.get(name, 0) + value
+            attempt_usage.clear()
+            if router is not None and lease is not None:
+                retries = account_retries.get(lease.alias, 0)
+                if isinstance(exc, AccountAuthenticationFailed):
+                    router.fail(lease, exc.account_failure_reason)
+                elif retries >= 1:
+                    router.fail(lease, "rate_limited")
+                else:
+                    delay = float(capacity.environment.get("SDO_CLAUDE_ACCOUNT_BACKOFF_SECONDS", "5"))
+                    if not math.isfinite(delay) or delay <= 0:
+                        raise ValueError("account backoff must be positive and finite") from None
+                    with capacity.measured_wait("rate_limit"):
+                        capacity.sleep(min(delay, capacity.remaining_seconds))
+                    account_retries[lease.alias] = retries + 1
+            else:
+                capacity.backoff(attempt, session_id=session_id or "")
+            attempt += 1
+
+
+def _with_prior_usage(turn: StructuredTurn, prior: Mapping[str, int | float]) -> StructuredTurn:
+    if not prior:
+        return turn
+    combined = turn_usage(turn)
+    for name, value in prior.items():
+        combined[name] = combined.get(name, 0) + value
+    if turn.model_requests_source == CLAUDE_TURNS_REQUEST_SOURCE:
+        combined["model_requests"] = combined["llm_calls"]
+    tokens = normalized_usage(
+        input_tokens=int(combined["input_tokens"]),
+        output_tokens=int(combined["output_tokens"]),
+        cache_read_input_tokens=int(combined["cache_read_input_tokens"]),
+        cache_write_input_tokens=int(combined["cache_write_input_tokens"]),
+        cache_write_1h_input_tokens=int(combined["cache_write_1h_input_tokens"]),
+        reasoning_output_tokens=int(combined["reasoning_output_tokens"]),
+        turns=int(combined["llm_calls"]),
+    )
+    cost = turn.usage.total_cost_usd
+    if cost is not None:
+        cost = cost + prior["total_cost_usd"] if "total_cost_usd" in prior else None
+    return replace(
+        turn,
+        usage=replace(turn.usage, tokens=tokens, total_cost_usd=cost),
+        model_requests=int(combined["model_requests"]) if "model_requests" in combined else None,
+        usd_complete=(turn.usd_complete and cost is not None) if turn.usd_complete is not None else None,
+    )
+
+
+def _run_structured_turn_once(
+    provider: AgentProvider,
+    prompt: str,
+    *,
+    output_schema: Mapping[str, object],
+    cwd: str | Path,
+    access: AccessMode,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    timeout_seconds: float | None = None,
+    resume_session_id: str | None = None,
+    executor: CommandExecutor | None = None,
+    mcp_servers: Sequence[McpServer] = (),
+    environment: Mapping[str, str] | None = None,
+    on_session_started: Callable[[str], None] | None = None,
+    on_usage: Callable[[dict[str, int | float], bool], None] | None = None,
+    session_ownership_directory: Path | None = None,
+    session_ownership_role: Literal["responder", "reflection"] = "responder",
+    session_ownership_worker: WorkerIdentity | None = None,
+    session_termination_observer: Callable[[WorkerIdentity, float], WorkerTermination | None] | None = None,
+    interrupt_when: Callable[[], bool] | None = None,
 ) -> StructuredTurn:
     """Run one structured turn, fresh or resumed, and return its output.
 
+    ``interrupt_when`` is polled while the turn runs; once it returns true the
+    running CLI is stopped. A turn that still finished normally is returned.
+
     Raises:
+        StructuredTurnInterrupted: ``interrupt_when`` stopped the turn.
         StructuredTurnTimeout: The turn exceeded ``timeout_seconds``.
         StructuredTurnError: The CLI failed, or reported no session id or no
             structured output.
+        SessionHandoffError: Persisted writer ownership does not authorize a resume.
         ValueError: An argument is invalid before any process starts.
     """
     if provider not in AGENT_PROVIDERS:
@@ -223,12 +508,142 @@ def run_structured_turn(
         raise ValueError("a Codex workspace-write turn cannot be resumed: its session lives in a per-turn CODEX_HOME")
 
     workspace = Path(cwd).resolve()
-    recorder = _ShellCommandRecorder()
+    ownership = (
+        SessionOwnership(
+            session_ownership_directory,
+            provider,
+            role=session_ownership_role,
+            worker=session_ownership_worker,
+            termination_observer=session_termination_observer,
+            timeout_seconds=min(timeout_seconds, HANDOFF_TIMEOUT_SECONDS)
+            if timeout_seconds is not None
+            else HANDOFF_TIMEOUT_SECONDS,
+        )
+        if session_ownership_directory is not None
+        else None
+    )
+
+    def session_started(session_id: str) -> None:
+        # Persist ownership before exposing the ID to the controller checkpoint.
+        if ownership is not None:
+            ownership.claim(session_id, resume=resume_session_id is not None)
+        if on_session_started is not None:
+            on_session_started(session_id)
+
+    recorder = _ShellCommandRecorder(on_session_started=session_started)
     started = time.monotonic()
+    interrupted = threading.Event()
+    codex_home: Path | None = None
+    rollout_before: _RolloutTotals | None = None
+    claude_before = ClaudeLedger()
+    claude_ledger = ClaudeLedger()
+    claude_home: Path | None = None
+    claude_bill: ClaudeBill | None = None
+    usage_lock = threading.RLock()
+    claude_result: dict[str, object] = {}
+
+    def claude_snapshot() -> ClaudeBill:
+        with usage_lock:
+            if claude_home is not None:
+                sid = recorder.session_id or resume_session_id
+                for path in sorted((claude_home / "projects").glob(f"**/{sid}.jsonl")) if sid else []:
+                    claude_ledger.merge_file(path)
+            return claude_ledger.since(claude_before, default_pricing())
+
+    def capture_stdout(line: str) -> None:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            return
+        if isinstance(record, dict):
+            record = cast("dict[str, Any]", record)
+            with usage_lock:
+                claude_ledger.observe(record, model=model)
+                if record.get("type") == "result":
+                    claude_result.update(record)
+                if record.get("type") == "assistant" and on_usage is not None:
+                    on_usage(claude_snapshot().usage(), False)
+
+    def spent_usage() -> dict[str, int | float]:
+        """Accounting of a stopped turn: its rollout delta, or Claude's incremental reports."""
+        if provider != "codex":
+            bill = claude_snapshot()
+            if bill.requests or not claude_result:
+                return bill.usage()
+            raw = claude_result.get("usage")
+            if not isinstance(raw, dict):
+                return {}
+            tokens = api_tokens(cast("dict[str, Any]", raw))
+            observed = token_mapping(tokens, int(cast("int", claude_result.get("num_turns")) or 0))
+            dollars = claude_result.get("total_cost_usd")
+            entry = price_for("claude", model, default_pricing())
+            fresh_billing = resume_session_id is None
+            price_matches = (
+                isinstance(dollars, (int, float))
+                and entry is not None
+                and abs(cost_usd(tokens, entry) - dollars) < 1e-7
+            )
+            if isinstance(dollars, (int, float)) and dollars >= 0 and (fresh_billing or price_matches):
+                observed["total_cost_usd"] = dollars
+            return observed
+        latest = _codex_rollout_totals(codex_home, recorder.session_id or resume_session_id)
+        delta = latest.since(rollout_before) if latest is not None else None
+        if delta is None or delta.tokens is None or delta.requests == 0:
+            return {}
+        from agentshim import ProviderUsage
+
+        return turn_usage(
+            StructuredTurn(
+                "", recorder.session_id or "", ProviderUsage(tokens=delta.tokens), model_requests=delta.requests
+            )
+        )
+
+    def provider_failure(*streams: str) -> ProviderRateLimited | None:
+        account_mode = bool((environment or {}).get("SDO_CLAUDE_ACCOUNTS_DIR"))
+        failure_type = (
+            AccountAuthenticationFailed
+            if account_mode and any(is_claude_auth_failure(text) for text in streams)
+            else ProviderRateLimited
+            if any(is_claude_rate_limit(text) for text in streams)
+            else None
+        )
+        if failure_type is None or provider != "claude":
+            return None
+        return failure_type(
+            session_id=recorder.session_id or resume_session_id or "",
+            shell_commands=tuple(recorder.commands),
+            tool_calls=recorder.tool_calls,
+            usage=spent_usage(),
+        )
+
+    def stopped() -> StructuredTurnInterrupted:
+        usage = spent_usage()
+        if usage and on_usage is not None:
+            on_usage(usage, True)
+        return StructuredTurnInterrupted(recorder.session_id or resume_session_id or "", usage)
+
     try:
         with ExitStack() as turn_scope:
+            writer = _WriterExecutor(
+                executor or HostCommandExecutor(), capture_stdout if provider == "claude" else None
+            )
+            if ownership is not None:
+                turn_scope.callback(lambda: ownership.close(writer_closed=writer.closed))
+                if resume_session_id is not None:
+                    ownership.claim(resume_session_id, resume=True)
+            executor = writer
             selected, extra_args, extra_env = _provider_for(provider, access, workspace, turn_scope)
+            startup = turn_scope.enter_context(StartupTelemetry(provider))
+            if provider == "codex":
+                settings = [argument for setting in CODEX_SESSION_SETTINGS for argument in ("-c", setting)]
+                extra_args = [*extra_args, *settings, *startup.codex_args()]
+            if startup.endpoint:
+                executor = startup.executor(executor)
             effective_environment = {**os.environ, **(environment or {}), **extra_env}
+            if provider == "claude":
+                claude_home = Path(effective_environment.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+                claude_before = session_ledger(claude_home, resume_session_id)
+                claude_ledger = ClaudeLedger(dict(claude_before.requests), list(claude_before.states))
             home_variable = "CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"
             default_home = Path.home() / (".codex" if provider == "codex" else ".claude")
             skill_directory = Path(effective_environment.get(home_variable) or default_home).expanduser() / "skills"
@@ -240,44 +655,207 @@ def run_structured_turn(
                 event_handler=recorder,
                 check_timeout=_CLI_CHECK_TIMEOUT_S,
             )
-            session = agent.start_session(cwd=str(workspace), timeout=timeout_seconds)
+            if provider == "claude" and mcp_servers:
+                _exclude_claude_mcp_config(workspace)
+            # Ownership waiting consumes the existing turn budget.
+            remaining_timeout = timeout_seconds
+            if ownership is not None and timeout_seconds is not None:
+                remaining_timeout = timeout_seconds - (time.monotonic() - started)
+                if remaining_timeout <= 0:
+                    raise StructuredTurnTimeout(timeout_seconds)
+            session = agent.start_session(cwd=str(workspace), timeout=remaining_timeout)
             if resume_session_id is not None and not session.adopt(resume_session_id):
                 raise StructuredTurnError(f"{provider} cannot resume session {resume_session_id!r}")
-            codex_home = _codex_session_home(extra_env) if provider == "codex" else None
+            codex_home = _codex_session_home(effective_environment) if provider == "codex" else None
             rollout_before = _codex_rollout_totals(codex_home, resume_session_id)
-            schema_dir = turn_scope.enter_context(tempfile.TemporaryDirectory(prefix="sdo-structured-turn-"))
-            result = session.turn(
-                TurnRequest(
-                    prompt=prompt,
-                    output_schema=OutputSchema(schema=dict(output_schema), host_dir=Path(schema_dir)),
-                    reasoning_effort=reasoning_effort,
-                    extra_args=extra_args,
-                    mcp_servers=mcp_servers,
+            if (
+                on_usage is not None
+                and provider == "codex"
+                and resume_session_id is not None
+                and (rollout_before is None or (rollout_before.requests > 0 and rollout_before.totals is None))
+            ):
+                raise StructuredTurnError(
+                    "cannot checkpoint resumed usage without a readable cumulative token baseline"
                 )
-            )
+            schema_dir = turn_scope.enter_context(tempfile.TemporaryDirectory(prefix="sdo-structured-turn-"))
+            # Codex exposes response accounting in its rollout before its CLI
+            # emits a terminal usage event. Poll only in the worker, never Go.
+            stop_usage = threading.Event()
+            usage_errors: list[Exception] = []
+
+            def sample_usage() -> None:
+                if provider == "claude":
+                    with usage_lock:
+                        bill = claude_snapshot()
+                        if bill.requests and on_usage is not None:
+                            on_usage(bill.usage(), False)
+                    return
+                if on_usage is None:
+                    return
+                latest = _codex_rollout_totals(codex_home, recorder.session_id or resume_session_id)
+                delta = latest.since(rollout_before) if latest is not None else None
+                if delta is not None and delta.tokens is not None and delta.requests > 0:
+                    from agentshim import ProviderUsage
+
+                    snapshot = StructuredTurn(
+                        "", recorder.session_id or "", ProviderUsage(tokens=delta.tokens), model_requests=delta.requests
+                    )
+                    on_usage(turn_usage(snapshot), False)
+
+            def monitor_usage() -> None:
+                try:
+                    while not stop_usage.wait(0.1):
+                        sample_usage()
+                except Exception as exc:
+                    usage_errors.append(exc)
+
+            monitor = threading.Thread(target=monitor_usage, name="sdo-usage-checkpoint", daemon=True)
+            if on_usage is not None:
+                monitor.start()
+
+            def watch_interrupt() -> None:
+                assert interrupt_when is not None
+                while not stop_usage.wait(0.2):
+                    if interrupt_when():
+                        interrupted.set()
+                        session.cancel()
+                        return
+
+            watcher = threading.Thread(target=watch_interrupt, name="sdo-turn-interrupt", daemon=True)
+            if interrupt_when is not None:
+                watcher.start()
+            turn_started = time.time()
+
+            def journal(event: str, bill: ClaudeBill | None = None) -> None:
+                log = effective_environment.get(TURN_USAGE_LOG_ENV, "").strip()
+                directory = effective_environment.get("SDO_SESSION_DIR", "").strip()
+                if provider != "claude" or not (log or directory):
+                    return
+                path = (
+                    Path(directory) / "claude-turns.jsonl"
+                    if directory
+                    else Path(log).expanduser().with_name("claude-turns.jsonl")
+                )
+                path.parent.mkdir(parents=True, exist_ok=True)
+                record = {
+                    "schema": "sdo.claude-usage/v1",
+                    "event": event,
+                    "role": session_ownership_role,
+                    "provider": provider,
+                    "model": model,
+                    "resumed": resume_session_id is not None,
+                    "session_id": recorder.session_id or resume_session_id or "",
+                    "recorded_at_epoch": turn_started if event == "start" else time.time(),
+                    "cwd": str(workspace),
+                    "usage": bill.usage() if bill else {},
+                    "usd_complete": bill.usd_complete if bill else False,
+                    "cache_write_ttl_complete": bill.ttl_complete if bill else None,
+                    "reconciliation_evidence": list(bill.evidence) if bill else [],
+                }
+                with path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(record, sort_keys=True) + "\n")
+
+            journal("start")
+            turn_finished = False
+            try:
+                result = session.turn(
+                    TurnRequest(
+                        prompt=prompt,
+                        output_schema=OutputSchema(schema=dict(output_schema), host_dir=Path(schema_dir)),
+                        reasoning_effort=reasoning_effort,
+                        extra_args=extra_args,
+                        mcp_servers=mcp_servers,
+                    )
+                )
+                turn_finished = True
+            finally:
+                stop_usage.set()
+                if interrupt_when is not None:
+                    watcher.join()
+                if on_usage is not None:
+                    monitor.join()
+                    sample_usage()
+                    if usage_errors:
+                        raise StructuredTurnError(f"usage checkpoint failed: {usage_errors[0]}") from usage_errors[0]
+                if provider == "claude":
+                    claude_bill = claude_snapshot()
+                    if not claude_bill.requests and claude_result:
+                        observed = spent_usage()
+                        dollars = observed.get("total_cost_usd")
+                        raw = claude_result.get("usage")
+                        if dollars is not None and isinstance(raw, dict):
+                            requests = int(observed["model_requests"])
+                            tokens = replace(api_tokens(cast("dict[str, Any]", raw)), turns=requests)
+                            claude_bill = ClaudeBill(
+                                tokens,
+                                requests,
+                                float(dollars),
+                                True,
+                                ttl_complete=not tokens.cache_write_input_tokens or "cache_creation" in raw,
+                                source=(
+                                    "complete CLI result; fresh session provider billing"
+                                    if resume_session_id is None
+                                    else "complete CLI result with exact token-price identity"
+                                ),
+                            )
+                    if claude_bill.requests and on_usage is not None:
+                        on_usage(claude_bill.usage(), claude_bill.usd_complete)
+                    journal("complete" if turn_finished else "error", claude_bill)
             # Read the rollout now: a workspace-write Codex home is deleted
             # when the turn scope closes.
             rollout_after = _codex_rollout_totals(codex_home, result.session_id or resume_session_id)
     except CliTimeoutError as exc:
+        if interrupted.is_set():
+            raise stopped() from exc
         raise StructuredTurnTimeout(exc.timeout) from exc
     except CliExitError as exc:
+        if interrupted.is_set():
+            raise stopped() from exc
         # Both streams, stderr first: a provider may report the real cause on
         # either, and callers hand this text back to the next attempt.
         details = "\n".join(part.strip() for part in (exc.stderr, exc.stdout) if part.strip())
+        if failed := provider_failure(exc.stderr, exc.stdout):
+            raise failed from None
+        if (environment or {}).get("SDO_CLAUDE_ACCOUNTS_DIR"):
+            raise StructuredTurnError(
+                f"{provider} exited with code {exc.returncode}; provider output withheld"
+            ) from None
         raise StructuredTurnError(f"{provider} exited with code {exc.returncode}: {details or 'no output'}") from exc
     except AgentShimError as exc:
+        if interrupted.is_set():
+            raise stopped() from exc
+        if failed := provider_failure(str(exc)):
+            raise failed from None
+        if (environment or {}).get("SDO_CLAUDE_ACCOUNTS_DIR"):
+            raise StructuredTurnError(f"{provider} turn failed; provider output withheld") from None
         raise StructuredTurnError(f"{provider} turn failed: {exc}") from exc
 
+    if on_usage is not None and provider == "codex" and resume_session_id is not None:
+        delta = rollout_after.since(rollout_before) if rollout_after is not None else None
+        if delta is None or delta.tokens is None:
+            # The CLI's whole-session total cannot safely become a turn delta.
+            # Keep any observed partial checkpoint rather than billing it twice.
+            raise StructuredTurnError("resumed cumulative token accounting unavailable after turn")
+
+    if provider == "claude" and result.structured_output is None and (failed := provider_failure(result.text)):
+        raise failed from None
+
     structured_output: object = result.structured_output
-    if not isinstance(structured_output, dict):
-        raise StructuredTurnError(f"{provider} turn returned no structured output")
-    session_id = result.session_id or resume_session_id
-    if not session_id:
-        raise StructuredTurnError(f"{provider} turn did not report a session id")
+    session_id = result.session_id or resume_session_id or ""
     model_requests: int | None = None
     model_requests_source: str | None = None
     usage = result.usage
-    if provider == "claude" and result.usage.tokens.turns > 0:
+    if provider == "claude" and claude_bill is not None:
+        usage = replace(usage, total_cost_usd=claude_bill.usd)
+    if provider == "claude" and claude_bill is not None and claude_bill.requests:
+        usage = replace(result.usage, tokens=claude_bill.tokens, total_cost_usd=claude_bill.usd)
+        model_requests = claude_bill.requests
+        model_requests_source = (
+            CLAUDE_TURNS_REQUEST_SOURCE
+            if claude_bill.source.startswith("complete CLI result")
+            else "claude-unique-message-id"
+        )
+    elif provider == "claude" and result.usage.tokens.turns > 0:
         model_requests, model_requests_source = result.usage.tokens.turns, CLAUDE_TURNS_REQUEST_SOURCE
     elif rollout_after is not None:
         turn_totals = rollout_after.since(rollout_before)
@@ -299,9 +877,95 @@ def run_structured_turn(
         model_requests_source=model_requests_source,
         resumed=resume_session_id is not None,
         skill_directory=skill_directory,
+        usd_complete=claude_bill.usd_complete if claude_bill is not None else None,
+        cache_write_ttl_complete=claude_bill.ttl_complete if claude_bill is not None else None,
     )
-    _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
+    # A model can spend tokens and then fail the structured-response contract.
+    # Persist its observed accounting before rejecting that response.
+    if on_usage is not None:
+        on_usage(turn_usage(turn), True)
+    if not isinstance(structured_output, dict):
+        _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
+        raise StructuredTurnError(f"{provider} turn returned no structured output")
+    if not session_id:
+        _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
+        raise StructuredTurnError(f"{provider} turn did not report a session id")
     return turn
+
+
+class _WriterExecutor:
+    """Track the executor's terminal process evidence, independently of parsing.
+
+    Local closure requires a reaped process; remote closure requires a terminal
+    result/exit. Unknown transport failures leave the durable owner active, including
+    after restart; an OS lock disappearing does not manufacture a release.
+    """
+
+    def __init__(self, live: CommandExecutor, observe_stdout: Callable[[str], None] | None = None) -> None:
+        self.live = live
+        self.observe_stdout = observe_stdout
+        self.closed = True
+
+    def find_binary(self, name: str, env: Mapping[str, str]) -> str:
+        return self.live.find_binary(name, env)
+
+    def check_binary(self, path: str, env: Mapping[str, str], *, timeout: float) -> None:
+        self.live.check_binary(path, env, timeout=timeout)
+
+    def run(self, request: CommandRequest, sink: CommandStreamSink) -> CommandResult:
+        self.closed = False
+        process: subprocess.Popen[str] | None = None
+        terminal = False
+
+        class Sink:
+            def started(self, handle: CommandHandle) -> None:
+                nonlocal process
+                if isinstance(handle, ProcessCommandHandle):
+                    process = handle.process
+                sink.started(handle)
+
+            def stdout(self, line: str) -> None:
+                if self_observer is not None:
+                    self_observer(line)
+                sink.stdout(line)
+
+            def stderr(self, line: str) -> None:
+                sink.stderr(line)
+
+        self_observer = self.observe_stdout
+        try:
+            result = self.live.run(request, Sink())
+            terminal = True
+            return result
+        except CliExitError:
+            terminal = True
+            raise
+        finally:
+            # For local processes, inspect actual reaping even on cancellation
+            # or callback failure. A timeout alone never proves writer closure.
+            # Remote executors must return a terminal result/exit to release.
+            self.closed = process.poll() is not None if process is not None else terminal
+
+
+def _exclude_claude_mcp_config(workspace: Path) -> None:
+    """Keep the ``.mcp.json`` Claude gets for the turn out of commits the agent makes in the checkout.
+
+    A responder may commit source during its turn, and the broker stages the checkout with ``add --all``.
+    """
+
+    probe = subprocess.run(
+        ["git", "rev-parse", "--git-path", "info/exclude"], cwd=workspace, capture_output=True, text=True, check=False
+    )
+    if probe.returncode != 0:
+        return
+    exclude = workspace / probe.stdout.strip()
+    entry = "/.mcp.json"
+    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if entry in existing.split():
+        return
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    exclude.write_text(f"{existing}{separator}{entry}\n", encoding="utf-8")
 
 
 def _append_turn_usage(
@@ -320,13 +984,29 @@ def _append_turn_usage(
         "session_id": turn.session_id,
         "resumed": turn.resumed,
         "duration_seconds": duration_seconds,
+        "rate_limit_wait_seconds": turn.rate_limit_wait_seconds,
+        "concurrency_wait_seconds": turn.concurrency_wait_seconds,
         "model_requests": turn.model_requests,
         "model_requests_source": turn.model_requests_source,
         "tool_calls": turn.tool_calls,
         "shell_commands": len(turn.shell_commands),
         "shell_command_lines": [_bounded_command(command) for command in turn.shell_commands],
         "usage": turn_usage(turn),
+        "usd_complete": turn.usd_complete,
+        "cache_write_ttl_complete": turn.cache_write_ttl_complete,
     }
+    if turn.usage.total_cost_usd is not None:
+        record["cost_usd"] = turn.usage.total_cost_usd
+        record["cost_source"] = "provider"
+    elif turn.usd_complete is False:
+        record["cost_usd"] = None
+        record["cost_source"] = "incomplete"
+    elif (pricing := price_for(provider, model, default_pricing())) is not None:
+        record["cost_usd"] = cost_usd(turn.usage.tokens, pricing)
+        record["cost_source"] = "agentshim-pricing"
+    else:
+        record["cost_usd"] = None
+        record["cost_source"] = "pricing-unavailable"
     log = Path(path).expanduser()
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("a", encoding="utf-8") as handle:

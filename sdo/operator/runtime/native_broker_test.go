@@ -5,6 +5,7 @@ import (
 	"errors"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"testing"
 	"time"
@@ -21,7 +22,8 @@ func (rejectingLatePull) VerifyPull(context.Context, string, uint32, string, []s
 }
 
 func nativeClosure(workspace IncidentWorkspace) IncidentClosure {
-	now := time.Unix(1700000000, 0).UTC()
+	// Reflection deadlines are compared with the wall clock, so closure times are current.
+	now := lifecycleio.Now().UTC()
 	return IncidentClosure{
 		Request: IncidentRequest{
 			SchemaVersion: ProtocolSchemaVersion, Application: "app", Namespace: "default", IncidentID: workspace.IncidentID,
@@ -34,7 +36,10 @@ func nativeClosure(workspace IncidentWorkspace) IncidentClosure {
 			SchemaVersion: ProtocolSchemaVersion, IncidentID: workspace.IncidentID, Status: IncidentCompleted,
 			Timing: TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)},
 		},
-		DetectedAt: now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
+		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear}},
+		DetectedAt:          now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
+		// The controller freezes every closure before its first broker attempt.
+		Frozen: true,
 	}
 }
 

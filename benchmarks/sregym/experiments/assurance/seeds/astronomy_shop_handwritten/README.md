@@ -10,3 +10,5 @@
 ## Overlap with the benchmark grader's probe
 
 The composite grader (`sregym/conductor/problems/composition/grading.py`, `ENTRY_POINTS["OpenTelemetry Demo Astronomy Shop"]`) requests `/`, `/api/products`, `/api/products/OLJCESPC7Z`, `/api/recommendations?productIds=OLJCESPC7Z` and `/api/data?contextKeys=telescopes`. Overlapping scenarios: `storefront-home` (`/`), `product-browse` (`/api/products/<id>`, OLJCESPC7Z among ten seeded IDs), `product-recommendations` (`/api/recommendations?productIds=<id>`) and `ads` (`/api/data?contextKeys=<category>`, telescopes among six). The seed does not request the product list `/api/products`; its other five scenarios have no grader counterpart.
+
+The generic `pod-admission` detector requires successful server-side dry-run Pod creation in the application namespace, even while existing Pods are Ready. API rejection is unhealthy; transport failure is an observation error.

@@ -16,6 +16,9 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 		return result, fmt.Errorf("invalid pending application action %d", index)
 	}
 	patch := result.Patches[index]
+	if patch.Operation != "" {
+		return e.reconcileObjectEffect(ctx, result, index)
+	}
 	if patch.Before == nil || patch.After == nil {
 		return result, fmt.Errorf("pending write has no in-process field images")
 	}
@@ -23,28 +26,47 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 	if err != nil {
 		return result, err
 	}
-	if live.GetUID() != patch.Before.GetUID() {
-		return result, fmt.Errorf("interrupted write conflict: object recreated")
+	if patch.Structured {
+
+		if live.GetUID() == "" || live.GetUID() != patch.Before.GetUID() {
+			return result, fmt.Errorf("structured receipt unknown: UID changed")
+		}
+		before, after := true, true
+		for _, field := range planPatchFields(patch) {
+			b, bok := planConfigurationField(patch.Before, field)
+			a, aok := planConfigurationField(patch.After, field)
+			v, vok := live.Object[field]
+			before = before && planFieldsMatch(b, bok, a, aok, v, vok, true)
+			after = after && planFieldsMatch(b, bok, a, aok, v, vok, false)
+		}
+		if !before && !after {
+			return result, fmt.Errorf("structured receipt unknown: neither field image matches")
+		}
 	}
-	matchesAfter := true
-	matchesBefore := true
-	for _, field := range []string{"spec", "data", "binaryData"} {
-		b, bok := patch.Before.Object[field]
-		a, aok := patch.After.Object[field]
+	// The write landed unless the object still holds its pre-image. Anything else
+	// is the write plus whatever the server made of it, so no after-image is compared.
+	landed := false
+	for _, field := range planPatchFields(patch) {
+		b, bok := planConfigurationField(patch.Before, field)
+		a, aok := planConfigurationField(patch.After, field)
 		v, vok := live.Object[field]
-		matchesAfter = matchesAfter && planFieldsMatch(b, bok, a, aok, v, vok, false)
-		matchesBefore = matchesBefore && planFieldsMatch(b, bok, a, aok, v, vok, true)
+		landed = landed || !planFieldsMatch(b, bok, a, aok, v, vok, true)
 	}
-	if !matchesAfter && !matchesBefore {
-		return result, fmt.Errorf("interrupted write conflict: owned fields changed")
-	}
-	if matchesAfter && !matchesBefore && len(result.ActionsApplied) == index {
-		result.ActionsApplied = append(result.ActionsApplied, result.Plan.Actions[index])
+	if landed && len(result.ActionsApplied) == index {
+		count := patch.ActionCount
+		if count < 1 {
+			count = 1
+		}
+		if index+count > len(result.Plan.Actions) {
+			return result, fmt.Errorf("invalid pending action count")
+		}
+		result.ActionsApplied = append(result.ActionsApplied, result.Plan.Actions[index:index+count]...)
 		result.Applied = true
 	}
 	result.PendingAction = nil
 	return result, nil
 }
+
 func planFieldsMatch(before any, bok bool, after any, aok bool, live any, lok bool, wantBefore bool) bool {
 	if bok == aok && planValuesEqual(before, after) {
 		return true
@@ -73,6 +95,34 @@ func planFieldsMatch(before any, bok bool, after any, aok bool, live any, lok bo
 	ba, barray := before.([]any)
 	aa, aarray := after.([]any)
 	la, larray := live.([]any)
+	// Empty configuration lists are omitted by canonicalization/API storage.
+	if (barray || aarray || larray) && (barray || !bok) && (aarray || !aok) && (larray || !lok) {
+		if bm, am, lm, ok := namedPlanLists(ba, aa, la); ok {
+			keys := map[string]bool{}
+			for k := range bm {
+				keys[k] = true
+			}
+			for k := range am {
+				keys[k] = true
+			}
+			for k := range keys {
+				b, bo := bm[k]
+				a, ao := am[k]
+				l, lo := lm[k]
+				if bo == ao && planValuesEqual(b, a) {
+					continue
+				}
+				// List membership is not a server-defaulted object field.
+				if (!wantBefore && !ao && lo) || (wantBefore && !bo && lo) {
+					return false
+				}
+				if !planFieldsMatch(b, bo, a, ao, l, lo, wantBefore) {
+					return false
+				}
+			}
+			return true
+		}
+	}
 	if barray && aarray && larray && len(ba) == len(aa) && len(aa) == len(la) {
 		for i := range ba {
 			if !planFieldsMatch(ba[i], true, aa[i], true, la[i], true, wantBefore) {

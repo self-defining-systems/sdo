@@ -180,6 +180,7 @@ def build_run_manifest(
         "codex_quota": report.facts.get("codex_quota"),
         "lanes": report.facts.get("lanes"),
         "preflight": report.to_dict(),
+        "fault_capabilities": report.facts.get("fault_capabilities", []),
     }
 
 

@@ -56,16 +56,17 @@ func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (Sour
 		if parts[1] != "blob" || parts[0] == "120000" {
 			continue
 		}
+		if !strings.HasSuffix(strings.ToLower(path), ".yaml") && !strings.HasSuffix(strings.ToLower(path), ".yml") {
+			// Assets and code are source, not topology: they need no parsing.
+			continue
+		}
 		content, err := memoryio.Git(ctx, checkout, false, nil, "cat-file", "blob", parts[2])
 		if err != nil {
 			return SourceFacts{}, fmt.Errorf("read accepted source blob %s: %w", path, err)
 		}
 		total += int64(len(content))
 		if total > 64<<20 {
-			return SourceFacts{}, fmt.Errorf("accepted source inventory exceeds 64 MiB")
-		}
-		if !strings.HasSuffix(strings.ToLower(path), ".yaml") && !strings.HasSuffix(strings.ToLower(path), ".yml") {
-			continue
+			return SourceFacts{}, fmt.Errorf("accepted source YAML inventory exceeds 64 MiB")
 		}
 		decoder := yaml.NewDecoder(bytes.NewReader(content))
 		for {

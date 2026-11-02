@@ -58,7 +58,7 @@ func TestOwnershipChecksEveryRegistrationWithDuplicateID(t *testing.T) {
 				edit(t, root, healthManifest, "interval: 30s", "interval: 20s")
 			},
 			want: []Diagnostic{
-				{Rule: RuleOwnershipDenied, Path: ".sdo/diagnostics/detectors/incidents/health/manifest.yaml", Message: "actor health_judge may not change incident-detector-manifest files in the initial phase", Hint: "changeable by responder in the reflection phase"},
+				{Rule: RuleOwnershipDenied, Path: ".sdo/diagnostics/detectors/incidents/health/manifest.yaml", Message: "actor health_judge may not change incident-detector-manifest files in the initial phase", Hint: "changeable by human in the import phase or responder in the reflection phase"},
 				{Rule: RuleProtectedDetector, Path: ".sdo/diagnostics/detectors/incidents/health/manifest.yaml", Message: "actor health_judge added protected incident detector health"},
 			},
 		},

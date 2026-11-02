@@ -16,7 +16,7 @@ Production code must not import from SREGym packages. Benchmark adapters may imp
 
 ## Development conventions
 
-- Begin with a failing test for bugs and new public behavior.
+- Begin with a failing test for bugs and new public behavior; fix bugs as a class ([guide](docs/testing-guide.md#fix-the-class-not-the-instance)).
 - Test contracts and ownership boundaries, not private implementation details.
 - Use Python type hints, `autopep8`, `ruff`, and `pytest`.
 - Prefer dataclasses or Pydantic models over repeated raw mapping shapes.
@@ -28,14 +28,15 @@ Production code must not import from SREGym packages. Benchmark adapters may imp
 
 ## SDO invariants
 
-- `.sdo/` contains the five durable artifact classes: goal, architecture, playbooks, diagnostics, and outcomes.
+- `.sdo/` contains the six durable artifact classes: goal, architecture, playbooks, diagnostics, outcomes, and rendered deployments.
 - Artifact ownership is enforced by the Go commit broker. Agents edit files in isolated checkouts; only validated commits reach the operational branch.
 - The health judge owns health detectors. Responders may add or refine incident detectors and playbooks after independently verified outcomes.
 - Detector runtime code is deterministic Go using `sdo/operator/sdk`; it must not call an LLM or inspect benchmark verdicts.
 - `sdo/operator/runtime` remains transport-neutral. SREGym submission relays and receipts stay behind the benchmark adapter.
 - Agent implementations register capabilities through versioned protobuf task/result contracts. The native design assigns operational decisions and accepted repository state to Go; only the storage edge knows the physical outcome layout.
 - Native incident/reflection tasks carry accepted-commit-bound logical memory snapshots; responders return logical playbook/script IDs. Reflection directly edits `.sdo/` in its isolated checkout and runs the same `validate.Check` used by the broker through `sdo-operator memory check`. The health judge also edits final health, traffic and health-objective playbook files directly and returns metadata and logical detector IDs; Go explicitly prepares generic policy detectors in the shared check. Source repairs remain isolated checkout edits.
-- Playbook memory includes responder-owned Go programs under `.sdo/playbooks/`, shared `.sdo/lib/` helpers, and immutable captured `.sdo/corpus/` cases. These remain part of the playbook artifact class. The shared validator enforces provenance, replay, imports, and changed-source formatting before publication.
+- Playbook memory includes responder-owned Go programs under `.sdo/playbooks/`, shared `.sdo/lib/` helpers, and immutable captured `.sdo/corpus/` cases. These remain part of the playbook artifact class. The shared validator enforces provenance, imports, and changed-source formatting before publication; replay outcomes are informational.
+- SDO applies a learned playbook automatically when its diagnose matches live and every parameter binds (stage [deterministic, agent]); the agent is told the result and handles what remains; no automatic rollback, no trust gate.
 - Program trust is bound to the accepted source revision and independently verified outcomes. Deterministic controller plans, drift assessment, and live reads remain production APIs; benchmark scripted workers, grading, and recording stay under `benchmarks/`.
 - The active Go broker stores one versioned outcome document per incident at `.sdo/outcomes/<sha256(incident_id)>.json`. Only the current operational-memory schema is supported; incompatible repositories fail before memory is read. No Python broker remains on the production path.
 
@@ -53,6 +54,8 @@ bash scripts/check_errors.sh
 `check_errors.sh` includes the AST import and ownership checks in
 `tests/unit/test_architecture.py`, including the facade-import rule, alongside
 Ruff, Tach, Pyright, Go checks, and proto drift when Buf is installed.
+
+The repository tooling map is [docs/tooling.md](docs/tooling.md).
 
 Use `uv` and `uv run ...` for Python. See [docs/testing-guide.md](docs/testing-guide.md) for focused Python and Go commands.
 

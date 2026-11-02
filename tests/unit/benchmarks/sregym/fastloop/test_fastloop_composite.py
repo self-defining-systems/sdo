@@ -71,6 +71,22 @@ def synchronous_fault_sampling(monkeypatch: pytest.MonkeyPatch):
     assert not _ACTIVE_TRACKERS
 
 
+@pytest.fixture(autouse=True)
+def registered_faults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "benchmarks.sregym.fastloop.composite.composite_faults",
+        lambda problem: (
+            (
+                FaultSpec("readiness", "geo"),
+                FaultSpec("configmap", "mongodb-rate"),
+                FaultSpec("network_policy", "recommendation"),
+            )
+            if problem == PROBLEM
+            else ()
+        ),
+    )
+
+
 def _closure(incident_id: str, offset: int) -> dict[str, Any]:
     at = INJECTED + timedelta(seconds=offset)
     return {
@@ -83,6 +99,7 @@ def _closure(incident_id: str, offset: int) -> dict[str, Any]:
         "dispatched_at": at.isoformat(),
         "responder_completed_at": (at + timedelta(seconds=20)).isoformat(),
         "verified_at": (at + timedelta(seconds=30)).isoformat(),
+        "final_detector_states": [{"detector_id": "health", "status": "clear"}],
     }
 
 
@@ -107,6 +124,9 @@ class FakeOps:
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         return self.pods.get(control_namespace)
 
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        return None
+
     def namespace_exists(self, namespace: str) -> bool:
         return namespace in self.pods
 
@@ -122,7 +142,9 @@ class FakeOps:
         self.logs[control] = []
         return False
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         self.maintenance.append("paused" if paused else "active")
         self.logs[control_namespace].append(
             json.dumps(
@@ -168,8 +190,6 @@ class FakeOps:
                     "incident_open": True,
                     "responder_done": True,
                     "incident_request": {"incident_id": "incident-1"},
-                    "detector_review_required": True,
-                    "detector_review_reason": "health detectors did not clear",
                     "incident_detected_at": INJECTED.isoformat(),
                     "incident_result": {
                         "confirmed_root_causes": [{"summary": "geo and mongodb-rate"}],
@@ -255,6 +275,7 @@ def _agent(
     *,
     agent_registrations: Path | None = None,
     detection_timeout_seconds: float | None = None,
+    clock: Clock | None = None,
 ) -> CompositeSdoAgent:
     repository = tmp_path / "application_workspace"
     repository.mkdir(exist_ok=True)
@@ -310,7 +331,7 @@ def _agent(
         ops=ops,
         lifecycle_inputs=lambda: DeployedLifecycle(fingerprint="fp", context=context),
         run_lifecycle=run_lifecycle,
-        clock=_clock(),
+        clock=clock or _clock(),
         reader=reader,
         report_dir=tmp_path / "reports",
         composite=FAST,
@@ -322,7 +343,7 @@ def _inject() -> InjectionWindow:
 
 
 @pytest.mark.parametrize("recovery_oracle_failed", [False, True])
-def test_failed_composite_reset_restarts_controller_before_next_incident(
+def test_failed_composite_resets_only_after_verified_harness_recovery(
     tmp_path: Path, recovery_oracle_failed: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     class RestartOps(FakeOps):
@@ -368,10 +389,22 @@ def test_failed_composite_reset_restarts_controller_before_next_incident(
         state.save(tmp_path / "state.json")
         resets.append("reset")
 
-    config = LoopConfig("composite-reset", (PROBLEM, "single"), 2, tmp_path / "rows.jsonl", continue_on_error=True)
+    config = LoopConfig(
+        "composite-reset",
+        (PROBLEM, "single"),
+        2,
+        tmp_path / "rows.jsonl",
+        continue_on_error=True,
+        recovery_settle_seconds=1,
+    )
     with caplog.at_level("INFO"):
         rows = run_incidents(agent, Driver(), config, on_failed_incident=reset_failed)
 
+    if recovery_oracle_failed:
+        assert len(rows) == 1
+        assert rows[0].recovery_error is not None
+        assert resets == []
+        return
     assert len(rows) == 2
     assert rows[0].error is not None
     assert "oracle reported failure" in rows[0].error
@@ -503,9 +536,17 @@ def test_composite_drains_pending_incident_with_scripted_agent_config(tmp_path: 
 
 def test_run_stops_when_no_further_incident_arrives_while_a_fault_remains(tmp_path: Path) -> None:
     ops = FakeOps(second_incident=False)
-    agent = _agent(tmp_path, ops)
+    clock = _clock()
+    sleeps: list[float] = []
+    original_sleep = clock.sleep
 
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        original_sleep(seconds)
+
+    agent = _agent(tmp_path, ops, clock=replace(clock, sleep=sleep))
     outcome = agent.resolve(0, PROBLEM, _inject)
+    assert sum(sleeps) < FAST.idle_seconds
     agent.learn(outcome)
 
     report = json.loads((tmp_path / "reports" / f"composite_000_{PROBLEM}.json").read_text(encoding="utf-8"))
@@ -625,7 +666,7 @@ def test_tracked_agent_uses_resolved_stream_faults(tmp_path: Path) -> None:
     assert report["faults"] == ["target_port:geo", "incorrect_image:rate"]
 
 
-def test_a_controller_that_stops_for_detector_review_is_reported_not_waited_on(tmp_path: Path) -> None:
+def test_a_controller_that_never_closes_the_incident_is_reported_not_waited_on(tmp_path: Path) -> None:
     ops = FakeOps(wedge=True)
     agent = _agent(tmp_path, ops)
 
@@ -633,12 +674,55 @@ def test_a_controller_that_stops_for_detector_review_is_reported_not_waited_on(t
     outcome = agent.learn(outcome)
 
     report = json.loads((tmp_path / "reports" / f"composite_000_{PROBLEM}.json").read_text(encoding="utf-8"))
-    assert report["stop_reason"] == "detector_review_required"
+    assert report["stop_reason"] == "no_closure_within_deadline"
     assert report["faults_resolved"] == 2
     assert report["resolved_s"]["network_policy:recommendation"] is None
     assert outcome.resolved_at is None
     assert "geo and mongodb-rate" in outcome.diagnosis
     assert outcome.responder_tokens == TokenCounts(input_tokens=500, cached_input_tokens=400, output_tokens=50)
     assert outcome.error is not None
-    assert "detector review" in outcome.error
+    assert "without a verified closure" in outcome.error
     assert ops.maintenance[-1] == "paused"
+
+
+def test_composite_grades_first_closure_before_its_internal_reflection_drain(tmp_path: Path) -> None:
+    class Ops(FakeOps):
+        def collect_receipt(self, config, incident_id, artifacts_dir):
+            checkpoint = json.loads((tmp_path / "rows.grades" / "000000.json").read_text())
+            assert checkpoint["oracle_incident_id"] == "incident-1"
+            assert checkpoint["oracle"]["success"] is False
+            return super().collect_receipt(config, incident_id, artifacts_dir)
+
+    ops = Ops(second_incident=True)
+    agent = _agent(tmp_path, ops)
+    grades: list[int] = []
+
+    class Driver:
+        def inject(self, _problem: str) -> InjectionWindow:
+            return _inject()
+
+        def oracle(self) -> OracleVerdict:
+            assert ops.receipts == [], "the grade precedes the composite's internal reflection drain"
+            grades.append(1)
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=False)
+
+        def recover(self) -> float:
+            pytest.fail("tier 2 owns the next row's recovery")
+
+    rows = run_incidents(
+        agent,
+        Driver(),
+        LoopConfig("composite-closure-grade", (PROBLEM,), 1, tmp_path / "rows.jsonl", row_start_tier2=True),
+    )
+    assert grades == [1]
+    assert rows[0].oracle_incident_id == "incident-1"
+    assert rows[0].oracle_resolved_at == INJECTED + timedelta(seconds=39)
+    assert rows[0].resolved_at == INJECTED + timedelta(seconds=330)
+    sample = rows[0].model_copy(update={"oracle_finished_at": INJECTED + timedelta(seconds=40)})
+    assert sample.closure_to_grade_seconds == 1
+    assert rows[0].oracle is not None
+    assert rows[0].oracle.success is False
+    assert ops.receipts == ["incident-1", "incident-2"]
+    report = json.loads((tmp_path / "reports" / f"composite_000_{PROBLEM}.json").read_text())
+    assert len(report["incidents"]) == 2
+    assert rows[0].recovery_error is None

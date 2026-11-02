@@ -10,11 +10,15 @@ from pathlib import Path
 
 import yaml
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 
-def write_kind_config(source: Path, destination: Path, worktree: Path) -> Path:
+
+def write_kind_config(source: Path, destination: Path, worktree: Path, parallel_root: Path | None = None) -> Path:
     config = yaml.safe_load(source.read_text(encoding="utf-8"))
     for node in config["nodes"]:
         node.setdefault("extraMounts", []).append({"hostPath": str(worktree), "containerPath": "/opt/sdo-dev"})
+        if parallel_root is not None:
+            node["extraMounts"].append({"hostPath": str(parallel_root.resolve()), "containerPath": "/opt/sdo-parallel"})
     config.setdefault("containerdConfigPatches", []).extend(
         [
             '[plugins."io.containerd.grpc.v1.cri".registry]\n  config_path = "/etc/containerd/certs.d"',
@@ -25,7 +29,9 @@ def write_kind_config(source: Path, destination: Path, worktree: Path) -> Path:
     return destination
 
 
-def prepare_dev_mount(worktree: Path, sregym_dir: Path | None, run_dir: Path) -> Path:
+def prepare_dev_mount(
+    worktree: Path, sregym_dir: Path | None, run_dir: Path, parallel_root: Path | None = None
+) -> Path:
     if not (worktree / "sdo" / "operator" / "go.mod").is_file():
         raise ValueError(f"--dev-mount is not an SDO worktree: {worktree}")
     output = worktree / ".fastloop" / "sdo-operator"
@@ -69,4 +75,89 @@ def prepare_dev_mount(worktree: Path, sregym_dir: Path | None, run_dir: Path) ->
     base = (
         sregym_dir / "kind" / ("kind-config-arm.yaml" if "arm" in arch or "aarch" in arch else "kind-config-x86.yaml")
     )
-    return write_kind_config(base, run_dir / "kind-dev.yaml", worktree)
+    return write_kind_config(base, run_dir / "kind-dev.yaml", worktree, parallel_root)
+
+
+def _copy_dev_snapshot(worktree: Path, node: str, target: str) -> None:
+    """Copy the mounted code allowlist to node storage, never into another checkout."""
+    command = [
+        "tar",
+        "-C",
+        str(worktree),
+        "--exclude=__pycache__",
+        "--exclude=.git",
+        "-cf",
+        "-",
+        "sdo",
+        "libs",
+        "examples",
+        "benchmarks",
+        ".fastloop/sdo-operator",
+    ]
+    producer = subprocess.Popen(command, stdout=subprocess.PIPE)
+    try:
+        subprocess.run(
+            ["docker", "exec", "-i", node, "tar", "-xf", "-", "-C", target],
+            stdin=producer.stdout,
+            check=True,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
+        )
+    finally:
+        if producer.stdout:
+            producer.stdout.close()
+        if producer.wait(timeout=wait_for(WaitKind.PROBE)):
+            raise RuntimeError("failed to snapshot the dev worktree")
+
+
+def retarget_dev_mount(cluster: str, worktree: Path) -> None:
+    """Rebind an idle warm lane without changing its old host checkout or images.
+
+    Kind cannot change Docker bind specifications. A node-local snapshot covers
+    the original mount. Reset refreshes it; node recreation still uses normal up.
+    The caller stops controller writers before this explicit lane adoption.
+    """
+    import hashlib
+
+    target = "/opt/sdo-fastloop-" + hashlib.sha256(str(worktree.resolve()).encode()).hexdigest()[:16]
+    nodes = subprocess.run(
+        ["kind", "get", "nodes", "--name", cluster],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=wait_for(WaitKind.PROBE),
+    ).stdout.splitlines()
+    if not nodes:
+        raise ValueError(f"dev retarget found no nodes for {cluster}")
+    for node in nodes:
+        subprocess.run(["docker", "exec", node, "mkdir", "-p", target], check=True, timeout=wait_for(WaitKind.PROBE))
+        _copy_dev_snapshot(worktree, node, target)
+
+        def identity(path: str, node: str = node) -> str:
+            return subprocess.run(
+                ["docker", "exec", node, "stat", "-c", "%d:%i", path],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=wait_for(WaitKind.PROBE),
+            ).stdout.strip()
+
+        # Isolate propagation before covering the original host bind, then keep
+        # the resulting mount private. Repeated reset must not stack mounts.
+        subprocess.run(
+            ["docker", "exec", node, "mount", "--make-private", "/opt/sdo-dev"],
+            check=True,
+            timeout=wait_for(WaitKind.PROBE),
+        )
+        if identity(target) != identity("/opt/sdo-dev"):
+            subprocess.run(
+                ["docker", "exec", node, "mount", "--bind", target, "/opt/sdo-dev"],
+                check=True,
+                timeout=wait_for(WaitKind.PROBE),
+            )
+        subprocess.run(
+            ["docker", "exec", node, "mount", "--make-private", "/opt/sdo-dev"],
+            check=True,
+            timeout=wait_for(WaitKind.PROBE),
+        )
+        if identity(target) != identity("/opt/sdo-dev"):
+            raise ValueError(f"eval: dev mount identity differs after retarget on {node}")

@@ -16,12 +16,12 @@ func TestOperateClaimAgeUsesInjectedClock(t *testing.T) {
 		name    string
 		age     time.Duration
 		expired bool
-	}{{"recent", 5 * time.Minute, false}, {"expired", 20 * time.Minute, true}} {
+	}{{"recent", operateClaimCreationWindow / 2, false}, {"expired", 2 * operateClaimCreationWindow, true}} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := Config{Namespace: "demo", ControlNamespace: "demo-sdo"}
 			client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: "demo-sdo", CreationTimestamp: metav1.NewTime(created)}, Data: map[string]string{"operation_id": "previous"}})
 			installer := Installer{Client: client, Now: func() time.Time { return created.Add(test.age) }}
-			err := installer.acquireOperateLock(context.Background(), cfg, "next")
+			_, err := installer.acquireOperateLock(context.Background(), cfg, "next", metav1.OwnerReference{Kind: "Job", Name: "next"})
 			if test.expired {
 				if err != nil {
 					t.Fatal(err)

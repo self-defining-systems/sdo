@@ -18,7 +18,7 @@ func (Program) Spec() program.ProgramSpec {
 }
 
 func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
-	ref := b["service"]
+	ref := b.Objects["service"]
 	for _, service := range v.Services() {
 		if service.Namespace != ref.Namespace || service.Name != ref.Name {
 			continue

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import (
     BenchmarkClusterResourcesConfig,
     kubectl,
@@ -34,6 +35,7 @@ from benchmarks.sregym.adapter.fault_gate import (
     inject_fault_after_controller_baseline,
     request_fault_injection,
 )
+from benchmarks.sregym.adapter.grading import ClosureGrader, ClosureGradingMonitor
 from benchmarks.sregym.adapter.healthy_baseline import capture_snapshots, kubectl_capture_ops, publish_snapshots
 from benchmarks.sregym.adapter.native_operator import (
     NativeHostConfig,
@@ -44,14 +46,18 @@ from benchmarks.sregym.adapter.native_operator import (
     inspect_existing,
     install_existing,
     launch_host,
+    read_incident_evidence,
     sync_existing,
 )
 from benchmarks.sregym.adapter.persistent import (
     PERSISTENT_STATE_ENV,
     ClusterOps,
     KubectlClusterOps,
+    PersistentState,
     StageInputs,
     control_namespace_for,
+    drain_pending_incident,
+    pause_for_recovery,
     persist_resolution,
     run_persistent_stage,
 )
@@ -64,6 +70,7 @@ from benchmarks.sregym.protocol.conductor import (
     poll_stage_sync,
     signal_cleanup,
 )
+from benchmarks.sregym.protocol.injection import InvalidInjectionError
 from benchmarks.sregym.protocol.schema import READY_STAGES, TERMINAL_STAGES
 
 logger = logging.getLogger(__name__)
@@ -75,7 +82,7 @@ CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def _cleanup_defer_timeout_seconds() -> float:
-    raw = os.getenv("SREGYM_CLEANUP_DEFER_TIMEOUT_SECONDS", "600").strip()
+    raw = os.getenv("SREGYM_CLEANUP_DEFER_TIMEOUT_SECONDS", str(int(wait_for(WaitKind.OPERATION)))).strip()
     timeout = float(raw)
     if timeout <= 0:
         raise ValueError("SREGYM_CLEANUP_DEFER_TIMEOUT_SECONDS must be positive")
@@ -181,12 +188,12 @@ def _submit_recorded_result(
     *,
     current_stage: Callable[[str], str | None] = get_current_stage_sync,
     submitter: Callable[..., dict[str, Any]] = submit_solution,
-) -> None:
+) -> dict[str, Any]:
     """Publish the responder-authored result when it omitted benchmark transport."""
 
     stage = current_stage(api_base)
     if stage in TERMINAL_STAGES:
-        return
+        return {"done": {"status": stage}}
     if stage not in READY_STAGES:
         raise RuntimeError(f"cannot publish SDO result while SREGym is at stage {stage!r}")
 
@@ -210,13 +217,55 @@ def _submit_recorded_result(
         for item in repair_actions
         if isinstance(item, dict) and str(item.get("summary", "")).strip()
     )
+    responses: dict[str, Any] = {}
     if stage == "diagnosis":
         if not diagnosis:
             raise RuntimeError("SDO result has no confirmed root cause to submit")
-        submitter(diagnosis, phase="diagnosis", api_base=api_base)
+        responses["diagnosis"] = submitter(diagnosis, phase="diagnosis", api_base=api_base)
     if not mitigation:
         raise RuntimeError("SDO result has no successful repair action to submit")
-    submitter(mitigation, phase="mitigation", api_base=api_base)
+    responses["mitigation"] = submitter(mitigation, phase="mitigation", api_base=api_base)
+    return responses
+
+
+def _closure_grading_monitor(native: NativeInstallConfig, api_base: str, directory: Path) -> ClosureGradingMonitor:
+    def state() -> dict[str, Any]:
+        completed = kubectl(
+            ["--request-timeout=10s", "get", "configmap/sdo-controller-state", "-o", "json"],
+            namespace=native.control_namespace,
+            kubeconfig=native.kubeconfig,
+            check=False,
+        )
+        if completed.returncode != 0:
+            details = completed.stderr or completed.stdout
+            if "NotFound" in details or "not found" in details:
+                return {}
+            raise RuntimeError(f"cannot observe closure for grading: {details[-2048:]}")
+        document = json.loads(completed.stdout)
+        return json.loads(document.get("data", {}).get("runtime-state.json", "{}"))
+
+    def identities(snapshot: dict[str, Any]) -> list[str]:
+        closures = [snapshot.get("pending_closure")]
+        failures = snapshot.get("failed_closures", [])
+        if isinstance(failures, list):
+            closures.extend(item.get("closure") for item in failures if isinstance(item, dict))
+        values = [snapshot.get("last_acknowledged_incident_id")]
+        for closure in closures:
+            request = closure.get("request") if isinstance(closure, dict) else None
+            if isinstance(request, dict):
+                values.insert(0, request.get("incident_id"))
+        return [value for value in values if isinstance(value, str) and value]
+
+    known = set(identities(state()))
+
+    def read() -> dict[str, Any] | None:
+        for incident_id in identities(state()):
+            if incident_id not in known:
+                return read_incident_evidence(native, incident_id)["ledger"]
+        return None
+
+    grader = ClosureGrader(directory, api_base, submit=_submit_recorded_result)
+    return ClosureGradingMonitor(grader, read=read)
 
 
 def _receipt_directory(logs_dir: str | None, repository: Path) -> Path:
@@ -267,17 +316,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="explicit deployed manifest file/directory; repeat to select multiple paths (replaces configured list)",
     )
+
     parser.add_argument(
-        "--program-fast-path",
+        "--permissive-responder",
         action=argparse.BooleanOptionalAction,
-        default=config.get("program_fast_path", False),
-        help="enable trusted playbook programs to resolve incidents without a responder",
+        default=config.get("permissive_responder", False),
+        help="enable reviewed permissive responder grants for this benchmark",
     )
     parser.add_argument(
-        "--program-trust-threshold",
-        type=int,
-        default=config.get("program_trust_threshold", 3),
-        help="successful verified repairs required before a program is trusted (positive integer)",
+        "--responder-namespace",
+        dest="responder_namespaces",
+        action="append",
+        default=None,
+        help="additional reviewed responder namespace; repeat to replace the configured list",
     )
     parser.add_argument("--agent-registrations", default=config.get("agent_registrations"))
     parser.add_argument(
@@ -297,19 +348,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=config.get("late_findings", "off"),
         help="let the responder pull findings that activated after dispatch (off by default)",
     )
-    parser.add_argument(
-        "--max-follow-ups",
-        type=int,
-        default=int(config.get("max_follow_ups", 0)),
-        help="follow-up responders for health findings left active after a response (0 = off)",
-    )
-    parser.add_argument("--max-response-loops", type=int, default=int(config.get("max_response_loops", 5)))
-    parser.add_argument(
-        "--follow-up-cooldown-seconds",
-        type=int,
-        default=int(config.get("follow_up_cooldown_seconds", 30)),
-        help="wait after a response before its still-active health findings get a follow-up responder",
-    )
+    parser.add_argument("--max-response-loops", type=int, default=int(config.get("max_response_loops", 10)))
     parser.add_argument(
         "--healthy-baseline",
         action=argparse.BooleanOptionalAction,
@@ -338,10 +377,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if not isinstance(paths, list) or any(not isinstance(path, str) or not path.strip() for path in paths):
         raise ValueError("deployed_manifest_paths must be a list of non-empty strings")
     args.deployed_manifest_paths = tuple(paths)
-    if type(args.program_fast_path) is not bool:
-        raise ValueError("program_fast_path must be a boolean")
-    if type(args.program_trust_threshold) is not int or args.program_trust_threshold <= 0:
-        raise ValueError("program_trust_threshold must be a positive integer")
+
+    if type(args.permissive_responder) is not bool:
+        raise ValueError("permissive_responder must be a boolean")
+    namespaces = args.responder_namespaces
+    if namespaces is None:
+        namespaces = config.get("responder_namespaces", [])
+    if not isinstance(namespaces, list) or any(not isinstance(ns, str) or not ns.strip() for ns in namespaces):
+        raise ValueError("responder_namespaces must be a list of non-empty strings")
+    if namespaces and not args.permissive_responder:
+        raise ValueError("responder_namespaces requires permissive_responder")
+    args.responder_namespaces = tuple(namespaces)
     return args
 
 
@@ -508,7 +554,9 @@ def _configure_turn_usage_log(logs_dir: str | None) -> None:
         os.environ[TURN_USAGE_LOG_ENV] = str(Path(logs_dir) / "sdo_turn_usage.jsonl")
 
 
-def _wait_for_installed_controller(install: NativeInstallConfig, *, timeout_seconds: float = 300.0) -> None:
+def _wait_for_installed_controller(
+    install: NativeInstallConfig, *, timeout_seconds: float = wait_for(WaitKind.ROLLOUT)
+) -> None:
     """An unbounded persistent install returns at creation; wait for its ready Pod."""
 
     deadline = time.monotonic() + timeout_seconds
@@ -520,14 +568,27 @@ def _wait_for_installed_controller(install: NativeInstallConfig, *, timeout_seco
             if time.monotonic() >= deadline:
                 raise
             logger.info("waiting for the seeded controller: %s", exc)
-            time.sleep(3)
+            time.sleep(wait_for(WaitKind.POLL))
 
 
 def _has_accepted_lifecycle(repository: Path) -> bool:
-    """Whether *repository* already holds an accepted SDO lifecycle (a seeded workspace)."""
+    """Select seeded installation; the Go installer independently validates memory.
+
+    Native broker seeds carry current goal, architecture and health artifacts
+    without the historical Python lifecycle-provenance file.
+    """
 
     sdo = repository / ".sdo"
-    if not (sdo / "lifecycle-provenance.yaml").is_file():
+    native = False
+    try:
+        native = (
+            (sdo / "schema-version").read_text(encoding="utf-8").strip() == "3"
+            and (sdo / "goal.md").is_file()
+            and (sdo / "arch.md").is_file()
+        )
+    except (OSError, UnicodeError):
+        pass
+    if not native and not (sdo / "lifecycle-provenance.yaml").is_file():
         return False
     diagnostics = sdo / "diagnostics"
     return (diagnostics / "manifest.yaml").is_file() or any(
@@ -596,6 +657,14 @@ def _launch_native_lifecycle(
     if not raw_kubeconfig or not Path(raw_kubeconfig).is_absolute():
         raise RuntimeError("native benchmark operation requires an absolute trusted kubeconfig")
     kubeconfig = Path(raw_kubeconfig)
+    if namespace == "astronomy-shop":
+        from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability
+
+        prepare_oracle_observability(
+            kubeconfig=kubeconfig,
+            sregym_dir=Path(__file__).resolve().parents[3] / "third_party/sregym",
+            cluster=kind_cluster_name,
+        )
     control_namespace = control_namespace_for(namespace)
     cluster = BenchmarkClusterResourcesConfig(
         namespace=namespace,
@@ -630,14 +699,12 @@ def _launch_native_lifecycle(
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployed_manifest_paths=args.deployed_manifest_paths,
-        program_fast_path=args.program_fast_path,
-        program_trust_threshold=args.program_trust_threshold,
+        permissive_responder=args.permissive_responder,
+        responder_namespaces=args.responder_namespaces,
         healthy_baseline=args.healthy_baseline,
-        max_follow_ups=args.max_follow_ups,
         max_response_loops=args.max_response_loops,
-        follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=120,
+        verification_timeout_seconds=int(wait_for(WaitKind.VERIFICATION_SAMPLE)),
         duration_seconds=None if persistent else args.timeout_sec,
         exit_after_closure=not persistent,
         registration_configmap="sdo-agent-registrations" if args.agent_registrations else None,
@@ -737,13 +804,11 @@ def _native_install_for_run(
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployed_manifest_paths=args.deployed_manifest_paths,
-        program_fast_path=args.program_fast_path,
-        program_trust_threshold=args.program_trust_threshold,
-        max_follow_ups=args.max_follow_ups,
+        permissive_responder=args.permissive_responder,
+        responder_namespaces=args.responder_namespaces,
         max_response_loops=args.max_response_loops,
-        follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=120,
+        verification_timeout_seconds=int(wait_for(WaitKind.VERIFICATION_SAMPLE)),
         duration_seconds=args.timeout_sec,
         exit_after_closure=True,
         responder_env=(
@@ -809,7 +874,14 @@ class _FaultGate:
     def _inject(self) -> None:
         if self._before_inject is not None:
             self._before_inject()
-        request_fault_injection(self._api_base)
+        from benchmarks.sregym.adapter.persistent import KubectlClusterOps, inject_while_paused
+
+        inject_while_paused(
+            KubectlClusterOps(),
+            self._namespace,
+            f"deferred-{uuid.uuid4().hex[:8]}",
+            lambda: request_fault_injection(self._api_base),
+        )
 
     def _run(self) -> None:
         try:
@@ -825,7 +897,9 @@ class _FaultGate:
             self._error = exc
 
     def join(self) -> None:
-        self._thread.join(timeout=5)
+        self._thread.join(timeout=wait_for(WaitKind.PROBE))
+        if isinstance(self._error, InvalidInjectionError):
+            raise self._error
         if self._error is not None:
             raise FaultGateError(f"deferred fault was not injected: {self._error}") from self._error
         if not self.timings:
@@ -888,7 +962,7 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
     initial_stage = poll_stage_sync(
         api_base,
         wait_for=READY_STAGES | {AWAITING_FAULT_INJECTION},
-        timeout=300,
+        timeout=int(wait_for(WaitKind.ROLLOUT)),
         on_timeout="raise",
     )
     if initial_stage != AWAITING_FAULT_INJECTION:
@@ -929,13 +1003,11 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployed_manifest_paths=args.deployed_manifest_paths,
-        program_fast_path=args.program_fast_path,
-        program_trust_threshold=args.program_trust_threshold,
+        permissive_responder=args.permissive_responder,
+        responder_namespaces=args.responder_namespaces,
         late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline,
-        max_follow_ups=args.max_follow_ups,
         max_response_loops=args.max_response_loops,
-        follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         submission_api_base=_in_cluster_api_base(api_base),
         submission_relay_target_base=_relay_target_api_base(api_base),
         artifacts_dir=receipt_dir,
@@ -948,25 +1020,31 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         max_deployment_attempts=args.max_deployment_attempts,
         agent_registrations=Path(args.agent_registrations).resolve() if args.agent_registrations else None,
     )
-    resolution = run_persistent_stage(
-        StageInputs(
-            stage_label=_stage_label(args.logs_dir),
-            application=application,
-            namespace=namespace,
-            lifecycle_fingerprint=_lifecycle_fingerprint(lifecycle_context),
-            runtime_config=config,
-            receipt_dir=receipt_dir,
-            state_path=Path(raw_state_path),
-            kubeconfig=trusted_kubeconfig,
-            verification_timeout_seconds=float(args.timeout_sec + 300),
-            detection_timeout_seconds=(
-                float(args.detection_timeout_sec) if args.detection_timeout_sec is not None else None
-            ),
-        ),
-        ops=_cluster_ops(args, namespace),
-        run_lifecycle=lifecycle,
-        inject=lambda: request_fault_injection(api_base),
+    monitor = (
+        _closure_grading_monitor(native_install_config(config), api_base, receipt_dir)
+        if api_base
+        else contextlib.nullcontext()
     )
+    with monitor:
+        resolution = run_persistent_stage(
+            StageInputs(
+                stage_label=_stage_label(args.logs_dir),
+                application=application,
+                namespace=namespace,
+                lifecycle_fingerprint=_lifecycle_fingerprint(lifecycle_context),
+                runtime_config=config,
+                receipt_dir=receipt_dir,
+                state_path=Path(raw_state_path),
+                kubeconfig=trusted_kubeconfig,
+                verification_timeout_seconds=float(args.timeout_sec + 300),
+                detection_timeout_seconds=(
+                    float(args.detection_timeout_sec) if args.detection_timeout_sec is not None else None
+                ),
+            ),
+            ops=_cluster_ops(args, namespace),
+            run_lifecycle=lifecycle,
+            inject=lambda: request_fault_injection(api_base),
+        )
     resolution["driver_phase_timings_seconds"]["conductor_wait"] = conductor_ready - started
     return resolution
 
@@ -980,7 +1058,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     initial_stage = poll_stage_sync(
         api_base,
         wait_for=READY_STAGES | {AWAITING_FAULT_INJECTION},
-        timeout=300,
+        timeout=int(wait_for(WaitKind.ROLLOUT)),
         on_timeout="raise",
     )
     fault_deferred = initial_stage == AWAITING_FAULT_INJECTION
@@ -1005,36 +1083,62 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     )
     if gate is not None:
         gate.start()
-    host_receipt = _launch_native_lifecycle(
-        args,
-        repository=repository,
-        namespace=namespace,
-        application=application,
-        health_objective=health_objective,
-        api_base=api_base,
-        persistent=False,
-    )
-    runtime_ready = time.monotonic()
-    if gate is not None:
-        gate.join()
     native = _native_install_for_run(args, repository, namespace, application, api_base)
-    if native.kubeconfig is None:
-        raise RuntimeError("native benchmark evidence requires an absolute trusted kubeconfig")
-    incident_id = _acknowledged_incident_id(control_namespace, native.kubeconfig)
-    sync_existing(native)
-    receipt = collect_native_receipt(native, incident_id)
-    receipt["native_host_receipt"] = host_receipt
-    artifact_dir = _receipt_directory(args.logs_dir, repository).resolve()
-    receipt["runtime_artifacts"] = {"directory": str(export_runtime_artifacts(native, artifact_dir))}
-    receipt["fault_injection_deferred"] = fault_deferred
-    if gate is not None:
-        receipt["fault_gate_timings_seconds"] = gate.timings
-    receipt["driver_phase_timings_seconds"] = {
-        "conductor_wait": conductor_ready - started,
-        "native_lifecycle_and_controller": runtime_ready - conductor_ready,
-        "driver_total_before_submission": runtime_ready - started,
-    }
-    return receipt
+    directory = _receipt_directory(args.logs_dir, repository)
+    with _closure_grading_monitor(native, api_base, directory):
+        host_receipt = _launch_native_lifecycle(
+            args,
+            repository=repository,
+            namespace=namespace,
+            application=application,
+            health_objective=health_objective,
+            api_base=api_base,
+            persistent=False,
+        )
+        runtime_ready = time.monotonic()
+        if gate is not None:
+            try:
+                gate.join()
+            except InvalidInjectionError:
+                _remove_sdo_jobs_before_benchmark_grading({}, control_namespace)
+                raise
+        if native.kubeconfig is None:
+            raise RuntimeError("native benchmark evidence requires an absolute trusted kubeconfig")
+        incident_id = _acknowledged_incident_id(control_namespace, native.kubeconfig)
+        sync_existing(native)
+        receipt = collect_native_receipt(native, incident_id)
+        receipt["native_host_receipt"] = host_receipt
+        artifact_dir = _receipt_directory(args.logs_dir, repository).resolve()
+        receipt["runtime_artifacts"] = {"directory": str(export_runtime_artifacts(native, artifact_dir))}
+        receipt["fault_injection_deferred"] = fault_deferred
+        if gate is not None:
+            receipt["fault_gate_timings_seconds"] = gate.timings
+        receipt["driver_phase_timings_seconds"] = {
+            "conductor_wait": conductor_ready - started,
+            "native_lifecycle_and_controller": runtime_ready - conductor_ready,
+            "driver_total_before_submission": runtime_ready - started,
+        }
+        return receipt
+
+
+def _finish_invalid_injection(args: argparse.Namespace, api_base: str, exc: InvalidInjectionError) -> int:
+    directory = _receipt_directory(args.logs_dir, _application_repository())
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "sdo_infrastructure_outcome.json").write_text(
+        json.dumps(
+            {
+                "infra_error": exc.infra_error,
+                "injection_evidence": exc.details,
+                "cleanup_error": exc.cleanup_error,
+                "incident_credit": False,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    signal_cleanup(api_base)
+    return 1 if exc.cleanup_error else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1046,23 +1150,43 @@ def main(argv: list[str] | None = None) -> int:
         return _main_persistent(args, api_base)
     try:
         receipt = _run(args)
+    except InvalidInjectionError as exc:
+        return _finish_invalid_injection(args, api_base, exc)
     except Exception:
         logger.exception("production SDO incident lifecycle failed")
         return 1
     receipt_dir = _receipt_directory(args.logs_dir, _application_repository())
-    # Persist the SDO-authoritative recovery before optional benchmark transport
-    # so a scoring failure cannot erase evidence of a completed incident.
+    # Keep terminal SDO evidence separate from the immutable closure grading checkpoint.
     persist_production_receipt(receipt, receipt_dir)
     _remove_sdo_jobs_before_benchmark_grading(receipt, str(receipt["namespace"]))
-    submission_started = time.monotonic()
-    _submit_recorded_result(receipt, api_base)
-    receipt.setdefault("driver_phase_timings_seconds", {})["benchmark_submission"] = (
-        time.monotonic() - submission_started
-    )
-    persist_production_receipt(receipt, receipt_dir)
     print(f"SDO_RUN_TELEMETRY={json.dumps(receipt, sort_keys=True)}")
     signal_cleanup(api_base)
     return 0
+
+
+def _quiesce_persistent_cleanup(args: argparse.Namespace, resolution: dict[str, Any]) -> None:
+    """Keep conductor teardown behind terminal bookkeeping and paused incident intake."""
+
+    namespace = str(resolution["namespace"])
+    incident_id = str(resolution["incident_id"])
+    state_path = Path(os.environ[PERSISTENT_STATE_ENV])
+    state = PersistentState.load(state_path)
+    record = state.controllers.get(namespace)
+    if record is None:
+        raise RuntimeError("eval: cannot clean up an unrecorded persistent controller")
+    ops = _cluster_ops(args, namespace)
+    if record.pending is not None:
+        if record.pending.incident_id != incident_id:
+            raise RuntimeError("eval: cleanup incident differs from the pending closure")
+        drain_pending_incident(
+            record,
+            ops=ops,
+            repository=record.pending.repository,
+            drained_by="conductor-before-cleanup",
+        )
+        record.pending = None
+        state.save(state_path)
+    pause_for_recovery(ops, record.control_namespace, incident_id=incident_id)
 
 
 def _main_persistent(args: argparse.Namespace, api_base: str) -> int:
@@ -1073,16 +1197,19 @@ def _main_persistent(args: argparse.Namespace, api_base: str) -> int:
         raise RuntimeError("sdo_codex requires defer_cleanup: true in the SREGym agent registry")
     try:
         resolution = _run_persistent(args, api_base, started)
+    except InvalidInjectionError as exc:
+        return _finish_invalid_injection(args, api_base, exc)
     except Exception:
         logger.exception("persistent SDO incident lifecycle failed")
         return 1
     receipt_dir = _receipt_directory(args.logs_dir, _application_repository())
     persist_resolution(resolution, receipt_dir)
-    submission_started = time.monotonic()
-    _submit_recorded_result(resolution, api_base)
-    resolution["driver_phase_timings_seconds"]["benchmark_submission"] = time.monotonic() - submission_started
-    persist_resolution(resolution, receipt_dir)
     print(f"SDO_RUN_TELEMETRY={json.dumps(resolution, sort_keys=True, default=str)}")
+    try:
+        _quiesce_persistent_cleanup(args, resolution)
+    except Exception:
+        logger.exception("persistent benchmark cleanup blocked before terminal intake pause")
+        return 1
     signal_cleanup(api_base)
     return 0
 

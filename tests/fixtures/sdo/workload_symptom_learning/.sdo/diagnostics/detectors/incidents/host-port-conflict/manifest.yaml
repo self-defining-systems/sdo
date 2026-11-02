@@ -1,0 +1,21 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: host-port-conflict
+constructor: New
+class: incident
+owner: responder
+watches:
+  - apiVersion: apps/v1
+    kind: Deployment
+interval: 30s
+persistence:
+  firing: 1
+  clearing: 1
+batching:
+  severity: warn
+  debounce: "0"
+possiblePlaybooks:
+  - workload-host-port
+originatingIncident: workload-symptom-learning
+originatingCommit: synthetic

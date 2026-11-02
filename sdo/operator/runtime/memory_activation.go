@@ -44,9 +44,6 @@ func (c *Controller) ReconfigureMemory(remote *RemoteMemory, provider SnapshotPr
 	c.detectorSpecs = specs
 	c.healthDetectorIDs = health
 	c.provider = provider
-	if c.drift != nil {
-		c.drift.Programs = remote.Programs
-	}
 	return nil
 }
 

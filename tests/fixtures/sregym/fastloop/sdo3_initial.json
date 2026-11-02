@@ -1,0 +1,18 @@
+{
+  "diagnosis_grading": "off",
+  "judge_model_id": "codex-gpt-6-luna",
+  "incidents": [
+    "missing_configmap_hotel_reservation",
+    "network_policy_block__v_hotel_reservation_search_both_descriptive",
+    "readiness_probe_misconfiguration_hotel_reservation",
+    "wrong_service_selector_hotel_reservation",
+    "incorrect_image__v_hotel_reservation_rate_nonexistent_tag",
+    "composite3_hotel_geo_rate_recommendation",
+    "mf__hotel_reservation__n2__s1773744812__v_",
+    "mf__hotel_reservation__n2__s3830920265__v_",
+    "mf__hotel_reservation__n2__s3801549391__v_",
+    "mf__hotel_reservation__n2__s1085951852__v_",
+    "missing_configmap_hotel_reservation",
+    "wrong_service_selector_hotel_reservation"
+  ]
+}

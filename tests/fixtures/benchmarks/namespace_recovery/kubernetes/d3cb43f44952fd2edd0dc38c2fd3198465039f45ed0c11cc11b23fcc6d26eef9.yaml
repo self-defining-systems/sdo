@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+    annotations: {}
+    labels:
+        app.kubernetes.io/component: agent-collector
+        app.kubernetes.io/instance: astronomy-shop
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: opentelemetry-collector
+        app.kubernetes.io/part-of: opentelemetry-collector
+        app.kubernetes.io/version: 0.142.0
+        helm.sh/chart: opentelemetry-collector-0.142.2
+    name: otel-collector
+    namespace: astronomy-shop

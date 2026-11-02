@@ -1,0 +1,308 @@
+"""Namespace recovery must retain prerequisites, independent of application names."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from pathlib import Path
+
+import pytest
+
+from benchmarks.sregym.fastloop.baseline_recovery import capture_application_baseline, reconcile_application
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
+from tests.unit.benchmarks.sregym.fastloop.test_baseline_recovery import FakeCluster, obj
+
+
+@pytest.mark.parametrize(
+    ("namespace", "accounts"),
+    [
+        ("astronomy-shop", ["astronomy-shop", "grafana", "jaeger", "otel-collector"]),
+        ("hotel-reservation", ["reservation-reader"]),
+        ("social-network", ["social-reader"]),
+    ],
+)
+def test_namespace_recovery_capture_contains_referenced_nondefault_service_accounts(
+    namespace: str, accounts: list[str]
+) -> None:
+    # AST3's sealed-baseline reproducer: all four account names come from real
+    # pod-template references, not recovery configuration.
+    cluster = FakeCluster()
+    for account in accounts:
+        cluster.add(obj("Deployment", account, namespace, spec={"template": {"spec": {"serviceAccountName": account}}}))
+        cluster.add(obj("ServiceAccount", account, namespace))
+    role = obj("Role", "reader", namespace, rules=[{"apiGroups": [""], "resources": ["pods"], "verbs": ["get"]}])
+    binding = obj(
+        "RoleBinding",
+        "reader",
+        namespace,
+        roleRef={"kind": "Role", "name": "reader"},
+        subjects=[{"kind": "ServiceAccount", "name": accounts[0], "namespace": namespace}],
+    )
+    cluster.add(role)
+    cluster.add(binding)
+    original = deepcopy(cluster.objects)
+    baseline = capture_application_baseline(cluster, namespace)
+    captured_accounts = {v["metadata"]["name"] for v in baseline.objects if v["kind"] == "ServiceAccount"}
+    assert set(accounts) <= captured_accounts
+    cluster.objects.clear()
+    reconcile_application(cluster, baseline, namespace)
+    assert cluster.objects == original
+    order = [kind for _, kind, _ in cluster.touched]
+    assert order.index("ServiceAccount") < order.index("Deployment")
+
+
+def test_ast3_sealed_baseline_recovers_all_referenced_accounts_and_grants(tmp_path: Path) -> None:
+    import yaml
+
+    from benchmarks.sregym.fastloop.baseline_recovery import load_application_baseline
+    from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
+
+    root = Path(__file__).parents[4] / "fixtures/benchmarks/namespace_recovery"
+    baseline = load_application_baseline(root / "astronomy-baseline.json", "astronomy-shop")
+    assert baseline
+    manifests = [yaml.safe_load(path.read_text()) for path in sorted((root / "kubernetes").glob("*.yaml"))]
+    source = commit_accepted_source(tmp_path / "workspace", manifests, namespace="astronomy-shop")
+    recovered = complete_recovery_baselines(source, baseline)
+    for captured in recovered:
+        accounts = {v["metadata"]["name"] for v in captured.objects if v["kind"] == "ServiceAccount"}
+        required = set()
+        for value in captured.objects:
+            from benchmarks.sregym.fastloop.recovery_closure import pod_spec
+
+            pod = pod_spec(value)
+            if pod and pod.get("serviceAccountName", "default") != "default":
+                required.add(pod["serviceAccountName"])
+        assert required <= accounts
+    assert {v["kind"] for v in recovered[0].objects} >= {"Role", "RoleBinding"}
+    # Grafana's Secret is a real second blocker, never synthesized or read.
+    assert [r.label() for r in missing_prerequisites(recovered)] == ["astronomy-shop/Secret/grafana"]
+    assert recovered[0].objects[: len(baseline[0].objects)] == baseline[0].objects
+
+
+@pytest.mark.parametrize("namespace", ["hotel-reservation", "social-network", "astronomy-shop"])
+def test_reference_closure_follows_env_volumes_rbac_and_stateful_claims(namespace: str) -> None:
+    from benchmarks.sregym.fastloop.recovery_closure import prerequisites
+
+    deployment = obj(
+        "StatefulSet",
+        "app",
+        namespace,
+        spec={
+            "serviceName": "headless",
+            "volumeClaimTemplates": [{"metadata": {"name": "data"}, "spec": {"storageClassName": "local-path"}}],
+            "template": {
+                "spec": {
+                    "serviceAccountName": "reader",
+                    "imagePullSecrets": [{"name": "registry"}],
+                    "volumes": [
+                        {"configMap": {"name": "mounted"}},
+                        {"persistentVolumeClaim": {"claimName": "data"}},
+                        {
+                            "projected": {
+                                "sources": [
+                                    {"secret": {"name": "projected"}},
+                                    {"configMap": {"name": "kube-root-ca.crt"}},
+                                ]
+                            }
+                        },
+                    ],
+                    "initContainers": [{"envFrom": [{"configMapRef": {"name": "init"}}]}],
+                    "containers": [
+                        {
+                            "env": [{"valueFrom": {"secretKeyRef": {"name": "password"}}}],
+                            "envFrom": [{"configMapRef": {"name": "optional", "optional": True}}],
+                        }
+                    ],
+                }
+            },
+        },
+    )
+    assert {(r.kind, r.name) for r in prerequisites(deployment, namespace)} == {
+        ("Service", "headless"),
+        ("ServiceAccount", "reader"),
+        ("Secret", "registry"),
+        ("ConfigMap", "mounted"),
+        ("Secret", "projected"),
+        ("ConfigMap", "init"),
+        ("Secret", "password"),
+        ("StorageClass", "local-path"),
+    }
+    binding = obj(
+        "RoleBinding",
+        "reader",
+        namespace,
+        roleRef={"kind": "ClusterRole", "name": "read"},
+        subjects=[{"kind": "ServiceAccount", "name": "reader"}],
+    )
+    assert {r.label() for r in prerequisites(binding, namespace)} == {
+        "ClusterRole/read",
+        f"{namespace}/ServiceAccount/reader",
+    }
+
+
+def test_missing_prerequisites_rejects_before_controller_or_namespace_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import reset
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, save_application_baseline
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    env = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fake",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+        seed_commit="synthetic",
+    )
+    commit_accepted_source(env.workspace, namespace="hotel")
+    env.baseline_path.write_text("{}")
+    deployment = obj(
+        "Deployment",
+        "app",
+        spec={
+            "template": {
+                "spec": {
+                    "serviceAccountName": "absent",
+                    "containers": [{"envFrom": [{"secretRef": {"name": "credential"}}]}],
+                }
+            }
+        },
+    )
+    commit_accepted_source(env.workspace, [deployment])
+    save_application_baseline(env.baseline_path, (ApplicationBaseline("hotel", [deployment]),))
+    calls = []
+
+    def command(args, **kwargs):
+        calls.append(args)
+        assert args[0] == "get", "rejection must precede every mutation"
+        return subprocess.CompletedProcess(args, 1, "", "(NotFound)")
+
+    monkeypatch.setattr(reset, "kubectl", command)
+    cluster = SimpleNamespace(reset_controller=lambda *a, **k: pytest.fail("controller mutated"))
+    with pytest.raises(ValueError, match="hotel/Secret/credential, hotel/ServiceAccount/absent"):
+        reset.reset_environment(env, cluster, SimpleNamespace(), checks=reset.RestoreChecks(env))
+    assert calls == [["get", "namespace", "hotel", "-o", "name"]]
+
+
+def test_secret_manifests_are_never_rendered_during_closure(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+    from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
+
+    secret = {"apiVersion": "v1", "kind": "Secret", "metadata": {"namespace": "hotel", "name": "credential"}}
+    source = commit_accepted_source(tmp_path, [{**secret, "stringData": {"token": "synthetic"}}])
+    value = obj("Pod", "app", spec={"containers": [{"envFrom": [{"secretRef": {"name": "credential"}}]}]})
+    result = complete_recovery_baselines(source, (ApplicationBaseline("hotel", [value]),))
+    assert [r.label() for r in missing_prerequisites(result)] == ["hotel/Secret/credential"]
+    assert not any(v["kind"] == "Secret" for v in result[0].objects)
+
+
+@pytest.mark.parametrize("kind", ["Role", "RoleBinding", "ServiceAccount"])
+def test_recovery_restores_top_level_identity_and_rbac_fields(
+    kind: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
+
+    fields = {
+        "Role": {"rules": [{"verbs": ["get"], "resources": ["pods"]}]},
+        "RoleBinding": {
+            "roleRef": {"kind": "Role", "name": "reader"},
+            "subjects": [{"kind": "ServiceAccount", "name": "reader"}],
+        },
+        "ServiceAccount": {"automountServiceAccountToken": False, "imagePullSecrets": [{"name": "registry"}]},
+    }
+    value = obj(kind, "reader", **fields[kind])
+    live = deepcopy(value)
+    live["metadata"]["resourceVersion"] = "17"
+    field = {"Role": "rules", "RoleBinding": "subjects", "ServiceAccount": "imagePullSecrets"}[kind]
+    live[field] = []
+
+    def api(args, **kwargs):
+        if args[0] == "get":
+            return SimpleNamespace(stdout=json.dumps(live))
+        assert args[0] == "patch"
+        for operation in json.loads(Path(args[4]).read_text()):
+            if operation["op"] == "add":
+                live[operation["path"].removeprefix("/")] = operation["value"]
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+    KubectlApplicationCluster(tmp_path / "kubeconfig").apply("hotel", value)
+    assert live[field] == value[field]
+
+
+def test_reset_cli_checks_prerequisites_before_building_or_starting_a_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import cli, reset
+
+    environment = SimpleNamespace(
+        shared_accepted_id=None,
+        seed_commit="seed",
+        dev_mount=None,
+        app="sregym",
+        namespace="hotel",
+        kubeconfig=tmp_path / "kubeconfig",
+    )
+    monkeypatch.setattr(cli.FastloopEnvironment, "load", lambda _: environment)
+
+    def reject(_):
+        raise ValueError("eval: namespace recovery cannot restore prerequisites: hotel/Secret/credential")
+
+    monkeypatch.setattr(reset.RestoreChecks, "validate", reject)
+    monkeypatch.setattr(cli, "_worker", lambda _: pytest.fail("worker started before rejection"))
+    args = cli.build_parser().parse_args(["reset", "--run-dir", str(tmp_path)])
+    with pytest.raises(ValueError, match="hotel/Secret/credential"):
+        args.handler(args)
+
+
+@pytest.mark.parametrize("kind", ["ServiceAccount", "Role", "RoleBinding"])
+def test_legacy_capture_cannot_delete_unrecorded_namespace_prerequisites(kind: str) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+
+    cluster = FakeCluster()
+    cluster.add(obj(kind, "default" if kind == "ServiceAccount" else "reader"))
+    original = deepcopy(cluster.objects)
+    reconcile_application(cluster, ApplicationBaseline("hotel", []), "hotel")
+    assert cluster.objects == original
+    assert cluster.touched == []
+
+
+@pytest.mark.parametrize("unrelated_kind", ["Deployment", "ConfigMap"])
+def test_recovery_reads_only_the_reference_closure_from_the_accepted_source(
+    tmp_path: Path, unrelated_kind: str
+) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+    from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
+
+    source = commit_accepted_source(
+        tmp_path, [obj("ServiceAccount", "reader"), {**obj(unrelated_kind, "other-lane"), "apiVersion": "v1"}]
+    )
+    baseline = (ApplicationBaseline("hotel", [obj("Pod", "app", spec={"serviceAccountName": "reader"})]),)
+    completed = complete_recovery_baselines(source, baseline)
+    assert [(v["kind"], v["metadata"]["name"]) for v in completed[0].objects] == [
+        ("Pod", "app"),
+        ("ServiceAccount", "reader"),
+    ]
+
+
+def test_legacy_default_account_configuration_contributes_transitive_dependencies(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+    from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
+
+    value = obj("ServiceAccount", "default", imagePullSecrets=[{"name": "registry"}])
+    source = commit_accepted_source(tmp_path, [value])
+    baselines = (ApplicationBaseline("hotel", [obj("Pod", "app", spec={"containers": []})]),)
+    completed = complete_recovery_baselines(source, baselines)
+    assert value in completed[0].objects
+    assert [ref.label() for ref in missing_prerequisites(completed)] == ["hotel/Secret/registry"]

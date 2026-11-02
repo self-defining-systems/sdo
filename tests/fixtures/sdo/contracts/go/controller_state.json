@@ -213,6 +213,7 @@
     ]
   },
   "pending_closure": {
+    "closure_stability_window": "15s",
     "detected_at": "1970-01-01T00:00:01Z",
     "detector_timeline": [
       {
@@ -230,28 +231,21 @@
     "final_detector_states": [
       {
         "detector_id": "cause",
-        "evaluated_at": "1970-01-01T00:00:03Z",
+        "evaluated_at": "1970-01-01T00:00:17Z",
         "status": "clear"
       }
     ],
     "final_state_changes": {
       "baseline_at": "1970-01-01T00:00:00Z",
-      "observed_at": "1970-01-01T00:00:03Z"
+      "observed_at": "1970-01-01T00:00:17Z"
     },
     "health_cleared_at": "1970-01-01T00:00:02Z",
     "incident_detector_fired_before_dispatch": true,
     "incident_detector_states": [
       {
         "detector_id": "cause",
-        "evaluated_at": "1970-01-01T00:00:03Z",
+        "evaluated_at": "1970-01-01T00:00:17Z",
         "status": "clear"
-      }
-    ],
-    "observed_state_changes": [
-      {
-        "first_observed_at": "1970-01-01T00:00:01Z",
-        "kind": "Service",
-        "name": "frontend"
       }
     ],
     "request": {
@@ -370,7 +364,7 @@
         }
       ]
     },
-    "verified_at": "1970-01-01T00:00:03Z"
+    "verified_at": "1970-01-01T00:00:17Z"
   },
   "scheduler_deadlines": {
     "health": "2026-01-02T03:04:05.000000006Z"

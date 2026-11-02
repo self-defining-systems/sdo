@@ -6,28 +6,69 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"strings"
-	"testing"
-	"time"
 )
+
+// Full command reports retain the original controller response under actions[].
+// Read that complete typed output for assertions; summaries are presentation only.
+func fullToolAction(t *testing.T, encoded []byte) []byte {
+	t.Helper()
+	var envelope struct {
+		DetailsFile string            `json:"details_file"`
+		Actions     []json.RawMessage `json:"actions"`
+	}
+	if err := json.Unmarshal(encoded, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.DetailsFile != "" {
+		data, err := os.ReadFile(envelope.DetailsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded = data
+		if err = json.Unmarshal(data, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(envelope.DetailsFile) })
+	}
+	if envelope.Actions != nil {
+		if len(envelope.Actions) != 1 {
+			t.Fatalf("one invocation must retain one complete raw controller response, got %d", len(envelope.Actions))
+		}
+		return envelope.Actions[0]
+	}
+	return encoded
+}
 
 func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	// Include Python startup and cold JIT compilation under the race-enabled CI
+	// shard. Eight seconds can expire even after the CLI emits its response.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "uv", append([]string{"run", "python", "-m", "sdo.agents.responder.tools_cli"}, args...)...)
+	prefix := []string{"run", "python", "-m", "sdo.agents.responder.tools_cli"}
+	compact := os.Getenv("SDO_SCRIPTED_COMPACT_OUTPUT") == "1"
+	if !compact {
+		prefix = append(prefix, "--json")
+	}
+	command := exec.CommandContext(ctx, "uv", append(prefix, args...)...)
 	command.Dir = filepath.Join("..", "..", "..")
 	command.Env = append(os.Environ(), "SDO_TOOLS_DIR="+directory)
 	command.WaitDelay = time.Second
@@ -35,10 +76,51 @@ func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 	command.Stderr = &stderr
 	output, err := command.Output()
 	if err != nil {
-		t.Fatalf("sdo %v: %v: stdout: %s; stderr: %s", args, err, output, stderr.String())
+		t.Fatalf("sdo %v: %v (context: %v): stdout: %s; stderr: %s", args, err, ctx.Err(), output, stderr.String())
 	}
 	var response ToolResponse
 	encoded := []byte(strings.SplitN(string(output), "\n", 2)[0])
+	if compact {
+		parts := strings.SplitN(string(output), "Full JSON: ", 2)
+		if len(parts) != 2 {
+			t.Fatalf("compact sdo %v must name complete JSON: %s", args, output)
+		}
+		detailsFile := strings.TrimSpace(strings.SplitN(parts[1], "\n", 2)[0])
+		if len([]rune(string(output))) > 3001 {
+			t.Fatalf("compact sdo %s: %d characters exceeds 3001", args[0], len([]rune(string(output))))
+		}
+		t.Logf("compact sdo %s stdout=%d characters", args[0], len([]rune(string(output))))
+		if destination := os.Getenv("SDO_SCRIPTED_TOOL_RESPONSES"); destination != "" {
+			if err := os.WriteFile(filepath.Join(destination, args[0]+".summary.txt"), output, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		encoded, err = os.ReadFile(detailsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(detailsFile) })
+		encoded = fullToolAction(t, encoded)
+		var full ToolResponse
+		if err := json.Unmarshal(encoded, &full); err != nil {
+			t.Fatal(err)
+		}
+		mutation := args[0] == "mitigate" || args[0] == "apply" || args[0] == "act"
+		if mutation {
+			if len(output) > 2048 {
+				t.Fatalf("mutation summary exceeds 2KiB: %d bytes", len(output))
+			}
+			if !strings.Contains(string(output), "Incident:") || !strings.Contains(string(output), "incident_verified:") {
+				t.Fatal("mutation summary omitted closure status")
+			}
+			if full.IncidentVerified == nil && !strings.Contains(string(output), "Incident: NOT verified") {
+				t.Fatal("action health was promoted to incident closure")
+			}
+		} else if full.Healthy && !strings.Contains(string(output), "healthy=true") {
+			t.Fatal("compact output omitted verified health")
+		}
+	}
+	encoded = fullToolAction(t, encoded)
 	if err := json.Unmarshal(encoded, &response); err != nil {
 		t.Fatalf("decode sdo %v: %v: stdout: %s; stderr: %s", args, err, output, stderr.String())
 	}
@@ -76,11 +158,13 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			deployment, _ := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
 			deployment.Name = "peer"
 			deployment.Spec.Template.Spec.Containers[0].Image = "missing:v1"
+			deployment.Status = appsv1.DeploymentStatus{}
 			_, _ = client.AppsV1().Deployments("app").Create(ctx, deployment, metav1.CreateOptions{})
 			pod, _ := client.CoreV1().Pods("app").Get(ctx, "api-pod", metav1.GetOptions{})
 			pod.Name = "peer-pod"
 			pod.Labels = map[string]string{"app": "peer"}
-			pod.Status.ContainerStatuses[0].State.Waiting.Reason = "ImagePullBackOff"
+			pod.Spec.Containers[0].Image = "missing:v1"
+			pod.Status = corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}
 			_, _ = client.CoreV1().Pods("app").Create(ctx, pod, metav1.CreateOptions{})
 			port.Name, image.Name = "peer", "peer"
 		}
@@ -105,6 +189,17 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			}
 		}
 		loop := NewResponderLoop(IncidentRequest{IncidentID: id, Namespace: "app", RepairPolicy: "recorded-actions", Findings: findings}, registry, provider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
+		now := time.Now().UTC()
+		controller, err := NewController(testControllerConfig(), []sdk.Detector{fastloopDetector{}}, provider, &verificationRetryDispatcher{}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		controller.currentIncidentRequest = &loop.Request
+		controller.incidentOpen = true
+		bindRecoveryFixture(controller, loop, now)
+		if err := controller.Step(ctx, now, nil); err != nil {
+			t.Fatal(err)
+		}
 		loop.CorpusSessionRoot = root
 		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 			return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
@@ -116,11 +211,6 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			}
 			fastloopPodWaiting(t, ctx, client, "api-pod", "ErrImagePull")
 			fastloopPodWaiting(t, ctx, client, "api-pod", "ImagePullBackOff")
-			loop.DiagnosisSettleDelay = time.Millisecond
-			loop.RetryInitialDiagnose(ctx)
-			if got := loop.ProgramRuns(); len(got) != 2 || got[1].Verdict.Result != program.Match {
-				t.Fatalf("settled diagnosis: %+v", got)
-			}
 		}
 		tools := filepath.Join(t.TempDir(), "tools")
 		server := SessionToolServer{Directory: tools, Handle: loop.Handle, PollInterval: time.Millisecond}
@@ -145,6 +235,12 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 		}
 		fastloopTool(t, tools, "diagnose")
 		if incident == 1 {
+			if got := loop.ProgramRuns(); got[len(got)-1].Verdict.Result != program.Match {
+				t.Fatalf("diagnosis after the pull failure settled: %+v", got)
+			}
+			if response := loop.Handle(ctx, ToolRequest{Command: "pre-apply"}); response.Error != "" {
+				t.Fatal(response.Error)
+			}
 			for _, ref := range []sdk.ObjectRef{port, image} {
 				patch := []byte(`{"spec":{"ports":[{"port":80,"targetPort":8080}]}}`)
 				if ref.Kind == "Deployment" {
@@ -175,6 +271,43 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 				t.Fatalf("reload plan outcome: %+v %v", reloaded.IncidentResult, err)
 			}
 		}
+		pending := fastloopTool(t, tools, "verify")
+		if pending.Healthy || pending.IncidentVerified != nil {
+			t.Fatalf("clear health bypassed the controller proof: %+v", pending)
+		}
+		if destination := os.Getenv("SDO_SCRIPTED_TOOL_RESPONSES"); destination != "" {
+			encoded, err := json.Marshal(pending)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(destination, "verify-pending.json"), encoded, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Model the independent workload controller's observed completion in
+		// the fake Kubernetes API; repairing a template alone is not recovery.
+		deployment, err := client.AppsV1().Deployments("app").Get(ctx, image.Name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		one := int32(1)
+		deployment.Spec.Replicas = &one
+		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": image.Name}}
+		deployment.Spec.Template.Labels = map[string]string{"app": image.Name}
+		deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: deployment.Generation, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}
+		if _, err := client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		pod, err := client.CoreV1().Pods("app").Get(ctx, image.Name+"-pod", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pod.Spec = *deployment.Spec.Template.Spec.DeepCopy()
+		pod.Status = corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}
+		if _, err := client.CoreV1().Pods("app").Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		assertRecoveryFixtureWindow(t, controller, ctx, time.Now().UTC().Add(time.Second))
 		verified := fastloopTool(t, tools, "verify")
 		if !verified.Healthy || len(verified.Findings) != 0 {
 			t.Fatalf("incident %d did not verify: %+v", incident, verified)
@@ -204,21 +337,20 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		names := []string{"open@detect.json", "open@pre-apply.json", "fixed.json"}
-		if incident == 1 {
-			names = append(names, "open@settle.json")
-		}
-		for _, name := range names {
+		for _, name := range []string{"open@detect.json", "open@pre-apply.json", "fixed.json"} {
 			if _, err := os.Stat(filepath.Join(captureDir, name)); err != nil {
 				t.Fatalf("missing %s: %v", name, err)
 			}
 		}
+		for _, name := range []string{"open@settle.json"} {
+			if _, err := os.Stat(filepath.Join(captureDir, name)); !os.IsNotExist(err) {
+				t.Fatalf("%s must no longer be captured: %v", name, err)
+			}
+		}
 		if incident == 1 {
-			for name, want := range map[string]string{"open@detect.json": "ContainerCreating", "open@settle.json": "ImagePullBackOff", "open@pre-apply.json": "ImagePullBackOff"} {
-				wire, err := os.ReadFile(filepath.Join(captureDir, name))
-				if err != nil || !strings.Contains(string(wire), want) {
-					t.Fatalf("%s was captured at the wrong phase: %v", name, err)
-				}
+			wire, err := os.ReadFile(filepath.Join(captureDir, "open@detect.json"))
+			if err != nil || !strings.Contains(string(wire), "ContainerCreating") {
+				t.Fatalf("open@detect was captured at the wrong phase: %v", err)
 			}
 		}
 	}

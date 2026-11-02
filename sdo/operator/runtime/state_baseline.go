@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
@@ -54,10 +55,12 @@ type StateFieldChange struct {
 // StateChange is one application object that differs from the healthy
 // baseline.
 type StateChange struct {
-	Kind   string
-	Name   string
-	Change string
-	Fields []StateFieldChange
+	APIVersion string
+	Namespace  string
+	Kind       string
+	Name       string
+	Change     string
+	Fields     []StateFieldChange
 }
 
 // StateChanges is the application namespace's configuration diff against its
@@ -83,7 +86,8 @@ type StateBaseline interface {
 
 // StateTrackerConfig configures a StateTracker.
 type StateTrackerConfig struct {
-	Client kubernetes.Interface
+	Scope, Ceiling sdk.ObservationScope
+	Client         kubernetes.Interface
 	// MetadataClient is required to observe Secrets. Without it Secrets are
 	// unobserved; the typed Client is never used as a fallback.
 	MetadataClient rest.Interface
@@ -112,17 +116,17 @@ type trackedKind struct {
 // that commonly carry faults and diffs them in memory, so a diff costs
 // milliseconds and never calls the API server at dispatch.
 type StateTracker struct {
-	config StateTrackerConfig
+	scoped          sdk.ScopedSnapshot
+	scopedBaselined map[string]bool
+	config          StateTrackerConfig
 
-	mu         sync.Mutex
-	cancel     context.CancelFunc
+	mu sync.Mutex
+	// stop cancels the live informers and returns once their goroutines have exited.
+	stop       func()
 	informers  map[string]cache.SharedIndexInformer
 	unobserved []string
 	baseline   *stateSnapshot
 	candidate  *stateSnapshot
-	// Image evidence outlives the configuration diff baseline across maintenance.
-	// GitPlanSource independently checks its source tree before using it.
-	images *stateSnapshot
 }
 
 // NewStateTracker creates an unstarted tracker.
@@ -144,6 +148,14 @@ func (t *StateTracker) Start(ctx context.Context) error {
 	t.Stop()
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	factory := informers.NewSharedInformerFactoryWithOptions(t.config.Client, t.config.ResyncPeriod, informers.WithNamespace(t.config.Namespace))
+	var secretRuns sync.WaitGroup
+	// Every exit path, including a failed sync, ends with the informer
+	// goroutines gone: a leaked reflector keeps reading process-wide state.
+	stop := func() {
+		cancel()
+		factory.Shutdown()
+		secretRuns.Wait()
+	}
 	started := map[string]cache.SharedIndexInformer{}
 	unobserved := []string{}
 	for _, kind := range trackedKinds {
@@ -158,7 +170,11 @@ func (t *StateTracker) Start(ctx context.Context) error {
 			}
 			informer := t.secretMetadataInformer(runCtx)
 			started[kind.kind] = informer
-			go informer.Run(runCtx.Done())
+			secretRuns.Add(1)
+			go func() {
+				defer secretRuns.Done()
+				informer.Run(runCtx.Done())
+			}()
 			continue
 		}
 		if err := kind.probe(ctx, t.config.Client, t.config.Namespace); err != nil {
@@ -173,13 +189,21 @@ func (t *StateTracker) Start(ctx context.Context) error {
 		syncs = append(syncs, informer.HasSynced)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), syncs...) {
-		cancel()
+		stop()
 		return fmt.Errorf("sync state tracker informers: %w", ctx.Err())
 	}
 	t.mu.Lock()
-	t.cancel, t.informers, t.unobserved = cancel, started, unobserved
+	t.stop, t.informers, t.unobserved = stop, started, unobserved
 	t.mu.Unlock()
 	return nil
+}
+
+// Running reports whether the tracker's informers are observing, so a
+// caller can start it exactly when it is not, whatever pause history led here.
+func (t *StateTracker) Running() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.informers != nil
 }
 
 // UnobservedKinds are the kinds the last Start could not read.
@@ -189,19 +213,20 @@ func (t *StateTracker) UnobservedKinds() []string {
 	return append([]string(nil), t.unobserved...)
 }
 
-// Stop ends observation; the baseline is kept until Reset.
+// Stop ends observation and waits for the informers to exit; the baseline is
+// kept until Reset.
 func (t *StateTracker) Stop() {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.cancel != nil {
-		t.cancel()
+	stop := t.stop
+	t.stop, t.informers = nil, nil
+	t.mu.Unlock()
+	if stop != nil {
+		stop()
 	}
-	t.cancel, t.informers = nil, nil
 }
 
 // Reset forgets the baseline, for example when a maintenance window may have
-// redeployed the application. Last healthy image evidence is retained separately;
-// it is usable only with matching source identity.
+// redeployed the application.
 func (t *StateTracker) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -218,21 +243,47 @@ func (t *StateTracker) Observe(now time.Time, healthy bool) {
 	if t.informers == nil {
 		return
 	}
-	if !healthy {
+	if !healthy || !t.scopedCompleteLocked() {
 		t.candidate = nil
 		return
 	}
 	switch {
 	case t.baseline == nil:
 		t.baseline = t.snapshotLocked(now)
-		t.images = t.baseline
+		t.scopedBaselined = map[string]bool{}
+		for _, status := range t.scoped.Statuses {
+			if status.State == sdk.ObservationObserved {
+				t.scopedBaselined[status.Target.Key()] = true
+			}
+		}
 	case t.candidate == nil:
 		t.candidate = t.snapshotLocked(now)
 	case now.Sub(t.candidate.at) >= t.config.Settle:
 		t.baseline = t.candidate
-		t.images = t.baseline
 		t.candidate = t.snapshotLocked(now)
 	}
+}
+
+// BaselineAt exposes the exact clear observation adopted by Observe, so the
+// controller's replay capture and closure configuration diff share one boundary.
+func (t *StateTracker) BaselineAt() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.baseline == nil {
+		return time.Time{}
+	}
+	return t.baseline.at
+}
+
+// BaselineCandidateAt exposes the beginning of the next healthy settle
+// interval. Replay observations must be captured then, before any later fault.
+func (t *StateTracker) BaselineCandidateAt() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.candidate == nil {
+		return time.Time{}
+	}
+	return t.candidate.at
 }
 
 // Changes implements StateBaseline.
@@ -245,32 +296,13 @@ func (t *StateTracker) Changes(now time.Time) *StateChanges {
 	current := t.snapshotLocked(now)
 	changes := diffStates(t.baseline, current)
 	changes.UnobservedKinds = append([]string(nil), t.unobserved...)
+	for _, status := range t.scoped.Statuses {
+		if status.State != sdk.ObservationObserved {
+			changes.UnobservedKinds = append(changes.UnobservedKinds, status.Target.Key())
+		}
+	}
+	sort.Strings(changes.UnobservedKinds)
 	return changes
-}
-
-// BaselineImage returns the image recorded before the current incident changed a workload.
-func (t *StateTracker) BaselineImage(ref sdk.ObjectRef, container string, init bool) (string, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.images == nil || ref.Namespace != t.config.Namespace {
-		return "", false
-	}
-	state := t.images.objects[ref.Kind+"/"+ref.Name]
-	prefix := "container"
-	if init {
-		prefix = "initContainer"
-	}
-	image := state[prefix+"["+container+"].image"]
-	return image, image != ""
-}
-
-func (t *StateTracker) BaselineTree(ref sdk.ObjectRef) string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.images == nil || ref.Namespace != t.config.Namespace {
-		return ""
-	}
-	return t.images.objects[ref.Kind+"/"+ref.Name]["template.sourceTree"]
 }
 
 func (t *StateTracker) snapshotLocked(now time.Time) *stateSnapshot {
@@ -283,7 +315,35 @@ func (t *StateTracker) snapshotLocked(now time.Time) *stateSnapshot {
 		for _, object := range informer.GetStore().List() {
 			name, state, include := kind.state(object)
 			if include {
+				if metadata, err := meta.Accessor(object); err == nil {
+					if deleted := metadata.GetDeletionTimestamp(); deleted != nil {
+						state["metadata.deletionTimestamp"] = deleted.UTC().Format(time.RFC3339Nano)
+					}
+					if finalizers := metadata.GetFinalizers(); len(finalizers) > 0 {
+						sort.Strings(finalizers)
+						state["metadata.finalizers"] = renderJSON(finalizers)
+					}
+				}
 				snapshot.objects[kind.kind+"/"+name] = state
+			}
+		}
+	}
+	for target, objects := range scopedObjects(t.scoped) {
+		for name, object := range objects {
+			snapshot.objects["@"+target+"/"+name] = scopedState(object)
+		}
+	}
+	// During a gap retain the baseline without manufacturing removals.
+	if t.baseline != nil {
+		for _, status := range t.scoped.Statuses {
+			if status.State == sdk.ObservationObserved {
+				continue
+			}
+			prefix := "@" + status.Target.Key() + "/"
+			for key, state := range t.baseline.objects {
+				if strings.HasPrefix(key, prefix) {
+					snapshot.objects[key] = state
+				}
 			}
 		}
 	}
@@ -316,6 +376,14 @@ func diffStates(baseline *stateSnapshot, current *stateSnapshot) *StateChanges {
 		after, hasAfter := current.objects[key]
 		kind, name, _ := strings.Cut(key, "/")
 		change := StateChange{Kind: kind, Name: name}
+		if strings.HasPrefix(key, "@") {
+			parts := strings.Split(strings.TrimPrefix(key, "@"), "/")
+			last := len(parts) - 1
+			change.Name = parts[last]
+			change.Kind = parts[last-3]
+			change.Namespace = parts[last-2]
+			change.APIVersion = strings.Join(parts[:last-3], "/")
+		}
 		switch {
 		case !hadBefore:
 			change.Change = StateChangeAdded
@@ -765,4 +833,61 @@ func bounded(value string) string {
 		return value
 	}
 	return value[:maxRenderedValue-len("...")] + "..." + " (" + digest([]byte(value)) + ")"
+}
+
+func (t *StateTracker) UpdateScoped(s sdk.ScopedSnapshot) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.scoped.Generation != s.Generation {
+		t.candidate = nil
+	}
+	allowed := map[string]bool{}
+	for _, target := range s.Scope.Targets {
+		allowed[target.Key()] = true
+	}
+	if t.scopedBaselined == nil {
+		t.scopedBaselined = map[string]bool{}
+	}
+	for key := range t.scopedBaselined {
+		if !allowed[key] {
+			delete(t.scopedBaselined, key)
+			if t.baseline != nil {
+				for objectKey := range t.baseline.objects {
+					if strings.HasPrefix(objectKey, "@"+key+"/") {
+						delete(t.baseline.objects, objectKey)
+					}
+				}
+			}
+		}
+	}
+	if t.baseline != nil {
+		for key, objects := range scopedObjects(s) {
+			if t.scopedBaselined[key] {
+				continue
+			}
+			for name, o := range objects {
+				t.baseline.objects["@"+key+"/"+name] = scopedState(o)
+			}
+			t.scopedBaselined[key] = true
+		}
+	}
+	t.scoped = s
+	t.config.Scope = s.Scope
+	if !t.scopedCompleteLocked() {
+		t.candidate = nil
+	}
+}
+func (t *StateTracker) scopedCompleteLocked() bool {
+	if len(t.config.Scope.Targets) == 0 {
+		return true
+	}
+	if len(t.scoped.Statuses) != len(t.config.Scope.Targets) {
+		return false
+	}
+	for _, status := range t.scoped.Statuses {
+		if status.State != sdk.ObservationObserved {
+			return false
+		}
+	}
+	return true
 }

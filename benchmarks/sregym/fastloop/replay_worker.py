@@ -15,17 +15,26 @@ from unittest.mock import patch
 
 from google.protobuf import json_format
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.agent_script.cli import script_environment
 from benchmarks.sregym.agent_script.converter import convert_recording
 from benchmarks.sregym.fastloop.fake_kube import FakeKubernetesAPIServer
 from benchmarks.sregym.fastloop.file_edits import encode_file_edits, record_file_edits
 from benchmarks.sregym.fastloop.reflection_script import reflection_script
-from benchmarks.sregym.fastloop.replay import CheckpointError, CheckpointStore, StageCheckpoint, replay_broker_result
+from benchmarks.sregym.fastloop.replay import (
+    CheckpointError,
+    CheckpointStore,
+    StageCheckpoint,
+    materialize_captures,
+    replay_broker_result,
+)
 from benchmarks.sregym.fastloop.replay_transport import captured_commands
 from benchmarks.sregym.fastloop.responder_script import responder_script
+from benchmarks.sregym.repository_git import host_clone_command, host_git_command
 from sdo.agents.responder import (
     CodexSessionBackend,
     SessionReflector,
+    capture_sections,
     execute_incident,
     run_reflection_task,
     run_worker_task,
@@ -87,6 +96,8 @@ class CapturedKubernetesAPI:
         raise CheckpointError(f"uncaptured Kubernetes command: {argv[:6]}")
 
     def tool(self, *args: str) -> dict[str, Any]:
+        # Replies are always JSON here; the flag only selects the real CLI's output form.
+        args = tuple(arg for arg in args if arg != "--json")
         if args[0] == "source":
             if len(args) != 2:
                 raise CheckpointError(f"invalid source reference: {args[1:]}")
@@ -123,8 +134,9 @@ class CapturedKubernetesAPI:
 
 def _objects(snapshot: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
     result: dict[tuple[str, str], dict[str, Any]] = {}
+    sections = capture_sections(snapshot)
     for kind, collection in (("Service", "services"), ("Deployment", "deployments")):
-        for item in snapshot.get(collection, []):
+        for item in sections.get(collection, []):
             result[(kind, item["metadata"]["name"])] = item
     return result
 
@@ -139,6 +151,7 @@ def _relevant(item: dict[str, Any] | None, kind: str) -> Any:
 
 def replay_generated_responder(store: CheckpointStore, incident: int, *, source: Path) -> dict[str, Any]:
     checkpoint = store.load(incident, "responder")
+    checkpoint.require_captures()
     task = parse_json(checkpoint.request, AgentTask())
     typed = IncidentRequest()
     if not task.request.Unpack(typed):
@@ -212,10 +225,19 @@ def replay_generated_responder(store: CheckpointStore, incident: int, *, source:
     }
 
 
+def _read_only_git(args: list[str]) -> bool:
+    """Whether ``git`` arguments only inspect a checkout (configuration overrides, then diff or ls-files)."""
+
+    while args[:1] == ["-c"]:
+        args = args[2:]
+    return args[:1] in (["diff"], ["ls-files"])
+
+
 def replay_generated_reflection(
     store: CheckpointStore, incident: int, *, source: Path, operator_root: Path
 ) -> dict[str, Any]:
     checkpoint = store.load(incident, "reflection")
+    checkpoint.require_captures()
     task = parse_json(checkpoint.request, AgentTask())
     typed = ReflectionRequest()
     if not task.request.Unpack(typed):
@@ -230,12 +252,18 @@ def replay_generated_reflection(
         task_path.write_text(to_canonical_json(task), encoding="utf-8")
         captures = root / "corpus"
         captures.mkdir()
-        for name, data in checkpoint.captures.items():
-            (captures / name).write_bytes(data)
+        materialize_captures(captures, checkpoint.captures)
         publisher = _Publisher()
         binary = root / "sdo-operator"
 
-        def command(argv: list[str], *, timeout: int = 180) -> str:
+        def command(argv: list[str], *, timeout: int = int(wait_for(WaitKind.ROLLOUT))) -> str:
+            git = host_git_command(checkout)
+            if argv[: len(git)] == git and _read_only_git(argv[len(git) :]):
+                # The reflector decides from its own checkout's diff; inspection never writes.
+                inspected = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+                if inspected.returncode:
+                    raise CheckpointError(f"reflection git inspection failed: {inspected.stderr.strip()[-4096:]}")
+                return inspected.stdout
             if argv[0] != "sdo-operator":
                 raise CheckpointError(f"unexpected reflection command: {argv[:3]}")
             if not binary.is_file():
@@ -244,7 +272,7 @@ def replay_generated_reflection(
                     cwd=operator_root,
                     capture_output=True,
                     text=True,
-                    timeout=180,
+                    timeout=wait_for(WaitKind.ROLLOUT),
                     check=False,
                 )
                 if built.returncode:
@@ -325,10 +353,12 @@ def replay_generated_reflection(
 
 def _clone_at(source: Path, destination: Path, commit: str) -> None:
     for command in (
-        ["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", str(source), str(destination)],
-        ["git", "-C", str(destination), "reset", "--quiet", "--hard", commit],
+        host_clone_command(source, destination, "--quiet", "--no-hardlinks", "--no-checkout"),
+        host_git_command(destination, "reset", "--quiet", "--hard", commit),
     ):
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=wait_for(WaitKind.SLOW_COMMAND), check=False
+        )
         if completed.returncode:
             raise CheckpointError(f"prepare accepted replay source: {completed.stderr.strip()[-4096:]}")
 
@@ -343,6 +373,7 @@ def replay_script_worker(
     script: Path | None = None,
 ) -> dict[str, Any]:
     checkpoint = store.load(incident, stage)
+    checkpoint.require_captures()
     operator_root = operator_root or Path(__file__).resolve().parents[3] / "sdo/operator"
     proposals: list[dict[str, Any]] = []
     task = parse_json(checkpoint.request, AgentTask())
@@ -417,8 +448,7 @@ def replay_script_worker(
         publisher = _Publisher()
         captures = root / "corpus"
         captures.mkdir()
-        for name, data in checkpoint.captures.items():
-            (captures / name).write_bytes(data)
+        materialize_captures(captures, checkpoint.captures)
         api = CapturedKubernetesAPI(checkpoint.captures) if stage == "responder" else None
         if api is not None:
             api.runs = json_format.MessageToDict(typed, preserving_proto_field_name=True).get(
@@ -458,7 +488,7 @@ def replay_script_worker(
                         cwd=operator_root,
                         capture_output=True,
                         text=True,
-                        timeout=180,
+                        timeout=wait_for(WaitKind.ROLLOUT),
                         check=False,
                     )
                     if built.returncode:
@@ -472,7 +502,7 @@ def replay_script_worker(
                 env={**os.environ, "SDO_OPERATOR_ROOT": str(operator_root)},
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=wait_for(WaitKind.ROLLOUT),
                 check=False,
             )
             if completed.returncode:
@@ -506,6 +536,9 @@ def replay_script_worker(
                     "KUBECONFIG": str(server.write_kubeconfig(root / "kubeconfig")),
                     "KUBERNETES_SERVICE_HOST": "",
                     "SDO_CAPTURED_CORPUS_DIR": str(captures),
+                    "SDO_OPERATOR_ROOT": str(operator_root),
+                    "SDO_HEALTHY_BASELINE": "",
+                    "PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
                 },
             ),
         ):

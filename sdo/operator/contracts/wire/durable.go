@@ -9,24 +9,34 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// UnmarshalDurable drops only the retired PlanApplication mutation journal in
+// UnmarshalDurable maps retired field names and values to their successors (see
+// retired.go) and drops only retired mutation journals and program sweep cursors in
 // documents from prior builds. Other unknown fields still fail strict decoding.
 func UnmarshalDurable(data []byte, message proto.Message) error {
 	// Keep the ordinary strict path unchanged, including rejection of malformed
-	// documents. Migration is needed only for the two explicitly retired fields.
-	if err := Unmarshal(data, message); err == nil {
+	// documents. Migration is needed only for explicitly retired fields and
+	// values.
+	err := Unmarshal(data, message)
+	if err == nil {
 		return nil
-	} else if !strings.Contains(err.Error(), `unknown field "pre_images"`) && !strings.Contains(err.Error(), `unknown field "preImages"`) && !strings.Contains(err.Error(), `unknown field "patches"`) {
+	}
+	if migrated, migrateErr := migrateRetired(data, message.ProtoReflect().Descriptor()); migrateErr == nil {
+		data = migrated
+		if err = Unmarshal(data, message); err == nil {
+			return nil
+		}
+	}
+	if !strings.Contains(err.Error(), `unknown field "pre_images"`) && !strings.Contains(err.Error(), `unknown field "preImages"`) && !strings.Contains(err.Error(), `unknown field "patches"`) && !strings.Contains(err.Error(), `unknown field "program_sweep_cursors"`) && !strings.Contains(err.Error(), `unknown field "programSweepCursors"`) {
 		return err
 	}
-	cleaned, err := discardPlanJournals(data, message.ProtoReflect().Descriptor())
+	cleaned, err := discardRetiredFields(data, message.ProtoReflect().Descriptor())
 	if err != nil {
 		return fmt.Errorf("decode durable %s: %w", name(message), err)
 	}
 	return Unmarshal(cleaned, message)
 }
 
-func discardPlanJournals(data json.RawMessage, descriptor protoreflect.MessageDescriptor) (json.RawMessage, error) {
+func discardRetiredFields(data json.RawMessage, descriptor protoreflect.MessageDescriptor) (json.RawMessage, error) {
 	// Well-known messages have special ProtoJSON shapes and cannot contain an
 	// SDO PlanApplication. In particular, leave arbitrary Struct/Value data alone.
 	if strings.HasPrefix(string(descriptor.FullName()), "google.protobuf.") || string(data) == "null" {
@@ -40,6 +50,10 @@ func discardPlanJournals(data json.RawMessage, descriptor protoreflect.MessageDe
 		delete(object, "pre_images")
 		delete(object, "preImages")
 		delete(object, "patches")
+	}
+	if descriptor.FullName() == "sdodev.contracts.v1alpha1.ControllerState" {
+		delete(object, "program_sweep_cursors")
+		delete(object, "programSweepCursors")
 	}
 	for key, value := range object {
 		fields := descriptor.Fields()
@@ -57,13 +71,13 @@ func discardPlanJournals(data json.RawMessage, descriptor protoreflect.MessageDe
 				return nil, err
 			}
 			for i := range list {
-				if list[i], err = discardPlanJournals(list[i], field.Message()); err != nil {
+				if list[i], err = discardRetiredFields(list[i], field.Message()); err != nil {
 					return nil, err
 				}
 			}
 			object[key], err = json.Marshal(list)
 		} else {
-			object[key], err = discardPlanJournals(value, field.Message())
+			object[key], err = discardRetiredFields(value, field.Message())
 		}
 		if err != nil {
 			return nil, err

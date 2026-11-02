@@ -1,0 +1,1 @@
+Health detectors (judge-owned, never edit): 

@@ -27,6 +27,10 @@ RUN mkdir /deps \
     done
 
 FROM go-modules AS go-deps
+# Bound shared-host build parallelism, including nested compiler jobs.
+# Match transient memory-check/JIT flags; a mismatched seed causes cold
+# recompilation of the entire runtime and Kubernetes dependency graph per Job.
+ENV GOMAXPROCS=4 GOFLAGS="-p=4 -trimpath"
 COPY --from=go-dep-list /deps /deps
 RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
       (cd "$dir" && go build $(cat "/deps/$(echo "$dir" | tr / _).txt")); \
@@ -38,21 +42,27 @@ FROM registry.k8s.io/kubectl:v1.33.2@sha256:15ac68dd5ff1c5ef4c5ef85f2ef1a6e20903
 FROM node:22.17.0-bookworm-slim@sha256:b04ce4ae4e95b522112c2e5c52f781471a5cbc3b594527bcddedee9bc48c03a0 AS node-tools
 
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime-base
-# The identical OS/tool layer is shared by every shipped role. Go and build
-# dependencies stay in build stages; only controller copies the compiler.
+# The identical OS/tool layer is shared by every shipped role. Pods run as uid 65532;
+# its passwd entry lets the ssh client reach a memory upstream. Go and build
+# dependencies stay in build stages; controller and validator share compiler layers.
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates git python3 python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install --yes --no-install-recommends ca-certificates git openssh-client python3 python3-pip bash curl jq tar \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "sdo:x:65532:65532:SDO:/tmp:/usr/sbin/nologin" >> /etc/passwd
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 ENV PATH="/usr/local/go/bin:${PATH}" \
     PYTHONPATH=/opt/sdo \
+    GIT_AUTHOR_NAME="SDO Agent" \
+    GIT_AUTHOR_EMAIL="sdo-agent@sdo.dev" \
+    GIT_COMMITTER_NAME="SDO Agent" \
+    GIT_COMMITTER_EMAIL="sdo-agent@sdo.dev" \
     HOME=/tmp \
     GOCACHE=/tmp/go-cache \
     GOMODCACHE=/go/pkg/mod \
     GOPROXY=off \
     GOSUMDB=off \
     GOMAXPROCS=2 \
-    GOFLAGS="-mod=mod -p=2" \
+    GOFLAGS="-mod=mod -p=2 -trimpath" \
     CGO_ENABLED=0 \
     SDO_GO_CACHE_SEED=/go/build-cache \
     SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs
@@ -101,25 +111,52 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
 
 FROM python-deps AS model-deps
 # Node is needed by model CLIs, never by controller, validator or scripted jobs.
-RUN apt-get update && apt-get install --yes --no-install-recommends libstdc++6 \
+RUN apt-get update && apt-get install --yes --no-install-recommends libstdc++6 jq \
+    && printf '%s\n' '{"probe":[{"ok":true}]}' | jq -e '.probe[0].ok == true' >/dev/null \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=node-tools /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-tools /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 ARG CODEX_VERSION=0.163.0
-ARG CLAUDE_CODE_VERSION=2.1.258
+ARG CLAUDE_CODE_VERSION=2.1.280
 RUN npm install --global "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force
+# Keep model requirements beside their image defaults; measure the installed
+# executables rather than trusting the npm arguments or image labels alone.
+COPY scripts/check_model_cli_versions.py /usr/local/lib/sdo/check_model_cli_versions.py
+COPY sdo/operator/model_cli_requirements.json /usr/local/lib/sdo/model_cli_requirements.json
+RUN python3 /usr/local/lib/sdo/check_model_cli_versions.py \
+      --requirements /usr/local/lib/sdo/model_cli_requirements.json \
+      --claude-code-version "${CLAUDE_CODE_VERSION}" \
+      --codex-version "${CODEX_VERSION}" \
+      --metadata /opt/sdo/model-cli-versions.json
+LABEL dev.sdo.claude-code.version="${CLAUDE_CODE_VERSION}" \
+      dev.sdo.codex.version="${CODEX_VERSION}"
 
-FROM go-deps AS go-runtime
+FROM go-deps AS go-binaries
 # The runtime and synthesized detector workspaces use local Go modules in this
 # tree, including memory, worker registration, and generated contracts.
 COPY sdo/operator ./sdo/operator
-RUN cd sdo/operator/sdk && go test -run '^$' ./...
-RUN cd sdo/operator/core && go test -run '^$' ./...
-RUN cd sdo/operator/runtime && go test -run '^$' ./...
+RUN cd sdo/operator && go build -buildvcs=false -ldflags="-s -w" -o /usr/local/bin/sdo-go-cache ./cmd/sdo-go-cache
 RUN cd sdo/operator && go build -buildvcs=false -ldflags="-s -w" -o /usr/local/bin/sdo-operator ./cmd/sdo-operator
+RUN cd sdo/operator/runtime && go build -buildvcs=false -ldflags="-s -w" -o /usr/local/bin/sdo-observation-check ./cmd/sdo-observation-check
+
+# Only compiler-bearing roles need offline archive/vet warming. Workers consume
+# the binaries directly so their builds do not depend on the validator seed.
+FROM go-binaries AS go-runtime
+# Test suites own test-binary linking; the image needs production archives and vet facts.
+RUN cd sdo/operator/sdk && go build ./... && go vet ./...
+RUN cd sdo/operator/core && go build ./... && go vet ./...
+RUN cd sdo/operator/runtime && go build ./...
+# Vet the production dependency graph through a neutral consumer. Worker and
+# runtime test-only packages are not dependencies of generated validators.
+RUN mkdir sdo/operator/runtime/cachewarm \
+    && printf 'package cachewarm\nimport (_ "sdo.dev/operator/runtime"; _ "sdo.dev/operator/runtime/prometheus"; _ "sdo.dev/operator/runtime/prober"; _ "sdo.dev/operator/runtime/replay")\n' > sdo/operator/runtime/cachewarm/cachewarm.go \
+    && (cd sdo/operator/runtime && go vet ./cachewarm) \
+    && rm -rf sdo/operator/runtime/cachewarm
+RUN cd sdo/operator/runtime && go build -buildvcs=false -ldflags="-s -w" -o /usr/local/bin/sdo-shell-controller ./cmd/sdo-shell-controller
+
 # Cache entries added on top of go-deps, so the worker image copies only these.
 RUN mkdir /go/build-cache-delta \
     && cd /go/build-cache \
@@ -127,27 +164,35 @@ RUN mkdir /go/build-cache-delta \
       | tar -cf - -T - | tar -xf - -C /go/build-cache-delta
 
 
-FROM runtime-base AS runtime-sources
-COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
-COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
-
-FROM runtime-sources AS controller
+# One inherited layer chain for the full offline compiler seed. Copying the
+# same directories independently in each role produces different layer digests
+# because their parent chains differ. Keep these copies at their single owner.
+FROM runtime-base AS compiler-base
 COPY --from=go-deps /usr/local/go /usr/local/go
 COPY --from=go-deps /go/pkg/mod /go/pkg/mod
 COPY --from=go-deps /go/build-cache /go/build-cache
 COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/
+
+FROM compiler-base AS runtime-sources
+COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
+COPY --from=go-runtime /usr/local/bin/sdo-observation-check /usr/local/bin/sdo-observation-check
+COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
+
+FROM runtime-sources AS controller
+COPY --from=go-runtime /usr/local/bin/sdo-shell-controller /usr/local/bin/sdo-shell-controller
 COPY sdo/agents/registrations /opt/sdo/sdo/agents/registrations
 LABEL org.opencontainers.image.title="SDO Go operator" org.opencontainers.image.version="0.1.0"
 CMD ["/usr/local/bin/sdo-operator", "controller", "--help"]
 
 FROM model-deps AS worker-runtime
-COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
-COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
+COPY --from=go-binaries /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
+COPY --from=go-binaries /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 COPY examples/playbook-programs /opt/sdo/examples/playbook-programs
 COPY sdo /opt/sdo/sdo
 COPY libs/__init__.py /opt/sdo/libs/__init__.py
 COPY libs/agent_cli /opt/sdo/libs/agent_cli
 RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-incident-response/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-operationalize/SKILL.md \
@@ -156,18 +201,21 @@ RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > 
     && chmod 755 /usr/local/bin/sdo
 RUN /usr/local/bin/sdo-operator memory help | grep -q 'memory check'
 CMD ["python3", "-m", "sdo.agents.responder.worker"]
+
+COPY scripts/check_claude_worker.py /usr/local/lib/sdo/check_claude_worker.py
 
 FROM worker-runtime AS responder
 
 # Scripted lanes share Python dependencies, without ever adding model CLIs.
 FROM python-deps AS scripted-runtime
-COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
-COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
+COPY --from=go-binaries /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
+COPY --from=go-binaries /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 COPY examples/playbook-programs /opt/sdo/examples/playbook-programs
 COPY sdo /opt/sdo/sdo
 COPY libs/__init__.py /opt/sdo/libs/__init__.py
 COPY libs/agent_cli /opt/sdo/libs/agent_cli
 RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-incident-response/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-operationalize/SKILL.md \
@@ -176,3 +224,13 @@ RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > 
     && chmod 755 /usr/local/bin/sdo
 RUN /usr/local/bin/sdo-operator memory help | grep -q 'memory check'
 CMD ["python3", "-m", "sdo.agents.responder.worker"]
+
+# Fixed slim tools for RunScript; no model CLI, compiler, module cache or sources.
+FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS script-tools-base
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates git bash curl jq tar \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+FROM script-tools-base AS script-tools
+COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
+CMD ["/usr/local/bin/sdo-operator", "script-runner"]

@@ -1,0 +1,18 @@
+{
+  "root_cause_program_ids": [
+    "extra-workload-listener"
+  ],
+  "bindings": {
+    "objects": {
+      "deployment": {
+        "api_version": "apps/v1",
+        "kind": "Deployment",
+        "namespace": "demo",
+        "name": "recommendation"
+      }
+    }
+  },
+  "provenance": {
+    "incident_id": "workload-symptom-learning"
+  }
+}

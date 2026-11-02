@@ -37,12 +37,13 @@ func durabilityController(t *testing.T, client *fake.Clientset, config Controlle
 	config.FiringThreshold = 1
 	controller, err := NewController(
 		config,
-		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))},
+		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault")), controllerDetector("health", time.Second, sdk.Finding{})},
 		staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, time.Unix(0, 0),
 	)
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
 	}
+	controller.now = func() time.Time { return time.Unix(0, 0) }
 	if err := controller.AttachStateStore(
 		context.Background(), lifecycleio.NewConfigMapStateStore(client, "demo", durabilityStateName),
 	); err != nil {
@@ -265,19 +266,6 @@ func (b *stateCheckingBroker) AcknowledgeClosure(_ context.Context, receipt Clos
 	return nil
 }
 
-func (b *stateCheckingBroker) ReleaseIncident(_ context.Context, incidentID string) error {
-	state, err := durableState(b.client)
-	recorded := false
-	for _, id := range state.PendingReleases {
-		if id == incidentID {
-			recorded = true
-			break
-		}
-	}
-	b.report("release", err == nil && recorded, state, err)
-	return nil
-}
-
 func awaitObservation(t *testing.T, observed <-chan string, want string) {
 	t.Helper()
 	if got := <-observed; got != want {
@@ -372,8 +360,10 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 		if err := controller.ExecuteClosureEffect(ctx, closure); !errors.Is(err, ErrEffectNotDurable) {
 			t.Fatalf("closure committed before incident close was durable: got %v", err)
 		}
-		if err := executePausedEffects(ctx, controller); err != nil || len(broker.observed) != 0 {
-			t.Fatalf("paused controller stopped or committed undurable closure: %v", err)
+		// A pause persists pending bookkeeping itself. The broker checks the
+		// API's durable state when the effect runs, including on the first save.
+		if err := executePausedEffects(ctx, controller); err != nil {
+			t.Fatalf("paused closure: %v", err)
 		}
 		if err := controller.PersistState(ctx); err != nil {
 			t.Fatalf("persist incident close: %v", err)
@@ -392,8 +382,8 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 		if err := controller.ExecuteClosureAcknowledgmentEffect(ctx, ack); !errors.Is(err, ErrEffectNotDurable) {
 			t.Fatalf("closure acknowledged before its receipt was durable: got %v", err)
 		}
-		if err := executePausedEffects(ctx, controller); err != nil || len(broker.observed) != 0 {
-			t.Fatalf("paused controller stopped or acknowledged undurable receipt: %v", err)
+		if err := executePausedEffects(ctx, controller); err != nil {
+			t.Fatalf("paused acknowledgment: %v", err)
 		}
 		if err := controller.PersistState(ctx); err != nil {
 			t.Fatalf("persist closure receipt: %v", err)

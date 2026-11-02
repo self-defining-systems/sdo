@@ -25,8 +25,11 @@ type HealthProbe interface {
 }
 
 type AcceptedDetectorProbe struct {
-	MetricsURL string
-	Limit      time.Duration
+	Replay          string
+	RequireComplete bool
+	Kubeconfig      string
+	MetricsURL      string
+	Limit           time.Duration
 }
 
 func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string) (string, error) {
@@ -40,7 +43,7 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	if err != nil {
 		return "", fmt.Errorf("resolve accepted diagnostics: %w", err)
 	}
-	workspace, err := builder.BuildWorkspace(bounded, builder.Config{ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
+	workspace, err := builder.BuildWorkspace(bounded, builder.Config{Replay: probe.Replay, ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
 	if err != nil {
 		return "", fmt.Errorf("stage accepted diagnostics: %w", err)
 	}
@@ -54,7 +57,11 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 		return "", fmt.Errorf("compile accepted memory host: %w", err)
 	}
 	args := append(probe.evaluationArgs(acceptedRoot, namespace), "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
-	stdout, stderr, err := deploymentio.Evaluate(bounded, workspace.Directory, binary, args)
+	var environment []string
+	if probe.Kubeconfig != "" {
+		environment = append(environment, "KUBECONFIG="+probe.Kubeconfig)
+	}
+	stdout, stderr, err := deploymentio.Evaluate(bounded, workspace.Directory, binary, args, environment)
 
 	if err != nil {
 		return "", fmt.Errorf("evaluate accepted health detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
@@ -69,7 +76,7 @@ func decodeHealthVerdict(stdout, stderr []byte) (string, error) {
 	if err := json.Unmarshal(stdout, &verdict); err != nil {
 		return "", fmt.Errorf("decode health detector verdict: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
-	if verdict.Status != "clear" && verdict.Status != "firing" {
+	if verdict.Status != "clear" && verdict.Status != "firing" && verdict.Status != "pending" && verdict.Status != "unavailable" {
 		return "", fmt.Errorf("unknown health detector verdict %q (stdout=%q stderr=%q)", verdict.Status, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
 	return verdict.Status, nil
@@ -179,6 +186,9 @@ func (v IndependentHealthVerifier) Validate() error {
 
 func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string) []string {
 	args := []string{"--evaluate-once", "--namespace", namespace, "--app-root", acceptedRoot}
+	if probe.RequireComplete {
+		args = append(args, "--accept-seed")
+	}
 	if probe.MetricsURL != "" {
 		args = append(args, "--metrics-url", probe.MetricsURL)
 	}

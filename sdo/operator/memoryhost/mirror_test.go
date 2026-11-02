@@ -6,6 +6,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 	"testing"
@@ -157,11 +158,15 @@ func TestMirrorAllSnapshotKindsAndDeletes(t *testing.T) {
 		}
 		fields[field] = []any{object}
 	}
-	data, err := json.Marshal(fields)
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := capturefixture.Raw(t, "mirror coverage feeds every informer kind as a raw view, not a capture boundary", func() []byte {
+		raw, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}())
 	var view sdktest.Snapshot
+	var err error
 	if err = json.Unmarshal(data, &view); err != nil {
 		t.Fatal(err)
 	}

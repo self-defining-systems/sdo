@@ -1,0 +1,1 @@
+Write or refine an incident detector for the confirmed observable cause using detector authoring guidance; watch the resource it reads so recurrence fires within seconds. Compare existing predicates first. Health detectors remain judge-owned.

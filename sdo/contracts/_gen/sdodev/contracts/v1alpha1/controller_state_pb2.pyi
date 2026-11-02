@@ -2,11 +2,11 @@ import datetime
 
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
-from sdodev.contracts.v1alpha1 import memory_pb2 as _memory_pb2
+from sdodev.contracts.v1alpha1 import memory_diagnostic_pb2 as _memory_diagnostic_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from sdodev.contracts.v1alpha1 import outcome_pb2 as _outcome_pb2
 from sdodev.contracts.v1alpha1 import worker_pb2 as _worker_pb2
-from sdodev.contracts.v1alpha1 import program_pb2 as _program_pb2
+from sdodev.contracts.v1alpha1 import mitigation_menu_pb2 as _mitigation_menu_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -25,7 +25,6 @@ class DispatchState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DISPATCH_STATE_PENDING: _ClassVar[DispatchState]
     DISPATCH_STATE_RUNNING: _ClassVar[DispatchState]
     DISPATCH_STATE_COMPLETED: _ClassVar[DispatchState]
-    DISPATCH_STATE_ADMISSION_DEFERRED: _ClassVar[DispatchState]
 
 class ClosureState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -43,6 +42,8 @@ class ClosureFailureReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     CLOSURE_FAILURE_REASON_INVALID_RECEIPT: _ClassVar[ClosureFailureReason]
     CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED: _ClassVar[ClosureFailureReason]
     CLOSURE_FAILURE_REASON_AGENT_TIMEOUT: _ClassVar[ClosureFailureReason]
+    CLOSURE_FAILURE_REASON_OBSERVER_DENIED: _ClassVar[ClosureFailureReason]
+    CLOSURE_FAILURE_REASON_OWNER_LOST: _ClassVar[ClosureFailureReason]
 
 class ReflectionPhase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -62,7 +63,6 @@ DISPATCH_STATE_WORKSPACE_RUNNING: DispatchState
 DISPATCH_STATE_PENDING: DispatchState
 DISPATCH_STATE_RUNNING: DispatchState
 DISPATCH_STATE_COMPLETED: DispatchState
-DISPATCH_STATE_ADMISSION_DEFERRED: DispatchState
 CLOSURE_STATE_UNSPECIFIED: ClosureState
 CLOSURE_STATE_PENDING: ClosureState
 CLOSURE_STATE_PROCESSING: ClosureState
@@ -74,6 +74,8 @@ CLOSURE_FAILURE_REASON_BROKER_ERROR: ClosureFailureReason
 CLOSURE_FAILURE_REASON_INVALID_RECEIPT: ClosureFailureReason
 CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED: ClosureFailureReason
 CLOSURE_FAILURE_REASON_AGENT_TIMEOUT: ClosureFailureReason
+CLOSURE_FAILURE_REASON_OBSERVER_DENIED: ClosureFailureReason
+CLOSURE_FAILURE_REASON_OWNER_LOST: ClosureFailureReason
 REFLECTION_PHASE_UNSPECIFIED: ReflectionPhase
 REFLECTION_PHASE_INSPECT: ReflectionPhase
 REFLECTION_PHASE_DISPATCH: ReflectionPhase
@@ -178,7 +180,7 @@ class ClosureFailure(_message.Message):
     def __init__(self, incident_id: _Optional[str] = ..., attempts: _Optional[int] = ..., max_attempts: _Optional[int] = ..., last_error: _Optional[str] = ..., first_failed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_failed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., next_attempt_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., permanent: _Optional[bool] = ..., action: _Optional[str] = ..., reason: _Optional[_Union[ClosureFailureReason, str]] = ...) -> None: ...
 
 class ControllerState(_message.Message):
-    __slots__ = ("version", "scheduler_deadlines", "finding_states", "pending_batch", "history", "incident_open", "responder_done", "incident_request", "incident_result", "dispatch_error", "incident_detected_at", "incident_dispatched_at", "responder_completed_at", "detector_review_required", "detector_review_required_at", "detector_review_reason", "detector_clear_since", "incident_observed_changes", "dispatch_state", "incident_finding_keys", "pending_closure", "closure_state", "closure_receipt", "closure_failure", "last_acknowledged_incident_id", "pending_releases", "evaluation_iteration", "detector_timeline", "incident_view", "drift_events", "ownership_adoption", "drift_admission", "program_sweep_cursors", "responder_tool_state_json", "failed_closures")
+    __slots__ = ("version", "scheduler_deadlines", "finding_states", "pending_batch", "history", "incident_open", "responder_done", "incident_request", "incident_result", "dispatch_error", "incident_detected_at", "incident_dispatched_at", "responder_completed_at", "detector_clear_since", "dispatch_state", "incident_finding_keys", "pending_closure", "closure_state", "closure_receipt", "closure_failure", "last_acknowledged_incident_id", "evaluation_iteration", "detector_timeline", "incident_view", "drift_events", "ownership_adoption", "responder_tool_state_json", "failed_closures", "selection_ledger", "accepted_source_drift", "accepted_source_drift_revision", "namespace_onboarding", "queued_reflection_incident_ids", "queued_reflections_unknown", "busy_until", "step_count", "verification_deadline_at", "setup_evaluated_revision", "disabled_setup_detectors")
     class SchedulerDeadlinesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -200,13 +202,6 @@ class ControllerState(_message.Message):
         key: str
         value: _timestamp_pb2.Timestamp
         def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
-    class ProgramSweepCursorsEntry(_message.Message):
-        __slots__ = ("key", "value")
-        KEY_FIELD_NUMBER: _ClassVar[int]
-        VALUE_FIELD_NUMBER: _ClassVar[int]
-        key: str
-        value: str
-        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
     VERSION_FIELD_NUMBER: _ClassVar[int]
     SCHEDULER_DEADLINES_FIELD_NUMBER: _ClassVar[int]
     FINDING_STATES_FIELD_NUMBER: _ClassVar[int]
@@ -220,11 +215,7 @@ class ControllerState(_message.Message):
     INCIDENT_DETECTED_AT_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_DISPATCHED_AT_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
-    DETECTOR_REVIEW_REQUIRED_FIELD_NUMBER: _ClassVar[int]
-    DETECTOR_REVIEW_REQUIRED_AT_FIELD_NUMBER: _ClassVar[int]
-    DETECTOR_REVIEW_REASON_FIELD_NUMBER: _ClassVar[int]
     DETECTOR_CLEAR_SINCE_FIELD_NUMBER: _ClassVar[int]
-    INCIDENT_OBSERVED_CHANGES_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_STATE_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_FINDING_KEYS_FIELD_NUMBER: _ClassVar[int]
     PENDING_CLOSURE_FIELD_NUMBER: _ClassVar[int]
@@ -232,16 +223,24 @@ class ControllerState(_message.Message):
     CLOSURE_RECEIPT_FIELD_NUMBER: _ClassVar[int]
     CLOSURE_FAILURE_FIELD_NUMBER: _ClassVar[int]
     LAST_ACKNOWLEDGED_INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
-    PENDING_RELEASES_FIELD_NUMBER: _ClassVar[int]
     EVALUATION_ITERATION_FIELD_NUMBER: _ClassVar[int]
     DETECTOR_TIMELINE_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_VIEW_FIELD_NUMBER: _ClassVar[int]
     DRIFT_EVENTS_FIELD_NUMBER: _ClassVar[int]
     OWNERSHIP_ADOPTION_FIELD_NUMBER: _ClassVar[int]
-    DRIFT_ADMISSION_FIELD_NUMBER: _ClassVar[int]
-    PROGRAM_SWEEP_CURSORS_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_TOOL_STATE_JSON_FIELD_NUMBER: _ClassVar[int]
     FAILED_CLOSURES_FIELD_NUMBER: _ClassVar[int]
+    SELECTION_LEDGER_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_SOURCE_DRIFT_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_SOURCE_DRIFT_REVISION_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_ONBOARDING_FIELD_NUMBER: _ClassVar[int]
+    QUEUED_REFLECTION_INCIDENT_IDS_FIELD_NUMBER: _ClassVar[int]
+    QUEUED_REFLECTIONS_UNKNOWN_FIELD_NUMBER: _ClassVar[int]
+    BUSY_UNTIL_FIELD_NUMBER: _ClassVar[int]
+    STEP_COUNT_FIELD_NUMBER: _ClassVar[int]
+    VERIFICATION_DEADLINE_AT_FIELD_NUMBER: _ClassVar[int]
+    SETUP_EVALUATED_REVISION_FIELD_NUMBER: _ClassVar[int]
+    DISABLED_SETUP_DETECTORS_FIELD_NUMBER: _ClassVar[int]
     version: str
     scheduler_deadlines: _containers.MessageMap[str, _timestamp_pb2.Timestamp]
     finding_states: _containers.MessageMap[str, FindingState]
@@ -255,11 +254,7 @@ class ControllerState(_message.Message):
     incident_detected_at: _timestamp_pb2.Timestamp
     incident_dispatched_at: _timestamp_pb2.Timestamp
     responder_completed_at: _timestamp_pb2.Timestamp
-    detector_review_required: bool
-    detector_review_required_at: _timestamp_pb2.Timestamp
-    detector_review_reason: str
     detector_clear_since: _containers.MessageMap[str, _timestamp_pb2.Timestamp]
-    incident_observed_changes: _containers.RepeatedCompositeFieldContainer[_messages_pb2.ObservedStateChange]
     dispatch_state: DispatchState
     incident_finding_keys: _containers.RepeatedScalarFieldContainer[str]
     pending_closure: _messages_pb2.IncidentClosure
@@ -267,43 +262,45 @@ class ControllerState(_message.Message):
     closure_receipt: ClosureReceipt
     closure_failure: ClosureFailure
     last_acknowledged_incident_id: str
-    pending_releases: _containers.RepeatedScalarFieldContainer[str]
     evaluation_iteration: int
     detector_timeline: _containers.RepeatedCompositeFieldContainer[_messages_pb2.DetectorTimelineEntry]
     incident_view: _messages_pb2.IncidentView
     drift_events: _containers.RepeatedCompositeFieldContainer[_messages_pb2.DriftEvent]
     ownership_adoption: OwnershipAdoptionStatus
-    drift_admission: DriftAdmissionState
-    program_sweep_cursors: _containers.ScalarMap[str, str]
     responder_tool_state_json: bytes
     failed_closures: _containers.RepeatedCompositeFieldContainer[FailedIncidentClosure]
-    def __init__(self, version: _Optional[str] = ..., scheduler_deadlines: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., finding_states: _Optional[_Mapping[str, FindingState]] = ..., pending_batch: _Optional[_Union[BatcherState, _Mapping]] = ..., history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., incident_open: _Optional[bool] = ..., responder_done: _Optional[bool] = ..., incident_request: _Optional[_Union[_messages_pb2.IncidentRequest, _Mapping]] = ..., incident_result: _Optional[_Union[_messages_pb2.IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., incident_detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., incident_dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_required: _Optional[bool] = ..., detector_review_required_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_reason: _Optional[str] = ..., detector_clear_since: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., incident_observed_changes: _Optional[_Iterable[_Union[_messages_pb2.ObservedStateChange, _Mapping]]] = ..., dispatch_state: _Optional[_Union[DispatchState, str]] = ..., incident_finding_keys: _Optional[_Iterable[str]] = ..., pending_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., closure_state: _Optional[_Union[ClosureState, str]] = ..., closure_receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., closure_failure: _Optional[_Union[ClosureFailure, _Mapping]] = ..., last_acknowledged_incident_id: _Optional[str] = ..., pending_releases: _Optional[_Iterable[str]] = ..., evaluation_iteration: _Optional[int] = ..., detector_timeline: _Optional[_Iterable[_Union[_messages_pb2.DetectorTimelineEntry, _Mapping]]] = ..., incident_view: _Optional[_Union[_messages_pb2.IncidentView, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., ownership_adoption: _Optional[_Union[OwnershipAdoptionStatus, _Mapping]] = ..., drift_admission: _Optional[_Union[DriftAdmissionState, _Mapping]] = ..., program_sweep_cursors: _Optional[_Mapping[str, str]] = ..., responder_tool_state_json: _Optional[bytes] = ..., failed_closures: _Optional[_Iterable[_Union[FailedIncidentClosure, _Mapping]]] = ...) -> None: ...
+    selection_ledger: _mitigation_menu_pb2.SelectionLedger
+    accepted_source_drift: _containers.RepeatedCompositeFieldContainer[_messages_pb2.DriftEvent]
+    accepted_source_drift_revision: str
+    namespace_onboarding: _messages_pb2.NamespaceOnboarding
+    queued_reflection_incident_ids: _containers.RepeatedScalarFieldContainer[str]
+    queued_reflections_unknown: bool
+    busy_until: _timestamp_pb2.Timestamp
+    step_count: int
+    verification_deadline_at: _timestamp_pb2.Timestamp
+    setup_evaluated_revision: str
+    disabled_setup_detectors: _containers.RepeatedCompositeFieldContainer[_messages_pb2.DisabledSetupDetector]
+    def __init__(self, version: _Optional[str] = ..., scheduler_deadlines: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., finding_states: _Optional[_Mapping[str, FindingState]] = ..., pending_batch: _Optional[_Union[BatcherState, _Mapping]] = ..., history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., incident_open: _Optional[bool] = ..., responder_done: _Optional[bool] = ..., incident_request: _Optional[_Union[_messages_pb2.IncidentRequest, _Mapping]] = ..., incident_result: _Optional[_Union[_messages_pb2.IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., incident_detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., incident_dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_clear_since: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., dispatch_state: _Optional[_Union[DispatchState, str]] = ..., incident_finding_keys: _Optional[_Iterable[str]] = ..., pending_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., closure_state: _Optional[_Union[ClosureState, str]] = ..., closure_receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., closure_failure: _Optional[_Union[ClosureFailure, _Mapping]] = ..., last_acknowledged_incident_id: _Optional[str] = ..., evaluation_iteration: _Optional[int] = ..., detector_timeline: _Optional[_Iterable[_Union[_messages_pb2.DetectorTimelineEntry, _Mapping]]] = ..., incident_view: _Optional[_Union[_messages_pb2.IncidentView, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., ownership_adoption: _Optional[_Union[OwnershipAdoptionStatus, _Mapping]] = ..., responder_tool_state_json: _Optional[bytes] = ..., failed_closures: _Optional[_Iterable[_Union[FailedIncidentClosure, _Mapping]]] = ..., selection_ledger: _Optional[_Union[_mitigation_menu_pb2.SelectionLedger, _Mapping]] = ..., accepted_source_drift: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., accepted_source_drift_revision: _Optional[str] = ..., namespace_onboarding: _Optional[_Union[_messages_pb2.NamespaceOnboarding, _Mapping]] = ..., queued_reflection_incident_ids: _Optional[_Iterable[str]] = ..., queued_reflections_unknown: _Optional[bool] = ..., busy_until: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., step_count: _Optional[int] = ..., verification_deadline_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., setup_evaluated_revision: _Optional[str] = ..., disabled_setup_detectors: _Optional[_Iterable[_Union[_messages_pb2.DisabledSetupDetector, _Mapping]]] = ...) -> None: ...
 
 class ReflectionDecision(_message.Message):
-    __slots__ = ("learning_decision", "no_change_reason", "playbook_ids", "error", "sdk_gaps", "usage")
+    __slots__ = ("learning_decision", "no_change_reason", "playbook_ids", "error", "sdk_gaps", "usage", "decline_reason", "failure_reason")
     LEARNING_DECISION_FIELD_NUMBER: _ClassVar[int]
     NO_CHANGE_REASON_FIELD_NUMBER: _ClassVar[int]
     PLAYBOOK_IDS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     SDK_GAPS_FIELD_NUMBER: _ClassVar[int]
     USAGE_FIELD_NUMBER: _ClassVar[int]
+    DECLINE_REASON_FIELD_NUMBER: _ClassVar[int]
+    FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     learning_decision: str
     no_change_reason: str
     playbook_ids: _containers.RepeatedScalarFieldContainer[str]
     error: str
-    sdk_gaps: _containers.RepeatedCompositeFieldContainer[_worker_pb2.SdkGap]
+    sdk_gaps: _containers.RepeatedCompositeFieldContainer[_outcome_pb2.SdkGap]
     usage: _messages_pb2.UsageMetrics
-    def __init__(self, learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., sdk_gaps: _Optional[_Iterable[_Union[_worker_pb2.SdkGap, _Mapping]]] = ..., usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ...) -> None: ...
-
-class ProposalRejection(_message.Message):
-    __slots__ = ("attempt", "diagnostics", "rejected_at")
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
-    DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
-    REJECTED_AT_FIELD_NUMBER: _ClassVar[int]
-    attempt: int
-    diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
-    rejected_at: _timestamp_pb2.Timestamp
-    def __init__(self, attempt: _Optional[int] = ..., diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ..., rejected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    decline_reason: str
+    failure_reason: str
+    def __init__(self, learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., sdk_gaps: _Optional[_Iterable[_Union[_outcome_pb2.SdkGap, _Mapping]]] = ..., usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., decline_reason: _Optional[str] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class ProposalRejectionLog(_message.Message):
     __slots__ = ("proposal_id", "rejections", "terminal")
@@ -311,9 +308,9 @@ class ProposalRejectionLog(_message.Message):
     REJECTIONS_FIELD_NUMBER: _ClassVar[int]
     TERMINAL_FIELD_NUMBER: _ClassVar[int]
     proposal_id: str
-    rejections: _containers.RepeatedCompositeFieldContainer[ProposalRejection]
+    rejections: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.ProposalRejection]
     terminal: bool
-    def __init__(self, proposal_id: _Optional[str] = ..., rejections: _Optional[_Iterable[_Union[ProposalRejection, _Mapping]]] = ..., terminal: _Optional[bool] = ...) -> None: ...
+    def __init__(self, proposal_id: _Optional[str] = ..., rejections: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.ProposalRejection, _Mapping]]] = ..., terminal: _Optional[bool] = ...) -> None: ...
 
 class ControllerRolloutExpectation(_message.Message):
     __slots__ = ("incident_id", "reflection_commit", "before_detector_fingerprint", "after_detector_fingerprint")
@@ -344,7 +341,7 @@ class ControllerRolloutReceipt(_message.Message):
     def __init__(self, expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., build_artifact: _Optional[str] = ..., controller_revision: _Optional[str] = ..., observed_detector_fingerprint: _Optional[str] = ..., success: _Optional[bool] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class BrokerLedger(_message.Message):
-    __slots__ = ("incident_id", "closure", "proposal_commit", "outcome_document", "requires_reflection", "outcome_commit", "reflection_processed", "reflection_decision", "reflection_commit", "rollout_expectation", "rollout_receipts", "receipt", "acknowledged", "acknowledged_at", "reflection_rejections", "reflection_rejected", "reflection_skipped_reason", "closure_phase_timestamps", "fast_path_skipped_reason", "fast_path_relation_covered_findings", "reflection_phase", "reflection_workspace", "reflection_paths", "reflection_results", "reflection_max_retries", "reflection_dispatch_at")
+    __slots__ = ("incident_id", "closure", "proposal_commit", "outcome_document", "requires_reflection", "outcome_commit", "reflection_processed", "reflection_decision", "reflection_commit", "rollout_expectation", "rollout_receipts", "receipt", "acknowledged", "acknowledged_at", "reflection_rejections", "reflection_rejected", "reflection_skipped_reason", "closure_phase_timestamps", "reflection_phase", "reflection_workspace", "reflection_paths", "reflection_results", "reflection_max_retries", "reflection_dispatch_at", "reflection_no_repair_count", "reflection_queued", "reflection_queued_at", "reflection_coverage_gaps")
     class ClosurePhaseTimestampsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -370,14 +367,16 @@ class BrokerLedger(_message.Message):
     REFLECTION_REJECTED_FIELD_NUMBER: _ClassVar[int]
     REFLECTION_SKIPPED_REASON_FIELD_NUMBER: _ClassVar[int]
     CLOSURE_PHASE_TIMESTAMPS_FIELD_NUMBER: _ClassVar[int]
-    FAST_PATH_SKIPPED_REASON_FIELD_NUMBER: _ClassVar[int]
-    FAST_PATH_RELATION_COVERED_FINDINGS_FIELD_NUMBER: _ClassVar[int]
     REFLECTION_PHASE_FIELD_NUMBER: _ClassVar[int]
     REFLECTION_WORKSPACE_FIELD_NUMBER: _ClassVar[int]
     REFLECTION_PATHS_FIELD_NUMBER: _ClassVar[int]
     REFLECTION_RESULTS_FIELD_NUMBER: _ClassVar[int]
     REFLECTION_MAX_RETRIES_FIELD_NUMBER: _ClassVar[int]
     REFLECTION_DISPATCH_AT_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_NO_REPAIR_COUNT_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_QUEUED_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_QUEUED_AT_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_COVERAGE_GAPS_FIELD_NUMBER: _ClassVar[int]
     incident_id: str
     closure: _messages_pb2.IncidentClosure
     proposal_commit: str
@@ -392,22 +391,24 @@ class BrokerLedger(_message.Message):
     receipt: ClosureReceipt
     acknowledged: bool
     acknowledged_at: _timestamp_pb2.Timestamp
-    reflection_rejections: _containers.RepeatedCompositeFieldContainer[ProposalRejection]
+    reflection_rejections: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.ProposalRejection]
     reflection_rejected: bool
     reflection_skipped_reason: str
     closure_phase_timestamps: _containers.MessageMap[str, _timestamp_pb2.Timestamp]
-    fast_path_skipped_reason: str
-    fast_path_relation_covered_findings: _containers.RepeatedCompositeFieldContainer[_program_pb2.RelationCoveredFinding]
     reflection_phase: ReflectionPhase
     reflection_workspace: _worker_pb2.ProposalWorkspace
     reflection_paths: _containers.RepeatedScalarFieldContainer[str]
     reflection_results: _containers.RepeatedCompositeFieldContainer[ReflectionDecision]
     reflection_max_retries: int
     reflection_dispatch_at: _timestamp_pb2.Timestamp
-    def __init__(self, incident_id: _Optional[str] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_document: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., requires_reflection: _Optional[bool] = ..., outcome_commit: _Optional[str] = ..., reflection_processed: _Optional[bool] = ..., reflection_decision: _Optional[_Union[ReflectionDecision, _Mapping]] = ..., reflection_commit: _Optional[str] = ..., rollout_expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., rollout_receipts: _Optional[_Iterable[_Union[ControllerRolloutReceipt, _Mapping]]] = ..., receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., acknowledged_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_rejections: _Optional[_Iterable[_Union[ProposalRejection, _Mapping]]] = ..., reflection_rejected: _Optional[bool] = ..., reflection_skipped_reason: _Optional[str] = ..., closure_phase_timestamps: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., fast_path_skipped_reason: _Optional[str] = ..., fast_path_relation_covered_findings: _Optional[_Iterable[_Union[_program_pb2.RelationCoveredFinding, _Mapping]]] = ..., reflection_phase: _Optional[_Union[ReflectionPhase, str]] = ..., reflection_workspace: _Optional[_Union[_worker_pb2.ProposalWorkspace, _Mapping]] = ..., reflection_paths: _Optional[_Iterable[str]] = ..., reflection_results: _Optional[_Iterable[_Union[ReflectionDecision, _Mapping]]] = ..., reflection_max_retries: _Optional[int] = ..., reflection_dispatch_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    reflection_no_repair_count: int
+    reflection_queued: bool
+    reflection_queued_at: _timestamp_pb2.Timestamp
+    reflection_coverage_gaps: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.MemoryDiagnostic]
+    def __init__(self, incident_id: _Optional[str] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_document: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., requires_reflection: _Optional[bool] = ..., outcome_commit: _Optional[str] = ..., reflection_processed: _Optional[bool] = ..., reflection_decision: _Optional[_Union[ReflectionDecision, _Mapping]] = ..., reflection_commit: _Optional[str] = ..., rollout_expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., rollout_receipts: _Optional[_Iterable[_Union[ControllerRolloutReceipt, _Mapping]]] = ..., receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., acknowledged_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_rejections: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.ProposalRejection, _Mapping]]] = ..., reflection_rejected: _Optional[bool] = ..., reflection_skipped_reason: _Optional[str] = ..., closure_phase_timestamps: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., reflection_phase: _Optional[_Union[ReflectionPhase, str]] = ..., reflection_workspace: _Optional[_Union[_worker_pb2.ProposalWorkspace, _Mapping]] = ..., reflection_paths: _Optional[_Iterable[str]] = ..., reflection_results: _Optional[_Iterable[_Union[ReflectionDecision, _Mapping]]] = ..., reflection_max_retries: _Optional[int] = ..., reflection_dispatch_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_no_repair_count: _Optional[int] = ..., reflection_queued: _Optional[bool] = ..., reflection_queued_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_coverage_gaps: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
 
 class OwnershipAdoptionStatus(_message.Message):
-    __slots__ = ("source_commit", "adopted_objects", "conflicts_taken_over", "from_managers", "last_error", "skipped_reason", "retry_at", "failures")
+    __slots__ = ("source_commit", "adopted_objects", "conflicts_taken_over", "from_managers", "last_error", "skipped_reason", "retry_at", "failures", "accepted_objects", "unadopted_objects")
     SOURCE_COMMIT_FIELD_NUMBER: _ClassVar[int]
     ADOPTED_OBJECTS_FIELD_NUMBER: _ClassVar[int]
     CONFLICTS_TAKEN_OVER_FIELD_NUMBER: _ClassVar[int]
@@ -416,6 +417,8 @@ class OwnershipAdoptionStatus(_message.Message):
     SKIPPED_REASON_FIELD_NUMBER: _ClassVar[int]
     RETRY_AT_FIELD_NUMBER: _ClassVar[int]
     FAILURES_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_OBJECTS_FIELD_NUMBER: _ClassVar[int]
+    UNADOPTED_OBJECTS_FIELD_NUMBER: _ClassVar[int]
     source_commit: str
     adopted_objects: int
     conflicts_taken_over: int
@@ -424,22 +427,6 @@ class OwnershipAdoptionStatus(_message.Message):
     skipped_reason: str
     retry_at: _timestamp_pb2.Timestamp
     failures: int
-    def __init__(self, source_commit: _Optional[str] = ..., adopted_objects: _Optional[int] = ..., conflicts_taken_over: _Optional[int] = ..., from_managers: _Optional[_Iterable[str]] = ..., last_error: _Optional[str] = ..., skipped_reason: _Optional[str] = ..., retry_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., failures: _Optional[int] = ...) -> None: ...
-
-class DriftAdmissionState(_message.Message):
-    __slots__ = ("seen_keys", "dispatch_at", "token_usage")
-    SEEN_KEYS_FIELD_NUMBER: _ClassVar[int]
-    DISPATCH_AT_FIELD_NUMBER: _ClassVar[int]
-    TOKEN_USAGE_FIELD_NUMBER: _ClassVar[int]
-    seen_keys: _containers.RepeatedScalarFieldContainer[str]
-    dispatch_at: _containers.RepeatedCompositeFieldContainer[_timestamp_pb2.Timestamp]
-    token_usage: _containers.RepeatedCompositeFieldContainer[DriftAdmissionUse]
-    def __init__(self, seen_keys: _Optional[_Iterable[str]] = ..., dispatch_at: _Optional[_Iterable[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]] = ..., token_usage: _Optional[_Iterable[_Union[DriftAdmissionUse, _Mapping]]] = ...) -> None: ...
-
-class DriftAdmissionUse(_message.Message):
-    __slots__ = ("at", "tokens")
-    AT_FIELD_NUMBER: _ClassVar[int]
-    TOKENS_FIELD_NUMBER: _ClassVar[int]
-    at: _timestamp_pb2.Timestamp
-    tokens: int
-    def __init__(self, at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., tokens: _Optional[int] = ...) -> None: ...
+    accepted_objects: _containers.RepeatedScalarFieldContainer[str]
+    unadopted_objects: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, source_commit: _Optional[str] = ..., adopted_objects: _Optional[int] = ..., conflicts_taken_over: _Optional[int] = ..., from_managers: _Optional[_Iterable[str]] = ..., last_error: _Optional[str] = ..., skipped_reason: _Optional[str] = ..., retry_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., failures: _Optional[int] = ..., accepted_objects: _Optional[_Iterable[str]] = ..., unadopted_objects: _Optional[_Iterable[str]] = ...) -> None: ...

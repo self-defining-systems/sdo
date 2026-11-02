@@ -1,0 +1,46 @@
+{
+ "namespace": "demo",
+ "deployments": [
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "namespace": "demo",
+    "name": "widget",
+    "uid": "widget-uid",
+    "resourceVersion": "7",
+    "annotations": {
+     "deployment.kubernetes.io/revision": "2"
+    }
+   },
+   "spec": {
+    "replicas": 1,
+    "selector": {
+     "matchLabels": {
+      "app": "widget"
+     }
+    },
+    "template": {
+     "metadata": {
+      "labels": {
+       "app": "widget"
+      }
+     },
+     "spec": {
+      "containers": [
+       {
+        "name": "widget",
+        "image": "widget:1",
+        "resources": {
+         "requests": {
+          "cpu": "4"
+         }
+        }
+       }
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

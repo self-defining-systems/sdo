@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/memory/layout"
+	"slices"
 	"strings"
 	"sync"
 
@@ -19,6 +20,18 @@ import (
 var capturedRecordingsMu sync.Mutex
 
 func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdktest.PrimitiveCall) error {
+	return AppendCapturedRecordings(repositoryMount, incidentID, phase, []sdktest.PrimitiveCall{call})
+}
+
+// AppendCapturedRecordings adds calls to one open phase's recordings in one
+// write. A state read (source comparison, database catalog, admission
+// webhooks) keeps its first
+// observation per phase: a live view freezes such reads per snapshot, and
+// replay answers every repeated read from that first reply.
+func AppendCapturedRecordings(repositoryMount, incidentID, phase string, added []sdktest.PrimitiveCall) error {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
 	if phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
 		return fmt.Errorf("invalid corpus recording phase %q", phase)
 	}
@@ -37,7 +50,37 @@ func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdk
 	if err := json.Unmarshal(data, &calls); err != nil {
 		return err
 	}
-	calls = append(calls, call)
+	seen := map[string]bool{}
+	for _, prior := range calls {
+		if key, ok, err := firstObservationKey(prior); err != nil {
+			return err
+		} else if ok {
+			seen[key] = true
+		}
+	}
+	appended := false
+	for _, call := range added {
+		if call.Method == "RepairReceipt" && slices.ContainsFunc(calls, func(prior sdktest.PrimitiveCall) bool {
+			return prior.Method == call.Method && string(prior.Result) == string(call.Result)
+		}) {
+			continue
+		}
+		key, ok, err := firstObservationKey(call)
+		if err != nil {
+			return err
+		}
+		if ok && seen[key] {
+			continue
+		}
+		if ok {
+			seen[key] = true
+		}
+		calls = append(calls, call)
+		appended = true
+	}
+	if !appended {
+		return nil
+	}
 	data, err = json.Marshal(calls)
 	if err != nil {
 		return err
@@ -55,6 +98,50 @@ func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdk
 		return err
 	}
 	return os.Rename(file.Name(), path)
+}
+
+// firstObservationKey identifies a state read within its phase. Catalogs are
+// mutable: a later responder call cannot replace the first observation at this
+// immutable capture boundary, even with another credential source or an
+// equivalent shell.
+func firstObservationKey(call sdktest.PrimitiveCall) (string, bool, error) {
+	phase := call.Phase
+	if phase == "" {
+		phase = "open"
+	}
+	switch call.Method {
+	case "DatabaseUsers":
+		identity, err := databaseCaptureIdentity(call)
+		if err != nil {
+			return "", false, err
+		}
+		return identity, true, nil
+	case "DiffAgainstSource", "DiffAgainstBaseline", "AdmissionWebhooksFor", "WebhookCAMatchesSecret":
+		return phase + "\x00" + recordedReadKey(call), true, nil
+	}
+	return "", false, nil
+}
+
+func databaseCaptureIdentity(call sdktest.PrimitiveCall) (string, error) {
+	var targets []program.DatabaseTarget
+	if err := json.Unmarshal(call.Arguments, &targets); err != nil || len(targets) != 1 {
+		return "", fmt.Errorf("invalid captured database target")
+	}
+	target := targets[0]
+	if err := target.Validate(); err != nil {
+		return "", fmt.Errorf("invalid captured database target")
+	}
+	target.Auth = nil
+	target.Shell = ""
+	phase := call.Phase
+	if phase == "" {
+		phase = "open"
+	}
+	raw, _ := json.Marshal(struct {
+		Phase  string
+		Target program.DatabaseTarget
+	}{phase, target})
+	return string(raw), nil
 }
 
 // IncidentCorpusDir locates trusted controller captures outside accepted memory.
@@ -128,7 +215,9 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 			return fmt.Errorf("corpus %s references another captured incident", entry.Name())
 		}
 		openName := "open.json"
-		if label.Provenance.OpenAt != "" {
+		if label.Provenance.OpenAt == sdktest.CapturedFixedNoMatchPhase && len(label.RootCauseProgramIDs) == 0 && len(label.NoMatchProgramIDs) > 0 {
+			openName = "fixed.json"
+		} else if label.Provenance.OpenAt != "" {
 			if label.Provenance.OpenAt != "detect" && label.Provenance.OpenAt != "settle" && label.Provenance.OpenAt != "pre-apply" {
 				return fmt.Errorf("invalid captured open phase %q", label.Provenance.OpenAt)
 			}
@@ -136,7 +225,7 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 		} else {
 			for _, phase := range []string{"open@pre-apply", "open@settle", "open@detect"} {
 				data, readErr := os.ReadFile(filepath.Join(trusted, phase+".json"))
-				if readErr == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == label.Provenance.OpenSHA256 {
+				if readErr == nil && sdktest.SnapshotMatchesDigest(data, label.Provenance.OpenSHA256) {
 					openName = phase + ".json"
 					break
 				}
@@ -149,16 +238,42 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 			}
 			if name == "recordings.json" && openName != "open.json" {
 				trustedName = strings.TrimSuffix(openName, ".json") + "-recordings.json"
+				if openName == "fixed.json" {
+					trustedName = "open@detect-recordings.json"
+				}
+			}
+			if name == "recordings.json" && openName == "fixed.json" {
+				got, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					return err
+				}
+				exact := false
+				for _, phase := range []string{"detect", "pre-apply"} {
+					want, err := os.ReadFile(filepath.Join(trusted, "open@"+phase+"-recordings.json"))
+					exact = exact || (err == nil && string(got) == string(want))
+				}
+				if !exact {
+					return fmt.Errorf("corpus %s recordings differ from captured incident observations", entry.Name())
+				}
+				continue
 			}
 			want, err := os.ReadFile(filepath.Join(trusted, trustedName))
 			if err != nil {
 				return fmt.Errorf("read trusted captured %s: %w", name, err)
 			}
-			got, err := os.ReadFile(filepath.Join(dir, name))
+			got, err := os.ReadFile(sdktest.CorpusSnapshotFile(dir, name))
 			if err != nil {
 				return err
 			}
-			if string(got) != string(want) {
+			same := string(got) == string(want)
+			if name != "recordings.json" {
+				// Snapshots compare by content: an earlier capture layout and the
+				// objects-only form of the same snapshot are equal.
+				gotDigest, gotErr := sdktest.SnapshotDigest(got)
+				wantDigest, wantErr := sdktest.SnapshotDigest(want)
+				same = gotErr == nil && wantErr == nil && gotDigest == wantDigest
+			}
+			if !same {
 				return fmt.Errorf("corpus %s %s differs from captured incident snapshot", entry.Name(), strings.TrimSuffix(name, ".json"))
 			}
 		}
@@ -167,19 +282,26 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 }
 
 // CaptureIncidentSnapshot stores the first namespace-local view at each boundary.
-func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string) error {
+func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string, refs ...sdk.ObjectRef) error {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
 	if phase != "open" && phase != "fixed" && phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
 		return fmt.Errorf("invalid corpus capture phase %q", phase)
 	}
-	snapshot, err := sdktest.CaptureSnapshot(view, namespace)
+	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
+	if err != nil {
+		return err
+	}
+	refs, err = CapturedSessionRefs(filepath.Dir(dir), refs)
+	if err != nil {
+		return err
+	}
+	snapshot, err := sdktest.CaptureSnapshot(view, namespace, refs...)
 	if err != nil {
 		return err
 	}
 	data, err := json.Marshal(snapshot)
-	if err != nil {
-		return err
-	}
-	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
 	if err != nil {
 		return err
 	}
@@ -226,19 +348,18 @@ func writeCapturedFile(path string, data []byte) error {
 }
 
 // CaptureRepairedProgramReads records fresh answers at the controller's verified
-// fixed boundary for every primitive inspected before repair. They travel in
-// the same protected recordings file with explicit phase metadata.
-func CaptureRepairedProgramReads(repositoryMount, incidentID string, readView func(sdk.DetectionContext) program.ReadView) error {
+// fixed boundary for every primitive inspected before repair. The view reads
+// the live fixed-boundary snapshot: the captured fixed.json is projected
+// (ConfigMap values redacted), so comparisons recomputed from it are wrong. They travel in
+// the same protected recordings file with explicit phase metadata. Each open
+// read is repeated unless the phase already holds its fixed answer (a plan's
+// own verification read), so repeated calls add nothing.
+func CaptureRepairedProgramReads(repositoryMount, incidentID string, view program.ReadView) error {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
 	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
 	if err != nil {
-		return err
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "fixed.json"))
-	if err != nil {
-		return err
-	}
-	var snapshot sdktest.Snapshot
-	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return err
 	}
 	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
@@ -253,29 +374,53 @@ func CaptureRepairedProgramReads(repositoryMount, incidentID string, readView fu
 		if err := json.Unmarshal(raw, &calls); err != nil {
 			return err
 		}
-		var open []sdktest.PrimitiveCall
-		fixed := false
+		fixed := map[string]int{}
 		for _, call := range calls {
 			if call.Phase == "fixed" {
-				fixed = true
-			}
-			if call.Phase == "" || call.Phase == "open" {
-				open = append(open, call)
+				fixed[recordedReadKey(call)]++
 			}
 		}
-		if fixed || len(open) == 0 {
+		var open []sdktest.PrimitiveCall
+		for _, call := range calls {
+			if call.Phase != "" && call.Phase != "open" {
+				continue
+			}
+			if key := recordedReadKey(call); fixed[key] > 0 {
+				fixed[key]--
+				continue
+			}
+			open = append(open, call)
+		}
+		if len(open) == 0 {
 			continue
 		}
-		observed, err := sdktest.RecordPrimitiveCalls(readView(snapshot), open)
+		observed, err := sdktest.RecordPrimitiveCalls(view, open)
 		if err != nil {
 			return err
 		}
-		for _, call := range observed {
-			call.Phase = "fixed"
-			if err := AppendCapturedRecording(repositoryMount, incidentID, phase, call); err != nil {
-				return err
-			}
+		for i := range observed {
+			observed[i].Phase = "fixed"
+		}
+		if err := AppendCapturedRecordings(repositoryMount, incidentID, phase, observed); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// recordedReadKey identifies one read independent of its phase. A catalog read
+// is identified like its capture: credential source and shell do not matter.
+func recordedReadKey(call sdktest.PrimitiveCall) string {
+	if call.Method == "DatabaseUsers" {
+		call.Phase = ""
+		if identity, err := databaseCaptureIdentity(call); err == nil {
+			return call.Method + "\x00" + identity
+		}
+	}
+	var arguments any
+	if err := json.Unmarshal(call.Arguments, &arguments); err != nil {
+		return call.Method + "\x00" + string(call.Arguments)
+	}
+	canonical, _ := json.Marshal(arguments)
+	return call.Method + "\x00" + string(canonical)
 }

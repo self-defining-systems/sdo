@@ -30,8 +30,7 @@ def _record(index: int, *, agent: str = "sdo", warm: bool | None = True, passed:
         agent=agent,
         problem_id="missing_configmap_hotel_reservation",
         model="gpt-6-luna",
-        injection_started_at=T0,
-        injection_finished_at=T0 + timedelta(seconds=6),
+        injection={"state": "injected", "started_at": T0, "finished_at": T0 + timedelta(seconds=6)},
         detected_at=T0 + timedelta(seconds=8) if agent == "sdo" else None,
         mitigation_applied_at=T0 + timedelta(seconds=40),
         resolved_at=T0 + timedelta(seconds=70),
@@ -66,7 +65,8 @@ def test_unknown_agent_and_naive_timestamps_are_rejected() -> None:
         IncidentRecord.model_validate(_record(0).model_dump() | {"agent": "claude"})
     with pytest.raises(ValidationError):
         IncidentRecord.model_validate(
-            _record(0).model_dump() | {"injection_started_at": datetime(2026, 9, 27, 12, 0, 0)}
+            _record(0).model_dump()
+            | {"injection": {"state": "injected", "started_at": datetime(2026, 9, 27, 12, 0, 0), "finished_at": T0}}
         )
 
 
@@ -121,3 +121,129 @@ def test_summary_separates_agents_and_reports_warm_and_reflection() -> None:
     assert summary["codex"].oracle_passed == 0
     assert summary["codex"].warm_path_fired == 0
     assert summary["codex"].median_reflection_seconds is None
+
+
+def test_recorded_no_repair_count_survives_csv_round_trip(tmp_path: Path) -> None:
+    record = _record(0).model_copy(update={"reflection_no_repair_count": 2})
+    path = tmp_path / "incidents.jsonl"
+    append_record(path, record)
+    assert load_records(path)[0].reflection_no_repair_count == 2
+    with path.with_suffix(".csv").open() as handle:
+        assert next(csv.DictReader(handle))["reflection_no_repair_count"] == "2"
+
+
+def test_recorded_row_with_the_old_count_name_loads_as_the_new_field(tmp_path: Path) -> None:
+    row = json.loads(_record(0).model_copy(update={"reflection_no_repair_count": 3}).model_dump_json())
+    row["reflection_evidence_gap_count"] = row.pop("reflection_no_repair_count")
+    path = tmp_path / "incidents.jsonl"
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    loaded = load_records(path)[0]
+    assert loaded.reflection_no_repair_count == 3
+    assert "reflection_evidence_gap_count" not in loaded.model_dump()
+
+
+def test_typed_injection_state_rejects_timestamps_on_not_injected() -> None:
+    row = _record(0).model_dump()
+    row["injection"] = {"state": "not_injected", "stage": "pre_injection", "started_at": T0}
+    with pytest.raises(ValidationError):
+        IncidentRecord.model_validate(row)
+
+
+def test_typed_injected_state_requires_ordered_aware_event_times() -> None:
+    row = _record(0).model_dump()
+    for event in (
+        {"state": "injected"},
+        {"state": "injected", "started_at": T0, "finished_at": T0 - timedelta(seconds=1)},
+    ):
+        with pytest.raises(ValidationError):
+            IncidentRecord.model_validate(row | {"injection": event})
+
+
+def test_not_injected_round_trip_is_excluded_from_incident_statistics(tmp_path: Path) -> None:
+    row = _record(0).model_dump() | {"injection": {"state": "not_injected", "stage": "pre_injection"}}
+    record = IncidentRecord.model_validate(row)
+    path = tmp_path / "incidents.jsonl"
+    append_record(path, record)
+    loaded = load_records(path)[0]
+    assert loaded.injection_started_at is None
+    assert loaded.injection_finished_at is None
+    assert loaded.injection_to_detection_seconds is None
+    assert loaded.injection_to_mitigation_seconds is None
+    assert loaded.injection_to_resolution_seconds is None
+    summary = summarize([loaded])[0]
+    assert summary.incidents == summary.oracle_passed == 0
+    assert summary.infrastructure_outcomes == 1
+
+
+def test_a_claude_rows_tokens_keep_every_priced_class_so_its_cost_is_complete(tmp_path: Path) -> None:
+    from agentshim import TokenUsage as ProviderTokens
+    from agentshim import cost_usd, default_pricing, price_for
+
+    from benchmarks.sregym.analysis.incident_cost import PricingContext, TokenUsage
+
+    # A Claude turn's usage as the worker records it (``turn_usage``) and as the receipt's ProtoJSON spells it.
+    turn = {
+        "input_tokens": 10_000,
+        "cached_input_tokens": 6_000,
+        "cache_read_input_tokens": 6_000,
+        "cache_write_input_tokens": 3_000,
+        "cache_write_1h_input_tokens": 1_000,
+        "uncached_input_tokens": 1_000,
+        "output_tokens": 500,
+        "reasoning_output_tokens": 200,
+    }
+    proto = {
+        "inputTokens": "10000",
+        "cachedInputTokens": "6000",
+        "cacheReadInputTokens": "6000",
+        "cacheWriteInputTokens": "3000",
+        "cacheWrite1hInputTokens": "1000",
+        "outputTokens": "500",
+        "reasoningOutputTokens": "200",
+    }
+    pricing = price_for("claude", "claude-opus-5-5", default_pricing())
+    assert pricing is not None
+    expected = cost_usd(
+        ProviderTokens(
+            input_tokens=10_000,
+            cache_read_input_tokens=6_000,
+            cache_write_input_tokens=3_000,
+            cache_write_1h_input_tokens=1_000,
+            output_tokens=500,
+            reasoning_output_tokens=200,
+        ),
+        pricing,
+    )
+    arm = PricingContext(default_pricing()).arm("claude", "claude-opus-5-5")
+    for usage in (turn, proto):
+        record = _record(0).model_copy(update={"responder_tokens": TokenCounts.from_usage(usage)})
+        path = tmp_path / f"incidents-{len(usage)}.jsonl"
+        append_record(path, record)
+        (loaded,) = load_records(path)
+        tokens = TokenUsage.from_mapping(loaded.responder_tokens.model_dump())
+        assert arm.entry is not None
+        assert cost_usd(tokens.normalized(), arm.entry) == pytest.approx(expected)
+
+
+def test_token_counts_add_every_class() -> None:
+    left = TokenCounts(input_tokens=10, cached_input_tokens=2, cache_write_input_tokens=3, output_tokens=4)
+    right = TokenCounts(input_tokens=5, cache_write_input_tokens=1, cache_write_1h_input_tokens=1, output_tokens=1)
+
+    assert left + right == TokenCounts(
+        input_tokens=15,
+        cached_input_tokens=2,
+        cache_write_input_tokens=4,
+        cache_write_1h_input_tokens=1,
+        output_tokens=5,
+    )
+
+
+def test_a_row_records_the_provider_model_and_effort_its_agents_ran_with(tmp_path: Path) -> None:
+    record = _record(0).model_copy(
+        update={"provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "medium"}
+    )
+    path = tmp_path / "incidents.jsonl"
+    append_record(path, record)
+
+    (loaded,) = load_records(path)
+    assert (loaded.provider, loaded.model, loaded.reasoning_effort) == ("claude", "claude-opus-5-5", "medium")

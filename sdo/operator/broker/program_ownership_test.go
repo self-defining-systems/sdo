@@ -40,7 +40,7 @@ func TestIgnoredSharedLibraryReachesValidatorTree(t *testing.T) {
 	if len(paths) != 2 || paths[0] != ".sdo/corpus/case-1/labels.json" || paths[1] != ".sdo/lib/ports/ports.go" {
 		t.Fatalf("library missing from proposal diff: %v", paths)
 	}
-	if err := addIgnoredProgramMemory(context.Background(), root, nil); err != nil {
+	if err := addIgnoredOperationalMemory(context.Background(), root, nil); err != nil {
 		t.Fatal(err)
 	}
 	git(t, root, "add", "--all", "--", ".")

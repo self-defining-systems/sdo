@@ -40,15 +40,21 @@ def reply(
     *,
     session_id: str | None,
     commands: Sequence[str] = (),
+    branch: str | None = None,
 ) -> FakeRun:
-    """A successful turn that ran *commands* and returned *output*."""
+    """A successful turn that ran *commands* and returned *output* (wrapped when *branch* is given)."""
     tool = "execute" if provider == "codex" else "Bash"
     return scripted_turn(
         provider,
         session_id=session_id,
-        structured_output=dict(output),
+        structured_output=dict(output) if branch is None else wrapped(output, branch),
         tool_calls=[(tool, {"command": command}, "") for command in commands],
     )
+
+
+def wrapped(output: Mapping[str, Any], branch: str) -> dict[str, Any]:
+    """*output* as the session wrapper object the responder and reflection turns share."""
+    return {"incident_result": None, "reflection": None, branch: dict(output)}
 
 
 def failure(stdout: str = "", stderr: str = "", returncode: int = 1) -> FakeRun:

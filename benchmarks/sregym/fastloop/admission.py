@@ -1,0 +1,655 @@
+"""Always-run pre-injection evidence over narrow benchmark I/O boundaries."""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import subprocess
+import time
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+import yaml
+
+from benchmarks.sregym.adapter import (
+    BusyDeadline,
+    ControllerStateUnavailableError,
+    Deadline,
+    StabilizationError,
+    WaitKind,
+    assert_host_disk_headroom,
+    assert_lane_resources,
+    assert_stable_workloads,
+    controller_proof,
+    incident_work_open,
+    kubectl,
+    qualified_scenarios,
+    setup_lineage,
+    shell_runner_proof,
+    wait_for,
+    wait_for_proof,
+)
+from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
+from benchmarks.sregym.repository_git import host_git_command
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    from benchmarks.sregym.adapter import ClusterOps, NativeInstallConfig
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+
+def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
+    listing = json.loads(
+        kubectl(
+            ["get", "deployments,statefulsets,daemonsets,pods", "-o", "json"],
+            namespace=namespace,
+            kubeconfig=kubeconfig,
+        ).stdout
+    )["items"]
+    workloads = {}
+    pods = [row for row in listing if row["kind"] == "Pod" and not row["metadata"].get("deletionTimestamp")]
+    for row in listing:
+        if row["kind"] == "Pod":
+            continue
+        metadata, spec = row["metadata"], row["spec"]
+        selector = spec.get("selector", {}).get("matchLabels", {})
+        selected = [
+            pod
+            for pod in pods
+            if selector and all(pod["metadata"].get("labels", {}).get(key) == val for key, val in selector.items())
+        ]
+        status = row.get("status", {})
+        desired = spec.get("replicas", 1)
+        if row["kind"] == "DaemonSet":
+            desired = status.get("desiredNumberScheduled", 0)
+            updated, current, ready = (
+                status.get("updatedNumberScheduled"),
+                status.get("currentNumberScheduled"),
+                status.get("numberReady", 0),
+            )
+        else:
+            updated, current, ready = (
+                status.get("updatedReplicas"),
+                status.get("replicas"),
+                status.get("readyReplicas", 0),
+            )
+        observed, generation = status.get("observedGeneration", -1), metadata.get("generation", 0)
+        label = f"{row['kind']}/{metadata['name']}"
+        # A rollout is a template change still in progress; an unchanged
+        # template whose pods lost readiness (crash, eviction, responder
+        # restart) is a different cause and is named as such.
+        if (
+            observed < generation
+            or updated != desired
+            or current != desired
+            or (row["kind"] == "StatefulSet" and status.get("currentRevision") != status.get("updateRevision"))
+        ):
+            raise ValueError(
+                f"restore invariant: rollout not complete: {label} "
+                f"(generation {generation} observed {observed}; updated {updated}/{desired}; current {current})"
+            )
+        if ready != desired or len(selected) != desired:
+            pods = ", ".join(
+                f"{pod['metadata'].get('name', pod['metadata'].get('uid'))} {pod.get('status', {}).get('phase')}"
+                for pod in selected
+            )
+            raise ValueError(f"restore invariant: workload not Ready: {label} (ready {ready}/{desired}; pods: {pods})")
+        if desired == 0:
+            raise ValueError(f"restore invariant: installed workload scaled to zero: {row['kind']}/{metadata['name']}")
+        if not selected or any(
+            not any(
+                condition.get("type") == "Ready" and condition.get("status") == "True"
+                for condition in pod.get("status", {}).get("conditions", [])
+            )
+            for pod in selected
+        ):
+            raise ValueError(f"restore invariant: workload not Ready: {row['kind']}/{metadata['name']}")
+        # A roll is a pod replaced or restarted. The object's generation is no roll signal: SDO's own
+        # acceptance apply bumps it on an unchanged workload (a recreated Deployment's first adoption).
+        workloads[f"{row['kind']}/{metadata['name']}"] = {
+            "pods": sorted(
+                (
+                    pod["metadata"]["uid"],
+                    tuple(
+                        status.get("restartCount", 0) for status in pod.get("status", {}).get("containerStatuses", [])
+                    ),
+                )
+                for pod in selected
+            ),
+        }
+    if not workloads:
+        raise ValueError("restore invariant: no installed application workloads")
+    return workloads
+
+
+def active_incident(state: dict[str, Any]) -> str | None:
+    """Name controller incident work, so a workload refusal shows SDO acted before injection."""
+    if not incident_work_open(state):
+        return None
+    request = state.get("incident_request")
+    incident = request.get("incident_id") if isinstance(request, dict) else None
+    keys = ", ".join(key for key in ("incident_open", "incident_request", "pending_closure") if state.get(key))
+    return f"{incident or 'unidentified'} ({keys})"
+
+
+class PriorClosureIncompleteError(ValueError):
+    """A previous incident on the lane had not closed naturally; the row is not measured."""
+
+    reason = "prior_closure_incomplete"
+
+    def __init__(self, message: str, evidence: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.evidence = evidence
+
+
+@dataclass(frozen=True)
+class ControllerProcess:
+    """Which controller process runs the lane: its Job and how many of the Job's pods have failed.
+
+    The Job's pods never restart in place (restart policy Never) and the supervisor relaunches a rebuilt
+    controller inside the same pod, so a new failed pod or a new Job is exactly a controller process that exited.
+    """
+
+    job_uid: str
+    failed_pods: int
+
+    def exit_since(self, current: ControllerProcess | None) -> str | None:
+        """How the process this one names exited by *current*, or None while it still runs."""
+        if current is None:
+            return "controller Job is gone"
+        if current.job_uid != self.job_uid:
+            return "controller Job was replaced"
+        failed = current.failed_pods - self.failed_pods
+        if failed > 0:
+            return f"{failed} controller pod{'s' if failed > 1 else ''} failed"
+        return None
+
+
+class ControllerExitedError(StabilizationError):
+    """The controller process admission was observing exited; no later row of it can prove health."""
+
+    reason = "controller_exited"
+
+    def __init__(self, message: str, evidence: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.evidence = evidence
+
+
+class _IncidentWorkStarted(Exception):
+    """SDO opened incident work during stabilization; admission waits for it to close, then restarts the clock."""
+
+
+#: Stabilization restarts after new SDO work at most this often; a lane that keeps opening incidents is not stable.
+MAX_STABILIZATION_RESTARTS = 3
+
+
+def _accepted_head(workspace: Path) -> str | None:
+    completed = subprocess.run(
+        host_git_command(workspace, "rev-parse", "HEAD"), capture_output=True, text=True, check=False
+    )
+    return completed.stdout.strip() or None if completed.returncode == 0 else None
+
+
+# Failed controller pods that make onboarding hopeless: a restarted process cannot prove the continuity of the
+# install window and the Job's backoff takes ~10 minutes to give up.
+CONTROLLER_CRASH_LOOP_PODS = 2
+
+
+class LaneAdmission:
+    def __init__(
+        self,
+        environment: FastloopEnvironment,
+        ops: ClusterOps,
+        directory: Path,
+        *,
+        timeout_seconds: float = int(wait_for(WaitKind.ROLLOUT)),
+        onboarding_timeout_seconds: float = int(wait_for(WaitKind.OPERATION)),
+        prior_closure_timeout_seconds: float = int(wait_for(WaitKind.RESPONSE)),
+        code_path: str = "go",
+        install_config: NativeInstallConfig | None = None,
+        synchronize: Callable[[], None] | None = None,
+        progress: Callable[..., None] | None = None,
+        before_proof: Callable[[str, dict[str, Any]], None] | None = None,
+    ) -> None:
+        if code_path not in {"go", "shell"}:
+            raise ValueError(f"eval: unsupported admission code path {code_path!r}")
+        self.code_path = code_path
+        self.environment, self.ops = environment, ops
+        self.directory = directory
+        self.timeout_seconds = timeout_seconds
+        self.onboarding_timeout_seconds = onboarding_timeout_seconds
+        self.prior_closure_timeout_seconds = prior_closure_timeout_seconds
+        self.install_config = install_config
+        self.synchronize, self.progress = synchronize, progress
+        self.before_proof = before_proof
+        self.required_detectors = {"workload-health", "service-endpoints", "service-reachability", "traffic-health"}
+        self.required_scenarios: set[str] = set()
+        self._identity: dict[str, Any] | None = None
+        self._sequence = 0
+
+    def _policy(self) -> None:
+        if self.code_path == "shell":
+            self.required_detectors = {"shell.detectors"}
+            self.required_scenarios = set()
+            return
+        root = self.environment.workspace / ".sdo/diagnostics"
+        self.required_detectors.update(path.parent.name for path in (root / "detectors/health").glob("*/manifest.yaml"))
+        self.required_scenarios = set()
+        for path in (root / "traffic/workloads").glob("*.yaml"):
+            document = yaml.safe_load(path.read_text())
+            if document.get("purpose") == "health-probe":
+                self.required_scenarios.update(row["id"] for row in document.get("scenarios", []))
+        if not self.required_scenarios:
+            raise ValueError("eval: accepted health policy declares no synthetic traffic scenarios")
+
+    def _windows(self, control: str) -> dict[str, Any]:
+        env = self.environment
+        pod = json.loads(
+            kubectl(["get", "pod/sdo-prober", "-o", "json"], namespace=control, kubeconfig=env.kubeconfig).stdout
+        )
+        address = ipaddress.ip_address(pod["status"]["podIP"])
+        host = f"[{address}]" if address.version == 6 else str(address)
+        code = f"import urllib.request; print(urllib.request.urlopen('http://{host}:8080/v1/windows',timeout=5).read().decode())"
+        return json.loads(
+            kubectl(
+                ["exec", "job/sdo-controller-run", "-c", "controller", "--", "python3", "-c", code],
+                namespace=control,
+                kubeconfig=env.kubeconfig,
+            ).stdout
+        )
+
+    def _shell_results(self, control: str) -> dict[str, Any]:
+        """Read runner health and executable policy from the controller's accepted HEAD."""
+        env = self.environment
+        job = json.loads(
+            kubectl(
+                ["get", "job/sdo-controller-run", "-o", "json"], namespace=control, kubeconfig=env.kubeconfig
+            ).stdout
+        )
+        containers = job["spec"]["template"]["spec"]["containers"]
+        controller = next(row for row in containers if row["name"] == "controller")
+        args = controller["args"]
+        repository = args[args.index("--app") + 1]
+        if not repository.startswith("/"):
+            raise ValueError("eval: installed accepted repository path must be absolute")
+        code = (
+            "import json, subprocess, urllib.request; "
+            f"root={repository!r}; "
+            "git=lambda *args: subprocess.check_output(['git','-C',root,*args]); "
+            "head=git('rev-parse','HEAD').decode().strip(); "
+            "entries=git('ls-tree','-r','-z',head,'--','.sdo/diagnostics/detectors').split(bytes([0])); "
+            "scripts=[entry.split(bytes([9]),1)[1].decode() for entry in entries "
+            "if entry.startswith(b'100755 blob ') and entry.endswith(b'.sh')]; "
+            "report=json.load(urllib.request.urlopen('http://sdo-shell-detectors:8080/results',timeout=5)); "
+            "assert git('rev-parse','HEAD').decode().strip()==head, 'accepted HEAD changed during shell observation'; "
+            "print(json.dumps({'accepted_commit':head,'scripts':scripts,'report':report}))"
+        )
+        return json.loads(
+            kubectl(
+                ["exec", "job/sdo-controller-run", "-c", "controller", "--", "python3", "-c", code],
+                namespace=control,
+                kubeconfig=env.kubeconfig,
+            ).stdout
+        )
+
+    def _controller_job(self, control: str) -> dict[str, Any] | None:
+        """The controller Job, or None when it does not exist."""
+        output = kubectl(
+            ["get", "job/sdo-controller-run", "-o", "json", "--ignore-not-found=true"],
+            namespace=control,
+            kubeconfig=self.environment.kubeconfig,
+        ).stdout
+        return json.loads(output) if output.strip() else None
+
+    def _controller_process(self, control: str) -> ControllerProcess | None:
+        """Name the controller process the lane runs now; None when it has no controller Job."""
+        job = self._controller_job(control)
+        if job is None:
+            return None
+        return ControllerProcess(
+            str(job.get("metadata", {}).get("uid", "")), int(job.get("status", {}).get("failed", 0))
+        )
+
+    def _onboarding(self, control: str) -> dict[str, dict[str, Any] | None]:
+        """Read the controller's pending, completed and rejected onboarding records."""
+        records: dict[str, dict[str, Any] | None] = {}
+        for key, name in (
+            ("complete", "sdo-namespace-onboarding"),
+            ("pending", "sdo-namespace-onboarding-pending"),
+            ("rejected", "sdo-namespace-onboarding-rejected"),
+        ):
+            output = kubectl(
+                ["get", f"configmap/{name}", "-o", "json", "--ignore-not-found=true"],
+                namespace=control,
+                kubeconfig=self.environment.kubeconfig,
+            ).stdout
+            if not output.strip():
+                records[key] = None
+            elif key == "rejected":
+                records[key] = {"reason": json.loads(output)["data"]["reason"]}
+            else:
+                records[key] = json.loads(json.loads(output)["data"]["onboarding.json"])
+        status = (self._controller_job(control) or {}).get("status", {})
+        failed = [c for c in status.get("conditions", []) if c.get("type") == "Failed"]
+        if failed:
+            records["controller_failed"] = {"reason": f"{failed[0].get('reason')}: {failed[0].get('message')}"}
+        elif status.get("failed", 0) >= CONTROLLER_CRASH_LOOP_PODS:
+            records["controller_failed"] = {"reason": f"{status['failed']} controller pods failed (crash loop)"}
+        else:
+            records["controller_failed"] = None
+        return records
+
+    def _keep_controller_log(self, control: str, name: str) -> None:
+        """Save the logs of every controller pod of a failed wait: the Job and its pods are gone after the row."""
+        try:
+            log = kubectl(
+                ["logs", "-l", "job-name=sdo-controller-run", "-c", "controller", "--prefix", "--tail=2000"],
+                namespace=control,
+                kubeconfig=self.environment.kubeconfig,
+            ).stdout
+        except (RuntimeError, ValueError) as exc:
+            log = f"controller log unavailable: {exc}\n"
+        (self.directory / name).write_text(log)
+
+    def await_onboarding(self, control: str) -> dict[str, Any]:
+        """Wait, on a separate recorded budget, until the lane's SDO onboarding has finished.
+
+        A fresh seed runs install-existing and the first health refresh after
+        resume. The controller publishes the completed onboarding record only
+        after that refresh and its clear first evaluation, so the record proves
+        the controller is observing; only then may the stabilization clock start.
+        """
+        started = time.monotonic()
+        self.directory.mkdir(parents=True, exist_ok=True)
+        destination = self.directory / "onboarding.json"
+        while True:
+            try:
+                records, error = self._onboarding(control), None
+            except (RuntimeError, ValueError, KeyError) as exc:
+                records, error = (
+                    {"complete": None, "pending": None, "rejected": None, "controller_failed": None},
+                    str(exc),
+                )
+            record = records["complete"] or {}
+            done = bool(record.get("acceptedCommit") and record.get("objects"))
+            rejected = (records["rejected"] or {}).get("reason")
+            crashed = (records["controller_failed"] or {}).get("reason")
+            evidence = {
+                "passed": done,
+                "accepted_commit": record.get("acceptedCommit"),
+                "pending": records["pending"] is not None,
+                "rejected_reason": rejected,
+                "controller_failed": crashed,
+                "last_error": error,
+                "seconds": round(time.monotonic() - started, 3),
+                "budget_seconds": self.onboarding_timeout_seconds,
+            }
+            # The controller's rejection is durable and its one evaluation is spent, and a failed controller
+            # Job has stopped restarting: the completed record cannot appear, so waiting out the budget
+            # only delays the same failure.
+            if done or rejected or crashed or time.monotonic() - started >= self.onboarding_timeout_seconds:
+                break
+            time.sleep(min(2, max(0, started + self.onboarding_timeout_seconds - time.monotonic())))
+        destination.write_text(json.dumps(evidence, indent=2) + "\n")
+        if not done:
+            self._keep_controller_log(control, "onboarding-controller.log")
+        if not done and crashed and not rejected:
+            raise ValueError(
+                f"eval: SDO controller Job failed during onboarding after {evidence['seconds']:g}s ({crashed}); "
+                "see onboarding-controller.log; no injection"
+            )
+        if not done and rejected:
+            raise ValueError(
+                f"eval: SDO rejected onboarding after {evidence['seconds']:g}s ({rejected}); the fresh lane was not "
+                "healthy and quiet at install, and a rejection is final; no injection"
+            )
+        if not done:
+            raise ValueError(
+                f"eval: SDO onboarding did not finish within {self.onboarding_timeout_seconds:g}s "
+                f"(completed record: {bool(record)}, pending record: {evidence['pending']}, "
+                f"last error: {error}); no injection"
+            )
+        if self.progress:
+            self.progress("onboarding", accepted_commit=evidence["accepted_commit"], evidence=str(destination))
+        return evidence
+
+    @staticmethod
+    def _wall_now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    def await_prior_closure(self, control: str) -> dict[str, Any]:
+        """Wait until the controller reports no incident work, bounded by the controller's own ``busy_until``.
+
+        A repeat must start on the memory the previous row's reflection accepted, and its admission clock
+        must not contain that reflection. The controller publishes one fact: ``busy_until`` is unset when it
+        owns no open incident, closure or queued reflection, and otherwise is the latest time it can still be
+        working (from its own response timeout, retry policy and queue). The wait ends when the fact clears;
+        the only slack past ``busy_until`` is one closeout margin. A state that cannot be read is retried
+        for ``prior_closure_timeout_seconds``. The wait never aborts or reuses running work; when it ends
+        busy, the row is not measured.
+        """
+        started = time.monotonic()
+        self.directory.mkdir(parents=True, exist_ok=True)
+        destination = self.directory / "prior-closure.json"
+        busy = BusyDeadline(wait_for(WaitKind.CLOSEOUT_SETTLE))
+        unreadable_expires = started + self.prior_closure_timeout_seconds
+        while True:
+            try:
+                state, error = self.ops.runtime_state(control), None
+                if not state:
+                    error = "empty controller state"
+            except (RuntimeError, ValueError, KeyError) as exc:
+                state, error = {}, str(exc)
+            still_busy = error is None and busy.observe(state, time.monotonic(), self._wall_now())
+            done = error is None and not still_busy
+            expires = unreadable_expires if error is not None else (busy.deadline or started)
+            evidence = {
+                "passed": done,
+                "closure_state": state.get("closure_state"),
+                "incident_work": active_incident(state),
+                "busy_until": state.get("busy_until"),
+                "last_acknowledged_incident_id": state.get("last_acknowledged_incident_id") or None,
+                "last_error": error,
+                "seconds": round(time.monotonic() - started, 3),
+                "budget_seconds": round(expires - started, 3),
+            }
+            if done or time.monotonic() >= expires:
+                break
+            time.sleep(min(wait_for(WaitKind.SAMPLE), max(0, expires - time.monotonic())))
+        # Recorded after the wait, so a repeat names the memory its predecessor's reflection accepted.
+        evidence["accepted_before"] = _accepted_head(self.environment.workspace)
+        destination.write_text(json.dumps(evidence, indent=2) + "\n")
+        if not done:
+            failure = ControllerStateUnavailableError if error is not None else PriorClosureIncompleteError
+            raise failure(
+                f"eval: previous incident closure did not finish within {evidence['budget_seconds']:g}s "
+                f"(controller busy until {evidence['busy_until']}, closure state: {evidence['closure_state']}, "
+                f"incident work: {evidence['incident_work']}, last error: {error}); row not measured, no injection",
+                evidence,
+            )
+        if self.progress:
+            self.progress("prior_closure", evidence=str(destination))
+        return evidence
+
+    def check_resources(self, stage: str) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        try:
+            evidence = assert_lane_resources(self.environment.kubeconfig, app_namespaces={self.environment.namespace})
+            evidence["host_disk"] = assert_host_disk_headroom()
+        except ValueError as exc:
+            if self.progress:
+                self.progress("lane_resources", passed=False, reason=str(exc))
+            raise
+        destination = self.directory / "lane-resources.json"
+        destination.write_text(json.dumps(evidence, indent=2) + "\n")
+        if self.progress:
+            self.progress("lane_resources", evidence=str(destination))
+
+    def prove(self, control: str, *, fresh: bool = False) -> dict[str, Any]:
+        # Detector evaluations after the resume count as evidence, including those made while onboarding and
+        # the previous row's closure are awaited: admission never waits for a re-evaluation that already ran.
+        boundary = datetime.now(timezone.utc).isoformat()
+        self.check_resources("entry")
+        process = self._controller_process(control)
+        self._policy()
+        # Onboarding has its own budget: the stabilization clock below must never
+        # contain install-existing or the first health refresh of a fresh seed.
+        onboarding = self.await_onboarding(control) if self.code_path == "go" else {}
+        # A previous row's closure and reflection have their own budget too: a
+        # repeat starts only on the memory that reflection accepted.
+        self.await_prior_closure(control)
+        if self.before_proof is not None:
+            self.before_proof(control, onboarding)
+        for _ in range(MAX_STABILIZATION_RESTARTS):
+            try:
+                boundary, process = self._live_boundary(control, boundary, process)
+                return self._stabilize(control, fresh=fresh, boundary=boundary, process=process)
+            except _IncidentWorkStarted:
+                # Work SDO opened during stabilization gets the closure wait's derived budget,
+                # never the fixed stabilization budget; evidence must then postdate that work.
+                self.await_prior_closure(control)
+                boundary = datetime.now(timezone.utc).isoformat()
+        try:
+            boundary, process = self._live_boundary(control, boundary, process)
+            return self._stabilize(control, fresh=fresh, boundary=boundary, process=process)
+        except _IncidentWorkStarted as exc:
+            raise StabilizationError(
+                f"eval: SDO opened incident work during each of {MAX_STABILIZATION_RESTARTS + 1} stabilization "
+                f"windows ({exc}); no injection"
+            ) from exc
+
+    def _live_boundary(
+        self, control: str, boundary: str, process: ControllerProcess | None
+    ) -> tuple[str, ControllerProcess]:
+        """Bind the window's evidence to the controller process running as it opens.
+
+        Rows a process wrote after the boundary and then exited with (during onboarding or the previous
+        closure) do not speak for its replacement, so a changed process moves the boundary to now. A lane with
+        no controller Job cannot produce evidence at all.
+        """
+        current = self._controller_process(control)
+        if current is None:
+            raise ControllerExitedError(
+                "eval: SDO controller process exited during admission (controller Job is gone); no injection",
+                {"boundary": boundary, "controller_process": None},
+            )
+        if process is None or process.exit_since(current) is not None:
+            return datetime.now(timezone.utc).isoformat(), current
+        return boundary, process
+
+    def _stabilize(self, control: str, *, fresh: bool, boundary: str, process: ControllerProcess) -> dict[str, Any]:
+        from benchmarks.sregym.fastloop.rbac import verify_rbac
+
+        deadline = Deadline(time.monotonic() + self.timeout_seconds, time.monotonic)
+        env = self.environment
+        self.directory.mkdir(parents=True, exist_ok=True)
+        rbac = verify_rbac(env.kubeconfig, env.namespace, self.install_config)
+        (self.directory / "rbac.json").write_text(json.dumps(rbac, indent=2) + "\n")
+        if self.progress:
+            self.progress("rbac_equality", evidence=str(self.directory / "rbac.json"))
+        self._identity = workload_identity(env.kubeconfig, env.namespace)
+        self._sequence += 1
+        path = self.directory / f"stabilization-{self._sequence:03d}.jsonl"
+
+        def stable_workloads() -> None:
+            try:
+                assert_stable_workloads(self._identity or {}, workload_identity(env.kubeconfig, env.namespace))
+            except ValueError as exc:
+                incident = active_incident(self.ops.runtime_state(control))
+                if incident is None:
+                    raise
+                raise ValueError(f"{exc}; SDO incident work active before injection: {incident}") from exc
+
+        def sample() -> dict[str, Any]:
+            # Only the process running when the window opened can refresh its rows; once it exits, waiting
+            # out the budget for fresh observations only delays the same failure.
+            exited = process.exit_since(self._controller_process(control))
+            if exited is not None:
+                evidence = {"passed": False, "controller_exited": exited, "controller_process": asdict(process)}
+                record(evidence)
+                self._keep_controller_log(control, "controller.log")
+                raise ControllerExitedError(
+                    f"eval: SDO controller process exited during admission ({exited}); its observations "
+                    "stopped before they could prove health; see controller.log; no injection",
+                    evidence,
+                )
+            assert_clean_baseline(env.kubeconfig, namespace=env.namespace)
+            if self.progress:
+                self.progress("probe_placement", namespace="sregym")
+            stable_workloads()
+            state = self.ops.runtime_state(control)
+            proof = controller_proof(state, self.required_detectors, boundary)
+            proof["code_path"] = self.code_path
+            if proof["incident_work_pending"]:
+                proof.update(required_scenarios=sorted(self.required_scenarios), suspended="incident_work_started")
+                record(proof)
+                raise _IncidentWorkStarted(active_incident(state) or "incident work")
+            if self.code_path == "shell":
+                try:
+                    runner = shell_runner_proof(
+                        self._shell_results(control), boundary, datetime.now(timezone.utc).isoformat()
+                    )
+                except (RuntimeError, ValueError, KeyError, IndexError, StopIteration) as exc:
+                    runner = {"passed": False, "reason": str(exc)}
+                proof["shell_runner"] = runner
+                proof["passed"] = proof["passed"] and runner["passed"]
+            else:
+                try:
+                    windows = self._windows(control)
+                    proof["qualified_scenarios"] = qualified_scenarios(windows, self.required_scenarios)
+                except (RuntimeError, ValueError, KeyError) as exc:
+                    proof.update(qualified_scenarios=False, prober_error=str(exc))
+                proof["passed"] = proof["passed"] and proof["qualified_scenarios"]
+            proof["required_scenarios"] = sorted(self.required_scenarios)
+            return proof
+
+        def record(proof: dict[str, Any]) -> None:
+            with path.open("a") as output:
+                output.write(json.dumps(proof) + "\n")
+
+        proof = wait_for_proof(
+            sample, record, timeout_seconds=self.timeout_seconds, deadline=deadline, monotonic=time.monotonic
+        )
+        if self.progress:
+            self.progress("stabilization", evidence=str(path))
+        if fresh:
+            if self.synchronize is None:
+                raise ValueError("eval: fresh-memory proof requires synchronization from the accepted repository")
+            self.synchronize()
+            lineage = setup_lineage(env.workspace, env.seed_commit or "HEAD")
+            destination = self.directory / "setup-lineage.json"
+            destination.write_text(json.dumps(lineage, indent=2) + "\n")
+            if self.progress:
+                self.progress("setup_memory", evidence=str(destination))
+        from benchmarks.sregym.fastloop.hotel_helpers import admit_install
+
+        helper_evidence = admit_install(env.kubeconfig, env.namespace)
+        (self.directory / "hotel-script-profile.json").write_text(json.dumps(helper_evidence, indent=2) + "\n")
+        self.check_resources("injection")
+        deadline.remaining()
+        return proof
+
+
+class EvalAdmissionOps:
+    """Prove health while ACTIVE, before either ordinary or simultaneous injection."""
+
+    def __init__(self, inner: ClusterOps, admission: LaneAdmission, *, fresh: bool = False) -> None:
+        self._inner, self.admission, self._fresh = inner, admission, fresh
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def inject_after_resume(
+        self, control_namespace: str, generation: str, inject: Callable[[], None]
+    ) -> dict[str, float]:
+        started = time.monotonic()
+        self._inner.set_maintenance(control_namespace, paused=False, generation=generation + "-proof")
+        self.admission.prove(control_namespace, fresh=self._fresh)
+        self._fresh = False
+        seconds = time.monotonic() - started
+        result = dict(self._inner.inject_after_resume(control_namespace, generation, inject))
+        result["traffic_stabilization"] = seconds
+        return result

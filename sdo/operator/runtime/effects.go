@@ -21,7 +21,10 @@ type DispatchEffect struct {
 func (c *Controller) PendingDispatchEffect() (DispatchEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.currentIncidentRequest == nil {
+	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.currentIncidentRequest == nil || c.earlyReportPendingLocked() {
+		return DispatchEffect{}, false
+	}
+	if !c.verificationDeadline.IsZero() && !c.clock().Before(c.verificationDeadlineLocked()) {
 		return DispatchEffect{}, false
 	}
 	if !c.dispatchRetryDueLocked() {
@@ -41,6 +44,11 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		cancel()
 		return fmt.Errorf("dispatch effect is not pending")
 	}
+	if !c.verificationDeadline.IsZero() && !c.clock().Before(c.verificationDeadlineLocked()) {
+		c.mu.Unlock()
+		cancel()
+		return fmt.Errorf("responder verification deadline expired")
+	}
 	if effect.Request.IncidentID != c.currentIncidentRequest.IncidentID {
 		c.mu.Unlock()
 		cancel()
@@ -54,20 +62,18 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		cancel()
 		return err
 	}
+	c.responderCancel = cancel
+	c.responseStagesRunning = !(len(c.codePath.Selection.ResponseStages) == 1 && c.codePath.Selection.ResponseStages[0] == "agent")
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	if c.incidentDispatchedAt.IsZero() {
 		c.incidentDispatchedAt = c.incidentDetectedAt
 	}
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseDispatched, RecordedAt: contractTimestamp(c.incidentDispatchedAt), IncidentId: effect.Request.IncidentID,
-		Worktree: effect.Request.RepositoryWorktree, BaseCommit: effect.Request.RepositoryBaseCommit,
-	})
 	c.mu.Unlock()
-	go func() {
+	c.goBackground(func() {
 		defer cancel()
-		result, dispatchErr := c.dispatcher.Dispatch(actionCtx, effect.Request)
-		c.results <- dispatchCompletion{incidentID: effect.Request.IncidentID, result: result, err: dispatchErr}
-	}()
+		result, reports, dispatchErr := c.runResponsePipeline(actionCtx, effect.Request)
+		c.results <- dispatchCompletion{incidentID: effect.Request.IncidentID, result: result, priorStages: reports, err: dispatchErr}
+	})
 	return nil
 }
 

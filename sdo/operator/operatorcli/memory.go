@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 
@@ -15,8 +16,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/checktransport"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -24,17 +27,54 @@ import (
 const MemoryUsage = `usage: sdo-operator memory <command> [flags]
 
 commands:
-  check [--root .] [--json] [--decision FILE]
-        Run structural, semantic, ownership, build, vet, and detector tests.
+  adopt-existing --root DIR [--operator-root DIR] [--code-path go|shell]
+        Explicitly adopt supplied memory as an unvalidated base. Go compiles it;
+        shell uses text/size/credential hygiene. SDO_CODE_PATH supplies the default.
+        Records SDO-Origin: adopted-existing; later edits require the broker.
+  import prepare --root DIR --worktree-root DIR --id ID
+        Create a broker proposal for operator-authored memory. Edit only the
+        returned checkout. Each positive corpus case needs operator.json and
+        accepted.json; no captured provenance or live trust is implied.
+  import publish --root DIR --worktree-root DIR --id ID --namespace NS
+        --validator-image IMAGE --repository-pvc PVC --repository-mount-path DIR
+        [--repository-pvc-subpath PATH] [--kubeconfig FILE] [--context NAME]
+        [--operator-root DIR] [--application-namespace NS] [--healthy-baseline]
+        Publish through the broker and its isolated Kubernetes validator.
+  check [--replay on|off] [--root .] [--json] [--decision FILE]
+        Run structural, semantic, ownership, compilation and provenance checks.
+        Tests and replay run as information; their verdicts never block saving.
+        Like the broker, it derives playbook fault_class and regenerates the
+        playbook index from each README's first heading; never edit the index.
+        SDO_CODE_PATH=shell selects text/size/credential hygiene and ownership
+        without Go compilation or replay; broker launch policy is authoritative.
         SDO_ACTOR, SDO_PHASE, and SDO_BASE_COMMIT are required. Operator sources
         default to $SDO_OPERATOR_ROOT or /opt/sdo/sdo/operator. Optional recorded
         healthy snapshots come from SDO_HEALTHY_BASELINE. Publication context is
         provisioned in .git/sdo-check-context.json. Reflection must write its
-        intended ReflectionDecision JSON (learning_decision, no_change_reason,
-        playbook_ids) to .git/sdo-reflection-decision.json or --decision FILE.
-        The returned result must use the same decision and logical IDs.
+        intended ReflectionResult JSON (summary, learning_decision, no_change_reason,
+        proposed_artifact_ids, sdk_gaps; the returned result JSON can be written
+        as is) to .git/sdo-reflection-decision.json
+        or --decision FILE. The returned result must use the same decision and
+        logical IDs. A provisioned reflection endpoint runs the broker-owned
+        isolated check; publication reuses it only for identical candidate bytes,
+        accepted base, policy and immutable toolchain. Otherwise it checks again.
+        A broker memory.conflict carries the newer accepted commit,
+        conflicting paths, peer incidents and validator errors. The correction
+        checkout keeps your edits on the newer commit with conflict markers only
+        where they collided; merge both incidents' intent there and preserve
+        accepted learning before resubmitting.
+        --replay (or SDO_REPLAY, default on) selects the run policy. Off skips
+        all corpus requirements and replay; compilation, imports, formatting
+        and successful accepted RunScript receipt provenance remain required.
+        Coverage gaps (a verified cause without a program, a skipped healthy replay,
+        a recorded fault no detector reaches, a links.yaml edge no health-probe
+        scenario drives: traffic.undriven-edge, a health-probe scenario on the
+        default latency bound: traffic.default-latency) never fail the check: they print as
+        coverage_gap lines, or in the JSON coverage_gaps field. Replay outcomes and
+        reasons use program.replay-observation and are retained with reflection.
         Exit 0 when clean,
-        1 for diagnostics, 2 for missing inputs or infrastructure/usage errors.
+        1 for diagnostics, 2 for missing inputs or infrastructure/usage errors,
+        124 for an exceeded validation deadline. Report timeouts; do not retry.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
         List artifacts by logical ID.
   new playbook <id> [--root .] [--incident I]
@@ -56,6 +96,7 @@ const (
 	exitClean       = 0
 	exitDiagnostics = 1
 	exitInfra       = 2
+	exitTimeout     = 124
 )
 
 // RunMemory runs "sdo-operator memory <args>" and returns the process exit
@@ -72,6 +113,10 @@ func RunMemory(ctx context.Context, args []string, getenv func(string) string, s
 	var code int
 	var err error
 	switch args[0] {
+	case "adopt-existing":
+		err = memoryAdoptExisting(ctx, args[1:], getenv, stdout)
+	case "import":
+		err = memoryImport(ctx, args[1:], getenv, stdout)
 	case "check":
 		code, err = memoryCheck(ctx, args[1:], getenv, stdout)
 	case "ls":
@@ -90,8 +135,18 @@ func RunMemory(ctx context.Context, args []string, getenv func(string) string, s
 		fmt.Fprintln(stdout, MemoryUsage)
 		return exitClean
 	}
+	var failure *validate.Failure
+	if errors.As(err, &failure) {
+		for _, diagnostic := range failure.Diagnostics {
+			fmt.Fprintln(stdout, diagnosticLine(diagnostic))
+		}
+		return exitDiagnostics
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "sdo-operator memory:", err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return exitTimeout
+		}
 		return exitInfra
 	}
 	return code
@@ -145,6 +200,7 @@ func writeJSON(stdout io.Writer, message proto.Message) error {
 
 func memoryCheck(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
 	flags := flag.NewFlagSet("memory check", flag.ContinueOnError)
+	replayFlag := flags.String("replay", getenv(settings.ReplayEnvironment), "replay policy: on or off")
 	decisionPath := flags.String("decision", "", "ReflectionDecision JSON; defaults to .git/sdo-reflection-decision.json")
 	root := flags.String("root", ".", "repository checkout to validate")
 	asJSON := flags.Bool("json", false, "print a MemoryCheckReport as ProtoJSON")
@@ -154,6 +210,10 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	}
 	if len(positional) != 0 {
 		return exitInfra, fmt.Errorf("check takes no arguments, got %q", positional)
+	}
+	replay, err := settings.Replay(*replayFlag)
+	if err != nil {
+		return exitInfra, err
 	}
 	absolute, err := absRoot(*root)
 	if err != nil {
@@ -169,16 +229,78 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	}
 	var decision *contracts.ReflectionDecision
 	if phase == string(validate.ReflectionPhase) {
-		decision, err = validate.LoadReflectionDecision(ctx, absolute, *decisionPath)
+		decision, err = validate.LoadCheckedReflectionDecision(ctx, absolute, *decisionPath)
 		if err != nil {
-			return exitInfra, err
+			var failure *validate.Failure
+			if !errors.As(err, &failure) {
+				return exitInfra, err
+			}
+			if *asJSON {
+				if err := writeJSON(stdout, &contracts.MemoryCheckReport{
+					Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics), Root: absolute, Actor: actor, Phase: phase, Base: base,
+				}); err != nil {
+					return exitInfra, err
+				}
+			} else {
+				for _, diagnostic := range failure.Diagnostics {
+					fmt.Fprintln(stdout, diagnosticLine(diagnostic))
+				}
+			}
+			return exitDiagnostics, nil
 		}
 	}
 
+	// Reflection workers use the broker's complete isolated check when a trusted
+	// endpoint is provisioned. Missing endpoints never silently claim a pass.
+	if directory := getenv("SDO_MEMORY_CHECK_DIR"); directory != "" && phase == string(validate.ReflectionPhase) {
+		report, err := checktransport.Check(ctx, directory, decision)
+		if err != nil {
+			return exitInfra, err
+		}
+		if *asJSON {
+			if err := writeJSON(stdout, report); err != nil {
+				return exitInfra, err
+			}
+		} else {
+			for _, d := range report.GetDiagnostics() {
+				fmt.Fprintln(stdout, d.GetRule()+": "+d.GetMessage())
+			}
+		}
+		if len(report.GetDiagnostics()) != 0 {
+			return exitDiagnostics, nil
+		}
+		return exitClean, nil
+	}
+
+	// Mirror the broker: authored memory whitespace is normalized in place.
+	if base != "" {
+		paths, err := validate.ChangedPaths(ctx, absolute, base)
+		if err != nil {
+			return exitInfra, err
+		}
+		if _, err := validate.NormalizeAuthoredWhitespace(absolute, paths); err != nil {
+			return exitInfra, err
+		}
+		if _, err := validate.NormalizeAuthoredPlaybooks(absolute, paths); err != nil {
+			return exitInfra, err
+		}
+		if _, err := normalizeCorpusForReplay(absolute, paths, replay); err != nil {
+			return exitInfra, err
+		}
+	}
 	var replayNotes []sdktest.MitigationReplayResult
+	var coverageGaps []validate.Diagnostic
+	var ceiling sdk.ObservationScope
+	appNamespace := ""
+	if publication != nil {
+		ceiling = publication.ObservationCeiling
+		appNamespace = publication.ApplicationNamespace
+	}
 	diagnostics, err := validate.Check(ctx, validate.Request{
-		MitigationReplayNotes: &replayNotes,
-		Root:                  absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
+		Replay: replay, CodePath: memoryValidationCodePath(getenv),
+		ObservationCeiling: ceiling, ApplicationNamespace: appNamespace,
+		MitigationReplayNotes: &replayNotes, CoverageGaps: &coverageGaps,
+		Root: absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
 		OperatorRoot: operatorRootDefault(getenv), HealthyBaseline: getenv("SDO_HEALTHY_BASELINE"),
 		MetricsDetectors: getenv(memoryMetricsEnv) != "",
 	}, validate.CompileCandidate)
@@ -186,13 +308,16 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		return exitInfra, err
 	}
 	if *asJSON {
-		report := &contracts.MemoryCheckReport{MitigationReplayNotes: validate.ProtoMitigationReplayNotes(replayNotes), Diagnostics: validate.ProtoDiagnostics(diagnostics), Root: absolute, Actor: actor, Phase: phase, Base: base}
+		report := &contracts.MemoryCheckReport{MitigationReplayNotes: validate.ProtoMitigationReplayNotes(replayNotes), Diagnostics: validate.ProtoDiagnostics(diagnostics), CoverageGaps: validate.ProtoDiagnostics(coverageGaps), Root: absolute, Actor: actor, Phase: phase, Base: base}
 		if err := writeJSON(stdout, report); err != nil {
 			return exitInfra, err
 		}
 	} else {
 		for _, diagnostic := range diagnostics {
 			fmt.Fprintln(stdout, diagnosticLine(diagnostic))
+		}
+		for _, gap := range coverageGaps {
+			fmt.Fprintln(stdout, "coverage_gap "+diagnosticLine(gap))
 		}
 		for _, note := range replayNotes {
 			fmt.Fprintf(stdout, "program=%s case=%s mitigation_replay=%s\n", note.ProgramID, note.CaseID, note.Status)
@@ -312,7 +437,8 @@ func memoryOutcomes(ctx context.Context, args []string, stdout io.Writer) error 
 	if err != nil {
 		return err
 	}
-	stored, err := memory.OpenReader(absolute).List(ctx)
+	reader := memory.OpenReader(absolute)
+	stored, skipped, err := memory.ListOutcomes(ctx, reader, "memory outcomes")
 	if err != nil {
 		return err
 	}
@@ -326,5 +452,26 @@ func memoryOutcomes(ctx context.Context, args []string, stdout io.Writer) error 
 	for _, record := range outcomes.Outcomes {
 		fmt.Fprintf(stdout, "%s\t%s\n", record.GetIncidentId(), record.GetClassification())
 	}
+	for _, note := range skipped {
+		fmt.Fprintf(stdout, "unreadable\t%s\t%s\n", note.Name, note.Reason)
+	}
 	return nil
+}
+
+func memoryValidationCodePath(getenv func(string) string) string {
+	mode := getenv("SDO_MEMORY_VALIDATION")
+	if mode == "" {
+		return getenv("SDO_CODE_PATH")
+	}
+	if mode == "hygiene" {
+		return "shell"
+	}
+	return mode
+}
+
+func normalizeCorpusForReplay(root string, paths []string, replay string) ([]string, error) {
+	if replay == "off" {
+		return nil, nil
+	}
+	return validate.NormalizeCapturedCorpus(root, paths)
 }

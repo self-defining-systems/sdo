@@ -18,7 +18,7 @@ How each detector decides, kept deterministic and cheap. Validator limits (firin
 
 - Declared facts are yes/no: no threshold, no tuning.
 - Latency budgets come from the source. A caller's client timeout or deadline is an upper bound for the callee's
-  latency, and the frontend's timeout bounds the journey. Without a stated budget, keep the SDK SLO defaults; do not
+  latency, and the client's timeout bounds the journey. Without a stated budget, keep the SDK SLO defaults; do not
   invent tighter numbers.
 - Error budgets: a healthy synthetic journey has zero errors. Allow only the transient rate the SDK defaults
   absorb.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	"sdo.dev/operator/runtime/prometheus"
@@ -37,12 +38,23 @@ func withMetrics(
 	if err != nil {
 		return nil, nil, err
 	}
+	return withMetricsAPI(provider, detectors, api, requireSource, clock)
+}
+
+// withMetricsAPI is withMetrics for an already constructed metrics source.
+func withMetricsAPI(
+	provider SnapshotProvider, detectors []sdk.Detector, api MetricsAPI, requireSource bool, clock func() time.Time,
+) (SnapshotProvider, *MetricsObserver, error) {
 	observer, err := NewMetricsObserver(api, detectors, MetricsObserverOptions{Clock: clock})
 	if err != nil {
 		return nil, nil, err
 	}
 	if observer == nil {
-		return provider, nil, nil
+		if api == nil {
+			return provider, nil, nil
+		}
+		// Configured sources also serve on-demand Diagnose queries.
+		observer = &MetricsObserver{api: api, timeout: DefaultMetricsQueryTimeout, clock: lifecycleio.Now}
 	}
 	if api == nil && requireSource {
 		return nil, nil, errors.New("metrics health evaluation requires --metrics-url")

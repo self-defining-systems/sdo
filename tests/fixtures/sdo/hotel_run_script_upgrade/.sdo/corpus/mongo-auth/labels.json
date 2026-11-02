@@ -1,0 +1,21 @@
+{
+  "root_cause_program_ids": [
+    "mongo-auth-bootstrap"
+  ],
+  "bindings": {
+    "objects": {
+      "pod": {
+        "api_version": "v1",
+        "kind": "Pod",
+        "namespace": "demo",
+        "name": "mongodb-geo"
+      }
+    }
+  },
+  "provenance": {
+    "incident_id": "mongo-auth-upgrade"
+  },
+  "script_origins": {
+    "356db4f1dc4280d7959ed51e88208b9820c0919d2a792958115485d416cec139": "manual-mongo-user"
+  }
+}

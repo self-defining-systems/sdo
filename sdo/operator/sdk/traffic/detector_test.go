@@ -243,7 +243,7 @@ func TestDetectorFiresOnTimeoutsAndLatency(t *testing.T) {
 		t.Fatalf("expected timeout and latency findings, got %v", findings)
 	}
 	joined := findings[0].Summary + findings[1].Summary
-	if !strings.Contains(joined, "timeout rate") || !strings.Contains(joined, "p90 latency") {
+	if !strings.Contains(joined, "timeout rate") || !strings.Contains(joined, "p50 latency") {
 		t.Fatalf("findings must name the violated SLO dimension, got %q", joined)
 	}
 }
@@ -277,5 +277,76 @@ func TestDetectorReportsAWorkloadTheProberCouldNotRun(t *testing.T) {
 	_, err := traffic.NewDetector(detectorSpec(), "health").Detect(context.Background(), snapshot)
 	if err == nil || !strings.Contains(err.Error(), "prober unreachable") {
 		t.Fatalf("a load error must surface as a detector error, got %v", err)
+	}
+}
+
+func TestSteadyDetectorRequiresTrafficProofBeforeClear(t *testing.T) {
+	unqualified := healthy("search")
+	unqualified.Qualified = false
+	unqualified.Samples = samples(failed(3*time.Second, 500, "already failing at restart"), failed(2*time.Second, 500, "already failing at restart"), failed(time.Second, 500, "already failing at restart"))
+	stale := healthy("search")
+	stale.Samples = samples(ok(5 * time.Minute))
+	invalid := healthy("search")
+	invalid.Samples = samples(traffic.Sample{At: observedAt, Outcome: traffic.OutcomeInvalid})
+	for _, test := range []struct {
+		name      string
+		scenarios []traffic.ScenarioObservations
+		confirmed bool
+	}{
+		{"no-window", nil, false},
+		{"no-scenarios", []traffic.ScenarioObservations{}, false},
+		{"missing-scenarios", []traffic.ScenarioObservations{healthy("search")}, false},
+		{"no-samples", []traffic.ScenarioObservations{observed(descriptor("search"))}, false},
+		{"never-succeeded", []traffic.ScenarioObservations{unqualified}, false},
+		{"partial-qualification", []traffic.ScenarioObservations{healthy("login"), unqualified}, false},
+		{"stale", []traffic.ScenarioObservations{stale}, false},
+		{"invalid", []traffic.ScenarioObservations{invalid}, false},
+		{"insufficient", []traffic.ScenarioObservations{observed(descriptor("search"), ok(time.Second))}, false},
+		{"healthy", []traffic.ScenarioObservations{healthy("search"), healthy("login"), healthy("reserve")}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			detector := traffic.NewDetector(detectorSpec(), "health")
+			confirmation, ok := detector.(interface {
+				Confirmed(sdk.DetectionContext) bool
+			})
+			if !ok {
+				t.Fatal("steady traffic detector must expose observation confirmation")
+			}
+			var windows map[string]traffic.Window
+			if test.scenarios != nil {
+				windows = window(healthWorkload(t), test.scenarios...)
+			}
+			snapshot := hotelSnapshot(windows)
+			if got := confirmation.Confirmed(snapshot); got != test.confirmed {
+				t.Fatalf("confirmed=%v want %v", got, test.confirmed)
+			}
+			findings, err := detector.Detect(context.Background(), snapshot)
+			if err != nil || len(findings) != 0 {
+				t.Fatalf("unproven traffic must not fire: %v %v", findings, err)
+			}
+		})
+	}
+}
+
+// A resolved scenario stops reporting once its pre-repair samples leave the
+// window, so the declared evaluation window must cover the oldest sample age.
+func TestDetectorEvaluationWindowCoversPreRepairSamples(t *testing.T) {
+	outage := observed(descriptor("search"),
+		failed(3*time.Second, 503, "outage"), failed(2*time.Second, 503, "outage"), failed(time.Second, 503, "outage"), failed(0, 503, "outage"))
+	workload := healthWorkload(t)
+	snapshot := hotelSnapshot(window(workload, outage, healthy("login"), healthy("reserve")))
+	if findings := detect(t, snapshot); len(findings) == 0 {
+		t.Fatal("positive control: the outage window must fire")
+	}
+	horizon := traffic.NewDetector(detectorSpec(), "health").(sdk.WindowedDetector).EvaluationWindow(snapshot)
+	if horizon < traffic.DefaultMaxAge {
+		t.Fatalf("window %s is shorter than the %s sample age", horizon, traffic.DefaultMaxAge)
+	}
+	later := window(workload, outage, healthy("login"), healthy("reserve"))
+	aged := later[workload.Name]
+	aged.ObservedAt = observedAt.Add(horizon)
+	later[workload.Name] = aged
+	if findings := detect(t, hotelSnapshot(later)); len(findings) != 0 {
+		t.Fatalf("pre-repair samples still reported %s after the outage: %v", horizon, findings)
 	}
 }

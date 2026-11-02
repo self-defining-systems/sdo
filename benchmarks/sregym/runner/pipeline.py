@@ -223,6 +223,7 @@ def merge_stage_config(
         allow_failed_verdicts=merged.get("allow_failed_verdicts", False),
         reasoning_effort=str(merged.get("reasoning_effort", "")),
         tasklist=merged.get("tasklist", ""),
+        capability_mode=merged.get("capability_mode", "strict"),
         problems=merged.get("problems", []),
         spec_names=merged.get("spec_names", []),
         variants=variants,

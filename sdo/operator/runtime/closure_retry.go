@@ -82,10 +82,20 @@ func (c *Controller) clock() time.Time {
 	return lifecycleio.Now().UTC()
 }
 
-// PausedWake is when a paused controller must wake: the next closure retry,
-// or zero. A pause stops observing the application, not committing memory.
+// PausedWake includes report grace, worker termination retries, ownerless
+// incident retirement and closure retries. A pause stops observation, not
+// already-started closure work.
 func (c *Controller) PausedWake() time.Time {
-	return c.closureRetryWake(time.Time{})
+	c.mu.Lock()
+	next := c.earlyReportWakeLocked()
+	if retry := c.pausedEffectRetryAt; !retry.IsZero() && (next.IsZero() || retry.Before(next)) {
+		next = retry
+	}
+	if retire := c.retirementWakeLocked(c.clock()); !retire.IsZero() && (next.IsZero() || retire.Before(next)) {
+		next = retire
+	}
+	c.mu.Unlock()
+	return c.closureRetryWake(next)
 }
 
 // closureRetryWake returns the next closure retry time when it is earlier than
@@ -93,12 +103,22 @@ func (c *Controller) PausedWake() time.Time {
 func (c *Controller) closureRetryWake(next time.Time) time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	failure := c.closureFailure
-	if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || failure == nil || failure.Permanent || failure.NextAttemptAt.IsZero() {
+	if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING {
 		return next
 	}
-	if next.IsZero() || failure.NextAttemptAt.Before(next) {
-		return failure.NextAttemptAt
+	retry := c.closureRecheckRetryAt
+	if failure := c.closureFailure; failure != nil {
+		if failure.Permanent {
+			return next
+		}
+		// Both waits are lower bounds: a future broker backoff wins, while
+		// an expired backoff cannot override a fresh observation wake.
+		if retry.IsZero() || failure.NextAttemptAt.After(retry) {
+			retry = failure.NextAttemptAt
+		}
+	}
+	if !retry.IsZero() && (next.IsZero() || retry.Before(next)) {
+		return retry
 	}
 	return next
 }

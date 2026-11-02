@@ -2,17 +2,19 @@ package install
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sdo.dev/operator/shellpath"
 	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/install/internal/installio"
 )
@@ -32,15 +34,17 @@ type Extension interface {
 }
 
 type Installer struct {
-	Client             kubernetes.Interface
-	SeedRepository     RepositorySeeder
-	SyncRepository     RepositorySynchronizer
-	ReadAcceptedCommit func(context.Context, SyncConfig) (string, error)
-	Extension          Extension
-	PollInterval       time.Duration
-	SyncTimeout        time.Duration
-	Now                func() time.Time
-	Wait               func(context.Context, time.Duration) error
+	// BeforeControllerStart runs trusted lifecycle bookkeeping after preparation.
+	BeforeControllerStart func(context.Context, Config) error
+	Client                kubernetes.Interface
+	SeedRepository        RepositorySeeder
+	SyncRepository        RepositorySynchronizer
+	ReadAcceptedCommit    func(context.Context, SyncConfig) (string, error)
+	Extension             Extension
+	PollInterval          time.Duration
+	SyncTimeout           time.Duration
+	Now                   func() time.Time
+	Wait                  func(context.Context, time.Duration) error
 }
 
 type Result struct {
@@ -60,8 +64,19 @@ type SyncConfig struct {
 const MaintenanceConfigMap = "sdo-controller-maintenance"
 
 // SetMaintenance pauses observation during a planned application redeploy.
-// A new generation on resume makes the controller relist application state.
+// A paused-to-active transition relists application state; generation-only
+// active updates retain running observations.
 func SetMaintenance(ctx context.Context, client kubernetes.Interface, namespace string, paused bool, generation string) error {
+	return SetMaintenanceWithOptions(ctx, client, namespace, paused, generation, MaintenanceOptions{})
+}
+
+// MaintenanceOptions distinguishes a redeploy from a temporary observation barrier.
+type MaintenanceOptions struct {
+	PreserveBaseline bool
+}
+
+// SetMaintenanceWithOptions can retain the last healthy baseline across a pause.
+func SetMaintenanceWithOptions(ctx context.Context, client kubernetes.Interface, namespace string, paused bool, generation string, options MaintenanceOptions) error {
 	if client == nil {
 		return errors.New("Kubernetes client is required")
 	}
@@ -76,7 +91,10 @@ func SetMaintenance(ctx context.Context, client kubernetes.Interface, namespace 
 		state = "paused"
 	}
 	configMaps := client.CoreV1().ConfigMaps(namespace)
-	want := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMap, Namespace: namespace}, Data: map[string]string{"state": state, "generation": generation}}
+	want := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMap, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"state": state, "generation": generation}}
+	if paused && options.PreserveBaseline {
+		want.Data["preserve_baseline"] = "true"
+	}
 	prior, err := configMaps.Get(ctx, MaintenanceConfigMap, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = configMaps.Create(ctx, want, metav1.CreateOptions{})
@@ -110,7 +128,7 @@ func (i Installer) SyncExistingRepository(ctx context.Context, syncConfig SyncCo
 
 // WithSyncPod gives a read-only transport callback temporary access to the
 // repository PVC. The callback owns no Kubernetes resource lifecycle.
-func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, action func(context.Context, Config) error) error {
+func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, action func(context.Context, Config) error) (resultErr error) {
 	if i.Client == nil || action == nil {
 		return errors.New("Kubernetes client and sync Pod action are required")
 	}
@@ -119,20 +137,74 @@ func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, actio
 	}
 	cfg := Config{Namespace: syncConfig.ControlNamespace, ControlNamespace: syncConfig.ControlNamespace, RepositoryPVC: syncConfig.RepositoryPVC, ControllerImage: syncConfig.ControllerImage}
 	owner := fmt.Sprintf("sync-%d", i.now().UnixNano())
-	if err := i.acquireOperateLock(ctx, cfg, owner); err != nil {
+	reservation, err := i.acquireOperateLock(ctx, cfg, owner, metav1.OwnerReference{Kind: "Pod", Name: RepositorySyncPodName})
+	if err != nil {
 		return err
 	}
-	defer func() { _ = i.releaseOperateLock(context.Background(), cfg, owner) }()
-	if err := i.ensureSyncPod(ctx, syncPod(cfg)); err != nil {
+	defer func() { resultErr = errors.Join(resultErr, i.finishClaimedSyncPod(cfg, reservation)) }()
+	if err := i.startClaimedSyncPod(ctx, cfg, reservation, syncPod(cfg)); err != nil {
 		return err
 	}
-	defer func() {
-		_ = i.Client.CoreV1().Pods(cfg.controlNamespace()).Delete(context.Background(), RepositorySyncPodName, metav1.DeleteOptions{})
-	}()
 	if err := i.waitSync(ctx, cfg.controlNamespace()); err != nil {
 		return err
 	}
 	return action(ctx, cfg)
+}
+
+// WithRuntimeExportPod gives a transport callback access to sealed runtime
+// evidence on the repository PVC. It takes no operate lock: the callback may
+// read and retire only immutable snapshot archives, never the live checkout.
+func (i Installer) WithRuntimeExportPod(ctx context.Context, syncConfig SyncConfig, action func(context.Context, Config) error) (resultErr error) {
+	if i.Client == nil || action == nil {
+		return errors.New("Kubernetes client and export Pod action are required")
+	}
+	if !namespaceName.MatchString(syncConfig.ControlNamespace) || !namespaceName.MatchString(syncConfig.RepositoryPVC) || strings.TrimSpace(syncConfig.ControllerImage) == "" {
+		return errors.New("runtime evidence export requires control namespace, PVC, and controller image")
+	}
+	cfg := Config{Namespace: syncConfig.ControlNamespace, ControlNamespace: syncConfig.ControlNamespace, RepositoryPVC: syncConfig.RepositoryPVC, ControllerImage: syncConfig.ControllerImage}
+	pods := i.Client.CoreV1().Pods(cfg.controlNamespace())
+	// A crashed earlier delivery may leave its Pod; one lane delivers serially.
+	if err := i.deletePod(ctx, cfg.controlNamespace(), RuntimeExportPodName); err != nil {
+		return err
+	}
+	if _, err := pods.Create(ctx, runtimeExportPod(cfg), metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("start runtime export Pod: %w", err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		resultErr = errors.Join(resultErr, i.deletePod(cleanup, cfg.controlNamespace(), RuntimeExportPodName))
+	}()
+	if err := i.waitPodReady(ctx, cfg.controlNamespace(), RuntimeExportPodName); err != nil {
+		return err
+	}
+	return action(ctx, cfg)
+}
+
+func (i Installer) deletePod(ctx context.Context, namespace, name string) error {
+	pods := i.Client.CoreV1().Pods(namespace)
+	pod, err := pods.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := pods.Delete(ctx, name, syncPodDeleteOptions(pod.ObjectMeta)); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	for {
+		remaining, err := pods.Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) || err == nil && remaining.UID != pod.UID {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := i.pause(ctx); err != nil {
+			return fmt.Errorf("wait for %s retirement: %w", name, err)
+		}
+	}
 }
 
 // InstallPrepared starts the controller from a clean accepted checkout already
@@ -183,7 +255,7 @@ func verifyPreparedCheckout(ctx context.Context, root, acceptedCommit string) er
 	return nil
 }
 
-func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Result, error) {
+func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (result Result, resultErr error) {
 	if i.Client == nil {
 		return Result{}, errors.New("Kubernetes client is required")
 	}
@@ -232,12 +304,15 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Resu
 		}
 	}
 	if !prepared {
-		if err := i.ensureSyncPod(ctx, plan.SyncPod); err != nil {
+		owner := fmt.Sprintf("sync-install-%d", i.now().UnixNano())
+		reservation, err := i.acquireOperateLock(ctx, cfg, owner, metav1.OwnerReference{Kind: "Pod", Name: RepositorySyncPodName})
+		if err != nil {
 			return Result{}, err
 		}
-		defer func() {
-			_ = i.Client.CoreV1().Pods(control).Delete(context.Background(), RepositorySyncPodName, metav1.DeleteOptions{})
-		}()
+		defer func() { resultErr = errors.Join(resultErr, i.finishClaimedSyncPod(cfg, reservation)) }()
+		if err := i.startClaimedSyncPod(ctx, cfg, reservation, plan.SyncPod); err != nil {
+			return Result{}, err
+		}
 		if err := i.waitSync(ctx, control); err != nil {
 			return Result{}, err
 		}
@@ -248,10 +323,20 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Resu
 			return Result{}, err
 		}
 	}
+	if runner, enabled := ShellRunnerConfig(cfg); enabled && !prepared {
+		if err := shellpath.EnsureReadOnlyRunner(ctx, i.Client, runner); err != nil {
+			return Result{}, err
+		}
+	}
+	if i.BeforeControllerStart != nil {
+		if err := i.BeforeControllerStart(ctx, cfg); err != nil {
+			return Result{}, fmt.Errorf("before controller start: %w", err)
+		}
+	}
 	if _, err := i.Client.BatchV1().Jobs(control).Create(ctx, plan.Job, metav1.CreateOptions{}); err != nil {
 		return Result{}, fmt.Errorf("start controller Job: %w", err)
 	}
-	result := Result{Fingerprint: plan.Job.Annotations[InstallFingerprintAnnotation]}
+	result = Result{Fingerprint: plan.Job.Annotations[InstallFingerprintAnnotation]}
 	if cfg.WaitForCompletion {
 		if err := i.waitJob(ctx, control, time.Duration(cfg.TimeoutSeconds+300)*time.Second); err != nil {
 			return Result{}, err
@@ -309,31 +394,36 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 			return fmt.Errorf("ensure controller namespace: %w", err)
 		}
 	}
-	if _, err := i.Client.CoreV1().PersistentVolumeClaims(p.PVC.Namespace).Create(ctx, p.PVC, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("create repository PVC: %w", err)
+	labelPatch, err := json.Marshal(map[string]any{"metadata": map[string]any{"labels": map[string]string{"app.kubernetes.io/managed-by": "sdo", ApplicationNamespaceLabel: cfg.Namespace}}})
+	if err != nil {
+		return err
+	}
+	_, err = i.Client.CoreV1().PersistentVolumeClaims(p.PVC.Namespace).Create(ctx, p.PVC, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		_, err = i.Client.CoreV1().PersistentVolumeClaims(p.PVC.Namespace).Patch(ctx, p.PVC.Name, types.MergePatchType, labelPatch, metav1.PatchOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("ensure repository PVC ownership: %w", err)
 	}
 	for _, sa := range p.ServiceAccounts {
-		if _, err := i.Client.CoreV1().ServiceAccounts(sa.Namespace).Create(ctx, sa, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("create ServiceAccount %s: %w", sa.Name, err)
+		_, err := i.Client.CoreV1().ServiceAccounts(sa.Namespace).Create(ctx, sa, metav1.CreateOptions{})
+		if apierrors.IsAlreadyExists(err) {
+			_, err = i.Client.CoreV1().ServiceAccounts(sa.Namespace).Patch(ctx, sa.Name, types.MergePatchType, labelPatch, metav1.PatchOptions{})
+		}
+		if err != nil {
+			return fmt.Errorf("ensure ServiceAccount %s ownership: %w", sa.Name, err)
 		}
 	}
 	if err := i.ensureObservability(ctx, p); err != nil {
 		return err
 	}
+	if err := i.ensurePermissiveNamespaces(ctx, cfg); err != nil {
+		return err
+	}
 	if err := i.ensureClusterGrants(ctx, p); err != nil {
 		return err
 	}
-	for _, role := range append(p.ControlRoles, p.AppRoles...) {
-		if err := i.upsertRole(ctx, role); err != nil {
-			return err
-		}
-	}
-	for _, binding := range append(p.ControlBindings, p.AppBindings...) {
-		if err := i.upsertBinding(ctx, binding); err != nil {
-			return err
-		}
-	}
-	_, err := i.Client.CoreV1().Secrets(cfg.controlNamespace()).Get(ctx, cfg.CredentialsSecret, metav1.GetOptions{})
+	_, err = i.Client.CoreV1().Secrets(cfg.controlNamespace()).Get(ctx, cfg.CredentialsSecret, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		if len(cfg.Credentials) == 0 {
 			return fmt.Errorf("credentials Secret %q is missing and no credentials were supplied", cfg.CredentialsSecret)
@@ -380,59 +470,11 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 	return nil
 }
 
-func (i Installer) upsertRole(ctx context.Context, want *rbacv1.Role) error {
-	roles := i.Client.RbacV1().Roles(want.Namespace)
-	prior, err := roles.Get(ctx, want.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = roles.Create(ctx, want, metav1.CreateOptions{})
-	} else if err == nil {
-		updated := want.DeepCopy()
-		updated.ResourceVersion = prior.ResourceVersion
-		_, err = roles.Update(ctx, updated, metav1.UpdateOptions{})
-	}
-	if err != nil {
-		return fmt.Errorf("ensure Role %s/%s: %w", want.Namespace, want.Name, err)
-	}
-	return nil
-}
-func (i Installer) upsertBinding(ctx context.Context, want *rbacv1.RoleBinding) error {
-	bindings := i.Client.RbacV1().RoleBindings(want.Namespace)
-	prior, err := bindings.Get(ctx, want.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = bindings.Create(ctx, want, metav1.CreateOptions{})
-	} else if err == nil {
-		updated := want.DeepCopy()
-		updated.ResourceVersion = prior.ResourceVersion
-		_, err = bindings.Update(ctx, updated, metav1.UpdateOptions{})
-	}
-	if err != nil {
-		return fmt.Errorf("ensure RoleBinding %s/%s: %w", want.Namespace, want.Name, err)
-	}
-	return nil
-}
-func (i Installer) ensureSyncPod(ctx context.Context, want *corev1.Pod) error {
-	pods := i.Client.CoreV1().Pods(want.Namespace)
-	if err := pods.Delete(ctx, want.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("delete stale repository sync Pod: %w", err)
-	}
-	for {
-		_, err := pods.Get(ctx, want.Name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if err := i.pause(ctx); err != nil {
-			return err
-		}
-	}
-	if _, err := pods.Create(ctx, want, metav1.CreateOptions{}); err != nil {
-		return fmt.Errorf("create repository sync Pod: %w", err)
-	}
-	return nil
-}
 func (i Installer) waitSync(ctx context.Context, namespace string) error {
+	return i.waitPodReady(ctx, namespace, RepositorySyncPodName)
+}
+
+func (i Installer) waitPodReady(ctx context.Context, namespace, name string) error {
 	timeout := i.SyncTimeout
 	if timeout <= 0 {
 		timeout = 180 * time.Second
@@ -440,7 +482,7 @@ func (i Installer) waitSync(ctx context.Context, namespace string) error {
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for {
-		pod, err := i.Client.CoreV1().Pods(namespace).Get(waitCtx, RepositorySyncPodName, metav1.GetOptions{})
+		pod, err := i.Client.CoreV1().Pods(namespace).Get(waitCtx, name, metav1.GetOptions{})
 		if err == nil {
 			for _, condition := range pod.Status.Conditions {
 				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
@@ -448,13 +490,13 @@ func (i Installer) waitSync(ctx context.Context, namespace string) error {
 				}
 			}
 			if pod.Status.Phase == corev1.PodFailed {
-				return errors.New("repository sync Pod failed")
+				return fmt.Errorf("%s Pod failed", name)
 			}
 		} else if !apierrors.IsNotFound(err) {
 			return err
 		}
 		if err := i.pause(waitCtx); err != nil {
-			return fmt.Errorf("repository sync Pod did not become ready: %w", err)
+			return fmt.Errorf("%s Pod did not become ready: %w", name, err)
 		}
 	}
 }
@@ -518,34 +560,5 @@ func jobFailed(job *batchv1.Job) bool {
 	return false
 }
 
-func (i Installer) ensureClusterGrants(ctx context.Context, p Plan) error {
-	for _, want := range p.ClusterRoles {
-		api := i.Client.RbacV1().ClusterRoles()
-		prior, err := api.Get(ctx, want.Name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			_, err = api.Create(ctx, want, metav1.CreateOptions{})
-		} else if err == nil {
-			updated := want.DeepCopy()
-			updated.ResourceVersion = prior.ResourceVersion
-			_, err = api.Update(ctx, updated, metav1.UpdateOptions{})
-		}
-		if err != nil {
-			return fmt.Errorf("ensure cluster ClusterRole: %w", err)
-		}
-	}
-	for _, want := range p.ClusterBindings {
-		api := i.Client.RbacV1().ClusterRoleBindings()
-		prior, err := api.Get(ctx, want.Name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			_, err = api.Create(ctx, want, metav1.CreateOptions{})
-		} else if err == nil {
-			updated := want.DeepCopy()
-			updated.ResourceVersion = prior.ResourceVersion
-			_, err = api.Update(ctx, updated, metav1.UpdateOptions{})
-		}
-		if err != nil {
-			return fmt.Errorf("ensure cluster ClusterRoleBinding: %w", err)
-		}
-	}
-	return nil
-}
+// Observed reads the installer clock, injected in tests.
+func (i Installer) Observed() time.Time { return i.now() }

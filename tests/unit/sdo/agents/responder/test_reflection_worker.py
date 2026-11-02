@@ -4,6 +4,7 @@ import pytest
 from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any
 
+from libs.agent_cli.session_ownership import SessionHandoffError, SessionHandoffTimeout
 from sdo.agents.responder.reflection import ReflectionTurn
 from sdo.agents.responder.reflection_worker import run_reflection_task
 from sdo.contracts import (
@@ -12,11 +13,14 @@ from sdo.contracts import (
     IncidentClosure,
     MemoryDiagnostic,
     OperationalMemorySnapshot,
+    ReflectionDecision,
     ReflectionRequest,
     ReflectionResult,
     parse_json,
     to_canonical_json,
+    validate,
 )
+from tests.context_helpers import expand_context
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 
 FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "go" / "closure_repaired.json"
@@ -79,6 +83,10 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
         outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
     )
+    cause = request.cause_work.add(cause_index=0)
+    cause.items.add(
+        disposition="question", reason="binding_not_written", question="Why did this clear without a write?"
+    )
     request.memory_snapshot.accepted_commit = "outcome-commit"
     packed = Any()
     packed.Pack(request)
@@ -97,6 +105,7 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
     run_reflection_task(path, "result-map", publisher, reflector=reflector)
 
     assert reflector.kwargs is not None
+    assert reflector.kwargs["cause_work"] == list(request.cause_work)
     assert reflector.kwargs["outcome_commit"] == "outcome-commit"
     assert reflector.kwargs["session_mode"] == "fresh"
     assert publisher.payload is not None
@@ -136,6 +145,38 @@ def test_reflection_worker_restores_result_program_runs_from_the_outcome(tmp_pat
     assert [run.program_id for run in seen.result.program_runs] == ["targetport"]
 
 
+def test_reflection_worker_restores_result_transcripts_from_the_outcome(tmp_path: Path) -> None:
+    closure = _closure()
+    del closure.result.program_tool_calls[:]
+    del closure.result.plan_applications[:]
+    outcome = _outcome(closure.request.incident_id)
+    outcome.program_tool_calls.add(command="kubectl get pods", summary="listed")
+    outcome.plan_applications.add(application_id="plan-1")
+    request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit")
+    request.memory_snapshot.accepted_commit = "outcome-commit"
+    packed = Any()
+    packed.Pack(request)
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-1",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        request=packed,
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
+    )
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    reflector = Reflector()
+
+    run_reflection_task(path, "result-map", Publisher(), reflector=reflector)
+
+    assert reflector.kwargs is not None
+    seen = reflector.kwargs["closure"]
+    assert isinstance(seen, IncidentClosure)
+    assert [call.command for call in seen.result.program_tool_calls] == ["kubectl get pods"]
+    assert [application.application_id for application in seen.result.plan_applications] == ["plan-1"]
+
+
 def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: Path) -> None:
     closure = _closure()
     assert closure.HasField("result")
@@ -168,8 +209,10 @@ def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: P
     task.request.Pack(request)
     path.write_text(to_canonical_json(task), encoding="utf-8")
     fallback = Reflector()
-    run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
-    assert fallback.kwargs["session_mode"] == "fresh"
+    result = run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
+    assert fallback.kwargs is None
+    assert result.status == "failed"
+    assert result.failure_reason == "session_unavailable"
 
     request.session_mode = "unknown"
     request.closure.result.responder_session_id = "responder-session-123"
@@ -183,8 +226,10 @@ def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: P
     task.request.Pack(request)
     path.write_text(to_canonical_json(task), encoding="utf-8")
     fallback = Reflector()
-    run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
-    assert fallback.kwargs["session_mode"] == "fresh"
+    result = run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
+    assert fallback.kwargs is None
+    assert result.status == "failed"
+    assert result.failure_reason == "session_unavailable"
 
 
 def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(
@@ -222,6 +267,150 @@ def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(
     path.write_text(to_canonical_json(task), encoding="utf-8")
     with pytest.raises(ValueError, match="invalid reflection guidance"):
         run_reflection_task(path, "result-map", Publisher())
+
+
+@pytest.mark.parametrize(("needs_work", "late_detection"), [(False, False), (True, False), (False, True)])
+@pytest.mark.parametrize("replay", ["on", "off"])
+def test_builtin_reflection_uses_real_native_no_change_check_before_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prepare_reflection_memory,
+    needs_work: bool,
+    late_detection: bool,
+    replay: str,
+) -> None:
+    """Native acceptance can finish covered work; a real unencoded repair still reaches the model."""
+    from sdo.agents.responder import reflection_worker
+    from sdo.contracts import OutcomeRecord
+
+    monkeypatch.setenv("SDO_REPLAY", replay)
+    checkout = tmp_path / "checkout"
+    outcome = OutcomeRecord(schema_version=1, incident_id="covered", classification="success")
+    if needs_work:
+        action = outcome.repair_actions.add(
+            action_id="manual",
+            kind="kubectl-delete",
+            success=True,
+            target="Pod/app/api",
+            summary="replace unhealthy Pod",
+        )
+        action.resources.add(api_version="v1", kind="Pod", namespace="app", name="api")
+        action.started_at.FromJsonString("2026-10-28T00:00:00Z")
+        action.completed_at.FromJsonString("2026-10-28T00:00:01Z")
+    base = prepare_reflection_memory(
+        checkout, "covered", outcome_record=json_format.MessageToDict(outcome, preserving_proto_field_name=True)
+    )
+    closure = _closure()
+    closure.request.incident_id = "covered"
+    if late_detection:
+        from datetime import timedelta
+
+        from sdo.contracts import datetime_timestamp, timestamp_datetime
+
+        ref = closure.result.confirmed_root_causes[0].resources[0]
+        del closure.detector_timeline[:]
+        closure.detector_timeline.add(
+            detector_id="workload-health",
+            detector_class="health",
+            owner="health_judge",
+            rule_id="pending",
+            fingerprint="init",
+            first_activated_at=closure.detected_at,
+            last_seen_at=closure.detected_at,
+            relation="before_dispatch",
+            activations=1,
+        )
+        closure.request.drift_events.add(
+            ref=ref,
+            observed_at=datetime_timestamp(timestamp_datetime(closure.detected_at) - timedelta(seconds=62)),
+            classification="unexplained",
+        )
+    request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit=base, session_mode="fresh")
+    request.memory_snapshot.accepted_commit = base
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="covered-reflection",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        workspace={"proposal_id": "covered-reflection", "checkout_path": str(checkout), "base_commit": base},
+    )
+    task.request.Pack(request)
+    path = tmp_path / "request.json"
+    path.write_text(to_canonical_json(task))
+    selected = Reflector()
+    calls = []
+
+    def select(guidance):
+        calls.append(guidance)
+        return selected
+
+    monkeypatch.setattr(reflection_worker, "_default_reflector", select)
+    publisher = Publisher()
+    result = run_reflection_task(path, "result-map", publisher)
+    assert result.status == "completed"
+    assert bool(calls) == (needs_work or late_detection), "only native-accepted no_change may avoid the provider"
+    assert (selected.kwargs is not None) == (needs_work or late_detection)
+    response = ReflectionResult()
+    assert result.response.Unpack(response)
+    assert response.learning_decision == "no_change"
+    if not needs_work and not late_detection:
+        assert response.no_change_reason == "native_memory_check_no_change"
+
+
+@pytest.mark.parametrize("released_record", [True, False])
+def test_native_no_change_preserves_resumed_session_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prepare_reflection_memory,
+    released_record: bool,
+) -> None:
+    from libs.agent_cli.session_ownership import SessionOwnership
+    from sdo.agents.responder import reflection_worker
+    from sdo.contracts import OutcomeRecord
+
+    checkout, session = tmp_path / "checkout", tmp_path / "session"
+    monkeypatch.setenv("SDO_SESSION_DIR", str(session))
+    monkeypatch.setenv("SDO_AGENT_PROVIDER", "codex")
+    directory = session / "thread-ownership"
+    if released_record:
+        owner = SessionOwnership(directory, "codex", timeout_seconds=1)
+        owner.claim("prior-session", resume=False)
+        owner.close(writer_closed=True)
+    base = prepare_reflection_memory(checkout, "covered")
+    closure = _closure()
+    closure.request.incident_id = "covered"
+    closure.result.responder_session_id = "prior-session"
+    request = ReflectionRequest(
+        closure=closure,
+        outcome=OutcomeRecord(schema_version=1, incident_id="covered", classification="success"),
+        outcome_commit=base,
+        session_mode="resume",
+    )
+    request.memory_snapshot.accepted_commit = base
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="covered-reflection",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        workspace={"proposal_id": "covered-reflection", "checkout_path": str(checkout), "base_commit": base},
+    )
+    task.request.Pack(request)
+    path = tmp_path / "request.json"
+    path.write_text(to_canonical_json(task))
+
+    def forbidden(_guidance):
+        pytest.fail("native acceptance must not dispatch a provider")
+
+    monkeypatch.setattr(reflection_worker, "_default_reflector", forbidden)
+    result = run_reflection_task(path, "result-map", Publisher())
+    if not released_record:
+        assert result.status == "failed"
+        assert result.failure_reason == "session_handoff_invalid"
+        return
+    assert result.status == "completed"
+    stale = SessionOwnership(directory, "codex", timeout_seconds=1, role="responder")
+    with pytest.raises(SessionHandoffError, match="transferred to reflection"):
+        stale.claim("prior-session", resume=True)
 
 
 def test_reflection_worker_requires_commit_bound_logical_memory(tmp_path: Path) -> None:
@@ -325,3 +514,304 @@ def test_reflection_schema_rejects_legacy_proposals() -> None:
         ReflectionTurn.model_validate(
             {"summary": "Legacy", "learning_decision": "updated", "artifact_proposal": {"playbooks": []}}
         )
+
+
+@pytest.mark.parametrize(
+    ("disposition", "reason"), [("false_match", "fixed_capture_match"), ("covered", "verified_equivalent_repair")]
+)
+def test_registered_task_preserves_settled_work_in_actual_session_prompt(
+    tmp_path: Path, disposition: str, reason: str
+) -> None:
+    from sdo.agents.responder.reflection import SessionReflector
+    from tests.unit.sdo.agents.responder.test_reflection import _CapturingBackend
+
+    closure = _closure()
+    closure.result.responder_session_id = "incident-session"
+    request = ReflectionRequest(
+        closure=closure,
+        outcome=_outcome(closure.request.incident_id),
+        outcome_commit="outcome-commit",
+        session_mode="resume",
+    )
+    request.memory_snapshot.accepted_commit = "outcome-commit"
+    cause = request.cause_work.add(cause_index=0)
+    cause.items.add(
+        program_id="source-repair",
+        disposition=disposition,
+        reason=reason,
+        question="Review the fixed regression" if disposition == "false_match" else "",
+    )
+    request.outcome.reflection_eligibility.version = 1
+    request.outcome.reflection_eligibility.causes.extend(request.cause_work)
+    packed = Any()
+    packed.Pack(request)
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-1",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        request=packed,
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
+    )
+    path = tmp_path / "task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    backend = _CapturingBackend()
+    run_reflection_task(path, "result-map", Publisher(), reflector=SessionReflector(backend))
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
+    assert backend.calls[0]["mode"] == "resume"
+    assert disposition in prompt
+    assert reason in prompt
+    assert "Return updated whenever final files include Go or agent edits" in prompt
+    assert "leave the tree unchanged" not in prompt
+    assert "skip validation" not in prompt
+    assert prompt.count(reason) == 1
+
+
+def _task_path(tmp_path: Path, *, deadline: float | None = None) -> Path:
+    closure = _closure()
+    request = ReflectionRequest(closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit="c")
+    request.memory_snapshot.accepted_commit = "c"
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-1",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "c"},
+    )
+    task.request.Pack(request)
+    if deadline is not None:
+        task.deadline.FromNanoseconds(int(deadline * 1e9))
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    return path
+
+
+class FailingReflector:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def resume(self, **_: object) -> ReflectionTurn:
+        raise self.error
+
+
+def _timed_out() -> RuntimeError:
+    from libs.agent_cli.structured import StructuredTurnTimeout
+
+    try:
+        raise StructuredTurnTimeout(451.02)
+    except StructuredTurnTimeout as exc:
+        try:
+            raise RuntimeError(f"codex reflection failed: {exc}") from exc
+        except RuntimeError as wrapped:
+            return wrapped
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (_timed_out(), "agent_timeout"),
+        (RuntimeError("model I/O exceeds 4194304 bytes"), "agent_failed"),
+        (SessionHandoffTimeout("writer did not release"), "session_handoff_timeout"),
+        (SessionHandoffError("invalid record"), "session_handoff_invalid"),
+    ],
+)
+def test_failed_reflection_publishes_a_typed_reason_instead_of_failing_the_job(
+    tmp_path: Path, error: BaseException, reason: str
+) -> None:
+    publisher = Publisher()
+
+    run_reflection_task(_task_path(tmp_path), "result-map", publisher, reflector=FailingReflector(error))
+
+    assert publisher.payload is not None
+    result = parse_json(publisher.payload, AgentResult())
+    assert (result.status, result.failure_reason, result.error_summary) == ("failed", reason, str(error))
+    assert not result.HasField("response")
+    validate(result)
+    validate(ReflectionDecision(learning_decision="failed", failure_reason=reason))
+
+
+def test_reflection_budget_ends_before_the_frozen_task_deadline(tmp_path: Path) -> None:
+    # The Job's active deadline and any claimed standby end no earlier than the task
+    # deadline, so an agent budget derived from it cannot be killed from outside first.
+    import time
+
+    from sdo.agents.responder.reflection import REFLECTION_RESULT_MARGIN_SECONDS, reflection_budget_seconds
+
+    deadline = time.time() + 1800
+    budgets: list[float] = []
+
+    class BudgetReflector(Reflector):
+        def resume(self, **kwargs: object) -> ReflectionTurn:
+            budgets.append(reflection_budget_seconds())
+            return super().resume(**kwargs)
+
+    run_reflection_task(_task_path(tmp_path, deadline=deadline), "result-map", Publisher(), reflector=BudgetReflector())
+
+    (budget,) = budgets
+    assert 1800 - REFLECTION_RESULT_MARGIN_SECONDS - 5 < budget <= 1800 - REFLECTION_RESULT_MARGIN_SECONDS
+
+
+def test_expired_task_deadline_is_a_typed_timeout(tmp_path: Path) -> None:
+    import time
+
+    from sdo.agents.responder.reflection import reflection_budget_seconds
+
+    class BudgetReflector(Reflector):
+        def resume(self, **kwargs: object) -> ReflectionTurn:
+            reflection_budget_seconds()
+            return super().resume(**kwargs)
+
+    publisher = Publisher()
+    run_reflection_task(
+        _task_path(tmp_path, deadline=time.time() + 60), "result-map", publisher, reflector=BudgetReflector()
+    )
+
+    assert publisher.payload is not None
+    assert parse_json(publisher.payload, AgentResult()).failure_reason == "agent_timeout"
+
+
+def test_reflection_default_budget_fits_the_controller_and_eval_deadlines() -> None:
+    from benchmarks.sregym.adapter.native_operator import NativeInstallConfig
+    from benchmarks.sregym.adapter.persistent import DRAIN_TIMEOUT_SECONDS
+    from sdo.agents.responder.reflection import DEFAULT_REFLECTION_SECONDS
+
+    response_timeout = NativeInstallConfig.__dataclass_fields__["response_timeout_seconds"].default
+    assert DEFAULT_REFLECTION_SECONDS < response_timeout < DRAIN_TIMEOUT_SECONDS
+
+
+def test_builtin_resume_requires_persisted_session_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sdo.agents.responder import reflection_worker
+
+    monkeypatch.delenv("SDO_SESSION_DIR", raising=False)
+    path = _task_path(tmp_path)
+    task = parse_json(path.read_text(), AgentTask())
+    request = ReflectionRequest()
+    assert task.request.Unpack(request)
+    request.session_mode = "resume"
+    request.closure.result.responder_session_id = "session-1"
+    task.request.Pack(request)
+    path.write_text(to_canonical_json(task))
+    selected = Reflector()
+    monkeypatch.setattr(reflection_worker, "_default_reflector", lambda _: selected)
+    publisher = Publisher()
+
+    result = run_reflection_task(path, "result-map", publisher)
+
+    assert selected.kwargs is None
+    assert result.status == "failed"
+    assert result.failure_reason == "session_handoff_invalid"
+    validate(result)
+
+
+def _git(path: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", str(path), "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _moved_head_task(tmp_path: Path, *, snapshot_on_base: bool = True, outcome_ancestor: bool = True) -> Path:
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "a").write_text("outcome")
+    _git(tmp_path, "add", "a")
+    _git(tmp_path, "commit", "-qm", "outcome")
+    outcome_commit = _git(tmp_path, "rev-parse", "HEAD")
+    if not outcome_ancestor:
+        _git(tmp_path, "checkout", "-q", "--orphan", "other")
+    (tmp_path / "b").write_text("peer publication")
+    _git(tmp_path, "add", "b")
+    _git(tmp_path, "commit", "-qm", "peer")
+    base = _git(tmp_path, "rev-parse", "HEAD")
+    closure = _closure()
+    request = ReflectionRequest(
+        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit=outcome_commit
+    )
+    request.memory_snapshot.accepted_commit = base if snapshot_on_base else outcome_commit
+    packed = Any()
+    packed.Pack(request)
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-2",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        request=packed,
+        workspace={"proposal_id": "proposal-2", "checkout_path": str(tmp_path), "base_commit": base},
+    )
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    return path
+
+
+def test_memory_conflict_retry_on_a_head_advanced_by_a_peer_still_reflects(tmp_path: Path) -> None:
+    path = _moved_head_task(tmp_path)
+    reflector = Reflector()
+
+    run_reflection_task(path, "result-map", Publisher(), reflector=reflector)
+
+    assert reflector.kwargs is not None
+
+
+@pytest.mark.parametrize(
+    "case",
+    [{"snapshot_on_base": False}, {"outcome_ancestor": False}],
+    ids=["snapshot-not-on-base", "outcome-not-in-base"],
+)
+def test_reflection_still_refuses_a_snapshot_or_base_unrelated_to_the_outcome(
+    tmp_path: Path, case: dict[str, bool]
+) -> None:
+    path = _moved_head_task(tmp_path, **case)
+
+    with pytest.raises(ValueError, match="not bound to committed outcome"):
+        run_reflection_task(path, "result-map", Publisher(), reflector=Reflector())
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_real_final_check_timeout_publishes_terminal_worker_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str
+) -> None:
+    import os
+    import subprocess
+    import sys
+
+    from sdo.agents.responder.memory_check import check_reflection_result
+    from sdo.agents.responder.reflection import ClaudeSessionBackend, CodexSessionBackend, SessionReflector
+    from tests.structured_turns import ScriptedAgent, reply
+
+    executable = tmp_path / "sdo-operator"
+    executable.write_text(f"#!{sys.executable}\nimport time\nprint('checking', flush=True)\ntime.sleep(600)\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+
+    def expire(process, seconds):
+        assert process.stdout.readline() == b"checking\n"
+        raise subprocess.TimeoutExpired(process.args, seconds)
+
+    def check(root, decision, seconds):
+        return check_reflection_result(root, decision, seconds, communicate=expire)
+
+    agent = ScriptedAgent(
+        lambda _: reply(
+            provider,
+            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    backend = CodexSessionBackend if provider == "codex" else ClaudeSessionBackend
+    publisher = Publisher()
+    result = run_reflection_task(
+        _task_path(tmp_path),
+        "result-map",
+        publisher,
+        reflector=SessionReflector(backend(executor=agent.executor, memory_checker=check)),
+    )
+    assert (result.status, result.failure_reason) == ("failed", "agent_timeout")
+    assert "memory check timed out" in result.error_summary
+    assert not result.HasField("response")
+    assert len(agent.requests) == 1
+    assert publisher.payload == to_canonical_json(result)
+    validate(result)

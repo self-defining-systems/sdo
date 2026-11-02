@@ -4,13 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/format"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 const fastloopProgramRunner = `package main
@@ -32,13 +37,14 @@ func main() {
 	registry, err := generated.Programs(); if err != nil { panic(err) }
 	diagnoser, ok := registry.Diagnoser("service-targetport-mismatch"); if !ok { panic("missing compiled diagnoser") }
 	mitigator, ok := registry.Mitigator("service-targetport-mismatch"); if !ok { panic("missing compiled mitigator") }
-	bindings := program.Bindings{"service": sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "peer"}}
+	bindings := program.Bindings{Objects:program.ObjectBindings{"service": sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "peer"}}}
 	view := &sdktest.ReplayReadView{Snapshot: snapshot}
 	verdict, err := diagnoser.Diagnose(context.Background(), view, bindings); if err != nil { panic(err) }
 	plan, err := mitigator.Mitigate(context.Background(), view, bindings); if err != nil { panic(err) }
 	if len(plan.Actions) != 1 { panic("expected one action") }
 	action, ok := plan.Actions[0].(program.SetField); if !ok { panic("expected SetField") }
-	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"result": verdict.Result, "path": action.Path, "value": action.Value}); err != nil { panic(err) }
+	value,_,err:=program.ResolveValue(action.Value,program.ValueInputs{Observed:func(ref sdk.ObjectRef)(map[string]any,error){for _,pod:=range snapshot.Pods(){if pod.Namespace==ref.Namespace&&pod.Name==ref.Name{raw,_:=json.Marshal(pod);var object map[string]any;err:=json.Unmarshal(raw,&object);return object,err}};return nil,os.ErrNotExist}});if err!=nil{panic(err)}
+ if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"result": verdict.Result, "path": action.Path, "value": value}); err != nil { panic(err) }
 }
 `
 
@@ -102,6 +108,34 @@ func fastloopWriteProgram(t *testing.T, checkout, captureDir, incidentID string)
 	}
 
 	writeCapturedProgramCorpus(t, checkout, captureDir, incidentID, "service-targetport-mismatch", "service", "Service", "app", "api", "peer", "detect")
+	fastloopWriteDetector(t, checkout, incidentID)
+}
+
+func fastloopWriteDetector(t *testing.T, root, incidentID string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".sdo/diagnostics/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := programModule.FindSubmatch(data)
+	if len(module) != 2 {
+		t.Fatal("missing module")
+	}
+	sourceBytes, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/diagnostics/detectors/incidents/routing-relations/detector.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.ReplaceAll(string(sourceBytes), `"fixture-diagnostics/lib/ports"`, "")
+	source = strings.ReplaceAll(source, "ports.Matches(port.TargetPort, exposed)", "(port.TargetPort.Type == 0 && port.TargetPort.IntVal == exposed.ContainerPort || port.TargetPort.Type == 1 && port.TargetPort.StrVal == exposed.Name)")
+	source = strings.Replace(source, `OriginatingIncident: "incident"`, `OriginatingIncident: `+strconv.Quote(incidentID), 1)
+	formatted, err := format.Source([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = layout.WriteDetector(root, layout.Detector{Class: layout.ClassIncident, Manifest: layout.DetectorManifest{APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion, ID: "routing-relations", Constructor: "New", Class: "incident", Owner: "responder", Watches: []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Pod"}}, Interval: "1s", Persistence: layout.Persistence{Firing: 1, Clearing: 1}, Batching: layout.Batching{Severity: "warn", Debounce: "500ms"}, PossiblePlaybooks: []string{"service-targetport-mismatch"}, OriginatingIncident: incidentID, OriginatingCommit: "reflection"}, Files: []layout.File{{Name: "detector.go", Content: formatted}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func fastloopGateResult(request IncidentRequest, resources []sdk.ObjectRef) IncidentResult {

@@ -6,6 +6,8 @@ syntax = "proto3";
 // proto governs the schema, not the encoding.
 package sdodev.contracts.v1alpha1;
 
+import "google/protobuf/descriptor.proto";
+
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 // ObjectRef identifies a Kubernetes object a finding or repair refers to.
@@ -14,4 +16,9 @@ message ObjectRef {
   string kind = 2;      // required, non-empty (enforced via protovalidate in Stage 2)
   string namespace = 3;
   string name = 4;      // required, non-empty
+}
+
+// Controller facts are excluded recursively from model output and worker validation.
+extend google.protobuf.FieldOptions {
+  bool controller_owned = 51001;
 }

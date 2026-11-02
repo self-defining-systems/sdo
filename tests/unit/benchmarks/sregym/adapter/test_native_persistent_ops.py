@@ -61,6 +61,9 @@ def test_persistent_maintenance_and_receipt_do_not_start_python_sync_pod(
     monkeypatch.setattr(persistent, "go_set_maintenance", maintenance)
     monkeypatch.setattr(persistent, "collect_production_receipt", receipt)
     ops = persistent.KubectlClusterOps()
+    # Maintenance now proves the controller has no pending closure first.
+    # This transport-only fixture supplies that read independently of kubectl.
+    monkeypatch.setattr(ops, "runtime_state", lambda _namespace: {"incident_open": False})
     ops.set_maintenance("demo-sdo", paused=True, generation="stage-2")
     assert ops.collect_receipt(config, "incident-1", tmp_path)["schema_version"] == "sdo.production-receipt/v2"
     assert called == ["maintenance", "receipt"]
@@ -70,13 +73,15 @@ def test_native_closeout_settles_on_acknowledged_go_ledger() -> None:
     assert persistent._closeout_settled(
         {
             "schema_version": "sdo.production-receipt/v2",
-            "native_ledger": {"acknowledged": True},
+            "incident_id": "incident-1",
+            "native_ledger": {"incident_id": "incident-1", "acknowledged": True},
         }
     )
     assert not persistent._closeout_settled(
         {
             "schema_version": "sdo.production-receipt/v2",
-            "native_ledger": {"acknowledged": False},
+            "incident_id": "incident-1",
+            "native_ledger": {"incident_id": "incident-1", "acknowledged": False},
         }
     )
 
@@ -211,5 +216,12 @@ def test_graceful_teardown_stops_benchmark_transport_after_go_runtime(tmp_path, 
     monkeypatch.setattr(ops, "controller_pod", lambda *_: None)
     monkeypatch.setattr(ops, "stop_runtime", lambda target: events.append(("go-stop", target.kubeconfig)))
     monkeypatch.setattr(ops, "stop_transport", lambda target: events.append(("benchmark-stop", target.kubeconfig)))
+    monkeypatch.setattr(
+        ops, "retire_controller_state", lambda target, _archive: events.append(("retire-state", target.kubeconfig))
+    )
     assert persistent.teardown(path, ops=ops) == []
-    assert events == [("go-stop", "/recorded/lane"), ("benchmark-stop", "/recorded/lane")]
+    assert events == [
+        ("go-stop", "/recorded/lane"),
+        ("benchmark-stop", "/recorded/lane"),
+        ("retire-state", "/recorded/lane"),
+    ]

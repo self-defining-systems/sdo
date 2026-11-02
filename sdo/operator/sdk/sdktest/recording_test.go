@@ -19,8 +19,8 @@ func (exampleMitigator) Spec() program.ProgramSpec {
 }
 func (exampleMitigator) Mitigate(_ context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
 	for _, service := range v.Services() {
-		if service.Name == b["service"].Name && service.Spec.Ports[0].TargetPort.IntVal == 9999 {
-			return program.Plan{Actions: []program.Action{program.SetField{Ref: b["service"], Path: "spec.ports[0].targetPort", Value: 8080}}}, nil
+		if service.Name == b.Objects["service"].Name && service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+			return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}}}, nil
 		}
 	}
 	return program.Plan{}, nil

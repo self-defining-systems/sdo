@@ -1,0 +1,1 @@
+State changes at dispatch (against healthy baseline):

@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
+from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
+from sdo.agents.responder import recorded_actions
+from sdo.agents.responder.detection_learning import detection_learning
 from sdo.contracts import Verdict, timestamp_datetime, to_canonical_json
 
 if TYPE_CHECKING:
@@ -25,30 +28,8 @@ if TYPE_CHECKING:
 
     from sdo.contracts import DetectorEvaluation, Finding, IncidentClosure, IncidentResult, ObjectRef
 
-#: Upper bound on the whole brief: about 4 characters per token, under 8K tokens.
-BRIEF_MAX_CHARS = 30_000
-_FINDINGS_BUDGET = 12_000
-_RESULT_BUDGET = 6_000
-_COMMANDS_BUDGET = 6_000
-_MEMORY_BUDGET = 9_000
 _MAX_FULL_FINDINGS = 4
-_EVIDENCE_MAX_CHARS = 3_000
-_METADATA_MAX_CHARS = 1_200
-_DETAILS_MAX_CHARS = 700
-_COMMAND_MAX_CHARS = 300
-_HEAD_COMMANDS = 10
-_PLAYBOOK_EXCERPT_CHARS = 700
 _MAX_PLAYBOOK_EXCERPTS = 4
-_INDEX_EXCERPT_CHARS = 1_000
-_DETECTOR_DESCRIPTION_CHARS = 500
-_DETECTOR_PREDICATE_CHARS = 1_400
-
-
-def _clip(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    omitted = len(text) - limit
-    return f"{text[:limit]}\n[... {omitted} characters omitted ...]"
 
 
 def _iso(value: Timestamp) -> str:
@@ -69,35 +50,63 @@ def _plain(value: Any) -> Any:
 
 def _ref(ref: ObjectRef) -> str:
     location = f"{ref.namespace}/{ref.name}" if ref.namespace else ref.name
-    version = f" ({ref.api_version})" if ref.api_version else ""
-    return f"{ref.kind} {location}{version}"
+    version = (
+        render_prompt("responder", "ref_01", part="reflection_brief.instructions", api_version=ref.api_version)
+        if ref.api_version
+        else ""
+    )
+    return render_prompt(
+        "responder", "ref_02", part="reflection_brief.instructions", kind=ref.kind, location=location, version=version
+    )
 
 
 def _fenced(text: str) -> str:
     fence = "~~~~" if "```" in text else "```"
-    return f"{fence}\n{text}\n{fence}"
+    return render_prompt(
+        "responder",
+        "fenced_01",
+        part="reflection_brief.instructions",
+        fence=fence,
+        text=named_prompt("reflection_brief.findings", text, required=False),
+        fence_2=fence,
+    )
 
 
 def _finding(finding: Finding) -> str:
-    lines = [
-        f"- [{finding.severity}] {finding.detector_id} / {finding.rule_id} ({finding.status}): {finding.summary}",
-        f"  primary: {_ref(finding.primary_resource)}",
+    lines: list[str] = [
+        render_prompt(
+            "responder",
+            "finding_01",
+            part="reflection_brief.instructions",
+            severity=finding.severity,
+            detector_id=finding.detector_id,
+            rule_id=finding.rule_id,
+            status=finding.status,
+            summary=finding.summary,
+        ),
+        render_prompt(
+            "responder", "finding_02", part="reflection_brief.instructions", ref=_ref(finding.primary_resource)
+        ),
     ]
     if finding.related_resources:
         lines.append("  related: " + "; ".join(_ref(ref) for ref in finding.related_resources[:10]))
     if finding.parameter_bindings:
         bindings = "; ".join(f"{role}={_ref(ref)}" for role, ref in sorted(finding.parameter_bindings.items()))
-        lines.append(f"  parameter bindings: {bindings}")
+        lines.append(render_prompt("responder", "finding_03", part="reflection_brief.instructions", bindings=bindings))
     if finding.fingerprint:
-        lines.append(f"  fingerprint: {finding.fingerprint}")
+        lines.append(
+            render_prompt(
+                "responder", "finding_04", part="reflection_brief.instructions", fingerprint=finding.fingerprint
+            )
+        )
     if finding.playbook_ids:
         lines.append("  playbooks: " + ", ".join(finding.playbook_ids))
-    lines.append("  evidence (verbatim):")
-    lines.append(_fenced(_clip(finding.evidence, _EVIDENCE_MAX_CHARS)))
+    lines.append(render_prompt("responder", "finding_05", part="reflection_brief.instructions"))
+    lines.append(_fenced(finding.evidence))
     if finding.metadata.fields:
         metadata = json.dumps(_plain(json_format.MessageToDict(finding.metadata)), sort_keys=True, default=str)
-        lines.append("  metadata (object shapes, verbatim JSON):")
-        lines.append(_fenced(_clip(metadata, _METADATA_MAX_CHARS)))
+        lines.append(render_prompt("responder", "finding_06", part="reflection_brief.instructions"))
+        lines.append(_fenced(metadata))
     return "\n".join(lines)
 
 
@@ -105,72 +114,188 @@ def _history(evaluations: Sequence[DetectorEvaluation]) -> list[str]:
     by_detector: dict[str, list[DetectorEvaluation]] = {}
     for evaluation in evaluations:
         by_detector.setdefault(evaluation.detector_id, []).append(evaluation)
-    lines = []
+    lines: list[str] = []
     for detector_id, entries in sorted(by_detector.items()):
         statuses = ", ".join(entry.status for entry in entries[-6:])
         lines.append(
-            f"- {detector_id}: {len(entries)} evaluation(s) {_iso(entries[0].evaluated_at)} .. "
-            f"{_iso(entries[-1].evaluated_at)}; latest statuses: {statuses}"
+            render_prompt(
+                "responder",
+                "history_01",
+                part="reflection_brief.instructions",
+                detector_id=detector_id,
+                len=len(entries),
+                iso=_iso(entries[0].evaluated_at),
+                iso_2=_iso(entries[-1].evaluated_at),
+                statuses=statuses,
+            )
         )
     return lines
 
 
 def _states(label: str, evaluations: Sequence[DetectorEvaluation]) -> list[str]:
     if not evaluations:
-        return [f"{label}: none recorded"]
+        return [render_prompt("responder", "states_01", part="reflection_brief.instructions", label=label)]
     rendered = []
     for state in evaluations:
-        detail = f" fingerprints={state.fingerprints}" if state.fingerprints else ""
-        error = f" error={state.error}" if state.error else ""
+        detail = (
+            render_prompt(
+                "responder", "states_02", part="reflection_brief.instructions", fingerprints=state.fingerprints
+            )
+            if state.fingerprints
+            else ""
+        )
+        error = (
+            render_prompt("responder", "states_03", part="reflection_brief.instructions", error=state.error)
+            if state.error
+            else ""
+        )
         rendered.append(f"{state.detector_id}={state.status}{detail}{error}")
-    return [f"{label}: " + "; ".join(rendered)]
-
-
-def _findings_section(closure: IncidentClosure) -> str:
-    request = closure.request
-    lines = [
-        "## Live evidence at dispatch (closure request)",
-        f"Application {request.application} in namespace {request.namespace}; source commit "
-        f"{request.source_commit}, deployed commit {request.deployed_commit}.",
-        f"Detected {_iso(closure.detected_at)}, dispatched {_iso(closure.dispatched_at)}, responder "
-        f"completed {_iso(closure.responder_completed_at)}, health verified {_iso(closure.verified_at)}.",
-        "Findings:",
+    return [
+        render_prompt("responder", "states_04", part="reflection_brief.instructions", label=label)
+        + named_prompt("reflection_brief.findings", "; ".join(rendered), required=False)
     ]
+
+
+def _findings_section(closure: IncidentClosure, *, include_detection: bool = True) -> str:
+    request = closure.request
+    lines: list[str] = [
+        render_prompt("responder", "findings_section_01", part="reflection_brief.instructions"),
+        render_prompt(
+            "responder",
+            "findings_section_02",
+            part="reflection_brief.instructions",
+            application=request.application,
+            namespace=request.namespace,
+            source_commit=request.source_commit,
+            deployed_commit=request.deployed_commit,
+        ),
+        render_prompt(
+            "responder",
+            "findings_section_03",
+            part="reflection_brief.instructions",
+            iso=_iso(closure.detected_at),
+            iso_2=_iso(closure.dispatched_at),
+            iso_3=_iso(closure.responder_completed_at),
+            iso_4=_iso(closure.verified_at),
+        ),
+        render_prompt("responder", "brief_heading_01", part="reflection_brief.instructions"),
+    ]
+    if request.HasField("namespace_onboarding"):
+        lines.append(
+            render_prompt(
+                "responder",
+                "namespace_onboarding",
+                part="reflection_brief.findings",
+                onboarding_json=named_prompt(
+                    "template_data.responder-namespace_onboarding-onboarding_json",
+                    to_canonical_json(request.namespace_onboarding),
+                    required=False,
+                ),
+            )
+        )
     if request.HasField("state_changes"):
-        lines.append("State changes at dispatch (against healthy baseline):")
-        lines.append(_fenced(_clip(to_canonical_json(request.state_changes), 2_000)))
+        lines.append(render_prompt("responder", "findings_section_04", part="reflection_brief.instructions"))
+        lines.append(_fenced(to_canonical_json(request.state_changes)))
     if closure.HasField("final_state_changes"):
-        lines.append("State changes at verification (against healthy baseline):")
-        lines.append(_fenced(_clip(to_canonical_json(closure.final_state_changes), 2_000)))
-    lines.append("Findings:")
+        lines.append(render_prompt("responder", "findings_section_05", part="reflection_brief.instructions"))
+        lines.append(_fenced(to_canonical_json(closure.final_state_changes)))
+    lines.append(render_prompt("responder", "brief_heading_02", part="reflection_brief.instructions"))
     lines.extend(_finding(finding) for finding in request.findings[:_MAX_FULL_FINDINGS])
     lines.extend(
-        f"- [{finding.severity}] {finding.detector_id} / {finding.rule_id}: {finding.summary} "
-        f"({_ref(finding.primary_resource)}; evidence omitted)"
+        render_prompt(
+            "responder",
+            "findings_section_06",
+            part="reflection_brief.instructions",
+            severity=finding.severity,
+            detector_id=finding.detector_id,
+            rule_id=finding.rule_id,
+            summary=finding.summary,
+            ref=_ref(finding.primary_resource),
+        )
         for finding in request.findings[_MAX_FULL_FINDINGS:]
     )
-    lines.append("Detector history before dispatch:")
+    lines.append(render_prompt("responder", "findings_section_07", part="reflection_brief.instructions"))
     lines.extend(_history(request.detector_history))
+    if include_detection:
+        lines.append(detection_learning(closure))
     if request.surfaced_playbooks:
         lines.append(
-            "Surfaced playbooks: " + ", ".join(playbook.playbook_id for playbook in request.surfaced_playbooks)
+            render_prompt("responder", "findings_section_08", part="reflection_brief.instructions")
+            + ", ".join(playbook.playbook_id for playbook in request.surfaced_playbooks)
         )
     lines.extend(
-        f"Prior outcome {prior.incident_id} ({prior.match_reason}): root causes {list(prior.root_cause_summaries)}; "
-        f"repairs {list(prior.repair_action_summaries)}; applied {list(prior.applied_playbook_ids)}"
+        render_prompt(
+            "responder",
+            "findings_section_09",
+            part="reflection_brief.instructions",
+            incident_id=prior.incident_id,
+            match_reason=prior.match_reason,
+            list=named_prompt(
+                "template_data.responder-findings_section_09-list",
+                json.dumps(list(prior.root_cause_summaries)),
+                required=False,
+            ),
+            list_2=named_prompt(
+                "template_data.responder-findings_section_09-list_2",
+                json.dumps(list(prior.repair_action_summaries)),
+                required=False,
+            ),
+            list_3=named_prompt(
+                "template_data.responder-findings_section_09-list_3",
+                json.dumps(list(prior.applied_playbook_ids)),
+                required=False,
+            ),
+        )
         for prior in request.relevant_outcomes
     )
-    lines.extend(_states("Post-response health detector states", closure.final_detector_states))
-    lines.extend(_states("Post-response incident detector states", closure.incident_detector_states))
-    return _clip("\n".join(lines), _FINDINGS_BUDGET)
+    lines.extend(
+        _states(
+            render_prompt("responder", "findings_section_10", part="reflection_brief.instructions"),
+            closure.final_detector_states,
+        )
+    )
+    lines.extend(
+        _states(
+            render_prompt("responder", "findings_section_11", part="reflection_brief.instructions"),
+            closure.incident_detector_states,
+        )
+    )
+    return "\n".join(lines)
+
+
+def _result_line(name: str, /, **values: object) -> RenderedPrompt:
+    """Every substitution in the auxiliary result section is summarizable data.
+
+    Lists of bounded identities can overflow too. Keep this semantic decision
+    at the section owner so new result fields inherit the same lossless caps.
+    Nested rendered requirements remain enforced by the common renderer.
+    """
+    return render_prompt(
+        "responder", name, part="reflection_brief.instructions", optional_values=tuple(values), **values
+    )
 
 
 def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
-    lines = ["## Responder structured result"]
+    lines: list[str] = [_result_line("result_section_01")]
     if result is None:
-        lines.append(f"No responder result was recorded (dispatch error: {dispatch_error or 'none'}).")
+        lines.append(
+            _result_line(
+                "result_section_02",
+                dispatch_error=dispatch_error or "none",
+            )
+        )
         return "\n".join(lines)
-    lines.append(f"Status: {result.status}" + (f"; error: {result.error}" if result.error else ""))
+    lines.append(
+        _result_line("result_section_03", status=result.status)
+        + (
+            _result_line(
+                "result_section_04",
+                error=result.error,
+            )
+            if result.error
+            else ""
+        )
+    )
     verdict_names = {
         "RESULT_MATCH": "Match",
         "RESULT_NO_MATCH": "NoMatch",
@@ -186,12 +311,19 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
             history = by_program.setdefault(run.program_id, [])
             if not history or history[-1] != verdict:
                 history.append(verdict)
-        lines.append("Program diagnoses:")
-        lines.extend(f"- {program_id}: {' -> '.join(history)}" for program_id, history in list(by_program.items())[:12])
+        lines.append(_result_line("result_section_05"))
+        lines.extend(
+            _result_line(
+                "result_section_06",
+                program_id=program_id,
+                join=" -> ".join(history),
+            )
+            for program_id, history in list(by_program.items())[:12]
+        )
         if len(by_program) > 12:
-            lines.append(f"- {len(by_program) - 12} more programs omitted")
+            lines.append(_result_line("result_section_07", len=len(by_program) - 12))
     if result.plan_applications:
-        lines.append("Program applications:")
+        lines.append(_result_line("result_section_08"))
         for application in result.plan_applications[:12]:
             verification = (
                 verdict_names.get(
@@ -202,43 +334,90 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
                 else "not recorded"
             )
             state = "applied" if application.applied else "not applied"
-            programs = ", ".join(application.program_ids) or "unknown program"
+            programs = ", ".join(application.program_ids) or _result_line("result_section_09")
             lines.append(
-                f"- {application.application_id or 'unnamed'}: {programs}; "
-                f"{state}; verification {verification}"
-                + (f"; error {_clip(application.error, 120)}" if application.error else "")
+                _result_line(
+                    "result_section_10",
+                    application_id=application.application_id or "unnamed",
+                    programs=programs,
+                    state=state,
+                    verification=verification,
+                )
+                + (
+                    _result_line(
+                        "result_section_11",
+                        clip=application.error,
+                    )
+                    if application.error
+                    else ""
+                )
             )
         if len(result.plan_applications) > 12:
-            lines.append(f"- {len(result.plan_applications) - 12} more applications omitted")
-    lines.append("Confirmed root causes:")
+            lines.append(
+                _result_line(
+                    "result_section_12",
+                    len=len(result.plan_applications) - 12,
+                )
+            )
+    lines.append(_result_line("result_section_13"))
     lines.extend(
-        f"- {cause.summary} [{'; '.join(_ref(ref) for ref in cause.resources)}]"
+        _result_line(
+            "result_section_14",
+            summary=cause.summary,
+            join="; ".join(_ref(ref) for ref in cause.resources),
+        )
         for cause in result.confirmed_root_causes
     )
     if not result.confirmed_root_causes:
-        lines.append("- none")
-    lines.append("Repair actions:")
+        lines.append(_result_line("brief_heading_04"))
+    lines.append(_result_line("result_section_15"))
     lines.extend(
-        f"- [{'ok' if action.success else 'FAILED'}] {action.kind} {action.target}: {action.summary} -- "
-        f"{_clip(action.details, _DETAILS_MAX_CHARS)}"
+        _result_line(
+            "result_section_16",
+            value="ok" if action.success else "FAILED",
+            kind=action.kind,
+            target=action.target,
+            summary=action.summary,
+            clip=action.details,
+        )
         for action in result.repair_actions
     )
     if not result.repair_actions:
-        lines.append("- none recorded")
+        lines.append(_result_line("result_section_17"))
     if result.repair_changes:
-        lines.append("Source changes: " + ", ".join(result.repair_changes))
-    lines.append("Verification:")
+        lines.append(
+            _result_line("result_section_18")
+            + named_prompt("reflection_brief.incident_data", ", ".join(result.repair_changes), required=False)
+        )
+    lines.append(_result_line("brief_heading_03"))
     lines.extend(
-        f"- [{'passed' if evidence.passed else 'FAILED'}] {evidence.name}: "
-        f"{_clip(evidence.details, _DETAILS_MAX_CHARS)}"
+        _result_line(
+            "result_section_19",
+            value="passed" if evidence.passed else "FAILED",
+            name=evidence.name,
+            clip=evidence.details,
+        )
         for evidence in result.verification_evidence
     )
     if not result.verification_evidence:
-        lines.append("- none recorded")
+        lines.append(_result_line("result_section_20"))
     for playbook in result.applied_playbooks:
-        scripts = f" (scripts: {', '.join(playbook.script_names)})" if playbook.script_names else ""
-        lines.append(f"Applied playbook: {playbook.playbook_id}{scripts}")
-    return _clip("\n".join(lines), _RESULT_BUDGET)
+        scripts = (
+            _result_line(
+                "result_section_21",
+                join=", ".join(playbook.script_names),
+            )
+            if playbook.script_names
+            else ""
+        )
+        lines.append(
+            _result_line(
+                "result_section_22",
+                playbook_id=playbook.playbook_id,
+                scripts=scripts,
+            )
+        )
+    return "\n".join(lines)
 
 
 def responder_shell_commands(log: Path | None, session_id: str | None) -> list[str] | None:
@@ -260,40 +439,29 @@ def responder_shell_commands(log: Path | None, session_id: str | None) -> list[s
                 found = True
                 lines = record.get("shell_command_lines")
                 if isinstance(lines, list):
-                    commands.extend(str(command) for command in lines)
+                    commands.extend(recorded_actions.scrub_shell_command(str(command)) for command in lines)
     except OSError:
         return None
     return commands if found else None
 
 
 def _commands_section(commands: list[str] | None) -> str:
-    header = "## Responder shell commands"
+    header = render_prompt("responder", "commands_section_01", part="reflection_brief.instructions")
     if commands is None:
-        return f"{header}\nThe responder's shell commands are not available for this session."
+        return render_prompt("responder", "commands_section_02", part="reflection_brief.instructions", header=header)
     if not commands:
-        return f"{header}\nThe responder session recorded no shell commands."
-    rendered = [f"{index}. {_clip(command, _COMMAND_MAX_CHARS)}" for index, command in enumerate(commands, 1)]
-    if sum(len(line) + 1 for line in rendered) <= _COMMANDS_BUDGET:
-        return "\n".join([f"{header} ({len(commands)}, in order)", *rendered])
-    # Keep the first diagnostic commands and as many of the last (repair and
-    # verification) commands as fit.
-    head = rendered[:_HEAD_COMMANDS]
-    used = sum(len(line) + 1 for line in head)
-    tail: list[str] = []
-    for line in reversed(rendered[_HEAD_COMMANDS:]):
-        if used + len(line) + 1 > _COMMANDS_BUDGET - 80:
-            break
-        tail.insert(0, line)
-        used += len(line) + 1
-    omitted = len(rendered) - len(head) - len(tail)
-    return "\n".join(
-        [
-            f"{header} ({len(commands)}, in order)",
-            *head,
-            f"[... {omitted} commands omitted ...]",
-            *tail,
-        ]
-    )
+        return render_prompt("responder", "commands_section_03", part="reflection_brief.instructions", header=header)
+    rendered = [
+        render_prompt(
+            "responder",
+            "commands_section_04",
+            part="reflection_brief.instructions",
+            index=index,
+            clip=command,
+        )
+        for index, command in enumerate(commands, 1)
+    ]
+    return "\n".join([header, *rendered])
 
 
 def _relevant_playbooks(
@@ -317,39 +485,67 @@ def _logical_memory_section(closure: IncidentClosure, *, detector_detail: bool, 
     assert closure.request.HasField("memory_snapshot")
     snapshot = closure.request.memory_snapshot
     fired = {finding.detector_id for finding in closure.request.findings}
-    lines = ["## Existing operational memory (trusted logical snapshot)"]
+    lines: list[str] = [render_prompt("responder", "logical_memory_section_01", part="reflection_brief.instructions")]
     health = [item.id for item in snapshot.detectors if item.detector_class == "health"]
-    lines.append("Health detectors (judge-owned, never edit): " + (", ".join(health) or "none"))
+    lines.append(
+        render_prompt("responder", "logical_memory_section_02", part="reflection_brief.instructions")
+        + (", ".join(health) or "none")
+    )
     possible = {item.id: list(item.possible_playbook_ids) for item in snapshot.detectors}
     for detector in snapshot.detectors:
         if detector.detector_class != "incident":
             continue
         watches = ", ".join(f"{watch.api_version}/{watch.kind}" for watch in detector.watches) or "none"
-        marker = " [raised a finding in this incident]" if detector.id in fired else ""
+        marker = (
+            render_prompt("responder", "logical_memory_section_03", part="reflection_brief.instructions")
+            if detector.id in fired
+            else ""
+        )
         lines.append(
-            f"- {detector.id} (watches: {watches}, firing: {detector.firing}, "
-            f"playbooks: {list(detector.possible_playbook_ids)}, "
-            f"originatingIncident: {detector.originating_incident}){marker}"
+            render_prompt(
+                "responder",
+                "logical_memory_section_04",
+                part="reflection_brief.instructions",
+                id=detector.id,
+                watches=watches,
+                firing=detector.firing,
+                list=list(detector.possible_playbook_ids),
+                originating_incident=detector.originating_incident,
+                marker=marker,
+            )
         )
         if detector_detail:
             if detector.description:
-                lines.append("  Description: " + _clip(detector.description, _DETECTOR_DESCRIPTION_CHARS))
+                lines.append(
+                    render_prompt("responder", "logical_memory_section_05", part="reflection_brief.instructions")
+                    + detector.description
+                )
             if detector.predicate_excerpt:
-                lines.append(_fenced(_clip(detector.predicate_excerpt, _DETECTOR_PREDICATE_CHARS)))
+                lines.append(_fenced(detector.predicate_excerpt))
             if event_dependence:
-                lines.append("  Reads Kubernetes Events: " + ("yes" if detector.reads_events else "no"))
+                lines.append(
+                    render_prompt("responder", "logical_memory_section_06", part="reflection_brief.instructions")
+                    + ("yes" if detector.reads_events else "no")
+                )
     if snapshot.playbook_index_markdown:
-        lines.append("Playbook index:")
-        lines.append(_fenced(_clip(snapshot.playbook_index_markdown, _INDEX_EXCERPT_CHARS)))
+        lines.append(render_prompt("responder", "logical_memory_section_07", part="reflection_brief.instructions"))
+        lines.append(_fenced(snapshot.playbook_index_markdown))
     available = {item.id: item for item in snapshot.playbooks}
-    lines.append("Existing playbooks: " + (", ".join(sorted(available)) or "none"))
+    lines.append(
+        render_prompt("responder", "logical_memory_section_08", part="reflection_brief.instructions")
+        + (", ".join(sorted(available)) or "none")
+    )
     relevant = [item for item in _relevant_playbooks(closure, fired, possible) if item in available]
     if not relevant:
         relevant = sorted(available)
     for playbook_id in relevant[:_MAX_PLAYBOOK_EXCERPTS]:
-        lines.append(f"Excerpt of playbook {playbook_id}:")
-        lines.append(_fenced(_clip(available[playbook_id].markdown.strip(), _PLAYBOOK_EXCERPT_CHARS)))
-    return _clip("\n".join(lines), _MEMORY_BUDGET)
+        lines.append(
+            render_prompt(
+                "responder", "logical_memory_section_09", part="reflection_brief.instructions", playbook_id=playbook_id
+            )
+        )
+        lines.append(_fenced(available[playbook_id].markdown.strip()))
+    return "\n".join(lines)
 
 
 def incident_brief(
@@ -359,8 +555,13 @@ def incident_brief(
     responder_turn_log: Path | None = None,
     detector_detail: bool = False,
     event_dependence: bool = False,
-) -> str:
+    include_memory: bool = True,
+    include_detection: bool = True,
+) -> RenderedPrompt:
     """Render the bounded incident brief for a fresh first reflection attempt.
+
+    ``include_memory`` is false when the reflection request already supplies
+    every accepted detector and playbook, avoiding duplicate excerpts.
 
     ``detector_detail`` adds, for every existing incident detector, its Spec
     description and a bounded excerpt of its match predicate, so the reader can
@@ -372,13 +573,26 @@ def incident_brief(
     result = closure.result if closure.HasField("result") else None
     session_id = None if result is None else result.responder_session_id
     sections = [
-        _findings_section(closure),
-        _result_section(result, closure.dispatch_error),
-        _logical_memory_section(closure, detector_detail=detector_detail, event_dependence=event_dependence),
-        _commands_section(responder_shell_commands(responder_turn_log, session_id)),
+        named_prompt(
+            "reflection_brief.findings", _findings_section(closure, include_detection=include_detection), required=False
+        ),
+        named_prompt("reflection_brief.result", _result_section(result, closure.dispatch_error), required=False),
+        named_prompt(
+            "reflection_brief.commands",
+            _commands_section(responder_shell_commands(responder_turn_log, session_id)),
+            required=False,
+        ),
     ]
-    body = _clip("\n\n".join(sections), BRIEF_MAX_CHARS)
-    return (
-        f"Incident brief (built by the broker from the verified closure; about {len(body) // 4} tokens):\n"
-        f"{body}\nEnd of incident brief.\n"
+    if include_memory:
+        sections.insert(
+            2,
+            named_prompt(
+                "reflection_brief.memory",
+                _logical_memory_section(closure, detector_detail=detector_detail, event_dependence=event_dependence),
+                required=False,
+            ),
+        )
+    body = join_prompts("\n\n", sections, part="reflection_brief.separators")
+    return render_prompt(
+        "responder", "incident_brief", part="reflection_brief.instructions", len=len(body) // 4, body=body
     )

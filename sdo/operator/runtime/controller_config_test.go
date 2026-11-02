@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,6 +39,7 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		Dispatcher:                 "/usr/local/bin/responder",
 		DispatcherMode:             "job",
 		ResponderImage:             "registry/responder:latest",
+		ScriptImage:                "registry/script-tools:slim",
 		AgentRegistrationDirectory: "/etc/sdo/agents",
 		ResponderAgentId:           "custom-responder",
 		RepositoryPvc:              "app-repo",
@@ -50,14 +52,9 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		Duration:                   durationpb.New(0),
 		ResponseTimeout:            durationpb.New(1800000000000), // 30m
 		VerificationTimeout:        durationpb.New(120000000000),  // 2m
-		MaxFollowUps:               3,
 		MaxResponseLoops:           4,
-		ProgramFastPath:            true,
 		MemoryHostBinary:           "/tmp/sdo-memory-host",
 		MemoryHostDigest:           "sha256:test",
-		ProgramTrustThreshold:      3,
-		ProgramMinDuration:         durationpb.New(3000000000),
-		FollowUpCooldown:           durationpb.New(30000000000), // 30s
 		RepairPolicy:               "recorded-actions",
 		LeaseName:                  "sdo-controller",
 		LeaseDuration:              durationpb.New(60000000000), // 60s
@@ -101,7 +98,6 @@ func TestLoadControllerConfigRejectsInvalid(t *testing.T) {
 		"empty app_root":      func(c *contractsv1alpha1.ControllerConfig) { c.AppRoot = "" },
 		"bad dispatcher_mode": func(c *contractsv1alpha1.ControllerConfig) { c.DispatcherMode = "cluster" },
 		"bad repair_policy":   func(c *contractsv1alpha1.ControllerConfig) { c.RepairPolicy = "yolo" },
-		"negative follow_ups": func(c *contractsv1alpha1.ControllerConfig) { c.MaxFollowUps = -1 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -170,20 +166,18 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 	pairs := argPairs(args)
 
 	wantValue := map[string]string{
-		"--namespace":               "hotel-reservation",
-		"--control-namespace":       "sdo-system",
-		"--app-root":                "/workspace/app",
-		"--dispatcher-mode":         "job",
-		"--repair-policy":           "recorded-actions",
-		"--max-follow-ups":          "3",
-		"--max-response-loops":      "4",
-		"--program-trust-threshold": "3",
-		"--program-min-duration":    "3s",
-		"--response-timeout":        "30m0s",
-		"--lease-duration":          "1m0s",
-		"--metrics-url":             "http://prometheus:9090",
-		"--toolchain-image":         "registry/controller:compiler",
-		"--metrics-token-file":      "/var/run/secrets/metrics/token",
+		"--namespace":          "hotel-reservation",
+		"--control-namespace":  "sdo-system",
+		"--app-root":           "/workspace/app",
+		"--dispatcher-mode":    "job",
+		"--repair-policy":      "recorded-actions",
+		"--max-response-loops": "4",
+		"--response-timeout":   "30m0s",
+		"--lease-duration":     "1m0s",
+		"--metrics-url":        "http://prometheus:9090",
+		"--toolchain-image":    "registry/controller:compiler",
+		"--metrics-token-file": "/var/run/secrets/metrics/token",
+		"--script-image":       "registry/script-tools:slim",
 	}
 	for flag, want := range wantValue {
 		if got := pairs[flag]; got != want {
@@ -201,8 +195,8 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 	if !contains(args, "--exit-after-closure") {
 		t.Fatalf("expected --exit-after-closure in args: %v", args)
 	}
-	if !contains(args, "--program-fast-path") {
-		t.Fatalf("expected --program-fast-path in args: %v", args)
+	if contains(args, "--program-fast-path=true") {
+		t.Fatalf("retired program flag in args: %v", args)
 	}
 	// Repeated fields expand once per element as --flag=value.
 	for _, flag := range []string{"--responder-env=FOO=bar", "--responder-env=BAZ=qux", "--deployed-manifest-path=kubernetes"} {
@@ -287,4 +281,14 @@ func argPairs(args []string) map[string]string {
 		}
 	}
 	return pairs
+}
+
+func TestColdStandbySwitchSurvivesTypedRuntimeLaunch(t *testing.T) {
+	config := fullControllerConfig()
+	enabled := false
+	config.ResponderStandby = &enabled
+	args := controllerConfigToArgs(config)
+	if !slices.Contains(args, "--responder-standby=false") {
+		t.Fatalf("cold switch absent: %v", args)
+	}
 }

@@ -137,7 +137,7 @@ func TestLogsSourceFailureAndBounds(t *testing.T) {
 	}
 }
 func TestLogsWatchCreatesOnlyPodInformer(t *testing.T) {
-	_, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset()}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{ID: "logs", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: logs.Watch.APIVersion, Kind: logs.Watch.Kind, Namespace: "app"}}}}})
+	_, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset()}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{ID: "logs", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: logs.Watch.APIVersion, Kind: logs.Watch.Kind, Namespace: "app"}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

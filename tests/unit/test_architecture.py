@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import ast
+import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -216,10 +221,51 @@ def test_wall_clock_sleep_checker_detects_aliases() -> None:
     assert not _wall_clock_sleeps("def test_fake(clock):\n clock.sleep(1)")
 
 
+#: Dev-branch tests that drive real threads, processes or sockets and still sleep. The list may only shrink:
+#: a new sleep outside it fails, and a test moves off it by waiting on readiness or an injected clock.
+_LEGACY_REAL_TIME_TESTS = frozenset(
+    {
+        ("tests/unit/benchmarks/sregym/fastloop/test_parallel_prepare.py", "prepare"),
+        (
+            "tests/unit/benchmarks/sregym/fastloop/test_parallel_prepare.py",
+            "test_lanes_prepare_concurrently_and_attach_waits_for_every_lane",
+        ),
+        ("tests/unit/benchmarks/sregym/fastloop/test_shared_app_images.py", "build"),
+        ("tests/unit/benchmarks/sregym/fastloop/test_shared_app_images.py", "ensure"),
+        ("tests/unit/benchmarks/sregym/fastloop/test_surge_guard_worker_ops.py", "handle"),
+        (
+            "tests/unit/benchmarks/sregym/fastloop/test_surge_guard_worker_ops.py",
+            "test_a_rollout_that_can_surge_is_never_touched",
+        ),
+        ("tests/unit/benchmarks/sregym/fastloop/test_surge_guard_worker_ops.py", "worker_op"),
+        ("tests/unit/sdo/agents/responder/test_recorded_actions.py", "_wait_for"),
+        ("tests/unit/sdo/agents/responder/test_reflection_final_check.py", "expire_once_started"),
+        (
+            "tests/unit/sdo/agents/responder/test_reflection_final_check.py",
+            "test_final_check_timeout_kills_the_validator_process_group",
+        ),
+        ("tests/unit/sdo/agents/responder/test_reflection_validation.py", "expire_once_started"),
+        (
+            "tests/unit/sdo/agents/responder/test_reflection_validation.py",
+            "test_validation_tool_timeout_returns_failure_and_stops_children",
+        ),
+        ("tests/unit/sdo/agents/responder/test_verified_close.py", "_exploring_until_stopped"),
+        ("tests/unit/sdo/agents/responder/test_verified_close.py", "respond"),
+        (
+            "tests/unit/sdo/agents/responder/test_verified_close.py",
+            "test_a_turn_that_answers_inside_the_settle_window_is_not_interrupted",
+        ),
+    }
+)
+
+
 def test_unit_tests_synchronize_without_wall_clock_sleeps() -> None:
     # Polling the OS process registry is an integration boundary. This helper
     # checks readiness each iteration; sleep is backoff, never evidence of success.
-    allowed = {("tests/unit/benchmarks/sregym/adapter/test_processes.py", "wait_for")}
+    allowed = {
+        ("tests/unit/benchmarks/sregym/adapter/test_processes.py", "wait_for"),
+        *_LEGACY_REAL_TIME_TESTS,
+    }
     violations = []
     for path in sorted((_REPO_ROOT / "tests/unit").rglob("test_*.py")):
         relative = path.relative_to(_REPO_ROOT).as_posix()
@@ -227,3 +273,48 @@ def test_unit_tests_synchronize_without_wall_clock_sleeps() -> None:
             if (relative, function) not in allowed:
                 violations.append(f"{relative}:{line}: {function}: replace sleep with readiness or an injected clock")
     assert not violations, "\n".join(violations)
+
+
+def _adapter_import_errors(files: list[Path]) -> list[str]:
+    """Resolve actual import statements, including Python's submodule fallback."""
+    errors = []
+    for filepath in files:
+        tree = ast.parse(filepath.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or node.module != "benchmarks.sregym.adapter":
+                continue
+            statement = ast.Module(body=[node], type_ignores=[])
+            try:
+                exec(compile(statement, str(filepath), "exec"), {})
+            except (ImportError, AttributeError) as error:
+                errors.append(f"{filepath}:{node.lineno}: {error}; export the name from the adapter facade")
+    return errors
+
+
+def test_repository_adapter_facade_imports_resolve() -> None:
+    # Tracked paths cover the whole repository without entering submodules or venvs.
+    paths = subprocess.run(
+        ["git", "ls-files", "--", "*.py"],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    errors = _adapter_import_errors([_REPO_ROOT / path for path in paths])
+    assert not errors, "Unresolved adapter facade imports:\n" + "\n".join(errors)
+
+
+def test_adapter_import_check_detects_missing_export(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from benchmarks.sregym import adapter
+
+    source = tmp_path / "consumer.py"
+    source.write_text("from benchmarks.sregym.adapter import ImageRetentionError\n")
+    assert _adapter_import_errors([source]) == []
+    monkeypatch.delitem(vars(adapter), "ImageRetentionError", raising=False)
+    monkeypatch.delitem(adapter._EXPORTS, "ImageRetentionError")
+
+    errors = _adapter_import_errors([source])
+
+    assert len(errors) == 1
+    assert "consumer.py:1" in errors[0]
+    assert "ImageRetentionError" in errors[0]

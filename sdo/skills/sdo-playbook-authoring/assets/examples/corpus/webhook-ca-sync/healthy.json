@@ -1,0 +1,8 @@
+{
+ "namespace": "demo",
+ "pod_admission": {
+  "namespace": "demo",
+  "source_pod": "web-1",
+  "admitted": true
+ }
+}

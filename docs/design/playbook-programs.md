@@ -135,6 +135,19 @@ A playbook program is accepted only if:
   broken fixture and an empty plan on the fixed one.
 - The README contains no shell commands.
 
+What is not a gate (2026-10-27): a verified cause without a program or detector
+link, a skipped healthy replay (no controller capture), and a recorded fault no
+incident detector reaches (`program.repeat-unreachable`) are recorded as
+coverage gaps (ledger `reflection_coverage_gaps`, commit trailers, check
+report), never refused: the repeat's act-verify loop is the safety net. The
+memory edge derives the playbook `fault_class` from its ID, accepts literal
+resource names and regenerates the playbook index. When no finding selects a playbook
+its mitigation is still replayed with the case bindings and must repair. A
+program or detector defect on the repeat path is still blocking under its own
+rule: `program.diagnose-no-match`, `program.mitigator-missing`,
+`detector.invalid-finding`, `detector.fires-on-healthy`,
+`program.repeat-unavailable`.
+
 Rename replay keeps namespace names, IP addresses, image digests, binary
 ConfigMap data, and HTTP probe paths unchanged. The corpus has no safe
 substitute for those opaque or externally resolved values. Existing library
@@ -182,7 +195,9 @@ same session reflects at the end.
      hidden behind the fixed one surface here.
 3. The loop stops when every detector clears, or after the loop budget: 5
    iterations by default, set with `--max-response-loops` or controller
-   config. The incident is then reported as unresolved.
+   config. The incident is then reported as unresolved. An iteration is one
+   act→verify cycle: all writes before the next verification share it, and a
+   call that writes nothing spends none.
 4. Ad-hoc fixes go through the same verification (`sdo verify`).
 
 Tools: `sdo status`, `sdo diagnose`, `sdo plan`, `sdo apply`, `sdo verify`,
@@ -198,28 +213,11 @@ Failure signals recorded for reflection, the corpus and trust:
 | Fixed ad hoc, and some program would have matched | a binding or ranking bug |
 | Fixed ad hoc, and no program applies | a coverage gap: compile a new program or record an `sdk_gap` |
 
-## Fast path and trust
+## Agent-selected recurrence and coverage
 
-- A program is trusted after K verified successes (default 3, set with
-  `--program-trust-threshold`) with no failures since its last change. Accepted
-  program revisions have passed the broker's corpus replay. Any failure or edit
-  resets the count.
-- The fast path is implemented behind `--program-fast-path` (default off) and
-  requires `recorded-actions`. After the settle re-diagnosis, every active
-  finding must have exactly one trusted `Match`, or be directly related to a
-  bound object of a selected trusted run. Direct relations come only from the
-  settled snapshot: a Service selector matching workload pod template labels
-  in the same namespace, a Pod or ReplicaSet owned by the bound Deployment or
-  StatefulSet, or an HPA or PDB targeting the bound workload. An unrelated
-  finding skips with `uncovered_finding`. The controller applies the batch
-  through `PlanExecutor`, verifies program `NoMatch` and that every finding's
-  detector clears, and closes without a responder
-  or reflection turn. It allows one attempt per incident. An unsuccessful
-  attempt restores captured pre-images and hands its summary to the responder.
-- The outcome records `resolution_path`, `fast_path_programs`, plan verification,
-  rollback, failure signals, and `fast_path_relation_covered_findings` with the
-  finding fingerprint, program ID, and binding. The ledger and fastloop row
-  export the same relation evidence alongside the path and programs.
+Go diagnoses accepted, non-retired programs at incident open. `PlaybookCoverage` lists all Match results by program/revision/bindings, their explained finding fingerprints, informational verified counters and the menu option selecting their mitigation. Remaining active findings are listed explicitly. The responder chooses program mitigations and fixes uncovered findings; Go independently verifies closure. Completed repairs are undone only on explicit responder rollback. Partial-write compensation within an apply remains.
+
+Coverage is copied unchanged into the outcome; application and action receipts show which candidate repairs actually ran. See [agent-selected repair evidence](../../.agents/skills/analyze-experiment/references/automatic-repair.md).
 
 ## Reflection
 
@@ -245,7 +243,7 @@ Three arms on the same stream:
 
 Per incident: requests, tokens and time to mitigation (judge time excluded),
 `Diagnose` runs and verdicts, loop iterations, reuse on new services, SDK gaps,
-trust statistics, and fast-path-eligible incidents.
+verified counters and coverage of incident findings.
 
 ## Memory maintenance
 
@@ -284,9 +282,8 @@ rarely needed programs are the long-tail knowledge memory exists to keep.
   diagnoser is an on-demand root-cause check over bound resources.
 - Shared `.sdo/lib` functions hold the logic once, and both kinds of code
   import them.
-- `sdk.DetectorFromProgram(p Diagnoser, locate Locator) sdk.Detector`
-  promotes a precise, snapshot-only diagnoser to an always-on incident
-  detector owned by the responder.
+- Detectors have independent detection entry points. Diagnose runs only when
+  handling a finding, with roles bound from that finding.
 - Health detectors stay symptom-level, owned by the health judge, and
   independent.
 
@@ -298,8 +295,7 @@ rarely needed programs are the long-tail knowledge memory exists to keep.
 
 ## Implementation phases
 
-1. **SDK and validation:** the `sdk/program` types, `DetectorFromProgram`
-   and `Locator`; record-and-replay `ReadView` and the corpus fixture format
+1. **SDK and validation:** the `sdk/program` types and finding bindings; record-and-replay `ReadView` and the corpus fixture format
    in `sdktest`; a module layout that lets detectors and playbook programs
    both import `.sdo/lib`; validator support (import allowlist, binding
    type-check, rename-invariance replay, generalization tests); protobuf
@@ -310,7 +306,7 @@ rarely needed programs are the long-tail knowledge memory exists to keep.
 3. **Agents:** resume-mode reflection by default, the compile-to-programs or
    `sdk_gap` reflection contract, responder prompts for program verdicts and
    scratch scripts, and reflection token export.
-4. **Evaluation:** the three-arm experiment, then turning on the fast path.
+4. **Evaluation:** the scripted coverage gate, then live recurrence evaluation.
 
 Each phase updates `docs/architecture.md` (ownership: responders author
 playbook programs, the broker validates them, the controller executes them)

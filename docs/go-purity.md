@@ -71,6 +71,14 @@ The exact declared edge-package list is:
 - `sdo/operator/memoryhost/hostio`: memory-host process launcher, Unix socket server/client and read-only network adapter.
 - `sdo/operator/memory/internal/memoryio`: Git reads, isolated-index whitespace checks, shell syntax and toolchain lookup. No process handles escape.
 - `sdo/operator/deployment/internal/deploymentio`: trusted deployment processes, bounded health process execution, wait timers and Job-name suffixes.
+- `sdo/operator/apihistory/internal/apiio`: API-history clock, timers and identifier randomness.
+- `sdo/operator/kubeproxy/internal/proxyio`: API proxy clock and request-ID randomness.
+- `sdo/operator/rendered/internal/renderio`: rendered-source Git reads.
+- `sdo/operator/shellpath/internal/shellio`: shell detector processes, runner server, timers and environment.
+- `sdo/operator/worker_registry/internal/workerio`: worker clocks, warm-standby processes, sockets and environment.
+- `sdo/operator/cmd/sdo-go-cache/internal/cacheio`: Go cache helper environment and clock.
+- `sdo/operator/cmd/sdo-replay/internal/replayio`: replay command child-process launcher.
+- `sdo/operator/sdk/kubeclient/internal/clientio`: in-memory observation HTTP client; opens no connections.
 - `sdo/operator/toolchain`: Go compiler and offline module-cache download process adapter.
 - `sdo/operator/devmount`: development mount process adapter.
 - `sdo/operator/runtime/sim`: the deterministic simulation world. Its clock reads are the synctest bubble's

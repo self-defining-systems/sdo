@@ -1,0 +1,278 @@
+package validate
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+
+	"google.golang.org/protobuf/proto"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
+)
+
+// ReflectionRepairDiagnostics binds the fast no-change path to controller
+// receipts, not the model's explanation. Reported changed IDs are checked
+// against the real diff by ReflectionDiagnostics. Recorded hand repairs require executable steps; replay remains informational.
+func ReflectionRepairDiagnostics(root string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision, paths []string, replay ...string) []Diagnostic {
+	if decision == nil || (outcome.GetReflectionSkipReason() == "no_session" && decision.GetLearningDecision() == "no_change" && decision.GetNoChangeReason() == "no_session") {
+		return nil
+	}
+	changed, touched := map[string]bool{}, map[string]bool{}
+	for _, p := range paths {
+		kind, id, ok := layout.Classify(p)
+		id, _, _ = strings.Cut(id, "/")
+		if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookProgram || kind == layout.KindPlaybookScript) {
+			touched[id] = true
+			if decision.GetLearningDecision() == "updated" && slices.Contains(decision.GetPlaybookIds(), id) {
+				changed[id] = true
+			}
+		}
+	}
+	// Only accepted playbooks own repairs and can go stale. Applications also
+	// attribute generic menu actions and removals, which stay hand repairs.
+	playbook := func(id string) bool {
+		if touched[id] {
+			return true
+		}
+		if id == "" || id == "." || id == ".." || strings.ContainsAny(id, "/:\\") {
+			return false
+		}
+		info, err := os.Stat(filepath.Join(root, layout.PlaybookDir(id)))
+		return err == nil && info.IsDir()
+	}
+	applications := append([]*contracts.PlanApplication(nil), outcome.GetPlanApplications()...)
+	stageHandled := map[string]map[string]bool{}
+	stale := map[string]string{}
+	for _, stage := range outcome.GetPriorStages() {
+		for _, m := range stage.GetMitigations() {
+			if m.GetResult() == "skipped" {
+				// The stage skips a playbook as ineffective only after it applied
+				// in this incident and left its findings open.
+				if m.GetSkipReason() == "ineffective" {
+					stale[m.GetPlaybookId()] = "stage skipped it as ineffective"
+				}
+				continue
+			}
+			app := m.GetApplyReceipt()
+			if app != nil {
+				applications = append(applications, app)
+				if stageHandled[app.GetApplicationId()] == nil {
+					stageHandled[app.GetApplicationId()] = map[string]bool{}
+				}
+				stageHandled[app.GetApplicationId()][m.GetPlaybookId()] = true
+			}
+			switch {
+			case m.GetResult() == "reverted_ineffective":
+				stale[m.GetPlaybookId()] = "stage reverted it as ineffective"
+			case !stageApplicationSettled(m, outcome.GetPlanApplications()) && !stageObservationSettled(m, outcome) && (m.GetResult() != "applied_cleared" || len(m.GetRemainingFindingFingerprints()) > 0 || m.GetError() != ""):
+				stale[m.GetPlaybookId()] = "stage result " + m.GetResult()
+			}
+		}
+	}
+	var hand []*contracts.RepairActionReceipt
+	for _, a := range outcome.GetRepairActions() {
+		if !a.GetSuccess() {
+			continue
+		}
+		fromPlaybook := false
+		for _, app := range applications {
+			if slices.ContainsFunc(app.GetProgramIds(), playbook) && !app.GetDryRun() && applicationOwnsRepair(app, a) {
+				fromPlaybook = true
+				break
+			}
+		}
+		if !fromPlaybook {
+			hand = append(hand, a)
+		}
+	}
+	for _, app := range applications {
+		if app.GetDryRun() {
+			continue
+		}
+		for _, id := range app.GetProgramIds() {
+			if !playbook(id) {
+				continue
+			}
+			if !stageHandled[app.GetApplicationId()][id] && (!app.GetApplied() || app.GetError() != "" || app.GetRolledBack() || app.GetRollbackError() != "" || !app.GetVerificationCompleted() || !app.GetVerificationPassed()) {
+				stale[id] = "application failed or did not verify its findings"
+			}
+			for _, a := range hand {
+				if app.GetCompletedAt() == nil || a.GetStartedAt() == nil || a.GetStartedAt().AsTime().Before(app.GetCompletedAt().AsTime()) {
+					continue
+				}
+				if repairOverlapsPlaybook(outcome, app, id, a) {
+					stale[id] = "needed later hand repair " + a.GetActionId()
+				}
+			}
+		}
+	}
+	// Prior deterministic stages precede responder repairs even when a legacy
+	// stage omitted its application receipt. Its own bindings still identify
+	// the playbook that needed a later repair.
+	for _, stage := range outcome.GetPriorStages() {
+		for _, m := range stage.GetMitigations() {
+			if stage.GetStage() != "deterministic" || m.GetResult() == "skipped" || m.GetApplyReceipt() != nil {
+				continue
+			}
+			for _, a := range hand {
+				if repairOverlapsPlaybook(outcome, nil, m.GetPlaybookId(), a) {
+					stale[m.GetPlaybookId()] = "needed later hand repair " + a.GetActionId()
+				}
+			}
+		}
+	}
+	remaining := map[string]bool{}
+	for _, evaluation := range outcome.GetFinalHealthDetectorState() {
+		if evaluation.GetStatus() == "firing" || evaluation.GetStatus() == "pending" {
+			for _, fingerprint := range evaluation.GetFingerprints() {
+				remaining[fingerprint] = true
+			}
+		}
+	}
+	applied := map[string]bool{}
+	for _, id := range outcome.GetAppliedPlaybooks() {
+		applied[id] = true
+	}
+	for _, app := range applications {
+		for _, id := range app.GetProgramIds() {
+			applied[id] = true
+		}
+	}
+	for _, match := range outcome.GetPlaybookCoverage().GetMatches() {
+		if applied[match.GetPlaybookId()] && slices.ContainsFunc(match.GetExplainedFindingFingerprints(), func(fingerprint string) bool { return remaining[fingerprint] }) {
+			stale[match.GetPlaybookId()] = "its findings remain unresolved in the final controller observation"
+		}
+	}
+	var ds []Diagnostic
+	if len(replay) > 0 && replay[0] == "off" {
+		ds = recordedRepairExecutableDiagnostics(root, hand, changed)
+	} else {
+		ds = recordedRepairProgramDiagnostics(root, outcome, hand, changed)
+	}
+	if len(hand) > 0 {
+		ds = append(ds, recordedRepairSDKGapDiagnostics(outcome, decision.GetSdkGaps())...)
+	}
+	ids := make([]string, 0, len(stale))
+	for id := range stale {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		// The health judge owns its playbook; a failed generic application is
+		// learned as incident playbooks for the hand repairs that followed.
+		if changed[id] || id == layout.HealthObjectivePlaybook {
+			continue
+		}
+		ds = append(ds, Diagnostic{Rule: RuleReflectionStalePlaybook, Message: fmt.Sprintf("applied playbook %q must change: %s", id, stale[id]), Hint: "update this playbook, or retire it with a reason, and include its ID in the updated result; a peer edit or SDK gap does not fix stale memory"})
+	}
+	return ds
+}
+
+// A stage receipt is a handoff snapshot, not a terminal application verdict.
+// Only later verified settlement of that exact execution can supersede a
+// pending snapshot. Final unresolved findings and later hand repairs are still
+// checked separately; peer success or health alone cannot excuse stale memory.
+func stageApplicationSettled(stage *contracts.StageMitigation, applications []*contracts.PlanApplication) bool {
+	initial := stage.GetApplyReceipt()
+	if (stage.GetResult() != "rollout_pending_at_handoff" && stage.GetResult() != "admission_blocked") || initial.GetRolloutPending() == nil || !initial.GetApplied() || initial.GetDryRun() || initial.GetRolledBack() || initial.GetApplicationId() == "" || initial.GetStartedAt() == nil || initial.GetCompletedAt() == nil {
+		return false
+	}
+	var final *contracts.PlanApplication
+	for _, app := range applications {
+		if app.GetApplicationId() == initial.GetApplicationId() {
+			if final != nil {
+				return false // Conflicting or duplicate final identities prove nothing.
+			}
+			final = app
+		}
+	}
+	if final == nil || final.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED || !final.GetApplied() || final.GetDryRun() || final.GetRolledBack() || final.GetRollbackError() != "" || final.GetError() != "" || final.GetRolloutPending() != nil || !final.GetVerificationCompleted() || !final.GetVerificationPassed() {
+		return false
+	}
+	return slices.Contains(final.GetProgramIds(), stage.GetPlaybookId()) && slices.Equal(final.GetProgramIds(), initial.GetProgramIds()) &&
+		proto.Equal(final.GetPlan(), initial.GetPlan()) && proto.Equal(final.GetStartedAt(), initial.GetStartedAt()) &&
+		final.GetCompletedAt() != nil && final.GetCompletedAt().AsTime().After(initial.GetCompletedAt().AsTime())
+}
+
+// Match the controller's receipt identities, including per-script receipts and
+// duplicate suffixes. A bare program-plan kind never proves playbook ownership:
+// direct hand repairs also run through the ordinary plan executor.
+func applicationOwnsRepair(app *contracts.PlanApplication, a *contracts.RepairActionReceipt) bool {
+	id := app.GetApplicationId()
+	if id == "" {
+		return false
+	}
+	switch a.GetKind() {
+	case "sdo-apply", "sdo-mitigate":
+		return a.GetActionId() == id
+	case "mitigation-menu":
+		// The responder menu numbers each applied action of one application.
+		n, err := strconv.Atoi(strings.TrimPrefix(a.GetActionId(), id+"-a"))
+		return strings.HasPrefix(a.GetActionId(), id+"-a") && err == nil && n >= 1
+	case "program-plan", "run-script":
+		base := "sdo-program-" + id
+		if a.GetActionId() == base {
+			return true
+		}
+		suffix, ok := strings.CutPrefix(a.GetActionId(), base+"-")
+		if !ok {
+			return false
+		}
+		suffix = strings.TrimPrefix(suffix, "script-")
+		for _, part := range strings.Split(suffix, "-") {
+			n, err := strconv.Atoi(part)
+			if err != nil || n < 1 {
+				return false
+			}
+		}
+		return suffix != ""
+	}
+	return false
+}
+
+func repairOverlapsPlaybook(o *contracts.OutcomeRecord, app *contracts.PlanApplication, id string, a *contracts.RepairActionReceipt) bool {
+	var resources []*contracts.ObjectRef
+	// A batched application may contain unrelated playbooks. Its aggregate
+	// receipt cannot attribute a peer's later repair to every member.
+	if len(app.GetProgramIds()) == 1 {
+		for _, receipt := range o.GetRepairActions() {
+			if applicationOwnsRepair(app, receipt) {
+				resources = append(resources, receipt.GetResources()...)
+			}
+		}
+	}
+	for _, match := range o.GetPlaybookCoverage().GetMatches() {
+		if match.GetPlaybookId() == id {
+			for _, b := range match.GetBindings() {
+				if b.GetObject() != nil {
+					resources = append(resources, b.GetObject())
+				}
+			}
+		}
+	}
+	for _, stage := range o.GetPriorStages() {
+		for _, m := range stage.GetMitigations() {
+			if m.GetPlaybookId() == id {
+				for _, b := range m.GetBindings() {
+					if b.GetObject() != nil {
+						resources = append(resources, b.GetObject())
+					}
+				}
+			}
+		}
+	}
+	for _, ref := range resources {
+		if slices.ContainsFunc(a.GetResources(), func(other *contracts.ObjectRef) bool { return equalCauseResource(ref, other) }) {
+			return true
+		}
+		for _, owner := range a.GetOwners() {
+			if slices.ContainsFunc(owner.GetOwnerChain(), func(other *contracts.ObjectRef) bool { return equalCauseResource(ref, other) }) {
+				return true
+			}
+		}
+	}
+	return false
+}

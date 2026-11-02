@@ -67,6 +67,23 @@ func driftEventsContract(events []sdk.DriftEvent) []*contracts.DriftEvent {
 	return result
 }
 
+func resourceOwnersContract(owners []ResourceOwners) []*contracts.ResourceOwners {
+	var result []*contracts.ResourceOwners
+	for _, owner := range owners {
+		resource := objectRefsContract([]sdk.ObjectRef{owner.Resource})
+		result = append(result, &contracts.ResourceOwners{Resource: resource[0], OwnerChain: objectRefsContract(owner.OwnerChain)})
+	}
+	return result
+}
+
+func resourceOwnersState(owners []*contracts.ResourceOwners) []ResourceOwners {
+	var result []ResourceOwners
+	for _, owner := range owners {
+		result = append(result, ResourceOwners{Resource: objectRefState(owner.GetResource()), OwnerChain: objectRefsState(owner.GetOwnerChain())})
+	}
+	return result
+}
+
 func objectRefsState(refs []*contracts.ObjectRef) []sdk.ObjectRef {
 	result := make([]sdk.ObjectRef, 0, len(refs))
 	for _, ref := range refs {
@@ -132,6 +149,9 @@ func evaluationsContract(items []DetectorEvaluation) []*contracts.DetectorEvalua
 			DetectorId: item.DetectorID, EvaluatedAt: contractTimestamp(item.EvaluatedAt), Status: string(item.Status),
 			Fingerprints: append([]string(nil), item.Fingerprints...),
 		}
+		if item.Reason != "" {
+			message.Reason = &item.Reason
+		}
 		if item.Error != "" {
 			message.Error = &item.Error
 		}
@@ -145,7 +165,7 @@ func evaluationsState(items []*contracts.DetectorEvaluation) []DetectorEvaluatio
 	for _, item := range items {
 		result = append(result, DetectorEvaluation{
 			DetectorID: item.GetDetectorId(), EvaluatedAt: controllerTime(item.GetEvaluatedAt()),
-			Status: DetectorEvaluationStatus(item.GetStatus()), Fingerprints: append([]string(nil), item.GetFingerprints()...), Error: item.GetError(),
+			Status: DetectorEvaluationStatus(item.GetStatus()), Fingerprints: append([]string(nil), item.GetFingerprints()...), Error: item.GetError(), Reason: item.GetReason(),
 		})
 	}
 	return result
@@ -165,6 +185,10 @@ func stateChangesContract(state *StateChanges) *contracts.StateChanges {
 	}
 	for _, change := range state.Changes {
 		item := &contracts.StateChange{Kind: change.Kind, Name: change.Name, Change: change.Change, Fields: make([]*contracts.StateFieldChange, 0, len(change.Fields))}
+		if change.APIVersion != "" {
+			item.ApiVersion = proto.String(change.APIVersion)
+			item.Namespace = proto.String(change.Namespace)
+		}
 		for _, field := range change.Fields {
 			value := &contracts.StateFieldChange{Field: field.Field}
 			if field.Before != "" {
@@ -181,8 +205,10 @@ func stateChangesContract(state *StateChanges) *contracts.StateChanges {
 }
 
 func incidentRequestContract(request IncidentRequest) (*contracts.IncidentRequest, error) {
-	result := &contracts.IncidentRequest{MetricsSource: request.MetricsSource,
-		SchemaVersion: request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
+	result := &contracts.IncidentRequest{
+		MetricsSource:         request.MetricsSource,
+		ObservationGeneration: request.ObservationGeneration,
+		SchemaVersion:         request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
 		IncidentId: request.IncidentID, Findings: make([]*contracts.Finding, 0, len(request.Findings)),
 		DetectorHistory: evaluationsContract(request.DetectorHistory), SurfacedPlaybooks: make([]*contracts.SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)),
 		RelevantOutcomes: make([]*contracts.PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)),
@@ -192,7 +218,11 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
-		FastPathSummary: request.FastPathSummary, PriorStages: cloneStageReports(request.PriorStages),
+		PriorResponseProgress:  cloneResponseProgress(request.PriorResponseProgress),
+		PlaybookCoverage:       cloneCoverage(request.PlaybookCoverage),
+		PriorStages:            cloneStageReports(request.PriorStages),
+		NamespaceOnboarding:    cloneNamespaceOnboarding(request.NamespaceOnboarding),
+		DisabledSetupDetectors: cloneDisabledSetupDetectors(request.DisabledSetupDetectors),
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
@@ -218,18 +248,12 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 			SourceCommit: prior.SourceCommit, ExactSourceMatch: prior.ExactSourceMatch,
 		})
 	}
-	if request.FollowUp != nil {
-		result.FollowUp = &contracts.FollowUpContext{
-			OriginalIncidentId: request.FollowUp.OriginalIncidentID, ParentIncidentId: request.FollowUp.ParentIncidentID,
-			Attempt: int32(request.FollowUp.Attempt), MaxFollowUps: int32(request.FollowUp.MaxFollowUps),
-			PriorResponderSummary: request.FollowUp.PriorSummary, DriftLabelsOnly: request.FollowUp.DriftLabelsOnly,
-		}
-	}
 	return result, nil
 }
 
 func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, error) {
 	message := &contracts.IncidentResult{
+		DriftReprompt: cloneDriftReprompt(result.DriftReprompt),
 		SchemaVersion: result.SchemaVersion, IncidentId: result.IncidentID, Status: string(result.Status),
 		ConfirmedRootCauses: make([]*contracts.ConfirmedRootCause, 0, len(result.ConfirmedRootCauses)),
 		DriftEvents:         driftEventsContract(result.DriftEvents),
@@ -241,11 +265,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		Timing:               &contracts.TimingMetrics{StartedAt: optionalTimestamp(result.Timing.StartedAt), CompletedAt: optionalTimestamp(result.Timing.CompletedAt)},
 		ResponseLoopsUsed:    int32(result.ResponseLoopsUsed), ResponseLoopExhausted: result.ResponseLoopExhausted,
 		ProgramFailureSignals: append([]string(nil), result.ProgramFailureSignals...),
-		ResolutionPath:        result.ResolutionPath, FastPathPrograms: append([]string(nil), result.FastPathPrograms...), FastPathSkippedReason: string(result.FastPathSkippedReason),
-		PriorStages: cloneStageReports(result.PriorStages),
-	}
-	for _, covered := range result.FastPathRelationCoveredFindings {
-		message.FastPathRelationCoveredFindings = append(message.FastPathRelationCoveredFindings, relationCoveredFindingContract(covered))
+		ResolutionPath:        result.ResolutionPath,
 	}
 	for _, call := range result.ProgramToolCalls {
 		message.ProgramToolCalls = append(message.ProgramToolCalls, toolCallContract(call))
@@ -289,11 +309,19 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		}
 		message.AppliedPlaybooks = append(message.AppliedPlaybooks, item)
 	}
+	for _, finding := range result.UnresolvedFindings {
+		encoded, err := findingContract(finding)
+		if err != nil {
+			return nil, err
+		}
+		message.UnresolvedFindings = append(message.UnresolvedFindings, encoded)
+	}
 	for _, action := range result.RepairActions {
 		message.RepairActions = append(message.RepairActions, &contracts.RepairActionReceipt{
 			ActionId: action.ActionID, Kind: action.Kind, Target: action.Target, Resources: objectRefsContract(action.Resources),
 			Summary: action.Summary, Details: action.Details, StartedAt: optionalTimestamp(action.StartedAt),
-			CompletedAt: optionalTimestamp(action.CompletedAt), Success: action.Success, Reversible: action.Reversible,
+			CompletedAt: optionalTimestamp(action.CompletedAt), Success: action.Success, Reversible: action.Reversible, FailureReason: action.FailureReason, ScriptDigest: action.ScriptDigest,
+			Owners: resourceOwnersContract(action.Owners),
 		})
 	}
 	for _, evidence := range result.VerificationEvidence {
@@ -326,6 +354,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 
 func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 	result := IncidentResult{
+		DriftReprompt: cloneDriftReprompt(message.GetDriftReprompt()),
 		SchemaVersion: message.GetSchemaVersion(), IncidentID: message.GetIncidentId(), Status: IncidentStatus(message.GetStatus()),
 		ConfirmedRootCauses:  make([]ConfirmedRootCause, 0, len(message.GetConfirmedRootCauses())),
 		DriftEvents:          driftEventsState(message.GetDriftEvents()),
@@ -339,11 +368,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		ResponderSessionID:   message.GetResponderSessionId(), Error: message.GetError(),
 		ResponseLoopsUsed: int(message.GetResponseLoopsUsed()), ResponseLoopExhausted: message.GetResponseLoopExhausted(),
 		ProgramFailureSignals: append([]string(nil), message.GetProgramFailureSignals()...),
-		ResolutionPath:        message.GetResolutionPath(), FastPathPrograms: append([]string(nil), message.GetFastPathPrograms()...), FastPathSkippedReason: FastPathSkipReason(message.GetFastPathSkippedReason()),
-		PriorStages: cloneStageReports(message.GetPriorStages()),
-	}
-	for _, covered := range message.GetFastPathRelationCoveredFindings() {
-		result.FastPathRelationCoveredFindings = append(result.FastPathRelationCoveredFindings, relationCoveredFindingState(covered))
+		ResolutionPath:        message.GetResolutionPath(),
 	}
 	for _, call := range message.GetProgramToolCalls() {
 		result.ProgramToolCalls = append(result.ProgramToolCalls, toolCallState(call))
@@ -378,7 +403,8 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		result.RepairActions = append(result.RepairActions, RepairActionReceipt{
 			ActionID: action.GetActionId(), Kind: action.GetKind(), Target: action.GetTarget(), Resources: objectRefsState(action.GetResources()),
 			Summary: action.GetSummary(), Details: action.GetDetails(), StartedAt: controllerTime(action.GetStartedAt()),
-			CompletedAt: controllerTime(action.GetCompletedAt()), Success: action.GetSuccess(), Reversible: action.GetReversible(),
+			CompletedAt: controllerTime(action.GetCompletedAt()), Success: action.GetSuccess(), Reversible: action.GetReversible(), FailureReason: action.GetFailureReason(), ScriptDigest: action.GetScriptDigest(),
+			Owners: resourceOwnersState(action.GetOwners()),
 		})
 	}
 	for _, evidence := range message.GetVerificationEvidence() {
@@ -392,6 +418,9 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 			PlaybookIDs: append([]string(nil), pull.GetPlaybookIds()...), ReportDigest: pull.GetReportDigest(),
 		}
 	}
+	for _, finding := range message.GetUnresolvedFindings() {
+		result.UnresolvedFindings = append(result.UnresolvedFindings, findingState(finding))
+	}
 	return result
 }
 
@@ -404,17 +433,28 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	// whole memory snapshot) that every later reader of the closure would otherwise copy.
 	request.PreparedAgentTask = ""
 	message := &contracts.IncidentClosure{
-		Request: request, FinalDetectorStates: evaluationsContract(closure.FinalDetectorStates),
+		VerifiedWhileResponderRunning: closure.VerifiedWhileResponderRunning,
+		ClosureStabilityWindow:        durationpb.New(closure.ClosureStabilityWindow),
+		ObservationGeneration:         closure.ObservationGeneration,
+		Request:                       request, FinalDetectorStates: evaluationsContract(closure.FinalDetectorStates),
 		IncidentDetectorStates:              evaluationsContract(closure.IncidentDetectorStates),
+		PartialDetectorStates:               evaluationsContract(closure.PartialDetectorStates),
 		IncidentDetectorFiredBeforeDispatch: closure.IncidentDetectorFiredBeforeDispatch,
 		IncidentDetectorFiredAfterDispatch:  closure.IncidentDetectorFiredAfterDispatch,
 		NoIncidentDetectorFired:             closure.NoIncidentDetectorFired,
 		FinalStateChanges:                   stateChangesContract(closure.FinalStateChanges),
 		DetectedAt:                          contractTimestamp(closure.DetectedAt), DispatchedAt: contractTimestamp(closure.DispatchedAt),
 		ResponderCompletedAt: contractTimestamp(closure.ResponderCompletedAt), VerifiedAt: contractTimestamp(closure.VerifiedAt),
-		HealthClearedAt:          optionalContractTimestamp(closure.HealthClearedAt),
-		DetectorReviewRequiredAt: optionalContractTimestamp(closure.DetectorReviewRequiredAt),
-		CleanedHelpers:           append([]string(nil), closure.CleanedHelpers...),
+		HealthClearedAt:         optionalContractTimestamp(closure.HealthClearedAt),
+		CleanedHelpers:          append([]string(nil), closure.CleanedHelpers...),
+		UnconfirmedReason:       closure.UnconfirmedReason,
+		UnconfirmedDetail:       closure.UnconfirmedDetail,
+		StatePersistenceFailure: clonePersistenceFailure(closure.StatePersistenceFailure),
+		SourceCheckNotes:        append([]string(nil), closure.SourceCheckNotes...),
+		Frozen:                  closure.Frozen,
+	}
+	if closure.ClosureStabilityWindow == 0 {
+		message.ClosureStabilityWindow = nil
 	}
 	if closure.Result != nil {
 		message.Result, err = incidentResultContract(*closure.Result)
@@ -425,11 +465,8 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	if closure.DispatchError != "" {
 		message.DispatchError = &closure.DispatchError
 	}
-	if closure.DetectorReviewReason != "" {
-		message.DetectorReviewReason = &closure.DetectorReviewReason
-	}
+	request.PlaybookCoverage = settledApplicationCoverage(request, message.Result)
 	message.DetectorTimeline = detectorTimelineContract(closure.DetectorTimeline)
-	message.ObservedStateChanges = observedStateChangesContract(closure.ObservedStateChanges)
 	return message, nil
 }
 
@@ -492,7 +529,7 @@ func stateChangesState(message *contracts.StateChanges) *StateChanges {
 		UnobservedKinds: append([]string(nil), message.GetUnobservedKinds()...),
 	}
 	for _, change := range message.GetChanges() {
-		item := StateChange{Kind: change.GetKind(), Name: change.GetName(), Change: change.GetChange()}
+		item := StateChange{APIVersion: change.GetApiVersion(), Namespace: change.GetNamespace(), Kind: change.GetKind(), Name: change.GetName(), Change: change.GetChange()}
 		for _, field := range change.GetFields() {
 			item.Fields = append(item.Fields, StateFieldChange{Field: field.GetField(), Before: field.GetBefore(), After: field.GetAfter()})
 		}
@@ -505,8 +542,14 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 	if message == nil {
 		return nil
 	}
-	result := &IncidentRequest{MetricsSource: message.GetMetricsSource(),
-		SchemaVersion: message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
+	result := &IncidentRequest{
+		MetricsSource:          message.GetMetricsSource(),
+		PriorResponseProgress:  cloneResponseProgress(message.GetPriorResponseProgress()),
+		ObservationGeneration:  message.GetObservationGeneration(),
+		NamespaceOnboarding:    cloneNamespaceOnboarding(message.GetNamespaceOnboarding()),
+		DisabledSetupDetectors: cloneDisabledSetupDetectors(message.GetDisabledSetupDetectors()),
+		PriorStages:            cloneStageReports(message.GetPriorStages()),
+		SchemaVersion:          message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
 		IncidentID: message.GetIncidentId(), Findings: findingsState(message.GetFindings()),
 		DetectorHistory:   evaluationsState(message.GetDetectorHistory()),
 		SurfacedPlaybooks: make([]SurfacedPlaybook, 0, len(message.GetSurfacedPlaybooks())),
@@ -515,8 +558,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		RepositoryWorktree: message.GetRepositoryWorktree(), RepositoryBaseCommit: message.GetRepositoryBaseCommit(),
 		ResponseDeadline: controllerTime(message.GetResponseDeadline()), CancellationToken: message.GetCancellationToken(),
 		RepairPolicy: message.GetRepairPolicy(), StateChanges: stateChangesState(message.GetStateChanges()),
-		DriftEvents: driftEventsState(message.GetDriftEvents()), FastPathSummary: message.GetFastPathSummary(), MaxResponseLoops: int(message.GetMaxResponseLoops()), PreparedAgentTask: message.GetPreparedAgentTask(),
-		PriorStages: cloneStageReports(message.GetPriorStages()),
+		DriftEvents: driftEventsState(message.GetDriftEvents()), PlaybookCoverage: cloneCoverage(message.GetPlaybookCoverage()), MaxResponseLoops: int(message.GetMaxResponseLoops()), PreparedAgentTask: message.GetPreparedAgentTask(),
 	}
 	for _, run := range message.GetInitialProgramRuns() {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunState(run))
@@ -533,33 +575,6 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 			RepairActionSummaries: append([]string(nil), prior.GetRepairActionSummaries()...),
 			AppliedPlaybookIDs:    append([]string(nil), prior.GetAppliedPlaybookIds()...),
 			SourceCommit:          prior.GetSourceCommit(), ExactSourceMatch: prior.GetExactSourceMatch(),
-		})
-	}
-	if followUp := message.GetFollowUp(); followUp != nil {
-		result.FollowUp = &FollowUpContext{
-			OriginalIncidentID: followUp.GetOriginalIncidentId(), ParentIncidentID: followUp.GetParentIncidentId(),
-			Attempt: int(followUp.GetAttempt()), MaxFollowUps: int(followUp.GetMaxFollowUps()),
-			PriorSummary: followUp.GetPriorResponderSummary(), DriftLabelsOnly: followUp.GetDriftLabelsOnly(),
-		}
-	}
-	return result
-}
-
-func observedStateChangesContract(changes []ObservedStateChange) []*contracts.ObservedStateChange {
-	result := make([]*contracts.ObservedStateChange, 0, len(changes))
-	for _, change := range changes {
-		result = append(result, &contracts.ObservedStateChange{
-			Kind: change.Kind, Name: change.Name, FirstObservedAt: contractTimestamp(change.FirstObservedAt),
-		})
-	}
-	return result
-}
-
-func observedStateChangesState(changes []*contracts.ObservedStateChange) []ObservedStateChange {
-	result := make([]ObservedStateChange, 0, len(changes))
-	for _, change := range changes {
-		result = append(result, ObservedStateChange{
-			Kind: change.GetKind(), Name: change.GetName(), FirstObservedAt: controllerTime(change.GetFirstObservedAt()),
 		})
 	}
 	return result
@@ -608,8 +623,12 @@ func optionalTimeState(at *timestamppb.Timestamp) *time.Time {
 
 func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 	closure := IncidentClosure{
-		DispatchError: message.GetDispatchError(), FinalDetectorStates: evaluationsState(message.GetFinalDetectorStates()),
+		VerifiedWhileResponderRunning: message.GetVerifiedWhileResponderRunning(),
+		ClosureStabilityWindow:        message.GetClosureStabilityWindow().AsDuration(),
+		ObservationGeneration:         message.GetObservationGeneration(),
+		DispatchError:                 message.GetDispatchError(), FinalDetectorStates: evaluationsState(message.GetFinalDetectorStates()),
 		IncidentDetectorStates:              evaluationsState(message.GetIncidentDetectorStates()),
+		PartialDetectorStates:               evaluationsState(message.GetPartialDetectorStates()),
 		DetectorTimeline:                    detectorTimelineState(message.GetDetectorTimeline()),
 		IncidentDetectorFiredBeforeDispatch: message.GetIncidentDetectorFiredBeforeDispatch(),
 		IncidentDetectorFiredAfterDispatch:  message.GetIncidentDetectorFiredAfterDispatch(),
@@ -617,11 +636,13 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		FinalStateChanges:                   stateChangesState(message.GetFinalStateChanges()),
 		DetectedAt:                          controllerTime(message.GetDetectedAt()), DispatchedAt: controllerTime(message.GetDispatchedAt()),
 		ResponderCompletedAt: controllerTime(message.GetResponderCompletedAt()), VerifiedAt: controllerTime(message.GetVerifiedAt()),
-		HealthClearedAt:          optionalTimeState(message.HealthClearedAt),
-		ObservedStateChanges:     observedStateChangesState(message.GetObservedStateChanges()),
-		DetectorReviewRequiredAt: optionalTimeState(message.DetectorReviewRequiredAt),
-		DetectorReviewReason:     message.GetDetectorReviewReason(),
-		CleanedHelpers:           append([]string(nil), message.GetCleanedHelpers()...),
+		HealthClearedAt:         optionalTimeState(message.HealthClearedAt),
+		CleanedHelpers:          append([]string(nil), message.GetCleanedHelpers()...),
+		UnconfirmedReason:       message.GetUnconfirmedReason(),
+		UnconfirmedDetail:       message.GetUnconfirmedDetail(),
+		StatePersistenceFailure: clonePersistenceFailure(message.GetStatePersistenceFailure()),
+		SourceCheckNotes:        append([]string(nil), message.GetSourceCheckNotes()...),
+		Frozen:                  message.GetFrozen(),
 	}
 	if request := incidentRequestState(message.GetRequest()); request != nil {
 		closure.Request = *request

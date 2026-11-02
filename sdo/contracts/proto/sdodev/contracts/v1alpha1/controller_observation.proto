@@ -14,7 +14,8 @@ message ControllerObservationRequest {
   ControllerState state = 1 [(buf.validate.field).required = true];
   repeated string known_incident_ids = 2;
   string incident_id = 3;
-  bool stop_on_review = 4;
+  reserved 4;
+  reserved "stop_on_review";
 }
 
 message ControllerObservationFailure {
@@ -22,7 +23,8 @@ message ControllerObservationFailure {
     CODE_UNSPECIFIED = 0;
     CODE_INVALID_SNAPSHOT = 1;
     CODE_CLOSURE_FAILED = 2;
-    CODE_DETECTOR_REVIEW_REQUIRED = 3;
+    reserved 3;
+    reserved "CODE_DETECTOR_REVIEW_REQUIRED";
   }
   Code code = 1 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
   string incident_id = 2;
