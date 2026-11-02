@@ -64,6 +64,14 @@ processes such as the operator CLI. Build any real binary (for example
 `operatorcli.TestMemoryCheckReportsACompilerStageFailureAtItsFile`.
 A test that asserts compiler or replay *output* (replay notes, healthy-baseline refusals,
 cache identity, link flags) keeps the real compiler and belongs on the nightly list.
+`Workspace.Check` links the generated test binary once: `go test -json ./generated` is
+classified per test (only a failing `TestProgramCorpus` is advisory), and the
+informational pass runs every other top-level directory. A result that cannot be
+attributed to one test (build error, panic, timeout) is rerun without the corpus so the
+rejection keeps its usual diagnostics (`builder.TestCheckLinksTheGeneratedTestsOnce`).
+`broker.TestCLIAndBrokerAgree...Automatic0-4` run the CLI/broker parity table over
+`FakeGo`; `TestCLIAndBrokerAgreeOnRealCompilerVerdicts` keeps the three verdicts that
+need real compiler or replay output.
 Use `Workspace.Check` rather than `ValidateAndBuild` unless the controller binary is the
 subject: `Check` runs the same acceptance and advisory stages without the controller link.
 
@@ -1417,3 +1425,17 @@ uv run python scripts/check_session_context.py /absolute/path/to/rollout.jsonl -
 
 The reader measures canonical Codex response items or Claude messages, including list-valued custom tool outputs and resumed messages, without double counting event mirrors. Missing or unsupported evidence fails closed. A gate failure points to the measured dimension and configured cap. This is a context-shape check; model repair quality still requires the separately authorized replay/live tiers. Keep recorded inputs read-only and measurement outputs outside the repository.
 
+
+## Build tags
+
+`//go:build integration` marks a test file that itself references real time, environment,
+processes or sockets (`docs/go-purity.md`). It does not decide whether a test runs in PR CI;
+the nightly list does. A file that only calls a tagged helper loses its tag when the helper
+moves behind a declared edge (`internal/testutil/gitio`, `internal/testutil/toolio`) or takes an
+injected instant. Run `go vet ./...` with and without `-tags=integration` after retagging.
+
+## Heavy tests must earn their cost
+
+A test over about 2 s, or one that builds, spawns or connects for real, stays only if it catches a
+deliberate production fault that no cheaper test catches: apply the fault, the fast suite passes,
+the heavy test fails. Record the fault with the test. Failing after a refactor is cost, not value.
