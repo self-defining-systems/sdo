@@ -66,7 +66,8 @@ var grants = []grant{
 
 	{actor: Human, phase: InitialPhase, kinds: []layout.Kind{layout.KindGoal}},
 	{actor: Upkeep, phase: InitialPhase, kinds: []layout.Kind{
-		layout.KindArchitecture, layout.KindSchemaVersion, layout.KindDiagnosticsModule,
+		layout.KindArchitecture, layout.KindSchemaVersion, layout.KindDiagnosticsModule, layout.KindLegacyDetectorManifest,
+		layout.KindHealthDetectorManifest, layout.KindIncidentDetectorManifest, layout.KindHealthDetectorSource, layout.KindIncidentDetectorSource,
 	}},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindHealthDetectorManifest, layout.KindHealthDetectorSource}},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindTrafficGenerator, layout.KindTrafficWorkload}, only: notIncidentTraffic},
@@ -164,7 +165,7 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
 		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests"})
 	}
-	needsBase := (actor == Responder || actor == HealthJudge || actor == Human && phase == ImportPhase) && manifests
+	needsBase := (actor == Upkeep && changesDetectors(s.changed)) || (actor == Responder || actor == HealthJudge || actor == Human && phase == ImportPhase) && manifests
 	if !needsBase {
 		return nil
 	}
@@ -173,6 +174,9 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 		return err
 	}
 	defer os.RemoveAll(base)
+	if actor == Upkeep {
+		return s.upkeepMigration(base)
+	}
 	return s.detectorOwnership(base)
 }
 
@@ -197,6 +201,58 @@ func (s *run) candidateManifests() map[string]*detector {
 		}
 	}
 	return byPath
+}
+
+// upkeepMigration lets Upkeep touch detectors only as part of a schema
+// migration: the same change must stamp the new schema version, and the
+// accepted detector registrations must survive it unchanged, modulo the
+// normalization of playbook references to logical IDs.
+func (s *run) upkeepMigration(base string) error {
+	fail := func(message string) {
+		s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: layout.DetectorsDir, Message: message})
+	}
+	if !containsPath(s.changed, layout.SchemaVersionFile) {
+		fail("upkeep may change detectors only together with a schema-version migration")
+		return nil
+	}
+	// Recompute the registered transformation from the independently exported
+	// accepted tree. A schema stamp is not authority to change detector behavior,
+	// including when v1 packages move to their canonical ID directories.
+	changed, err := layout.Migrate(base)
+	if err != nil {
+		return fmt.Errorf("plan accepted migration: %w", err)
+	}
+	if !changed {
+		fail("upkeep requires an older accepted schema")
+		return nil
+	}
+	expected, err := migrationDetectorFiles(base)
+	if err != nil {
+		return err
+	}
+	actual, err := migrationDetectorFiles(s.req.Root)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(expected, actual) {
+		fail("migration may change detector source only by the registered schema transformation")
+	}
+	legacy, err := layout.AcceptedDetectors(base)
+	if err != nil {
+		return fmt.Errorf("baseline manifest: %w", err)
+	}
+	after := s.candidateManifests()
+	if len(legacy) != len(after) {
+		fail(fmt.Sprintf("migration changed the detector count from %d to %d", len(legacy), len(after)))
+		return nil
+	}
+	for _, prior := range legacy {
+		current, ok := after[layout.DetectorManifestPath(prior.DetectorClass(), prior.ID)]
+		if !ok || (current.manifest != nil && !reflect.DeepEqual(prior, *current.manifest)) {
+			fail(fmt.Sprintf("migration changed detector %s", prior.ID))
+		}
+	}
+	return nil
 }
 
 // detectorOwnership compares the candidate's registrations with the accepted
@@ -263,4 +319,31 @@ func (s *run) detectorOwnership(base string) error {
 		}
 	}
 	return nil
+}
+
+func migrationDetectorFiles(root string) (map[string]string, error) {
+	files := map[string]string{}
+	base := filepath.Join(root, filepath.FromSlash(layout.DetectorsDir))
+	err := filepath.WalkDir(base, func(path string, entry os.DirEntry, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(base, path)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = string(data)
+		return nil
+	})
+	return files, err
 }

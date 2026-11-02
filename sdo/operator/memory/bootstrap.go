@@ -41,15 +41,8 @@ func WriteSchema(checkout string) error {
 	if checkout == "" {
 		return fmt.Errorf("checkout is required")
 	}
-	if _, err := os.Stat(filepath.Join(checkout, layout.SchemaVersionFile)); err == nil {
-		if _, err := layout.ReadTree(checkout); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if err := writeBootstrapFile(checkout, layout.SchemaVersionFile, strconv.Itoa(layout.CurrentSchemaVersion)+"\n"); err != nil {
-		return err
+	if _, err := layout.Migrate(checkout); err != nil {
+		return fmt.Errorf("migrate operational memory: %w", err)
 	}
 	module := filepath.Join(checkout, layout.DiagnosticsGoModFile)
 	if err := os.MkdirAll(filepath.Dir(module), 0o755); err != nil {

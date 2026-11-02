@@ -26,6 +26,9 @@ import (
 // MemoryUsage is the help text of the memory subcommand.
 const MemoryUsage = `usage: sdo-operator memory <command> [flags]
 
+  migrate <directory> --worktree-root <directory> [--replay on|off]
+    Upgrade saved memory through startup Upkeep, publish, then audit.
+
 commands:
   adopt-existing --root DIR [--operator-root DIR] [--code-path go|shell]
         Explicitly adopt supplied memory as an unvalidated base. Go compiles it;
@@ -113,6 +116,8 @@ func RunMemory(ctx context.Context, args []string, getenv func(string) string, s
 	var code int
 	var err error
 	switch args[0] {
+	case "migrate":
+		err = memoryMigrate(ctx, args[1:], getenv, stdout)
 	case "adopt-existing":
 		err = memoryAdoptExisting(ctx, args[1:], getenv, stdout)
 	case "import":
@@ -204,6 +209,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	decisionPath := flags.String("decision", "", "ReflectionDecision JSON; defaults to .git/sdo-reflection-decision.json")
 	root := flags.String("root", ".", "repository checkout to validate")
 	asJSON := flags.Bool("json", false, "print a MemoryCheckReport as ProtoJSON")
+	accepted := flags.Bool("accepted", false, "audit a clean accepted checkout without publication context")
 	positional, err := parseFlags(flags, args)
 	if err != nil {
 		return exitInfra, err
@@ -218,6 +224,28 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	absolute, err := absRoot(*root)
 	if err != nil {
 		return exitInfra, err
+	}
+	if *accepted {
+		if _, err := processio.AcceptedHead(ctx, absolute); err != nil {
+			return exitInfra, err
+		}
+		diagnostics, err := validate.CheckAccepted(ctx, validate.Request{Root: absolute, OperatorRoot: operatorRootDefault(getenv), Replay: replay, CodePath: memoryValidationCodePath(getenv)}, validate.CompileCandidate)
+		if err != nil {
+			return exitInfra, err
+		}
+		if *asJSON {
+			if err := writeJSON(stdout, &contracts.MemoryCheckReport{Root: absolute, Diagnostics: validate.ProtoDiagnostics(diagnostics)}); err != nil {
+				return exitInfra, err
+			}
+		} else {
+			for _, d := range diagnostics {
+				fmt.Fprintln(stdout, diagnosticLine(d))
+			}
+		}
+		if len(diagnostics) > 0 {
+			return exitDiagnostics, nil
+		}
+		return exitClean, nil
 	}
 	actor, phase, base := getenv(memoryActorEnv), getenv(memoryPhaseEnv), getenv("SDO_BASE_COMMIT")
 	publication, err := validate.LoadPublicationContext(ctx, absolute)
