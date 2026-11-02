@@ -10,7 +10,8 @@
 //
 //	SDO_SIM_SEED=<n> go test ./sdo/operator/runtime -run TestSim
 //
-// SDO_SIM_RUNS changes the number of seeds swept; a sweep also stops at
+// Outside the full profile (SDO_SIM_FULL, set by the nightly runner) a sweep
+// runs only the first simPRRuns seeds. SDO_SIM_RUNS changes the number of seeds swept; a sweep also stops at
 // simWallBudget so no profile exceeds the project's five-minute cap.
 package runtime
 
@@ -21,8 +22,21 @@ import (
 	"time"
 )
 
+// simPRRuns is the fixed seed prefix a sweep runs outside the full profile.
+const simPRRuns = 3
+
+// simRuns returns the run count for a campaign: its declared full count when
+// SDO_SIM_FULL is set (nightly), otherwise at most pr runs (a fixed prefix of
+// the same seed sequence, so a PR failure replays under the full profile).
+func simRuns(full, pr int) int {
+	if os.Getenv("SDO_SIM_FULL") != "" || full <= pr {
+		return full
+	}
+	return pr
+}
+
 // simSeeds returns the seeds to sweep; SDO_SIM_SEED replays one.
-func simSeeds(t *testing.T, defaultRuns int) []uint64 {
+func simSeeds(t *testing.T, defaultRuns, prRuns int) []uint64 {
 	t.Helper()
 	if raw := os.Getenv("SDO_SIM_SEED"); raw != "" {
 		seed, err := strconv.ParseUint(raw, 10, 64)
@@ -31,7 +45,7 @@ func simSeeds(t *testing.T, defaultRuns int) []uint64 {
 		}
 		return []uint64{seed}
 	}
-	runs := defaultRuns
+	runs := simRuns(defaultRuns, prRuns)
 	if raw := os.Getenv("SDO_SIM_RUNS"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 {
@@ -56,12 +70,19 @@ func sweepSimSeeds(t *testing.T, body func(t *testing.T, seed uint64)) {
 // simulations whose single run is expensive.
 func sweepSimSeedsN(t *testing.T, defaultRuns int, body func(t *testing.T, seed uint64)) {
 	t.Helper()
+	sweepSimSeedsPR(t, defaultRuns, simPRRuns, body)
+}
+
+// sweepSimSeedsPR is sweepSimSeedsN with an explicit seed count outside the full profile,
+// for sweeps whose single seed is already expensive.
+func sweepSimSeedsPR(t *testing.T, defaultRuns, prRuns int, body func(t *testing.T, seed uint64)) {
+	t.Helper()
 	// Sweeps are bounded by wall time, not work; running them in parallel with
 	// each other keeps a shard from paying every sweep's budget back to back.
 	t.Parallel()
 	deadline := time.Now().Add(simWallBudget)
 	ran := 0
-	seeds := simSeeds(t, defaultRuns)
+	seeds := simSeeds(t, defaultRuns, prRuns)
 	for _, seed := range seeds {
 		if ran > 0 && time.Now().After(deadline) {
 			break

@@ -175,7 +175,8 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 	old := tracingRefresh(t, baselineRoot, baseline)
 	covered := map[string]bool{}
 	executed := 0
-	for seed := int64(1); seed <= 20; seed++ {
+	// Eight consecutive seeds visit every crash cut once; the full profile runs twenty.
+	for seed := int64(1); seed <= int64(simRuns(20, len(cuts))); seed++ {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			executed++
 			random := rand.New(rand.NewSource(seed))
