@@ -14,12 +14,7 @@ from sdo.contracts.proto import (
     AgentResult,
     AgentTask,
     AppliedPlaybook,
-<<<<<<< HEAD
-=======
     ApplyObject,
-    ArchitectureRequest,
-    ArchitectureResult,
->>>>>>> origin/vic-lsh/dev/sdo-improve
     BatcherState,
     Binding,
     BrokerLedger,
@@ -82,16 +77,13 @@ from sdo.contracts.proto import (
     MemoryPlaybook,
     MemoryScript,
     MemoryWatch,
-<<<<<<< HEAD
-    MetricsSource,
-=======
     MitigationActionReceipt,
     MitigationBarrier,
     MitigationMenu,
     MitigationObservation,
     MitigationOption,
     MitigationOptionSelection,
->>>>>>> origin/vic-lsh/dev/sdo-improve
+    MetricsSource,
     MitigationReplayNote,
     MitigationReport,
     MitigationReportQuery,
@@ -289,12 +281,9 @@ __all__ = [
     "ImageBuild",
     "IncidentClosure",
     "IncidentRequest",
-<<<<<<< HEAD
-    "MetricsSource",
-=======
     "NamespaceOnboarding",
     "InstallEnvironmentObject",
->>>>>>> origin/vic-lsh/dev/sdo-improve
+    "MetricsSource",
     "IncidentResult",
     "IncidentView",
     "KubernetesJobLaunch",

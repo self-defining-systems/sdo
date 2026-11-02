@@ -142,17 +142,12 @@ ResponseProgress = messages_pb2.ResponseProgress
 StateFieldChange = messages_pb2.StateFieldChange
 StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
-<<<<<<< HEAD
-ObservedStateChange = messages_pb2.ObservedStateChange
-FollowUpContext = messages_pb2.FollowUpContext
-StageReport = messages_pb2.StageReport
-StageMitigation = messages_pb2.StageMitigation
-MetricsSource = messages_pb2.MetricsSource
-=======
 InstallEnvironmentObject = messages_pb2.InstallEnvironmentObject
 DisabledSetupDetector = messages_pb2.DisabledSetupDetector
 NamespaceOnboarding = messages_pb2.NamespaceOnboarding
->>>>>>> origin/vic-lsh/dev/sdo-improve
+StageReport = messages_pb2.StageReport
+StageMitigation = messages_pb2.StageMitigation
+MetricsSource = messages_pb2.MetricsSource
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
 ConfirmedRootCause = messages_pb2.ConfirmedRootCause
