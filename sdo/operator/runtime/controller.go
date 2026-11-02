@@ -1565,7 +1565,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)
 			c.mu.Unlock()
 			readsStart := c.clock()
-			err := memory.CaptureRepairedProgramReads(c.config.CorpusSessionRoot, incidentID, c.drift.View(snapshot))
+			err := memory.CaptureRepairedProgramReads(c.config.CorpusSessionRoot, incidentID, boundedProbeView{c.drift.View(snapshot)})
 			readsMs := c.clock().Sub(readsStart).Milliseconds()
 			routingStart := c.clock()
 			if err == nil {
