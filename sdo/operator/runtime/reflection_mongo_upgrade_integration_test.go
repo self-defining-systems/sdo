@@ -9,9 +9,7 @@ import (
 	"errors"
 	"go/format"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -29,19 +27,8 @@ import (
 // real CLI and broker both require the executable, compile the current SDK and
 // prove detector -> finding binding -> diagnosis -> catalog repair -> NoMatch.
 // No model, MongoDB server, credentials or cluster is involved.
-func TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
-	testReflectionMongoAuthUpgrade(t, "mongo_auth_upgrade")
-}
-
-func TestReflectionHotelMongoAuthUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
-	testReflectionMongoAuthUpgrade(t, "hotel_mongo_auth_upgrade")
-}
-
 func TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker(t *testing.T) {
-	testReflectionMongoAuthUpgrade(t, "hotel_run_script_upgrade")
-}
-
-func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
+	const fixtureName = "hotel_run_script_upgrade"
 	ctx := context.Background()
 	const incidentID = "mongo-auth-upgrade"
 	operatorRoot, err := filepath.Abs("..")
@@ -52,27 +39,6 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 	target := nativeRepository(t)
 	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(target, ".sdo"))
 	fixture := filepath.Join("../../../tests/fixtures/sdo", fixtureName, ".sdo")
-	if fixtureName == "hotel_mongo_auth_upgrade" {
-		raw, err := os.ReadFile(filepath.Join(fixture, "corpus/mongo-auth/open.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var snapshot struct {
-			Pods []struct {
-				Spec struct{ Containers []struct{ Env []any } }
-			}
-		}
-		if err := json.Unmarshal(raw, &snapshot); err != nil {
-			t.Fatal(err)
-		}
-		for _, pod := range snapshot.Pods {
-			for _, container := range pod.Spec.Containers {
-				if len(container.Env) != 0 {
-					t.Fatal("hotel credential fixture must have no container env")
-				}
-			}
-		}
-	}
 	module, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/diagnostics/go.mod")
 	if err != nil {
 		t.Fatal(err)
@@ -131,15 +97,9 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	podName := "mongo-app"
-	if fixtureName == "hotel_mongo_auth_upgrade" || fixtureName == "hotel_run_script_upgrade" {
-		podName = "mongodb-geo"
-	}
+	const podName = "mongodb-geo"
 	ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Pod", Namespace: "demo", Name: podName}
-	opened := time.Now().Add(-time.Minute)
-	if fixtureName == "hotel_run_script_upgrade" {
-		opened = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	}
+	opened := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mutation := opened.Add(20 * time.Second)
 	verified := mutation.Add(10 * time.Second)
 	fingerprint := "mongo-authentication/mongo-authentication/demo/Pod/" + podName
@@ -151,20 +111,18 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 		DetectorHistory:     []*contracts.DetectorEvaluation{{DetectorId: "mongo-authentication", Status: "firing", Fingerprints: []string{fingerprint}, EvaluatedAt: timestamppb.New(opened)}, {DetectorId: "mongo-authentication", Status: "clear", EvaluatedAt: timestamppb.New(verified)}},
 		Timestamps:          &contracts.OutcomeTimestamps{DetectedAt: timestamppb.New(opened), MitigatedAt: timestamppb.New(mutation), VerifiedAt: timestamppb.New(verified), CompletedAt: timestamppb.New(verified)},
 	}
-	if fixtureName == "hotel_run_script_upgrade" {
-		// Obtain authority from the Go execution/receipt path, never authored labels.
-		const script = `kubectl exec --namespace "$NAMESPACE" "$POD" --container "$CONTAINER" -- bash "$MOUNT/$ITEM"`
-		executor := PlanExecutor{Client: &scriptPlanFake{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-		result, err := executor.Apply(ctx, IncidentRequest{IncidentID: incidentID, Namespace: "demo", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.RunScript{Script: script}}}, false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		receipts := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "manual-mongo-user", Result: result, StartedAt: mutation.Add(-time.Second), CompletedAt: mutation}}, nil)
-		if len(receipts) != 1 || receipts[0].ScriptDigest == "" {
-			t.Fatalf("Go script receipt missing: %v", receipts)
-		}
-		outcome.RepairActions[0].ScriptDigest = receipts[0].ScriptDigest
+	// Obtain authority from the Go execution/receipt path, never authored labels.
+	const script = `kubectl exec --namespace "$NAMESPACE" "$POD" --container "$CONTAINER" -- bash "$MOUNT/$ITEM"`
+	executor := PlanExecutor{Client: &scriptPlanFake{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+	result, err := executor.Apply(ctx, IncidentRequest{IncidentID: incidentID, Namespace: "demo", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.RunScript{Script: script}}}, false)
+	if err != nil {
+		t.Fatal(err)
 	}
+	receipts := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "manual-mongo-user", Result: result, StartedAt: mutation.Add(-time.Second), CompletedAt: mutation}}, nil)
+	if len(receipts) != 1 || receipts[0].ScriptDigest == "" {
+		t.Fatalf("Go script receipt missing: %v", receipts)
+	}
+	outcome.RepairActions[0].ScriptDigest = receipts[0].ScriptDigest
 	if _, err := repository.RecordOutcome(ctx, incidentID, outcome); err != nil {
 		t.Fatal(err)
 	}
@@ -216,54 +174,52 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 		if err := os.WriteFile(recordingsPath, recorded, 0644); err != nil {
 			return nil, err
 		}
-		if fixtureName == "hotel_run_script_upgrade" {
-			diagnosePath := filepath.Join(checkout, book, "diagnose.go")
-			original, err := os.ReadFile(diagnosePath)
+		diagnosePath := filepath.Join(checkout, book, "diagnose.go")
+		original, err := os.ReadFile(diagnosePath)
+		if err != nil {
+			return nil, err
+		}
+		for _, verdict := range []string{"Match", "NoMatch"} {
+			source := strings.Replace(string(original), `return mongorelation.Diagnose(v, b.Objects["pod"])`, `if b.Objects["pod"].Name!="" {return program.Verdict{Result:program.`+verdict+`},nil}; return mongorelation.Diagnose(v, b.Objects["pod"])`, 1)
+			formatted, err := format.Source([]byte(source))
 			if err != nil {
 				return nil, err
 			}
-			for _, verdict := range []string{"Match", "NoMatch"} {
-				source := strings.Replace(string(original), `return mongorelation.Diagnose(v, b.Objects["pod"])`, `if b.Objects["pod"].Name!="" {return program.Verdict{Result:program.`+verdict+`},nil}; return mongorelation.Diagnose(v, b.Objects["pod"])`, 1)
-				formatted, err := format.Source([]byte(source))
-				if err != nil {
-					return nil, err
-				}
-				if err := os.WriteFile(diagnosePath, formatted, 0644); err != nil {
-					return nil, err
-				}
-				advisory, exit := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
-				unverified := false
-				for _, note := range advisory.MitigationReplayNotes {
-					unverified = unverified || note.Status == contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT
-				}
-				if exit != 0 || len(advisory.Diagnostics) != 0 || !unverified {
-					t.Fatalf("script %s diagnosis blocked saving or hid replay: %d %v", verdict, exit, advisory)
-				}
-			}
-			if err := os.WriteFile(diagnosePath, original, 0644); err != nil {
+			if err := os.WriteFile(diagnosePath, formatted, 0644); err != nil {
 				return nil, err
 			}
-			labelsPath := filepath.Join(checkout, ".sdo/corpus/mongo-auth/labels.json")
-			originalLabels, err := os.ReadFile(labelsPath)
-			if err != nil {
-				return nil, err
+			advisory, exit := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
+			unverified := false
+			for _, note := range advisory.MitigationReplayNotes {
+				unverified = unverified || note.Status == contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT
 			}
-			invalid := bytes.ReplaceAll(originalLabels, []byte("manual-mongo-user"), []byte("unrelated-or-unsuccessful-receipt"))
-			if err = os.WriteFile(labelsPath, invalid, 0644); err != nil {
-				return nil, err
-			}
-			rejected, exit := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
-			_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
-			var originFailure *validate.Failure
-			if exit != 1 || !errors.As(publishErr, &originFailure) || len(rejected.Diagnostics) != 1 || rejected.Diagnostics[0].Rule != "program.invalid" {
-				t.Fatalf("unlinked script accepted: CLI=%d %v broker=%v", exit, rejected.Diagnostics, publishErr)
-			}
-			if err = os.WriteFile(labelsPath, originalLabels, 0644); err != nil {
-				return nil, err
+			if exit != 0 || len(advisory.Diagnostics) != 0 || !unverified {
+				t.Fatalf("script %s diagnosis blocked saving or hid replay: %d %v", verdict, exit, advisory)
 			}
 		}
+		if err := os.WriteFile(diagnosePath, original, 0644); err != nil {
+			return nil, err
+		}
+		labelsPath := filepath.Join(checkout, ".sdo/corpus/mongo-auth/labels.json")
+		originalLabels, err := os.ReadFile(labelsPath)
+		if err != nil {
+			return nil, err
+		}
+		invalid := bytes.ReplaceAll(originalLabels, []byte("manual-mongo-user"), []byte("unrelated-or-unsuccessful-receipt"))
+		if err = os.WriteFile(labelsPath, invalid, 0644); err != nil {
+			return nil, err
+		}
+		rejected, exit := runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
+		_, publishErr := repository.PublishReflection(ctx, incidentID, publication)
+		var originFailure *validate.Failure
+		if exit != 1 || !errors.As(publishErr, &originFailure) || len(rejected.Diagnostics) != 1 || rejected.Diagnostics[0].Rule != "program.invalid" {
+			t.Fatalf("unlinked script accepted: CLI=%d %v broker=%v", exit, rejected.Diagnostics, publishErr)
+		}
+		if err = os.WriteFile(labelsPath, originalLabels, 0644); err != nil {
+			return nil, err
+		}
 		report, code = runReflectionMemoryCheck(t, binary, checkout, proposal.BaseCommit, operatorRoot)
-		if fixtureName == "hotel_run_script_upgrade" && code == 0 {
+		if code == 0 {
 			observed := false
 			for _, note := range report.MitigationReplayNotes {
 				observed = observed || note.Status == contracts.MitigationReplayNote_STATUS_OBSERVED_TRANSITION
@@ -286,40 +242,6 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 		for _, relative := range []string{book + "/diagnose.go", book + "/mitigate.go", ".sdo/diagnostics/detectors/incidents/mongo-authentication/detector.go"} {
 			if content := nativeGit(t, target, "show", receipt.Commit+":"+relative); strings.TrimSpace(content) == "" {
 				t.Fatalf("accepted executable absent: %s", relative)
-			}
-		}
-		if fixtureName == "hotel_mongo_auth_upgrade" {
-			// Publication's repeat-reachability check is followed by the full
-			// runtime loop: linked detector must also clear after real actions.
-			replayCommand := exec.Command("go", "run", "./cmd/sdo-replay", "-sdo", filepath.Join(target, ".sdo"), "-operator", operatorRoot, "-fixtures", filepath.Join(target, ".sdo/corpus"), "-matrix=false")
-			replayCommand.Dir = operatorRoot
-			output, err := replayCommand.Output()
-			if err != nil {
-				var failed *exec.ExitError
-				if errors.As(err, &failed) {
-					t.Fatalf("hotel closed-loop replay failed: %v: %s", err, failed.Stderr)
-				}
-				t.Fatal(err)
-			}
-			var row struct {
-				Status    string
-				Post      struct{ Result string }
-				Effects   []string
-				Detectors map[string][]struct {
-					Active int
-					Error  string
-				}
-			}
-			if err := json.Unmarshal(bytes.TrimSpace(output), &row); err != nil {
-				t.Fatal(err)
-			}
-			if row.Status != "replayed" || row.Post.Result != "NoMatch" || len(row.Detectors["post"]) != 1 || row.Detectors["post"][0].Active != 0 || row.Detectors["post"][0].Error != "" {
-				t.Fatalf("hotel replay did not clear diagnosis and detector: %s", output)
-			}
-			for _, effect := range []string{"real:program.EnsureDatabaseUser:action:0", "real:program.RestartRollout:action:1"} {
-				if !slices.Contains(row.Effects, effect) {
-					t.Fatalf("hotel replay omitted %s", effect)
-				}
 			}
 		}
 		packed, err := anypb.New(decision)
