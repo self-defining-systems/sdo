@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from benchmarks.sregym.agent_script.wire import EventStream
+from benchmarks.sregym.agent_script.wire import EventStream, ResumeError, Rollout
 
 from .converter import convert_recording
 from .invocation import Invocation
@@ -92,6 +92,13 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
     turn = plan.select(role, incident, index)
     context = TemplateContext(request, Path.cwd(), incident=incident)
     session = invocation.resume or hashlib.sha256(f"{key}:{index}".encode()).hexdigest()[:32]
+    home = os.environ.get("CODEX_HOME")
+    if home:
+        # The production worker checkpoints the persisted transcript the moment the session starts.
+        try:
+            Rollout.resume(Path(home), session)
+        except ResumeError:
+            Rollout.create(Path(home), cwd=str(Path.cwd()), session_id=session)
     stream = EventStream()
     stream.thread_started(session)
     stream.turn_started()

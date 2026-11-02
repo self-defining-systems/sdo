@@ -587,3 +587,46 @@ def test_go_composite_literals_are_not_template_references():
     source = '[]sdk.ObjectRef{{APIVersion: "v1", Kind: "Pod"}}'
     plan = AgentScript.model_validate(script(steps=[{"kind": "write", "path": "detector.go", "text": source}]))
     assert expand(plan.turns[0].steps[0].text, {}) == source
+
+
+def test_scripted_session_persists_a_rollout_before_the_worker_checkpoints_it(scripted_cli, tmp_path, monkeypatch):
+    """The production responder's session recovery needs the transcript the moment the session starts."""
+    from libs.agent_cli.structured import run_structured_turn
+
+    path, root = scripted_cli
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "turns": [
+                    {"role": "responder", "index": index, "result": {"confirmed_root_causes": "turn"}}
+                    for index in range(2)
+                ],
+            }
+        )
+    )
+    started: list[list[Path]] = []
+
+    def run(resume=None):
+        return run_structured_turn(
+            provider="codex",
+            model="unused",
+            cwd=root,
+            prompt="test",
+            output_schema={
+                "type": "object",
+                "properties": {"confirmed_root_causes": {"type": "string"}},
+                "required": ["confirmed_root_causes"],
+                "additionalProperties": False,
+            },
+            access="danger-full-access",
+            resume_session_id=resume,
+            on_session_started=lambda session: started.append(list(home.glob(f"sessions/**/rollout-*{session}.jsonl"))),
+        )
+
+    first = run()
+    run(first.session_id)
+    assert [len(found) for found in started] == [1, 1]
+    assert started[0][0].stat().st_size > 0
