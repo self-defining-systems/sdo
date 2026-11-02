@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sdo.dev/operator/sdk"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -30,22 +31,24 @@ func TestDeterministicResponseStageBudgetExhaustedAppliesEveryBinding(t *testing
 // Every rollout wait ends within the stage budget. A pending handoff keeps the
 // pass, so each binding still gets its own apply under what remains.
 func TestDeterministicResponseStageRolloutWaitIsBoundedByBudget(t *testing.T) {
-	loop, state := pipelineTestLoopWithServices(t, false, "api2")
-	rollout := &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
-	loop.Executor.Rollouts = rollout
-	const budget = 20 * time.Second
-	report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, Budget: budget}).Run(context.Background(), state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rollout.observed <= 0 || rollout.observed > budget || len(loop.PlanApplications()) != len(report.Mitigations) || len(report.Mitigations) != 3 {
-		t.Fatalf("rollout wait %s outside the %s budget, applications=%d", rollout.observed, budget, len(loop.PlanApplications()))
-	}
-	for _, attempt := range report.Mitigations {
-		if attempt.Result != "rollout_pending_at_handoff" {
-			t.Fatalf("pending rollout must reach the agent: %v", attempt)
+	synctest.Test(t, func(t *testing.T) {
+		loop, state := pipelineTestLoopWithServices(t, false, "api2")
+		rollout := &pipelineDeadlineRollout{failure: context.DeadlineExceeded}
+		loop.Executor.Rollouts = rollout
+		const budget = 20 * time.Second
+		report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, Budget: budget}).Run(context.Background(), state)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
+		if rollout.observed <= 0 || rollout.observed > budget || len(loop.PlanApplications()) != len(report.Mitigations) || len(report.Mitigations) != 3 {
+			t.Fatalf("rollout wait %s outside the %s budget, applications=%d", rollout.observed, budget, len(loop.PlanApplications()))
+		}
+		for _, attempt := range report.Mitigations {
+			if attempt.Result != "rollout_pending_at_handoff" {
+				t.Fatalf("pending rollout must reach the agent: %v", attempt)
+			}
+		}
+	})
 }
 
 // A rollout deliberately remains pending while independent covered bindings
