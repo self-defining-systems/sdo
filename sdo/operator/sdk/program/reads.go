@@ -7,10 +7,8 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/metrics"
-	"sdo.dev/operator/sdk/servicehealth"
-	"sdo.dev/operator/sdk/traffic"
-	"time"
 )
 
 // ReadFrom exposes the shared runtime reads to a detector. An object-only
@@ -22,7 +20,7 @@ func ReadFrom(view sdk.DetectionContext) ReadView {
 	if source, ok := view.(interface{ RuntimeReadView() ReadView }); ok {
 		return source.RuntimeReadView()
 	}
-	return snapshotReadView{DetectionContext: view, ScopedObservationSource: sdk.ScopedSource(view)}
+	return snapshotReadView{Carrier: inputs.New(view), ScopedObservationSource: sdk.ScopedSource(view)}
 }
 
 // CheckReads gives one evaluation its own failure tracking. A failed read
@@ -30,12 +28,6 @@ func ReadFrom(view sdk.DetectionContext) ReadView {
 func CheckReads(view ReadView) (sdk.DetectionContext, func() error) {
 	checked := &checkedReadView{ReadView: view}
 	return checked, checked.failure
-}
-func (v snapshotReadView) MetricResult(id string) (metrics.Result, bool) {
-	return metrics.ResultFrom(v.DetectionContext, id)
-}
-func (v snapshotReadView) AlertsResult() (metrics.AlertsResult, bool) {
-	return metrics.AlertsFrom(v.DetectionContext)
 }
 func (v snapshotReadView) QueryMetrics(q metrics.Query) metrics.Result {
 	if source, ok := v.DetectionContext.(metrics.QuerySource); ok {
@@ -45,9 +37,6 @@ func (v snapshotReadView) QueryMetrics(q metrics.Query) metrics.Result {
 		return result
 	}
 	return metrics.Result{Query: q, Error: "metric query unavailable"}
-}
-func (v snapshotReadView) TrafficWindow(name string) (traffic.Window, bool) {
-	return traffic.WindowFrom(v.DetectionContext, name)
 }
 func (v *checkedReadView) MetricResult(id string) (metrics.Result, bool) {
 	r, ok := v.ReadView.MetricResult(id)
@@ -98,20 +87,6 @@ func (v snapshotReadView) PodDisruptionBudgets() []policyv1.PodDisruptionBudget 
 		return source.PodDisruptionBudgets()
 	}
 	return nil
-}
-
-func (v snapshotReadView) ObservedAt() time.Time {
-	if clock, ok := v.DetectionContext.(sdk.ObservationClock); ok {
-		return clock.ObservedAt()
-	}
-	return time.Time{}
-}
-
-func (v snapshotReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
-	if source, ok := v.DetectionContext.(servicehealth.ReachabilitySource); ok {
-		return source.ServiceReachability()
-	}
-	return servicehealth.ReachabilityWindow{}, false
 }
 
 func (v snapshotReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {

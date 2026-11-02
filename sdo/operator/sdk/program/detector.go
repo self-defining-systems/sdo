@@ -3,11 +3,12 @@ package program
 import (
 	"fmt"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"time"
 )
 
 type snapshotReadView struct {
-	sdk.DetectionContext
+	inputs.Carrier
 	sdk.ScopedObservationSource
 }
 

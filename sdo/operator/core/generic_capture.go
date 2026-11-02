@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +16,7 @@ import (
 	discoverymemory "k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 
+	"sdo.dev/operator/core/internal/kubeio"
 	"sdo.dev/operator/sdk"
 )
 
@@ -31,11 +31,11 @@ type GenericCapture struct {
 }
 
 func NewGenericCapture(namespace string) (*GenericCapture, error) {
-	config, err := kubernetesConfig()
+	config, err := kubeio.Config()
 	if err != nil {
 		return nil, err
 	}
-	if err = applyClientRateLimits(config, os.LookupEnv); err != nil {
+	if err = applyClientRateLimits(config, kubeio.LookupEnv); err != nil {
 		return nil, err
 	}
 	config.Timeout = 30 * time.Second

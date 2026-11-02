@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"regexp"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
 )
 
@@ -143,4 +144,12 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		return Snapshot{}, fmt.Errorf("captured snapshot exceeds %d bytes", MaxCapturedSnapshotBytes)
 	}
 	return s, nil
+}
+
+func compactMeta(meta *metav1.ObjectMeta) {
+	meta.ManagedFields = nil
+	meta.ResourceVersion = ""
+	meta.UID = ""
+	meta.Generation = 0
+	delete(meta.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
 }

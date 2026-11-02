@@ -473,7 +473,7 @@ func RequiresValidatorJob(changedPaths []string) bool {
 			return true
 		}
 		switch kind {
-		case KindGoal, KindArchitecture, KindLifecycleProvenance, KindPlaybookIndex, KindPlaybook, KindPlaybookScript, KindOutcome, KindLegacyOutcomes:
+		case KindGoal, KindArchitecture, KindLifecycleProvenance, KindPlaybookIndex, KindPlaybook, KindPlaybookScript, KindOutcome:
 		default:
 			return true
 		}

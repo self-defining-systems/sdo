@@ -40,7 +40,7 @@ func renderLayoutReference(t *testing.T) string {
 		layout.CorpusDir + "/case-id/labels.json", layout.CorpusDir + "/case-id/operator.json",
 		layout.CorpusDir + "/case-id/accepted.json", layout.RenderedLockFile,
 		layout.RenderedDir + "/" + strings.Repeat("0", 64) + ".yaml",
-		layout.OutcomePath("incident-id"), layout.LegacyOutcomesFile,
+		layout.OutcomePath("incident-id"),
 	}
 	var out strings.Builder
 	out.WriteString("# Operational-memory layout\n\nGENERATED from `memory/layout/paths.go` and `memory/validate/ownership.go`. Do not edit.\nRegenerate from `sdo/operator` with `SDO_UPDATE_LAYOUT_REFERENCE=1 go test ./memory/validate -run '^TestMemoryLayoutReference$'`.\n\n")

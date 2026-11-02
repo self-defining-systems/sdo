@@ -24,7 +24,6 @@ import (
 )
 
 type Snapshot struct {
-	Reachability *servicehealth.ReachabilityWindow `json:"-"`
 	// Usage holds a synthetic resource usage window.
 	Usage              *usage.Result                  `json:"-"`
 	SecretList         []sdk.SecretMetadata           `json:"secrets"`

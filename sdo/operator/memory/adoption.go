@@ -1,8 +1,6 @@
 package memory
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -80,8 +78,7 @@ func AfterAdoption(ctx context.Context, repository string, outcomes []Outcome) (
 	if err != nil || adoption == "" {
 		return outcomes, err
 	}
-	inherited := map[string]bool{}
-	listing, err := exec.CommandContext(ctx, "git", "-C", repository, "ls-tree", "-r", "--name-only", adoption, "--", layout.OutcomesDir, layout.LegacyOutcomesFile).Output()
+	listing, err := exec.CommandContext(ctx, "git", "-C", repository, "ls-tree", "-r", "--name-only", adoption, "--", layout.OutcomesDir).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -89,30 +86,9 @@ func AfterAdoption(ctx context.Context, repository string, outcomes []Outcome) (
 	for _, name := range strings.Split(strings.TrimSpace(string(listing)), "\n") {
 		paths[name] = true
 	}
-	if paths[layout.LegacyOutcomesFile] {
-		legacy, err := exec.CommandContext(ctx, "git", "-C", repository, "show", adoption+":"+layout.LegacyOutcomesFile).Output()
-		if err != nil {
-			return nil, err
-		}
-		scanner := bufio.NewScanner(bytes.NewReader(legacy))
-		scanner.Buffer(make([]byte, 4096), 8<<20)
-		for scanner.Scan() {
-			if len(bytes.TrimSpace(scanner.Bytes())) == 0 {
-				continue
-			}
-			o, err := parse(scanner.Bytes())
-			if err != nil {
-				return nil, err
-			}
-			inherited[o.IncidentID] = true
-		}
-		if err := scanner.Err(); err != nil {
-			return nil, err
-		}
-	}
 	result := make([]Outcome, 0, len(outcomes))
 	for _, outcome := range outcomes {
-		if !inherited[outcome.IncidentID] && !paths[layout.OutcomePath(outcome.IncidentID)] {
+		if !paths[layout.OutcomePath(outcome.IncidentID)] {
 			result = append(result, outcome)
 		}
 	}

@@ -89,7 +89,7 @@ func ShellHygiene(ctx context.Context, root string) ([]Diagnostic, error) {
 		}
 		// Controller-owned records are validated by their storage edge, not agents.
 		switch kind {
-		case layout.KindOutcome, layout.KindLegacyOutcomes, layout.KindRenderedLock, layout.KindRenderedObject, layout.KindCorpus:
+		case layout.KindOutcome, layout.KindRenderedLock, layout.KindRenderedObject, layout.KindCorpus:
 			return nil
 		}
 		info, err := entry.Info()
