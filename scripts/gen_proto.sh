@@ -67,13 +67,8 @@ if command -v protoc >/dev/null 2>&1 && [ "$(protoc --version)" = "libprotoc 33.
 fi
 
 echo "==> buf generate"
-<<<<<<< HEAD
 if ! timeout 240 buf generate "${TEMPLATE[@]}" 2>"${VALIDATE_TMP}/generate-error"; then
-    if ! grep -qi 'resource_exhausted' "${VALIDATE_TMP}/generate-error"; then
-=======
-if ! timeout 240 buf generate 2>"${VALIDATE_TMP}/generate-error"; then
     if ! grep -Eqi 'resource_exhausted|the server hosted at that remote is unavailable' "${VALIDATE_TMP}/generate-error"; then
->>>>>>> origin/vic-lsh/dev/sdo-improve
         cat "${VALIDATE_TMP}/generate-error" >&2
         exit 1
     fi

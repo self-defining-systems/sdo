@@ -10,7 +10,6 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 echo "Running Python tests..."
 cd "$PROJECT_ROOT"
 
-<<<<<<< HEAD
 # Build the benchmark protocol tools once for this invocation, from this checkout.
 # xdist workers otherwise independently compile/link the same executables on their
 # first receipt/submission test. Only compiler entries persist; never trust a
@@ -24,10 +23,7 @@ done
 export SDO_NATIVE_RECEIPT_BIN="$TOOLS/sdo-native-receipt"
 export SDO_SUBMISSION_GUARD_BIN="$TOOLS/sdo-submission-guard"
 
-# Parallelize across cores with pytest-xdist; pytest-cov combines the per-worker
-=======
 # Bound shared-host parallelism; pytest-cov combines the per-worker
->>>>>>> origin/vic-lsh/dev/sdo-improve
 # coverage so the fail_under gate still sees the whole suite. Override with
 # SDO_PYTEST_WORKERS (e.g. 0 to run in-process for a targeted local run).
 if [[ -v SDO_PYTEST_WORKERS ]]; then

@@ -38,6 +38,9 @@ else
     echo "==> proto contracts: skipped (buf not installed; enforced by the proto CI job)"
 fi
 
+echo "==> Go nondeterminism ratchet"
+"$SCRIPT_DIR/check_go_determinism.sh"
+
 # Functional Go core: dependency/API lint plus structural purity checks.
 "$SCRIPT_DIR/check_go_core.sh"
 

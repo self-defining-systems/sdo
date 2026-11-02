@@ -13,7 +13,7 @@ export SDO_SOURCE_REVISION="$(git -C "${repo_root}" rev-parse HEAD)"
 # Source-checked images also carry the identity of exactly the files their build
 # context sends (image_provenance.py), so commits outside those files reuse them.
 provenance="${repo_root}/benchmarks/sregym/fastloop/image_provenance.py"
-for target in controller validator; do
+for target in controller; do
   built_changes="$(cd "${repo_root}" && python3 "${provenance}" dirty "${target}" HEAD)"
   if [[ -n "${built_changes}" ]]; then
     echo "image source has uncommitted changes; commit before building source-bound images: ${built_changes}" >&2
@@ -21,19 +21,11 @@ for target in controller validator; do
   fi
 done
 export SDO_CONTROLLER_SOURCE_TREE="$(cd "${repo_root}" && python3 "${provenance}" identity controller HEAD)"
-export SDO_VALIDATOR_SOURCE_TREE="$(cd "${repo_root}" && python3 "${provenance}" identity validator HEAD)"
 # CI builds only changed targets through Bake, then uses these same smoke gates.
-<<<<<<< HEAD
-read -r -a selected <<<"${SDO_IMAGES:-controller responder benchmark}"
+read -r -a selected <<<"${SDO_IMAGES:-controller responder benchmark script-tools}"
 for image in "${selected[@]}"; do
   case "${image}" in
-  controller | responder | benchmark) ;;
-=======
-read -r -a selected <<<"${SDO_IMAGES:-controller validator responder benchmark script-tools}"
-for image in "${selected[@]}"; do
-  case "${image}" in
-  controller | validator | responder | benchmark | script-tools) ;;
->>>>>>> origin/vic-lsh/dev/sdo-improve
+  controller | responder | benchmark | script-tools) ;;
   *)
     echo "unknown SDO image target: ${image}" >&2
     exit 1
@@ -73,7 +65,7 @@ for target in "${selected[@]}"; do
       for tool in bash kubectl jq curl tar sdo-operator; do command -v "$tool" >/dev/null; done
       ! command -v go
     '
-  elif [[ "${target}" == "controller" || "${target}" == "validator" ]]; then
+  elif [[ "${target}" == "controller" ]]; then
     docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
       command -v go >/dev/null
       test "$GOPROXY" = off
@@ -93,22 +85,6 @@ for target in "${selected[@]}"; do
   fi
   if [[ "${SDO_IMAGE_PREFLIGHT:-0}" == "1" && -n "${role}" ]]; then
     uv run python -m benchmarks.sregym.runner.preflight --image "${role}=${image}:${tag}"
-  fi
-  if [[ "${target}" == "validator" ]]; then
-    # A readonly, offline build must hit the SDK seed without compiling it.
-    # A missing cache COPY or stale warm flags fails the image smoke gate.
-    docker run --rm --network none --read-only --tmpfs /tmp --user 65532:65532 \
-      "${image}:${tag}" sh -ec '
-        test "$GOCACHEPROG" = /usr/local/bin/sdo-go-cache
-        cd /opt/sdo/sdo/operator/sdk
-        go list -x -export ./program >/tmp/sdk-export 2>/tmp/sdk-build
-        go vet -x ./program 2>>/tmp/sdk-build
-        if grep -qE "/(compile|vet) " /tmp/sdk-build; then
-          cat /tmp/sdk-build >&2
-          echo "validator SDK cache is missing or stale" >&2
-          exit 1
-        fi
-      '
   fi
   if [[ "${target}" == "responder" || "${target}" == "benchmark" ]]; then
     docker run --rm --user 65532:65532 \

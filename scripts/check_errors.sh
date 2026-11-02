@@ -10,6 +10,7 @@
 #   parity — fast Go/Python/proto contract parity (scripts/check_contracts_fast.sh)
 #   pin    — the SREGym gitlink never moves behind the base branch
 #   refs   — generated skill references and the read-only Kubernetes client facade
+#   determinism — no production real time, process or socket use outside declared edge packages
 
 set -e
 
@@ -22,7 +23,6 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-<<<<<<< HEAD
 # Keep per-check wall time in hosted logs even while this script overlaps pytest.
 check() {
     local started=$SECONDS
@@ -30,16 +30,10 @@ check() {
     echo "Timing: $*: $((SECONDS - started))s"
 }
 
-echo "==> ruff"
-if [ "$1" == "--fix" ]; then
-    check uv run ruff check --fix .
-else
-    check uv run ruff check .
-=======
 mode="${1:-}"
 case "$mode" in
     --go-only) exec bash "$SCRIPT_DIR/check_go_errors.sh" "${@:2}" ;;
-    ""|--fix) bash "$SCRIPT_DIR/check_go_errors.sh" ;;
+    ""|--fix|--python-suite) check bash "$SCRIPT_DIR/check_go_errors.sh" ;;
     --python-only) ;;
     *) echo "unknown check mode: $mode" >&2; exit 2 ;;
 esac
@@ -80,14 +74,13 @@ uv run python scripts/check_submodule_pin.py
 
 echo "==> ruff"
 if [ "$mode" == "--fix" ]; then
-    uv run python -m ruff check --fix .
-    uv run python -m ruff format .
+    check uv run python -m ruff check --fix .
+    check uv run python -m ruff format .
 else
-    uv run python -m ruff check .
+    check uv run python -m ruff check .
     # Same check as hosted CI: a branch that needs formatting fails here, so
     # format_code.sh never rewrites files the branch did not touch.
-    uv run python -m ruff format --check .
->>>>>>> origin/vic-lsh/dev/sdo-improve
+    check uv run python -m ruff format --check .
 fi
 
 echo "==> tach (module boundaries)"
@@ -97,34 +90,11 @@ echo "==> architecture (AST import and ownership rules)"
 # These tests scan source files; Tach's import-based impact analysis cannot
 # determine which changes affect them. --python-suite delegates the complete
 # file to the concurrently running full Python suite (without impact selection).
-if [[ "${1:-}" != --python-suite ]]; then
+if [[ "$mode" != --python-suite ]]; then
     check uv run --extra test python -m pytest -q -p no:tach tests/unit/test_architecture.py
 fi
 
 echo "==> types (scripts/type_check.sh)"
 check "$SCRIPT_DIR/type_check.sh"
 
-<<<<<<< HEAD
-# Proto contract drift (buf lint + committed-codegen diff) runs in checks/Python.
-# Skipped here when the buf
-# toolchain is absent so a buf-less environment still passes the Python gates.
-export PATH="${GOBIN:-${HOME}/go/bin}:${PATH}"
-if command -v buf >/dev/null 2>&1; then
-    echo "==> proto contracts (scripts/check_proto.sh)"
-    check "$SCRIPT_DIR/check_proto.sh"
-else
-    echo "==> proto contracts: skipped (buf not installed; required in checks/Python CI)"
-fi
-
-echo "==> Go nondeterminism ratchet"
-check "$SCRIPT_DIR/check_go_determinism.sh"
-
-# Functional Go core: dependency/API lint plus structural purity checks.
-check "$SCRIPT_DIR/check_go_core.sh"
-
-# Build production packages without test declarations, then vet benchmark API consumers.
-echo "==> Go production packages and benchmark programs"
-check "$SCRIPT_DIR/check_go_mains.sh"
-=======
-"$SCRIPT_DIR/check_contracts_fast.sh" --python-only
->>>>>>> origin/vic-lsh/dev/sdo-improve
+check "$SCRIPT_DIR/check_contracts_fast.sh" --python-only

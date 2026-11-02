@@ -2,16 +2,11 @@
 // to the benchmark extension, including with a docker-container builder.
 variable "SDO_SOURCE_REVISION" { default = "unknown" }
 variable "SDO_CONTROLLER_SOURCE_TREE" { default = "unknown" }
-variable "SDO_VALIDATOR_SOURCE_TREE" { default = "unknown" }
 variable "SDO_IMAGE_TAG" { default = "v0.1.0" }
 variable "SDO_WORKER_TARGET" { default = "sregym-responder" }
 
 group "default" {
-<<<<<<< HEAD
-  targets = ["controller", "responder", "benchmark"]
-=======
-  targets = ["controller", "validator", "responder", "benchmark", "script-tools"]
->>>>>>> origin/vic-lsh/dev/sdo-improve
+  targets = ["controller", "responder", "benchmark", "script-tools"]
 }
 
 target "controller" {
@@ -25,20 +20,6 @@ target "controller" {
   tags = ["sdo-controller:${SDO_IMAGE_TAG}"]
 }
 
-<<<<<<< HEAD
-=======
-target "validator" {
-  labels = {
-    "org.opencontainers.image.revision" = SDO_SOURCE_REVISION
-    "dev.sdo.source-tree" = SDO_VALIDATOR_SOURCE_TREE
-  }
-  context = "."
-  dockerfile = "sdo/operator/Dockerfile.runtime"
-  target = "validator"
-  args = { SDO_VALIDATOR_SCHEMA_IDENTITY = SDO_VALIDATOR_SCHEMA_IDENTITY }
-  tags = ["sdo-detector-validator:${SDO_IMAGE_TAG}"]
-}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 target "responder" {
   context = "."

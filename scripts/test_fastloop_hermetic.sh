@@ -9,15 +9,12 @@ if [[ "$hermetic_jobs" != 4 && "$hermetic_jobs" != 8 ]]; then
     echo "SDO_HERMETIC_JOBS must be 4 or 8" >&2
     exit 2
 fi
-reflection_jobs=$((hermetic_jobs / 2))
-first_runtime_jobs=$((reflection_jobs - 1))
 export GOMAXPROCS="$hermetic_jobs" GOFLAGS="${GOFLAGS:-} -p=$hermetic_jobs"
 
 # Deployed-source tests always exercise the portable repository fixture.
 # Set SDO_DRIFT_SEED explicitly to also check a full deployed hotel seed.
 
 (
-<<<<<<< HEAD
     cd "$root/sdo/operator/runtime"
     go test -tags=integration -run '^(TestPendingDriftJoinsIncidentBeforeVerifiedClosure|TestPendingDriftPreventsVerificationWhenPeerIsUnresolved|TestLearningRepairAtThresholdOneDispatchesFastPathWithoutResponder|TestLearningCreditRequiresSuccessfulOutcomeAndOriginalProgramRevision|TestLearningEvidenceRejectsUnvalidatedSyntheticAndMismatchedCaptures|TestLearningCreditCannotEraseSubsequentFastPathFailure|TestWatchEventProgramMatchesOwnedServiceBeforeSweep|TestWatchEventProgramMatchesUnownedServiceBeforeSweep|TestWatchEventProgramsUseHintOnceForOwnedAndUnownedChanges|TestWatchEventTransientMidRolloutProgramNeverFires|TestWatchEventRepairQueuesNothingAndSweepClearsLearnedIncident|TestWatchEventUnownedChangeWithoutProgramMatchIsQuiet|TestWatchEventPendingBindingsSurviveRestartIndependently|TestProgramSweepUsesDefaultTimedConfirmation|TestHermeticFastloopRealGoGate|TestHermeticNewDetectorInputs|TestHermeticNewSnapshotKinds|TestHermeticFakeConfigMapEnforcesProductionLimit|TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit|TestHermeticResponderProgramReuseThroughRealToolTransport|TestHermeticAcceptedSourceAfterMemoryCommit|TestAcceptedSourceRenderFailureIsObjectScoped|TestAcceptedSourceDoesNotReuseImagesAcrossSourceChange|TestControllerAdoptsAvailableObjectsWithExplicitRenderGap|TestGitPlanSourceUsesOnlyDeployedManifestSet|TestGitPlanSourceSelectsDeployedHotelSeed|TestControllerAdoptsSeededServiceThenDispatchesLaterDrift|TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus|TestUnexplainedDriftDuringResponseAttachesToOpenIncident|TestHermeticForeignNetworkPolicyOpensLatentIncident|TestHermeticForeignNetworkPolicyInvariantRepeat|TestForeignNetworkPolicyInvariantNearMisses|TestForeignDriftNormalChurn|TestHermeticBenignDriftAcrossFastloopResetAndNextIncident|TestHermeticDriftlive4NewFaultAfterHealthyBaseline|TestRepairedDriftRecursWithoutProgramAfterRestart|TestVerifyRetainsDriftWithHealthyDetectors|TestClosureRetainsDriftWithHealthyDetectors|TestVerifyRetainedLearnedDriftRequiresEveryBinding|TestUnexplainedDriftSourceErrorNeverClears|TestOrdinaryDriftAdmissionBudgetsBatchingAndNewKeyPriority|TestTerminalDriftResponderFailureDoesNotWaitForTTLOrCloseHealthy|TestCheckedBenignNoopClosesWithoutMitigationCredit|TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob|TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder|TestHermeticRoutingCaptureCompilesReplayableMitigator|TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists|TestRoutingCaptureHasCountAndTimeBudgets|TestRunCapturesRoutingWithoutTrafficWorkloads|TestRoutingCaptureRecordsUnavailableCapabilityOnce|TestHermeticTrustedLatentDriftFastPathSkipsResponderAndReflection|TestFailedFastPathRollsBackAndDispatchesResponderWithSummary|TestTrustedProgramFastPathRequiresEveryFindingExplained|TestTrustedProgramFastPathRejectsNeedsJudgement|TestNativeBrokerSkipsReflectionAfterTrustedFastPath)$' -count=1 .
     go test -tags=integration -run '^TestHermeticProtocolDialer$' -count=1 ./prober
@@ -33,91 +30,10 @@ cd "$root"
 uv run --extra test pytest -q -p no:tach \
     tests/unit/benchmarks/sregym/test_agent_script.py \
     tests/unit/benchmarks/sregym/fastloop/test_fake_kube.py \
+    tests/unit/benchmarks/sregym/fastloop/test_toy.py \
+    tests/unit/benchmarks/sregym/fastloop/test_fastloop_loop.py \
+    tests/unit/benchmarks/sregym/fastloop/test_fastloop_fault_driver.py \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_composite.py::test_failed_composite_reset_restarts_controller_before_next_incident \
     tests/unit/benchmarks/sregym/adapter/test_native_persistent_ops.py::test_reset_stage_syncs_accepted_pvc_before_recreating_controller \
-    tests/unit/benchmarks/sregym/fastloop/test_fastloop_reset.py::test_reset_cancels_and_awaits_workers_before_deleting_captures \
-    tests/unit/benchmarks/sregym/adapter/test_scripted_drift.py
-=======
-    cd "$root/sdo/operator"
-    go test -run '^(TestStandbyRealDaemonClaimResultAndReplenishment|TestKubernetesExecutorVanishedJobIsTerminalAcrossRestart|TestKubernetesExecutorNeverRecreatesWorkerWithUnsettledResult|TestKubernetesExecutorConcurrentPayloads|TestKubernetesExecutorHealthJudge|TestKubernetesExecutorRecoversRequestBoundStagedResult|TestRuntimeArtifactsExportsSetupUsage)' -count=1 ./worker_registry ./operatorcli
-)
-
-(
-    cd "$root/sdo/operator"
-    go test -run '^TestResetControlState|^TestParseResetControlState' -count=1 ./onboarding ./operatorcli
-    go test -run '^(TestInstallPlanCarriesOwnershipOnEveryObject|TestInstallReconcileAddsOwnershipToLegacyCaptureGrants|TestDiscoveredPermissiveReadGrantsCarryInstallOwnership|TestAdoptionSeederGivesTagImageWorkloadsTrustedLockEvidence)$' -count=1 -timeout=1m ./install
-
-    go test -run '^TestInstallExisting.*Onboarding|^TestInstallExistingClearAdoption|^TestInstallExistingAdoptedVerifiedSeedOnboarding$' -count=1 -timeout=5m ./operatorcli
-)
-
-# Replay owns a distinct fake API transport; exercise its lifecycle publisher too.
-(
-    cd "$root/sdo/operator/runtime"
-    go test -count=1 -timeout=1m ./replay
-)
-
-# Fixture checks compile their own isolated CLI/workspaces. Run that process
-# alongside the remaining runtime checks, with four Go workers on each side.
-# Separate processes also isolate tests that set session environment variables.
-(
-    export GOMAXPROCS="$reflection_jobs" GOFLAGS="${GOFLAGS:-} -p=$reflection_jobs"
-    cd "$root/sdo/operator/runtime"
-    reflection_status=0
-    go test -run '^(TestAcceptedSourceBridgeDryRunCreateDoesNotPolluteTypedLists|TestRecreatedObjectKeepsItsCarriedAcceptanceRecord|TestAdoptedDeploymentDNSPolicyDriftIsNamedAndRestoredWithoutImageEvidence|TestReflectionHotelRunScriptUpgradesReadmeThroughCLIAndBroker|TestReflectionMongoAuthUpgradesReadmeThroughCLIAndBroker|TestReflectionLearnsDeploymentRepairWithUnwrittenServiceSymptoms|TestHermeticAdoptedHostPortRepairLearnsAndReplays|TestFirstEncounterNamingReplacedPodPublishesWorkloadPlaybook)$' -count=1 -timeout=5m . || reflection_status=$?
-    # Shared-memory publication owns independent repositories and a full package
-    # budget; it must not start at the end of the reflection package deadline.
-    go test -run '^TestHermeticSharedMemoryControllers$' -count=1 -timeout=5m . || reflection_status=$?
-    exit "$reflection_status"
-) &
-reflection_pid=$!
-runtime_status=0
-
-(
-    # The Python shard runs while the first Go group needs three workers.
-    # Reflection, runtime and Python share the selected four/eight-worker cap.
-    (
-        export GOMAXPROCS=1 GOFLAGS="${GOFLAGS:-} -p=1"
-        cd "$root"
-        uv run --extra test pytest -q -p no:tach \
-            tests/unit/scripts/test_hermetic_shards.py \
-            tests/unit/sdo/agents/prompts/test_session_context.py \
-            tests/unit/libs/agent_cli/test_structured.py \
-            tests/unit/libs/agent_cli/test_session_ownership.py \
-            tests/unit/sdo/agents/responder/test_reflection_worker.py \
-            tests/unit/sdo/agents/responder/test_writer_termination.py \
-            tests/unit/sdo/agents/test_health_judge_worker.py \
-            tests/unit/sdo/agents/responder/test_result_publisher.py \
-            tests/unit/sdo/agents/responder/test_incident_context.py \
-            tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py \
-            tests/unit/benchmarks/sregym/fastloop/test_toy.py \
-            tests/unit/benchmarks/sregym/fastloop/test_scripted_worker.py \
-            tests/unit/benchmarks/sregym/fastloop/test_fastloop_loop.py \
-            tests/unit/benchmarks/sregym/fastloop/test_fastloop_cli.py::test_native_install_runs_without_a_selective_reset_because_the_row_start_wipe_owns_it \
-            tests/unit/benchmarks/sregym/fastloop/test_wipe.py \
-            tests/unit/benchmarks/sregym/fastloop/test_sdo3_descriptions.py \
-            tests/unit/benchmarks/sregym/fastloop/test_sdo3_s3a_contracts.py \
-            tests/unit/benchmarks/sregym/fastloop/test_fastloop_composite.py::test_failed_composite_resets_only_after_verified_harness_recovery \
-            tests/unit/benchmarks/sregym/adapter/test_native_persistent_ops.py::test_reset_stage_syncs_accepted_pvc_before_recreating_controller \
-            tests/unit/benchmarks/sregym/fastloop/test_fastloop_reset.py::test_reset_cancels_and_awaits_workers_before_deleting_captures \
-            tests/unit/benchmarks/sregym/adapter/test_scripted_drift.py \
-            tests/unit/benchmarks/sregym/assurance/test_mixed10_replay.py \
-            tests/unit/benchmarks/sregym/fastloop/test_fastloop_fault_driver.py \
-            tests/unit/benchmarks/sregym/fastloop/test_scripted_image_build.py
-    ) &
-    python_pid=$!
-    shard_status=0
-    export GOMAXPROCS="$first_runtime_jobs" GOFLAGS="${GOFLAGS:-} -p=$first_runtime_jobs"
-    cd "$root/sdo/operator/runtime"
-    go test -run '^(TestHermeticBringupPersistsPendingAndRestarts|TestHermeticBringupMaintenanceGenerationDuringOnboarding|TestRunOnboardingMaintenanceGenerationPreservesSamples|TestPendingDetector|TestSourceInventory|TestInstallEnvironment|TestSimInstallerOwnership|TestLatent|TestTrafficPartialIteration)' -count=1 -timeout=5m . || shard_status=$?
-    wait "$python_pid" || shard_status=$?
-    export GOMAXPROCS="$reflection_jobs" GOFLAGS="${GOFLAGS:-} -p=$reflection_jobs"
-    go test -run '^(TestResponderChildWriteAfterStallReleaseDeniesProgramCredit|TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels|TestSettlementCoverageSurvivesLaterPassAndDispatchPreparation|TestAdmissionRecoveryCanRequeuePendingTemplateRepair|TestCoveredAdmissionPrerequisitePrecedesWorkloadRepairs|TestKubernetesJobDispatcherReturnsFailedJob|TestHermeticResponsePipelineClearsTwoFaultsThroughControllerClosure|TestDeterministicResponseStageUsesPostApplyEvidenceForOpeningIncidentFinding|TestDeterministicResponseStageHandoffRetainsObservedDetectorIdentity|TestDeterministicResponseStageReflectionReceivesVerifiedRepairCauses|TestResponseStageRejoinRetainsDeterministicApplicationEvidence|TestResponseStageVerifiedRepairsReachRegisteredReflection|TestDeterministicResponseStageWaitsForPostRolloutHealthObservation|TestDeterministicResponseStageCannotClearWithoutIndependentProof|TestDeterministicResponseStageObservationBudgetPreservesUnresolvedHealth|TestDeterministicResponseStageRejoinReobservesRetainedIncidentFinding|TestSimScheduleDeterministicPipelineEvidence|TestRunScriptActVerifyRequiresDiagnosisAndTargetedClearance|TestRunScriptJobBoundsRecoveryAndEnvironment|TestRunScriptFailureNeverAutomaticallyUndoesAndOutputStaysPrivate|TestRunScriptRawMenuEnvironmentValues|TestLearnedOriginCreditIncludesObservedUnwrittenSymptoms|TestPartialReflectionRetainsRecoveredUnwrittenSymptoms|TestHermeticLearnAcceptRepeatKeepsControllerIterating|TestRunRepeatWithLearnedDetectorErrorAndQueuedPodChanges|TestProgramDiagnosisRequiresFindingSevenRoles|TestObjectChangeAndTimerNeverDiagnosePlaybooks|TestDriftAndControllerEntrypointsCannotInvokePlaybookDiagnosis|TestHermeticResponderThreeFaultContinuation|TestHermeticStaleSavedStepRepromptsWithOnlyTheStillBrokenFinding|TestMitigationReturnsWithUnrelatedFaultBeforeGlobalHealthBudget|TestHermeticSourceReconcileLearningExposesVerifiedCounters|TestHermeticAgentRepairsTwoCoveredFaultsAndOneUnexplained|TestPlaybookCoverageIncludesEveryMatchAndUnexplainedFinding|TestPendingDriftJoinsIncidentBeforeVerifiedClosure|TestPendingDriftPreventsVerificationWhenPeerIsUnresolved|TestNewProgramGetsOneVerifiedOriginCreditWithoutPriorProgramRun|TestAcceptedCorpusDoesNotInventTrustForAnUnmatchedOrigin|TestRunPreservesStateChangesAcrossObservationBarrier|TestRunPreservesLatentFaultAcrossObservationBarrier|TestHermeticFastloopRealGoGate|TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence|TestReadmeOnlyVerifiedReflectionIsRejectedAndRetried|TestFailedGlobalClosureCanLearnControllerAllClearRepair|TestHermeticFakeConfigMapEnforcesProductionLimit|TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit|TestHermeticResponderProgramReuseThroughRealToolTransport|TestHermeticResponderWorkingPlaybookCLI|TestHermeticAcceptedSourceAfterMemoryCommit|TestAcceptedSourceRenderFailureIsObjectScoped|TestAcceptedSourceDoesNotReuseImagesAcrossSourceChange|TestControllerAdoptsAvailableObjectsWithExplicitRenderGap|TestGitPlanSourceUsesOnlyDeployedManifestSet|TestGitPlanSourceSelectsDeployedHotelSeed|TestControllerAdoptsSeededServiceThenDispatchesLaterDrift|TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus|TestUnexplainedDriftDuringResponseAttachesToOpenIncident|TestHermeticForeignNetworkPolicyOpensLatentIncident|TestForeignNetworkPolicyInvariantNearMisses|TestForeignDriftNormalChurn|TestHermeticBenignDriftAcrossFastloopResetAndNextIncident|TestHermeticDriftlive4NewFaultAfterHealthyBaseline|TestRepairedDriftRecursWithoutProgramAfterRestart|TestVerifyRetainsDriftWithHealthyDetectors|TestClosureAdmittedDriftContracts|TestClosureDriftResolvedByRestoringSource|TestClosureL3I04Reduction|TestClosureDriftSourceErrorFailsClosed|TestClosureDriftRestoredFieldsIgnoreUnadmittedChanges|TestClosureDriftUsesSourceFieldsWhenReconcileIsNoop|TestSimSchedulePartialRepairCannotVerifyDrift|TestUnexplainedDriftSourceErrorNeverClears|TestTerminalDriftResponderFailureDoesNotWaitForTTL|TestCheckedBenignNoopClosesWithoutMitigationCredit|TestHermeticRoutingCaptureCompilesReplayableMitigator|TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists|TestRoutingCaptureHasCountAndTimeBudgets|TestRunCapturesRoutingWithoutTrafficWorkloads|TestRunStartsRoutingProberWithoutTrafficWorkloads|TestRoutingCaptureRecordsUnavailableCapabilityOnce|TestGS1DeployedIdentityAndNamespaceScope|TestGS1TrustSurvivesProgramRevision|TestRV4RestartMustNotBlessChangedPinnedImage|TestRV4PublicationFailureMustKeepAcceptedCommit|TestRV4OldReadyReplicaMustNotCountAsCompletedRollout|TestRenderedLockRestartWithoutNamedEvidenceHasObjectGap|TestRenderedLockJobNeedsRequestedCompletions|TestRenderedLockMutableImageReferencesDoNotCreateDrift|TestRenderedLockAfterRolloutAndRestart|TestRenderedLockMissingIsEvidenceGap|TestRenderedLockPublicationWaitsForClosureAcknowledgment|TestRenderedLockPerObjectGaps|TestRenderedLockConsulGapAfterMemoryCommitKeepsReservationDrift|TestSimRenderedLockSchedule|TestClosureRetainsDriftWithHealthyDetectors|TestTerminalDriftResponderFailureDoesNotWaitForTTLOrCloseHealthy|TestOrdinaryDriftAdmissionBudgetsBatchingAndNewKeyPriority|TestDeterministicResponseStageWaitFollowsDetectorWindow|TestDeterministicResponseStageWaitStopsAtCeiling|TestReflectionVanishedJobStopsClosureRetriesWithEvidence|TestReflectionFailedJobStopsClosureRetriesWithEvidence|TestFailedClosureReflectionReceivesExactlyVerifiedCauses|TestReflectionPublicationRetainsFrozenHealthWithCapture|TestClosureDriftRemovedExtraFieldsAgreeWithStatus|TestHermeticControllerClosureReachesNativeOutcomeBroker|TestControllerIntegrationInformerPersistenceAndRestart|TestClosureNamesRolloutBlockersWithoutProgramApplication|TestClosureRolloutIgnoresOtherNamespacesAndHelpers|TestClosureRolloutBlockerClasses|TestClosureRolloutRecordedWriteReachesCachedVerification|TestClosureRolloutWaitsBeforePublishingSuccess|TestShellControllerClosureReflectionAndActivation)$' -count=1 -timeout=5m . || shard_status=$?
-    exit "$shard_status"
-) || runtime_status=$?
-
-wait "$reflection_pid" || runtime_status=$?
-if ((runtime_status != 0)); then
-    exit "$runtime_status"
-fi
->>>>>>> origin/vic-lsh/dev/sdo-improve
+    tests/unit/benchmarks/sregym/fastloop/test_fastloop_reset.py::test_reset_cancels_and_awaits_workers_before_deleting_captures
