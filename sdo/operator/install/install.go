@@ -34,17 +34,6 @@ type Extension interface {
 }
 
 type Installer struct {
-<<<<<<< HEAD
-	Client             kubernetes.Interface
-	SeedRepository     RepositorySeeder
-	SyncRepository     RepositorySynchronizer
-	ReadAcceptedCommit func(context.Context, SyncConfig) (string, error)
-	Extension          Extension
-	PollInterval       time.Duration
-	SyncTimeout        time.Duration
-	Now                func() time.Time
-	Wait               func(context.Context, time.Duration) error
-=======
 	// BeforeControllerStart runs trusted lifecycle bookkeeping after preparation.
 	BeforeControllerStart func(context.Context, Config) error
 	Client                kubernetes.Interface
@@ -54,7 +43,8 @@ type Installer struct {
 	Extension             Extension
 	PollInterval          time.Duration
 	SyncTimeout           time.Duration
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	Now                   func() time.Time
+	Wait                  func(context.Context, time.Duration) error
 }
 
 type Result struct {
@@ -146,14 +136,9 @@ func (i Installer) WithSyncPod(ctx context.Context, syncConfig SyncConfig, actio
 		return errors.New("repository synchronization requires control namespace, PVC, and controller image")
 	}
 	cfg := Config{Namespace: syncConfig.ControlNamespace, ControlNamespace: syncConfig.ControlNamespace, RepositoryPVC: syncConfig.RepositoryPVC, ControllerImage: syncConfig.ControllerImage}
-<<<<<<< HEAD
 	owner := fmt.Sprintf("sync-%d", i.now().UnixNano())
-	if err := i.acquireOperateLock(ctx, cfg, owner); err != nil {
-=======
-	owner := fmt.Sprintf("sync-%d", time.Now().UnixNano())
 	reservation, err := i.acquireOperateLock(ctx, cfg, owner, metav1.OwnerReference{Kind: "Pod", Name: RepositorySyncPodName})
 	if err != nil {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, i.finishClaimedSyncPod(cfg, reservation)) }()
@@ -429,22 +414,11 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 			return fmt.Errorf("ensure ServiceAccount %s ownership: %w", sa.Name, err)
 		}
 	}
-<<<<<<< HEAD
 	if err := i.ensureObservability(ctx, p); err != nil {
 		return err
 	}
-	if err := i.ensureClusterGrants(ctx, p); err != nil {
-		return err
-	}
-	for _, role := range append(p.ControlRoles, p.AppRoles...) {
-		if err := i.upsertRole(ctx, role); err != nil {
-			return err
-		}
-=======
-
 	if err := i.ensurePermissiveNamespaces(ctx, cfg); err != nil {
 		return err
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	if err := i.ensureClusterGrants(ctx, p); err != nil {
 		return err
@@ -584,36 +558,4 @@ func jobFailed(job *batchv1.Job) bool {
 		}
 	}
 	return false
-}
-
-func (i Installer) ensureClusterGrants(ctx context.Context, p Plan) error {
-	for _, want := range p.ClusterRoles {
-		api := i.Client.RbacV1().ClusterRoles()
-		prior, err := api.Get(ctx, want.Name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			_, err = api.Create(ctx, want, metav1.CreateOptions{})
-		} else if err == nil {
-			updated := want.DeepCopy()
-			updated.ResourceVersion = prior.ResourceVersion
-			_, err = api.Update(ctx, updated, metav1.UpdateOptions{})
-		}
-		if err != nil {
-			return fmt.Errorf("ensure cluster ClusterRole: %w", err)
-		}
-	}
-	for _, want := range p.ClusterBindings {
-		api := i.Client.RbacV1().ClusterRoleBindings()
-		prior, err := api.Get(ctx, want.Name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			_, err = api.Create(ctx, want, metav1.CreateOptions{})
-		} else if err == nil {
-			updated := want.DeepCopy()
-			updated.ResourceVersion = prior.ResourceVersion
-			_, err = api.Update(ctx, updated, metav1.UpdateOptions{})
-		}
-		if err != nil {
-			return fmt.Errorf("ensure cluster ClusterRoleBinding: %w", err)
-		}
-	}
-	return nil
 }

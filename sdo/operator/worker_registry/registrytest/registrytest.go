@@ -14,34 +14,18 @@ import (
 
 // Directory is the checked-in directory of built-in agent manifests.
 func Directory() string {
-<<<<<<< HEAD
-	directory, err := os.Getwd()
-	if err != nil {
-		panic(err)
-	}
-	for {
-=======
 	start, err := os.Getwd()
 	if err != nil {
 		panic(err)
 	}
 	for directory := start; ; directory = filepath.Dir(directory) {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		candidate := filepath.Join(directory, "sdo", "agents", "registrations")
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
 		}
-<<<<<<< HEAD
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			panic("cannot locate built-in agent registrations from test working directory")
-		}
-		directory = parent
-=======
 		if filepath.Dir(directory) == directory {
 			panic("built-in agent manifests not found above test working directory: " + start)
 		}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 }
 

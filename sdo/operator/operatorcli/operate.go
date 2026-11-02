@@ -48,11 +48,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
-<<<<<<< HEAD
-=======
 	scriptImage := flags.String("script-image", "", "fixed slim RunScript tool image")
-	validatorImage := flags.String("validator-image", "", "isolated validator image")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	buildkitImage := flags.String("buildkit-image", "", "isolated source image builder")
 	registryPushSecret := flags.String("registry-push-secret", "", "image registry credentials Secret")
 	registryHost := flags.String("registry-host", "", "trusted source image registry host[:port]")
@@ -181,15 +177,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
-<<<<<<< HEAD
-			RepositoryPVC:     *repositoryPVC,
-			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider,
-			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, DisableObservability: *disableObservability, MetricsURL: *metricsURL,
-=======
-			ScriptImage: *scriptImage, ValidatorImage: *validatorImage, RepositoryPVC: *repositoryPVC,
+			ScriptImage: *scriptImage, DisableObservability: *disableObservability, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
 			MaxResponseLoops: *maxResponseLoops,

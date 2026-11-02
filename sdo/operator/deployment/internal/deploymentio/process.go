@@ -29,6 +29,7 @@ func Wait(ctx context.Context, d time.Duration) error {
 	}
 }
 func JobSuffix() string { return rand.String(8) }
+
 // Evaluate runs binary in directory with the process environment plus extraEnv.
 func Evaluate(ctx context.Context, directory, binary string, args, extraEnv []string) ([]byte, []byte, error) {
 	c := exec.CommandContext(ctx, binary, args...)

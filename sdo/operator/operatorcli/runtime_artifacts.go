@@ -13,11 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"os"
 	"path/filepath"
-<<<<<<< HEAD
-	"sdo.dev/operator/operatorcli/internal/processio"
-=======
 	"regexp"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -171,13 +167,7 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 		return RuntimeArtifactsResult{}, err
 	}
 	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
-<<<<<<< HEAD
-		// Archive only evidence files; extraction applies the same allowlist.
-		script := `cd /workspace/.sdo-runtime 2>/dev/null || exit 0; find usage telemetry sessions codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]'); case "$lower_path" in *cache*|*plugin*|*catalog*) continue;; esac; base=${lower_path##*/}; case "$base" in *auth*|*credential*|*token*) [ "$base" = token_usage.json ] || continue;; esac; case "$path" in usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/checkpoints/*/request.json|sessions/*/checkpoints/*/result.json|sessions/*/checkpoints/*/file_edits.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | tar -cf - -T -`
-		return processio.StreamPodArchive(ctx, cfg.Sync.ControlNamespace, cfg.Kubeconfig, install.RepositorySyncPodName, script, func(r io.Reader) error { return extractRuntimeArtifacts(r, destination) })
-=======
 		return copyRuntimeArtifacts(ctx, execute, cfg.Sync.ControlNamespace, destination)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	})
 	if err != nil {
 		return RuntimeArtifactsResult{}, err

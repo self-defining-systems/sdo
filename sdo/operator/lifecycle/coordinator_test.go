@@ -32,7 +32,7 @@ type fakeBroker struct {
 	// proposalRoot overrides the checkout directory for tests that run a real
 	// executor against a temporary repository mount.
 	proposalRoot string
-	rejections    map[string]*contracts.ProposalRejectionLog
+	rejections   map[string]*contracts.ProposalRejectionLog
 }
 
 func (f *fakeBroker) Rejections(id string) (*contracts.ProposalRejectionLog, error) {
@@ -165,15 +165,13 @@ func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*c
 		}
 		response, err = anypb.New(&contracts.SourceDeploymentResult{Proposed: proposed, Summary: "prepared", AgentSessionId: "session", Plan: &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: raw}})
 	case healthJudgeTask:
-<<<<<<< HEAD
 		if f.judgeFailures > 0 {
 			f.judgeFailures--
 			return nil, errors.New("judge interrupted")
-=======
+		}
 		if f.judgeJobsVanished > 0 {
 			f.judgeJobsVanished--
 			return nil, &worker_registry.JobVanishedError{TaskID: task.GetTaskId(), JobName: worker_registry.JobName(task.GetTaskId())}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 		if f.judgeJobFailures > 0 {
 			f.judgeJobFailures--

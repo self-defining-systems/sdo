@@ -45,10 +45,6 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil || proposalSubPath == "." || proposalSubPath == ".." || filepath.IsAbs(proposalSubPath) || len(proposalSubPath) >= 3 && proposalSubPath[:3] == "../" {
 		return lifecycle.Result{}, errors.New("broker proposals must be inside the shared repository mount")
 	}
-	schemaIdentity, err := builder.SchemaIdentity(config.OperatorRoot)
-	if err != nil {
-		return lifecycle.Result{}, fmt.Errorf("cannot bind operate schema identity: %w", err)
-	}
 	registry, err := lifecycleRegistry(config, "")
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("load lifecycle agents: %w", err)
@@ -66,26 +62,16 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if control == "" {
 		control = config.Lifecycle.Namespace
 	}
-<<<<<<< HEAD
 	validation := broker.SubprocessValidator{}
 	if config.Install.HealthyBaseline {
 		validation.HealthyBaseline = filepath.Join(config.RepositoryMount, ".sdo-baseline/healthy")
-	}
-	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, validation.Validator())
-=======
-	validation := broker.KubernetesValidationJobClient{
-		ToolchainImage: config.Install.ControllerImage,
-		Client:         client, Namespace: control, Image: config.Install.ValidatorImage,
-		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
-		SchemaIdentity: schemaIdentity, HealthyBaseline: config.Install.HealthyBaseline,
 	}
 	ceiling, policyErr := observation.CeilingFromEnvironment()
 	if policyErr != nil {
 		return lifecycle.Result{}, policyErr
 	}
 
-	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, selectMemoryValidator(config.Install.CodePath, broker.JobValidator(validation)), broker.ObservationPolicy{Replay: config.Install.Replay, CodePath: memoryCodePath(config.Install.CodePath), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, selectMemoryValidator(config.Install.CodePath, validation.Validator()), broker.ObservationPolicy{Replay: config.Install.Replay, CodePath: memoryCodePath(config.Install.CodePath), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
@@ -132,7 +118,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},
 		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true,
 	}
-	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay}
+	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay, MetricsURL: config.Install.MetricsURL}
 	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
 		healthProbe = deployment.ShellDetectorProbe{Config: runner}
 	}
@@ -140,12 +126,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry,
 		Workers: workers, Readiness: readiness,
 		Verifier: deployment.IndependentHealthVerifier{
-<<<<<<< HEAD
-			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: readiness,
-			Probe: deployment.AcceptedDetectorProbe{MetricsURL: config.Install.MetricsURL},
-=======
 			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: readiness, Probe: healthProbe,
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}, Installer: installer,
 	}
 	return coordinator.Run(ctx, config.Lifecycle)

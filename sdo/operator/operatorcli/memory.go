@@ -8,11 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-<<<<<<< HEAD
-	"sdo.dev/operator/operatorcli/internal/processio"
-=======
 	"sdo.dev/operator/contracts/settings"
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"

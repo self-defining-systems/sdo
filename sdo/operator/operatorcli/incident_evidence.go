@@ -115,19 +115,11 @@ func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg I
 				return fmt.Errorf("synchronize accepted repository: %w", err)
 			}
 		}
-<<<<<<< HEAD
-		output, readErr := processio.ReadPodFile(ctx, cfg.Sync.ControlNamespace, cfg.Kubeconfig, podName, path)
-		if readErr != nil {
-			return readErr
-		}
-		data = output
-=======
 		var output, stderr bytes.Buffer
 		if err := execute(ctx, cfg.Sync.ControlNamespace, podName, []string{"cat", path}, &output, &stderr); err != nil {
 			return fmt.Errorf("read native incident ledger: %w: %s", err, strings.TrimSpace(stderr.String()))
 		}
 		data = output.Bytes()
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		return nil
 	}
 	if podName == install.RepositorySyncPodName {

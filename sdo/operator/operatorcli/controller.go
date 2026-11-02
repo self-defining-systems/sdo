@@ -26,15 +26,9 @@ func (r *repeatable) String() string         { return strings.Join(*r, ",") }
 func (r *repeatable) Set(value string) error { *r = append(*r, value); return nil }
 
 // ParseControllerLaunch rejects native/legacy split-brain before any build or
-<<<<<<< HEAD
 // Kubernetes effect. It is pure so installer Job arguments can be contract
 // tested against the same parser shipped in the controller image.
 func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
-=======
-// Kubernetes effect. It binds installer arguments to the installed source
-// identity used by the validator image.
-func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if len(args) == 0 || args[0] != "controller" {
 		return builder.RunConfig{}, errors.New("expected controller subcommand")
 	}
@@ -50,13 +44,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	controlNamespace := flags.String("control-namespace", "", "controller namespace")
 	application := flags.String("application", "", "application identity")
 	responderImage := flags.String("responder-image", "", "registered responder image")
-<<<<<<< HEAD
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required)")
-=======
-	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers and validators (required)")
 	scriptImage := flags.String("script-image", "", "fixed tool image for app-local RunScript Jobs")
-	proberImage := flags.String("prober-image", "", "traffic prober image")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	repositoryPVC := flags.String("repository-pvc", "", "repository PVC")
 	repositoryMount := flags.String("repository-mount-path", "", "repository PVC mount")
 	repositorySubPath := flags.String("repository-pvc-subpath", "", "repository PVC subpath")
@@ -64,12 +53,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	worktreeRoot := flags.String("worktree-root", "", "broker proposal and ledger root")
 	model := flags.String("model", "", "responder model")
 	backend := flags.String("responder-backend", "codex", "responder backend")
-<<<<<<< HEAD
-=======
 	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
 	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
-	schemaIdentity := flags.String("schema-identity", "", "expected SDK schema identity (defaults to installed sources)")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	brokerMode := flags.String("broker-mode", "", "broker mode")
 	workerMountMode := flags.String("worker-mount-mode", "", "worker mount mode")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
@@ -89,14 +74,10 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
-<<<<<<< HEAD
-=======
-	supervise := flags.Bool("supervise", false, "rebuild and relaunch after closure")
 	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	upstreamURL := flags.String("memory-upstream-url", "", "shared remote Git URL the accepted repository replicates")
 	upstreamBranch := flags.String("memory-upstream-branch", "", "remote branch for this run's accepted memory")
 	upstreamSSH := flags.String("memory-upstream-ssh-dir", "", "read-only directory with the ssh identity and known_hosts for the memory remote")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	var deployedManifestPaths repeatable
@@ -117,49 +98,19 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if *duration < 0 {
 		return builder.RunConfig{}, errors.New("duration must be nonnegative")
 	}
-<<<<<<< HEAD
-	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown <= 0 {
-		return builder.RunConfig{}, errors.New("follow-up limit must be at most 1000 and cooldown positive")
-	}
-	if *programTrustThreshold < 1 {
-		return builder.RunConfig{}, errors.New("program trust threshold must be positive")
-	}
-	if *programMinDuration < 0 {
-		return builder.RunConfig{}, errors.New("program minimum duration must be nonnegative")
-	}
-	if err := validateDriftTokenBudget(*driftTokensPerHour); err != nil {
-		return builder.RunConfig{}, err
-	}
-	if *programFastPath && *repairPolicy != "recorded-actions" {
-		return builder.RunConfig{}, errors.New("program fast path requires recorded-actions repair policy")
-	}
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
 		*credentialsSecret == "" || *worktreeRoot == "" || *model == "" || *backend == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return builder.RunConfig{}, errors.New("native launch requires application, namespace, images, repository, credentials, and responder identity")
-=======
-
-	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
-		*credentialsSecret == "" || *worktreeRoot == "" || *validatorImage == "" || *model == "" || *backend == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
-		return builder.RunConfig{}, false, errors.New("native launch requires application, namespace, images, repository, credentials, validator, schema, and responder identity")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	if !filepath.IsAbs(*repositoryMount) || !filepath.IsAbs(*worktreeRoot) {
 		return builder.RunConfig{}, errors.New("repository mount and proposal root must be absolute")
 	}
-	actualSchema, err := builder.SchemaIdentity(*operatorRoot)
-	if err != nil {
-		return builder.RunConfig{}, false, fmt.Errorf("cannot bind controller schema identity: %w", err)
-	}
-	if *schemaIdentity != "" && *schemaIdentity != actualSchema {
-		return builder.RunConfig{}, false, fmt.Errorf("controller schema identity mismatch: installed %q, expected %q", actualSchema, *schemaIdentity)
-	}
-	*schemaIdentity = actualSchema
 	if *application == "" {
 		*application = filepath.Base(*app)
 	}
 	selectedCodePath, err := parseCodePathSelection(*codePath, *codePathOverrides)
 	if err != nil {
-		return builder.RunConfig{}, false, err
+		return builder.RunConfig{}, err
 	}
 	addResponseStageOverride(&selectedCodePath, responseStageOverrides)
 	launch := &contracts.ControllerConfig{
@@ -173,22 +124,11 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,
 		ResponseTimeout: durationpb.New(*responseTimeout), VerificationTimeout: durationpb.New(*verificationTimeout),
-<<<<<<< HEAD
-		RepairPolicy: *repairPolicy, MaxFollowUps: int32(*maxFollowUps), FollowUpCooldown: durationpb.New(*followUpCooldown), MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), DiagnosisSettleDelay: durationpb.New(*diagnosisSettleDelay), LeaseName: "sdo-controller",
+		RepairPolicy: *repairPolicy, MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), LeaseName: "sdo-controller",
 		ExitAfterClosure: *exitAfterClosure,
-		ToolchainImage:   *toolchainImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
+		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
-		ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL, MetricsPublishUrl: *metricsPublishURL,
-		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
-		DriftTokensPerHour: *driftTokensPerHour,
-		ProgramMinDuration: durationpb.New(*programMinDuration),
-=======
-		RepairPolicy: *repairPolicy, MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
-		ExitAfterClosure: *exitAfterClosure,
-		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
-		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
-		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL, MetricsPublishUrl: *metricsPublishURL,
 	}
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)
@@ -202,7 +142,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	return builder.RunConfig{
 		Build: builder.Config{Replay: *replay, ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
 		PrepareShell: func(ctx context.Context) error {
-			repository, err := openMigrationBroker(launch)
+			repository, err := openControllerBroker(launch)
 			if err != nil {
 				return err
 			}
@@ -213,19 +153,13 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
-<<<<<<< HEAD
-=======
-			if _, err := resolveAcceptedDiagnostics(ctx, root, repository); err != nil {
+			repository, err := openControllerBroker(launch)
+			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
 			if err := refreshControllerHealth(ctx, launch, repository); err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
-			projected, err := memory.AcceptedDiagnostics(ctx, root)
-			if err != nil {
-				return builder.DiagnosticsProjection{}, err
-			}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
 		},
 	}, nil

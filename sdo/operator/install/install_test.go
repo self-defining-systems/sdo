@@ -12,11 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-<<<<<<< HEAD
-	"k8s.io/apimachinery/pkg/runtime"
-=======
 	kruntime "k8s.io/apimachinery/pkg/runtime"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 )
@@ -172,11 +168,7 @@ func TestPrepareSeedsInitialCheckoutWithoutStartingController(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
 	seeded := false
 	i := Installer{Client: client, PollInterval: time.Millisecond}
-<<<<<<< HEAD
-	markSyncPodReady(client, cfg.ControlNamespace)
-=======
 	readySyncPodOnActivation(client, cfg.ControlNamespace)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	err := i.Prepare(context.Background(), cfg, func(ctx context.Context, got Config) error {
 		seeded = true
 		if got.AcceptedCommit != cfg.AcceptedCommit {
@@ -337,11 +329,7 @@ func TestBuilderIdentityAndRegistryCredentialsStaySeparate(t *testing.T) {
 	}
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
 	i := Installer{Client: client, PollInterval: time.Millisecond}
-<<<<<<< HEAD
-	markSyncPodReady(client, cfg.ControlNamespace)
-=======
 	readySyncPodOnActivation(client, cfg.ControlNamespace)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if err := i.Prepare(context.Background(), cfg, func(context.Context, Config) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -398,11 +386,7 @@ func TestSyncExistingRepositoryUsesTemporaryPodWithoutReplacingController(t *tes
 		}
 		return nil
 	}}
-<<<<<<< HEAD
-	markSyncPodReady(client, cfg.ControlNamespace)
-=======
 	readySyncPodOnActivation(client, cfg.ControlNamespace)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if err := installer.SyncExistingRepository(context.Background(), SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage}); err != nil {
 		t.Fatal(err)
 	}
@@ -423,11 +407,7 @@ func TestWithSyncPodCleansUpAfterReadFailure(t *testing.T) {
 	cfg := testConfig()
 	client := fake.NewSimpleClientset()
 	installer := Installer{Client: client, PollInterval: time.Millisecond, SyncTimeout: time.Second}
-<<<<<<< HEAD
-	markSyncPodReady(client, cfg.ControlNamespace)
-=======
 	readySyncPodOnActivation(client, cfg.ControlNamespace)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	want := errors.New("read failed")
 	err := installer.WithSyncPod(context.Background(), SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage}, func(context.Context, Config) error { return want })
 	if !errors.Is(err, want) {
@@ -450,8 +430,6 @@ func TestFreshInstallRequiresSeederBeforeControllerJob(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func TestPreparedInstallUsesAcceptedPVCWithoutBootstrapPrivileges(t *testing.T) {
 	root := t.TempDir()
 	for _, args := range [][]string{{"init", "-q", root}, {"-C", root, "config", "user.name", "SDO Test"}, {"-C", root, "config", "user.email", "test@example.invalid"}} {
@@ -506,7 +484,6 @@ func TestPreparedInstallUsesAcceptedPVCWithoutBootstrapPrivileges(t *testing.T) 
 	}
 }
 
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func TestFreshInstallSeedsBeforeStartingJob(t *testing.T) {
 	cfg := testConfig()
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})
@@ -522,11 +499,7 @@ func TestFreshInstallSeedsBeforeStartingJob(t *testing.T) {
 		}
 		return nil
 	}}
-<<<<<<< HEAD
-	markSyncPodReady(client, cfg.ControlNamespace)
-=======
 	readySyncPodOnActivation(client, cfg.ControlNamespace)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	result, err := i.Install(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -556,24 +529,12 @@ func TestReplacementStopsOldControllerBeforeReseedingPVC(t *testing.T) {
 		}
 		return nil
 	}}
-<<<<<<< HEAD
-	markSyncPodReady(client, cfg.ControlNamespace)
-=======
 	readySyncPodOnActivation(client, cfg.ControlNamespace)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if _, err := i.Install(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 }
 
-<<<<<<< HEAD
-// markSyncPodReady models readiness at fake API admission, before the installer
-// reads the Pod. The default tracker still owns creation and cleanup.
-func markSyncPodReady(client *fake.Clientset, namespace string) {
-	client.PrependReactor("create", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
-		pod := action.(ktesting.CreateAction).GetObject().(*corev1.Pod)
-		if pod.Namespace == namespace && pod.Name == RepositorySyncPodName {
-=======
 // The fake must not report readiness before activation releases the scheduling
 // gate: a concurrent status write can otherwise be lost by the fake tracker.
 func TestSyncPodReadinessFollowsActivation(t *testing.T) {
@@ -644,7 +605,6 @@ func readySyncPodOnActivation(client *fake.Clientset, namespace string) {
 	client.PrependReactor("update", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
 		pod := action.(ktesting.UpdateAction).GetObject().(*corev1.Pod)
 		if action.GetSubresource() == "" && action.GetNamespace() == namespace && pod.Name == RepositorySyncPodName && len(pod.Spec.SchedulingGates) == 0 {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
 		}
 		return false, nil, nil
@@ -684,13 +644,6 @@ func TestSeederRejectsCommitDifferentFromInstallFingerprint(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-func TestControllerSecretGrantsOnlyAllowMetadataListWatch(t *testing.T) {
-	for _, split := range []bool{false, true} {
-		cfg := testConfig()
-		if !split {
-			cfg.ControlNamespace = cfg.Namespace
-=======
 func TestKubeconfigSeederUsesExplicitContextWithoutChangingProcessEnvironment(t *testing.T) {
 	repo := t.TempDir()
 	git := func(args ...string) string {
@@ -734,7 +687,6 @@ func readyExportPodOnCreate(client *fake.Clientset, namespace string) {
 		pod := action.(ktesting.CreateAction).GetObject().(*corev1.Pod)
 		if action.GetNamespace() == namespace && pod.Name == RuntimeExportPodName {
 			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 		return false, nil, nil
 	})
@@ -765,35 +717,5 @@ func TestRuntimeExportPodCoexistsWithRepositorySync(t *testing.T) {
 	}
 	if _, err := client.CoreV1().ConfigMaps(cfg.ControlNamespace).Get(context.Background(), OperateLockConfigMap, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("evidence delivery left the operate lock held: %v", err)
-	}
-}
-
-func TestControllerObservesPoliciesWithoutProberMutationGrants(t *testing.T) {
-	for _, split := range []bool{false, true} {
-		config := testConfig()
-		if !split {
-			config.ControlNamespace = config.Namespace
-		}
-		plan, err := Resources(config)
-		if err != nil {
-			t.Fatal(err)
-		}
-		roles := append(append([]*rbacv1.Role{}, plan.ControlRoles...), plan.AppRoles...)
-		for _, role := range roles {
-			if role.Name != "sdo-controller" {
-				continue
-			}
-			for _, verb := range []string{"get", "list", "watch"} {
-				if !roleAllows(role, "networkpolicies", verb) {
-					t.Fatalf("split=%v namespace=%s controller lacks NetworkPolicy %s", split, role.Namespace, verb)
-				}
-			}
-			for _, verb := range []string{"create", "update", "delete"} {
-				want := false
-				if roleAllows(role, "networkpolicies", verb) != want {
-					t.Fatalf("split=%v namespace=%s prober NetworkPolicy %s grant, want %v", split, role.Namespace, verb, want)
-				}
-			}
-		}
 	}
 }

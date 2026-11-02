@@ -15,13 +15,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sdo.dev/operator/devmount"
-<<<<<<< HEAD
 	"sdo.dev/operator/install/internal/installio"
-=======
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/shellpath"
 	"sdo.dev/operator/worker_registry"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 )
 
 const PreparedCommitAnnotation = "sdo.dev/prepared-commit"
@@ -197,13 +194,11 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)
 	}
-<<<<<<< HEAD
 	if scale := installio.TimeScale(); scale != "" {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
-=======
+	}
 	if err := worker_registry.ApplyProviderCapacity(pod, worker_registry.ProviderCapacityEnvironment()); err != nil {
 		return nil, err
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	return job, nil
 }
@@ -278,56 +273,9 @@ func (i Installer) StartOperate(ctx context.Context, cfg Config, objective, oper
 		// An ambiguous create may have succeeded; leave recovery to the owner check.
 		return "", fmt.Errorf("start native operate Job: %w", err)
 	}
-<<<<<<< HEAD
-	return job.Name, nil
-}
-
-// The ConfigMap create is atomic across host launchers. A terminal Job permits
-// the next operation to claim the shared PVC; a pending Job still owns it.
-func (i Installer) acquireOperateLock(ctx context.Context, cfg Config, operationID string) error {
-	configMaps := i.Client.CoreV1().ConfigMaps(cfg.controlNamespace())
-	for attempt := 0; attempt < 3; attempt++ {
-		_, err := configMaps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: cfg.controlNamespace()}, Data: map[string]string{"operation_id": operationID}}, metav1.CreateOptions{})
-		if err == nil {
-			return nil
-		}
-		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("claim native operate PVC: %w", err)
-		}
-		prior, err := configMaps.Get(ctx, OperateLockConfigMap, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("inspect native operate PVC claim: %w", err)
-		}
-		owner := prior.Data["operation_id"]
-		if owner == "" {
-			return errors.New("native operate PVC claim has no operation ID")
-		}
-		job, err := i.Client.BatchV1().Jobs(cfg.controlNamespace()).Get(ctx, OperateJobName(owner), metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			if prior.CreationTimestamp.IsZero() || i.now().Sub(prior.CreationTimestamp.Time) < 15*time.Minute {
-				return fmt.Errorf("native operate PVC is claimed by %q but its Job is missing; inspect the claim before retrying", owner)
-			}
-			uid := prior.UID
-			if err := configMaps.Delete(ctx, OperateLockConfigMap, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
-				return fmt.Errorf("release expired native operate PVC claim: %w", err)
-			}
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("inspect native operate PVC owner Job: %w", err)
-		}
-		if job.Status.Succeeded == 0 && !jobFailed(job) && (job.Status.Failed == 0 || job.Status.Active > 0) {
-			return fmt.Errorf("native operate PVC is already used by operation %q", owner)
-		}
-		uid := prior.UID
-		if err := configMaps.Delete(ctx, OperateLockConfigMap, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
-			return fmt.Errorf("release completed native operate PVC claim: %w", err)
-		}
-=======
 	if err := i.bindOperateLock(ctx, cfg, reservation, "Job", created.ObjectMeta); err != nil {
 		_ = i.Client.BatchV1().Jobs(cfg.controlNamespace()).Delete(context.Background(), created.Name, ownerDeleteOptions(created.ObjectMeta))
 		return "", err
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current, err := i.Client.BatchV1().Jobs(cfg.controlNamespace()).Get(ctx, created.Name, metav1.GetOptions{})

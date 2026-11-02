@@ -125,11 +125,15 @@ func ProtoMitigationReplayNotes(notes []sdktest.MitigationReplayResult) []*contr
 // ParseReportReplayNotes retains advisory replay results across the trusted
 // self-check transport. They never grant publication authority.
 func ParseReportReplayNotes(logs string) []*contracts.MitigationReplayNote {
- for _,line:=range strings.Split(logs,"\n") {
-  if !strings.HasPrefix(line,ReportPrefix){continue}
-  report:=new(contracts.MemoryCheckReport)
-  if protojson.Unmarshal([]byte(strings.TrimPrefix(line,ReportPrefix)),report)!=nil{return nil}
-  return report.GetMitigationReplayNotes()
- }
- return nil
+	for _, line := range strings.Split(logs, "\n") {
+		if !strings.HasPrefix(line, ReportPrefix) {
+			continue
+		}
+		report := new(contracts.MemoryCheckReport)
+		if protojson.Unmarshal([]byte(strings.TrimPrefix(line, ReportPrefix)), report) != nil {
+			return nil
+		}
+		return report.GetMitigationReplayNotes()
+	}
+	return nil
 }

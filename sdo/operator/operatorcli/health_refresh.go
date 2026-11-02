@@ -130,3 +130,21 @@ func shellHealthRefreshNeeded(ctx context.Context, config *contracts.ControllerC
 	}
 	return true, nil
 }
+
+// openControllerBroker builds the controller's broker from its typed launch
+// config, with the same bounded validation subprocess the native incident
+// broker uses.
+func openControllerBroker(config *contracts.ControllerConfig) (lifecycle.ProposalBroker, error) {
+	if err := toolchain.ValidateImage(config.GetToolchainImage()); err != nil {
+		return nil, err
+	}
+	validation := broker.SubprocessValidator{}
+	if config.GetHealthyBaseline() {
+		validation.HealthyBaseline = filepath.Join(config.GetRepositoryMountPath(), ".sdo-baseline/healthy")
+	}
+	ceiling, err := observation.CeilingFromEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectMemoryValidator(config.GetCodePath(), validation.Validator()), broker.ObservationPolicy{Replay: config.GetReplay(), CodePath: memoryCodePath(config.GetCodePath()), Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+}

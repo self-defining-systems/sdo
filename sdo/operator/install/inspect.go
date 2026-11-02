@@ -139,18 +139,8 @@ func (i Installer) restoreApplicationGrantsWithSettings(ctx context.Context, cfg
 	if err != nil {
 		return fmt.Errorf("plan application grants: %w", err)
 	}
-<<<<<<< HEAD
-	if err := i.ensureClusterGrants(ctx, plan); err != nil {
-		return err
-	}
-	for _, role := range plan.AppRoles {
-		if err := i.upsertRole(ctx, role); err != nil {
-			return err
-		}
-=======
 	if err := i.ensurePermissiveNamespaces(ctx, Config{PermissiveResponder: settings != "", ResponderNamespaces: namespaces}); err != nil {
 		return err
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	return i.ensureClusterGrants(ctx, plan)
 }

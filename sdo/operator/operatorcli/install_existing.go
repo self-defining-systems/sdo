@@ -54,11 +54,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	application := flags.String("application", "", "application identity")
 	controllerImage := flags.String("controller-image", "", "Go controller image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
-<<<<<<< HEAD
-=======
 	scriptImage := flags.String("script-image", "", "fixed slim script-tools image; defaults to the controller image")
-	validatorImage := flags.String("validator-image", "", "isolated validator image")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	repositoryPVC := flags.String("repository-pvc", "", "shared accepted repository PVC")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	model := flags.String("model", "", "agent model")
@@ -136,19 +132,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	config := install.Config{
 		CodePath:  selectedCodePath,
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
-<<<<<<< HEAD
-		ControllerImage: *controllerImage, ResponderImage: *responderImage,
-		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
-		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
-		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
-		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
-		DriftTokensPerHour:   *driftTokensPerHour,
-		LateFindings:         *lateFindings,
-		HealthyBaseline:      *healthyBaseline,
-		DisableObservability: *disableObservability, MetricsURL: *metricsURL,
-		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
-=======
-		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
+		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
 		MaxResponseLoops: *maxResponseLoops,
@@ -156,8 +140,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		LateFindings:     *lateFindings,
 		HealthyBaseline:  *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
-		MetricsURL:    *metricsURL,
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		MetricsURL: *metricsURL, DisableObservability: *disableObservability,
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,
 		RegistrationConfigMap: *registrationConfigMap,

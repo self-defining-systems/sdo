@@ -27,8 +27,8 @@ func WithCaptureSource(ctx context.Context, directory, incidentID string) contex
 
 // CaptureSource returns trusted capture provenance for validation attestations.
 func CaptureSource(ctx context.Context) (string, string) {
- source, _ := ctx.Value(captureSourceKey{}).(captureSource)
- return source.directory, source.incidentID
+	source, _ := ctx.Value(captureSourceKey{}).(captureSource)
+	return source.directory, source.incidentID
 }
 
 // Check is the complete memory acceptance pipeline. Callers cannot select

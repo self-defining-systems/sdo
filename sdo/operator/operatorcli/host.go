@@ -178,13 +178,8 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
-<<<<<<< HEAD
-		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider,
-		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, DisableObservability: *disableObservability, MetricsURL: *metricsURL,
-=======
 		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
-		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, DisableObservability: *disableObservability, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
 		MaxResponseLoops: *maxResponseLoops,
@@ -198,41 +193,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	return HostConfig{Repository: *repository, Objective: *objective, OperationID: *operationID, MaxAttempts: *maxAttempts, Install: config, Kubeconfig: *kubeconfig, RegistrationSource: *registrationSource}, nil
 }
 
-<<<<<<< HEAD
-func hostKubernetesClient(path string) (kubernetes.Interface, error) {
-=======
-func acceptedHead(ctx context.Context, repository string) (string, error) {
-	root, err := exec.CommandContext(ctx, "git", "-C", repository, "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return "", fmt.Errorf("inspect accepted repository root: %w", err)
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(strings.TrimSpace(string(root)))
-	if err != nil {
-		return "", err
-	}
-	resolvedRepository, err := filepath.EvalSymlinks(repository)
-	if err != nil {
-		return "", err
-	}
-	if resolvedRoot != resolvedRepository {
-		return "", errors.New("accepted repository path must be its Git root")
-	}
-	status, err := exec.CommandContext(ctx, "git", "-C", repository, "status", "--porcelain").Output()
-	if err != nil {
-		return "", fmt.Errorf("inspect accepted repository status: %w", err)
-	}
-	if len(status) != 0 {
-		return "", errors.New("accepted repository has uncommitted changes")
-	}
-	commit, err := exec.CommandContext(ctx, "git", "-C", repository, "rev-parse", "HEAD").Output()
-	if err != nil {
-		return "", fmt.Errorf("inspect accepted commit: %w", err)
-	}
-	return strings.TrimSpace(string(commit)), nil
-}
-
 func hostKubernetesConfig(path string) (*rest.Config, error) {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if path != "" {
 		rules.ExplicitPath = path

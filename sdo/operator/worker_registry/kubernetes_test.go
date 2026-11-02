@@ -47,7 +47,6 @@ func reflectionTestTask(t *testing.T) *contracts.AgentTask {
 }
 
 func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.T) {
-<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		t.Setenv("SDO_DEV_MOUNT", "1")
 		client := fake.NewSimpleClientset()
@@ -61,7 +60,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 			CredentialsSecret:     "agent-provider-credentials",
 			HealthyBaseline:       true,
 			LateFindingsConfigMap: "sdo-late-incident",
-			Environment:           map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged"},
+			Environment:           map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged", "SDO_CAPTURED_CORPUS_DIR": "forged-capture", "SDO_HEALTHY_BASELINE": "forged-baseline"},
 		}
 		results := make(chan *contracts.AgentResult, 1)
 		errs := make(chan error, 1)
@@ -78,7 +77,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		if container.WorkingDir != task.Workspace.CheckoutPath {
 			t.Fatalf("wrong working directory: %q", container.WorkingDir)
 		}
-		for name, want := range map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "abc", "SDO_HEALTHY_BASELINE": "/sdo/healthy-baseline"} {
+		for name, want := range map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "abc", "SDO_HEALTHY_BASELINE": "/sdo/session/corpus/healthy", "SDO_CAPTURED_CORPUS_DIR": "/sdo/session/corpus"} {
 			found := 0
 			for _, env := range container.Env {
 				if env.Name == name {
@@ -93,110 +92,16 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 			}
 		}
 		foundSession := false
+		foundCorpus := false
 		repositoryVolumes := 0
 		for _, volume := range job.Spec.Template.Spec.Volumes {
 			if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == "repo" {
 				repositoryVolumes++
-=======
-	t.Setenv("SDO_DEV_MOUNT", "1")
-	client := fake.NewSimpleClientset()
-	task := reflectionTestTask(t)
-	jobCreated := make(chan struct{}, 1)
-	executor := KubernetesExecutor{
-		OnPhase:        notifyTestJobCreated(jobCreated),
-		ToolchainImage: "controller:compiler", Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), ServiceAccount: "sdo-worker",
-		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond,
-		SessionPVCSubPath: "tenant/.sdo-runtime/sessions/incident-hash",
-		CredentialsSecret: "agent-provider-credentials",
-		HealthyBaseline:   true,
-		Environment:       map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged", "SDO_CAPTURED_CORPUS_DIR": "forged-capture", "SDO_HEALTHY_BASELINE": "forged-baseline"},
-	}
-	results := make(chan *contracts.AgentResult, 1)
-	errs := make(chan error, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	finished := make(chan struct{})
-	t.Cleanup(func() { cancel(); <-finished })
-	go func() {
-		defer close(finished)
-		result, err := executor.Execute(ctx, task)
-		results <- result
-		errs <- err
-	}()
-	jobName := JobName(task.TaskId)
-	select {
-	case <-jobCreated:
-	case err := <-errs:
-		t.Fatalf("executor stopped before Job creation: %v", err)
-	}
-	job, err := client.BatchV1().Jobs("demo").Get(ctx, jobName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(job.Spec.Template.Spec.InitContainers) != 1 || job.Spec.Template.Spec.InitContainers[0].Image != "controller:compiler" {
-		t.Fatal("reflection job missing controller compiler")
-	}
-	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "example/reflector:1" || container.Command[0] != "/reflector" {
-		t.Fatalf("ignored registration: %#v", container)
-	}
-	if container.WorkingDir != task.Workspace.CheckoutPath {
-		t.Fatalf("wrong working directory: %q", container.WorkingDir)
-	}
-	for name, want := range map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "abc", "SDO_HEALTHY_BASELINE": "/sdo/session/corpus/healthy", "SDO_CAPTURED_CORPUS_DIR": "/sdo/session/corpus"} {
-		found := 0
-		for _, env := range container.Env {
-			if env.Name == name {
-				found++
-				if env.Value != want {
-					t.Fatalf("%s = %s, want %s", name, env.Value, want)
-				}
-			}
-		}
-		if found != 1 {
-			t.Fatalf("environment %s has %d entries", name, found)
-		}
-	}
-	foundSession := false
-	foundCorpus := false
-	repositoryVolumes := 0
-	for _, volume := range job.Spec.Template.Spec.Volumes {
-		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == "repo" {
-			repositoryVolumes++
-		}
-	}
-	if repositoryVolumes != 1 {
-		t.Fatalf("repository PVC must be declared once even when sessions are enabled: %#v", job.Spec.Template.Spec.Volumes)
-	}
-	for _, mount := range container.VolumeMounts {
-		if mount.MountPath == "/sdo/session" {
-			foundSession = true
-			if mount.Name != "repository" || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash" || mount.ReadOnly {
-				t.Fatalf("session mount is not a narrow writable incident subPath: %#v", mount)
-			}
-		}
-		if mount.MountPath == "/workspace" || mount.SubPath == "tenant/application" {
-			t.Fatalf("worker can access accepted repository: %#v", mount)
-		}
-		if mount.MountPath == "/sdo/session/api-history" || mount.MountPath == "/sdo/session/api-history.generation" {
-			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash/"+strings.TrimPrefix(mount.MountPath, "/sdo/session/") {
-				t.Fatalf("history mount: %+v", mount)
-			}
-			continue
-		}
-		if mount.MountPath == "/sdo/healthy-baseline" || strings.Contains(mount.SubPath, ".sdo-baseline") {
-			t.Fatalf("reflection still depends on legacy caller baseline: %+v", mount)
-		}
-		if mount.MountPath == "/sdo/session/corpus" {
-			foundCorpus = true
-			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash/corpus" {
-				t.Fatalf("controller corpus must be protected: %+v", mount)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
 		}
 		if repositoryVolumes != 1 {
 			t.Fatalf("repository PVC must be declared once even when sessions are enabled: %#v", job.Spec.Template.Spec.Volumes)
 		}
-<<<<<<< HEAD
 		for _, mount := range container.VolumeMounts {
 			if mount.MountPath == "/sdo/session" {
 				foundSession = true
@@ -210,9 +115,19 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 			if mount.MountPath == "/workspace" || mount.SubPath == "tenant/application" {
 				t.Fatalf("worker can access accepted repository: %#v", mount)
 			}
-			if mount.MountPath == "/sdo/healthy-baseline" {
-				if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-baseline/healthy" {
-					t.Fatalf("baseline must be narrow and read-only: %+v", mount)
+			if mount.MountPath == "/sdo/session/api-history" || mount.MountPath == "/sdo/session/api-history.generation" {
+				if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash/"+strings.TrimPrefix(mount.MountPath, "/sdo/session/") {
+					t.Fatalf("history mount: %+v", mount)
+				}
+				continue
+			}
+			if mount.MountPath == "/sdo/healthy-baseline" || strings.Contains(mount.SubPath, ".sdo-baseline") {
+				t.Fatalf("reflection still depends on legacy caller baseline: %+v", mount)
+			}
+			if mount.MountPath == "/sdo/session/corpus" {
+				foundCorpus = true
+				if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash/corpus" {
+					t.Fatalf("controller corpus must be protected: %+v", mount)
 				}
 				continue
 			}
@@ -221,23 +136,11 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 				t.Fatalf("repository mount leaks outside proposal checkout: %#v", mount)
 			}
 		}
+		if !foundCorpus {
+			t.Fatal("reflection has no read-only controller corpus projection")
+		}
 		if !foundSession {
 			t.Fatal("isolated incident session mount missing")
-=======
-	}
-	if !foundCorpus {
-		t.Fatal("reflection has no read-only controller corpus projection")
-	}
-	if !foundSession {
-		t.Fatal("isolated incident session mount missing")
-	}
-	if len(container.EnvFrom) != 1 || container.EnvFrom[0].SecretRef.Name != "agent-provider-credentials" {
-		t.Fatalf("worker received an unexpected Secret: %#v", container.EnvFrom)
-	}
-	for _, volume := range job.Spec.Template.Spec.Volumes {
-		if volume.Secret != nil && volume.Secret.SecretName != "agent-provider-credentials" {
-			t.Fatalf("worker mounted broker-only Secret %q", volume.Secret.SecretName)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 		if len(container.EnvFrom) != 1 || container.EnvFrom[0].SecretRef.Name != "agent-provider-credentials" {
 			t.Fatalf("worker received an unexpected Secret: %#v", container.EnvFrom)
@@ -420,61 +323,10 @@ func largeReflectionTask(t *testing.T, checkout string, snapshotBytes int) *cont
 	}
 }
 
-<<<<<<< HEAD
-func TestKubernetesExecutorStagesRequestsAboveConfigMapBudgetOnRepositoryVolume(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		mount := t.TempDir()
-		client := fake.NewSimpleClientset()
-		awaitCreated := watchCreatedJobs(t, client)
-		task := largeReflectionTask(t, mount+"/proposals/reflection-big", 2<<20)
-		executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount, RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		done := make(chan error, 1)
-		go func() { _, err := executor.Execute(ctx, task); done <- err }()
-		jobName := JobName(task.TaskId)
-		job := awaitCreated(jobName)
-		if maps, _ := client.CoreV1().ConfigMaps("demo").List(ctx, metav1.ListOptions{}); len(maps.Items) != 0 {
-			t.Fatalf("an oversized request must not use a ConfigMap: %d created", len(maps.Items))
-		}
-		var request *corev1.VolumeMount
-		for _, mount := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
-			if mount.MountPath == "/sdo/request" {
-				request = &mount
-			}
-		}
-		wantSubPath := "tenant/.sdo-runtime/requests/" + jobName
-		if request == nil || request.Name != "repository" || request.SubPath != wantSubPath || !request.ReadOnly {
-			t.Fatalf("worker request is not a read-only repository subPath: %+v", request)
-		}
-		for _, volume := range job.Spec.Template.Spec.Volumes {
-			if volume.ConfigMap != nil {
-				t.Fatalf("job mounts a ConfigMap request: %+v", volume)
-			}
-		}
-		staged, err := os.ReadFile(filepath.Join(mount, ".sdo-runtime/requests", jobName, TaskDataKey))
-		if err != nil {
-			t.Fatal(err)
-		}
-		want, err := wire.Canonical(task)
-		if err != nil || string(staged) != string(want) || len(staged) <= 1<<20 {
-			t.Fatalf("staged request differs from the canonical task (%d bytes, err %v)", len(staged), err)
-		}
-		cancel()
-		<-done
-	})
-}
-
-func TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent(t *testing.T) {
-	mount := t.TempDir()
-	client := fake.NewSimpleClientset()
-	task := largeReflectionTask(t, mount+"/proposals/reflection-big", MaxStagedRequestBytes+1<<20)
-=======
 func TestKubernetesExecutorRejectsRequestOverBudgetNamingTheComponent(t *testing.T) {
 	mount := t.TempDir()
 	client := fake.NewSimpleClientset()
 	task := largeReflectionTask(t, mount+"/proposals/reflection-big", MaxRequestBytes+1<<10)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount, PollInterval: time.Millisecond}
 	_, err := executor.Execute(context.Background(), task)
 	var tooLarge *RequestTooLargeError
