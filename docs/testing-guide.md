@@ -980,8 +980,7 @@ default. Their `generated_worker` launcher reads each typed task and generates
 its responder or reflection script separately, then wraps the corresponding
 production worker with the agent-script CLI. Scratch state uses the writable
 tool request exchange; the accepted checkout is changed only by script steps.
-Replay uses these generators with captured command transport. Custom registrations
-remain subject to the live-run time-scale guard.
+Replay uses these generators with captured command transport.
 
 Broker compilation uses the running controller executable in a bounded subprocess.
 `go test ./broker -run TestValidationSubprocessLimits` checks deadline and aggregate
