@@ -50,6 +50,16 @@ The HTTP transport currently supports snapshot lists, kubelet proxy and log read
 service application logic. No kind conformance run was performed for this extraction; claims above
 are bounded by the synthetic conformance tests.
 
+## Synthetic Go toolchain
+
+`internal/testutil.FakeGo` (operator module) stands in for the compiler edge. It models stage
+selection (verb, package patterns covering a directory) and exit status with canned output.
+It does not model type checking, vet analyzers, test execution, the Go build cache, link
+output, or replay results written by generated tests; assertions on those stay with the
+real-compiler integration tests (`TestShippedControllerKeepsItsDebugData`,
+`TestCheckReusesExactPackagesAcrossWorkspaces`, the program replay tests in `builder`, and
+the diagnose-compile mode of `TestPartialPlaybookPublication`).
+
 ## Accepted bounds
 
 HTTP connection pooling after an OS listener closes is not represented by the
