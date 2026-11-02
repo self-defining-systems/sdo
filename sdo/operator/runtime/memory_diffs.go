@@ -33,6 +33,11 @@ func memoryDiffInputs(view any, refs []sdk.ObjectRef) []sdktest.PrimitiveCall {
 			view = cached.ReadView
 			continue
 		}
+		// The onboarding wrapper only overrides the reachability window; diffs come from what it wraps.
+		if onboarding, ok := view.(onboardingReadView); ok {
+			view = onboarding.ReadView
+			continue
+		}
 		wrapper, ok := view.(interface{ UnderlyingReadView() program.ReadView })
 		if !ok {
 			return nil
