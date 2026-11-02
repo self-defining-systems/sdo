@@ -36,7 +36,6 @@ const (
 	RuleManifestLocation = "manifest.location"
 
 	// Semantic.
-<<<<<<< HEAD
 	RuleArchitectureMissing = "memory.architecture-missing"
 	RuleGoalOwner           = "goal.owner"
 	RuleManifestMissing     = "manifest.missing"
@@ -47,38 +46,13 @@ const (
 	RulePlaybookNone        = "playbook.none"
 	RulePlaybookNoReadme    = "playbook.missing-readme"
 	RulePlaybookOwner       = "playbook.owner"
-	RulePlaybookFaultClass  = "playbook.fault-class"
 	RulePlaybookIncident    = "playbook.originating-incident"
-	RulePlaybookPlaceholder = "playbook.placeholder"
 	RuleIndexMissing        = "playbook.index-missing"
-	RuleIndexLink           = "playbook.index-link"
-	RulePlaybookNotIndexed  = "playbook.not-indexed"
+	RuleIndexGenerated      = "playbook.index-generated"
 	RuleScriptNotExecutable = "script.not-executable"
 	RuleScriptUnreferenced  = "script.unreferenced"
 	RuleScriptSyntax        = "script.syntax"
 	RulePhysicalPath        = "text.physical-path"
-=======
-	RuleGoalMissing          = "memory.goal-missing"
-	RuleArchitectureMissing  = "memory.architecture-missing"
-	RuleGoalOwner            = "goal.owner"
-	RuleManifestMissing      = "manifest.missing"
-	RuleDetectorNone         = "detector.none"
-	RuleDetectorNoSource     = "detector.no-go-source"
-	RuleDuplicateID          = "id.duplicate"
-	RuleUnknownPlaybook      = "ref.unknown-playbook"
-	RulePlaybookNone         = "playbook.none"
-	RulePlaybookNoReadme     = "playbook.missing-readme"
-	RulePlaybookOwner        = "playbook.owner"
-	RulePlaybookIncident     = "playbook.originating-incident"
-	RuleIndexMissing         = "playbook.index-missing"
-	RuleIndexGenerated       = "playbook.index-generated"
-	RuleScriptNotExecutable  = "script.not-executable"
-	RuleScriptUnreferenced   = "script.unreferenced"
-	RuleScriptSyntax         = "script.syntax"
-	RulePhysicalPath         = "text.physical-path"
-	RuleArchitectureCommit   = "architecture.generated-at-commit"
-	RuleArchitectureBaseline = "architecture.source-commit"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	RuleCorpusImmutable = "program.corpus-immutable"
 

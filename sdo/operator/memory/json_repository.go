@@ -151,22 +151,6 @@ func (s *JSONStore) ListWithNotes(ctx context.Context) ([]Outcome, []UnreadableO
 		}
 		outcomes = append(outcomes, outcome)
 	}
-<<<<<<< HEAD
-=======
-	legacy, err := s.legacyOutcomes(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	known := make(map[string]struct{}, len(outcomes))
-	for _, outcome := range outcomes {
-		known[outcome.IncidentID] = struct{}{}
-	}
-	for _, outcome := range legacy {
-		if _, stored := known[outcome.IncidentID]; !stored {
-			outcomes = append(outcomes, outcome)
-		}
-	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].IncidentID < outcomes[j].IncidentID })
 	return outcomes, notes, nil
 }
@@ -189,102 +173,6 @@ func readOutcomeEntry(directory string, entry os.DirEntry) (Outcome, error) {
 	return outcome, nil
 }
 
-<<<<<<< HEAD
-=======
-// legacyOutcomes reads the retired JSONL stream without modifying the
-// repository, so readers of an accepted checkout see pre-migration history.
-// Playbook references are normalized to logical IDs. An incident repeated with
-// identical content is one outcome; conflicting repeats are an error.
-func (s *JSONStore) legacyOutcomes(ctx context.Context) ([]Outcome, error) {
-	path := filepath.Join(s.root, layout.LegacyOutcomesFile)
-	file, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("open legacy outcomes: %w", err)
-	}
-	defer file.Close()
-	var outcomes []Outcome
-	reader := bufio.NewReader(file)
-	for line := 1; ; line++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		data, readErr := reader.ReadBytes('\n')
-		if len(bytes.TrimSpace(data)) != 0 {
-			outcome, err := normalizeLegacy(data)
-			if err != nil {
-				return nil, fmt.Errorf("legacy outcome line %d: %w", line, err)
-			}
-			duplicate := false
-			for _, earlier := range outcomes {
-				if earlier.IncidentID != outcome.IncidentID {
-					continue
-				}
-				if !bytes.Equal(earlier.document, outcome.document) {
-					return nil, fmt.Errorf("legacy outcome line %d: %w: %s", line, ErrConflict, outcome.IncidentID)
-				}
-				duplicate = true
-			}
-			if !duplicate {
-				outcomes = append(outcomes, outcome)
-			}
-		}
-		if readErr == io.EOF {
-			return outcomes, nil
-		}
-		if readErr != nil {
-			return nil, fmt.Errorf("read legacy outcomes: %w", readErr)
-		}
-	}
-}
-
-func normalizeLegacy(data []byte) (Outcome, error) {
-	record := new(contracts.OutcomeRecord)
-	if err := wire.DecodeLenientUnvalidated(data, record); err != nil {
-		return Outcome{}, err
-	}
-	for _, list := range []*[]string{
-		&record.SurfacedPlaybooks, &record.InspectedPlaybooks, &record.ConfirmedPlaybooks,
-		&record.RejectedPlaybooks, &record.AppliedPlaybooks,
-	} {
-		ids, err := layout.PlaybookIDs(*list)
-		if err != nil {
-			return Outcome{}, err
-		}
-		*list = ids
-	}
-	document, err := wire.MarshalFull(record)
-	if err != nil {
-		return Outcome{}, err
-	}
-	return parse(document)
-}
-
-// ImportLegacy performs a one-time, restartable migration from the previous
-// stream. Playbook references are stored as logical IDs. The stream is deleted
-// only after every record has been accepted.
-func (s *JSONStore) ImportLegacy(ctx context.Context) error {
-	path := filepath.Join(s.root, layout.LegacyOutcomesFile)
-	if _, err := os.Lstat(path); os.IsNotExist(err) {
-		return nil
-	}
-	outcomes, err := s.legacyOutcomes(ctx)
-	if err != nil {
-		return err
-	}
-	for _, outcome := range outcomes {
-		if _, err := s.putDocument(ctx, outcome.document); err != nil {
-			return fmt.Errorf("legacy outcome %q: %w", outcome.IncidentID, err)
-		}
-	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove legacy outcomes: %w", err)
-	}
-	return nil
-}
-
 // LogicalOutcome returns record as every stored outcome reads: each text field
 // with its physical memory paths rewritten to logical references.
 func LogicalOutcome(record *contracts.OutcomeRecord) (*contracts.OutcomeRecord, error) {
@@ -302,7 +190,6 @@ func LogicalOutcome(record *contracts.OutcomeRecord) (*contracts.OutcomeRecord, 
 // parse is the one path by which outcome documents are written and read, so
 // stored outcomes, including memory accepted before agent prose was rewritten,
 // never show a worker a physical memory path.
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func parse(document []byte) (Outcome, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(document, &fields); err != nil || fields == nil {

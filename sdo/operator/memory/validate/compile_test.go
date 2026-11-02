@@ -1,10 +1,7 @@
 package validate
 
 import (
-<<<<<<< HEAD
-=======
 	"context"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"os"
 	"path/filepath"
 	"reflect"
@@ -118,7 +115,6 @@ func TestCompileSkipsRepositoriesWithoutDetectors(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 // Reporting does not need to rebuild Kubernetes/controller dependencies for
 // each Go failure stage. Real compiler fixtures still run in nightly CI.
 func TestCompileStageDiagnostics(t *testing.T) {
@@ -135,7 +131,11 @@ func TestCompileStageDiagnostics(t *testing.T) {
 			got := diagnose(t, compileRequest(compileTree(t)))
 			if len(got) != 1 || got[0].Rule != stage.rule || got[0].Path != detectorSource || got[0].Line != 17 {
 				t.Fatalf("%s diagnostic: %+v", stage.name, got)
-=======
+			}
+		})
+	}
+}
+
 func TestMissingHealthyReplayInputIsInformational(t *testing.T) {
 	for _, mode := range []string{"missing", "empty", "file"} {
 		t.Run(mode, func(t *testing.T) {
@@ -164,7 +164,6 @@ func TestMissingHealthyReplayInputIsInformational(t *testing.T) {
 			}
 			if !found {
 				t.Fatalf("missing replay input was hidden: %v", observations)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
 		})
 	}

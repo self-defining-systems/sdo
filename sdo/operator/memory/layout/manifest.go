@@ -217,7 +217,6 @@ func ParseDocument(data []byte) (Document, error) {
 	return Document{Meta: meta, Body: parts[2], Source: string(data)}, nil
 }
 
-<<<<<<< HEAD
 // supportedWatch is the manifest-side counterpart of core detector validation.
 func supportedWatch(w Watch) bool {
 	switch w.APIVersion + "/" + w.Kind {
@@ -228,7 +227,8 @@ func supportedWatch(w Watch) bool {
 		return true
 	}
 	return false
-=======
+}
+
 // ManifestKeys lists the detector manifest's YAML keys, nested keys in braces,
 // so a parse diagnostic can name every accepted field.
 func ManifestKeys() string {
@@ -250,5 +250,4 @@ func yamlKeys(t reflect.Type) string {
 		keys = append(keys, name)
 	}
 	return strings.Join(keys, ", ")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }

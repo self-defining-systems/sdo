@@ -65,7 +65,6 @@ func TestSourceInventoryBindsAcceptedCommitAndExcludesMemory(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestManifestInventoryIncludesSelectorsAndPodImages(t *testing.T) {
 	facts := sourceDependencies(map[string]any{"kind": "Pod", "spec": map[string]any{
 		"selector":   map[string]any{"matchLabels": map[string]any{"app": "api"}},
@@ -74,8 +73,10 @@ func TestManifestInventoryIncludesSelectorsAndPodImages(t *testing.T) {
 	got := strings.Join(facts, ",")
 	if !strings.Contains(got, "selector:app=api") || !strings.Contains(got, "image:example/api:v1") {
 		t.Fatalf("manifest inventory omitted declared facts: %s", got)
-=======
-func TestSourceInventoryStreamsLargeNonManifestAssets(t *testing.T) {
+	}
+}
+
+func TestSourceInventorySkipsLargeNonManifestAssets(t *testing.T) {
 	root := t.TempDir()
 	git := func(args ...string) string {
 		t.Helper()
@@ -107,27 +108,8 @@ func TestSourceInventoryStreamsLargeNonManifestAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(facts.Resources) != 1 || len(facts.Fingerprint) != 64 {
+	if len(facts.Resources) != 1 {
 		t.Fatalf("missing bounded projection: %+v", facts)
-	}
-	asset, err = os.OpenFile(filepath.Join(root, "asset.bin"), os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := asset.WriteAt([]byte("changed"), 64<<20); err != nil {
-		t.Fatal(err)
-	}
-	if err := asset.Close(); err != nil {
-		t.Fatal(err)
-	}
-	git("add", ".")
-	git("commit", "-qm", "change asset beyond old byte limit")
-	after, err := SourceInventory(context.Background(), root, git("rev-parse", "HEAD"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Fingerprint == facts.Fingerprint {
-		t.Fatal("large asset content was omitted from fingerprint")
 	}
 	if err := os.Rename(filepath.Join(root, "asset.bin"), filepath.Join(root, "asset.yaml")); err != nil {
 		t.Fatal(err)
@@ -136,6 +118,5 @@ func TestSourceInventoryStreamsLargeNonManifestAssets(t *testing.T) {
 	git("commit", "-qm", "synthetic oversized YAML")
 	if _, err := SourceInventory(context.Background(), root, git("rev-parse", "HEAD")); err == nil || !strings.Contains(err.Error(), "YAML inventory exceeds") {
 		t.Fatalf("YAML parsing lost its input bound: %v", err)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 }

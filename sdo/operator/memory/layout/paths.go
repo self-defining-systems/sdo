@@ -192,10 +192,6 @@ func Classify(p string) (Kind, string, bool) {
 		return only(parts, KindArchitecture)
 	case "lifecycle-provenance.yaml":
 		return only(parts, KindLifecycleProvenance)
-<<<<<<< HEAD
-=======
-	case "outcomes.jsonl":
-		return only(parts, KindLegacyOutcomes)
 	case "rendered":
 		if len(parts) == 2 {
 			if parts[1] == "lock.json" {
@@ -205,7 +201,6 @@ func Classify(p string) (Kind, string, bool) {
 				return KindRenderedObject, match[1], true
 			}
 		}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	case "outcomes":
 		if len(parts) == 2 {
 			if match := outcomeFile.FindStringSubmatch(parts[1]); match != nil {

@@ -272,11 +272,7 @@ func (s *run) visit(rel, abs string) error {
 		s.add(Structural, d)
 		return nil
 	}
-<<<<<<< HEAD
-	if kind == layout.KindOutcome {
-=======
-	if kind == layout.KindOutcome || kind == layout.KindLegacyOutcomes || kind == layout.KindRenderedLock || kind == layout.KindRenderedObject {
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	if kind == layout.KindOutcome || kind == layout.KindRenderedLock || kind == layout.KindRenderedObject {
 		return nil
 	}
 	info, err := os.Lstat(abs)

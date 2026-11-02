@@ -181,7 +181,6 @@ func TestPrepareHealthWithMetricsInstallsTheAlertsDetectorIdempotently(t *testin
 	}
 }
 
-<<<<<<< HEAD
 func TestPrepareHealthInstallsIndependentChecks(t *testing.T) {
 	root := preparedHealthRoot(t)
 	for _, id := range []string{"cluster-wiring", "workload-controllers", "warning-events", "node-health", "resource-saturation", "runtime-crashes"} {
@@ -199,7 +198,10 @@ func TestPrepareHealthInstallsIndependentChecks(t *testing.T) {
 		}
 		if manifest.Batching.Severity != "warn" || manifest.Persistence.Firing != firing {
 			t.Fatalf("%+v", manifest)
-=======
+		}
+	}
+}
+
 func TestPrepareHealthInstallsPodAdmissionInAllSeeds(t *testing.T) {
 	root := preparedHealthRoot(t)
 	generated := filepath.Join(root, layout.DetectorDir(layout.ClassHealth, "pod-admission"))
@@ -218,7 +220,6 @@ func TestPrepareHealthInstallsPodAdmissionInAllSeeds(t *testing.T) {
 			if string(got) != string(want) {
 				t.Fatalf("%s differs from generic policy", path)
 			}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 	}
 }

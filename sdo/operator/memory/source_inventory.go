@@ -56,54 +56,18 @@ func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (Sour
 		if parts[1] != "blob" || parts[0] == "120000" {
 			continue
 		}
-<<<<<<< HEAD
-		content, err := memoryio.Git(ctx, checkout, false, nil, "cat-file", "blob", parts[2])
-=======
-		_, _ = hash.Write(pathBytes)
-		_, _ = hash.Write([]byte{0})
-		blob := exec.CommandContext(ctx, "git", "-C", checkout, "cat-file", "blob", parts[2])
 		if !strings.HasSuffix(strings.ToLower(path), ".yaml") && !strings.HasSuffix(strings.ToLower(path), ".yml") {
-			// Assets affect the identical content fingerprint, but do not need
-			// materializing or parsing to produce the bounded topology projection.
-			blob.Stdout = hash
-			if err := blob.Run(); err != nil {
-				return SourceFacts{}, fmt.Errorf("hash accepted source blob %s: %w", path, err)
-			}
-			_, _ = hash.Write([]byte{0})
+			// Assets and code are source, not topology: they need no parsing.
 			continue
 		}
-		stream, err := blob.StdoutPipe()
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		content, err := memoryio.Git(ctx, checkout, false, nil, "cat-file", "blob", parts[2])
 		if err != nil {
-			return SourceFacts{}, err
-		}
-		if err := blob.Start(); err != nil {
-			return SourceFacts{}, err
-		}
-		content, readErr := io.ReadAll(io.LimitReader(stream, (64<<20)-total+1))
-		if readErr != nil || total+int64(len(content)) > 64<<20 {
-			_ = blob.Process.Kill()
-			_ = blob.Wait()
-			if readErr != nil {
-				return SourceFacts{}, fmt.Errorf("read accepted source blob %s: %w", path, readErr)
-			}
-			return SourceFacts{}, fmt.Errorf("accepted source YAML inventory exceeds 64 MiB")
-		}
-		if err := blob.Wait(); err != nil {
 			return SourceFacts{}, fmt.Errorf("read accepted source blob %s: %w", path, err)
 		}
 		total += int64(len(content))
-<<<<<<< HEAD
 		if total > 64<<20 {
-			return SourceFacts{}, fmt.Errorf("accepted source inventory exceeds 64 MiB")
+			return SourceFacts{}, fmt.Errorf("accepted source YAML inventory exceeds 64 MiB")
 		}
-		if !strings.HasSuffix(strings.ToLower(path), ".yaml") && !strings.HasSuffix(strings.ToLower(path), ".yml") {
-			continue
-		}
-=======
-		_, _ = hash.Write(content)
-		_, _ = hash.Write([]byte{0})
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		decoder := yaml.NewDecoder(bytes.NewReader(content))
 		for {
 			var doc map[string]any

@@ -164,14 +164,7 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
 		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests"})
 	}
-<<<<<<< HEAD
-	needsBase := (actor == Responder || actor == HealthJudge) && manifests
-=======
-	if phase == InitialPhase && actor == Deployer && containsPath(s.changed, layout.ArchitectureFile) && len(s.changed) != 1 {
-		s.add(Ownership, Diagnostic{Rule: RuleArchitectureAlone, Path: layout.ArchitectureFile, Message: "initial architecture must follow a separately accepted source proposal", Hint: "propose arch.md alone, after the source commit is accepted"})
-	}
-	needsBase := (actor == Upkeep && changesDetectors(s.changed)) || ((actor == Responder || actor == HealthJudge || actor == Human && phase == ImportPhase) && manifests)
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	needsBase := (actor == Responder || actor == HealthJudge || actor == Human && phase == ImportPhase) && manifests
 	if !needsBase {
 		return nil
 	}

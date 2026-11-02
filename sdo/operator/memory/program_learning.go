@@ -33,19 +33,11 @@ func ReadProgramLearningEvidence(ctx context.Context, repository, commit string)
 		return nil, nil
 	}
 	git := func(args ...string) ([]byte, error) {
-<<<<<<< HEAD
-		return memoryio.Git(ctx, repository, false, nil, args...)
-=======
-		output, err := exec.CommandContext(ctx, "git", append([]string{"-C", repository}, args...)...).Output()
+		output, err := memoryio.Git(ctx, repository, false, nil, args...)
 		if err != nil {
-			var exit *exec.ExitError
-			if errors.As(err, &exit) {
-				return nil, fmt.Errorf("git %s in %q at %s: %w: %s", strings.Join(args, " "), repository, commit, err, strings.TrimSpace(string(exit.Stderr)))
-			}
-			return nil, fmt.Errorf("git in %q at %s: %w", repository, commit, err)
+			return nil, fmt.Errorf("git %s in %q at %s: %w", strings.Join(args, " "), repository, commit, err)
 		}
 		return output, nil
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	listing, err := git("ls-tree", "-r", "--name-only", commit, "--", layout.CorpusDir+"/")
 	if err != nil {

@@ -332,7 +332,6 @@ func New() sdk.Detector {
 `, genericSpecWithSeverity(MetricsAlertsDetectorID, "Warning"))
 }
 
-<<<<<<< HEAD
 // extendedSource shares the SDK's watch declarations with the installed manifest.
 func extendedSource(id, kind, constructor string) string {
 	extra := ""
@@ -358,7 +357,8 @@ func New() sdk.Detector {
  }%s)
 }
 `, constructor, spec, kind, extra)
-=======
+}
+
 func podAdmissionSource() string {
 	return fmt.Sprintf(`package podadmission
 
@@ -376,5 +376,4 @@ func New() sdk.Detector {
     })
 }
 `, genericSpec("pod-admission"))
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
