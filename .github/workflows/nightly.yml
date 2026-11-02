@@ -43,12 +43,27 @@ jobs:
           sudo apt-get install -y --no-install-recommends bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           bwrap --ro-bind / / --dev /dev --proc /proc true
-      - name: Recorded reflection and scripted worker end-to-end compilation
+      - name: Check out the SREGym harness and its nested inputs
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          python3 scripts/init_test_prereqs.py
+      - name: Slow Python suites moved out of pull-request CI
         if: always()
         run: |
-          uv run pytest -n 2 --durations=30 \
+          uv run pytest -n 4 --durations=30 \
             tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
-            tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py
+            tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py \
+            tests/unit/sdo/agents/responder/test_reflection_final_check.py \
+            tests/unit/benchmarks/sregym/assurance/test_script_execution.py \
+            tests/unit/benchmarks/sregym/fastloop/test_sdo3_s3a_contracts.py \
+            tests/unit/benchmarks/sregym/fastloop/test_fastloop_fault_tracker.py \
+            tests/unit/benchmarks/sregym/fastloop/test_eval_guards.py \
+            tests/unit/benchmarks/sregym/fastloop/test_fastloop_composite.py \
+            tests/unit/benchmarks/sregym/adapter/test_deadline_owner.py \
+            tests/unit/benchmarks/sregym/test_agent_script.py \
+            tests/unit/benchmarks/sregym/fastloop/test_replay.py \
+            tests/unit/benchmarks/sregym/fastloop/test_sdo3_descriptions.py \
+            tests/unit/benchmarks/sregym/fastloop/test_attach_recovery.py
       - name: Complete race suite including replay and chaos
         run: bash scripts/test_go_ci.sh nightly
       - name: Bounded fuzz campaigns (seed cases also run on every PR)
