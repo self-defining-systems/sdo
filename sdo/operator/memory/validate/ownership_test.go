@@ -145,9 +145,9 @@ func TestOwnershipTable(t *testing.T) {
 		{"deployer cannot edit detectors", Deployer, InitialPhase, func(t *testing.T, r string) {
 			write(t, r, healthDetector, "package objective\n\n// x\n")
 		}, denied},
-		{"upkeep cannot change detectors", Upkeep, InitialPhase, func(t *testing.T, r string) {
+		{"upkeep cannot change detectors without schema migration", Upkeep, InitialPhase, func(t *testing.T, r string) {
 			write(t, r, cacheDetector, "package cache\n\n// x\n")
-		}, []string{RuleOwnershipDenied}},
+		}, []string{RuleUpkeepMigration}},
 		{"upkeep stamps schema alone", Upkeep, InitialPhase, func(t *testing.T, r string) {
 			write(t, r, layout.SchemaVersionFile, "3\n")
 			write(t, r, layout.DiagnosticsGoModFile, "module m\n")
@@ -237,7 +237,7 @@ func TestOwnershipFollowsMemoryKindAndActor(t *testing.T) {
 		{incident, HealthJudge, InitialPhase, false},
 		{layout.LegacyDetectorManifestFile, Responder, ReflectionPhase, false},
 		{layout.LegacyDetectorManifestFile, HealthJudge, InitialPhase, false},
-		{layout.LegacyDetectorManifestFile, Upkeep, InitialPhase, false},
+		{layout.LegacyDetectorManifestFile, Upkeep, InitialPhase, true},
 		{layout.DetectorDir(layout.ClassIncident, "i") + "/detector.go", Responder, ReflectionPhase, true},
 		{layout.DetectorDir(layout.ClassHealth, "h") + "/detector.go", Responder, ReflectionPhase, false},
 		{".sdo/diagnostics/traffic/workloads/incident-x.yaml", Responder, ReflectionPhase, true},

@@ -2,7 +2,8 @@ package validate
 
 // Rule IDs are stable: agents, the CLI, and tests match on them.
 const (
-	RulePlaybookStatus = "playbook.status"
+	RuleUpkeepMigration = "ownership.upkeep-migration"
+	RulePlaybookStatus  = "playbook.status"
 	// Publication content and lifecycle context.
 	RuleEmptyDiff                   = "diff.empty"
 	RuleBootstrapClosed             = "lifecycle.bootstrap-closed"

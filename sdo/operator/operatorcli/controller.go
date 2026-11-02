@@ -16,7 +16,6 @@ import (
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/toolchain"
 )
 
@@ -149,11 +148,15 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
 			return refreshControllerHealth(ctx, launch, repository)
 		},
 		ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
-			projected, err := memory.AcceptedDiagnostics(ctx, root)
+			repository, err := openMigrationBroker(launch)
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
-			repository, err := openControllerBroker(launch)
+			projected, err := resolveAcceptedDiagnostics(ctx, root, repository)
+			if err != nil {
+				return builder.DiagnosticsProjection{}, err
+			}
+			repository, err = openControllerBroker(launch)
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}

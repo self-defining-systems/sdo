@@ -9,8 +9,8 @@ import (
 	"sdo.dev/operator/memory/layout"
 )
 
-func TestWriteSchemaRejectsOldRepositoryWithoutChangingIt(t *testing.T) {
-	for _, version := range []int{1, 2} {
+func TestWriteSchemaRejectsFutureRepositoryWithoutChangingIt(t *testing.T) {
+	for _, version := range []int{999} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			root := t.TempDir()
 			directory := filepath.Join(root, layout.Dir)
@@ -23,7 +23,7 @@ func TestWriteSchemaRejectsOldRepositoryWithoutChangingIt(t *testing.T) {
 				t.Fatal(err)
 			}
 			err := WriteSchema(root)
-			want := fmt.Sprintf("unsupported operational memory schema version %d; required %d", version, layout.CurrentSchemaVersion)
+			want := fmt.Sprintf("migrate operational memory: cannot migrate operational memory schema version %d", version)
 			if err == nil || err.Error() != want {
 				t.Fatalf("error = %v; want %s", err, want)
 			}

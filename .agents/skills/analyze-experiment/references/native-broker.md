@@ -133,3 +133,5 @@ Memory-host observations contain optional input windows only. Kubernetes object
 state is selected by the completed mirror sequence; no inline snapshot fallback
 exists. A failed scheduler start leaves the previous revision serving, and crash
 recovery restores the accepted immutable revision with its requested traffic state.
+
+Saved-memory porting: use `sdo-operator memory migrate <checkout> --worktree-root <external-dir> --operator-root <operator> --replay on|off`. It shares startup Upkeep and registered schema migrations. Audit clean saved trees with `memory check --accepted --root <checkout>` and the original replay policy. An unchanged HEAD passed as a proposal base returns diff.empty; it is not an accepted-tree audit. Record source commit, replay policy and migration receipt. Migration never imports retired outcomes.jsonl.
