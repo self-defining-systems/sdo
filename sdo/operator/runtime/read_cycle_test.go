@@ -325,5 +325,3 @@ func (ignoringQueryDetector) Detect(_ context.Context, s sdk.DetectionContext) (
 	_ = program.ReadFrom(s).QueryMetrics(metrics.Query{ID: "up", Expr: "up"})
 	return nil, nil
 }
-
-

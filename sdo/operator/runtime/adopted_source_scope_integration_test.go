@@ -5,7 +5,6 @@ package runtime
 import (
 	"context"
 	"testing"
-
 )
 
 func TestMenuProgramParametersBindOneOptionWithoutFindingCandidates(t *testing.T) {
@@ -50,4 +49,3 @@ func TestMenuProgramParametersRejectUnknownAndIncompleteBindings(t *testing.T) {
 		}
 	}
 }
-

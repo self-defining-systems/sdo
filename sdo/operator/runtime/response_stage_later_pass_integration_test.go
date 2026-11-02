@@ -72,4 +72,3 @@ func TestLaterStagePassAppliesOnlyTheNewMatch(t *testing.T) {
 		t.Fatalf("an attempted binding was applied again: %v", third)
 	}
 }
-

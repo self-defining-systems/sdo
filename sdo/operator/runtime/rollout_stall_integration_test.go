@@ -242,4 +242,3 @@ func TestStalledPendingReservationReleasesToResponder(t *testing.T) {
 		t.Fatalf("responder waited on a stalled lock: %s", scale.Error)
 	}
 }
-

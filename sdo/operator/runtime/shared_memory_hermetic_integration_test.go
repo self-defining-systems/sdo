@@ -455,4 +455,3 @@ func requireOnlyRejectionEvidenceSince(t *testing.T, repo, accepted, incident st
 		}
 	}
 }
-

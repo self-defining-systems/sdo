@@ -258,4 +258,3 @@ func TestKubernetesCacheResyncObservesRecreatedNamespaceAfterStop(t *testing.T) 
 		awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: "v1", Kind: "Pod", Namespace: "demo"})
 	})
 }
-

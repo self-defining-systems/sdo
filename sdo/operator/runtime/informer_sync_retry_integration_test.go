@@ -117,4 +117,3 @@ func TestRunRetriesTransientInformerSyncFailure(t *testing.T) {
 	default:
 	}
 }
-

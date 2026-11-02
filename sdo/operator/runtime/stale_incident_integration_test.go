@@ -223,4 +223,3 @@ func TestFinishedResponderJobIsHarvestedBeforeRetirement(t *testing.T) {
 		})
 	}
 }
-

@@ -204,4 +204,3 @@ func TestTypedLogsEnforceByteCapAndDuration(t *testing.T) {
 		t.Fatal("new logs accepted implicit container")
 	}
 }
-

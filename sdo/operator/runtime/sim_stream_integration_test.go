@@ -522,4 +522,3 @@ func TestSimNextIncidentAfterFailedRepair(t *testing.T) {
 		})
 	}
 }
-

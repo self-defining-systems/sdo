@@ -76,7 +76,7 @@ func TestSeedAcceptanceRequiresReachabilityEvidence(t *testing.T) {
 		Args:     []string{"--evaluate-once", "--accept-seed", "--namespace", "demo"},
 		Provider: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "requires --prober-url") {
+	if err == nil || !strings.Contains(err.Error(), "requires the active memory host") {
 		t.Fatalf("missing reachability accepted: %v", err)
 	}
 }

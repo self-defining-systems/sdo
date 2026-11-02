@@ -58,4 +58,3 @@ func assertStage3Wait(t *testing.T, loop *ResponderLoop, report *contracts.Stage
 		t.Fatal(err)
 	}
 }
-

@@ -187,4 +187,3 @@ func realSeedLive(t *testing.T, root, commit, deployed, namespace string, paths 
 	}
 	return live
 }
-

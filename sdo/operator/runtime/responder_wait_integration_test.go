@@ -73,4 +73,3 @@ func TestResponderVerifyWaitTimeoutAndInstantCachedRead(t *testing.T) {
 		t.Fatalf("timeout %v: %+v", elapsed, response)
 	}
 }
-

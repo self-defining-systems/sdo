@@ -58,4 +58,3 @@ func recordEvalWaitSample(t *testing.T, controller *Controller, at time.Time, no
 	}
 	return evalWaitSample{At: at, Note: note, State: state}
 }
-

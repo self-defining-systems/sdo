@@ -248,4 +248,3 @@ func (s *retryFailingStateStore) Save(ctx context.Context, state *contracts.Cont
 	}
 	return s.StateStore.Save(ctx, state, revision)
 }
-

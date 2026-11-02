@@ -223,4 +223,3 @@ func bringupRehearsalAPI(t *testing.T, client *fake.Clientset, install func() er
 	}
 	return filename
 }
-

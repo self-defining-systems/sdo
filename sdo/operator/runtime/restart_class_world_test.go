@@ -65,4 +65,3 @@ func (j seedJudge) Execute(_ context.Context, task *contracts.AgentTask) (*contr
 	}
 	return &contracts.AgentResult{SchemaVersion: worker_registry.SchemaVersion, TaskId: task.GetTaskId(), Status: "completed", ProposalId: task.GetWorkspace().GetProposalId(), Response: response}, nil
 }
-

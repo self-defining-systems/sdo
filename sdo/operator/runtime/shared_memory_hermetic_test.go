@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"time"
-
 )
 
 type sharedMemoryResponder struct {
@@ -31,4 +30,3 @@ func (d sharedMemoryResponder) Dispatch(_ context.Context, r IncidentRequest) (I
 // The cluster edge is synthetic; controller detection, workspaces, registered
 // reflection tasks, independent compilation, native ledgers and Git are real.
 var conflictBlock = regexp.MustCompile(`(?s)<<<<<<< [^\n]*\n.*?\n>>>>>>> [^\n]*\n`)
-

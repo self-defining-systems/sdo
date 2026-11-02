@@ -318,13 +318,12 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	if reachability != nil {
 		carrier = carrier.WithReachability(reachabilityWindow{reachability})
 	}
-	return trafficContext{Carrier: carrier, ScopedObservationSource: sdk.ScopedSource(base)}, nil
+	return trafficContext{Carrier: carrier}, nil
 }
 
-// trafficContext keeps the carrier's inputs and the base snapshot's scoped reads visible.
+// trafficContext is the carrier with synthetic-traffic and reachability windows.
 type trafficContext struct {
 	inputs.Carrier
-	sdk.ScopedObservationSource
 }
 
 type trafficWindows map[string]traffic.Window

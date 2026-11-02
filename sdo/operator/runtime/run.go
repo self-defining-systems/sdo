@@ -1632,6 +1632,7 @@ func evaluateOnce(
 	trafficAPI ProberAPI,
 	clock kclock.WithTicker,
 ) error {
+	clock = timerClock(clock)
 	flags := flag.NewFlagSet("sdo-controller-evaluate-once", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")

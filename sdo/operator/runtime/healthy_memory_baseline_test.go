@@ -70,4 +70,3 @@ func TestControllerCapturesHealthyRefusedPortsBeforeIncident(t *testing.T) {
 		}
 	}
 }
-

@@ -1,8 +1,6 @@
 package runtime
 
-import (
-
-)
+import ()
 
 const compiledLearningRecurrence = `package generated
 import(
@@ -104,4 +102,3 @@ func TestCompiledIdenticalRecurrence(t *testing.T){
  t.Log("incident 1 committed programs and detector; identical incident 2 exposes compiled program coverage and is repaired by scripted agent selection")
 }
 `
-

@@ -134,4 +134,3 @@ func TestHermeticSourceAbsentDriftSelectsLearnedPlaybook(t *testing.T) {
 		t.Fatalf("compiled detector/program replay rejected: %v %+v", err, diagnostics)
 	}
 }
-

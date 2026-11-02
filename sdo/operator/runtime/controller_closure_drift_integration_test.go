@@ -215,4 +215,3 @@ func TestClosureDriftUsesSourceFieldsWhenReconcileIsNoop(t *testing.T) {
 		t.Fatal("apply normalization hid an admitted live/source mismatch")
 	}
 }
-

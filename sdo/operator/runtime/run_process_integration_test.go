@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"sdo.dev/operator/internal/testutil"
 )
 
 func TestResolveRepositoryCommitsUsesRealGitHead(t *testing.T) {

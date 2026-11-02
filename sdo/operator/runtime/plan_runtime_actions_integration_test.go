@@ -118,4 +118,3 @@ func TestXV2TypedExecCompletesWithOnlyExitStatus(t *testing.T) {
 		t.Fatalf("output-free upgrade: code=%d err=%v", code, err)
 	}
 }
-

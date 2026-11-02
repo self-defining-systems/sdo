@@ -251,7 +251,7 @@ func (p MetricsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 		return base, err
 	}
 	frozen := p.Observer.freeze(ctx)
-	return metricsContext{Carrier: inputs.New(base).WithMetrics(frozen).WithAlerts(frozen), ScopedObservationSource: sdk.ScopedSource(base), frozen: frozen}, nil
+	return metricsContext{Carrier: inputs.New(base).WithMetrics(frozen).WithAlerts(frozen), frozen: frozen}, nil
 }
 
 // metricsContext wraps a snapshot with the cycle's frozen metrics. The carrier
@@ -259,7 +259,6 @@ func (p MetricsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 // hides what capture and replay read.
 type metricsContext struct {
 	inputs.Carrier
-	sdk.ScopedObservationSource
 	frozen *frozenMetrics
 }
 

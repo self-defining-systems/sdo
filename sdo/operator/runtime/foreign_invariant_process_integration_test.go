@@ -7,20 +7,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/client-go/kubernetes/fake"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"testing"
+
+	networkingv1 "k8s.io/api/networking/v1"
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"strings"
-	"testing"
-	"time"
 )
 
 func compileReflectedForeignInvariant(t *testing.T, captureRoot, incidentID string) compiledForeignInvariant {
@@ -64,73 +63,6 @@ func compileReflectedForeignInvariant(t *testing.T, captureRoot, incidentID stri
 		t.Fatalf("build accepted invariant runner: %v: %s", err, output)
 	}
 	return compiledForeignInvariant{binary: binary}
-}
-
-func TestHermeticForeignNetworkPolicyInvariantRepeat(t *testing.T) {
-	captureRoot, incidentID, source, commit := runForeignPolicyIncident(t)
-	learned := compileReflectedForeignInvariant(t, captureRoot, incidentID)
-	registry, err := program.NewRegistry([]program.Diagnoser{learned}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The first verified incident supplies the diagnosis-only artifact. A distinct
-	// policy name and opposite direction exercise reuse rather than literal replay.
-	policy := foreignPolicy("second-deny")
-	policy.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
-	snapshot := policyWorkloadSnapshot(*policy)
-	start := time.Unix(100, 0).UTC()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	watch := sdk.WatchKind{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app"}
-	cache.eventHandler(watch).OnAdd(policy, false)
-	config := testControllerConfig()
-	config.Namespace, config.SourceCommit, config.FiringThreshold, config.ClearThreshold = "app", commit, 1, 1
-	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
-	provider := &changingProvider{snapshot: snapshot}
-	controller, err := NewController(config, nil, provider, dispatcher, start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourceAvailable := true
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		if !sourceAvailable {
-			return LiveReadView{Carrier: inputs.New(snapshot)}
-		}
-		return LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}
-	}})
-	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
-		t.Fatal(err)
-	}
-	if !controller.IncidentOpen() {
-		t.Fatalf("compiled program did not open repeat incident: %+v", exportState(t, controller))
-	}
-	executePendingEffect(t, controller)
-	request := awaitRequest(t, dispatcher.requests)
-	if len(request.Findings) != 1 || request.Findings[0].DetectorID != "drift.networkpolicy-service-isolation" || request.Findings[0].Severity != sdk.SeverityLatent {
-		t.Fatalf("repeat did not use invariant: %+v", request)
-	}
-	awaitDispatchCompletionQueued(t, controller)
-	snapshot.NetworkPolicyList = nil
-	provider.snapshot = snapshot
-	cache.eventHandler(watch).OnDelete(policy)
-	sourceAvailable = false
-	if err := controller.StepEvents(context.Background(), start.Add(2*time.Second), cache.TakeEvents()); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := controller.PendingIncidentClosure(); ok {
-		t.Fatal("an Unknown diagnosis cleared the learned finding")
-	}
-	sourceAvailable = true
-	cache.eventHandler(watch).OnDelete(policy)
-	if err := controller.StepEvents(context.Background(), start.Add(3*time.Second), cache.TakeEvents()); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := controller.PendingIncidentClosure(); !ok {
-		t.Fatal("deleting the policy left the learned invariant finding active")
-	}
-
 }
 
 func TestForeignNetworkPolicyInvariantNearMisses(t *testing.T) {

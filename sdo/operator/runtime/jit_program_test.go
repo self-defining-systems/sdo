@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
 )
 
 const syntheticWorkingProgram = `package repair
@@ -36,4 +35,3 @@ func TestWorkingProgramRevisionReceiptsStayBounded(t *testing.T) {
 		t.Fatalf("revision omission must be explicit: %s", recorded)
 	}
 }
-

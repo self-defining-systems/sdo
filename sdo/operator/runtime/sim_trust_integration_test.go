@@ -44,4 +44,3 @@ func TestSimProgramTrustFollowsOnlyVerifiedRepairs(t *testing.T) {
 		}
 	})
 }
-

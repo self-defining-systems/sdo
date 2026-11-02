@@ -99,4 +99,3 @@ func TestClosureLearnsWorkloadRepairWhoseCauseNamesItsReplacedPod(t *testing.T) 
 		t.Fatalf("accepted outcome kept the replaced Pod as a cause resource: %+v %v", recorded, err)
 	}
 }
-

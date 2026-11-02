@@ -105,4 +105,3 @@ func runSimSlowSetupRefresh(t *testing.T, seed uint64) {
 		}
 	})
 }
-

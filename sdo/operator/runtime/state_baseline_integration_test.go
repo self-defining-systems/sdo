@@ -264,4 +264,3 @@ func TestHealthyBaselineDoesNotAbsorbAChangeAtTheEndOfSettle(t *testing.T) {
 		t.Fatal("late change was absorbed without its own healthy settle")
 	}
 }
-

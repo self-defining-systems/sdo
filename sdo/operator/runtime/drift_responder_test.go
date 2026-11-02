@@ -103,4 +103,3 @@ func TestUnexplainedDriftFindingUsesAcceptedSourceRestorationDefault(t *testing.
 		t.Fatalf("changed drift identity: %+v", finding)
 	}
 }
-

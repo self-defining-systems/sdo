@@ -1,11 +1,10 @@
-//go:build integration
-
 package runtime
 
 import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 )
 
@@ -23,13 +22,13 @@ import (
 // awaitInformerGoroutines polls until at most baseline reflectors run, and
 // returns the final count.
 func awaitInformerGoroutines(baseline int, grace time.Duration) int {
-	deadline := time.Now().Add(grace)
+	deadline := lifecycleio.Now().Add(grace)
 	for {
 		count := informerGoroutines()
-		if count <= baseline || time.Now().After(deadline) {
+		if count <= baseline || lifecycleio.Now().After(deadline) {
 			return count
 		}
-		time.Sleep(10 * time.Millisecond)
+		<-lifecycleio.After(10 * time.Millisecond)
 	}
 }
 
@@ -63,4 +62,3 @@ func newCacheForTest(t testing.TB, config KubernetesCacheConfig, detectors []sdk
 	guardInformers(t, "KubernetesCache", cache.Stop)
 	return cache, nil
 }
-

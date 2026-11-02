@@ -103,17 +103,13 @@ func TestEvaluateOnceUnqualifiedTrafficReportsPendingReason(t *testing.T) {
 	frontend := &fakeFrontend{}
 	frontend.broken.Store(true)
 	api := runProber(t, frontend)
-	address, err := api.BaseURL(context.Background(), false)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, accept := range []bool{false, true} {
 		var output bytes.Buffer
-		args := []string{"--evaluate-once", "--namespace", "hotel-reservation", "--prober-url", address}
+		args := []string{"--evaluate-once", "--namespace", "hotel-reservation"}
 		if accept {
 			args = append(args, "--accept-seed")
 		}
-		err := RunWithOptions(context.Background(), []sdk.Detector{trafficDetector("traffic-health", "health")}, RuntimeOptions{Args: args, Stdout: &output, Provider: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "hotel-reservation"}}})
+		err := RunWithOptions(context.Background(), []sdk.Detector{trafficDetector("traffic-health", "health")}, RuntimeOptions{Args: args, Stdout: &output, Traffic: api, Provider: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "hotel-reservation"}}})
 		if (err != nil) != accept {
 			t.Fatalf("accept=%v: %v", accept, err)
 		}
@@ -173,4 +169,3 @@ func TestTrafficSelfChecksRetainPartialQualificationAndRealFaults(t *testing.T) 
 		}
 	}
 }
-

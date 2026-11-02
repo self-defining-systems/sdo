@@ -3,8 +3,6 @@ package runtime
 import (
 	"fmt"
 
-
-
 	"sdo.dev/operator/sdk"
 )
 
@@ -43,4 +41,3 @@ const (
 )
 
 var simEpoch = newSimClock().Now()
-

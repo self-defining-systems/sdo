@@ -50,4 +50,3 @@ func TestDeleteObservationPreservesBoundAndRejectsReplacement(t *testing.T) {
 		})
 	}
 }
-

@@ -70,4 +70,3 @@ func (p countingUnknownProgram) Diagnose(context.Context, program.ReadView, prog
 	p.calls.Add(1)
 	return program.Verdict{Result: program.Unknown}, nil
 }
-

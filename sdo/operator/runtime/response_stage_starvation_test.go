@@ -31,4 +31,3 @@ func (c stageFailedWriteClient) Patch(ctx context.Context, ref sdk.ObjectRef, ki
 	}
 	return c.PlanObjectClient.Patch(ctx, ref, kind, data)
 }
-

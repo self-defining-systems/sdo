@@ -45,4 +45,3 @@ func (c *hangingReadClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind t
 	c.patched[ref] = true
 	return c.planFakeClient.Patch(ctx, ref, kind, patch)
 }
-

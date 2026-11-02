@@ -31,7 +31,7 @@ type fakePrimitiveProber struct {
 
 type changingBaseline struct{ changes *StateChanges }
 
-func (b *changingBaseline) Observe(time.Time, bool)         {}
+func (b *changingBaseline) Observe(time.Time, bool) {}
 
 func (b *changingBaseline) Changes(time.Time) *StateChanges { return b.changes }
 
@@ -188,4 +188,3 @@ func TestUnavailableSweepCapabilityCannotClearFault(t *testing.T) {
 		})
 	}
 }
-

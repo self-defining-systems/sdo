@@ -148,4 +148,3 @@ func restartClassWriteReceipt(t *testing.T, native NativeIncidentBroker, path, i
 		t.Fatal(err)
 	}
 }
-

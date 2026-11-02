@@ -136,4 +136,3 @@ func testReflectionTerminalJob(t *testing.T, vanished bool) {
 		t.Fatalf("created %d Jobs", creates)
 	}
 }
-

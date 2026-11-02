@@ -28,4 +28,3 @@ func (p learnedRepeatProgram) Diagnose(ctx context.Context, v program.ReadView, 
 func (p learnedRepeatProgram) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
 	return p.Mitigator.Mitigate(ctx, v, p.original(b))
 }
-

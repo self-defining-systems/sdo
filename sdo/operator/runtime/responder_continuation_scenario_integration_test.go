@@ -177,4 +177,3 @@ func TestResponderContinuationWaitsForClearingWithoutNewJob(t *testing.T) {
 		t.Fatalf("clearing consumed another turn: jobs=%d attempts=%d", len(jobs.Items), loop.continuation.Attempts)
 	}
 }
-

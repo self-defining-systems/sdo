@@ -90,4 +90,3 @@ func (c informerRemovalAPI) Delete(ctx context.Context, ref sdk.ObjectRef, uid t
 	}
 	return fmt.Errorf("unsupported synthetic resource %s", ref.Kind)
 }
-

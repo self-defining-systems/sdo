@@ -73,4 +73,3 @@ func parseTestObjectPath(path string) (schema.GroupVersionResource, string, stri
 	}
 	return gv.WithResource(parts[0]), namespace, parts[1], true
 }
-

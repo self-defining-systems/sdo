@@ -180,4 +180,3 @@ func TestSourceDiffWithoutAcceptanceRecordFailsClosed(t *testing.T) {
 		}
 	}
 }
-

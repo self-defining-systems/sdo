@@ -1,8 +1,6 @@
 package runtime
 
-import (
-
-)
+import ()
 
 const compiledLearnAcceptRepeatController = `package generated
 
@@ -196,4 +194,3 @@ func TestAcceptedLearnedControllerRepeat(t *testing.T) {
 	t.Logf("accepted commit %s: healthy iteration %d, queued changes, learned repeat dispatch, later iteration %d", accepted.SourceCommit, before, state().GetEvaluationIteration())
 }
 `
-

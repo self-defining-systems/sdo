@@ -70,4 +70,3 @@ func TestSourceInventoryOnboardingUnmetPrerequisitesNeverClaim(t *testing.T) {
 		})
 	}
 }
-

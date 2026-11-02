@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-
 	"sdo.dev/operator/sdk"
 )
 
@@ -44,4 +43,3 @@ type stormResult struct {
 	// PersistState), which bounds how long a new watch event can wait.
 	maxStep time.Duration
 }
-

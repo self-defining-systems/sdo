@@ -167,4 +167,3 @@ func TestAddedFieldDriftOnAutoscaledWorkload(t *testing.T) {
 		t.Fatalf("HPA hid unrelated addition: %+v %v", event, err)
 	}
 }
-

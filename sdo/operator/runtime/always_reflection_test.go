@@ -26,4 +26,3 @@ func socialRepeatClosure(workspace IncidentWorkspace) IncidentClosure {
 	c.Result.RepairActions = []RepairActionReceipt{{ActionID: "recorded-selector-repair", Kind: "kubectl-patch", Target: "Deployment/default/toy-user", Summary: "remove unsupported selector", Details: "command succeeded", Success: true, Resources: c.Result.ConfirmedRootCauses[0].Resources, StartedAt: c.DetectedAt, CompletedAt: c.ResponderCompletedAt}}
 	return c
 }
-

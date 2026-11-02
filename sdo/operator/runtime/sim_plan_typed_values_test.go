@@ -87,4 +87,3 @@ func (k *simTypedKube) Exec(_ context.Context, ref sdk.ObjectRef, _ string, _ []
 	k.execCalls++
 	return 0, apierrors.NewForbidden(schema.GroupResource{Resource: "pods/exec"}, ref.Name, errors.New("no controller grant"))
 }
-

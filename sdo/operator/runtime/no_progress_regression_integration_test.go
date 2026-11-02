@@ -121,4 +121,3 @@ func TestResponderProgressContinuesToRecovery(t *testing.T) {
 		})
 	}
 }
-

@@ -103,4 +103,3 @@ func TestControllerRecordsSourceComparisonsOnLiveSnapshots(t *testing.T) {
 		t.Fatalf("fixed boundary did not repeat the admission webhook read: %+v", w)
 	}
 }
-

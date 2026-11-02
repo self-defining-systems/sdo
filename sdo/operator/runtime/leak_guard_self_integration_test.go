@@ -53,4 +53,3 @@ func TestGuardInformersFailsOwnerThatLeaksAndPassesOneThatStops(t *testing.T) {
 		t.Fatalf("an owner that stopped its informers was failed: %v", clean.errors)
 	}
 }
-

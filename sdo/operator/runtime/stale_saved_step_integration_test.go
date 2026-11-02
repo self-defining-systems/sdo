@@ -103,4 +103,3 @@ func TestHermeticStaleSavedStepRepromptsWithOnlyTheStillBrokenFinding(t *testing
 		}
 	}
 }
-

@@ -76,4 +76,3 @@ func TestEarlyClosureMissingReportResumesReflectionWithVerifiedReceipts(t *testi
 		t.Fatalf("reflection calls=%d", calls)
 	}
 }
-

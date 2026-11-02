@@ -47,4 +47,3 @@ func TestClientGoSourceBindingBecomesStaleAfterAcceptedRoleRemoval(t *testing.T)
 		t.Fatalf("removed role reused despite source change: %v", err)
 	}
 }
-

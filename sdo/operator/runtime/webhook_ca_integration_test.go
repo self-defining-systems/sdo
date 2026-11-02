@@ -186,4 +186,3 @@ func TestWebhookCASyncComposedActionPublication(t *testing.T) {
 		})
 	}
 }
-

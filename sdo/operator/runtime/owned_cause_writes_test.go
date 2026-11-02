@@ -53,4 +53,3 @@ func TestOwnedChildWriteIsCauseWorkNotUnassigned(t *testing.T) {
 		t.Fatal("a write without a recorded owner chain must stay unassigned; names never bind")
 	}
 }
-

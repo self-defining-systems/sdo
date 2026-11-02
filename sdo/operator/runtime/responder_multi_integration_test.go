@@ -319,4 +319,3 @@ func TestMultiMitigationPendingRolloutBlocksEarlyClosure(t *testing.T) {
 		t.Fatal("settled rollout prevented independent closure check")
 	}
 }
-

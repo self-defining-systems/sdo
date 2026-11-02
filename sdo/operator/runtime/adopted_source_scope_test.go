@@ -22,4 +22,3 @@ func (adoptedFlagProgram) Mitigate(_ context.Context, _ program.ReadView, b prog
 	ref := b.Objects["config"]
 	return program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[flags.json]", DocumentFormat: "json", DocumentPath: []string{"flags", "highCpu", "defaultVariant"}, Value: program.FromSource(ref, "data[flags.json]")}}}, nil
 }
-

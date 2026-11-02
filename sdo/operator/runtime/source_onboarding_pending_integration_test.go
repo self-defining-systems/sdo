@@ -44,4 +44,3 @@ func TestSourceInventoryPendingOnboardingUsesFirstClusterEvaluation(t *testing.T
 		t.Fatal(err)
 	}
 }
-

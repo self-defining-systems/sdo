@@ -189,4 +189,3 @@ func TestAcceptedAstronomyAddedFieldsReachRestoration(t *testing.T) {
 		})
 	}
 }
-

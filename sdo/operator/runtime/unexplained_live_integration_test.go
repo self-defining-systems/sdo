@@ -95,4 +95,3 @@ func TestUnexplainedLiveInformerMenu(t *testing.T) {
 		t.Fatal("removal receipts missing")
 	}
 }
-

@@ -14,4 +14,3 @@ func multiCall(t *testing.T, loop *ResponderLoop, options string) ToolResponse {
 	}
 	return loop.Handle(context.Background(), request)
 }
-

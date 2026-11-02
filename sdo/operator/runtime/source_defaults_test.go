@@ -138,4 +138,3 @@ func (p settlementSnapshot) Snapshot(ctx context.Context) (sdk.DetectionContext,
 	stored.Objects = []unstructured.Unstructured{*current}
 	return stored, nil
 }
-

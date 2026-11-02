@@ -81,4 +81,3 @@ func TestResponseStageVerifiedRepairsReachRegisteredReflection(t *testing.T) {
 		t.Fatalf("reflection calls=%d, want 1", calls)
 	}
 }
-

@@ -18,4 +18,3 @@ func (startupResidualDetector) Spec() sdk.DetectorSpec {
 func (startupResidualDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return []sdk.Finding{{DetectorID: "synthetic-residual", RuleID: "uncovered", Status: sdk.FindingActive, Severity: "critical", Summary: "Synthetic uncovered fault", Evidence: "Synthetic evidence", PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "uncovered"}}}, nil
 }
-

@@ -138,4 +138,3 @@ func TestPendingDriftPreventsVerificationWhenPeerIsUnresolved(t *testing.T) {
 		})
 	}
 }
-

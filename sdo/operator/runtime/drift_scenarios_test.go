@@ -100,4 +100,3 @@ func dispatchScenario(t *testing.T, c *Controller) {
 	}
 	executePendingEffect(t, c)
 }
-

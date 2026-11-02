@@ -183,4 +183,3 @@ func TestNativeStartupRejectsMissingToolchainBeforeKubernetes(t *testing.T) {
 		t.Fatal("missing compiler reached Kubernetes")
 	}
 }
-

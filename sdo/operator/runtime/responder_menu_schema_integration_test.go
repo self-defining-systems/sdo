@@ -141,4 +141,3 @@ func TestMenuMalformedStructuredParameterRefusesBatchBeforeWrites(t *testing.T) 
 		t.Fatalf("bad batch wrote or lost safe field error: %s", raw)
 	}
 }
-

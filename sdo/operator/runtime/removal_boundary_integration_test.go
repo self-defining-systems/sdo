@@ -114,4 +114,3 @@ func TestReadViewCannotExecuteWithControlIdentity(t *testing.T) {
 		t.Fatal("diagnosis crossed protected control boundary")
 	}
 }
-

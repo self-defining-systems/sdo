@@ -137,4 +137,3 @@ func TestHistoricalOutcomeWithoutSettlementCannotCreateSuccessCredit(t *testing.
 		t.Fatalf("historical compatibility created proof: %+v", got)
 	}
 }
-

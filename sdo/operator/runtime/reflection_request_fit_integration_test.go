@@ -200,4 +200,3 @@ func TestReflectionWorkerKilledForMemoryIsSkippedTypedAndTheIncidentCloses(t *te
 		})
 	}
 }
-

@@ -126,4 +126,3 @@ func TestRV6PausedStartupWorkerLossWaitsForResume(t *testing.T) {
 		})
 	}
 }
-

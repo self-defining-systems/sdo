@@ -120,4 +120,3 @@ func TestUncachedWriteStillNeedsFreshDirectProofAndWatchedKindsWait(t *testing.T
 		t.Fatalf("fresh direct proof did not discharge an uncached barrier: %v", err)
 	}
 }
-

@@ -49,4 +49,3 @@ func TestHealthAdoptionDiscardsQueuedObsoleteFindings(t *testing.T) {
 		t.Fatal("adopted health policy was not evaluated immediately")
 	}
 }
-

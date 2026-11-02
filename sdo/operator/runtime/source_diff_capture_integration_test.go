@@ -85,4 +85,3 @@ func TestSourceDiffIgnoresLastAppliedAnnotationNoise(t *testing.T) {
 		t.Fatalf("bookkeeping annotation is not source drift: %+v %v", diff, err)
 	}
 }
-

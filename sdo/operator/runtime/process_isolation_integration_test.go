@@ -28,4 +28,3 @@ func inIsolatedProcess(t *testing.T) bool {
 	}
 	return false
 }
-

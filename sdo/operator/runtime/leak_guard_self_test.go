@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"testing"
-
 )
 
 // recordingTB captures what guardInformers reports instead of failing the
@@ -13,7 +12,7 @@ type recordingTB struct {
 	errors   []string
 }
 
-func (r *recordingTB) Helper()          {}
+func (r *recordingTB) Helper() {}
 
 func (r *recordingTB) Cleanup(f func()) { r.cleanups = append(r.cleanups, f) }
 
@@ -26,4 +25,3 @@ func (r *recordingTB) runCleanups() {
 		r.cleanups[i]()
 	}
 }
-

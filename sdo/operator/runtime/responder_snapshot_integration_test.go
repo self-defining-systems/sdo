@@ -75,4 +75,3 @@ func TestControllerClosureSnapshotConcurrentDispatchInitialization(t *testing.T)
 		t.Fatalf("lost initialized program runs: %+v", snapshot.ProgramRuns)
 	}
 }
-

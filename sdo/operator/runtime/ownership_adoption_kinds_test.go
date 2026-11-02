@@ -133,4 +133,3 @@ func driftPDB(minAvailable int32, manager string, operation metav1.ManagedFields
 }
 
 var acceptedPDB = adoptionObject("policy/v1", "PodDisruptionBudget", "opensearch-pdb", map[string]any{"minAvailable": float64(1)})
-

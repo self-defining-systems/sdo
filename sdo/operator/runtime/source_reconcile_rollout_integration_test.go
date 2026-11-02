@@ -81,4 +81,3 @@ func TestSourceConvergenceWaitsForKubernetesOldObjects(t *testing.T) {
 		})
 	}
 }
-

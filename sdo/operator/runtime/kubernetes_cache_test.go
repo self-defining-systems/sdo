@@ -54,4 +54,3 @@ func TestEverySupportedWatchHasAnInformer(t *testing.T) {
 		}
 	}
 }
-

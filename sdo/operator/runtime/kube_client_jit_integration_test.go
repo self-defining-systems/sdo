@@ -51,4 +51,3 @@ func(Program)Diagnose(ctx context.Context,v program.ReadView,b program.Bindings)
 	}
 
 }
-

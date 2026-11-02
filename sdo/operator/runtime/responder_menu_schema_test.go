@@ -69,4 +69,3 @@ func TestMenuStructuredNullParametersAreRefused(t *testing.T) {
 		}
 	}
 }
-

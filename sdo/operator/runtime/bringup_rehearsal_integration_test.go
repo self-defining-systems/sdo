@@ -192,7 +192,7 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	installer := install.Installer{Client: client, BeforeControllerStart: func(ctx context.Context, _ install.Config) error {
 		return onboarding.Stage(ctx, client, "demo-sdo", "demo", installed, declared, time.Unix(100, 0))
 	}}
-	config := install.Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "tracing", AcceptedCommit: installed, Model: "scripted-no-model", TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}"), ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "accepted", CredentialsSecret: "credentials"}
+	config := install.Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "tracing", AcceptedCommit: installed, Model: "scripted-no-model", TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}"), ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "accepted", CredentialsSecret: "credentials"}
 
 	var installs atomic.Int32
 	kubeconfig := bringupRehearsalAPI(t, client, func() error {
@@ -580,4 +580,3 @@ func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	}
 	t.Logf("full native bring-up + real HY restore + recovered judge + validated pending checkpoint + six quiet cycles + namespace recreation with visible replacement inventory + restart passed in %s", time.Since(started))
 }
-

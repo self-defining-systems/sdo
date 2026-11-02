@@ -340,4 +340,3 @@ func TestReflectionAdoptionPublishesAcrossObjectiveOrPolicyChange(t *testing.T) 
 		})
 	}
 }
-

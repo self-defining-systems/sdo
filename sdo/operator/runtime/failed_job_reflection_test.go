@@ -11,4 +11,3 @@ func reflectionNoChangeResult(_ context.Context, task *contracts.AgentTask) (*co
 	response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "independent cause evidence unavailable"})
 	return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 }
-

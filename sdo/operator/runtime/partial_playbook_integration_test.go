@@ -86,4 +86,3 @@ func TestStillMatchingProgramIsNotAppliedTwiceWithinIncident(t *testing.T) {
 		t.Fatalf("still-matching program applied twice: %v", loop.PlanApplications())
 	}
 }
-

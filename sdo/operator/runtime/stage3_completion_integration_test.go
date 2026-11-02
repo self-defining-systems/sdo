@@ -49,4 +49,3 @@ func TestStageConsumesCompletionOfWaitAndSatisfiedEnsure(t *testing.T) {
 		})
 	}
 }
-

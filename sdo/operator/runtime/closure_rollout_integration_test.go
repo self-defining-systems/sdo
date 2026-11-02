@@ -140,4 +140,3 @@ func TestClosureRolloutWaitsBeforePublishingSuccess(t *testing.T) {
 		t.Fatalf("settled rollout did not release closure: %+v", f.closed)
 	}
 }
-

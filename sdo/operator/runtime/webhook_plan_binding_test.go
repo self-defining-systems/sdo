@@ -89,4 +89,3 @@ type webhookBindingView struct {
 func (v webhookBindingView) AdmissionWebhooksFor(sdk.ObjectRef) ([]program.AdmissionWebhook, error) {
 	return v.entries, nil
 }
-

@@ -55,4 +55,3 @@ func TestMitigationUnavailableHealthReturnsWithoutUndo(t *testing.T) {
 		t.Fatalf("health outage undid repair: live=%v error=%v", live, getErr)
 	}
 }
-

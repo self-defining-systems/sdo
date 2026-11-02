@@ -23,4 +23,3 @@ func (v clientGoServiceView) KubernetesRead(q program.KubernetesRequest) (json.R
 	}
 	return json.Marshal(object)
 }
-

@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"time"
-
 )
 
 type pipelineScenarioDispatcher struct {
@@ -32,4 +31,3 @@ func (d *recordingScenarioDispatcher) Dispatch(ctx context.Context, request Inci
 	d.requests <- request
 	return completedResult(request.IncidentID), nil
 }
-

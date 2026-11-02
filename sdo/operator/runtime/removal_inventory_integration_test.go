@@ -99,4 +99,3 @@ func TestRemovalForeignBindingDeletionOnlyWakesOwnership(t *testing.T) {
 		t.Fatal("ownership graph was not woken")
 	}
 }
-

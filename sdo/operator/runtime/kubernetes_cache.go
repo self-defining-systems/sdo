@@ -1,9 +1,9 @@
 package runtime
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"context"
 	"fmt"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kclock "k8s.io/utils/clock"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
@@ -142,8 +142,21 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 			if !inventoryClusterKind(watch.Kind) {
 				watch.Namespace = config.Namespace
 			}
+			if watch.Kind == "Node" && watch.APIVersion == "v1" {
+				watch.Namespace = ""
+			}
 			declared[watch.APIVersion+"/"+watch.Kind] = watch
 		}
+	}
+	// Programs read these kinds whether or not a detector watches them, so
+	// informers always back them; a snapshot never polls the API server.
+	for _, watch := range []sdk.WatchKind{
+		{APIVersion: "apps/v1", Kind: "StatefulSet"},
+		{APIVersion: "autoscaling/v2", Kind: "HorizontalPodAutoscaler"},
+		{APIVersion: "policy/v1", Kind: "PodDisruptionBudget"},
+	} {
+		watch.Namespace = config.Namespace
+		declared[watch.APIVersion+"/"+watch.Kind] = watch
 	}
 	if config.TrackDrift {
 		for _, watch := range []sdk.WatchKind{
@@ -446,9 +459,6 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 	c.observeScoped(scoped)
 	snapshot := controllercore.DetectionSnapshot{GenericCapture: c.config.GenericCapture, NamespaceName: c.config.Namespace, ObservedAtTime: clock().UTC(), ScopedSnapshot: scoped}
 	c.informerMu.RLock()
-	_, statefulSetInformer := c.informers["apps/v1/StatefulSet"]
-	_, hpaInformer := c.informers["autoscaling/v2/HorizontalPodAutoscaler"]
-	_, pdbInformer := c.informers["policy/v1/PodDisruptionBudget"]
 	for key, informer := range c.informers {
 		for _, object := range informer.GetStore().List() {
 			switch key {
@@ -489,6 +499,8 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 				snapshot.PDBList = append(snapshot.PDBList, *object.(*policyv1.PodDisruptionBudget).DeepCopy())
 			case "networking.k8s.io/v1/Ingress":
 				snapshot.IngressList = append(snapshot.IngressList, *object.(*networkingv1.Ingress).DeepCopy())
+			case "v1/Node":
+				snapshot.NodeList = append(snapshot.NodeList, *object.(*corev1.Node).DeepCopy())
 			case "v1/Secret":
 				snapshot.SecretList = append(snapshot.SecretList, sdk.SecretMetadataFrom(*object.(*corev1.Secret)))
 			case "v1/Event":
@@ -497,28 +509,6 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 		}
 	}
 	c.informerMu.RUnlock()
-	// Kinds no detector watches are still read for diagnosis.
-	if !statefulSetInformer {
-		statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return nil, fmt.Errorf("list statefulsets: %w", err)
-		}
-		snapshot.StatefulSetList = append([]appsv1.StatefulSet(nil), statefulSets.Items...)
-	}
-	if !hpaInformer {
-		hpas, err := c.config.Client.AutoscalingV2().HorizontalPodAutoscalers(c.config.Namespace).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return nil, fmt.Errorf("list horizontalpodautoscalers: %w", err)
-		}
-		snapshot.HPAList = append([]autoscalingv2.HorizontalPodAutoscaler(nil), hpas.Items...)
-	}
-	if !pdbInformer {
-		pdbs, err := c.config.Client.PolicyV1().PodDisruptionBudgets(c.config.Namespace).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return nil, fmt.Errorf("list poddisruptionbudgets: %w", err)
-		}
-		snapshot.PDBList = append([]policyv1.PodDisruptionBudget(nil), pdbs.Items...)
-	}
 	if c.podAdmission {
 		r := controllercore.ObservePodAdmission(ctx, c.config.Client, c.config.Namespace, snapshot.PodList)
 		snapshot.Admission = &r

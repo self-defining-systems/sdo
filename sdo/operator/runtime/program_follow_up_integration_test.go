@@ -259,4 +259,3 @@ func TestEffectivePendingApplicationKeepsItsObject(t *testing.T) {
 		t.Fatalf("a pending application whose targeted findings cleared lost its object: %+v", scale.Report)
 	}
 }
-

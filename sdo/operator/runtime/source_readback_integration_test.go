@@ -94,4 +94,3 @@ func TestSourceReadbackUnavailableRemainsPendingUntilObserved(t *testing.T) {
 		})
 	}
 }
-

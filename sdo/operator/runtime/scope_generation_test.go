@@ -26,4 +26,3 @@ func TestScopedDiagnosisSurvivesScopeChange(t *testing.T) {
 		t.Fatalf("scope change failed the diagnosis: %v", err)
 	}
 }
-

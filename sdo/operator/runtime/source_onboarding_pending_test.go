@@ -359,4 +359,3 @@ func TestInstallEnvironmentInventorySurvivesFailedHealthAndRestart(t *testing.T)
 		t.Fatalf("later fault hidden: %+v", c.sourceInventoryFindings)
 	}
 }
-

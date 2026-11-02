@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -188,29 +189,31 @@ func TestExpiredIncidentKeepsOrphanWorkerPod(t *testing.T) {
 }
 
 func TestExpiredIncidentEffectPumpRefusesDispatchWithoutAnotherEvaluation(t *testing.T) {
-	ctx := context.Background()
-	start := time.Unix(1000, 0)
-	config := testControllerConfig()
-	config.FiringThreshold = 1
-	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
-	controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := controller.Step(ctx, start, nil); err != nil {
-		t.Fatal(err)
-	}
-	old := exportState(t, controller).IncidentRequest
-	controller.now = func() time.Time { return old.ResponseDeadline.AsTime().Add(time.Second) }
-	// Workspace and transport completions pump effects without another Step.
-	if err := executePendingEffects(ctx, controller); err != nil {
-		t.Fatal(err)
-	}
-	got := exportState(t, controller)
-	if got.IncidentOpen || len(got.FailedClosures) != 1 {
-		t.Fatal("effect pump resumed expired request")
-	}
-	assertNoRequest(t, dispatcher.requests)
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		start := time.Unix(1000, 0)
+		config := testControllerConfig()
+		config.FiringThreshold = 1
+		dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+		controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := controller.Step(ctx, start, nil); err != nil {
+			t.Fatal(err)
+		}
+		old := exportState(t, controller).IncidentRequest
+		controller.now = func() time.Time { return old.ResponseDeadline.AsTime().Add(time.Second) }
+		// Workspace and transport completions pump effects without another Step.
+		if err := executePendingEffects(ctx, controller); err != nil {
+			t.Fatal(err)
+		}
+		got := exportState(t, controller)
+		if got.IncidentOpen || len(got.FailedClosures) != 1 {
+			t.Fatal("effect pump resumed expired request")
+		}
+		assertNoRequest(t, dispatcher.requests)
+	})
 }
 
 func TestExpiredIncidentPreservesClaimedClosure(t *testing.T) {
@@ -561,4 +564,3 @@ func TestFinishedResponderJobHoldIsBoundedByVerification(t *testing.T) {
 		})
 	}
 }
-

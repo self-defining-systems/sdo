@@ -4,7 +4,6 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -78,7 +77,7 @@ func(detector) Detect(_ context.Context, ctx sdk.DetectionContext)([]sdk.Finding
 	if err := os.WriteFile(path, formattedNativePathSource(w.t, source), 0644); err != nil {
 		return nil, err
 	}
-	response, _ := anypb.New(&contracts.HealthJudgeResult{Authored: true, AgentSessionId: "scripted-judge", ObjectiveDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(request.GetHealthObjective()))), DetectorIds: []string{"health-objective"}})
+	response, _ := anypb.New(&contracts.HealthJudgeResult{Authored: true, AgentSessionId: "scripted-judge", DetectorIds: []string{"health-objective"}})
 	result.Response = response
 	return result, nil
 }
@@ -237,4 +236,3 @@ func TestSimHealthRefreshInterruptedAndAdopted(t *testing.T) {
 		})
 	}
 }
-

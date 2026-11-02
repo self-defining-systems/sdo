@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/workloadhealth"
@@ -44,7 +45,7 @@ func TestPodAdmissionBlocksVerificationUntilAPIRecovers(t *testing.T) {
 	// observation must survive traffic, metrics and the cycle's read view.
 	base := TrafficSnapshotProvider{Base: cache}
 	provider := ReadSnapshotProvider{Base: base, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return program.ReadFrom(metricsContext{DetectionContext: snapshot, ScopedObservationSource: scopedSource(snapshot)})
+		return program.ReadFrom(metricsContext{Carrier: inputs.New(snapshot)})
 	}}
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Namespace: "app"}, nil, provider, []sdk.Detector{detector}, PlanExecutor{}, 1)
 	loop.ReadView = program.ReadFrom
@@ -84,4 +85,3 @@ func TestPodAdmissionBlocksVerificationUntilAPIRecovers(t *testing.T) {
 		t.Fatalf("capture lost observation: %+v", captured)
 	}
 }
-

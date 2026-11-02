@@ -64,4 +64,3 @@ func TestGenericRawDeleteCannotReachRemovalIdentity(t *testing.T) {
 		t.Fatal("generic config mutated")
 	}
 }
-

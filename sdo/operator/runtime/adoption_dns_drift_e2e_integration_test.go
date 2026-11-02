@@ -116,4 +116,3 @@ func TestAdoptedDeploymentDNSPolicyDriftIsNamedAndRestoredWithoutImageEvidence(t
 		t.Fatalf("one ReconcileFromSource did not restore dnsPolicy: %q %v", after.Spec.Template.Spec.DNSPolicy, err)
 	}
 }
-

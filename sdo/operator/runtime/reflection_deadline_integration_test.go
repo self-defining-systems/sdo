@@ -136,4 +136,3 @@ func TestReflectionPendingJobDeadlineIsFrozenAndTerminal(t *testing.T) {
 		})
 	}
 }
-

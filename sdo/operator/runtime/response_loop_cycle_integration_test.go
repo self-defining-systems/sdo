@@ -180,4 +180,3 @@ func TestResponseLoopActPhaseDoesNotEndIncident(t *testing.T) {
 		t.Fatalf("one act phase ended the incident: %+v err=%v", outcome.result, outcome.err)
 	}
 }
-

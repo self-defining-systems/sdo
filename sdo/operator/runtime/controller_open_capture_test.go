@@ -112,4 +112,3 @@ func TestIncidentIsOpenBeforeTheCorpusCaptureIO(t *testing.T) {
 		t.Fatalf("corpus capture ran with the batcher drained and no incident open (open=%v busy_until=%v)", openDuringCapture, busyDuringCapture)
 	}
 }
-

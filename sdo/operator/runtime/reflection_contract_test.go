@@ -328,4 +328,3 @@ func (Program) Spec() program.ProgramSpec {return program.ProgramSpec{ID:"contra
 func (Program) Mitigate(_ context.Context, _ program.ReadView,b program.Bindings)(program.Plan,error){return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b.Objects["service"],Reason:"restore accepted source"}},Rationale:"restore accepted source"},nil}
 func (Program) Diagnose(_ context.Context, v program.ReadView,b program.Bindings)(program.Verdict,error){d,e:=v.DiffAgainstSource(b.Objects["service"]);r:=program.NoMatch;if d.Changed {r=program.Match};return program.Verdict{Result:r},e}
 `
-

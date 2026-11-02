@@ -352,4 +352,3 @@ func coverRepairsWithPortProgram(t *testing.T, checkout, casePrefix string, outc
 		t.Fatal(err)
 	}
 }
-

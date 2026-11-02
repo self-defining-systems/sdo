@@ -150,4 +150,3 @@ func TestResponderMenuSessionAndReportsSurviveToolRestore(t *testing.T) {
 		t.Fatal("controller restart lost report or repair evidence")
 	}
 }
-

@@ -1,8 +1,6 @@
 package runtime
 
-import (
-
-)
+import ()
 
 // matchOptions lists the program options; the menu also carries generic actions.
 func matchOptions(response ToolResponse, programID string) []string {
@@ -14,4 +12,3 @@ func matchOptions(response ToolResponse, programID string) []string {
 	}
 	return ids
 }
-

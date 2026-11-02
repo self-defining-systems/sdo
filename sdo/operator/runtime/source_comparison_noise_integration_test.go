@@ -39,4 +39,3 @@ func TestSourceComparisonDryRunIgnoresControllerAndQuantityNoise(t *testing.T) {
 		t.Fatalf("dry run comparison: %+v %v called=%v", diff, err, called)
 	}
 }
-

@@ -49,4 +49,3 @@ func runCompiledLearnAcceptRepeatController(t *testing.T, ctx context.Context, b
 	}
 	t.Logf("dynamic accepted-memory controller cycle: %s", output)
 }
-

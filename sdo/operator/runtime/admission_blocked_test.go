@@ -41,4 +41,3 @@ func (r pendingDeploymentRollout) Wait(_ context.Context, refs []sdk.ObjectRef) 
 	}
 	return nil
 }
-

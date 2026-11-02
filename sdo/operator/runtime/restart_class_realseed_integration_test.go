@@ -65,4 +65,3 @@ func TestRealSeedHermeticReplay(t *testing.T) {
 		}
 	}
 }
-

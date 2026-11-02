@@ -124,4 +124,3 @@ func testAdmissionRetryLive(t *testing.T, kubeconfig, mode string) {
 		t.Fatal("live Deployment recovery was not independently verified")
 	}
 }
-

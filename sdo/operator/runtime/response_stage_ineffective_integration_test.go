@@ -134,4 +134,3 @@ func TestNoProgressStageHandsOffAfterOneTurn(t *testing.T) {
 		t.Fatalf("a no-progress turn was repeated: %d diagnoses for 2 matches", calls.Load())
 	}
 }
-

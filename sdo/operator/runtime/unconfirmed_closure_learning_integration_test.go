@@ -57,4 +57,3 @@ func TestUnconfirmedClosureCommitsOutcomeWithoutFailureLearning(t *testing.T) {
 		t.Fatalf("unconfirmed closure reflection was not accepted as a no-op: calls=%d decision=%v", calls, decision)
 	}
 }
-

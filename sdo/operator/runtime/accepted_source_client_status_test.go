@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-
 )
 
 // Result.Raw drops the server Status; no production request in this package
@@ -31,4 +29,3 @@ func TestProductionRequestsNeverReadRawBeforeError(t *testing.T) {
 		}
 	}
 }
-

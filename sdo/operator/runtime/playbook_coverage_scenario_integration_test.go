@@ -273,4 +273,3 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool, batchPrograms 
 		t.Fatalf("outcome: %v", err)
 	}
 }
-

@@ -62,4 +62,3 @@ func (r sourceReadbackRollouts) SourceRolloutResiduals(context.Context, *unstruc
 	}
 	return nil, nil
 }
-

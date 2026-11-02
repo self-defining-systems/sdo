@@ -29,4 +29,3 @@ func TestUnavailableAPIDoesNotClaimDispatchedWrite(t *testing.T) {
 		t.Fatalf("missing transport claimed a write: %+v %v", result, err)
 	}
 }
-

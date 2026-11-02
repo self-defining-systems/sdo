@@ -84,4 +84,3 @@ turn.finish("read failed mitigation report and selected successful alternate in 
 (directory/"factory-report.json").write_text(json.dumps(dict(first=first,second=second)))
 print(json.dumps(dict(session_id=rollout.session_id)))
 `
-

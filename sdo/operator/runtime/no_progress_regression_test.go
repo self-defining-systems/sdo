@@ -120,4 +120,3 @@ func TestResponderNoProgressRequiresStableInventoryAndFailedReceipts(t *testing.
 		})
 	}
 }
-

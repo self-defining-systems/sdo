@@ -20,4 +20,3 @@ func (simPartialHealth) Detect(ctx context.Context, v sdk.DetectionContext) ([]s
 	}
 	return (fastloopDetector{}).Detect(ctx, snapshot)
 }
-

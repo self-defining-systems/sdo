@@ -81,4 +81,3 @@ func (unschedulable) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk
 	}
 	return findings, nil
 }
-

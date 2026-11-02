@@ -25,4 +25,3 @@ func (c sourceConvergenceAPIClient) Patch(ctx context.Context, ref sdk.ObjectRef
 	}
 	return c.afterPatch(ctx, ref)
 }
-

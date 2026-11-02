@@ -125,4 +125,3 @@ func TestRunScriptRawMenuEnvironmentValues(t *testing.T) {
 		t.Fatalf("raw map lost provenance: %+v %+v", script.Env, inputs)
 	}
 }
-

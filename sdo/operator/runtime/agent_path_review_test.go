@@ -46,4 +46,3 @@ func TestMitigationScopeFollowsTargetFindingRatherThanWrittenObject(t *testing.T
 		})
 	}
 }
-

@@ -240,4 +240,3 @@ func TestNoProgressLaterPassSettlesTheStage(t *testing.T) {
 		t.Fatal("the later finding did not join the incident for the responder")
 	}
 }
-

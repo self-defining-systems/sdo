@@ -190,4 +190,3 @@ func TestDefaultRenderUsesIsolatedCreate(t *testing.T) {
 		t.Fatalf("isolated create: creates=%d err=%v", creates, err)
 	}
 }
-

@@ -131,4 +131,3 @@ func (c contextAwareSourceClient) Get(ctx context.Context, ref sdk.ObjectRef) (*
 	}
 	return c.planFakeClient.Get(ctx, ref)
 }
-

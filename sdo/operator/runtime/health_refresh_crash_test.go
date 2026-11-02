@@ -124,4 +124,3 @@ func crashController(t *testing.T, root, compiled, state, cut string) *Controlle
 	c.discardRestoredHealthObservations(time.Unix(1000, 0))
 	return c
 }
-

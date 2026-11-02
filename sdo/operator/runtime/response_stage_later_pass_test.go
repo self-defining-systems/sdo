@@ -13,4 +13,3 @@ func splitFindingsByPlaybook(t *testing.T, findings []sdk.Finding) (first, secon
 	}
 	return findings[0], findings[1]
 }
-

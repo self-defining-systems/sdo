@@ -56,4 +56,3 @@ func TestMenuMatchNarrowsByRequestedBinding(t *testing.T) {
 		t.Fatalf("binding should select one match: %+v", matchOptions(one, "restart-only"))
 	}
 }
-

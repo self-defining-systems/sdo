@@ -94,4 +94,3 @@ func (p mutatingFailureProgram) Mitigate(ctx context.Context, v program.ReadView
 	}
 	return p.pipelinePortProgram.Mitigate(ctx, v, b)
 }
-

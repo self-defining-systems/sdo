@@ -223,4 +223,3 @@ func TestControllerEvaluatesConfigMapWatcherAfterDeleteBehindPodBacklog(t *testi
 		}
 	})
 }
-

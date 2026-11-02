@@ -85,4 +85,3 @@ func TestAuthorizationDeniedNoProgressNeedsExactBrokenSet(t *testing.T) {
 		t.Fatal("ordinary failure stopped continuation")
 	}
 }
-

@@ -113,4 +113,3 @@ func TestRunRepeatWithLearnedDetectorErrorAndQueuedPodChanges(t *testing.T) {
 		return err == nil && state.GetEvaluationIteration() >= 4
 	})
 }
-

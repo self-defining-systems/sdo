@@ -51,4 +51,3 @@ func TestSourceInventoryOnboardingMaintenanceRequiresFreshSamples(t *testing.T) 
 		t.Fatalf("fresh post-resume window did not finalize: %v %v", record, err)
 	}
 }
-

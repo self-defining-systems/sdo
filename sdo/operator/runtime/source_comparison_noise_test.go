@@ -353,4 +353,3 @@ func TestSourceComparisonParsesIntoTypedContainerChanges(t *testing.T) {
 		})
 	}
 }
-

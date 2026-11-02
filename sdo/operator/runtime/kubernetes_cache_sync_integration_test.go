@@ -136,4 +136,3 @@ func TestKubernetesCacheObserveRelistsAfterStop(t *testing.T) {
 		t.Fatal("a stopped cache was not relisted")
 	}
 }
-

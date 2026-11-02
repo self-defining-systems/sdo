@@ -220,4 +220,3 @@ func(Program) Mitigate(context.Context,program.ReadView,program.Bindings)(progra
 		t.Fatalf("scripted reflection failed: calls=%d decision=%+v err=%v", calls, decision, err)
 	}
 }
-

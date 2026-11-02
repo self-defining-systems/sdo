@@ -92,4 +92,3 @@ func TestPostClosureReadPayloadIsNormalPlusWarning(t *testing.T) {
 		})
 	}
 }
-

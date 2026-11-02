@@ -88,4 +88,3 @@ func TestRefinementQuestionAF3Replay(t *testing.T) {
 		})
 	}
 }
-

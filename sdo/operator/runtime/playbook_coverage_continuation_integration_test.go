@@ -201,4 +201,3 @@ func TestHermeticCoverageContinuationLeavesOnlyUnexplainedFinding(t *testing.T) 
 		t.Fatalf("expected initial job and exactly one re-prompt, got %d", len(jobs.Items))
 	}
 }
-

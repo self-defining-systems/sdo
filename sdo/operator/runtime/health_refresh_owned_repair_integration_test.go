@@ -317,4 +317,3 @@ func TestClosureCompletesAcrossRepositoryAdvance(t *testing.T) {
 		})
 	}
 }
-

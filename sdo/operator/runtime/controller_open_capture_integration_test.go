@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
@@ -57,4 +56,3 @@ func TestOpenDetectRoutingSweepNeverDelaysDispatch(t *testing.T) {
 	prober.Release()
 	awaitRoutingSweep(t, root, request.IncidentID)
 }
-

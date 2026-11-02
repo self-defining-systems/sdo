@@ -379,4 +379,3 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 		}
 	}
 }
-

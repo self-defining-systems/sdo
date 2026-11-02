@@ -417,4 +417,3 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 		}
 	})
 }
-

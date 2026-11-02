@@ -1,7 +1,6 @@
 package runtime
 
 import (
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
@@ -43,4 +42,3 @@ func (v flagSourceView) flag() string {
 func flagSnapshot(value string) sdktest.Snapshot {
 	return sdktest.Snapshot{NamespaceName: "demo", ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "flags", Namespace: "demo"}, Data: map[string]string{"flag": value}}}}
 }
-

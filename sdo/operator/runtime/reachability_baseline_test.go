@@ -1,13 +1,13 @@
 package runtime
 
 import (
-	"sdo.dev/operator/sdk/inputs"
 	"context"
 	corev1 "k8s.io/api/core/v1"
 	"net"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
@@ -72,6 +72,5 @@ func withMode(mode string) *mutableSnapshots {
 }
 
 func withReachability(s sdktest.Snapshot, w servicehealth.ReachabilityWindow) sdk.DetectionContext {
-	return trafficContext{Carrier: inputs.New(s).WithReachability(reachabilityWindow{&w}), ScopedObservationSource: sdk.ScopedSource(s)}
+	return trafficContext{Carrier: inputs.New(s).WithReachability(reachabilityWindow{&w})}
 }
-

@@ -277,4 +277,3 @@ func TestTerminalPlanFailureUsesInvocationBindings(t *testing.T) {
 		t.Fatalf("authored mutation poisoned peer input: calls=%d response=%+v", calls.Load(), response)
 	}
 }
-

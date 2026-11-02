@@ -112,4 +112,3 @@ func closureRollouts(c *Controller, now time.Time, snapshot sdk.DetectionContext
 	report := c.verifyClosureSource(context.Background(), now, snapshot, nil)
 	return len(report.Rollouts) == 0, report.Rollouts
 }
-

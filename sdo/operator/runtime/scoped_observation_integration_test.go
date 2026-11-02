@@ -6,6 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -15,17 +23,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
-	"math/rand"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"strings"
-	"testing"
-	"time"
 )
 
 func TestScopedAvailabilitySeededDenialRegrant(t *testing.T) {
@@ -50,7 +51,7 @@ func TestScopedAvailabilitySeededDenialRegrant(t *testing.T) {
 				t.Fatal(err)
 			}
 			clock := time.Unix(0, 0)
-			cache, err := newCacheForTest(t, KubernetesCacheConfig{Now: func() time.Time { clock = clock.Add(time.Minute); return clock }, Namespace: "app", Client: client, Scope: scope, Ceiling: scope, TrackDrift: true, Generation: "commit"}, nil)
+			cache, err := newCacheForTest(t, KubernetesCacheConfig{Clock: func() time.Time { clock = clock.Add(time.Minute); return clock }, Namespace: "app", Client: client, Scope: scope, Ceiling: scope, TrackDrift: true, Generation: "commit"}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -237,7 +238,7 @@ func TestScopedControllerAvailabilitySeeded(t *testing.T) {
 			spec.Interval = time.Second
 			detector := scheduledDetector{spec: spec}
 			clock := time.Unix(0, 0)
-			cache, err := newCacheForTest(t, KubernetesCacheConfig{Now: func() time.Time { clock = clock.Add(time.Minute); return clock }, Client: client, Namespace: "app", Scope: scope, Ceiling: scope}, []sdk.Detector{detector})
+			cache, err := newCacheForTest(t, KubernetesCacheConfig{Clock: func() time.Time { clock = clock.Add(time.Minute); return clock }, Client: client, Namespace: "app", Scope: scope, Ceiling: scope}, []sdk.Detector{detector})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -397,7 +398,7 @@ func TestScopedRetryBackoffRequiresFreshRegrant(t *testing.T) {
 		}
 		return false, nil, nil
 	})
-	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: client, Scope: scope, Ceiling: scope, Now: func() time.Time { return now }}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: client, Scope: scope, Ceiling: scope, Clock: func() time.Time { return now }}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,4 +520,3 @@ func TestScopedWebhookDefaultsChangedThenRestored(t *testing.T) {
 		})
 	}
 }
-

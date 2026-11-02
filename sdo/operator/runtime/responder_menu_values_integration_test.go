@@ -99,4 +99,3 @@ func TestResponderMenuReportNamesSelectedOption(t *testing.T) {
 		t.Fatal("execution report does not say which option ran")
 	}
 }
-

@@ -85,4 +85,3 @@ func TestGeneralTokenRequestDoesNotReadCredentialResponse(t *testing.T) {
 		t.Fatal("generated credential crossed API boundary")
 	}
 }
-

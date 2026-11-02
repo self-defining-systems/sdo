@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 
-
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 )
@@ -51,4 +50,3 @@ func (p simChangedScopeProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	snapshot, err := p.SnapshotProvider.Snapshot(ctx)
 	return simChangedScopeSnapshot{DetectionContext: snapshot, ScopedObservationSource: sdk.ScopedSnapshot{Version: 1, Generation: p.generation}}, err
 }
-

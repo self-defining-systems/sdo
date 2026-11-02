@@ -157,4 +157,3 @@ func TestTrafficRestartMidIncidentCanVerifyRecovery(t *testing.T) {
 		t.Fatalf("restart could not verify/close recovered incident: verified=%+v closure=%+v", verified, closure)
 	}
 }
-

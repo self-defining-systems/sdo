@@ -5,7 +5,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
-
 )
 
 type stillFaultedStageView struct{ SnapshotProvider }
@@ -23,4 +22,3 @@ func (v stillFaultedStageView) Snapshot(ctx context.Context) (sdk.DetectionConte
 	}
 	return snapshot, nil
 }
-

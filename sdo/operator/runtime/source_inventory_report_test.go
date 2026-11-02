@@ -36,4 +36,3 @@ func TestSourceInventoryReadOnlyReport(t *testing.T) {
 		t.Fatal("accepted an ambiguous output path")
 	}
 }
-

@@ -4,17 +4,27 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"io"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
+	"os"
 	"os/exec"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/servicehealth"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/internal/testutil"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 )
 
 func gitRepository(t *testing.T) string {

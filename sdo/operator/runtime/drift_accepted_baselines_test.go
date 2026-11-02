@@ -1,7 +1,6 @@
 package runtime
 
 import (
-
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -25,4 +24,3 @@ func scriptedBaselineDefaults(source *unstructured.Unstructured) *unstructured.U
 	}
 	return live
 }
-

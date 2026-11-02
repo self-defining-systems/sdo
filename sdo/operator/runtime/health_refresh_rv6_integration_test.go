@@ -126,4 +126,3 @@ func TestOpenIncidentSurvivesAdoption(t *testing.T) {
 		t.Fatalf("adoption retired an investigation: open=%v failed=%v archive=%d", c.incidentOpen, failed, len(c.failedClosures))
 	}
 }
-

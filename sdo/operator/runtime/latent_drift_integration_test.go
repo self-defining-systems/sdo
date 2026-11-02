@@ -40,4 +40,3 @@ func TestLatentSourceAbsentInitialObjectsAreUnexplained(t *testing.T) {
 		t.Fatalf("startup latent objects are invisible: %+v", findings)
 	}
 }
-

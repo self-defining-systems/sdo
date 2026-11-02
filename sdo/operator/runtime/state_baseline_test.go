@@ -108,9 +108,8 @@ func field(change *StateChange, name string) *StateFieldChange {
 }
 
 func TestStateTrackerRejectsNegativeResyncPeriod(t *testing.T) {
-	tracker := NewStateTracker(StateTrackerConfig{ResyncPeriod: -time.Second})
+	tracker := newTrackerForTest(t, StateTrackerConfig{ResyncPeriod: -time.Second})
 	if err := tracker.Start(context.Background()); err == nil {
 		t.Fatal("negative resync period accepted")
 	}
 }
-

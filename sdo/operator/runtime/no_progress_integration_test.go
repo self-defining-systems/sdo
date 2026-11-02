@@ -72,4 +72,3 @@ func TestResponderMixedFailuresNoProgress(t *testing.T) {
 		t.Fatalf("terminal no progress resumed: %v %v", resumed, err)
 	}
 }
-

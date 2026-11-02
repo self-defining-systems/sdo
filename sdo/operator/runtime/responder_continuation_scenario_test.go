@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"testing"
-
 )
 
 func TestContinuationRepairsSurviveRestartAndDeduplicateReceipts(t *testing.T) {
@@ -42,4 +41,3 @@ func TestContinuationRepairsSurviveRestartAndDeduplicateReceipts(t *testing.T) {
 		t.Fatalf("duplicate resumed receipt: %+v", next)
 	}
 }
-

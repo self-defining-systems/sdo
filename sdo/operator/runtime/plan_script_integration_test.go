@@ -31,4 +31,3 @@ func TestRunScriptFailureNeverAutomaticallyUndoesAndOutputStaysPrivate(t *testin
 		t.Fatal("private output reference missing")
 	}
 }
-

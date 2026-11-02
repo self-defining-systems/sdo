@@ -4,10 +4,11 @@ package runtime
 
 import (
 	"context"
-	"k8s.io/client-go/kubernetes/fake"
 	"path/filepath"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"testing"
+
+	"k8s.io/client-go/kubernetes/fake"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
@@ -15,7 +16,7 @@ func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
 	config := &contracts.ControllerConfig{
 		ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "linked", AppRoot: root, Namespace: "default",
 		BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository",
-		ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model",
+		ResponderBackend: "codex", ResponderModel: "model",
 	}
 	if _, _, err := nativeBrokerFromLaunch(context.Background(), config, fake.NewSimpleClientset()); err == nil {
 		t.Fatal("linked worker mount accepted for native broker")

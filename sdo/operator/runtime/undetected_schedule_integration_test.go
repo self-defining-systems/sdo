@@ -65,4 +65,3 @@ func TestSimScheduleUndetectedLearningRequiresCompleteTransition(t *testing.T) {
 		}
 	})
 }
-

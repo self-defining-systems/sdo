@@ -91,4 +91,3 @@ func TestControllerStatePersistenceCannotBeStarvedByObservation(t *testing.T) {
 		}
 	}
 }
-

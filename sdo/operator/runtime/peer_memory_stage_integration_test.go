@@ -224,4 +224,3 @@ func TestPeerMemoryPublicationNeverBlocksBoundStage(t *testing.T) {
 		})
 	}
 }
-

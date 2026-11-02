@@ -168,4 +168,3 @@ func TestDependencyRecoveryPreservesProducedAdmissionPrerequisite(t *testing.T) 
 		t.Fatal("consumer recycled before new backend generation became Ready")
 	}
 }
-

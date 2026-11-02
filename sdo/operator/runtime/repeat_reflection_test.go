@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -29,4 +28,3 @@ func TestCompositeRepairKeepsBoundSuccessWhileOtherFaultIsOpen(t *testing.T) {
 		}
 	}
 }
-

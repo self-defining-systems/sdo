@@ -3,7 +3,6 @@ package runtime
 import (
 	"errors"
 
-
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -21,4 +20,3 @@ func (v failingDiffView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, err
 	}
 	return v.ReadView.DiffAgainstSource(ref)
 }
-

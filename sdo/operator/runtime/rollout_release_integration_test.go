@@ -155,4 +155,3 @@ func TestReplacementThatCannotBeCreatedHandsOffAsStalled(t *testing.T) {
 		})
 	}
 }
-

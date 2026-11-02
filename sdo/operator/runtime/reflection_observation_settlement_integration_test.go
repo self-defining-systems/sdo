@@ -95,4 +95,3 @@ func TestConfirmedLifecycleStageFeedsReflectionSettlement(t *testing.T) {
 		})
 	}
 }
-

@@ -3,15 +3,19 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/broker"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/memory"
 	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
+	"sdo.dev/operator/memory"
 )
 
 func TestNativeBrokerRejectsUnverifiedLatePullBeforeLedger(t *testing.T) {

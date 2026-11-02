@@ -6,18 +6,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
 	"google.golang.org/protobuf/encoding/protojson"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
-	"os"
-	"path/filepath"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/onboarding"
-	"strings"
-	"testing"
-	"time"
 )
 
 func TestSourceInventoryEvaluateOnceDoesNotWriteToKubernetes(t *testing.T) {
@@ -28,7 +29,7 @@ func TestSourceInventoryEvaluateOnceDoesNotWriteToKubernetes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	path := filepath.Join(t.TempDir(), "full.json")
-	err := evaluateOnce(ctx, nil, []string{"--namespace", "app", "--app-root", source.Repository, "--deployed-manifest-path", "app.yaml", "--source-drift-report", path}, &output, &stderr, provider)
+	err := evaluateOnce(ctx, nil, []string{"--namespace", "app", "--app-root", source.Repository, "--deployed-manifest-path", "app.yaml", "--source-drift-report", path}, &output, &stderr, provider, nil, nil)
 	if err != nil {
 		t.Fatalf("read-only evaluation: %v (%s)", err, stderr.String())
 	}
@@ -70,7 +71,7 @@ func TestSourceInventoryEvaluateOnceUsesInstallerAcknowledgementWithoutRecapture
 	evaluate := func(want string) {
 		t.Helper()
 		var out, stderr bytes.Buffer
-		if err := evaluateOnce(ctx, nil, []string{"--namespace", "app", "--app-root", source.Repository, "--deployed-manifest-path", "app.yaml", "--source-drift-acknowledgement", ackPath, "--source-drift-report", reportPath}, &out, &stderr, provider); err != nil {
+		if err := evaluateOnce(ctx, nil, []string{"--namespace", "app", "--app-root", source.Repository, "--deployed-manifest-path", "app.yaml", "--source-drift-acknowledgement", ackPath, "--source-drift-report", reportPath}, &out, &stderr, provider, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(out.String(), want) {
@@ -101,4 +102,3 @@ func TestSourceInventoryEvaluateOnceUsesInstallerAcknowledgementWithoutRecapture
 		t.Fatalf("reported acknowledgement is not reusable ProtoJSON: %v", err)
 	}
 }
-

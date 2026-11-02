@@ -37,4 +37,3 @@ func TestRV6InterruptedProposalWithMemoryAdvance(t *testing.T) {
 		t.Fatalf("interrupted refresh cannot resume after memory-only advance: %v", err)
 	}
 }
-

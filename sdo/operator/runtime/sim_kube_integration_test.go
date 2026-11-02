@@ -19,8 +19,6 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-
 )
 
 // simSeeds returns the seeds to sweep; SDO_SIM_SEED replays one.
@@ -73,4 +71,3 @@ func sweepSimSeedsN(t *testing.T, defaultRuns int, body func(t *testing.T, seed 
 	}
 	t.Logf("sim sweep ran %d/%d seed(s)", ran, len(seeds))
 }
-

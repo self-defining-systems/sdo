@@ -99,4 +99,3 @@ func (d recoveryHandoffDispatcher) Dispatch(_ context.Context, r IncidentRequest
 	result.ResponderSessionID = "residual-session"
 	return result, nil
 }
-

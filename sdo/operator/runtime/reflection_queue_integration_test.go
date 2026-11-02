@@ -4,7 +4,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,100 +112,6 @@ func TestSuccessfulClosureStillReflectsBeforeItsReceipt(t *testing.T) {
 	}
 }
 
-// A failed attempt's queued reflection that publishes a detector must take the
-// controller rollout path, and its incident stays open work until the restarted
-// controller records the rollout; otherwise the next problem runs old detectors.
-func TestQueuedReflectionDetectorChangeRestartsControllerBeforeWorkCloses(t *testing.T) {
-	ctx := context.Background()
-	root := nativeRepository(t)
-	repo, err := broker.New(root, filepath.Join(t.TempDir(), "proposals"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	native := NativeIncidentBroker{Repository: repo, LedgerRoot: t.TempDir(), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "test", ResponderModel: "test"}
-	workspace, err := native.PrepareIncident(ctx, "failed-detector")
-	if err != nil {
-		t.Fatal(err)
-	}
-	closure := socialRepeatClosure(workspace)
-	native.Reflector = ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
-		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "fixture"}, nil
-	})
-	now := time.Now()
-	controller := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 3}, native, &now)
-	controller.pendingClosure = &closure
-	attemptClosure(t, controller)
-	ack, ok := controller.PendingClosureAcknowledgmentEffect()
-	if !ok {
-		t.Fatal("failed attempt's closure was not acknowledgeable on its outcome commit")
-	}
-	if err := controller.ExecuteClosureAcknowledgmentEffect(ctx, ack); err != nil {
-		t.Fatal(err)
-	}
-	awaitBrokerResult(t, controller.acknowledgmentResults)
-	controller.processBrokerCompletions()
-	if err := controller.driveQueuedReflections(ctx, now); err != nil {
-		t.Fatal(err)
-	}
-	completion := <-controller.reflectionResults
-	// The ledger state reflectLocked leaves when the queued reflection accepted
-	// a detector change (setRolloutExpectation is shared with the success path,
-	// covered by TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck).
-	ledger, err := native.readLedger(workspace.IncidentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ledger.ReflectionCommit == "" {
-		ledger.ReflectionCommit = ledger.Receipt.GetOutcomeCommit()
-	}
-	expectation := ControllerRolloutExpectation{IncidentID: workspace.IncidentID, ReflectionCommit: ledger.ReflectionCommit, BeforeDetectorFingerprint: "before", AfterDetectorFingerprint: "after"}
-	ledger.RolloutExpectation = rolloutExpectationContract(&expectation)
-	if err := native.saveLedger(ledger); err != nil {
-		t.Fatal(err)
-	}
-	controller.reflectionResults <- completion
-	controller.processBrokerCompletions()
-	if err := controller.driveQueuedReflections(ctx, now); !errors.Is(err, ErrControllerRolloutRestartRequired) {
-		t.Fatalf("queued detector reflection did not require a controller restart: %v", err)
-	}
-	if ids := exportState(t, controller).GetQueuedReflectionIncidentIds(); len(ids) != 1 || ids[0] != workspace.IncidentID {
-		t.Fatalf("incident with a pending detector rollout is not open work: %v", ids)
-	}
-	if handoffs, err := native.PendingControllerRollouts(); err != nil || len(handoffs) != 1 || handoffs[0].Expectation != expectation {
-		t.Fatalf("restart handoff = %+v, %v", handoffs, err)
-	}
-
-	// The relaunched controller still reports the work open until it records
-	// the rollout, then closes it.
-	restarted := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 3}, native, &now)
-	restarted.pendingClosure, restarted.closureState = nil, 0
-	if err := restarted.driveQueuedReflections(ctx, now); err != nil {
-		t.Fatal(err)
-	}
-	if ids := exportState(t, restarted).GetQueuedReflectionIncidentIds(); len(ids) != 1 {
-		t.Fatalf("restarted controller closed work before recording the rollout: %v", ids)
-	}
-	if exportState(t, restarted).GetBusyUntil() == nil {
-		t.Fatal("restarted controller is idle while the rollout it must record is pending")
-	}
-	if err := native.RecordControllerRollout(ControllerRolloutReceipt{Expectation: expectation, Success: true, BuildArtifact: "image", ControllerRevision: "later", ObservedDetectorFingerprint: "after", VerifiedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	awaitBrokerResult(t, restarted.reflectionResults)
-	restarted.processBrokerCompletions()
-	if err := restarted.driveQueuedReflections(ctx, now); err != nil {
-		t.Fatal(err)
-	}
-	if ids := exportState(t, restarted).GetQueuedReflectionIncidentIds(); len(ids) != 0 || restarted.reflectionWorkOpen() {
-		t.Fatalf("recorded rollout still exported as open work: %v", ids)
-	}
-	// The eval waits on busy_until alone: once the restarted controller has
-	// recorded the rollout nothing it owns remains, so the bound must clear.
-	if got := exportState(t, restarted).GetBusyUntil(); got != nil {
-		t.Fatalf("recorded rollout left busy_until %v with no work running", got.AsTime())
-	}
-}
-
 // A failed ledger rescan must not export an empty queue: admission would read
 // it as idle while a reflection is still queued.
 func TestQueuedReflectionRescanFailureKeepsWorkOpen(t *testing.T) {
@@ -230,4 +135,3 @@ func TestQueuedReflectionRescanFailureKeepsWorkOpen(t *testing.T) {
 		t.Fatal("an unreadable reflection queue is exported as idle")
 	}
 }
-

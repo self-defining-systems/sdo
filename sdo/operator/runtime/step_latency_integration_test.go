@@ -157,4 +157,3 @@ func TestRestartStormEvaluatesConfigMapWatcherPromptly(t *testing.T) {
 		}
 	})
 }
-

@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-
 	"sdo.dev/operator/sdk"
 )
 
@@ -51,4 +50,3 @@ func awaitEventValue(t *testing.T, cache *KubernetesCache) []sdk.WatchKind {
 	<-cache.Notifications()
 	return cache.TakeEvents()
 }
-

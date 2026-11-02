@@ -43,4 +43,3 @@ func TestLearnedOriginCreditIncludesObservedUnwrittenSymptoms(t *testing.T) {
 		})
 	}
 }
-

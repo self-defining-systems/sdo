@@ -182,4 +182,3 @@ func TestMatchedToolUsesLiveDiagnosisBindingsWithoutAuthoredCoverage(t *testing.
 		t.Fatalf("matched repair must verify its diagnosed finding while the peer remains unhealthy: %+v", applied)
 	}
 }
-

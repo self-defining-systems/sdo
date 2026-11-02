@@ -33,4 +33,3 @@ func (c *recAmbiguousMenuClient) Get(ctx context.Context, ref sdk.ObjectRef) (*u
 	}
 	return c.menuB3Cluster.Get(ctx, ref)
 }
-

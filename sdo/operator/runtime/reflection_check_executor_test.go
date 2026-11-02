@@ -3,7 +3,6 @@ package runtime
 import (
 	"strings"
 	"testing"
-
 )
 
 func TestImmutableValidationImageRequiresCompleteDigest(t *testing.T) {
@@ -21,4 +20,3 @@ func TestImmutableValidationImageRequiresCompleteDigest(t *testing.T) {
 		}
 	}
 }
-

@@ -167,4 +167,3 @@ func TestResponseStageHandoffAlongsideStepEvents(t *testing.T) {
 		t.Fatalf("handoff persisted a partial scheduler transition: %v", deadline)
 	}
 }
-

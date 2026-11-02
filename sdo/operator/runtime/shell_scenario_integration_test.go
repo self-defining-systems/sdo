@@ -188,4 +188,3 @@ func TestShellControllerClosureReflectionAndActivation(t *testing.T) {
 		t.Fatalf("proposal snapshot moved with accepted head: %v %v", historical, err)
 	}
 }
-

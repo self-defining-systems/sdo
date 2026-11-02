@@ -197,4 +197,3 @@ func acceptPortProgram(t *testing.T, root string) {
 	nativeGit(t, root, "add", "-A")
 	nativeGit(t, root, "commit", "-qm", "accepted port program")
 }
-

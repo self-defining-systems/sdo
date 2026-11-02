@@ -84,4 +84,3 @@ func TestMitigationReturnsWithUnrelatedFaultBeforeGlobalHealthBudget(t *testing.
 		})
 	}
 }
-

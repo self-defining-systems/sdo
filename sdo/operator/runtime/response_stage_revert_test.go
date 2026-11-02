@@ -81,4 +81,3 @@ func (halfFixProgram) Diagnose(ctx context.Context, view program.ReadView, b pro
 func (halfFixProgram) Mitigate(ctx context.Context, view program.ReadView, b program.Bindings) (program.Plan, error) {
 	return (fastloopPortProgram{}).Mitigate(ctx, view, b)
 }
-

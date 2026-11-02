@@ -139,4 +139,3 @@ func TestClosureDriftRemovedExtraFieldsAgreeWithStatus(t *testing.T) {
 		})
 	}
 }
-

@@ -73,4 +73,3 @@ func TestReadmeOnlyVerifiedReflectionIsRejectedForRecordedHandRepair(t *testing.
 		t.Fatalf("rejected README reached accepted memory: %v", err)
 	}
 }
-

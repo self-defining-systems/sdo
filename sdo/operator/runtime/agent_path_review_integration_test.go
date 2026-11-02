@@ -46,4 +46,3 @@ func TestResponderVerifyConcurrentControllerObservations(t *testing.T) {
 	}
 	wg.Wait()
 }
-

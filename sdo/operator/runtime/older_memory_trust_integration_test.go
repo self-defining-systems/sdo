@@ -37,4 +37,3 @@ func TestDispatchPreparationSurvivesOlderAndUnreadableOutcomes(t *testing.T) {
 		t.Fatalf("stored outcomes blocked dispatch preparation: %v", err)
 	}
 }
-

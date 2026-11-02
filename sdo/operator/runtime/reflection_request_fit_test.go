@@ -12,4 +12,3 @@ func TestTransportLimitErrorIsNonRetryable(t *testing.T) {
 		t.Fatal("a request that does not fit must not be retried")
 	}
 }
-

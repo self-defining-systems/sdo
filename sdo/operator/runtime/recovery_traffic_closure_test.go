@@ -104,4 +104,3 @@ type retainedRecoveryDetector struct {
 func (d *retainedRecoveryDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return d.findings, nil
 }
-

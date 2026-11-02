@@ -140,4 +140,3 @@ func TestConfigMapCredentialReadErrorNeverIncludesResponse(t *testing.T) {
 		t.Fatal("upstream credential read failure was not sanitized")
 	}
 }
-

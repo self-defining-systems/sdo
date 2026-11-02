@@ -96,4 +96,3 @@ func simTrustOutcome(t *testing.T, event simTrustEvent, revision, other string) 
 	}
 	return &contracts.OutcomeRecord{SourceCommit: revision, ProgramRuns: []*contracts.ProgramRun{{ProgramId: id, ProgramRevision: revision}}}
 }
-

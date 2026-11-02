@@ -55,4 +55,3 @@ func TestStageWaitExitReasons(t *testing.T) {
 		})
 	}
 }
-

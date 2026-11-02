@@ -27,4 +27,3 @@ func (d *additionRepairDispatcher) Dispatch(ctx context.Context, r IncidentReque
 	}
 	return IncidentResult{}, nil
 }
-

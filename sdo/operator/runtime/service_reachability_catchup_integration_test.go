@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-
 )
 
 // TestReachabilityObserverWakesOnReadinessBetweenRounds runs the observer
@@ -52,4 +50,3 @@ func TestReachabilityObserverWakesOnReadinessBetweenRounds(t *testing.T) {
 		t.Fatal("catch-up rounds must wake the detectors")
 	}
 }
-

@@ -31,4 +31,3 @@ func (coverageThreeFaultDetector) Detect(ctx context.Context, view sdk.Detection
 	}
 	return findings, err
 }
-

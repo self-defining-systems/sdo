@@ -164,4 +164,3 @@ func TestAcceptedSourceBridgeDryRunCreateDoesNotPolluteTypedLists(t *testing.T) 
 		})
 	}
 }
-

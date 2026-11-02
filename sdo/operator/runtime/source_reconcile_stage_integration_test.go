@@ -83,4 +83,3 @@ func TestSourceReconcileApplyResponseCarriesTypedResidual(t *testing.T) {
 		t.Fatalf("apply response lost partial status: %+v", applied.ActionReports)
 	}
 }
-

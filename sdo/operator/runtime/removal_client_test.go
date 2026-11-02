@@ -67,4 +67,3 @@ func TestRemovalRechecksLiveSharedOwnershipBeforeDelete(t *testing.T) {
 		})
 	}
 }
-

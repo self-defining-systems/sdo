@@ -155,4 +155,3 @@ func TestSimVerifiedClosureDrainFailureAdmitsNextIncident(t *testing.T) {
 		})
 	}
 }
-

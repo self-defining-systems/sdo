@@ -68,4 +68,3 @@ func TestResponderUsageNormalCompletionAcrossContinuationAndRestart(t *testing.T
 		t.Fatalf("replay allocated another worker: %v %v", len(jobs.Items), err)
 	}
 }
-

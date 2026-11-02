@@ -37,7 +37,7 @@ func TestScopedWrappersKeepDenialUnknown(t *testing.T) {
 	base := sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: scoped}
 	live := LiveReadView{Carrier: inputs.New(base)}
 	recording := &sdktest.RecordingReadView{ReadView: live}
-	for _, view := range []sdk.DetectionContext{base, trafficContext{Carrier: inputs.New(base), ScopedObservationSource: base}, live, recording, struct{ sdk.DetectionContext }{base}} {
+	for _, view := range []sdk.DetectionContext{base, trafficContext{Carrier: inputs.New(base)}, live, recording, struct{ sdk.DetectionContext }{base}} {
 		if _, err := sdk.DetectObserved(context.Background(), scopedIgnoringDetector{}, view); err == nil {
 			t.Fatalf("wrapper hid unavailable dependency: %T", view)
 		}
@@ -65,7 +65,7 @@ func TestScopedCompositionPreservesObservationClock(t *testing.T) {
 	target := sdk.ObservationTarget{APIVersion: "v1", Kind: "Service", Namespace: "foreign"}
 	scoped := sdk.ScopedSnapshot{Version: 1, Generation: "commit", Scope: sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}, Statuses: []sdk.ObservationStatus{{Target: target, State: sdk.ObservationObserved}}}
 	base := sdktest.Snapshot{NamespaceName: "app", ObservedAtTime: &now, ScopedSnapshot: scoped}
-	trafficView := trafficContext{Carrier: inputs.New(base), ScopedObservationSource: base}
+	trafficView := trafficContext{Carrier: inputs.New(base)}
 	live := LiveReadView{Carrier: inputs.New(trafficView)}
 	recorded := &sdktest.RecordingReadView{ReadView: live}
 	for _, view := range []sdk.DetectionContext{trafficView, live, recorded} {
@@ -78,4 +78,3 @@ func TestScopedCompositionPreservesObservationClock(t *testing.T) {
 		}
 	}
 }
-

@@ -66,4 +66,3 @@ func assertRestoredApplicationReceiptReachesWorkerResult(t *testing.T, client *f
 	}
 	t.Fatalf("worker result lost pre-restart controller receipt: %+v", completed.value.RepairActions)
 }
-

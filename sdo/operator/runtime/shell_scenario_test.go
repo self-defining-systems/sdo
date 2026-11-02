@@ -14,7 +14,7 @@ import (
 
 type shellScenarioClock struct{ nanos atomic.Int64 }
 
-func (c *shellScenarioClock) Now() time.Time   { return time.Unix(0, c.nanos.Load()).UTC() }
+func (c *shellScenarioClock) Now() time.Time { return time.Unix(0, c.nanos.Load()).UTC() }
 
 func (c *shellScenarioClock) Set(at time.Time) { c.nanos.Store(at.UnixNano()) }
 
@@ -62,4 +62,3 @@ func (d shellScenarioDispatcher) Dispatch(ctx context.Context, r IncidentRequest
 	}
 	return d.fastloopDispatch.Dispatch(ctx, r)
 }
-

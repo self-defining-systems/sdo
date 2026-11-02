@@ -123,4 +123,3 @@ func TestXV2ExecWithoutConfigReportsRefused(t *testing.T) {
 		t.Fatalf("nil config must refuse exec before any effect: %+v %v", result, err)
 	}
 }
-

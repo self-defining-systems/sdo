@@ -83,4 +83,3 @@ func TestReplayReferencePromotesTheSameSettledCandidateAsStateChanges(t *testing
 		t.Fatalf("private baseline/candidate captures grew without bound: %v", files)
 	}
 }
-

@@ -70,4 +70,3 @@ func TestRunScriptActVerifyRequiresDiagnosisAndTargetedClearance(t *testing.T) {
 		})
 	}
 }
-

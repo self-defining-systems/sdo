@@ -1,7 +1,6 @@
 package runtime
 
 import (
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	discoveryfake "k8s.io/client-go/discovery/fake"
@@ -26,4 +25,3 @@ func driftBindingObservation(snapshot sdktest.Snapshot) sdk.DetectionContext {
 		Discovery: &discoveryfake.FakeDiscovery{Fake: &clienttesting.Fake{Resources: resources}},
 	}}
 }
-

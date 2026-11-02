@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
@@ -286,4 +285,3 @@ func takeEventsThrough(t *testing.T, informerCache *KubernetesCache, kinds ...st
 		clock.Sleep(5 * time.Millisecond)
 	}
 }
-

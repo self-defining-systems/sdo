@@ -294,4 +294,3 @@ func TestRuntimeBatchRecoversOnceAndPreservesSourceCreateReceipt(t *testing.T) {
 		t.Fatalf("runtime batch lost recovery/creation ownership: %+v %v", result, err)
 	}
 }
-

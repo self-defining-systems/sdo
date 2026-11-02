@@ -3,8 +3,6 @@ package runtime
 import (
 	"testing"
 	"testing/synctest"
-
-
 )
 
 func TestResourceVersionAtLeast(t *testing.T) {
@@ -22,4 +20,3 @@ func TestResourceVersionAtLeast(t *testing.T) {
 		}
 	})
 }
-

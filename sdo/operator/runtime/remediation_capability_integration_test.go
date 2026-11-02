@@ -100,4 +100,3 @@ func TestSuppliedKubernetesClientRetainsAPITransport(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-

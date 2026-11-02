@@ -216,4 +216,3 @@ func TestFieldOwnedByAnotherControllerIsNotDrift(t *testing.T) {
 		t.Fatalf("autoscaler-owned replicas reported as drift: %+v %v", diff, err)
 	}
 }
-

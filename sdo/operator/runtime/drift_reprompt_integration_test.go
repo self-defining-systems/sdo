@@ -393,4 +393,3 @@ func TestDriftRepromptInventoryProgress(t *testing.T) {
 		})
 	}
 }
-

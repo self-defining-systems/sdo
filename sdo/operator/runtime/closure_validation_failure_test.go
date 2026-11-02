@@ -75,4 +75,3 @@ func (b *countingIncidentBroker) ProcessClosure(ctx context.Context, closure Inc
 	b.calls++
 	return b.IncidentBroker.ProcessClosure(ctx, closure)
 }
-

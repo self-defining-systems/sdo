@@ -38,4 +38,3 @@ func TestRV6NoopJudgeAfterSourceAdvance(t *testing.T) {
 		t.Fatalf("successful unchanged judge leaves health permanently unverified; receipt=%+v", receipt)
 	}
 }
-

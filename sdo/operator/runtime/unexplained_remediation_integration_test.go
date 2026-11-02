@@ -119,4 +119,3 @@ func TestClusterRBACRemovalRequiresExclusiveOwnership(t *testing.T) {
 		})
 	}
 }
-

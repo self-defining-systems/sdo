@@ -133,4 +133,3 @@ func TestKubernetesPendingRolloutCarriesOwnedPodCreationEvidence(t *testing.T) {
 		t.Fatalf("missing/foreign blocker evidence: %v %v", pending, err)
 	}
 }
-

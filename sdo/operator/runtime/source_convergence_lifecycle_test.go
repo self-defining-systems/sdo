@@ -38,4 +38,3 @@ type convergenceExecClient struct{ *lifecycleTestClient }
 func (convergenceExecClient) Exec(context.Context, sdk.ObjectRef, string, []string) (int, error) {
 	return 0, nil
 }
-

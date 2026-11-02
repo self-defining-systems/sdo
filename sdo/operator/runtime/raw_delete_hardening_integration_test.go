@@ -86,4 +86,3 @@ func TestRawDeleteRequiresBoundTargetAndConfirmedAbsence(t *testing.T) {
 		})
 	}
 }
-

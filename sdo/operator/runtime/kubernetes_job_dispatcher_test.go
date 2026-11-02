@@ -20,7 +20,6 @@ import (
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
 	"testing/synctest"
-
 )
 
 type fixedMemoryCatalog struct{ commit string }

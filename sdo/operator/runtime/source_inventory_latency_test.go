@@ -75,4 +75,3 @@ func TestSourceInventorySymptomaticClosureTimingParity(t *testing.T) {
 	}
 	t.Logf("same scripted closure=%s; dispatches before=%d after=%d; additional re-prompts=0", before.verified, before.dispatches, after.dispatches)
 }
-

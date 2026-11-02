@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 )
 
 // Informers read process-wide state (klog verbosity) from their reflector
@@ -42,4 +41,3 @@ func requireNoInformerGoroutines(t testing.TB, owner string) {
 		t.Fatalf("%s left %d informer goroutines running; every started informer must be stopped and awaited", owner, count)
 	}
 }
-

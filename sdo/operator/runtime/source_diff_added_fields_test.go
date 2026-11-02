@@ -161,4 +161,3 @@ func acceptanceAnnotations(object any, source *unstructured.Unstructured) (map[s
 	}
 	return live.GetAnnotations(), nil
 }
-

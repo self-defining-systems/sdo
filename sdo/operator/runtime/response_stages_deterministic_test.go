@@ -163,4 +163,3 @@ func (p pipelinePortWhileImageBrokenProgram) Diagnose(ctx context.Context, view 
 	}
 	return program.Verdict{Result: program.NoMatch}, nil
 }
-

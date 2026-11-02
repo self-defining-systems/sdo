@@ -155,4 +155,3 @@ type pipelineDeadlineObserver struct{ *pipelineDeadlineRollout }
 func (r pipelineDeadlineObserver) Observe(ctx context.Context, refs []sdk.ObjectRef) error {
 	return r.Wait(ctx, refs)
 }
-

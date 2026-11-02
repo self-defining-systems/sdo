@@ -276,4 +276,3 @@ func TestAdoptionUpgradesRecordWithoutUID(t *testing.T) {
 		t.Fatalf("upgrade absorbed an addition: %+v %v", result, err)
 	}
 }
-

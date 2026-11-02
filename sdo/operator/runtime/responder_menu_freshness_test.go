@@ -50,4 +50,3 @@ func (c productionMenuServices) Patch(ctx context.Context, name string, kind typ
 	}
 	return projected, nil
 }
-

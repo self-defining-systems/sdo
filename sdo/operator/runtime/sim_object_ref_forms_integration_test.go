@@ -53,4 +53,3 @@ func TestSimSchedulePrintedObjectReferenceSurvivesMenuFilters(t *testing.T) {
 		}
 	})
 }
-

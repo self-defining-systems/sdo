@@ -485,4 +485,3 @@ func TestParameterWriteMustRestoreAcceptedTarget(t *testing.T) {
 		t.Fatalf("weak diagnosis accepted a wrong parameter value: %+v", r)
 	}
 }
-

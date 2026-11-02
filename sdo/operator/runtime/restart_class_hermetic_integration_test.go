@@ -398,4 +398,3 @@ func restartClassStrictReceipt(t *testing.T, ctx context.Context, raw []byte) {
 		t.Fatal("strict receipt lost successful resolution")
 	}
 }
-

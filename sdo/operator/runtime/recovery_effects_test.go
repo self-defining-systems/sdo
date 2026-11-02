@@ -48,4 +48,3 @@ func (s recoveryAcceptedSource) AcceptedManifest(ctx context.Context, revision s
 	}
 	return s.PlanSource.AcceptedManifest(ctx, revision, ref)
 }
-

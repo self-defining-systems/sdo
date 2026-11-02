@@ -34,4 +34,3 @@ func TestResponderNoProgressRequiresUnchangedFindingsAndSuccesses(t *testing.T) 
 		t.Fatal("unavailable verification ended incident")
 	}
 }
-

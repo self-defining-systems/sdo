@@ -177,4 +177,3 @@ func TestHermeticAdoptedHostPortRepairLearnsAndReplays(t *testing.T) {
 		t.Fatalf("source contradiction remains after the repeat: %+v %v", verdict, err)
 	}
 }
-

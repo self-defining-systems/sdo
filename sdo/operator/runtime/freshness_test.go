@@ -199,4 +199,3 @@ func TestUnverifiedClosureRejectsStaleEffectIdentity(t *testing.T) {
 		t.Fatal("stale effect consumed pending closure")
 	}
 }
-

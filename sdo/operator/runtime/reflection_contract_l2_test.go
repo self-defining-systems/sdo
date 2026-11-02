@@ -21,4 +21,3 @@ type t1ReplayInstance struct {
 	Bindings program.Bindings `json:"bindings"`
 	Verdict  program.Result   `json:"verdict"`
 }
-

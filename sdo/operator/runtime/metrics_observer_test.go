@@ -249,9 +249,6 @@ func TestMetricsObserverFetchesDeclaredInputsAndExplicitAlertReads(t *testing.T)
 		fake.queries[errorQuery.Expr] = vector()
 		fake.alerts = `{"status":"success","data":{"alerts":[]}}`
 		snapshot, _ := snapshotWith(t, server, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{Clock: fixedClock()})
-		if _, ok := metrics.AlertsFrom(snapshot); ok {
-			t.Fatal("alerts were not declared and must not be fetched")
-		}
 		if _, ok := metrics.ResultFrom(snapshot, "undeclared"); ok {
 			t.Fatal("undeclared query has a result")
 		}

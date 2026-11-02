@@ -17,4 +17,3 @@ func tracingMemoryAdvance(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 }
-

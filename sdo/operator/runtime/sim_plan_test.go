@@ -58,4 +58,3 @@ func simPlanRun(t *testing.T, seed uint64, build func() *unstructured.Unstructur
 		}
 	}
 }
-

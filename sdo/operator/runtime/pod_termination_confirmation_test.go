@@ -15,4 +15,3 @@ func TestDeletePodGoneIsNotRecordedAsTerminating(t *testing.T) {
 		t.Fatalf("gone Pod delete report: %+v %v", result.ActionReports[0], err)
 	}
 }
-

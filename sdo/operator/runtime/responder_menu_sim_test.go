@@ -62,4 +62,3 @@ func (p menuSimProgram) Diagnose(_ context.Context, v program.ReadView, b progra
 func (p menuSimProgram) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
 	return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromParam("port")}}}, nil
 }
-

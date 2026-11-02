@@ -345,4 +345,3 @@ func TestStepCountAdvancesWhileSnapshotsFailAndEvaluationsStop(t *testing.T) {
 		t.Fatalf("evaluation advanced without a snapshot: %d -> %d", before.GetEvaluationIteration(), after.GetEvaluationIteration())
 	}
 }
-

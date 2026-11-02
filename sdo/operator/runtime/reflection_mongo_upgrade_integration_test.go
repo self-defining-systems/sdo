@@ -331,4 +331,3 @@ func testReflectionMongoAuthUpgrade(t *testing.T, fixtureName string) {
 		t.Fatalf("scripted executable upgrade did not complete: calls=%d decision=%+v error=%v", calls, decision, err)
 	}
 }
-

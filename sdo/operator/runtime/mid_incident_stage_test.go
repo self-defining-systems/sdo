@@ -63,4 +63,3 @@ func (d stagedPortDetector) Detect(ctx context.Context, view sdk.DetectionContex
 	}
 	return kept, err
 }
-

@@ -78,4 +78,3 @@ func TestNativeBrokerDerivesOwnerChainsFromTheOpenCapture(t *testing.T) {
 		t.Fatalf("owners = %v, want only search-old -> Deployment/search", owners)
 	}
 }
-

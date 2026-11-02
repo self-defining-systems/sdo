@@ -41,4 +41,3 @@ type lifecycleObservationFailure struct{}
 func (lifecycleObservationFailure) AwaitWrites(context.Context, []ObservedWrite) error {
 	return fmt.Errorf("write observation unknown: synthetic informer unavailable")
 }
-

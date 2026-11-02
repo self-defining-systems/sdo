@@ -99,4 +99,3 @@ func TestControllerPersistsUnexplainedChangeWithoutIncident(t *testing.T) {
 		t.Fatalf("unexplained event was not retained: %+v", state)
 	}
 }
-

@@ -71,4 +71,3 @@ func (p stage3EndpointProvider) Snapshot(ctx context.Context) (sdk.DetectionCont
 	snapshot.EndpointList = endpoints.Items
 	return snapshot, nil
 }
-

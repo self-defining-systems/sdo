@@ -478,4 +478,3 @@ func (c replacingDeleteClient) Delete(ctx context.Context, ref sdk.ObjectRef, ui
 	c.objects[ref].SetUID("replacement")
 	return nil
 }
-

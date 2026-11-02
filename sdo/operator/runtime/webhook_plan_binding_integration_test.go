@@ -26,4 +26,3 @@ func TestCompiledMitigatorBindsWebhookReferencesBeforePlanValidation(t *testing.
 		t.Fatalf("compiled relation was not bound: %+v", got)
 	}
 }
-

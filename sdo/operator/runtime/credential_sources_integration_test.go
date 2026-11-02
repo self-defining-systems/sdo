@@ -109,4 +109,3 @@ func TestCredentialConfigMapNeverEntersVerboseClientLogs(t *testing.T) {
 		t.Fatal("credential API response entered verbose client logs")
 	}
 }
-

@@ -77,4 +77,3 @@ func checkCleanupPreconditions(t *testing.T, options metav1.DeleteOptions) {
 		t.Error("delete lacked exact UID/RV")
 	}
 }
-

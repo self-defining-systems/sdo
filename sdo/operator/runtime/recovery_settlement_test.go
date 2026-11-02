@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"time"
-
 )
 
 type settlementControllerDispatcher struct {
@@ -19,4 +18,3 @@ func (d *settlementControllerDispatcher) DeterministicResponseStage() ResponseSt
 		return d.loop
 	}}
 }
-

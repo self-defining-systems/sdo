@@ -108,4 +108,3 @@ func TestRECClosureChecksEveryApplicationResult(t *testing.T) {
 		}
 	}
 }
-

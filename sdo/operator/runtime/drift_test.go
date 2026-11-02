@@ -99,4 +99,3 @@ func objectChange(t *testing.T, old, next any, version, kind string) ObjectChang
 	t.Helper()
 	return ObjectChange{Old: driftObject(old, sdk.WatchKind{APIVersion: version, Kind: kind}), New: driftObject(next, sdk.WatchKind{APIVersion: version, Kind: kind})}
 }
-

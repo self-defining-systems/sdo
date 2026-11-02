@@ -160,4 +160,3 @@ func TestDatabaseCatalogTransportProjectionAndCanaries(t *testing.T) {
 		})
 	}
 }
-

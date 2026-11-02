@@ -194,4 +194,3 @@ func TestSettlementUsesMatchedRevisionInsteadOfALaterRun(t *testing.T) {
 		t.Fatalf("later run replaced the matched revision: %v", item)
 	}
 }
-

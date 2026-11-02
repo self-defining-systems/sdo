@@ -141,4 +141,3 @@ func TestCreatedAcceptanceUsesAdoptionWriterThroughAPI(t *testing.T) {
 		})
 	}
 }
-

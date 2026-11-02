@@ -152,4 +152,3 @@ func TestControllerIntegrationInformerPersistenceAndRestart(t *testing.T) {
 		}
 	})
 }
-

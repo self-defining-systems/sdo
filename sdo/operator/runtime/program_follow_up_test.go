@@ -165,4 +165,3 @@ func (wrongPlanProgram) Spec() program.ProgramSpec {
 func (wrongPlanProgram) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
 	return program.Verdict{Result: program.Match}, nil
 }
-

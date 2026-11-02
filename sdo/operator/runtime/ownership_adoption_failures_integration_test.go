@@ -163,4 +163,3 @@ func TestAdoptionRetrySkipsObjectsAlreadyRecorded(t *testing.T) {
 		t.Fatalf("recovered object not adopted: %v %+v", err, controller.ownershipAdoption)
 	}
 }
-

@@ -203,4 +203,3 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst, boundSession bool) {
 		t.Fatalf("restart duplicated work: %v %v calls=%d", again, err, modelCalls)
 	}
 }
-

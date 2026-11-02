@@ -253,4 +253,3 @@ func TestControllerContinuationRunsWithoutHoldingControllerLock(t *testing.T) {
 		})
 	}
 }
-

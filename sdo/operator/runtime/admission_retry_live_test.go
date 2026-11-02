@@ -20,4 +20,3 @@ func (v admissionLiveVerifier) Verify(ctx context.Context) (bool, error) {
 	}
 	return deployment.DeploymentRolloutComplete(object), nil
 }
-

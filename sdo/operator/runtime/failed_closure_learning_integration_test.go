@@ -77,4 +77,3 @@ func TestFailedClosureReflectionReceivesExactlyVerifiedCauses(t *testing.T) {
 		}
 	}
 }
-

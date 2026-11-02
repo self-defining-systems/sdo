@@ -226,4 +226,3 @@ func TestSettlementVetoIsAuthoritativeAtEveryCreditConsumer(t *testing.T) {
 		})
 	}
 }
-

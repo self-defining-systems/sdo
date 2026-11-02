@@ -32,4 +32,3 @@ func BenchmarkSourceInventoryInformerHotel(b *testing.B) {
 		}
 	}
 }
-

@@ -28,4 +28,3 @@ func TestEvaluateOnceChecksPodAdmission(t *testing.T) {
 		t.Fatalf("one-shot health missed rejection: err=%v stdout=%s stderr=%s", err, &stdout, &stderr)
 	}
 }
-

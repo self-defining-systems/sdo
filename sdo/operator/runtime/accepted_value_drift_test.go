@@ -219,4 +219,3 @@ func installSyntheticAdoptedDefaults(t *testing.T, client *fake.Clientset) {
 		return true, object, nil
 	})
 }
-

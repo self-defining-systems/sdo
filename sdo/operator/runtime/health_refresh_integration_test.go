@@ -36,4 +36,3 @@ func tracingRefresh(t *testing.T, root string, c lifecycle.Coordinator) memory.H
 	}
 	return accepted
 }
-

@@ -85,7 +85,7 @@ func TestHermeticNewDetectorInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	detectors := []sdk.Detector{newInputsDetector{}}
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client}, detectors)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: client}, detectors)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestHermeticNewSnapshotKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{Watches: watches}}})
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: client}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{Watches: watches}}})
 	if err != nil {
 		t.Fatal(err)
 	}

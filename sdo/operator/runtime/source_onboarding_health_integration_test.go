@@ -128,4 +128,3 @@ func TestSourceInventoryPendingOnboardingWaitsForHealthAuthority(t *testing.T) {
 		t.Fatalf("refresh worker calls: %d", worker.calls)
 	}
 }
-

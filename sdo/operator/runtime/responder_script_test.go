@@ -41,4 +41,3 @@ func (c verifyingScriptClient) RunScript(ctx context.Context, r ScriptExecutionR
 	code := int32(0)
 	return ScriptExecutionResult{ApplicationID: r.ApplicationID, JobName: "script-job", JobUID: "script-uid", ScriptDigest: program.ScriptDigest(r.Script), ExitCode: &code}, err
 }
-

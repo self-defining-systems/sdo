@@ -57,4 +57,3 @@ func TestRPXConvenienceReadsUseRecordedClientTransport(t *testing.T) {
 		t.Fatalf("calls=%d", calls)
 	}
 }
-

@@ -34,4 +34,3 @@ func TestToolResponseRoundTripsRolloutRelease(t *testing.T) {
 		t.Fatalf("round trip lost the release: %v", decoded.RolloutPending)
 	}
 }
-

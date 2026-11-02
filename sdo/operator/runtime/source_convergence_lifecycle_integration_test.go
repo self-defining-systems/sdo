@@ -115,4 +115,3 @@ func TestPendingSourceConvergenceKeepsAttributionUntilObservation(t *testing.T) 
 		})
 	}
 }
-

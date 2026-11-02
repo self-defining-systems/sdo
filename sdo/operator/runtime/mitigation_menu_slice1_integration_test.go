@@ -38,4 +38,3 @@ func menuB3Loop(t *testing.T) (*ResponderLoop, *menuB3Cluster) {
 	loop.MenuConfig = &ResponderMenuConfig{}
 	return loop, cluster
 }
-

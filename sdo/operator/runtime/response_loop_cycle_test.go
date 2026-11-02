@@ -30,4 +30,3 @@ func loopCycleUnwritable(loop *ResponderLoop) ToolResponse {
 func loopCycleVerify(loop *ResponderLoop) ToolResponse {
 	return loop.Handle(context.Background(), ToolRequest{Command: "verify"})
 }
-

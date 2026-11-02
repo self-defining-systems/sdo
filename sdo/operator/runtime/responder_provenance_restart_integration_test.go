@@ -258,4 +258,3 @@ func TestRecoveredProgramOwnersReachEarlyClosure(t *testing.T) {
 		t.Fatalf("early closure lost original receipt ownership: early=%+v final=%+v", early.RepairActions, fresh.ApplicationRepairReceipts(nil))
 	}
 }
-

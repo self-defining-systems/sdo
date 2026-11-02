@@ -229,4 +229,3 @@ func assertEvalWaitGolden(t *testing.T, name string, samples []evalWaitSample) {
 		t.Fatalf("exported busy states changed; review and regenerate %s with SDO_UPDATE_GOLDEN=1", path)
 	}
 }
-

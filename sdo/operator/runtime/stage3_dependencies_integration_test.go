@@ -165,4 +165,3 @@ func TestStageWaitsForAuthoredServiceObjective(t *testing.T) {
 		t.Fatalf("authored objective forced claim: claim=%v wait=%s reports=%v", dispatcher.opened, now.Sub(start), state.PriorStages)
 	}
 }
-

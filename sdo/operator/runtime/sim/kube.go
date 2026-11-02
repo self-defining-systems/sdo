@@ -147,6 +147,7 @@ func (c *Cache) live() (sdktest.Snapshot, error) {
 	}
 	// Decode through the SDK snapshot's public JSON shape, in stable object order.
 	lists := map[string][]json.RawMessage{}
+	var secrets []sdk.SecretMetadata
 	fields := map[string]string{"ConfigMap": "configMaps", "Service": "services", "Pod": "pods", "Deployment": "deployments", "StatefulSet": "statefulSets", "ReplicaSet": "replicaSets", "HorizontalPodAutoscaler": "horizontalPodAutoscalers", "PodDisruptionBudget": "podDisruptionBudgets", "Endpoints": "endpoints", "EndpointSlice": "endpointSlices", "NetworkPolicy": "networkPolicies", "Event": "events", "DaemonSet": "daemonSets", "Job": "jobs", "CronJob": "cronJobs", "PersistentVolumeClaim": "persistentVolumeClaims", "ServiceAccount": "serviceAccounts", "Ingress": "ingresses", "Node": "nodes"}
 	for _, object := range c.kube.Objects() {
 		if object.GetNamespace() != snapshot.NamespaceName && object.GetKind() != "Node" {
@@ -157,7 +158,7 @@ func (c *Cache) live() (sdktest.Snapshot, error) {
 			if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, &secret); err != nil {
 				return snapshot, err
 			}
-			snapshot.SecretList = append(snapshot.SecretList, sdk.SecretMetadataFrom(secret))
+			secrets = append(secrets, sdk.SecretMetadataFrom(secret))
 			continue
 		}
 		field, ok := fields[object.GetKind()]
@@ -174,7 +175,10 @@ func (c *Cache) live() (sdktest.Snapshot, error) {
 	if err != nil {
 		return snapshot, err
 	}
+	namespace, observedAt := snapshot.NamespaceName, snapshot.ObservedAtTime
 	err = json.Unmarshal(data, &snapshot)
+	// Decoding resets the snapshot, so restore its identity and Secret metadata.
+	snapshot.NamespaceName, snapshot.ObservedAtTime, snapshot.SecretList = namespace, observedAt, secrets
 	return snapshot, err
 }
 

@@ -34,4 +34,3 @@ func TestCycleReadProbeTimeoutIsRecorded(t *testing.T) {
 		t.Fatalf("timeout lost during replay: %v", err)
 	}
 }
-

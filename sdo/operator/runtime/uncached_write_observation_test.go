@@ -73,4 +73,3 @@ func (uncachedPolicyProgram) Diagnose(_ context.Context, v program.ReadView, b p
 func (uncachedPolicyProgram) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
 	return program.Plan{Actions: []program.Action{program.DeleteObject{Ref: b.Objects["policy"], Reason: "remove synthetic source-absent policy"}}}, nil
 }
-

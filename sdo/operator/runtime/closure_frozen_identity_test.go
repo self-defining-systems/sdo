@@ -148,4 +148,3 @@ func TestFrozenClosureIsDurableBeforeBrokerAttempt(t *testing.T) {
 		t.Fatalf("broker closure is not the durable frozen closure:\nsent   %v\nloaded %v", sent, loaded.GetPendingClosure())
 	}
 }
-

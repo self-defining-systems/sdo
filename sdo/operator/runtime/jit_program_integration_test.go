@@ -296,4 +296,3 @@ func TestResponderDeletedNewProgramCannotRunCachedBinary(t *testing.T) {
 		t.Fatalf("deleted program ran cached code: %+v", after)
 	}
 }
-

@@ -109,4 +109,3 @@ func TestSettlementNonpendingHealthObservationIsNeutral(t *testing.T) {
 		t.Fatalf("health observation became adverse execution evidence: %+v signals=%v", got, loop.FailureSignals())
 	}
 }
-

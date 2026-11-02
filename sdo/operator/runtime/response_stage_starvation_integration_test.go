@@ -96,4 +96,3 @@ func TestStageFailedWriteKeepsItsFindingAndAppliesIndependentMatches(t *testing.
 		}
 	}
 }
-

@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"testing"
-
 )
 
 func advertisedProgramOption(t *testing.T, loop *ResponderLoop, id string) string {
@@ -20,4 +19,3 @@ func advertisedProgramOption(t *testing.T, loop *ResponderLoop, id string) strin
 	t.Fatalf("program %s was not advertised", id)
 	return ""
 }
-

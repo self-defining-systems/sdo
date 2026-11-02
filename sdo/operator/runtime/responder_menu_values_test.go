@@ -37,4 +37,3 @@ func TestResponderMenuRawExecUsesOrdinaryClient(t *testing.T) {
 		t.Fatal("exec report omitted exit result or provenance")
 	}
 }
-

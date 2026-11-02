@@ -70,4 +70,3 @@ func (s confirmedAbsentSnapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstru
 	}
 	return s.Snapshot.Object(ref)
 }
-

@@ -214,4 +214,3 @@ func TestAdoptionBacksOffWhileObjectStaysUnsettled(t *testing.T) {
 		t.Fatalf("unsettled waits stayed short: %v", previous)
 	}
 }
-

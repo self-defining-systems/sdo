@@ -51,4 +51,3 @@ func TestNativeClosureWithInvalidRepairIsNotResubmitted(t *testing.T) {
 		t.Fatalf("invalid repair closure: calls=%d state=%s failure=%v", counting.calls, state.ClosureState, state.ClosureFailure)
 	}
 }
-

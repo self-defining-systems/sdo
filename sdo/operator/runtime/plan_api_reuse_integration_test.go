@@ -56,4 +56,3 @@ func TestReadClientMayObserveControlObjectsWithoutWriteAuthority(t *testing.T) {
 		t.Fatal("control object mutation allowed")
 	}
 }
-

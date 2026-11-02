@@ -129,4 +129,3 @@ func TestDatabaseLiveReadRejectsReplacedSnapshotPod(t *testing.T) {
 		}
 	}
 }
-

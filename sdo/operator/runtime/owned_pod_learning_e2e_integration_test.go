@@ -173,4 +173,3 @@ func TestFirstEncounterNamingReplacedPodPublishesWorkloadPlaybook(t *testing.T) 
 		}
 	}
 }
-

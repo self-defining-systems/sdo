@@ -692,4 +692,3 @@ func TestRecoveryResidualCannotDispatchPastOriginalResponseBudget(t *testing.T) 
 		t.Fatal("exhausted response budget did not produce an ordinary unverified closure")
 	}
 }
-

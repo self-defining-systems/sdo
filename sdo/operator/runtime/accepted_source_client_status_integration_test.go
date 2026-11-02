@@ -62,4 +62,3 @@ func TestAcceptedSourceRequestsKeepServerStatus(t *testing.T) {
 		}
 	}
 }
-

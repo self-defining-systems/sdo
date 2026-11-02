@@ -34,4 +34,3 @@ func TestSourceInventoryCacheOnlyExposesNamespaceBoundClusterRBAC(t *testing.T) 
 		}
 	}
 }
-

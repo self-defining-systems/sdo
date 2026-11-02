@@ -9,4 +9,3 @@ var cliFixture struct {
 	binary, directory string
 	err               error
 }
-

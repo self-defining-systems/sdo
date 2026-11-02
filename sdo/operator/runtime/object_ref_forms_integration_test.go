@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-
 )
 
 // Hand-written role fixtures exercise the public request decoder and real menu
@@ -38,4 +36,3 @@ func TestMenuRejectsAmbiguousObjectBeforeWrites(t *testing.T) {
 		t.Fatalf("ambiguous target must fail before writes: %+v", response)
 	}
 }
-

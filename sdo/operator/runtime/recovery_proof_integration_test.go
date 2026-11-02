@@ -138,4 +138,3 @@ func TestRecoveryProofPublishesNativeOutcomeWithoutFinalReport(t *testing.T) {
 		t.Fatalf("clear-to-outcome exceeded shared 15s proof + handoff: clear=%v written=%v", clear, written)
 	}
 }
-

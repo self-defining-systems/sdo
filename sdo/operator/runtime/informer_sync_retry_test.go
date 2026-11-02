@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
 )
 
 func fastSyncPolicy() InformerSyncPolicy {
@@ -57,4 +56,3 @@ func TestInformerSyncPolicyRejectsInvalidConfiguration(t *testing.T) {
 		t.Fatalf("defaults must stay within three attempts and three minutes: %+v", policy)
 	}
 }
-

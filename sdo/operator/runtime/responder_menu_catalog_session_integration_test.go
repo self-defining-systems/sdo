@@ -45,4 +45,3 @@ func TestMenuCatalogRefusesChangedProgramTargetBeforeAnyBatchWrite(t *testing.T)
 		t.Fatalf("changed preconditions were not refused before writes: %+v; patches=%d", response, len(cluster.patches))
 	}
 }
-

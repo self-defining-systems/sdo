@@ -74,4 +74,3 @@ func TestPendingRolloutDoesNotCountAsDurableTrustFailure(t *testing.T) {
 		})
 	}
 }
-

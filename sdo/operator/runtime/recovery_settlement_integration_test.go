@@ -218,4 +218,3 @@ func TestRecoverySettlementPreservesIndependentReceiptIdentity(t *testing.T) {
 	}
 	t.Fatal("settlement deleted an independent repair merely sharing a controller receipt prefix")
 }
-

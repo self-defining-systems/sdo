@@ -8,7 +8,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"strings"
 	"sync"
-
 )
 
 // capturingDispatcher records the incident request the controller dispatches.

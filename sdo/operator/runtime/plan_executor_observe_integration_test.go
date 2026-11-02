@@ -58,4 +58,3 @@ func TestKubernetesCacheAwaitsWritesBeforeVerification(t *testing.T) {
 		}
 	})
 }
-

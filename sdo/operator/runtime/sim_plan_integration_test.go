@@ -35,4 +35,3 @@ func TestSimPlanApplyUnderServerFaults(t *testing.T) {
 		})
 	})
 }
-

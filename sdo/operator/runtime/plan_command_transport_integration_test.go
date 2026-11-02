@@ -107,4 +107,3 @@ func TestGeneralCommandRejectsCredentialRedirect(t *testing.T) {
 		t.Fatal("exec followed redirect with controller credentials")
 	}
 }
-

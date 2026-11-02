@@ -318,4 +318,3 @@ func TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure(t *testing.
 		}
 	})
 }
-

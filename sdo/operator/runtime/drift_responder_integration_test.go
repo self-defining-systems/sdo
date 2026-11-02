@@ -250,4 +250,3 @@ func TestPendingDriftAloneStillWaitsForBatchWindow(t *testing.T) {
 		t.Fatal("drift-only batch never opened after the batch window")
 	}
 }
-

@@ -80,4 +80,3 @@ func TestDriftOnlyIncidentGetsOneExtraHealthyTurn(t *testing.T) {
 		t.Fatalf("remaining drift gated drift-only closure: %d", closed)
 	}
 }
-

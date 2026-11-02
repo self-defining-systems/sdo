@@ -456,4 +456,3 @@ func TestCommandStdoutKeepsToolWarningsOutOfTheDataChannel(t *testing.T) {
 		t.Fatalf("stderr must stay available for failure messages: %q", stderr)
 	}
 }
-

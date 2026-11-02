@@ -48,4 +48,3 @@ func TestClosureHandoffNotesSourceRegressionAfterVerification(t *testing.T) {
 		t.Fatalf("regression not recorded on the outcome: %q", notes)
 	}
 }
-

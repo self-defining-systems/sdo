@@ -337,4 +337,3 @@ func assertMenuSimStrictReceipt(t *testing.T, ctx context.Context, ledger *contr
 	}
 
 }
-

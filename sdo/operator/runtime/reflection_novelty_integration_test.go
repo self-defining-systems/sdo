@@ -219,4 +219,3 @@ func TestCoveredRepeatStageProducerReachesBroker(t *testing.T) {
 		t.Fatalf("workers=%d decision=%v", workers, ledger.GetReflectionDecision())
 	}
 }
-

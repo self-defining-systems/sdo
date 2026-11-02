@@ -33,4 +33,3 @@ func (p settle3ObservedProgram) Mitigate(context.Context, program.ReadView, prog
 		program.WaitFor{Ref: p.ref, Path: "/metadata/labels/ready", Equals: "yes"},
 	}}, nil
 }
-

@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -55,4 +54,3 @@ func TestWorkerReportedOwnerChainsAreIgnored(t *testing.T) {
 		t.Fatalf("worker-reported owner chain reached SDO: %#v", decoded.RepairActions)
 	}
 }
-

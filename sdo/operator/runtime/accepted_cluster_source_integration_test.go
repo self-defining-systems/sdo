@@ -165,4 +165,3 @@ func assertClusterSourceStatusVerify(t *testing.T, ref sdk.ObjectRef, view LiveR
 		}
 	}
 }
-

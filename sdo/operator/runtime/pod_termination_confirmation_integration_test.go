@@ -87,4 +87,3 @@ func TestKubectlDeleteReceiptAcceptsTerminatingPod(t *testing.T) {
 		t.Fatalf("terminating Pod delete receipt: %+v", receipts[0])
 	}
 }
-

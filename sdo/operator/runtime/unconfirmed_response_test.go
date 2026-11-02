@@ -163,4 +163,3 @@ func TestExpiredVerificationDoesNotDispatchPendingContinuation(t *testing.T) {
 		t.Fatal("pending continuation did not close unconfirmed")
 	}
 }
-

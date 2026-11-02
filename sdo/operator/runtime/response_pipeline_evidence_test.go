@@ -95,4 +95,3 @@ func (redundantPipelinePortProgram) Spec() program.ProgramSpec {
 	spec.ID = "zzz-redundant-port"
 	return spec
 }
-

@@ -121,7 +121,7 @@ type inventoryStore struct{ objects []*unstructured.Unstructured }
 
 func (s *inventoryStore) SourceDriftObjects() []*unstructured.Unstructured { return s.objects }
 
-func (s *inventoryStore) TakeObjectChanges() []ObjectChange                { return nil }
+func (s *inventoryStore) TakeObjectChanges() []ObjectChange { return nil }
 
 type inventorySource struct {
 	objects []*unstructured.Unstructured
@@ -421,4 +421,3 @@ func TestSourceInventoryHelperLabelDoesNotHideApplicationControllers(t *testing.
 		t.Fatal("Pod/Job helper label hid a persistent application controller")
 	}
 }
-

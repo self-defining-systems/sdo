@@ -57,4 +57,3 @@ func TestLiveReadViewUsesSnapshotAndReadOnlyPrimitives(t *testing.T) {
 		t.Fatalf("unexpected probes: %v", prober.calls)
 	}
 }
-

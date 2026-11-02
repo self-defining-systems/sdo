@@ -134,4 +134,3 @@ func TestHermeticResponsePipelineHandsAgentStageReportAndRemainingFindings(t *te
 		t.Fatalf("agent should receive only the uncovered finding, got %v", request.Findings)
 	}
 }
-

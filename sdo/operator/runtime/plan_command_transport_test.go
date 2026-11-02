@@ -24,4 +24,3 @@ func TestGeneralHTTPOnlySerializesCredentialReference(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-

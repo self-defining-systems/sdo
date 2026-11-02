@@ -576,4 +576,3 @@ func TestDeterministicResponseStageInvalidatedMatchNeverApplies(t *testing.T) {
 		t.Fatalf("stale plan executed: %v findings=%v", report, state.Findings)
 	}
 }
-

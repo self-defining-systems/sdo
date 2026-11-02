@@ -128,4 +128,3 @@ func runSimRestartOntoFailingTraffic(t *testing.T, seed uint64) {
 		t.Fatalf("scheduled restart/recovery did not settle: pending=%d closures=%+v violations=%v", pendingSeen, w.closed, w.violations)
 	}
 }
-

@@ -5,20 +5,23 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"google.golang.org/protobuf/types/known/anypb"
+	"go/format"
 	"os"
 	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
-	"strings"
-	"testing"
-	"time"
 )
 
 type nativePathInstaller struct {
@@ -224,7 +227,7 @@ func New() sdk.Detector { return servicehealth.NewReadyEndpointsDetector(sdk.Det
 		if err := os.WriteFile(filepath.Join(playbooks, "README.md"), []byte("# Playbooks\n\n- [health-objective](health-objective/README.md)\n"), 0o644); err != nil {
 			return nil, err
 		}
-		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "health checks authored", AgentSessionId: "judge-session", ObjectiveDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(request.GetHealthObjective()))), DetectorIds: []string{"health-objective"}})
+		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "health checks authored", AgentSessionId: "judge-session", DetectorIds: []string{"health-objective"}})
 	case reflectionTaskType(w.t):
 		request := &contracts.ReflectionRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
@@ -249,4 +252,13 @@ func New() sdk.Detector { return servicehealth.NewReadyEndpointsDetector(sdk.Det
 		return nil, err
 	}
 	return result, nil
+}
+
+func formattedNativePathSource(t *testing.T, source string) []byte {
+	t.Helper()
+	formatted, err := format.Source([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return formatted
 }

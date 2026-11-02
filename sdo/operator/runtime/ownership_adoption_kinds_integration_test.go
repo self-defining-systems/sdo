@@ -162,4 +162,3 @@ func TestAdoptionLeavesSharedClusterObjectsUnowned(t *testing.T) {
 		}
 	}
 }
-

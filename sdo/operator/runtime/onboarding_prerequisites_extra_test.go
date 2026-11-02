@@ -98,4 +98,3 @@ func TestSourceInventoryOnboardingContradictionSurvivesSnapshotFailure(t *testin
 		t.Fatalf("contradiction consumed attempt: %v %v", marked, err)
 	}
 }
-

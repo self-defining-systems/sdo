@@ -19,6 +19,14 @@ func TestMitigationPlansAreBuiltOnlyThroughBuildMitigationPlan(t *testing.T) {
 		"runtime/jit_program_runner.go": true,
 		"sdk/sdktest/mitigation.go":     true,
 		"sdk/sdktest/generalization.go": true,
+		// The memory host runs accepted programs in its own process; the
+		// controller reaches them through these RPC seams and builds plans
+		// from the validated response.
+		"memoryhost/program.go":        true,
+		"memoryhost/manager.go":        true,
+		"memoryhost/mirror.go":         true,
+		"memoryhost/hostio/process.go": true,
+		"runtime/memory_host.go":       true,
 	}
 	root := ".."
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {

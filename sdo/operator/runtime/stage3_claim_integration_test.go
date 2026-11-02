@@ -107,4 +107,3 @@ func TestStageClaimGateKeepsPublishedWorkerOwnership(t *testing.T) {
 		})
 	}
 }
-

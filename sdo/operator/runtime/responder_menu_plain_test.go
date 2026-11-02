@@ -18,4 +18,3 @@ func plainProgramOption(t *testing.T, menu *contracts.MitigationMenu, index int)
 	}
 	return ids[index]
 }
-

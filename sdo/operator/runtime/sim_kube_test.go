@@ -52,9 +52,9 @@ func newSimClock() *simClock {
 	return clock
 }
 
-func (c *simClock) Now() time.Time          { return time.Unix(0, c.nanos.Load()).UTC() }
+func (c *simClock) Now() time.Time { return time.Unix(0, c.nanos.Load()).UTC() }
 
-func (c *simClock) Set(now time.Time)       { c.nanos.Store(now.UnixNano()) }
+func (c *simClock) Set(now time.Time) { c.nanos.Store(now.UnixNano()) }
 
 func (c *simClock) Advance(d time.Duration) { c.nanos.Add(int64(d)) }
 
@@ -209,4 +209,3 @@ func (c *simCache) AwaitWrites(context.Context, []ObservedWrite) error {
 	c.pending = 0
 	return nil
 }
-

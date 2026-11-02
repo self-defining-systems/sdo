@@ -136,4 +136,3 @@ func TestIneffectiveIrreversibleProgramIsKeptAndRecorded(t *testing.T) {
 		t.Fatalf("irreversible attempt: deletes=%d %v", deletes.Load(), attempt)
 	}
 }
-

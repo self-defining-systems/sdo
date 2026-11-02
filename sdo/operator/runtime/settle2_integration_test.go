@@ -883,4 +883,3 @@ func TestSettlementGuardPreservesProvenObservation(t *testing.T) {
 		}
 	}
 }
-

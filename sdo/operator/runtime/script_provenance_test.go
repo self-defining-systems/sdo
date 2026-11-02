@@ -57,4 +57,3 @@ func (p provenancePipelineProgram) Mitigate(context.Context, program.ReadView, p
 	}
 	return program.Plan{Actions: []program.Action{step}}, nil
 }
-

@@ -142,4 +142,3 @@ func TestResponderUsageFailedWorkerWithoutSession(t *testing.T) {
 		t.Fatal("failed outcome dropped usage")
 	}
 }
-

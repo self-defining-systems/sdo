@@ -399,4 +399,3 @@ func TestT1TrustProperty(t *testing.T) {
 		}
 	}
 }
-

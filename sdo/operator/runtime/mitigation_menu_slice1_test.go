@@ -145,4 +145,3 @@ func menuSelection(t *testing.T, menu map[string]any, programID string, rounds i
 	t.Fatalf("missing option %q: %+v", programID, menu)
 	return nil
 }
-

@@ -6,8 +6,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"testing"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 func TestTypedLaunchRetainsRemovalTransports(t *testing.T) {
@@ -36,7 +37,7 @@ users:
 	}
 	t.Setenv("KUBECONFIG", kubeconfig)
 	root := nativeRepository(t)
-	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: root, Namespace: "app", ControlNamespace: "control", BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository", ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model"}
+	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: root, Namespace: "app", ControlNamespace: "control", BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository", ResponderBackend: "codex", ResponderModel: "model"}
 	_, client, err := nativeBrokerFromLaunch(context.Background(), config, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -61,4 +62,3 @@ users:
 		t.Fatalf("caller-injected client attempted ambient credentials: %v", err)
 	}
 }
-

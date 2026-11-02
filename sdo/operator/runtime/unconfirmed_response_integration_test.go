@@ -265,4 +265,3 @@ assert len(prompt)<=1500, len(prompt)
 		t.Fatalf("unconfirmed outcome did not reach reflection: calls=%d ledger=%v", reflections, ledger)
 	}
 }
-

@@ -152,4 +152,3 @@ func TestTerminalDriftResponderFailureDoesNotWaitForTTL(t *testing.T) {
 		t.Fatalf("failed responder dispatches=%d", dispatcher.calls)
 	}
 }
-

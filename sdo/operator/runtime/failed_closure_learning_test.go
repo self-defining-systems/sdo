@@ -245,4 +245,3 @@ func TestFailedClosurePartialEvidenceSnapshotIsIsolated(t *testing.T) {
 		t.Fatal("caller changed controller-owned partial proof through an exported snapshot")
 	}
 }
-

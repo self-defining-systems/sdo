@@ -84,4 +84,3 @@ func TestFailedResponseProgressBudgetsBoundEveryNestedInventory(t *testing.T) {
 		}
 	}
 }
-

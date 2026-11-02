@@ -965,6 +965,12 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint == "" || (exact && receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint) {
 				return errors.New("successful rollout lacks matching host artifact and activated detector fingerprint")
 			}
+			if !exact {
+				fingerprint, fingerprintErr := n.Repository.DiagnosticsFingerprint(context.Background(), receipt.ControllerRevision)
+				if fingerprintErr != nil || fingerprint != receipt.ObservedDetectorFingerprint {
+					return errors.New("successful rollout revision is not an accepted commit with the activated detector fingerprint")
+				}
+			}
 			if successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 				return errors.New("controller rollout already succeeded")
 			}

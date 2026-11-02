@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync/atomic"
 	"time"
-
 )
 
 // The setup caller's cancellation boundary is driven by virtual elapsed time.
@@ -35,4 +34,3 @@ func (b *simSetupBudget) spend(d time.Duration) {
 		}
 	}
 }
-

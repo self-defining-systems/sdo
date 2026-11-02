@@ -31,4 +31,3 @@ func (d repeatUnavailableDetector) Spec() sdk.DetectorSpec {
 func (repeatUnavailableDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return nil, fmt.Errorf("synthetic deployment evidence unavailable")
 }
-

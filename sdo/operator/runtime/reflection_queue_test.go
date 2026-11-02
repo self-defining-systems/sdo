@@ -33,4 +33,3 @@ func closeAndReflect(t *testing.T, ctx context.Context, native queuedReflectionB
 	}
 	return receipt, native.ProcessQueuedReflection(ctx, closure.Request.IncidentID)
 }
-

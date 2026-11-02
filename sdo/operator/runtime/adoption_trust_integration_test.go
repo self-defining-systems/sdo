@@ -37,4 +37,3 @@ func TestAdoptedProgramsStartWithoutInheritedTrust(t *testing.T) {
 		t.Fatalf("inherited trust survived adoption: %+v %v", after, err)
 	}
 }
-

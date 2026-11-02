@@ -142,4 +142,3 @@ func TestBrokerIdentityMismatchNamesFieldsAndIsNotRetried(t *testing.T) {
 		t.Fatalf("mismatch = %v, want a non-retryable error naming source_check_notes", err)
 	}
 }
-

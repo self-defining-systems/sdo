@@ -25,7 +25,7 @@ var globalMutators = map[string]bool{
 // isolatedGlobalMutators lists the test files allowed to mutate klog state,
 // each of whose tests must use inIsolatedProcess. It may only shrink.
 var isolatedGlobalMutators = map[string]string{
-	"credential_sources_test.go": "asserts credentials never reach verbose client logs",
+	"credential_sources_integration_test.go": "asserts credentials never reach verbose client logs",
 }
 
 func TestOnlyIsolatedTestsMutateProcessGlobalLogging(t *testing.T) {
@@ -80,4 +80,3 @@ func TestOnlyIsolatedTestsMutateProcessGlobalLogging(t *testing.T) {
 		t.Errorf("%s no longer mutates klog state; remove its allowlist entry", file)
 	}
 }
-

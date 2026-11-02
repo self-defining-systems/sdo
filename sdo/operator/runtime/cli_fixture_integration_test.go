@@ -44,4 +44,3 @@ func TestOperatorCLIFixtureReusesExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-

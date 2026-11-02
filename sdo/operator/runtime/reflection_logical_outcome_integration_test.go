@@ -117,4 +117,3 @@ func TestReflectionReadsOlderOutcomeWithPhysicalPaths(t *testing.T) {
 		t.Fatalf("reflection on older memory = %+v", decision)
 	}
 }
-

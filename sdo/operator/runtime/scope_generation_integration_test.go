@@ -96,4 +96,3 @@ func TestScopedClosureVerifiedUnderChangedScope(t *testing.T) {
 		}
 	}
 }
-

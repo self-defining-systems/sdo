@@ -87,4 +87,3 @@ func TestAdmissionRecoveryCanRequeuePendingTemplateRepair(t *testing.T) {
 		})
 	}
 }
-

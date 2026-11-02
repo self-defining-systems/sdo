@@ -233,4 +233,3 @@ func assertWebhookArtifactsPrivate(t *testing.T, canary string, artifacts ...any
 		scan(tree)
 	}
 }
-

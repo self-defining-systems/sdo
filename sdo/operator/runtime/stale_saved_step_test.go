@@ -23,4 +23,3 @@ func (p staleFaultProvider) Snapshot(ctx context.Context) (sdk.DetectionContext,
 	}
 	return snapshot, nil
 }
-

@@ -66,4 +66,3 @@ func TestInvalidStateRecoveryProducesFailedOutcomeAndReflection(t *testing.T) {
 		t.Fatalf("closure/reflection stalled: receipt=%v reflected=%d", receipt, reflected)
 	}
 }
-

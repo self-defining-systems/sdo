@@ -32,4 +32,3 @@ func TestFiftyCaseTiming(t *testing.T) {
 	}
 	t.Logf("50 synthetic in-memory cases in %s (%.3f ms/case after build)", elapsed, float64(elapsed)/float64(time.Millisecond)/50)
 }
-

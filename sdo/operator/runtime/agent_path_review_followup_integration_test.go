@@ -112,4 +112,3 @@ func TestApplicationReceiptsSurviveRestartBeforeFirstContinuation(t *testing.T) 
 	assertRestoredApplicationReceiptReachesWorkerResult(t, client, restored, before[0].ActionID)
 
 }
-

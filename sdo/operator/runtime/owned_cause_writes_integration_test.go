@@ -39,4 +39,3 @@ func TestProgramReceiptRecordsOwnerChainFromPreImages(t *testing.T) {
 		t.Fatalf("owner chain lost at the contract boundary: %+v", message.GetRepairActions())
 	}
 }
-

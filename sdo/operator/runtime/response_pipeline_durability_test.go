@@ -22,4 +22,3 @@ func (d *stageHandoffDetector) Spec() sdk.DetectorSpec {
 	}
 	return d.Detector.Spec()
 }
-
