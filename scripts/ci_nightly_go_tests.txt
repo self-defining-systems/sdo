@@ -413,3 +413,8 @@ TestHealthRefreshPreservesOnlyVerifiedInstallLineage
 TestSourceInventorySkipsLargeNonManifestAssets
 # worker_registry: tests of 1.0 s or more. PRs keep the rest, e.g. TestKubernetesExecutorRecoversRequestBoundStagedResult, TestStandbySlotIsReleasedOnEveryExitPath, TestRWS2PVCContinuationRemainsDiscoverable.
 TestStandbyExactlyOneClaimantWins
+# Parallel-subtest families whose parent reports almost no time (the work is in the subtests): about 50 s per
+# subtest for shared-memory controllers and about 70 s of subtests for the scripted broker matrix.
+# PRs keep TestHermeticNewDetectorInputs, TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels and the per-case broker tests.
+TestHermeticSharedMemoryControllers
+TestT1ScriptedBrokerMatrix
