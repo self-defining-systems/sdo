@@ -96,20 +96,14 @@ def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = T
         text=True,
         timeout=wait_for(WaitKind.PROBE),
     ).stdout.strip()
-    sources = {
-        image: image_source(worktree, "HEAD", target)
-        for image, target in (
-            (images.controller, "controller"),
-            (images.validator, "validator"),
-        )
-    }
+    sources = {image: image_source(worktree, "HEAD", target) for image, target in ((images.controller, "controller"),)}
     if uncommitted_build_files(worktree, list(sources.values())):
         raise ValueError(
             "eval: image source has uncommitted changes; commit and rebuild with scripts/build_sdo_images.sh"
         )
     for image, source in sources.items():
         _assert_image_source(image, source, worktree)
-    # Controller and validator remain source-bound above. A retained responder
+    # The controller remains source-bound above. A retained responder
     # may be from an older compatible build, but its complete runtime import
     # closure must load before a worker (and therefore injection) can start.
     if _image_labels(images.responder).get(REVISION_LABEL) != revision:
@@ -134,7 +128,7 @@ def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = T
                 "/tmp",
                 "--user",
                 "65532:65532",
-                images.validator,
+                images.controller,
                 "go",
                 "version",
             ],
@@ -145,5 +139,5 @@ def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = T
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise ValueError(
-            f"eval: validator {images.validator} Go toolchain cannot run; rebuild with scripts/build_sdo_images.sh"
+            f"eval: controller {images.controller} Go toolchain cannot run; rebuild with scripts/build_sdo_images.sh"
         ) from exc

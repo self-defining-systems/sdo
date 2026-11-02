@@ -188,7 +188,6 @@ def test_native_monitor_uses_correlated_ledger_and_skips_previous_incident(
         application="hotel",
         controller_image="controller:test",
         responder_image="responder:test",
-        validator_image="validator:test",
         repository_pvc="repo",
         credentials_secret="credentials",
         model="test",

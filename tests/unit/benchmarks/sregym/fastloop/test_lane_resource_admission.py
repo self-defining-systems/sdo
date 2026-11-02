@@ -140,7 +140,6 @@ def test_admission_uses_the_requested_installer_configuration(lane, monkeypatch)
         application=env.namespace,
         controller_image="controller:test",
         responder_image="responder:test",
-        validator_image="validator:test",
         repository_pvc="repository",
         credentials_secret="unused",
         model="scripted",

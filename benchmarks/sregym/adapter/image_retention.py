@@ -16,9 +16,7 @@ from typing import Any
 
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 
-_REPOSITORIES = frozenset(
-    {"sdo-controller", "sdo-detector-validator", "sdo-responder", "sdo-sregym-responder", "sdo-script-tools"}
-)
+_REPOSITORIES = frozenset({"sdo-controller", "sdo-responder", "sdo-sregym-responder", "sdo-script-tools"})
 _STATE = "/var/lib/sdo-image-retention.json"
 
 

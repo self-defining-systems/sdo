@@ -351,7 +351,6 @@ def _assert_native_shared_identity(environment: FastloopEnvironment) -> None:
         application=environment.application,
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
-        validator_image=environment.images.validator,
         repository_pvc=PVC_NAME,
         credentials_secret="sdo-agent-credentials",
         model="gpt-6-luna",

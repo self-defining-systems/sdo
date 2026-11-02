@@ -627,7 +627,6 @@ def _sdo_agent(
         reflection_wait_seconds=wait_for(WaitKind.REFLECTION_DRAIN),
         detection_timeout_seconds=args.detection_timeout,
         checkpoint_enabled=not args.no_checkpoints,
-        require_attestation_eligible=environment.pinned_tools,
     )
     if environment.app == "toy":
         from benchmarks.sregym.fastloop.toy_ops import ToyClusterOps

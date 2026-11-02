@@ -314,11 +314,10 @@ def fastloop(*args: str) -> list[str]:
     return ["uv", "run", "python", "-m", "benchmarks.sregym.fastloop", *args]
 
 
-IMAGE_ROLES = ("controller", "responder", "validator")
+IMAGE_ROLES = ("controller", "responder")
 IMAGE_NAMES = {
     "controller": "sdo-controller",
     "responder": "sdo-sregym-responder",
-    "validator": "sdo-detector-validator",
 }
 
 

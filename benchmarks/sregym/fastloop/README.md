@@ -8,14 +8,10 @@ restartable journal for adjacent first/exact-repeat pairs with private lane memo
 
 ## Pinned-tools lanes
 
-Measurement lanes set `pinned_tools: true` in `fastloop.json` with digest
-references (`name@sha256:...`) for the controller and validator images. Loading
-the environment fails otherwise. The kind nodes keep their dev and shared-memory
-mounts, but the controller and the workers it launches run image code, which is
-what lets the broker reuse a publication attestation. Before each injection,
-`run` reads the rendered `sdo-controller-run` Job and fails the row
-(`attestation_ineligible_launch`) if it still has a mutable validator or compiler
-image, `SDO_DEV_MOUNT=1` or development source mounts.
+Measurement lanes set `pinned_tools: true` in `fastloop.json` with a digest
+reference (`name@sha256:...`) for the controller image. Loading the environment
+fails otherwise. The kind nodes keep their dev and shared-memory mounts, but the
+controller and the workers it launches run image code.
 
 ## Change the application without recreating kind
 

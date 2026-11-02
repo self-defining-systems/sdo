@@ -28,14 +28,14 @@ def preflight(monkeypatch, repo, labels: dict[str, dict[str, str]]) -> None:
 
     monkeypatch.setattr(source_preflight.subprocess, "run", run)
     source_preflight.assert_runtime_images(
-        Images(controller="sdo-controller:x", validator="sdo-detector-validator:x", responder="responder:x"),
+        Images(controller="sdo-controller:x", responder="responder:x"),
         repo.path,
     )
 
 
 def revision_labels(revision: str) -> dict[str, dict[str, str]]:
     label = {"org.opencontainers.image.revision": revision}
-    return {"controller": label, "validator": label}
+    return {"controller": label}
 
 
 def test_benchmarks_only_commit_keeps_images_built_from_its_parent(image_repo, monkeypatch):
@@ -77,7 +77,7 @@ def test_tree_label_ignores_test_files_and_follows_production_go(image_repo):
 def test_the_real_build_context_sends_no_go_tests():
     from benchmarks.sregym.fastloop.image_provenance import image_source
 
-    for target in ("controller", "validator"):
+    for target in ("controller",):
         files = [path for path, _ in image_source(ROOT, "HEAD", target).objects]
         assert not [path for path in files if path.endswith("_test.go") or "/testdata/" in path]
         assert "sdo/operator/go.mod" in files
@@ -98,12 +98,11 @@ def test_change_under_a_built_path_names_the_differing_file(image_repo, monkeypa
         preflight(monkeypatch, image_repo, revision_labels(built))
 
 
-def test_registration_change_reaches_controller_only(image_repo):
+def test_registration_change_reaches_the_controller_image(image_repo):
     from benchmarks.sregym.fastloop.image_provenance import image_source
 
     built = image_repo.head
     image_repo.commit({"sdo/agents/registrations/responder.json": '{"v": 2}\n'}, "registration")
-    assert image_source(image_repo.path, built, "validator") == image_source(image_repo.path, "HEAD", "validator")
     assert image_source(image_repo.path, built, "controller") != image_source(image_repo.path, "HEAD", "controller")
 
 
@@ -115,11 +114,11 @@ def test_tree_label_accepts_image_whose_commit_is_unknown(image_repo, monkeypatc
             "org.opencontainers.image.revision": "0" * 40,
             SOURCE_TREE_LABEL: image_source(image_repo.path, "HEAD", target).identity,
         }
-        for target in ("controller", "validator")
+        for target in ("controller",)
     }
     preflight(monkeypatch, image_repo, labels)
-    labels["validator"][SOURCE_TREE_LABEL] = "tree-v1:stale"
-    with pytest.raises(ValueError, match=r"sdo-detector-validator:x .*0{40}.*fetch"):
+    labels["controller"][SOURCE_TREE_LABEL] = "tree-v1:stale"
+    with pytest.raises(ValueError, match=r"sdo-controller:x .*0{40}.*fetch"):
         preflight(monkeypatch, image_repo, labels)
 
 
@@ -141,13 +140,12 @@ def test_build_paths_follow_the_real_dockerfile_stage_graph():
         "sdo/agents/registrations",
         "sdo/operator",
     )
-    assert image_source(ROOT, "HEAD", "validator").roots == (".dockerignore", "sdo/operator")
 
 
 def test_every_source_checked_image_is_labelled_with_its_tree():
     bake = (ROOT / "scripts/sdo-images.hcl").read_text()
     build = (ROOT / "scripts/build_sdo_images.sh").read_text()
-    for target in ("controller", "validator"):
+    for target in ("controller",):
         block = re.search(rf'^target "{target}" \{{(.*?)^\}}', bake, re.MULTILINE | re.DOTALL)
         assert block is not None
         variable = f"SDO_{target.upper()}_SOURCE_TREE"

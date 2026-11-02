@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-IMAGES = {"controller": "c:t", "responder": "r:t", "validator": "v:t"}
+IMAGES = {"controller": "c:t", "responder": "r:t"}
 
 
 def _lane(tmp_path: Path) -> Path:
@@ -31,7 +31,7 @@ def _lane(tmp_path: Path) -> Path:
                 "run_dir": str(source),
                 "workspace": str(source / "application_workspace"),
                 "private_tmp": str(source / "tmp"),
-                "images": {"controller": "old", "responder": "old", "validator": "old"},
+                "images": {"controller": "old", "responder": "old"},
                 "worker_env": {"SREGYM_APP_SOURCE_DIR": str(source / "application_workspace"), "KEEP": "1"},
             }
         ),
@@ -82,8 +82,8 @@ def test_private_environment_never_writes_the_lane_directory(tmp_path: Path) -> 
 
 
 def test_private_environment_requires_every_image_role(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="validator"):
-        real.private_environment(_lane(tmp_path), tmp_path / "p", images={"controller": "c", "responder": "r"})
+    with pytest.raises(ValueError, match="responder"):
+        real.private_environment(_lane(tmp_path), tmp_path / "p", images={"controller": "c"})
 
 
 def test_a_clean_incident_passes_every_stage() -> None:

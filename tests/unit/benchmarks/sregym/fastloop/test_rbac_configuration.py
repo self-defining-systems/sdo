@@ -17,7 +17,6 @@ def config(tmp_path: Path, permissive: bool) -> NativeInstallConfig:
         application="app",
         controller_image="controller:test",
         responder_image="responder:test",
-        validator_image="validator:test",
         repository_pvc="repository",
         credentials_secret="unused",
         model="scripted",

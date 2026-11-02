@@ -22,6 +22,9 @@ for spec in 'native_receipt_go sdo-native-receipt' 'submission_go sdo-submission
 done
 export SDO_NATIVE_RECEIPT_BIN="$TOOLS/sdo-native-receipt"
 export SDO_SUBMISSION_GUARD_BIN="$TOOLS/sdo-submission-guard"
+# The operator executable is content-addressed by its Go inputs, so every worker verifies the same build.
+SDO_OPERATOR_BIN="$(python3 scripts/operator_test_binary.py)"
+export SDO_OPERATOR_BIN
 
 # Bound shared-host parallelism; pytest-cov combines the per-worker
 # coverage so the fail_under gate still sees the whole suite. Override with

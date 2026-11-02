@@ -38,8 +38,8 @@ def test_initialized_harness_with_missing_nested_chart_is_rejected(tmp_path):
         assert_harness_sources(tmp_path)
 
 
-@pytest.mark.parametrize("failure", ["controller", "validator", "missing-label", "toolchain", "dirty", None])
-def test_runtime_images_require_current_source_and_working_validator(image_repo, monkeypatch, failure):
+@pytest.mark.parametrize("failure", ["controller", "missing-label", "toolchain", "dirty", None])
+def test_runtime_images_require_current_source_and_a_working_controller_toolchain(image_repo, monkeypatch, failure):
     from benchmarks.sregym.fastloop import source_preflight
     from benchmarks.sregym.fastloop.environment import Images
 
@@ -55,7 +55,7 @@ def test_runtime_images_require_current_source_and_working_validator(image_repo,
         if args[0] == "git":
             return real_run(args, **kwargs)
         if args[:3] == ["docker", "image", "inspect"]:
-            role = next((role for role in ("controller", "validator") if role in args[3]), "responder")
+            role = next((role for role in ("controller",) if role in args[3]), "responder")
             revision = old if failure == role else current
             labels = {} if failure == "missing-label" else {"org.opencontainers.image.revision": revision}
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps([{"Config": {"Labels": labels}}]))
@@ -65,7 +65,7 @@ def test_runtime_images_require_current_source_and_working_validator(image_repo,
         return subprocess.CompletedProcess(args, 0, stdout="go version go1.26.8 linux/amd64\n")
 
     monkeypatch.setattr(source_preflight.subprocess, "run", run)
-    images = Images(controller="sdo-controller:x", validator="sdo-detector-validator:x", responder="responder:x")
+    images = Images(controller="sdo-controller:x", responder="responder:x")
     if failure:
         with pytest.raises(ValueError, match="eval:.*(source|toolchain)"):
             source_preflight.assert_runtime_images(images, image_repo.path)
@@ -133,7 +133,7 @@ def test_retained_responder_requires_current_source_or_real_entrypoint_smoke(ima
 
     monkeypatch.setattr(source_preflight.subprocess, "run", run)
     monkeypatch.setattr(adapter, "assert_image_entrypoints", smoke)
-    images = Images(controller="controller:current", responder="responder:retained", validator="validator:current")
+    images = Images(controller="controller:current", responder="responder:retained")
     if current:
         source_preflight.assert_runtime_images(images, image_repo.path)
         assert not called
@@ -167,11 +167,9 @@ def test_explicit_fastloop_preflight_checks_every_reused_image(tmp_path, monkeyp
             sregym_dir=tmp_path,
             controller_image="controller:reused",
             responder_image="benchmark:reused",
-            validator_image="validator:reused",
         )
     )
     assert smoked == [
         ("controller:reused", ()),
         ("benchmark:reused", adapter.BENCHMARK_IMAGE_ENTRY_POINTS),
-        ("validator:reused", ()),
     ]

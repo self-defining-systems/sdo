@@ -48,9 +48,7 @@ class FastloopEnvironment(BaseModel):
     dev_mount: Path | None = None
     dev_mount_snapshot: bool = False
     images: Images = Field(default_factory=Images)
-    #: Controller, compiler and validator run from immutable digests with no dev mount, so the
-    #: broker may reuse publication attestations. Node mounts (shared memory) stay; each row
-    #: checks the rendered controller Job before injection.
+    #: The controller runs from an immutable digest with no dev mount. Node mounts (shared memory) stay.
     pinned_tools: bool = False
     #: Environment for the SREGym worker process (deploy-from-source, kind, builder settings).
     worker_env: dict[str, str] = Field(default_factory=dict)
@@ -84,11 +82,9 @@ class FastloopEnvironment(BaseModel):
     def pinned_tools_are_digests(self) -> FastloopEnvironment:
         from benchmarks.sregym.fastloop.pinned_tools import immutable_image
 
-        if self.pinned_tools:
-            for role in ("controller", "validator"):
-                image = getattr(self.images, role)
-                if not immutable_image(image):
-                    raise ValueError(f"pinned_tools requires an immutable {role} digest, not {image!r}")
+        controller = self.images.controller
+        if self.pinned_tools and not immutable_image(controller):
+            raise ValueError(f"pinned_tools requires an immutable controller digest, not {controller!r}")
         return self
 
     @property

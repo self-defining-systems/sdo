@@ -25,7 +25,6 @@ def config(tmp_path):
         application="app-left",
         controller_image="controller:synthetic",
         responder_image="responder:synthetic",
-        validator_image="validator:synthetic",
         repository_pvc="repository",
         credentials_secret="credentials",
         model="scripted",

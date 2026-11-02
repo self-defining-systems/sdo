@@ -85,7 +85,6 @@ def installer_rbac(namespace: str, config: NativeInstallConfig | None = None) ->
             application="eval-dry-run",
             controller_image="controller:test",
             responder_image="responder:test",
-            validator_image="validator:test",
             repository_pvc="sdo-application-repository",
             credentials_secret="unused",
             model="scripted",

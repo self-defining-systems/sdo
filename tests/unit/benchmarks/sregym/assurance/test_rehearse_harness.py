@@ -427,7 +427,6 @@ def test_up_names_the_freeze_images_and_preflight_names_missing_ones(tmp_path: P
     up = gate.up_arguments(tmp_path / "freeze", tmp_path / "run", "3", "le-h96")
     assert up[up.index("--controller-image") + 1] == "sdo-controller:le-h96"
     assert up[up.index("--responder-image") + 1] == "sdo-sregym-responder:le-h96"
-    assert up[up.index("--validator-image") + 1] == "sdo-detector-validator:le-h96"
     problems = gate.preflight(REPO_ROOT, load=1.0, free_gib=500, absent_images=["sdo-controller:le-h96"])
     assert any("missing images" in item and "SDO_SCRIPTED_WORKER=1" in item for item in problems)
 

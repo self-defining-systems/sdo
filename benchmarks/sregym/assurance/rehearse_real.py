@@ -98,11 +98,11 @@ def private_environment(
     """A private copy of a lane's fastloop environment: own workspace clone, results, temp dir and delivery record.
 
     The lane keeps its cluster, kubeconfig and baseline; only paths that hold recorded data or accepted memory
-    move. ``images`` replaces the lane's controller, responder and validator refs with the scripted-worker ones.
+    move. ``images`` replaces the lane's controller and responder refs with the scripted-worker ones.
     """
 
     raw = json.loads((source / "fastloop.json").read_text(encoding="utf-8"))
-    for role in ("controller", "responder", "validator"):
+    for role in ("controller", "responder"):
         if role not in images:
             raise ValueError(f"image for {role} missing")
     target.mkdir(parents=True, exist_ok=True)
@@ -114,9 +114,9 @@ def private_environment(
     worker_env = dict(raw.get("worker_env", {}))
     worker_env["SREGYM_APP_SOURCE_DIR"] = str(workspace)
     worker_env["FASTLOOP_DELIVERY_RECORD"] = str(target / "image_delivery.jsonl")
-    required = [images["controller"], images["responder"], images["validator"]]
+    required = [images["controller"], images["responder"]]
     worker_env["SREGYM_KIND_REQUIRED_IMAGES"] = json.dumps(required)
-    worker_env["SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE"] = images["validator"]
+    worker_env["SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE"] = images["controller"]
     raw.update(
         run_dir=str(target),
         workspace=str(workspace),
