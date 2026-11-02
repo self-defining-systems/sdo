@@ -41,7 +41,7 @@ func TestRetiredProgramIsNotStagedCompiledOrRegistered(t *testing.T) {
 	if strings.Contains(string(generated), "service-targetport-mismatch") {
 		t.Fatal("retired program registered")
 	}
-	if _, err := w.ValidateAndBuild(context.Background()); err != nil {
+	if err := w.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

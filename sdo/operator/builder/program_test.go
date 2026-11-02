@@ -54,7 +54,7 @@ func TestProgramAcceptsRecordedSyntheticNoMatchCase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	if _, err := w.ValidateAndBuild(context.Background()); err != nil {
+	if err := w.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -95,7 +95,7 @@ func TestProgramSaveReplayDoesNotRequireRenameInvariance(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer w.Close()
-			_, err = w.ValidateAndBuild(context.Background())
+			err = w.Check(context.Background())
 			if err != nil {
 				t.Fatalf("repair replay should not require renamed fixtures (%s): %v", tc.name, err)
 			}
@@ -135,7 +135,7 @@ func TestProgramValidationRejectsUnsafeMemory(t *testing.T) {
 				defer w.Close()
 			}
 			if err == nil {
-				_, err = w.ValidateAndBuild(context.Background())
+				err = w.Check(context.Background())
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %q", err, tc.want)
@@ -160,7 +160,7 @@ func TestProgramRepeatUnreachableIsRecordedAsGap(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	if _, err := w.ValidateAndBuild(context.Background()); err != nil {
+	if err := w.Check(context.Background()); err != nil {
 		t.Fatalf("unreachable repeat must not reject memory: %v", err)
 	}
 	gaps, err := w.CoverageGaps()
@@ -192,7 +192,7 @@ func (ExtraMitigator) Mitigate(context.Context, program.ReadView, program.Bindin
 		defer w.Close()
 	}
 	if err == nil {
-		_, err = w.ValidateAndBuild(context.Background())
+		err = w.Check(context.Background())
 	}
 	if err == nil || !strings.Contains(err.Error(), "at most one Mitigator") {
 		t.Fatalf("two mitigators: %v", err)
@@ -219,7 +219,7 @@ func (ExtraDiagnoser) Diagnose(context.Context, program.ReadView, program.Bindin
 		defer w.Close()
 	}
 	if err == nil {
-		_, err = w.ValidateAndBuild(context.Background())
+		err = w.Check(context.Background())
 	}
 	if err == nil || !strings.Contains(err.Error(), "exactly one Diagnoser") {
 		t.Fatalf("two diagnosers: %v", err)
@@ -266,7 +266,7 @@ func TestCorpusCaseCannotNameUnknownProgram(t *testing.T) {
 		defer w.Close()
 	}
 	if err == nil {
-		_, err = w.ValidateAndBuild(context.Background())
+		err = w.Check(context.Background())
 	}
 	if err == nil || !strings.Contains(err.Error(), "unknown program") {
 		t.Fatalf("unknown corpus label accepted: %v", err)
@@ -293,7 +293,7 @@ func TestProgramAndLibraryRejectPersistentShellFiles(t *testing.T) {
 				defer w.Close()
 			}
 			if err == nil {
-				_, err = w.ValidateAndBuild(context.Background())
+				err = w.Check(context.Background())
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("shell file accepted: %v", err)
@@ -317,7 +317,7 @@ func TestProgramSaveReplayProvesEffectsWithoutFixedSnapshotGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	if _, err := w.ValidateAndBuild(context.Background()); err != nil {
+	if err := w.Check(context.Background()); err != nil {
 		t.Fatalf("repair replay unnecessarily depended on fixed snapshot: %v", err)
 	}
 }
