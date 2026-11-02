@@ -52,10 +52,10 @@ jobs:
           enable-cache: true
           prune-cache: false
       - run: uv sync --locked --all-extras
-      - name: Check out optional harness fixtures
+      - name: Check out the SREGym harness and its nested inputs
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule update --init --depth 1 third_party/sregym
+          python3 scripts/init_test_prereqs.py
       - name: Cache pinned proto tools
         id: proto-tools
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684

@@ -70,7 +70,7 @@ reason = "Typed metrics-source capabilities (query URL, annotation scraping, OTL
 
 [reflection.instructions]
 max_chars = 2300
-reason = "CTXFAIL1: fresh-session retries plus preserved history framing and backend API-history guidance require up to 2153 characters. Preserve every instruction through final provider transport, including this combined variant."
+reason = "CTXFAIL1: fresh-session retries plus preserved history framing and backend API-history guidance require up to 2263 characters, after the merge with main. Preserve every instruction through final provider transport, including this combined variant."
 
 [reflection.memory]
 max_chars = 800
