@@ -1,5 +1,3 @@
-//go:build integration
-
 package apihistory
 
 import (
@@ -8,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestStoreProjectsBeforeHashingAndBoundsIncident(t *testing.T) {
@@ -19,7 +16,7 @@ func TestStoreProjectsBeforeHashingAndBoundsIncident(t *testing.T) {
 	}
 	raw := []byte(`{"apiVersion":"v1","kind":"Secret","metadata":{"name":"db","namespace":"app","resourceVersion":"123"},"data":{"password":"cHJpdmF0ZQ=="},"stringData":{"token":"private"}}`)
 	for range 4 {
-		s.Record(Event{Started: time.Now(), Phase: "end", Verb: "get", Resource: "secrets", Namespace: "app", Name: "db", Status: 200}, raw)
+		s.Record(Event{Started: fixedNow, Phase: "end", Verb: "get", Resource: "secrets", Namespace: "app", Name: "db", Status: 200}, raw)
 	}
 	s.Close()
 	h, err := Read(dir)
@@ -78,7 +75,7 @@ func TestStoreRestartAndMissingHistoryAreUnknown(t *testing.T) {
 		t.Fatal("missing history accepted")
 	}
 	s, _ := Open(dir, "incident", Limits{})
-	s.Record(Event{Phase: "start", Verb: "patch", Started: time.Now()}, nil)
+	s.Record(Event{Phase: "start", Verb: "patch", Started: fixedNow}, nil)
 	s.Close()
 	s, err := Open(dir, "incident", Limits{})
 	if err != nil {
@@ -119,7 +116,7 @@ func TestStoreByteCapAndQueueGap(t *testing.T) {
 func TestUnfinishedRequestNeverClaimsCompleteHistory(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := Open(dir, "incident", Limits{})
-	s.Record(Event{RequestID: "unfinished", Phase: "start", Verb: "patch", Started: time.Now()}, nil)
+	s.Record(Event{RequestID: "unfinished", Phase: "start", Verb: "patch", Started: fixedNow}, nil)
 	s.Close()
 	h, err := Read(dir)
 	if err != nil {

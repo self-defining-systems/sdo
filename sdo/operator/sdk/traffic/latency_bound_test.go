@@ -1,5 +1,3 @@
-//go:build integration
-
 package traffic_test
 
 import (
@@ -22,7 +20,7 @@ func slowSamples(now time.Time, latency time.Duration) []traffic.Sample {
 }
 
 func TestDefaultLatencyBoundMissesASaturatedPathThatAMedianBoundCatches(t *testing.T) {
-	now := time.Now()
+	now := fixedNow
 	saturated := slowSamples(now, 350*time.Millisecond)
 	defaults := workload(t, "health", traffic.PurposeHealthProbe, traffic.WorkloadScenario{ID: "ads"})
 	if verdict := traffic.Evaluate("ads", defaults.ScenarioSLO("ads"), saturated, now); !verdict.Healthy {

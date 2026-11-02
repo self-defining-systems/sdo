@@ -1,22 +1,17 @@
-//go:build integration
-
 package memory
 
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"sdo.dev/operator/internal/testutil"
 )
 
 func healthTestGit(t *testing.T, root string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
-	return string(out)
+	return testutil.Git(t, root, args...)
 }
 func healthWrite(t *testing.T, root, path, content string) {
 	t.Helper()

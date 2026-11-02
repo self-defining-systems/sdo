@@ -1,25 +1,18 @@
-//go:build integration
-
 package memory
 
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/internal/testutil"
 )
 
 func catalogGit(t *testing.T, root string, args ...string) string {
 	t.Helper()
-	command := exec.Command("git", args...)
-	command.Dir = root
-	raw, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, raw)
-	}
-	return strings.TrimSpace(string(raw))
+	return testutil.Git(t, root, args...)
 }
 
 func TestCatalogSnapshotAtRetainsProposalCommitAfterPeerPublication(t *testing.T) {

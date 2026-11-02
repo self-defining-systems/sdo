@@ -1,23 +1,16 @@
-//go:build integration
-
 package validate
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"sdo.dev/operator/internal/testutil"
 )
 
 func gitIn(t *testing.T, root string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
+	return testutil.Git(t, root, args...)
 }
 
 // commit initializes root as a repository, optionally adds app.txt, and commits

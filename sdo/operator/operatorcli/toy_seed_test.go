@@ -5,12 +5,11 @@ package operatorcli
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"sdo.dev/operator/artifacts"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/validate"
 )
 
@@ -22,11 +21,7 @@ func TestToySeedPassesBrokerMemoryValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=toy", "-c", "user.email=toy@invalid", "commit", "-qm", "seed"}} {
-		command := exec.Command("git", args...)
-		command.Dir = root
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, output)
-		}
+		testutil.Git(t, root, args...)
 	}
 	// Startup upkeep must leave a current fixture's accepted commit unchanged.
 	if err := (artifacts.BootstrapStore{}).WriteSchema(root); err != nil {
@@ -45,13 +40,4 @@ func TestToySeedPassesBrokerMemoryValidation(t *testing.T) {
 	if err := validate.Err(diagnostics); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func gitIn(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
 }

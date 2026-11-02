@@ -1,5 +1,3 @@
-//go:build integration
-
 package broker
 
 import (
@@ -11,6 +9,8 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
 	"testing"
+
+	"sdo.dev/operator/internal/testutil"
 )
 
 func TestWorkingProgramDraftSurvivesIntoReflectionWithoutPublication(t *testing.T) {
@@ -66,7 +66,7 @@ func TestWorkingProgramDraftSurvivesIntoReflectionWithoutPublication(t *testing.
 }
 
 func TestSourcePublicationValidatesRepairsAndDefersWorkingPlaybooks(t *testing.T) {
-	t.Parallel()
+	testutil.FakeGo(t)
 	ctx := context.Background()
 	root := repository(t)
 	if err := os.CopyFS(filepath.Join(root, ".sdo"), os.DirFS("../memory/validate/testdata/good/.sdo")); err != nil {
