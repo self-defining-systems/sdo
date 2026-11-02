@@ -22,6 +22,16 @@ scheduler-start rejection and disconnect recovery) and
 
 For a fresh checkout or worktree, run `uv run python scripts/init_test_prereqs.py` once to initialize SREGym and every nested application/chart at the recorded SHA.
 
+## Seeded simulation sweeps
+
+Runtime sweeps (`sweepSimSeedsN`, `sweepSimSeedsPR`) run a fixed prefix of their seed sequence in PR CI
+(three seeds; `TestSimSchedule` one; the RV6 crash schedules eight so every crash cut runs once). The nightly
+runner exports `SDO_SIM_FULL=1`, which restores each sweep's declared seed count. `SDO_SIM_RUNS` and
+`SDO_SIM_SEED` still override both. A PR failure replays under the full profile because seeds are a prefix.
+
+Tests whose subject is not compilation use `sim.Compiler` as the broker's compile hook instead of
+`validate.CompileCandidate`; keep real compilation in the builder, validator and CLI tests.
+
 ## Capture boundary fixtures
 
 Tests that write capture boundaries (`open*.json`, `fixed.json`, `healthy.json`)

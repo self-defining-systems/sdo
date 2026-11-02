@@ -27,7 +27,10 @@ The simulated API server (`sdo/operator/runtime/sim`) models:
 - memory-host two-commit activation through Manager, detection during injected
   compilation delay, changed program plans, retained finding state, candidate
   failure, leased-call retirement, complete mirror deltas and same-revision crash recovery;
-- registered invariant hooks and a 45-second host-time seed-sweep budget.
+- registered invariant hooks and a 45-second host-time seed-sweep budget;
+- the memory broker's independent compile gate (`sim.Compiler`): it records each call, honors cancellation and
+  rejects changed Go files that do not parse, with an injectable typed verdict. It does not type-check, link or run
+  detector tests.
 
 The pure lifecycle core (`runtime/lifecyclecore`) is covered by exhaustive explorers of closure and
 reflection under bounded API faults, restarts and worker attempts (see `docs/lifecycle-state-machine.md`).
@@ -37,7 +40,9 @@ reflection under bounded API faults, restarts and worker attempts (see `docs/lif
 These are open gaps the simulation harness work closes; until then, cover them with integration-tagged
 tests or kind runs.
 
-- the real controller driver end to end (deferred slices of the lifecycle plan);
+- the production controller loop (`RunWithOptions`: informers, the state ConfigMap store, leases and executors). The
+  runtime tests' `simWorld` already steps the real `Controller` through `Step` and the pending-effect pump with a
+  scripted responder and broker under seeded faults, but it does not run that loop;
 - operating-system memory-host process launch, resource limits and activation swap;
 - NetworkPolicy enforcement and DNS.
 
@@ -69,6 +74,7 @@ sockets by the integration-tagged
 | 2026-10-31 | Synthetic shared-world conformance | Missing behavior / timing / fault | Shared pod, input and protocol edges | Modeled within bounds above | `TestCrashLoopRecovery`, `TestSimRealDetectionInputs`, `TestFaultSchedule`, `TestHermeticProtocolDialer` |
 
 | 2026-10-31 | Synthetic memory-host slice 1 | Transport / evidence | Detector and program execution outside the controller | Modeled at RPC boundary | `TestSimMemoryHostParityAndCrash`, `TestRemoteMemoryPreservesInputsAndCorpusReceipts`; same world, bufconn, host-owned log reads and typed receipt replay |
+| 2026-11-02 | Runtime test reduction | Missing behavior / cost | Broker compile gate repeated real Go builds in conflict and no-change tests | Modeled within bounds above | `sim.Compiler`, `TestCompilerRecordsCallsAndRejectsUnparsableGo`; `TestHermeticSharedMemoryControllers` and `TestReflectionNoChangeAndSDKGapNeverCommit` use it; real compilation stays in the builder/validator tests and the two compiling `TestReflectionDirectFilesCLIAndBroker` scenarios |
 | 2026-11-01 | Prober determinism migration | Transport | HTTP pool reuse after listener closure | Accepted bound | In-memory handlers intentionally omit TCP pooling; `TestKeepAliveConnectionsWouldMaskABlockedListener` and `TestBlockedListenerIsClassifiedAsADialFailureWithinAFewSeconds` retain real-socket integration coverage |
 
 The memory-host tests do not model OS process isolation, Unix socket permissions,
