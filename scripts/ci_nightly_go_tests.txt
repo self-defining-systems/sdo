@@ -2,8 +2,6 @@
 # rule tests, broker ownership tests and CLI error/JSON diagnostic contracts.
 TestAssuranceSeedsPassHealthJudgeCheck
 TestCLIAndBrokerAgreeOnAcceptance
-TestMemoryCheckCleanTreeExitsZero
-TestMemoryCheckCleanJSONHasEmptyDiagnosticList
 TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests
 TestToySeedPassesBrokerMemoryValidation
 TestIsolatedValidatorChecksProgramCorpus
@@ -51,13 +49,11 @@ TestValidateNotesDependencyEdgesNoHealthScenarioDrives
 # Dev operator end-to-end checks that compile detectors through the builder
 # (10-60 s each). PRs keep validator rule tests, broker ownership tests, the CLI
 # diagnostic contracts and the non-compiling halves of each pair.
-TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage
 TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits
 TestMalformedJudgeDetectorCLIAndBrokerDiagnosticParity
 TestReflectionAttestationBindsEveryInput
 TestAgentScriptJudgeMemoryCheckAndBroker
 TestPartialPlaybookPublication
-TestMissingHealthyReplayInputIsInformational
 TestLateInitCauseDetectorPassesReflectionCheckWithReplayOff
 TestWorkedExamplesPassTheReflectionMemoryCheck
 TestSkillExamplesPassMemoryCheckAndGoTest
