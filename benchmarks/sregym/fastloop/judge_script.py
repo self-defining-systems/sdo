@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from benchmarks.sregym.agent_script.model import AgentScript, ScriptTurn, Write
+from benchmarks.sregym.agent_script.model import AgentScript, ScriptTurn, Step, Write
 
 HEALTH = Path(".sdo/diagnostics/detectors/health")
 OBJECTIVE_DETECTOR = "health-objective"
@@ -32,7 +32,7 @@ def judge_script(*, checkout: Path) -> AgentScript:
         existing[str(manifest["id"])] = manifest_path.parent
     if not existing:
         raise ValueError("scripted health refresh needs an accepted seed with judge-owned health detectors")
-    steps: list[Write] = []
+    steps: list[Step] = []
     if OBJECTIVE_DETECTOR not in existing:
         source = existing[sorted(existing)[0]]
         for name in ("manifest.yaml", "detector.go"):
