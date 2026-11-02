@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -324,4 +325,27 @@ func (ignoringQueryDetector) Spec() sdk.DetectorSpec { return metricsSpec("ignor
 func (ignoringQueryDetector) Detect(_ context.Context, s sdk.DetectionContext) ([]sdk.Finding, error) {
 	_ = program.ReadFrom(s).QueryMetrics(metrics.Query{ID: "up", Expr: "up"})
 	return nil, nil
+}
+
+func TestCycleReadProbeTimeoutIsRecorded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		defer close(release)
+		v := NewCycleReadView(blockedProbe{program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}), release})
+		started := time.Now()
+		if _, err := v.ProbeTCP(sdk.ObjectRef{}, 80); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("probe error=%v", err)
+		}
+		if time.Since(started) > 10*time.Second {
+			t.Fatal("probe timeout not enforced")
+		}
+		captured, err := sdktest.CaptureSnapshot(v, "app")
+		if err != nil {
+			t.Fatal(err)
+		}
+		replay := program.ReadFrom(captured)
+		if _, err = replay.ProbeTCP(sdk.ObjectRef{}, 80); err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
+			t.Fatalf("timeout lost during replay: %v", err)
+		}
+	})
 }
