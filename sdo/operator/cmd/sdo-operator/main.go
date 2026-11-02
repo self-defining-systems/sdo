@@ -18,9 +18,7 @@ import (
 var sourceHash string
 
 func main() {
-<<<<<<< HEAD
 	broker.RunValidationChild()
-=======
 	if len(os.Args) == 2 && os.Args[1] == "shell-detector-runner" {
 		if err := shellpath.RunInCluster(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -35,13 +33,10 @@ func main() {
 		}
 		return
 	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if len(os.Args) == 2 && os.Args[1] == "source-hash" {
 		fmt.Println(sourceHash)
 		return
 	}
-<<<<<<< HEAD
-=======
 	if len(os.Args) > 1 && (os.Args[1] == "standby" || os.Args[1] == "standby-history" || os.Args[1] == "standby-ready") {
 		var err error
 		switch os.Args[1] {
@@ -78,7 +73,6 @@ func main() {
 		}
 		return
 	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	if len(os.Args) == 2 && os.Args[1] == "observe-controller" {
 		if err := operatorcli.RunControllerObservation(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)

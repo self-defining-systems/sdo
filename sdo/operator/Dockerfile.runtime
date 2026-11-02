@@ -184,25 +184,6 @@ COPY sdo/agents/registrations /opt/sdo/sdo/agents/registrations
 LABEL org.opencontainers.image.title="SDO Go operator" org.opencontainers.image.version="0.1.0"
 CMD ["/usr/local/bin/sdo-operator", "controller", "--help"]
 
-<<<<<<< HEAD
-=======
-FROM compiler-base AS validator-toolchain
-COPY --from=go-runtime /usr/local/bin/sdo-go-cache /usr/local/bin/sdo-go-cache
-ENV GOCACHEPROG=/usr/local/bin/sdo-go-cache
-# Fail the image build if compiler, SDK cache, or module seed is absent.
-RUN test -x /usr/local/go/bin/go && test -x /usr/local/bin/sdo-go-cache \
-    && test -d /go/pkg/mod/k8s.io && test -n "$(find /go/build-cache -name '*-a' -print -quit)"
-
-FROM validator-toolchain AS validator
-COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
-COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
-ARG SDO_VALIDATOR_SCHEMA_IDENTITY="unknown"
-LABEL org.opencontainers.image.title="SDO detector validator" \
-      org.opencontainers.image.version="0.1.0" \
-      dev.sdo.validator-schema="${SDO_VALIDATOR_SCHEMA_IDENTITY}"
-CMD ["/usr/local/bin/sdo-operator", "validate", "--help"]
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 FROM model-deps AS worker-runtime
 COPY --from=go-binaries /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
 COPY --from=go-binaries /opt/sdo/sdo/operator /opt/sdo/sdo/operator

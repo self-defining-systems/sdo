@@ -3,12 +3,9 @@ module sdo.dev/operator
 go 1.26.0
 
 require (
-<<<<<<< HEAD
-	github.com/robfig/cron/v3 v3.0.1 // indirect
-=======
 	github.com/distribution/reference v0.6.0
 	github.com/moby/patternmatcher v0.6.0
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	github.com/robfig/cron/v3 v3.0.1 // indirect
 	google.golang.org/protobuf v1.36.12
 	k8s.io/metrics v0.30.3
 	sdo.dev/operator/contracts v0.0.0
@@ -47,12 +44,8 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
-<<<<<<< HEAD
 	github.com/google/uuid v1.6.0 // indirect
-=======
-	github.com/google/uuid v1.3.1 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	github.com/imdario/mergo v0.3.6 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
