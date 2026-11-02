@@ -39,6 +39,9 @@ type cachedReadView struct {
 	entries map[string]*cachedRead
 }
 
+// UnderlyingReadView exposes the wrapped view to the memory host edge.
+func (v *cachedReadView) UnderlyingReadView() program.ReadView { return v.ReadView }
+
 func (v *cachedReadView) read(method string, args any, result any, fetch func() (any, error)) error {
 	key, err := json.Marshal([]any{method, args})
 	if err != nil {

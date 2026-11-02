@@ -2,10 +2,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"net/http"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
@@ -15,12 +18,28 @@ import (
 	"testing"
 )
 
-func TestHostDiffInputsNeverPatch(t *testing.T) {
+// Frozen diffs are read-only: they may ask the API server to render defaults (a dry run), never to persist.
+func TestHostDiffInputsOnlyDryRun(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "toy", Name: "api"}
+	source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "toy"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}
 	snapshot := sdktest.Snapshot{NamespaceName: "toy", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "toy"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 81}}}}}}
-	client := fake.NewSimpleClientset()
-	view := LiveReadView{Context: context.Background(), Carrier: inputs.New(snapshot), Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "toy"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}, Baseline: &StateChanges{Changes: []StateChange{{Kind: "Service", Name: "api", Change: StateChangeModified}}}}
-	calls := view.MemoryDiffInputs([]sdk.ObjectRef{ref})
+	var writes []string
+	server := newHandlerTransport(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDiscovery(writer, request) {
+			return
+		}
+		if request.URL.Query().Get("dryRun") != metav1.DryRunAll {
+			writes = append(writes, request.Method+" "+request.URL.String())
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(source)
+	}))
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: "http://in-memory", Transport: server})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := LiveReadView{Context: context.Background(), Carrier: inputs.New(snapshot), Client: client, SourceCommit: "accepted", Source: planFakeSource{source: source}, Baseline: &StateChanges{Changes: []StateChange{{Kind: "Service", Name: "api", Change: StateChangeModified}}}}
+	calls := memoryDiffInputs(NewCycleReadView(view), []sdk.ObjectRef{ref})
 	wire, err := memoryhost.EncodeReceipts(calls)
 	if err != nil {
 		t.Fatal(err)
@@ -30,16 +49,16 @@ func TestHostDiffInputsNeverPatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: decoded}
-	source, err := host.DiffAgainstSource(ref)
-	if err != nil || !source.Changed {
-		t.Fatal(source, err)
+	sourceDiff, err := host.DiffAgainstSource(ref)
+	if err != nil || !sourceDiff.Changed {
+		t.Fatal(sourceDiff, err)
 	}
 	baseline, err := host.DiffAgainstBaseline(ref)
 	if err != nil || !baseline.Changed {
 		t.Fatal(baseline, err)
 	}
-	if len(client.Actions()) != 0 {
-		t.Fatal("read-only diff input called Kubernetes", client.Actions())
+	if len(writes) != 0 {
+		t.Fatal("read-only diff input persisted to Kubernetes", writes)
 	}
 }
 
@@ -75,9 +94,9 @@ func TestRemoteDetectorReadsSourceDiffsTheControllerFroze(t *testing.T) {
 		"traffic over frozen logs over the cycle view": {wrap: func(live program.ReadView) sdk.DetectionContext {
 			return trafficContext{Carrier: inputs.New(inputs.New(cycle(live)).WithLogs(nil))}
 		}},
-		"view that hides its source": {wrap: func(live program.ReadView) sdk.DetectionContext {
+		"view that wraps another without exposing it": {wrap: func(live program.ReadView) sdk.DetectionContext {
 			return NewCycleReadView(opaqueReadView{cycle(live)})
-		}, wantErr: "unrecorded DiffAgainstSource"},
+		}},
 	} {
 		t.Run(name, func(t *testing.T) { remoteDetectorReadsSourceDiffs(t, tc.wrap, tc.wantErr) })
 	}
@@ -98,7 +117,7 @@ func remoteDetectorReadsSourceDiffs(t *testing.T, wrap func(program.ReadView) sd
 	}
 	snapshot := sdktest.Snapshot{NamespaceName: "toy", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "toy"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 81}}}}}}
 	source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "toy"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}
-	live := LiveReadView{Context: ctx, Carrier: inputs.New(snapshot), Client: fake.NewSimpleClientset(), SourceCommit: "accepted", Source: planFakeSource{source: source}}
+	live := LiveReadView{Context: ctx, Carrier: inputs.New(snapshot), SourceCommit: "accepted", Source: planFakeSource{source: source}}
 	// The controller hands detectors the cycle view the snapshot provider builds around its live view.
 	findings, err := remote.Detectors[0].Detect(ctx, wrap(live))
 	if wantErr != "" {

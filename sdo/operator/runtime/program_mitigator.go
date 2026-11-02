@@ -193,6 +193,9 @@ func newMitigationReadView(ctx context.Context, live program.ReadView) mitigatio
 	return mitigationReadView{ReadView: live, frozen: frozen, ctx: ctx}
 }
 
+// UnderlyingReadView lets the memory host edge reach the view this one isolates.
+func (v mitigationReadView) UnderlyingReadView() program.ReadView { return v.ReadView }
+
 func (v mitigationReadView) Namespace() string                { return v.frozen.Namespace() }
 func (v mitigationReadView) ConfigMaps() []corev1.ConfigMap   { return v.frozen.ConfigMaps() }
 func (v mitigationReadView) Services() []corev1.Service       { return v.frozen.Services() }

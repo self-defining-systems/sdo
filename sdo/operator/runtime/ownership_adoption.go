@@ -462,6 +462,9 @@ type adoptionConflictView struct {
 	diff program.Diff
 }
 
+// UnderlyingReadView exposes the wrapped view to the memory host edge.
+func (v adoptionConflictView) UnderlyingReadView() program.ReadView { return v.ReadView }
+
 func (v adoptionConflictView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
 	if ref == v.ref {
 		return v.diff, nil

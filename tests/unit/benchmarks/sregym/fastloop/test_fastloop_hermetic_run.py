@@ -73,7 +73,15 @@ func main() {
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		panic(err)
 	}
-	view := &sdktest.ReplayReadView{Snapshot: snapshot}
+	var calls []sdktest.PrimitiveCall
+	recorded, err := os.ReadFile(os.Args[2])
+	if err != nil {
+		panic(err)
+	}
+	if err := json.Unmarshal(recorded, &calls); err != nil {
+		panic(err)
+	}
+	view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
 	bindings := program.Bindings{Objects: program.ObjectBindings{
 		"service": sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "hotel-reservation", Name: "geo"},
 	}}
@@ -94,6 +102,14 @@ func main() {
 		panic("expected SetField")
 	}
 	value, _, err := program.ResolveValue(action.Value, program.ValueInputs{
+        SourceCommit: "accepted",
+        Source: func(ref sdk.ObjectRef) (map[string]any, error) {
+            raw, err := os.ReadFile(os.Args[3])
+            if err != nil { return nil, err }
+            var object map[string]any
+            err = json.Unmarshal(raw, &object)
+            return object, err
+        },
         Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
         for _, pod := range snapshot.Pods() {
             if ref.Kind == "Pod" && pod.Namespace == ref.Namespace && pod.Name == ref.Name {
@@ -398,6 +414,28 @@ class Controller(FakeOps):
             assert registration["kubernetes_job"]["command"][-1] == command
         return super().install(config)
 
+    def _write_recordings(self, comparisons: list[tuple[str, str, bool]], *, fixed: bool) -> None:
+        recordings = [
+            {
+                "method": "DiffAgainstSource",
+                "arguments": [
+                    {
+                        "api_version": "apps/v1" if kind == "Deployment" else "v1",
+                        "kind": kind,
+                        "namespace": NAMESPACE,
+                        "name": name,
+                    }
+                ],
+                "result": {"changed": differs and phase == "open", "text": "accepted: {}\nobserved: {}"},
+                **({"phase": "fixed"} if phase == "fixed" else {}),
+            }
+            for phase in (("open", "fixed") if fixed else ("open",))
+            for kind, name, differs in comparisons
+            if differs or phase == "open"
+        ]
+        for phase in ("detect", "pre-apply"):
+            (self.capture / f"open@{phase}-recordings.json").write_text(json.dumps(recordings) + "\n")
+
     def inject_after_resume(self, control: str, generation: str, inject: Any) -> dict[str, float]:
         inject()
         self.incidents += 1
@@ -442,6 +480,14 @@ class Controller(FakeOps):
             changes.append({"kind": kind, "name": name, "change": "modified", "fields": fields})
         raw["state_changes"] = {"baseline_at": now(), "observed_at": now(), "changes": changes}
         request = from_dict(IncidentRequest, raw)
+        # The controller records every object's source comparison at each capture boundary, then the same
+        # comparison again at the verified fixed boundary. The program under test reads them back.
+        comparisons = [
+            (kind, name, (kind, name) in changed)
+            for kind, name in self.app.objects
+            if kind in ("Service", "Deployment")
+        ]
+        self._write_recordings(comparisons, fixed=False)
         result = scripts.respond(request)
         assert result.status == "completed"
         if incident == "incident-1":
@@ -450,8 +496,7 @@ class Controller(FakeOps):
             assert source_image.endswith("a" * 64)
             assert image == source_image
         (self.capture / "fixed.json").write_text(json.dumps(self.app.snapshot()))
-        for phase in ("detect", "pre-apply"):
-            (self.capture / f"open@{phase}-recordings.json").write_text("[]\n")
+        self._write_recordings(comparisons, fixed=True)
         data = json_format.MessageToDict(result, preserving_proto_field_name=True)
         self.results[incident] = data
         self.commands_by_incident[incident] = list(self.commands)
@@ -548,8 +593,15 @@ class Controller(FakeOps):
                 assert (self.app.workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go").is_file()
                 assert self.sweep is not None
                 snapshot = self.capture / "open@detect.json"
+                accepted = self.sweep / "accepted-service.json"
+                accepted.write_text(json.dumps(self.app.baseline["Service", "geo"]))
                 completed = subprocess.run(
-                    [str(self.sweep / "diagnose"), str(snapshot)],
+                    [
+                        str(self.sweep / "diagnose"),
+                        str(snapshot),
+                        str(self.capture / "open@detect-recordings.json"),
+                        str(accepted),
+                    ],
                     cwd=self.sweep,
                     check=False,
                     capture_output=True,

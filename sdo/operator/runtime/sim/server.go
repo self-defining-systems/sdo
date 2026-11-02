@@ -47,6 +47,7 @@ func canonicalizeSpec(object *unstructured.Unstructured) {
 // settle applies API-server normalization and defaulting and a controller-managed status bump.
 func (c *serverClient) settle(object *unstructured.Unstructured) {
 	canonicalizeSpec(object)
+	defaultObject(object)
 	spec, _ := object.Object["spec"].(map[string]any)
 	if spec != nil && object.GetKind() == "Deployment" {
 		if _, ok := spec["progressDeadlineSeconds"]; !ok {
@@ -85,7 +86,12 @@ func (c *serverClient) settle(object *unstructured.Unstructured) {
 func (c *serverClient) bump(object *unstructured.Unstructured) {
 	c.version++
 	object.SetResourceVersion(strconv.Itoa(c.version))
-	object.SetAnnotations(map[string]string{"deployment.kubernetes.io/revision": strconv.Itoa(c.version)})
+	annotations := object.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations["deployment.kubernetes.io/revision"] = strconv.Itoa(c.version)
+	object.SetAnnotations(annotations)
 	_ = unstructured.SetNestedField(object.Object, int64(c.version), "status", "observedGeneration")
 }
 

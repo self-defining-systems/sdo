@@ -456,6 +456,11 @@ func (v *checkedReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error) {
 	return result, err
 }
 
+// Unchecked returns the view beneath this fail-closed read tracking. An edge that
+// reads on a program's behalf, such as the memory host's frozen diffs, uses it
+// so a read the program never made cannot fail the program's evaluation.
+func (v *checkedReadView) Unchecked() ReadView { return v.ReadView }
+
 // UnderlyingReadView preserves evidence sinks across the fail-closed wrapper.
 func (v *checkedReadView) UnderlyingReadView() ReadView { return v.ReadView }
 
