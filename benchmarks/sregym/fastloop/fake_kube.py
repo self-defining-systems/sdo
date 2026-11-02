@@ -96,7 +96,8 @@ class FakeKubernetesAPIServer:
                         events = server._watch_events(plural, revision)
                         if not events:
                             server._condition.wait_for(
-                                lambda: bool(server._watch_events(plural, revision)), timeout=1.0
+                                lambda: bool(server._watch_events(plural, revision)),
+                                timeout=wait_for(WaitKind.POLL_FAST),
                             )
                             events = server._watch_events(plural, revision)
                     for event in events:

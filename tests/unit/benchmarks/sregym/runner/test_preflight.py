@@ -667,6 +667,7 @@ def test_reused_benchmark_image_imports_real_entrypoint_transitively(tmp_path, f
         "agentshim",
         "benchmarks.sregym.adapter.submission",
         "benchmarks.sregym.adapter.submission_relay",
+        "benchmarks.sregym.fastloop.generated_worker",
     ):
         module(name)
     module("benchmarks.sregym.fastloop.recording_worker", "from .checkpoint_limits import MAX_TASK_BYTES\n")

@@ -1624,7 +1624,8 @@ def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(
     from benchmarks.sregym.adapter import persistent
 
     elapsed = [0.0]
-    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: None)
+    started = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: None, now=lambda: started)
 
     class SlowRead:
         def runtime_state(self, _control: str) -> dict[str, Any]:
@@ -1632,10 +1633,14 @@ def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(
             return {}
 
     monkeypatch.setattr(persistent, "_observe_state", lambda *a, **kw: pytest.fail("deadline already expired"))
-    wait = persistent._wait_for_reflection_drain if reflection else persistent._wait_for_verified_incident
-    argument = "incident" if reflection else set()
-    with pytest.raises(PersistentControllerError, match="within 60s"):
-        wait(SlowRead(), "demo", argument, 60, clock)
+    if reflection:
+        with pytest.raises(PersistentControllerError, match="reflection deadline"):
+            persistent._wait_for_reflection_drain(
+                SlowRead(), "demo", "incident", started + timedelta(seconds=60), clock
+            )
+    else:
+        with pytest.raises(PersistentControllerError, match="within 60s"):
+            persistent._wait_for_verified_incident(SlowRead(), "demo", set(), 60, clock)
 
 
 def test_verified_early_report_leaves_controller_active_until_outcome_recorded(tmp_path: Path) -> None:

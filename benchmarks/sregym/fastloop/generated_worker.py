@@ -11,7 +11,7 @@ from benchmarks.sregym.agent_script.cli import launch
 from benchmarks.sregym.fastloop.judge_script import judge_script
 from benchmarks.sregym.fastloop.reflection_script import reflection_script
 from benchmarks.sregym.fastloop.responder_script import responder_script
-from sdo.agents.responder.standby import await_standby_claim
+from sdo.agents.responder import await_standby_claim
 from sdo.contracts import AgentTask, IncidentRequest, ReflectionRequest, parse_json
 
 

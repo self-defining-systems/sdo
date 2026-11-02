@@ -8,104 +8,104 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
 
 ```json
 {
-  "type": "object",
-  "properties": {
-    "summary": {
-      "type": "string"
-    },
-    "learning_decision": {
-      "type": "string",
-      "enum": [
-        "updated",
-        "no_change",
-        "sdk_gap"
-      ]
-    },
-    "no_change_reason": {
-      "type": "string"
-    },
-    "proposed_artifact_ids": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "sdk_gaps": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "fault_class": {
-            "type": "string",
-            "minLength": 1
-          },
-          "primitive": {
-            "type": "string",
-            "minLength": 1
-          },
-          "reason": {
-            "type": "string",
-            "minLength": 1
-          },
-          "scratch_script": {
-            "type": "string",
-            "minLength": 1
-          },
-          "resources": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "api_version": {
-                  "type": "string"
-                },
-                "kind": {
-                  "type": "string"
-                },
-                "namespace": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "api_version",
-                "kind",
-                "namespace",
-                "name"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "fault_class",
-          "primitive",
-          "reason",
-          "scratch_script",
-          "resources"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "decline_reason": {
-      "type": "string",
-      "enum": [
-        "",
-        "no_recorded_repair"
-      ]
-    }
+ "type": "object",
+ "properties": {
+  "summary": {
+   "type": "string"
   },
-  "required": [
-    "summary",
-    "learning_decision",
-    "no_change_reason",
-    "proposed_artifact_ids",
-    "sdk_gaps",
-    "decline_reason"
-  ],
-  "additionalProperties": false
+  "learning_decision": {
+   "type": "string",
+   "enum": [
+    "updated",
+    "no_change",
+    "sdk_gap"
+   ]
+  },
+  "no_change_reason": {
+   "type": "string"
+  },
+  "proposed_artifact_ids": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "sdk_gaps": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "fault_class": {
+      "type": "string",
+      "minLength": 1
+     },
+     "primitive": {
+      "type": "string",
+      "minLength": 1
+     },
+     "reason": {
+      "type": "string",
+      "minLength": 1
+     },
+     "scratch_script": {
+      "type": "string",
+      "minLength": 1
+     },
+     "resources": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "api_version": {
+         "type": "string"
+        },
+        "kind": {
+         "type": "string"
+        },
+        "namespace": {
+         "type": "string"
+        },
+        "name": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "api_version",
+        "kind",
+        "namespace",
+        "name"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "fault_class",
+     "primitive",
+     "reason",
+     "scratch_script",
+     "resources"
+    ],
+    "additionalProperties": false
+   }
+  },
+  "decline_reason": {
+   "type": "string",
+   "enum": [
+    "",
+    "no_recorded_repair"
+   ]
+  }
+ },
+ "required": [
+  "summary",
+  "learning_decision",
+  "no_change_reason",
+  "proposed_artifact_ids",
+  "sdk_gaps",
+  "decline_reason"
+ ],
+ "additionalProperties": false
 }
 ```
 

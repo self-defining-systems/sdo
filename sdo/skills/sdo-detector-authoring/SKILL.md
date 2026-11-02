@@ -35,7 +35,7 @@ Read [validator rules](references/rules.md) before changing a manifest or when a
 Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
 [generated program SDK](../sdo-playbook-authoring/references/program-sdk.md) before using it.
 Use the [recorded Kubernetes client](../sdo-playbook-authoring/references/kubernetes-client.md) for typed or dynamic API reads.
-Detectors can call `ctx.DiffAgainstSource(ref)` directly, before playbook selection.
+Detectors can call `ctx.DiffAgainstSource(ref)` directly.
 `Changed` covers field drift and source-absent objects; `SourceAbsent` requires a successful accepted-source lookup.
 Bind playbooks through findings. The shared view adds `LogsWithOptions` (previous instances), `PodUsage`/`NodeUsage`, probes, baseline diffs, metric queries, alerts and traffic.
 The runtime caches identical reads per snapshot and records actual results and failures for offline replay.
@@ -58,7 +58,7 @@ patterns with their own IDs, and `Previous` for a crashed container's tail). Dec
 ID. A detector that reads kubelet usage implements `usage.Consumer`: `UsageRequirements()` returns
 `usage.Requirements{Throttling: true}` only when it needs CPU throttling. Declare `usage.Watch` and read with
 `usage.From(ctx)`. A missing input or a source error is a detector error, never a clear. Test with
-`sdktest.Snapshot.Logs` and `sdktest.Snapshot.Usage` (see the [replay reference](references/replay.md)).
+`sdktest.Snapshot.Logs` and `sdktest.Snapshot.Usage`.
 
 ## Metrics detectors (optional input)
 

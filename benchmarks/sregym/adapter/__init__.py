@@ -107,8 +107,6 @@ if TYPE_CHECKING:
         RuntimeConfig,
         native_install_config,
     )
-    from benchmarks.sregym.adapter.scripted_replay import replay_recorded_repair
-    from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
 _EXPORTS: dict[str, str] = {
     "run_context_preflight": "context_preflight",
@@ -148,8 +146,6 @@ _EXPORTS: dict[str, str] = {
     "setup_lineage": "eval_guards",
     "shell_runner_proof": "eval_guards",
     "wait_for_proof": "eval_guards",
-    "replay_recorded_repair": "scripted_replay",
-    "SCRIPTED_REPLAY_SLOTS": "scripted_replay_catalog",
     "prepare_oracle_observability": "oracle_observability",
     "bind_state": "processes",
     "controller_settings": "persistent",
@@ -239,8 +235,6 @@ __all__ = [
     "setup_lineage",
     "shell_runner_proof",
     "wait_for_proof",
-    "replay_recorded_repair",
-    "SCRIPTED_REPLAY_SLOTS",
     "prepare_oracle_observability",
     "bind_state",
     "controller_settings",

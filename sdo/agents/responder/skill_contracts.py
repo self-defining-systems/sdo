@@ -33,7 +33,7 @@ async def render_contract() -> str:
         "The model's session answer contains incident_result=null and reflection=ReflectionResult. "
         "The worker task/result envelopes are transport-owned and are never authored by the model. "
         "The check_memory tool accepts the decision fields directly and writes the CLI file.\n\n"
-        f"```json\n{json.dumps(schema, indent=2)}\n```",
+        f"```json\n{json.dumps(schema, indent=1)}\n```",
         "## Incident result ownership\n\n"
         "Return only the agent-owned fields in the session output schema: "
         + ", ".join(f"`{name}`" for name in incident_fields)

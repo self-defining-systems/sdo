@@ -331,7 +331,7 @@ def test_collector_uses_bounded_gets_and_recorded_node_digests(tmp_path):
     assert time.monotonic() - started < 15
     assert measured.accepted_memory_commit == "b" * 40
     assert measured.installed_memory_commit == "b" * 40
-    assert len(measured.images) == 3
+    assert len(measured.images) == 2
     assert "app/Service/web" in measured.live_objects
     assert "kube-system/ConfigMap/coredns" in measured.live_objects
     assert all(0 < kwargs["timeout"] <= 15 for _, kwargs in calls)

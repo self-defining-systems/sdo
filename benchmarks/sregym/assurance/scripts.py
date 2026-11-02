@@ -206,7 +206,7 @@ def assurance_script(
     decision = json.dumps({"learning_decision": "updated", "proposed_artifact_ids": [proposal.playbook_id]})
     decision_step = {
         "kind": "command",
-        "command": f"printf %s {shlex.quote(decision)} > \"$(git rev-parse --git-dir)/sdo-reflection-decision.json\"",
+        "command": f'printf %s {shlex.quote(decision)} > "$(git rev-parse --git-dir)/sdo-reflection-decision.json"',
     }
     for index in range(4):
         reflection_steps: list[dict[str, Any]] = list(writes)

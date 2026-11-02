@@ -56,7 +56,12 @@ def test_scripted_registrations_add_deterministic_health_refresh(tmp_path: Path)
     assert incident_types == {"incident-response", "outcome-reflection-direct-v1"}
     assert task_types(scripted) == incident_types | {"health-judgment-direct-v1"}
     health_judge = json.loads((scripted / "health-judge.json").read_text())
-    assert health_judge["kubernetes_job"]["command"][-1] == "health-judge"
+    assert health_judge["kubernetes_job"]["command"][:4] == [
+        "python3",
+        "-m",
+        "benchmarks.sregym.fastloop.generated_worker",
+        "health-judge",
+    ]
     assert health_judge["capabilities"][0]["request_type_url"].endswith(".HealthJudgeRequest")
     assert health_judge["capabilities"][0]["result_type_url"].endswith(".HealthJudgeResult")
 

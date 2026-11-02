@@ -486,7 +486,7 @@ def replay_script_worker(
                         cwd=operator_root,
                         capture_output=True,
                         text=True,
-                        timeout=180,
+                        timeout=wait_for(WaitKind.ROLLOUT),
                         check=False,
                     )
                     if built.returncode:
@@ -500,7 +500,7 @@ def replay_script_worker(
                 env={**os.environ, "SDO_OPERATOR_ROOT": str(operator_root)},
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=wait_for(WaitKind.ROLLOUT),
                 check=False,
             )
             if completed.returncode:

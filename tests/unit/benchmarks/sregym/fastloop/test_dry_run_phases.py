@@ -141,14 +141,14 @@ def _probe_without(missing):
 
 
 def test_scripted_preflight_rejects_production_responder_image():
-    run, calls = _probe_without("benchmarks.sregym.adapter.scripted_worker")
+    run, calls = _probe_without("benchmarks.sregym.fastloop.generated_worker")
     with pytest.raises(ValueError, match="cannot run the scripted registrations") as error:
         dry_run.assert_responder_runs_registrations(
             "sdo-sregym-responder:le-p4-h7", dry_run.SCRIPTED_REGISTRATIONS, run=run
         )
     message = str(error.value)
     assert "sdo-sregym-responder:le-p4-h7" in message
-    assert "benchmarks.sregym.adapter.scripted_worker" in message
+    assert "benchmarks.sregym.fastloop.generated_worker" in message
     assert "SDO_SCRIPTED_WORKER=1" in message
     assert "SDO_IMAGE_TAG=le-p4-h7-scripted" in message
     assert len(calls) == 1
@@ -162,8 +162,8 @@ def test_scripted_preflight_covers_every_registered_worker_module():
         "sdo-sregym-responder:scripted", dry_run.SCRIPTED_REGISTRATIONS, run=run
     )
     assert evidence["image"] == "sdo-sregym-responder:scripted"
-    assert evidence["modules"] == ["benchmarks.sregym.adapter.scripted_worker"]
-    assert "benchmarks.sregym.adapter.scripted_worker" in calls[0][-1]
+    assert evidence["modules"] == ["benchmarks.sregym.fastloop.generated_worker"]
+    assert "benchmarks.sregym.fastloop.generated_worker" in calls[0][-1]
 
 
 def test_dry_run_fails_on_responder_image_before_any_lane_mutation(monkeypatch, tmp_path):

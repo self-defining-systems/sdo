@@ -1992,7 +1992,9 @@ def _wait_for_verified_incident(
     summary = ""
     while budget.left() > 0:
         state = ops.runtime_state(control)
-        # A slow state read may have spent the stage budget; observing it still decides the stage.
+        # A slow state read may have spent the stage budget; stop polling rather than start an observer with none.
+        if budget.left() <= 0:
+            break
         observed = _observe_state(
             state,
             known=known,
