@@ -27,6 +27,7 @@ for spec in 'native_receipt_go sdo-native-receipt' 'submission_go sdo-submission
     builds+=($!)
 done
 for build in "${builds[@]}"; do wait "$build"; done
+echo "==> protocol tools built after ${SECONDS}s"
 export SDO_NATIVE_RECEIPT_BIN="$TOOLS/sdo-native-receipt"
 export SDO_SUBMISSION_GUARD_BIN="$TOOLS/sdo-submission-guard"
 
