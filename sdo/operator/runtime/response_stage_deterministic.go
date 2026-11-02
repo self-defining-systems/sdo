@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"google.golang.org/protobuf/encoding/protojson"
+	"log/slog"
 	"runtime/debug"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
@@ -856,6 +856,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	for {
 		pending := false
 		applied := false
+		var settling []*contracts.StageMitigation
 		covered := map[string]bool{}
 		for _, attempt := range report.Mitigations {
 			if reason := attempt.GetApplyReceipt().GetRolloutPending().GetReasonCode(); reason == "rollout_stalled" || reason == "admission_blocked" {
@@ -872,6 +873,13 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			case "rollout_pending_at_handoff":
 				pending = true
 			case "applied_cleared", "skipped":
+			case "applied_still_matching":
+				// The write verified and the program no longer matches; findings that only
+				// wait for their detectors to re-observe it are checked below, once a view exists.
+				if !writeVerifiedForSettling(attempt) {
+					return nil
+				}
+				settling = append(settling, attempt)
 			default:
 				return nil // Real failure or a verified dependency needs another actor.
 			}
@@ -882,6 +890,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		}
 		if !pending && len(state.Findings) == 0 {
 			exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
+			promoteSettledAttempts(settling)
 			return nil
 		}
 		if recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
@@ -902,12 +911,18 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		state.refreshUnexplained()
 		if !pending && len(state.Findings) == 0 {
 			exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
+			promoteSettledAttempts(settling)
 			return nil
 		}
 		health := map[string]sdk.Detector{}
 		for _, detector := range loop.Detectors {
 			if detector.Spec().Class == sdk.DetectorClassHealth {
 				health[detector.Spec().ID] = detector
+			}
+		}
+		for _, attempt := range settling {
+			if !remainingFindingsSettle(view, health, state.Findings, attempt) {
+				return nil
 			}
 		}
 		for _, finding := range state.Findings {
@@ -976,6 +991,49 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		if err := save(false); err != nil {
 			return err
 		}
+	}
+}
+
+// writeVerifiedForSettling reports an applied, unreverted write whose scoped verification passed and
+// whose program no longer matches, so any remaining finding is waiting on detector observation.
+func writeVerifiedForSettling(attempt *contracts.StageMitigation) bool {
+	receipt := attempt.GetApplyReceipt()
+	return receipt.GetApplied() && !receipt.GetRolledBack() && receipt.GetVerificationPassed() &&
+		attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH
+}
+
+// remainingFindingsSettle reports whether every finding still open for the attempt is a health
+// finding that depends on an object the attempt wrote, so the recovery wait can keep observing.
+func remainingFindingsSettle(view sdk.DetectionContext, health map[string]sdk.Detector, findings []sdk.Finding, attempt *contracts.StageMitigation) bool {
+	remaining := map[string]bool{}
+	for _, fp := range attempt.RemainingFindingFingerprints {
+		remaining[fp] = true
+	}
+	for _, finding := range findings {
+		if !remaining[FindingFingerprint(finding)] {
+			continue
+		}
+		detector := health[finding.DetectorID]
+		if detector == nil {
+			return false
+		}
+		depends := false
+		for _, ref := range attempt.TouchedObjects {
+			depends = depends || stageFindingDependsOnWrite(view, detector, finding, objectRefState(ref))
+		}
+		if !depends {
+			return false
+		}
+	}
+	return true
+}
+
+// promoteSettledAttempts records attempts whose remaining findings cleared on their own as cleared.
+func promoteSettledAttempts(attempts []*contracts.StageMitigation) {
+	for _, attempt := range attempts {
+		attempt.ClearedFindingFingerprints = append(attempt.ClearedFindingFingerprints, attempt.RemainingFindingFingerprints...)
+		attempt.RemainingFindingFingerprints = nil
+		attempt.Result = "applied_cleared"
 	}
 }
 
