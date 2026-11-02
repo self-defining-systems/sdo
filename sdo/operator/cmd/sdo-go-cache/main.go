@@ -11,7 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
+	"sdo.dev/operator/cmd/sdo-go-cache/internal/cacheio"
 )
 
 type request struct {
@@ -95,7 +95,7 @@ func (c cache) put(r request, body []byte) (response, error) {
 	if err := atomicWrite(path, body); err != nil {
 		return response{}, err
 	}
-	entry := fmt.Sprintf("v1 %x %x %20d %20d\n", r.ActionID, r.OutputID, r.BodySize, time.Now().UnixNano())
+	entry := fmt.Sprintf("v1 %x %x %20d %20d\n", r.ActionID, r.OutputID, r.BodySize, cacheio.UnixNano())
 	if err := atomicWrite(cachePath(c.writable, r.ActionID, "a"), []byte(entry)); err != nil {
 		return response{}, err
 	}
@@ -146,12 +146,12 @@ func serve(input io.Reader, output io.Writer, c cache) error {
 }
 
 func main() {
-	writable := os.Getenv("GOCACHE")
-	if !filepath.IsAbs(writable) || writable == os.Getenv("SDO_GO_CACHE_SEED") {
+	writable := cacheio.Getenv("GOCACHE")
+	if !filepath.IsAbs(writable) || writable == cacheio.Getenv("SDO_GO_CACHE_SEED") {
 		fmt.Fprintln(os.Stderr, "GOCACHE must be an absolute private writable directory distinct from SDO_GO_CACHE_SEED")
 		os.Exit(1)
 	}
-	if err := serve(os.Stdin, os.Stdout, cache{seed: os.Getenv("SDO_GO_CACHE_SEED"), writable: writable}); err != nil {
+	if err := serve(os.Stdin, os.Stdout, cache{seed: cacheio.Getenv("SDO_GO_CACHE_SEED"), writable: writable}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

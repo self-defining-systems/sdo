@@ -1,15 +1,13 @@
 package shellpath
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/shellpath/internal/shellio"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -22,7 +20,7 @@ type BashExecutor struct {
 func (e BashExecutor) Execute(ctx context.Context, root string, script Script) Result {
 	now := e.Now
 	if now == nil {
-		now = time.Now
+		now = shellio.Now
 	}
 	start := now()
 	r := Result{Script: script.Path, ExitCode: -1, At: start.UTC()}
@@ -48,34 +46,7 @@ func (e BashExecutor) Execute(ctx context.Context, root string, script Script) R
 	}
 	// Discovery freezes the accepted main script in memory. Writable /tmp files
 	// cannot change which authored bytes a later invocation executes.
-	cmd := exec.CommandContext(runCtx, "bash", "-s")
-	cmd.Args[0] = filepath.Join(root, filepath.FromSlash(script.Path))
-	cmd.Stdin = bytes.NewReader(source)
-	cmd.Dir = root
-	cmd.Env = e.Env
-	if cmd.Env == nil {
-		cmd.Env = os.Environ()
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if errors.Is(err, syscall.ESRCH) {
-			return os.ErrProcessDone
-		}
-		return err
-	}
-	cmd.WaitDelay = time.Second
-	cmd.Stdout = tailWriter{capture, false}
-	cmd.Stderr = tailWriter{capture, true}
-	err := cmd.Run()
-	// A successful shell can leave background processes behind. Retire the whole
-	// invocation group on every exit, including success, so sweeps cannot leak work.
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
+	err := shellio.RunBash(runCtx, root, filepath.Join(root, filepath.FromSlash(script.Path)), source, e.Env, tailWriter{capture, false}, tailWriter{capture, true})
 	r.Duration = now().Sub(start)
 	r.At = now().UTC()
 	r.Stdout, r.Stderr, r.Truncated = capture.result()
@@ -86,9 +57,8 @@ func (e BashExecutor) Execute(ctx context.Context, root string, script Script) R
 	case err == nil:
 		r.ExitCode = 0
 	default:
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() >= 0 {
-			r.ExitCode = exit.ExitCode()
+		if code, ok := shellio.ExitCode(err); ok {
+			r.ExitCode = code
 		} else {
 			r.Error = "detector process failed"
 		}

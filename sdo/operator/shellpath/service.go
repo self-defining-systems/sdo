@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sdo.dev/operator/shellpath/internal/shellio"
 	"sync"
 	"time"
 )
@@ -70,7 +71,7 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	now := s.Now
 	if now == nil {
-		now = time.Now
+		now = shellio.Now
 	}
 	_ = s.Step(ctx, now(), false)
 	events := s.Events
@@ -126,10 +127,15 @@ func (s *ReportStore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 const MaxReportBytes = 4 << 20
 
+// Doer sends one HTTP request. The default never follows redirects.
+type Doer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
 // HTTPReader refuses stale results, redirects and oversized or malformed reports.
 type HTTPReader struct {
 	URL    string
-	Client *http.Client
+	Client Doer
 	Now    func() time.Time
 }
 
@@ -140,11 +146,9 @@ func (r HTTPReader) Read(ctx context.Context) (Report, error) {
 	}
 	client := r.Client
 	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
+		client = shellio.NewHTTPClient(5 * time.Second)
 	}
-	copy := *client
-	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response, err := copy.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return Report{}, fmt.Errorf("shell runner unavailable: %w", err)
 	}
@@ -165,7 +169,7 @@ func (r HTTPReader) Read(ctx context.Context) (Report, error) {
 	}
 	now := r.Now
 	if now == nil {
-		now = time.Now
+		now = shellio.Now
 	}
 	age := now().Sub(report.At)
 	if report.Version != 1 || !commitPattern.MatchString(report.AcceptedCommit) || report.At.IsZero() || age > SweepInterval+ScriptTimeout*4 || age < -5*time.Second {

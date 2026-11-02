@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"sdo.dev/operator/shellpath/internal/shellio"
 )
 
 const RunnerName = "sdo-shell-detectors"
@@ -28,7 +28,7 @@ func RunnerURL(control string) string {
 // RunInCluster is the long-lived runner entrypoint. Its service account has only
 // application reads, with no Secret resource or control-namespace write grants.
 func RunInCluster(ctx context.Context) error {
-	namespace, root := os.Getenv("SDO_SHELL_NAMESPACE"), os.Getenv("SDO_SHELL_REPOSITORY")
+	namespace, root := shellio.Getenv("SDO_SHELL_NAMESPACE"), shellio.Getenv("SDO_SHELL_REPOSITORY")
 	if namespace == "" || root == "" {
 		return fmt.Errorf("shell runner requires application namespace and accepted repository")
 	}
@@ -93,19 +93,17 @@ func RunInCluster(ctx context.Context) error {
 		return client.DiscoveryV1().EndpointSlices(namespace).Watch(c, opts)
 	})
 	reports := &ReportStore{}
-	server := &http.Server{Addr: fmt.Sprintf(":%d", RunnerPort), Handler: reports, ReadHeaderTimeout: 5 * time.Second}
-	serverErrors := make(chan error, 1)
-	go func() { serverErrors <- server.ListenAndServe() }()
-	ticker := time.NewTicker(time.Second)
+	server := shellio.Listen(fmt.Sprintf(":%d", RunnerPort), reports)
+	ticker := shellio.NewTicker(time.Second)
 	defer ticker.Stop()
-	env := append(os.Environ(), "KUBECONFIG="+kubeconfig, "HOME=/tmp")
+	env := append(shellio.Environ(), "KUBECONFIG="+kubeconfig, "HOME=/tmp")
 	service := &Service{Repository: &GitRepository{Root: root, Scratch: "/tmp"}, Executor: BashExecutor{Env: env}, Reports: reports, Events: events, Tick: ticker.C}
 	done := make(chan error, 1)
 	go func() { done <- service.Run(runCtx) }()
 	var result error
 	select {
 	case result = <-done:
-	case result = <-serverErrors:
+	case result = <-server.Errors():
 	case <-ctx.Done():
 		result = ctx.Err()
 	}
@@ -140,12 +138,8 @@ func watchEvents(ctx context.Context, open func(context.Context) (watch.Interfac
 			}
 			watcher.Stop()
 		}
-		timer := time.NewTimer(time.Second)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		if shellio.Wait(ctx, time.Second) != nil {
 			return
-		case <-timer.C:
 		}
 	}
 }
@@ -153,7 +147,7 @@ func watchEvents(ctx context.Context, open func(context.Context) (watch.Interfac
 // AwaitActivation is used after publication. It never acknowledges a commit
 // until the runner has loaded that exact accepted revision.
 func AwaitActivation(ctx context.Context, reader Reader, commit string) (time.Time, error) {
-	ticker := time.NewTicker(200 * time.Millisecond)
+	ticker := shellio.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		report, err := reader.Read(ctx)
@@ -198,7 +192,7 @@ func EnsureReadOnlyRunner(ctx context.Context, client kubernetes.Interface, conf
 				if err = client.CoreV1().Pods(want.Namespace).Delete(bounded, want.Name, metav1.DeleteOptions{PropagationPolicy: &policy}); err != nil {
 					return err
 				}
-				ticker := time.NewTicker(200 * time.Millisecond)
+				ticker := shellio.NewTicker(200 * time.Millisecond)
 				defer ticker.Stop()
 				for {
 					_, getErr = client.CoreV1().Pods(want.Namespace).Get(bounded, want.Name, metav1.GetOptions{})

@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/operatorcli/internal/processio"
 )
 
 // OperateConfig is the typed, in-cluster bootstrap launch contract. The
@@ -35,7 +35,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 		return OperateConfig{}, errors.New("expected operate subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator operate", flag.ContinueOnError)
-	codePathName := flags.String("code-path", os.Getenv("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
+	codePathName := flags.String("code-path", processio.Environment("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
 	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	flags.SetOutput(io.Discard)
 	app := flags.String("app", "", "accepted application checkout")

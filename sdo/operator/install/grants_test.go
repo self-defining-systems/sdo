@@ -14,7 +14,12 @@ import (
 // a fresh install and of install-existing) restores that grant after it was
 // narrowed by hand.
 func TestEverySDOIdentityHoldsTheWildcardGrant(t *testing.T) {
-	for name, cfg := range map[string]Config{"split namespaces": func() Config { c := testConfig(); c.DisableObservability = true; return c }(), "single namespace": func() Config { c := testConfig(); c.DisableObservability = true; c.ControlNamespace = c.Namespace; return c }()} {
+	for name, cfg := range map[string]Config{"split namespaces": func() Config { c := testConfig(); c.DisableObservability = true; return c }(), "single namespace": func() Config {
+		c := testConfig()
+		c.DisableObservability = true
+		c.ControlNamespace = c.Namespace
+		return c
+	}()} {
 		plan, err := Resources(cfg)
 		if err != nil {
 			t.Fatal(err)

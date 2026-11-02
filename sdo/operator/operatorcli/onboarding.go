@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/onboarding"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/rendered"
 )
 
@@ -39,7 +39,7 @@ func stageExistingNamespace(ctx context.Context, client kubernetes.Interface, la
 	if current != commit {
 		return fmt.Errorf("accepted commit changed during onboarding staging")
 	}
-	return onboarding.Stage(ctx, client, control, launch.Install.Namespace, commit, objects, time.Now())
+	return onboarding.Stage(ctx, client, control, launch.Install.Namespace, commit, objects, processio.Now())
 }
 
 func existingSourcePaths(launch InstallExistingConfig) []string {

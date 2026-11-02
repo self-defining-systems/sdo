@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/worker_registry/internal/workerio"
 )
 
 // JobVanishedError is terminal for a dispatched immutable execution. Recreating
@@ -51,7 +51,7 @@ func (e KubernetesExecutor) recordWorkerDispatch(ctx context.Context, task *cont
 // confirmed missing Job after recorded dispatch is a permanent transport loss,
 // including when recovery is the first operation after controller restart.
 func (e KubernetesExecutor) recoverMissingResult(ctx context.Context, task *contracts.AgentTask, name string) error {
-	if deadline, bounded := frozenReflectionDeadline(task); bounded && !time.Now().Before(deadline) {
+	if deadline, bounded := frozenReflectionDeadline(task); bounded && !workerio.Now().Before(deadline) {
 		return &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
 	}
 	_, err := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, name, metav1.GetOptions{})

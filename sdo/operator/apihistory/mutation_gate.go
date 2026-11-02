@@ -1,7 +1,6 @@
 package apihistory
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"sdo.dev/operator/apihistory/internal/apiio"
 	"sdo.dev/operator/sessionstorage"
 )
 
@@ -115,7 +115,7 @@ func (g *MutationGate) Begin() (*MutationLease, error) {
 		}
 		return nil, errors.New("incident_verified")
 	}
-	name := "mutation-" + rand.Text() + ".json"
+	name := "mutation-" + apiio.Text() + ".json"
 	b, _ := json.Marshal(mutationRecord{Pending: true})
 	if err := os.WriteFile(filepath.Join(g.Directory, name), b, 0600); err != nil {
 		f.Close()
@@ -172,7 +172,7 @@ func (o *MutationObservation) Fence(at time.Time) error {
 	if err != nil {
 		return err
 	}
-	temporary := filepath.Join(o.gate.Directory, ".incident-verified-"+rand.Text())
+	temporary := filepath.Join(o.gate.Directory, ".incident-verified-"+apiio.Text())
 	if err := os.WriteFile(temporary, b, 0600); err != nil {
 		return err
 	}

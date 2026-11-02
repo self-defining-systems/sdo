@@ -3,10 +3,10 @@ package deployment
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
+	"sdo.dev/operator/deployment/internal/deploymentio"
 	"sdo.dev/operator/shellpath"
 )
 
@@ -22,7 +22,7 @@ func (p ShellDetectorProbe) Evaluate(ctx context.Context, root, _, namespace str
 	if namespace != p.Config.Namespace || root != p.Config.AcceptedRoot {
 		return "", fmt.Errorf("shell health probe repository or namespace differs from runner")
 	}
-	output, err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "HEAD").Output()
+	output, err := deploymentio.Output(ctx, "git", []string{"-C", root, "rev-parse", "HEAD"})
 	if err != nil {
 		return "", err
 	}
@@ -37,8 +37,6 @@ func (p ShellDetectorProbe) Evaluate(ctx context.Context, root, _, namespace str
 	}
 	bounded, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
 	for {
 		report, err := reader.Read(bounded)
 		if err == nil && report.AcceptedCommit == commit && len(report.Results) > 0 {
@@ -53,10 +51,8 @@ func (p ShellDetectorProbe) Evaluate(ctx context.Context, root, _, namespace str
 			}
 			return status, nil
 		}
-		select {
-		case <-bounded.Done():
-			return "", fmt.Errorf("wait for accepted shell health report: %w", bounded.Err())
-		case <-ticker.C:
+		if err := deploymentio.Wait(bounded, 250*time.Millisecond); err != nil {
+			return "", fmt.Errorf("wait for accepted shell health report: %w", err)
 		}
 	}
 }

@@ -56,7 +56,7 @@ func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "evidence" || os.Args[1] == "api-proxy") {
 		var err error
 		if os.Args[1] == "evidence" {
-			err = operatorcli.RunEvidence(os.Args[2:], os.Getenv, os.Stdout)
+			err = operatorcli.RunEvidence(os.Args[2:], operatorcli.Environment, os.Stdout)
 		} else {
 			err = operatorcli.RunAPIProxy(context.Background(), os.Args[2:])
 		}

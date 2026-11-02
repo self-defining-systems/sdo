@@ -42,3 +42,8 @@ func Evaluate(ctx context.Context, directory, binary string, args, extraEnv []st
 	err := c.Run()
 	return out.Bytes(), stderr.Bytes(), err
 }
+
+// Output runs a process and returns its standard output.
+func Output(ctx context.Context, name string, args []string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).Output()
+}

@@ -304,7 +304,7 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (resu
 		}
 	}
 	if !prepared {
-		owner := fmt.Sprintf("sync-install-%d", time.Now().UnixNano())
+		owner := fmt.Sprintf("sync-install-%d", i.now().UnixNano())
 		reservation, err := i.acquireOperateLock(ctx, cfg, owner, metav1.OwnerReference{Kind: "Pod", Name: RepositorySyncPodName})
 		if err != nil {
 			return Result{}, err
@@ -559,3 +559,6 @@ func jobFailed(job *batchv1.Job) bool {
 	}
 	return false
 }
+
+// Observed reads the installer clock, injected in tests.
+func (i Installer) Observed() time.Time { return i.now() }

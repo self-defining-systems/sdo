@@ -2,7 +2,6 @@
 package kubeproxy
 
 import (
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -15,9 +14,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"sdo.dev/operator/apihistory"
+	"sdo.dev/operator/kubeproxy/internal/proxyio"
 )
 
 type Recorder interface {
@@ -104,7 +103,7 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 			// A 101 Body is bidirectional. Leave it intact for ReverseProxy's upgrade
 			// path, including SPDY and WebSocket frames.
 			if res.StatusCode == http.StatusSwitchingProtocols {
-				end.Finished = time.Now().UTC()
+				end.Finished = proxyio.Now().UTC()
 				end.Omission = "upgrade_metadata_only"
 				recordEnd(end, nil)
 				return nil
@@ -132,7 +131,7 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 				}
 			}
 			res.Body = &captureBody{ReadCloser: res.Body, mode: mode, finish: func(body []byte, tooLarge, broken bool) {
-				end.Finished = time.Now().UTC()
+				end.Finished = proxyio.Now().UTC()
 				if broken {
 					uncertain.Store(true)
 					end.Omission = "incomplete_response"
@@ -158,7 +157,7 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 			end := e
 			end.Phase = "end"
 			end.Status = http.StatusBadGateway
-			end.Finished = time.Now().UTC()
+			end.Finished = proxyio.Now().UTC()
 			end.Omission = "upstream_error"
 			recordEnd(end, nil)
 			// Transport errors can contain URLs. Do not echo them into history or the
@@ -173,8 +172,8 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 func mutating(method string) bool { return method != "GET" && method != "HEAD" && method != "OPTIONS" }
 func requestEvent(r *http.Request) apihistory.Event {
 	var id [16]byte
-	_, _ = rand.Read(id[:])
-	e := apihistory.Event{RequestID: hex.EncodeToString(id[:]), Phase: "start", Started: time.Now().UTC(), Verb: strings.ToLower(r.Method)}
+	proxyio.Read(id[:])
+	e := apihistory.Event{RequestID: hex.EncodeToString(id[:]), Phase: "start", Started: proxyio.Now().UTC(), Verb: strings.ToLower(r.Method)}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) >= 2 && parts[0] == "api" {
 		e.Version = parts[1]

@@ -2,7 +2,6 @@ package apihistory
 
 import (
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/validation"
+	"sdo.dev/operator/apihistory/internal/apiio"
 )
 
 type identifierGrammar func(string) []string
@@ -156,7 +156,7 @@ func historyIdentityKey(directory string) ([]byte, error) {
 	key, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		key = make([]byte, 32)
-		if _, err = rand.Read(key); err != nil {
+		if err = apiio.Read(key); err != nil {
 			return nil, err
 		}
 		f, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)

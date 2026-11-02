@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
+	"sdo.dev/operator/sdk/kubeclient/internal/clientio"
 )
 
 // ReadFunc is implemented by the existing recorded ReadView, including replay.
@@ -48,7 +49,7 @@ func NewReadClient(read ReadFunc) (*ReadClient, error) {
 		return nil, fmt.Errorf("Kubernetes observation reader required")
 	}
 	config := &rest.Config{Host: "https://recorded.invalid", QPS: 50, Burst: 100, Timeout: 5 * time.Second}
-	httpClient := &http.Client{Transport: readTransport{read}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	httpClient := clientio.New(readTransport{read})
 	builtin, err := kubernetes.NewForConfigAndClient(config, httpClient)
 	if err != nil {
 		return nil, err

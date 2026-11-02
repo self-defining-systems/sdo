@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/rand/v2"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"sdo.dev/operator/broker/internal/processio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -263,20 +263,18 @@ func (b *Broker) pushRef(ctx context.Context, repository, commit, branch string)
 // shared check as a concurrent local publication.
 func (b *Broker) withUpstream(ctx context.Context, publish func() error) func() error {
 	return func() error {
-		deadline := time.Now().Add(upstreamRaceDeadline)
+		deadline := processio.Now().Add(upstreamRaceDeadline)
 		for attempt := 0; ; attempt++ {
 			if err := b.syncUpstream(ctx); err != nil {
 				return err
 			}
 			err := publish()
-			if !errors.Is(err, errUpstreamMoved) || time.Now().After(deadline) {
+			if !errors.Is(err, errUpstreamMoved) || processio.Now().After(deadline) {
 				return err
 			}
 			backoff := min(250*time.Millisecond<<min(attempt, 5), 8*time.Second)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff/2 + rand.N(backoff)):
+			if err := processio.Backoff(ctx, backoff); err != nil {
+				return err
 			}
 		}
 	}

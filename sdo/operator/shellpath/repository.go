@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/shellpath/internal/shellio"
 	"strings"
 )
 
@@ -23,8 +23,7 @@ type GitRepository struct {
 }
 
 func (r *GitRepository) Current(ctx context.Context) (Snapshot, error) {
-	command := exec.CommandContext(ctx, "git", "-c", "safe.directory=*", "-C", r.Root, "rev-parse", "HEAD")
-	output, err := command.Output()
+	output, err := shellio.Head(ctx, r.Root)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read accepted revision: %w", err)
 	}
@@ -45,24 +44,8 @@ func (r *GitRepository) Current(ctx context.Context) (Snapshot, error) {
 			_ = os.RemoveAll(directory)
 		}
 	}()
-	archive := exec.CommandContext(ctx, "git", "-c", "safe.directory=*", "-C", r.Root, "archive", "--format=tar", commit)
-	pipe, err := archive.StdoutPipe()
-	if err != nil {
+	if err = shellio.Archive(ctx, r.Root, commit, func(stream io.Reader) error { return extractArchive(directory, tar.NewReader(stream)) }); err != nil {
 		return Snapshot{}, err
-	}
-	if err = archive.Start(); err != nil {
-		return Snapshot{}, err
-	}
-	extracted := extractArchive(directory, tar.NewReader(pipe))
-	if extracted != nil {
-		_ = archive.Process.Kill()
-	}
-	waitErr := archive.Wait()
-	if extracted != nil {
-		return Snapshot{}, extracted
-	}
-	if waitErr != nil {
-		return Snapshot{}, waitErr
 	}
 	scripts, err := Discover(directory)
 	if err != nil {

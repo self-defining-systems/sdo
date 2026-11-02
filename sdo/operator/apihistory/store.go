@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/apihistory/internal/apiio"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -261,7 +262,7 @@ func (s *Store) Close() {
 func (s *Store) writeManifest() error {
 	s.manifest.Dropped = s.dropped.Load()
 	s.manifest.Complete = s.manifest.Complete && s.manifest.Dropped == 0
-	s.manifest.Updated = time.Now().UTC()
+	s.manifest.Updated = apiio.Now().UTC()
 	b, err := json.Marshal(s.manifest)
 	if err != nil {
 		return err
@@ -275,7 +276,7 @@ func (s *Store) writeManifest() error {
 func (s *Store) run() {
 	defer close(s.done)
 	defer s.file.Close()
-	tick := time.NewTicker(100 * time.Millisecond)
+	tick := apiio.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		select {
@@ -303,7 +304,7 @@ func (s *Store) run() {
 // timestamp precedes draining, so it never certifies work that is still queued.
 func (s *Store) checkpoint() {
 	s.gate.Lock()
-	through := time.Now().UTC()
+	through := apiio.Now().UTC()
 	s.projections.Wait()
 	// Capture admitted envelopes under the gate, then release callers before
 	// doing disk I/O. New observations remain queued behind this snapshot.
@@ -394,7 +395,7 @@ func ReadThrough(ctx context.Context, directory string, until time.Time) (Histor
 		if err != nil || !h.Manifest.Open || !h.Manifest.SnapshotThrough.Before(until) {
 			return h, err
 		}
-		timer := time.NewTimer(10 * time.Millisecond)
+		timer := apiio.NewTimer(10 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

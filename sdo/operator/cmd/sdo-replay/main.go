@@ -7,9 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sdo.dev/operator/builder"
+	"sdo.dev/operator/cmd/sdo-replay/internal/replayio"
 )
 
 func main() { os.Exit(run()) }
@@ -44,15 +44,5 @@ func run() int {
 	if *source != "" {
 		args = append(args, "-source", *source)
 	}
-	command := exec.Command(binary, args...)
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	if err = command.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			return exit.ExitCode()
-		}
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	return 0
+	return replayio.Run(binary, args)
 }

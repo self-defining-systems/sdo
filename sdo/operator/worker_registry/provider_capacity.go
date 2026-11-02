@@ -2,12 +2,12 @@ package worker_registry
 
 import (
 	"fmt"
-	"os"
 	"path"
 	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"sdo.dev/operator/worker_registry/internal/workerio"
 )
 
 var providerCapacityNames = []string{
@@ -21,7 +21,7 @@ var providerCapacityNames = []string{
 func ProviderCapacityEnvironment() map[string]string {
 	env := map[string]string{}
 	for _, name := range providerCapacityNames {
-		if value := os.Getenv(name); value != "" {
+		if value := workerio.Getenv(name); value != "" {
 			env[name] = value
 		}
 	}

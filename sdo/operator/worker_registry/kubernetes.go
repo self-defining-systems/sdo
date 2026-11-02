@@ -27,6 +27,7 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/toolchain"
+	"sdo.dev/operator/worker_registry/internal/workerio"
 )
 
 const (
@@ -176,7 +177,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
-		if !time.Now().Before(deadline) {
+		if !workerio.Now().Before(deadline) {
 			return nil, &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
 		}
 	}
@@ -399,7 +400,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		}
 		select {
 		case <-ctx.Done():
-			if bounded && !time.Now().Before(deadline) {
+			if bounded && !workerio.Now().Before(deadline) {
 				return nil, &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
 			}
 			return nil, ctx.Err()
@@ -467,7 +468,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	reflection := task.GetRequest().MessageIs(&contracts.ReflectionRequest{})
 	var activeDeadlineSeconds *int64
 	if deadline, bounded := frozenReflectionDeadline(task); bounded {
-		remaining := time.Until(deadline)
+		remaining := workerio.Until(deadline)
 		if remaining <= 0 {
 			return &TaskTimeoutError{TaskID: task.GetTaskId(), Deadline: deadline}
 		}

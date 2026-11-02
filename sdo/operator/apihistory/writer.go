@@ -1,10 +1,10 @@
 package apihistory
 
 import (
-	"crypto/rand"
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/apihistory/internal/apiio"
 	"syscall"
 )
 
@@ -53,7 +53,7 @@ func GenerationPath(directory string) string { return filepath.Clean(directory) 
 // Failure at this trusted launch boundary must prevent launching that attempt.
 func BeginGeneration(directory string) error {
 	token := make([]byte, 32)
-	if _, err := rand.Read(token); err != nil {
+	if err := apiio.Read(token); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(GenerationPath(directory), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)

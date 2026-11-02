@@ -38,7 +38,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		return HostConfig{}, errors.New("expected host subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator host", flag.ContinueOnError)
-	codePathName := flags.String("code-path", os.Getenv("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
+	codePathName := flags.String("code-path", processio.Environment("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
 	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	flags.SetOutput(io.Discard)
 	repository := flags.String("repository", "", "clean accepted Git repository")

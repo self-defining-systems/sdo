@@ -5,15 +5,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/worker_registry/internal/workerio"
 )
 
 // Persist the boundary before releasing work. A rejoin uses this Job's original
 // clock, while a continuation has a distinct immutable execution identity.
 func (e KubernetesExecutor) prepareDispatchStartup(task *contracts.AgentTask, jobName string) (DispatchStartup, error) {
-	timing := DispatchStartup{Mode: "cold", TaskBoundAt: time.Now().UTC()}
+	timing := DispatchStartup{Mode: "cold", TaskBoundAt: workerio.Now().UTC()}
 	if e.WarmBinding != nil {
 		timing.Mode = "warm"
 		timing.ClaimedAt = &e.WarmBinding.ClaimedAt

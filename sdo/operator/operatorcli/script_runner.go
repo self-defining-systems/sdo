@@ -5,16 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,13 +17,14 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/kubeproxy"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/sdk/program"
 )
 
 // RunScriptRunner is the fixed Job entrypoint. The child uses the same recording
 // proxy as responder kubectl, with first-write preimages and settled postimages.
 func RunScriptRunner(ctx context.Context) error {
-	namespace, indexName := os.Getenv("SDO_SCRIPT_NAMESPACE"), os.Getenv("SDO_SCRIPT_INDEX")
+	namespace, indexName := processio.Environment("SDO_SCRIPT_NAMESPACE"), processio.Environment("SDO_SCRIPT_INDEX")
 	if namespace == "" || indexName == "" {
 		return errors.New("script application identity is required")
 	}
@@ -49,7 +45,7 @@ func RunScriptRunner(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	script := os.Getenv("SDO_SCRIPT_TEXT")
+	script := processio.Environment("SDO_SCRIPT_TEXT")
 	out := program.ScriptExecutionResult{ApplicationID: index.Data["application_id"], JobName: indexName, JobUID: string(job.UID), ScriptDigest: program.ScriptDigest(script)}
 	if out.JobUID == "" || index.Data["script_digest"] != out.ScriptDigest || job.Annotations["sdo.dev/script-application"] != out.ApplicationID || index.Data["job_uid"] != "" && index.Data["job_uid"] != out.JobUID {
 		return errors.New("script runner identity conflict")
@@ -60,7 +56,7 @@ func RunScriptRunner(ctx context.Context) error {
 		return err
 	}
 	scriptDeadline := deadline
-	if time.Until(deadline) > 2*time.Second {
+	if processio.Until(deadline) > 2*time.Second {
 		scriptDeadline = deadline.Add(-2 * time.Second)
 	}
 	runCtx, cancel := context.WithDeadline(ctx, scriptDeadline)
@@ -92,38 +88,38 @@ func RunScriptRunner(ctx context.Context) error {
 		_, err = client.CoreV1().ConfigMaps(namespace).Patch(writeCtx, indexName, types.MergePatchType, patch, metav1.PatchOptions{})
 		return err
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return err
-	}
 	handler := kubeproxy.New(upstream, reads, writes, recorder)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server, err := processio.StartLocalServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCtx, stop := context.WithCancel(r.Context())
 		defer stop()
 		cancelOnDeadline := context.AfterFunc(runCtx, stop)
 		defer cancelOnDeadline()
 		handler.ServeHTTP(w, r.WithContext(requestCtx))
-	}), ReadHeaderTimeout: 5 * time.Second}
+	}))
+	if err != nil {
+		return err
+	}
 	defer server.Close()
-	go func() { _ = server.Serve(listener) }()
+	listenerAddress := server.Addr()
 	dir, err := os.MkdirTemp("", "sdo-script-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
 	kubeconfig := filepath.Join(dir, "kubeconfig")
-	body := fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: recorded\n  cluster:\n    server: http://%s\ncontexts:\n- name: recorded\n  context:\n    cluster: recorded\n    namespace: %s\n    user: recorded\ncurrent-context: recorded\nusers:\n- name: recorded\n  user: {}\n", listener.Addr().String(), namespace)
+	body := fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: recorded\n  cluster:\n    server: http://%s\ncontexts:\n- name: recorded\n  context:\n    cluster: recorded\n    namespace: %s\n    user: recorded\ncurrent-context: recorded\nusers:\n- name: recorded\n  user: {}\n", listenerAddress, namespace)
 	if err = os.WriteFile(kubeconfig, []byte(body), 0600); err != nil {
 		return err
 	}
-	env := make([]string, 0, len(os.Environ())+2)
-	for _, value := range os.Environ() {
+	environment := processio.Environ()
+	env := make([]string, 0, len(environment)+2)
+	for _, value := range environment {
 		if strings.HasPrefix(value, "SDO_SCRIPT_") || strings.HasPrefix(value, "KUBECONFIG=") {
 			continue
 		}
 		env = append(env, value)
 	}
-	env = append(env, "KUBECONFIG="+kubeconfig, "SDO_KUBE_API=http://"+listener.Addr().String())
+	env = append(env, "KUBECONFIG="+kubeconfig, "SDO_KUBE_API=http://"+listenerAddress)
 	code := executeScriptProcess(runCtx, script, env, &out)
 	out.ExitCode = &code
 	// The script deadline bounds writes. A separate short budget settles already
@@ -188,60 +184,6 @@ func RunScriptRunner(ctx context.Context) error {
 	return err
 }
 
-type scriptOutput struct {
-	bytes     []byte
-	truncated bool
-	mu        sync.Mutex
-}
-
-func (w *scriptOutput) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	n := len(p)
-	space := program.MaxScriptOutputBytes - len(w.bytes)
-	if len(p) > space {
-		p = p[:space]
-		w.truncated = true
-	}
-	w.bytes = append(w.bytes, p...)
-	return n, nil
-}
-
 func executeScriptProcess(ctx context.Context, script string, env []string, out *program.ScriptExecutionResult) int32 {
-	stdout, stderr := &scriptOutput{}, &scriptOutput{}
-	command := exec.CommandContext(ctx, "bash", "-c", script)
-	command.Env = env
-	command.Stdout = stdout
-	command.Stderr = stderr
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Cancel = func() error {
-		if command.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-	}
-	command.WaitDelay = 250 * time.Millisecond
-	err := command.Run()
-	if command.Process != nil {
-		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-	}
-	out.Stdout = string(stdout.bytes)
-	out.Stderr = string(stderr.bytes)
-	out.StdoutTruncated = stdout.truncated
-	out.StderrTruncated = stderr.truncated
-	out.TimedOut = ctx.Err() != nil
-	if err == nil {
-		return 0
-	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		code := exit.ExitCode()
-		if code < 0 {
-			code = 137
-		}
-		return int32(code)
-	}
-	return 127
+	return processio.ExecuteScript(ctx, script, env, out)
 }
-
-var _ io.Writer = (*scriptOutput)(nil)

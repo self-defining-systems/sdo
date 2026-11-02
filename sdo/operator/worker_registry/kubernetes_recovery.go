@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/worker_registry/internal/workerio"
 )
 
 // ReflectionResultRecoverer reads terminal evidence without executing a worker.
@@ -79,7 +79,7 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 		}
 	}
 	job, err := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, name, metav1.GetOptions{})
-	completedAt := time.Now()
+	completedAt := workerio.Now()
 	if err == nil {
 		if jobFailed(job) {
 			failure := e.taskJobFailure(ctx, task, job)

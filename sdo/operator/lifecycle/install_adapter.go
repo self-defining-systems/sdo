@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/rendered"
-	"time"
 
 	"sdo.dev/operator/install"
 )
@@ -54,7 +53,7 @@ func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespac
 		if err != nil || existing != nil {
 			return err
 		}
-		return onboarding.Stage(ctx, s.Installer.Client, control, namespace, commit, objects, time.Now())
+		return onboarding.Stage(ctx, s.Installer.Client, control, namespace, commit, objects, s.Installer.Observed())
 	}
 	return s
 }

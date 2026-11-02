@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/operatorcli/internal/processio"
 )
 
 // InstallExistingConfig installs an already accepted source tree without
@@ -121,7 +121,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *duration < 0 || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return InstallExistingConfig{}, errors.New("controller timeouts must be positive")
 	}
-	menu := os.Getenv("SDO_RESPONDER_MENU")
+	menu := processio.Environment("SDO_RESPONDER_MENU")
 	if menu != "" && menu != "0" && menu != "1" {
 		return InstallExistingConfig{}, errors.New("SDO_RESPONDER_MENU must be 0 or 1")
 	}

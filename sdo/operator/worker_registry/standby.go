@@ -2,14 +2,12 @@ package worker_registry
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -22,6 +20,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/worker_registry/internal/workerio"
 )
 
 const (
@@ -81,9 +80,9 @@ func (p *StandbyPool) Start(ctx context.Context) error {
 	}
 	go func() {
 		defer close(p.done)
-		ticker := time.NewTicker(time.Second)
+		ticker := workerio.NewTicker(time.Second)
 		defer ticker.Stop()
-		reap := time.NewTicker(standbyClaimExpiry)
+		reap := workerio.NewTicker(standbyClaimExpiry)
 		defer reap.Stop()
 		for {
 			select {
@@ -132,11 +131,11 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.current != nil {
-		if err := os.WriteFile(filepath.Join(p.current.Directory, "control/owner-heartbeat"), []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(p.current.Directory, "control/owner-heartbeat"), []byte(workerio.Now().UTC().Format(time.RFC3339Nano)), 0600); err != nil {
 			return err
 		}
 		job, err := p.Executor.Client.BatchV1().Jobs(p.Executor.Namespace).Get(ctx, p.current.JobName, metav1.GetOptions{})
-		if err == nil && !jobFailed(job) && !jobCompleted(job) && (standbyReady(p.current.Directory) || time.Since(p.current.CreatedAt) <= standbyReadyDeadline) {
+		if err == nil && !jobFailed(job) && !jobCompleted(job) && (standbyReady(p.current.Directory) || workerio.Since(p.current.CreatedAt) <= standbyReadyDeadline) {
 			return nil
 		}
 		if err != nil && !apierrors.IsNotFound(err) {
@@ -157,7 +156,7 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 		return err
 	}
 	var random [12]byte
-	if _, err := rand.Read(random[:]); err != nil {
+	if err := workerio.RandomRead(random[:]); err != nil {
 		return err
 	}
 	name := "sdo-standby-" + hex.EncodeToString(random[:])
@@ -170,7 +169,7 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 	if err := os.WriteFile(filepath.Join(directory, "session/api-history.generation"), []byte("standby"), 0600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(directory, "control/owner-heartbeat"), []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "control/owner-heartbeat"), []byte(workerio.Now().UTC().Format(time.RFC3339Nano)), 0600); err != nil {
 		return err
 	}
 	relative, err := filepath.Rel(p.Executor.RepositoryMountPath, directory)
@@ -187,7 +186,7 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 	if err := e.ensureJob(ctx, task, registration.GetKubernetesJob(), name, requestSource{PVCSubPath: path.Join(sub, "control")}, name+"-result", path.Join(sub, "checkout")); err != nil {
 		return err
 	}
-	p.current = &WarmBinding{JobName: name, Directory: directory, CreatedAt: time.Now().UTC()}
+	p.current = &WarmBinding{JobName: name, Directory: directory, CreatedAt: workerio.Now().UTC()}
 	slog.Info("responder_standby_created", "application", p.Application, "job", name)
 	return nil
 }
@@ -272,7 +271,7 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	}()
 	slot.IncidentID = request.GetIncidentId()
 	slot.Digest = taskRequestDigest(task)
-	slot.ClaimedAt = time.Now().UTC()
+	slot.ClaimedAt = workerio.Now().UTC()
 	for _, adopted := range [][2]string{
 		{task.GetWorkspace().GetCheckoutPath(), filepath.Join(slot.Directory, "checkout")},
 		{session, filepath.Join(slot.Directory, "session")},
@@ -315,7 +314,7 @@ func copyStandbyTree(ctx context.Context, source, destination string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("standby source is not a real directory: %s", source)
 	}
-	output, err := exec.CommandContext(ctx, "cp", "-a", source+"/.", destination).CombinedOutput()
+	output, err := workerio.CombinedOutput(ctx, "cp", "-a", source+"/.", destination)
 	if err != nil {
 		return fmt.Errorf("populate standby: %w: %s", err, output)
 	}
@@ -517,7 +516,7 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 	if !standbyReady(b.Directory) {
 		return unpublished(errors.New("unpublished standby lost readiness"))
 	}
-	if time.Since(b.ClaimedAt) > standbyPublishDeadline {
+	if workerio.Since(b.ClaimedAt) > standbyPublishDeadline {
 		return unpublished(errors.New("standby claim is too old to publish before the pod expires"))
 	}
 	environment := cloneEnvironment(e.Environment)
@@ -613,7 +612,7 @@ func warmSessionPath(e KubernetesExecutor, task *contracts.AgentTask) (string, b
 func standbyReady(directory string) bool {
 	for _, name := range []string{"agent", "history"} {
 		info, err := os.Stat(filepath.Join(directory, "ready", name))
-		if err != nil || time.Since(info.ModTime()) > standbyReadyFreshness {
+		if err != nil || workerio.Since(info.ModTime()) > standbyReadyFreshness {
 			return false
 		}
 	}

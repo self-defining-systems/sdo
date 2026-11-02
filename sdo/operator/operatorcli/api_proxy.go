@@ -5,16 +5,13 @@ import (
 	"errors"
 	"flag"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/apihistory"
 	"sdo.dev/operator/kubeproxy"
+	"sdo.dev/operator/operatorcli/internal/processio"
 )
 
 const APIProxyAddress = "127.0.0.1:18080"
@@ -23,11 +20,7 @@ const APIProxyAddress = "127.0.0.1:18080"
 // Provider credentials and incoming Authorization are never inspected or stored.
 func RunAPIProxy(ctx context.Context, args []string) error {
 	if len(args) == 1 && args[0] == "ready" {
-		c, err := net.DialTimeout("tcp", APIProxyAddress, time.Second)
-		if err == nil {
-			c.Close()
-		}
-		return err
+		return processio.DialReady(APIProxyAddress)
 	}
 	flags := flag.NewFlagSet("api-proxy", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -69,27 +62,7 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Addr: APIProxyAddress, Handler: kubeproxy.NewWithMutationGate(upstream, reads, writes, recorder, gate), ReadHeaderTimeout: 10 * time.Second}
-	listener, err := net.Listen("tcp", APIProxyAddress)
-	if err != nil {
-		return err
-	}
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			server.Close()
-		case <-done:
-		}
-	}()
-	err = server.Serve(listener)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
-	return err
+	return processio.ServeHTTP(ctx, APIProxyAddress, kubeproxy.NewWithMutationGate(upstream, reads, writes, recorder, gate))
 }
 
 // apiProxyTransports shares one authenticated connection pool for an incident.
@@ -99,7 +72,7 @@ func apiProxyTransports(config *rest.Config) (http.RoundTripper, http.RoundTripp
 	if err != nil {
 		return nil, nil, err
 	}
-	base := &http.Transport{TLSClientConfig: tlsConfig, DisableCompression: true, MaxIdleConnsPerHost: 32, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second}
+	base := processio.NewTransport(tlsConfig)
 	reads, err := rest.HTTPWrappersForConfig(config, base)
 	if err != nil {
 		return nil, nil, err
