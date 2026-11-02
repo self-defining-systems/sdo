@@ -39,3 +39,13 @@ TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder
 # controller before their intended failure. PRs keep TestCompileStageDiagnostics
 # through the real Go-process seam, plus real builder syntax/registration/metrics rejection.
 TestCompileReportsTheFailingStage
+# Real Go builds merged from dev (10-80 s each on the builder tests); nightly runs them.
+TestShippedControllerKeepsItsDebugData
+TestUnreplayableMitigatorIsSavedWithReason
+TestOperatorCorpusRequiresProductionClosedLoop
+TestProgramSaveReplayDoesNotRequireRenameInvariance
+TestProgramRepeatUnreachableIsRecordedAsGap
+TestProgramSaveReplayProvesEffectsWithoutFixedSnapshotGate
+TestPublicationCheckPreservesAcceptanceWithoutInformationalPass
+TestRetiredProgramIsNotStagedCompiledOrRegistered
+TestValidateNotesDependencyEdgesNoHealthScenarioDrives
