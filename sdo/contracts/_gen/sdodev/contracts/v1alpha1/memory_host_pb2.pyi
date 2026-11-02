@@ -118,14 +118,16 @@ class MemoryObservation(_message.Message):
     def __init__(self, observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., scoped: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_admission: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
 
 class EvaluateRequest(_message.Message):
-    __slots__ = ("detector_ids", "mirror_sequence", "observation")
+    __slots__ = ("detector_ids", "mirror_sequence", "observation", "reads")
     DETECTOR_IDS_FIELD_NUMBER: _ClassVar[int]
     MIRROR_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
     OBSERVATION_FIELD_NUMBER: _ClassVar[int]
+    READS_FIELD_NUMBER: _ClassVar[int]
     detector_ids: _containers.RepeatedScalarFieldContainer[str]
     mirror_sequence: int
     observation: MemoryObservation
-    def __init__(self, detector_ids: _Optional[_Iterable[str]] = ..., mirror_sequence: _Optional[int] = ..., observation: _Optional[_Union[MemoryObservation, _Mapping]] = ...) -> None: ...
+    reads: _containers.RepeatedCompositeFieldContainer[MemoryReadReceipt]
+    def __init__(self, detector_ids: _Optional[_Iterable[str]] = ..., mirror_sequence: _Optional[int] = ..., observation: _Optional[_Union[MemoryObservation, _Mapping]] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ...) -> None: ...
 
 class MemoryDetectorResult(_message.Message):
     __slots__ = ("detector_id", "findings", "error")

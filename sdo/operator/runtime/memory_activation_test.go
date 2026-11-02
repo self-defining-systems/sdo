@@ -387,3 +387,35 @@ func TestQueuedReflectionRolloutActivatesHostMemory(t *testing.T) {
 		t.Fatalf("activated reflection stayed open: queued=%v rollout=%q", ids, c.reflections.rollout)
 	}
 }
+
+func TestReconfigureMemoryKeepsTheOnboardingReachabilityReference(t *testing.T) {
+	ctx := context.Background()
+	manager := memoryhost.NewManager(time.Second)
+	defer manager.Close()
+	if err := manager.Publish(ctx, sdktest.Snapshot{NamespaceName: "toy"}); err != nil {
+		t.Fatal(err)
+	}
+	host := activationHost(t, "initial", []sdk.Detector{scheduledDetector{sdk.DetectorSpec{ID: "original", Interval: time.Second}}})
+	if err := manager.Prepare(ctx, host); err != nil {
+		t.Fatal(err)
+	}
+	ready, _ := host.Ready(ctx)
+	remote, err := NewRemoteMemory(ready, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := testControllerConfig()
+	config.Namespace = "toy"
+	provider := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "toy"}}
+	controller, err := NewController(config, remote.Detectors, provider, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(10, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.onboardingReachability = &onboardingReachabilityState{}
+	if err = controller.ReconfigureMemory(remote, provider, time.Unix(11, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if wrapped, ok := controller.provider.(onboardingSnapshotProvider); !ok || wrapped.State != controller.onboardingReachability {
+		t.Fatalf("activation dropped the onboarding reference: %T", controller.provider)
+	}
+}

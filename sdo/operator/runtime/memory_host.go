@@ -118,7 +118,11 @@ func (d *remoteDetector) Detect(ctx context.Context, view sdk.DetectionContext) 
 	if err != nil {
 		return nil, err
 	}
-	response, err := rpc.Evaluate(ctx, &pb.EvaluateRequest{DetectorIds: []string{d.ID}, MirrorSequence: sequence, Observation: observation})
+	reads, err := watchedDiffReads(view, d.DetectorSpec.Watches)
+	if err != nil {
+		return nil, err
+	}
+	response, err := rpc.Evaluate(ctx, &pb.EvaluateRequest{DetectorIds: []string{d.ID}, MirrorSequence: sequence, Observation: observation, Reads: reads})
 	if err != nil {
 		return nil, fmt.Errorf("memory host evaluate: %w", err)
 	}
@@ -131,6 +135,31 @@ func (d *remoteDetector) Detect(ctx context.Context, view sdk.DetectionContext) 
 	}
 	return findingsState(result.Findings), nil
 }
+
+// watchedDiffReads freezes the source and baseline diffs of the objects a detector watches, because the
+// memory host answers DiffAgainstSource from controller-provided reads and never calls back.
+func watchedDiffReads(view sdk.DetectionContext, watches []sdk.WatchKind) ([]*pb.MemoryReadReceipt, error) {
+	if len(watches) == 0 {
+		return nil, nil
+	}
+	refs, err := memoryhost.SnapshotRefs(view)
+	if err != nil {
+		return nil, err
+	}
+	var watched []sdk.ObjectRef
+	for _, ref := range refs {
+		for _, watch := range watches {
+			if ref.Kind == watch.Kind && (watch.APIVersion == "" || ref.APIVersion == watch.APIVersion) &&
+				(watch.Namespace == "" || ref.Namespace == watch.Namespace) {
+				watched = append(watched, ref)
+				break
+			}
+		}
+	}
+	calls := memoryDiffInputs(view, watched)
+	return memoryhost.EncodeReceipts(calls)
+}
+
 func wireStruct(value any) (*structpb.Struct, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {

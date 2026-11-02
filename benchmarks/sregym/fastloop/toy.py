@@ -153,7 +153,7 @@ def up(args: Any) -> int:
         env.worker_env.update(host_limits.worker_env())
         env.save()
         prepare_dev_mount(env.dev_mount, None, run_dir)
-        config = install_controller(env)
+        config = install_controller(env, registrations=getattr(args, "agent_registrations", None))
         record_controller(env, config)
         print(f"toy environment ready: {env.path}")
         return 0
@@ -281,10 +281,16 @@ def up(args: Any) -> int:
         env.baseline_path, (capture_application_baseline(KubectlApplicationCluster(kubeconfig), NAMESPACE),)
     )
     command(str(kubeconfig), "default", "create", "namespace", NAMESPACE + "-sdo")
-    command(str(kubeconfig), NAMESPACE + "-sdo", "create", "secret", "generic", "sdo-agent-credentials")
+    hook = getattr(args, "credentials_hook", None)
+    if hook is None:
+        command(str(kubeconfig), NAMESPACE + "-sdo", "create", "secret", "generic", "sdo-agent-credentials")
+    else:
+        from benchmarks.sregym.fastloop.wipe import credentials_hook
+
+        credentials_hook(hook.resolve(), kubeconfig)(NAMESPACE + "-sdo")
     env.save()
     deployed = time.monotonic()
-    config = install_controller(env)
+    config = install_controller(env, registrations=getattr(args, "agent_registrations", None))
     record_controller(env, config)
     timing = {
         "prepare": create_start - started,
@@ -300,8 +306,10 @@ def up(args: Any) -> int:
     return 0
 
 
-def install_controller(environment: FastloopEnvironment, config: Any = None) -> Any:
-    """Install the production controller and scripted registrations, without benchmark registry resources."""
+def install_controller(
+    environment: FastloopEnvironment, config: Any = None, *, registrations: Path | None = None
+) -> Any:
+    """Install the production controller and its registrations (scripted unless given), without benchmark resources."""
     from dataclasses import replace
 
     from benchmarks.sregym.adapter import (
@@ -331,6 +339,7 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
             persistent=True,
             kind_cluster_name=environment.cluster,
             deployed_manifest_paths=("kubernetes",),
+            agent_registrations=registrations.resolve() if registrations else None,
         )
     install = replace(native_install_config(config), registration_configmap="sdo-agent-registrations")
     resources = [

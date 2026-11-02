@@ -193,6 +193,11 @@ func (s *Server) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*pb
 	if err = observe(&snapshot, request.GetObservation()); err != nil {
 		return nil, err
 	}
+	reads, err := DecodeReceipts(request.GetReads())
+	if err != nil {
+		return nil, err
+	}
+	snapshot.Readings = append(snapshot.Readings[:len(snapshot.Readings):len(snapshot.Readings)], reads...)
 	response := &pb.EvaluateResponse{}
 	for _, id := range request.DetectorIds {
 		result := &pb.MemoryDetectorResult{DetectorId: id}

@@ -57,6 +57,24 @@ def test_toy_up_does_not_require_sregym_seed():
     assert args.seed is None
 
 
+def test_toy_up_accepts_live_registrations_and_credentials_hook():
+    args = build_parser().parse_args(
+        [
+            "up",
+            "--app",
+            "toy",
+            "--run-dir",
+            "/tmp/toy",
+            "--agent-registrations",
+            "/tmp/live-registrations",
+            "--credentials-hook",
+            "/tmp/keeper",
+        ]
+    )
+    assert args.agent_registrations == Path("/tmp/live-registrations")
+    assert args.credentials_hook == Path("/tmp/keeper")
+
+
 def test_scripted_source_restore_repairs_declared_readiness(monkeypatch):
     """A readiness fault must be repairable through the same accepted-source tool."""
     import json

@@ -77,6 +77,9 @@ message EvaluateRequest {
   repeated string detector_ids = 1;
   uint64 mirror_sequence = 2;
   MemoryObservation observation = 3;
+  // Source and baseline diffs the controller froze for the watched objects; a
+  // detector reads them through DiffAgainstSource/DiffAgainstBaseline.
+  repeated MemoryReadReceipt reads = 4;
 }
 message MemoryDetectorResult {
   string detector_id = 1;
