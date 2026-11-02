@@ -1,0 +1,23 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: replay-targetport
+constructor: New
+class: incident
+owner: responder
+watches:
+  - apiVersion: v1
+    kind: Service
+  - apiVersion: v1
+    kind: Pod
+interval: 30s
+persistence:
+  firing: 1
+  clearing: 1
+batching:
+  severity: critical
+  debounce: 500ms
+possiblePlaybooks:
+  - service-targetport-mismatch
+originatingIncident: synthetic-port
+originatingCommit: synthetic

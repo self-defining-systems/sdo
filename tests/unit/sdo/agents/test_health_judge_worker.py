@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from sdo.agents.code_paths import SKILLS_ROOT
 from sdo.agents.health_judge import worker as judge_worker
 from sdo.agents.health_judge.worker import _validate_judge_draft, run_judge_task
 from sdo.agents.lifecycle.agents import CodexLifecycleBackend, HealthJudgeDraft
@@ -121,7 +122,12 @@ def test_judge_authors_final_files_in_writable_session(
         target = tmp_path / ".sdo/diagnostics/detectors/health/health-objective"
         target.mkdir(parents=True)
         (target / "detector.go").write_text("package objective\n// authored bytes\n")
-        return reply("codex", output, session_id="judge-1", commands=["sdo-operator memory check"])
+        return reply(
+            "codex",
+            output,
+            session_id="judge-1",
+            commands=[f"cat {SKILLS_ROOT}/sdo-shell-authoring/SKILL.md", "sdo-operator memory check"],
+        )
 
     agent = ScriptedAgent(respond)
     monkeypatch.setenv("SDO_AGENT_PROVIDER", "codex")
@@ -132,8 +138,11 @@ def test_judge_authors_final_files_in_writable_session(
         result = judge_worker.author_health_diagnostics(request, tmp_path)
     assert result.detector_ids == ["health-objective"]
     assert not result.HasField("artifact_proposal")
-    assert any("workspace-write" in arg for arg in agent.argvs[0])
+    assert any("danger-full-access" in arg for arg in agent.argvs[0])
     prompt = agent.prompts[0]
+    assert "Accepted source and developer changes express intent." in prompt
+    assert "Operational memory is fallible advice." in prompt
+    assert "Recovery requires evidence from the intended application behavior." in prompt
     assert "sdo-operator memory check" in prompt
     assert "prometheus.io/scrape" in prompt
     assert "http://metrics/api/v1/otlp/v1/metrics" in prompt

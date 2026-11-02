@@ -1,0 +1,17 @@
+{
+ "root_cause_program_ids": [
+  "webhook-ca-sync"
+ ],
+ "bindings": {
+  "objects": {
+   "configuration": {
+    "api_version": "admissionregistration.k8s.io/v1",
+    "kind": "MutatingWebhookConfiguration",
+    "name": "pod-policy"
+   }
+  }
+ },
+ "provenance": {
+  "incident_id": "worked-example"
+ }
+}

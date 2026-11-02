@@ -2,6 +2,7 @@ package sdktest
 
 import (
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sort"
 	"time"
 
@@ -16,13 +17,13 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
 )
 
 type Snapshot struct {
-	Reachability *servicehealth.ReachabilityWindow `json:"-"`
 	// Usage holds a synthetic resource usage window.
 	Usage              *usage.Result                  `json:"-"`
 	SecretList         []sdk.SecretMetadata           `json:"secrets"`
@@ -35,30 +36,37 @@ type Snapshot struct {
 	DaemonSetList      []appsv1.DaemonSet             `json:"daemonSets"`
 	// Logs holds synthetic bounded log windows by query ID.
 	Logs map[string]logs.Result `json:"-"`
+	// ObjectSnapshotVersion 1 stores namespace-local objects in Objects and in
+	// the typed lists; ObjectsOnlySnapshotVersion stores them in Objects only.
+	ObjectSnapshotVersion int                         `json:"object_snapshot_version,omitempty"`
+	Admission             *sdk.PodAdmissionResult     `json:"pod_admission,omitempty"`
+	Objects               []unstructured.Unstructured `json:"objects,omitempty"`
 	// SourceName names the file a loaded snapshot came from, for messages.
-	SourceName        string                                  `json:"-"`
-	NamespaceName     string                                  `json:"namespace"`
-	ConfigMapList     []corev1.ConfigMap                      `json:"configMaps"`
-	ServiceList       []corev1.Service                        `json:"services"`
-	PodList           []corev1.Pod                            `json:"pods"`
-	DeploymentList    []appsv1.Deployment                     `json:"deployments"`
-	StatefulSetList   []appsv1.StatefulSet                    `json:"statefulSets"`
-	ReplicaSetList    []appsv1.ReplicaSet                     `json:"replicaSets"`
-	HPAList           []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers"`
-	PDBList           []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets"`
-	EndpointList      []corev1.Endpoints                      `json:"endpoints"`
-	EndpointSliceList []discoveryv1.EndpointSlice             `json:"endpointSlices"`
-	NetworkPolicyList []networkingv1.NetworkPolicy            `json:"networkPolicies"`
-	EventList         []corev1.Event                          `json:"events"`
-	// ObservedAtTime is when the live view was read; nil when unrecorded.
-	// It backs sdk.ObservationClock so age-based detectors replay exactly.
-	ObservedAtTime *time.Time `json:"observedAt,omitempty"`
+	SourceName         string `json:"-"`
+	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
+	NamespaceName      string                                  `json:"namespace"`
+	ConfigMapList      []corev1.ConfigMap                      `json:"configMaps,omitempty"`
+	ServiceList        []corev1.Service                        `json:"services,omitempty"`
+	PodList            []corev1.Pod                            `json:"pods,omitempty"`
+	DeploymentList     []appsv1.Deployment                     `json:"deployments,omitempty"`
+	StatefulSetList    []appsv1.StatefulSet                    `json:"statefulSets,omitempty"`
+	ReplicaSetList     []appsv1.ReplicaSet                     `json:"replicaSets,omitempty"`
+	HPAList            []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers,omitempty"`
+	PDBList            []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets,omitempty"`
+	EndpointList       []corev1.Endpoints                      `json:"endpoints,omitempty"`
+	EndpointSliceList  []discoveryv1.EndpointSlice             `json:"endpointSlices,omitempty"`
+	NetworkPolicyList  []networkingv1.NetworkPolicy            `json:"networkPolicies,omitempty"`
+	EventList          []corev1.Event                          `json:"events,omitempty"`
+	ObservedAtTime     *time.Time                              `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
-	Traffic map[string]traffic.Window `json:"-"`
+	Traffic map[string]traffic.Window `json:"traffic,omitempty"`
 	// Metrics holds frozen metric query results by query ID.
-	Metrics map[string]metrics.Result `json:"-"`
+	Metrics map[string]metrics.Result `json:"metrics,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
-	Alerts *metrics.AlertsResult `json:"-"`
+	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
+	// Readings are the runtime observations made on this exact snapshot.
+	Readings     []PrimitiveCall                   `json:"readings,omitempty"`
+	Reachability *servicehealth.ReachabilityWindow `json:"reachability,omitempty"`
 }
 
 // ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
@@ -379,9 +387,49 @@ func (s Snapshot) Secrets() []sdk.SecretMetadata {
 // LogResult implements logs.Source.
 func (s Snapshot) LogResult(id string) (logs.Result, bool) { r, ok := s.Logs[id]; return r, ok }
 
+func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result {
+	if err := q.Validate(); err != nil {
+		return metrics.Result{Query: q, Error: err.Error()}
+	}
+	if r, ok := s.Metrics[q.ID]; ok && r.Query == q {
+		return r
+	}
+	return metrics.Result{Query: q, Error: "metric query not recorded"}
+}
+
+// ObservedView binds detector reads to this snapshot's recorded evidence.
+func (s Snapshot) ObservedView() (sdk.DetectionContext, func() error) {
+	return program.CheckReads(&ReplayReadView{Snapshot: s, Calls: s.Readings})
+}
+
+func (s Snapshot) RuntimeReadView() program.ReadView {
+	return &ReplayReadView{Snapshot: s, Calls: s.Readings}
+}
+
 func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
 	if s.Reachability == nil {
 		return servicehealth.ReachabilityWindow{}, false
 	}
 	return *s.Reachability, true
+}
+
+func (s Snapshot) PodAdmission() (sdk.PodAdmissionResult, bool) {
+	if s.Admission == nil {
+		return sdk.PodAdmissionResult{}, false
+	}
+	return *s.Admission, true
+}
+
+func (s Snapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	// Generic objects are authoritative; old fixtures fall back to typed arrays.
+	objects := append(append([]unstructured.Unstructured(nil), s.Objects...), sdk.TypedObjects(s)...)
+	return sdk.FindObject(objects, ref)
+}
+func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	return append(sdk.TypedObjects(s), s.Objects...), nil
+}
+
+// DiffAgainstSource replays only observations recorded on this exact snapshot.
+func (s Snapshot) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error) {
+	return (&ReplayReadView{Snapshot: s, Calls: s.Readings}).DiffAgainstSource(ref)
 }

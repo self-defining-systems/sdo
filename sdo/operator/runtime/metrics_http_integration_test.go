@@ -86,3 +86,11 @@ func TestEvaluateOnceMetricsUsesInjectedRuntimeClock(t *testing.T) {
 		t.Fatalf("findings %+v", result.Findings)
 	}
 }
+
+func TestEvaluateOnceSharedReadsCannotIgnoreMetricsFailure(t *testing.T) {
+	fake, server := newRealFakePrometheus(t)
+	fake.status = 500
+	if _, err := evaluateOnceWithMetrics(t, []sdk.Detector{ignoringQueryDetector{}}, "--metrics-url", server.URL); err == nil {
+		t.Fatal("evaluate-once cleared an unreadable query")
+	}
+}

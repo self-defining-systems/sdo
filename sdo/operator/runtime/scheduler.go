@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -13,16 +14,25 @@ type scheduleEntry struct {
 	nextRun  time.Time
 }
 
+// Scheduler owns its complete mutable schedule. Selection, acceleration,
+// snapshot and restore share one lock so asynchronous durable handoffs cannot
+// read a transition concurrently with the controller loop.
 type Scheduler struct {
-	entries map[string]*scheduleEntry
+	mu        sync.RWMutex
+	namespace string
+	entries   map[string]*scheduleEntry
 }
 
-func NewScheduler(detectors []sdk.Detector, start time.Time) *Scheduler {
+func NewScheduler(detectors []sdk.Detector, start time.Time, namespace ...string) *Scheduler {
 	entries := make(map[string]*scheduleEntry, len(detectors))
 	for _, detector := range detectors {
 		entries[detector.Spec().ID] = &scheduleEntry{detector: detector, nextRun: start}
 	}
-	return &Scheduler{entries: entries}
+	s := &Scheduler{entries: entries}
+	if len(namespace) > 0 {
+		s.namespace = namespace[0]
+	}
+	return s
 }
 
 func (s *Scheduler) Select(now time.Time, event *sdk.WatchKind) []sdk.Detector {
@@ -35,6 +45,8 @@ func (s *Scheduler) Select(now time.Time, event *sdk.WatchKind) []sdk.Detector {
 // SelectEvents returns every detector that is due at now or watches any of the
 // coalesced events, and advances each selected detector's next interval run.
 func (s *Scheduler) SelectEvents(now time.Time, events []sdk.WatchKind) []sdk.Detector {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	selected := make([]sdk.Detector, 0)
 	for _, entry := range s.entries {
 		due := !now.Before(entry.nextRun)
@@ -42,7 +54,7 @@ func (s *Scheduler) SelectEvents(now time.Time, events []sdk.WatchKind) []sdk.De
 			if due {
 				break
 			}
-			due = watchesEvent(entry.detector.Spec().Watches, event)
+			due = watchesEventInNamespace(entry.detector.Spec().Watches, event, s.namespace)
 		}
 		if !due {
 			continue
@@ -58,6 +70,8 @@ func (s *Scheduler) SelectEvents(now time.Time, events []sdk.WatchKind) []sdk.De
 
 // Expedite moves a detector's next run earlier, never later.
 func (s *Scheduler) Expedite(detectorID string, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	entry, ok := s.entries[detectorID]
 	if !ok || !at.Before(entry.nextRun) {
 		return
@@ -67,12 +81,18 @@ func (s *Scheduler) Expedite(detectorID string, at time.Time) {
 
 // ExpediteAll makes every detector due at or before at.
 func (s *Scheduler) ExpediteAll(at time.Time) {
-	for id := range s.entries {
-		s.Expedite(id, at)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, entry := range s.entries {
+		if at.Before(entry.nextRun) {
+			entry.nextRun = at
+		}
 	}
 }
 
 func (s *Scheduler) NextRun() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var next time.Time
 	for _, entry := range s.entries {
 		if next.IsZero() || entry.nextRun.Before(next) {
@@ -83,6 +103,8 @@ func (s *Scheduler) NextRun() time.Time {
 }
 
 func (s *Scheduler) Deadlines() map[string]time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	result := make(map[string]time.Time, len(s.entries))
 	for id, entry := range s.entries {
 		result[id] = entry.nextRun
@@ -91,6 +113,8 @@ func (s *Scheduler) Deadlines() map[string]time.Time {
 }
 
 func (s *Scheduler) RestoreDeadlines(deadlines map[string]time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for id, deadline := range deadlines {
 		entry, ok := s.entries[id]
 		if !ok {
@@ -107,6 +131,30 @@ func watchesEvent(watches []sdk.WatchKind, event sdk.WatchKind) bool {
 			continue
 		}
 		if watch.Namespace == "" || watch.Namespace == event.Namespace {
+			return true
+		}
+	}
+	return false
+}
+
+func watchesEventInNamespace(watches []sdk.WatchKind, event sdk.WatchKind, app string) bool {
+	if app == "" {
+		return watchesEvent(watches, event)
+	}
+	// Synthetic namespaced events omit namespace and refer to the application.
+	// Normalize the event as well as its watch; this never matches a foreign watch.
+	if event.Namespace == "" && !(sdk.ObservationTarget{Kind: event.Kind}).Cluster() {
+		event.Namespace = app
+	}
+	for _, w := range watches {
+		if w.APIVersion != event.APIVersion || w.Kind != event.Kind {
+			continue
+		}
+		namespace := w.Namespace
+		if namespace == "" && !(sdk.ObservationTarget{Kind: w.Kind}).Cluster() {
+			namespace = app
+		}
+		if namespace == event.Namespace {
 			return true
 		}
 	}

@@ -16,20 +16,15 @@ instruction; unset (mode ``"none"``), the instruction is unchanged.
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Mapping
 
 PROMPT_APPENDIX_ENV = "SREGYM_AGENT_PROMPT_APPENDIX"
 #: SREGym's agent proxy forwards pod exec/attach/port-forward only when this is truthy.
 ALLOW_EXEC_ENV = "SREGYM_AGENT_PROXY_ALLOW_EXEC"
-
-#: SREGym's agent container image and the hook module the appendix needs in it.
-AGENT_IMAGE = "sregym-agent-base:latest"
-_IMAGE_HOOK_PATH = "/opt/sregym/clients/harness/prompt_appendix.py"
 
 VerifyProtocolMode = Literal["concise", "full", "none"]
 VERIFY_PROTOCOL_MODES: tuple[VerifyProtocolMode, ...] = ("concise", "full", "none")
@@ -127,35 +122,3 @@ class CodexBaselineConfig:
         if self.exec_disclosure:
             blocks.append(EXEC_DISCLOSURE_PROMPT)
         return "\n".join(block for block in blocks if block)
-
-
-class PromptAppendixImageError(RuntimeError):
-    """The agent image predates the prompt-appendix hook, so the appendix would be silently dropped."""
-
-
-def ensure_agent_image_supports_prompt_appendix(
-    env: Mapping[str, str],
-    *,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    image: str = AGENT_IMAGE,
-) -> None:
-    """Refuse to start an appendix run on an agent image without the hook.
-
-    The Codex driver is baked into the image, and SREGym rebuilds the image
-    only when it is missing. A stale image would run the stock prompt under
-    the verify arm's name.
-    """
-    if not env.get(PROMPT_APPENDIX_ENV):
-        return
-    try:
-        inspected = run(["docker", "image", "inspect", image], capture_output=True, text=True)
-        if inspected.returncode != 0:
-            return  # SREGym builds the missing image from this checkout, hook included.
-        probe = run(["docker", "run", "--rm", image, f"test -f {_IMAGE_HOOK_PATH}"], capture_output=True, text=True)
-    except OSError as exc:
-        raise PromptAppendixImageError(f"cannot inspect agent image {image}: {exc}") from exc
-    if probe.returncode != 0:
-        raise PromptAppendixImageError(
-            f"agent image {image} has no {_IMAGE_HOOK_PATH}, so it would drop {PROMPT_APPENDIX_ENV}. "
-            "Rebuild it with third_party/sregym/docker/agents/build.sh and rerun."
-        )

@@ -2,15 +2,22 @@ package validate
 
 // Rule IDs are stable: agents, the CLI, and tests match on them.
 const (
+	RulePlaybookStatus = "playbook.status"
 	// Publication content and lifecycle context.
-	RuleEmptyDiff          = "diff.empty"
-	RuleBootstrapClosed    = "lifecycle.bootstrap-closed"
-	RuleAcceptedOutcome    = "lifecycle.accepted-outcome"
-	RuleVerifiedSource     = "lifecycle.verified-source"
-	RuleReflectionDecision = "reflection.decision"
-	RuleWhitespace         = "diff.whitespace"
-	RuleSnapshotBudget     = "memory.snapshot-budget"
-	RuleSnapshotProjection = "memory.snapshot"
+	RuleEmptyDiff                   = "diff.empty"
+	RuleBootstrapClosed             = "lifecycle.bootstrap-closed"
+	RuleAcceptedOutcome             = "lifecycle.accepted-outcome"
+	RuleVerifiedSource              = "lifecycle.verified-source"
+	RuleReflectionDecision          = "reflection.decision"
+	RuleReflectionStalePlaybook     = "reflection.stale-playbook"
+	RuleReflectionSDKGapUnavailable = "reflection.sdk-gap-unavailable"
+	RuleReflectionProgramRequired   = "reflection.program-required"
+	RuleReflectionDetectorRequired  = "reflection.detector-required"
+	RuleWhitespace                  = "diff.whitespace"
+	RuleSnapshotBudget              = "memory.snapshot-budget"
+	RuleSnapshotProjection          = "memory.snapshot"
+	RuleClusterLocal                = "memory.cluster-local"
+	RuleSecretData                  = "memory.secret-data"
 
 	// Structural.
 	RuleUnknownPath      = "layout.unknown-path"
@@ -39,21 +46,15 @@ const (
 	RulePlaybookNone        = "playbook.none"
 	RulePlaybookNoReadme    = "playbook.missing-readme"
 	RulePlaybookOwner       = "playbook.owner"
-	RulePlaybookFaultClass  = "playbook.fault-class"
 	RulePlaybookIncident    = "playbook.originating-incident"
-	RulePlaybookPlaceholder = "playbook.placeholder"
 	RuleIndexMissing        = "playbook.index-missing"
-	RuleIndexLink           = "playbook.index-link"
-	RulePlaybookNotIndexed  = "playbook.not-indexed"
+	RuleIndexGenerated      = "playbook.index-generated"
 	RuleScriptNotExecutable = "script.not-executable"
 	RuleScriptUnreferenced  = "script.unreferenced"
 	RuleScriptSyntax        = "script.syntax"
 	RulePhysicalPath        = "text.physical-path"
 
-	RuleCorpusImmutable    = "program.corpus-immutable"
-	RuleCorpusProvenance   = "program.corpus-provenance"
-	RuleCaptureUnavailable = "program.capture-unavailable"
-	RuleCaptureProvenance  = "program.capture-provenance"
+	RuleCorpusImmutable = "program.corpus-immutable"
 
 	// Ownership.
 	RuleOwnershipDenied       = "ownership.denied"
@@ -69,10 +70,25 @@ const (
 	// Explicit Go health-bootstrap preparation.
 	RuleGenericHealth = "bootstrap.generic-health"
 
+	// Informational replay evidence, never an acceptance diagnostic.
+	RuleReplayObservation = "program.replay-observation"
+	// Informational traffic coverage: a declared dependency edge no
+	// health-probe scenario drives. Never an acceptance diagnostic.
+	RuleTrafficUndrivenEdge = "traffic.undriven-edge"
+	// Informational traffic coverage: a health-probe scenario that keeps the
+	// default latency bound. Never an acceptance diagnostic.
+	RuleTrafficDefaultLatency = "traffic.default-latency"
+	// RuleProgramDiffText notes (never rejects) a program deciding on a diff's
+	// Text, so reflection rewrites it with typed field comparisons.
+	RuleProgramDiffText = "program.diff-text-match"
+
 	// Compile.
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"
-	RuleProgramMitigationReplay = "program.mitigation-unreplayable"
 	RuleDetectorCompile         = "detector.compile"
 	RuleDetectorVet             = "detector.vet"
 	RuleDetectorTest            = "detector.test"
+	RuleDetectorHealthyBaseline = "detector.healthy-baseline"
+	// RuleDetectorControllerStart rejects detectors the controller would
+	// refuse at start; it runs the controller's own startup validation.
+	RuleDetectorControllerStart = "detector.controller-start"
 )

@@ -195,15 +195,35 @@ import (
 
 func TestIncidentDetectorsStayQuietOnHealthyBaseline(t *testing.T) {
     snapshots, err := sdktest.LoadSnapshots("testdata/healthy-baseline")
-    if err != nil { t.Fatalf("healthy baseline: %v", err) }
+    if err != nil { t.Fatalf("detector.healthy-baseline: cannot evaluate controller healthy capture: %v", err) }
     for _, detector := range All() {
         if detector.Spec().Class != sdk.DetectorClassIncident { continue }
         for _, violation := range sdktest.HealthyBaselineViolations(detector, snapshots) {
-            t.Error(violation)
+            t.Fatal("detector.healthy-baseline: " + violation)
         }
     }
 }
 `
+
+// controllerStartTest runs the exact validation the controller applies to its
+// detectors at start, so memory the broker accepts always loads.
+const controllerStartTest = `package generated
+
+import (
+    "testing"
+    "sdo.dev/operator/core"
+)
+
+func TestDetectorsLoadInController(t *testing.T) {
+    if err := core.ValidateDetectors(All()); err != nil {
+        t.Fatal("detector.controller-start: the controller would refuse to start: " + err.Error())
+    }
+}
+`
+
+func generateControllerStartTest(root string) error {
+	return os.WriteFile(filepath.Join(root, "generated", "controller_start_test.go"), []byte(controllerStartTest), 0o644)
+}
 
 const metricsContractTest = `package generated
 

@@ -1,0 +1,81 @@
+package operatorcli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"io"
+	"net/http"
+	"net/url"
+
+	"k8s.io/client-go/rest"
+	"sdo.dev/operator/apihistory"
+	"sdo.dev/operator/kubeproxy"
+	"sdo.dev/operator/operatorcli/internal/processio"
+)
+
+const APIProxyAddress = "127.0.0.1:18080"
+
+// RunAPIProxy uses only the Job Pod's in-cluster service-account identity.
+// Provider credentials and incoming Authorization are never inspected or stored.
+func RunAPIProxy(ctx context.Context, args []string) error {
+	if len(args) == 1 && args[0] == "ready" {
+		return processio.DialReady(APIProxyAddress)
+	}
+	flags := flag.NewFlagSet("api-proxy", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	incident := flags.String("incident", "", "controller-assigned incident")
+	directory := flags.String("directory", "", "runtime history directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *incident == "" || *directory == "" || flags.NArg() != 0 {
+		return errors.New("api-proxy requires --incident and --directory")
+	}
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return err
+	}
+	reads, writes, err := apiProxyTransports(config)
+	if err != nil {
+		return err
+	}
+	upstream, err := url.Parse(config.Host)
+	if err != nil {
+		return err
+	}
+	// The directory lease exposes this forwarding generation even if storage
+	// writes fail and an old closed manifest remains readable.
+	lease, leaseErr := apihistory.BeginWriter(*directory)
+	if leaseErr == nil {
+		defer lease.Close()
+	}
+	var recorder kubeproxy.Recorder
+	store, storeErr := apihistory.Open(*directory, *incident, apihistory.Limits{})
+	if storeErr == nil {
+		recorder = store
+		defer store.Close()
+	}
+	// Disabled markers and writer liveness make failed initialization Unknown.
+	// Recording failure must not prevent the forwarding endpoint from starting.
+	gate, err := apihistory.PrepareMutationGate(*directory)
+	if err != nil {
+		return err
+	}
+	return processio.ServeHTTP(ctx, APIProxyAddress, kubeproxy.NewWithMutationGate(upstream, reads, writes, recorder, gate))
+}
+
+// apiProxyTransports shares one authenticated connection pool for an incident.
+// The proxy strips retry-authorizing headers and replay bodies on writes.
+func apiProxyTransports(config *rest.Config) (http.RoundTripper, http.RoundTripper, error) {
+	tlsConfig, err := rest.TLSConfigFor(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	base := processio.NewTransport(tlsConfig)
+	reads, err := rest.HTTPWrappersForConfig(config, base)
+	if err != nil {
+		return nil, nil, err
+	}
+	return reads, reads, nil
+}

@@ -46,7 +46,9 @@ from sdodev.contracts.v1alpha1 import (
     late_findings_pb2,
     lifecycle_pb2,
     memory_pb2,
+    memory_diagnostic_pb2,
     messages_pb2,
+    mitigation_menu_pb2,
     outcome_pb2,
     program_pb2,
     telemetry_pb2,
@@ -79,6 +81,10 @@ ControllerObservationFailure = controller_observation_pb2.ControllerObservationF
 ControllerObservation = controller_observation_pb2.ControllerObservation
 
 
+StageReport = messages_pb2.StageReport
+StageMitigation = messages_pb2.StageMitigation
+PlaybookCoverage = program_pb2.PlaybookCoverage
+PlaybookMatch = program_pb2.PlaybookMatch
 ProgramSpec = program_pb2.ProgramSpec
 ParamSpec = program_pb2.ParamSpec
 Binding = program_pb2.Binding
@@ -86,12 +92,45 @@ Verdict = program_pb2.Verdict
 Evidence = program_pb2.Evidence
 Plan = program_pb2.Plan
 Action = program_pb2.Action
+PatchObject = program_pb2.PatchObject
+ListEdit = program_pb2.ListEdit
+ApplyObject = program_pb2.ApplyObject
+KubernetesRequest = program_pb2.KubernetesRequest
+WaitFor = program_pb2.WaitFor
+Command = program_pb2.Command
+HttpRequest = program_pb2.HttpRequest
+EnsureExec = program_pb2.EnsureExec
+EnsureHttp = program_pb2.EnsureHttp
+RunJob = program_pb2.RunJob
+CreateFromSource = program_pb2.CreateFromSource
+DeleteObject = program_pb2.DeleteObject
+PlanObjectEffect = program_pb2.PlanObjectEffect
 ReconcileFromSource = program_pb2.ReconcileFromSource
 Rollback = program_pb2.Rollback
 SetField = program_pb2.SetField
+PlanValue = program_pb2.PlanValue
+ValueField = program_pb2.ValueField
+ValueProvenance = program_pb2.ValueProvenance
+ActionReport = program_pb2.ActionReport
+DeletePod = program_pb2.DeletePod
+ScaleWorkload = program_pb2.ScaleWorkload
+Exec = program_pb2.Exec
 RestartRollout = program_pb2.RestartRollout
 ProgramRun = program_pb2.ProgramRun
 PlanApplication = program_pb2.PlanApplication
+MitigationMenu = mitigation_menu_pb2.MitigationMenu
+MitigationOption = mitigation_menu_pb2.MitigationOption
+MitigationSelectionSet = mitigation_menu_pb2.MitigationSelectionSet
+MitigationOptionSelection = mitigation_menu_pb2.MitigationOptionSelection
+MitigationSelection = mitigation_menu_pb2.MitigationSelection
+MitigationReportQuery = mitigation_menu_pb2.MitigationReportQuery
+MitigationReport = mitigation_menu_pb2.MitigationReport
+MitigationRoundReport = mitigation_menu_pb2.MitigationRoundReport
+MitigationActionReceipt = mitigation_menu_pb2.MitigationActionReceipt
+MitigationBarrier = mitigation_menu_pb2.MitigationBarrier
+MitigationObservation = mitigation_menu_pb2.MitigationObservation
+MitigationSession = mitigation_menu_pb2.MitigationSession
+MitigationSessionCheckpoint = mitigation_menu_pb2.MitigationSessionCheckpoint
 
 ControllerConfig = controller_config_pb2.ControllerConfig
 
@@ -99,13 +138,13 @@ Finding = messages_pb2.Finding
 DetectorEvaluation = messages_pb2.DetectorEvaluation
 SurfacedPlaybook = messages_pb2.SurfacedPlaybook
 PriorOutcomeEvidence = messages_pb2.PriorOutcomeEvidence
+ResponseProgress = messages_pb2.ResponseProgress
 StateFieldChange = messages_pb2.StateFieldChange
 StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
-ObservedStateChange = messages_pb2.ObservedStateChange
-FollowUpContext = messages_pb2.FollowUpContext
-StageReport = messages_pb2.StageReport
-StageMitigation = messages_pb2.StageMitigation
+InstallEnvironmentObject = messages_pb2.InstallEnvironmentObject
+DisabledSetupDetector = messages_pb2.DisabledSetupDetector
+NamespaceOnboarding = messages_pb2.NamespaceOnboarding
 MetricsSource = messages_pb2.MetricsSource
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
@@ -127,10 +166,11 @@ MemoryPlaybook = messages_pb2.MemoryPlaybook
 OperationalMemorySnapshot = messages_pb2.OperationalMemorySnapshot
 OutcomeRecord = outcome_pb2.OutcomeRecord
 OutcomeTimestamps = outcome_pb2.OutcomeTimestamps
-DiagnosisVerification = outcome_pb2.DiagnosisVerification
 
 MitigationReplayNote = memory_pb2.MitigationReplayNote
-MemoryDiagnostic = memory_pb2.MemoryDiagnostic
+MemoryDiagnostic = memory_diagnostic_pb2.MemoryDiagnostic
+MemoryConflict = memory_diagnostic_pb2.MemoryConflict
+AcceptedMemoryChange = memory_diagnostic_pb2.AcceptedMemoryChange
 MemoryCheckReport = memory_pb2.MemoryCheckReport
 MemoryArtifact = memory_pb2.MemoryArtifact
 MemoryListing = memory_pb2.MemoryListing
@@ -167,11 +207,14 @@ LocalProcessLaunch = worker_pb2.LocalProcessLaunch
 ProposalWorkspace = worker_pb2.ProposalWorkspace
 AgentTask = worker_pb2.AgentTask
 AgentResult = worker_pb2.AgentResult
+ReflectionEligibility = program_pb2.ReflectionEligibility
+ReflectionCauseWork = program_pb2.ReflectionCauseWork
+ReflectionWorkItem = program_pb2.ReflectionWorkItem
 ReflectionRequest = worker_pb2.ReflectionRequest
 ReflectionResult = worker_pb2.ReflectionResult
 DriftEvent = messages_pb2.DriftEvent
 DriftEvidence = messages_pb2.DriftEvidence
-SdkGap = worker_pb2.SdkGap
+SdkGap = outcome_pb2.SdkGap
 SourceDeploymentRequest = lifecycle_pb2.SourceDeploymentRequest
 SourceDeploymentResult = lifecycle_pb2.SourceDeploymentResult
 DeploymentPlan = lifecycle_pb2.DeploymentPlan
@@ -182,6 +225,27 @@ HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
 SourceResource = lifecycle_pb2.SourceResource
 
 __all__ = [
+    "PatchObject",
+    "ListEdit",
+    "ApplyObject",
+    "KubernetesRequest",
+    "WaitFor",
+    "Command",
+    "HttpRequest",
+    "EnsureExec",
+    "EnsureHttp",
+    "RunJob",
+    "MitigationSession",
+    "MitigationSessionCheckpoint",
+    "MitigationMenu",
+    "MitigationOption",
+    "MitigationSelection",
+    "MitigationReportQuery",
+    "MitigationReport",
+    "MitigationRoundReport",
+    "MitigationActionReceipt",
+    "MitigationBarrier",
+    "MitigationObservation",
     "NATIVE_RECEIPT_SCHEMA_VERSION",
     "ResponderJobEvidence",
     "NativeProductionReceipt",
@@ -227,10 +291,12 @@ __all__ = [
     "ROOT_CAUSE_EVIDENCE_KINDS",
     "SCHEMA_VERSION",
     "validate",
-    "FollowUpContext",
     "IncidentClosure",
     "MetricsSource",
     "IncidentRequest",
+    "NamespaceOnboarding",
+    "DisabledSetupDetector",
+    "InstallEnvironmentObject",
     "IncidentResult",
     "LateFindingsPull",
     "MemoryDetector",
@@ -258,19 +324,25 @@ __all__ = [
     "Plan",
     "PlanApplication",
     "ProgramRun",
+    "PlaybookCoverage",
+    "PlaybookMatch",
     "ProgramSpec",
     "MemoryArtifact",
     "MemoryCheckReport",
     "MemoryDiagnostic",
+    "MemoryConflict",
+    "AcceptedMemoryChange",
     "MitigationReplayNote",
     "MemoryListing",
     "MemoryOutcomes",
     "OutcomeRecord",
     "OutcomeTimestamps",
-    "DiagnosisVerification",
-    "ObservedStateChange",
     "PriorOutcomeEvidence",
+    "ResponseProgress",
     "ProposalWorkspace",
+    "ReflectionEligibility",
+    "ReflectionCauseWork",
+    "ReflectionWorkItem",
     "ReflectionRequest",
     "ReflectionResult",
     "DriftEvent",
@@ -285,6 +357,9 @@ __all__ = [
     "HealthJudgeResult",
     "SourceResource",
     "RepairActionReceipt",
+    "CreateFromSource",
+    "DeleteObject",
+    "PlanObjectEffect",
     "ReconcileFromSource",
     "RestartRollout",
     "Rollback",
@@ -293,6 +368,13 @@ __all__ = [
     "StateChanges",
     "StateFieldChange",
     "SetField",
+    "PlanValue",
+    "ValueField",
+    "ValueProvenance",
+    "ActionReport",
+    "DeletePod",
+    "ScaleWorkload",
+    "Exec",
     "SurfacedPlaybook",
     "TimingMetrics",
     "TrafficLink",

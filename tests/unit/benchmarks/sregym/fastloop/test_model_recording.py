@@ -62,3 +62,15 @@ def test_live_capture_converts_to_ordered_scripts(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="exactly one script"):
         script.select("reflector", None, 2)
     assert len(fake.requests) == 2
+
+
+def test_oversized_live_turn_returns_its_result_and_names_the_gap(tmp_path: Path) -> None:
+    """Benchmark evidence limits never discard a finished live model turn."""
+    import json
+
+    line = "x" * (1 << 20) + "\n"
+    fake = FakeExecutor(FakeRun(stdout=[line] * 65))
+
+    assert ModelRecorder(tmp_path, request_json="{}", live=fake).run(_request("large"), Sink()).stdout == line * 65
+    (recorded,) = tmp_path.glob("*/*.json")
+    assert "model I/O exceeds" in json.loads(recorded.read_text())["unrecorded"]

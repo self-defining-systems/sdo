@@ -58,7 +58,7 @@ Spend your detectors on what only the source can tell: the layers below list tho
 - Each write route: a journey workload with `SideEffectWriteWithCleanup`, a `Marker`, and a following step that
   reads back what was written (`SaveJSON`, `FromPrevious`). The read-back is the data-correctness check.
 - Login and session flows: chain the steps the way a client does.
-- The frontend page and its static assets: one GET each, checking a marker the page always contains.
+- The web page and its static assets: one GET each, checking a marker the page always contains.
 - Failures reported inside a success status: check the body and declare `traffic.FaultWrongBody`.
 - Latency: set the SLO from a budget the source states (see methods) and declare `traffic.FaultSlow`.
 
@@ -105,7 +105,7 @@ detector so the observed value, limit and window are in Evidence.
   falling, connections near maximum, consumer lag growing, dead-letter growth.
 - Store reachability: a link with the store's protocol (mongodb, redis, memcached, postgres, mysql) from each
   Service that uses it.
-- Not expressible yet: authenticated queries, data contents outside the application, and Kafka.
+- Not expressible yet: authenticated queries, data contents outside the application, and message brokers.
 
 ## 6. Application metrics (Metrics)
 

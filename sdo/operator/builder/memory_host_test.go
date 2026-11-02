@@ -54,11 +54,11 @@ func TestBuildMemoryHostUsesStagedMemory(t *testing.T) {
 	if err := workspace.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(workspace.Directory, "sdo-memory-host")); err != nil {
-		t.Fatal("validation did not build host", err)
-	}
-	if _, err := os.Stat(filepath.Join(workspace.Directory, "sdo-controller")); !os.IsNotExist(err) {
-		t.Fatal("validation built a controller", err)
+	// Check links no artifact; BuildMemoryHost produces the accepted host.
+	for _, name := range []string{"sdo-memory-host", "sdo-controller"} {
+		if _, err := os.Stat(filepath.Join(workspace.Directory, name)); !os.IsNotExist(err) {
+			t.Fatalf("validation linked %s: %v", name, err)
+		}
 	}
 	artifact, err := workspace.BuildMemoryHost(context.Background())
 	if err != nil {

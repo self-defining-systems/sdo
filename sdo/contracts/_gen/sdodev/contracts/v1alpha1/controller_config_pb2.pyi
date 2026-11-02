@@ -11,7 +11,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class ControllerConfig(_message.Message):
-    __slots__ = ("memory_host_binary", "memory_host_digest", "namespace", "control_namespace", "app_root", "application", "source_commit", "deployed_commit", "dispatcher", "dispatcher_args", "dispatcher_mode", "responder_image", "repository_pvc", "repository_mount_path", "repository_pvc_subpath", "responder_credentials_secret", "responder_env", "broker_worktree_root", "firing_telemetry_path", "duration", "response_timeout", "verification_timeout", "max_follow_ups", "follow_up_cooldown", "repair_policy", "lease_name", "lease_duration", "identity", "exit_after_closure", "maintenance_configmap", "maintenance_poll_interval", "resume_sync_timeout", "synthetic_traffic", "synthetic_traffic_warmup", "clean_responder_helpers", "state_baseline", "agent_registration_directory", "responder_agent_id", "diagnostics_fingerprint", "controller_artifact_digest", "controller_revision", "broker_mode", "responder_backend", "responder_model", "worker_mount_mode", "reflection_session", "reflection_guidance", "healthy_baseline", "max_response_loops", "diagnosis_deadline", "diagnosis_settle_delay", "drift_sweep_interval", "drift_batch_window", "drift_dispatches_per_hour", "drift_tokens_per_hour", "force_reflection", "deployed_manifest_paths", "program_fast_path", "program_trust_threshold", "program_min_duration", "metrics_url", "metrics_publish_url", "metrics_token_file", "toolchain_image")
+    __slots__ = ("memory_host_binary", "memory_host_digest", "namespace", "control_namespace", "app_root", "application", "source_commit", "deployed_commit", "dispatcher", "dispatcher_args", "dispatcher_mode", "responder_image", "repository_pvc", "repository_mount_path", "repository_pvc_subpath", "responder_credentials_secret", "responder_env", "broker_worktree_root", "firing_telemetry_path", "duration", "response_timeout", "verification_timeout", "repair_policy", "lease_name", "lease_duration", "identity", "exit_after_closure", "maintenance_configmap", "maintenance_poll_interval", "resume_sync_timeout", "synthetic_traffic", "synthetic_traffic_warmup", "clean_responder_helpers", "state_baseline", "agent_registration_directory", "responder_agent_id", "diagnostics_fingerprint", "controller_artifact_digest", "controller_revision", "broker_mode", "responder_backend", "responder_model", "agent_effort", "replay", "worker_mount_mode", "reflection_session", "reflection_guidance", "healthy_baseline", "max_response_loops", "diagnosis_deadline", "drift_batch_window", "force_reflection", "deployed_manifest_paths", "metrics_url", "metrics_publish_url", "metrics_token_file", "toolchain_image", "closure_stability_window", "responder_report_grace", "responder_standby", "script_image", "memory_upstream", "code_path")
     MEMORY_HOST_BINARY_FIELD_NUMBER: _ClassVar[int]
     MEMORY_HOST_DIGEST_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -34,8 +34,6 @@ class ControllerConfig(_message.Message):
     DURATION_FIELD_NUMBER: _ClassVar[int]
     RESPONSE_TIMEOUT_FIELD_NUMBER: _ClassVar[int]
     VERIFICATION_TIMEOUT_FIELD_NUMBER: _ClassVar[int]
-    MAX_FOLLOW_UPS_FIELD_NUMBER: _ClassVar[int]
-    FOLLOW_UP_COOLDOWN_FIELD_NUMBER: _ClassVar[int]
     REPAIR_POLICY_FIELD_NUMBER: _ClassVar[int]
     LEASE_NAME_FIELD_NUMBER: _ClassVar[int]
     LEASE_DURATION_FIELD_NUMBER: _ClassVar[int]
@@ -56,26 +54,27 @@ class ControllerConfig(_message.Message):
     BROKER_MODE_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_BACKEND_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_MODEL_FIELD_NUMBER: _ClassVar[int]
+    AGENT_EFFORT_FIELD_NUMBER: _ClassVar[int]
+    REPLAY_FIELD_NUMBER: _ClassVar[int]
     WORKER_MOUNT_MODE_FIELD_NUMBER: _ClassVar[int]
     REFLECTION_SESSION_FIELD_NUMBER: _ClassVar[int]
     REFLECTION_GUIDANCE_FIELD_NUMBER: _ClassVar[int]
     HEALTHY_BASELINE_FIELD_NUMBER: _ClassVar[int]
     MAX_RESPONSE_LOOPS_FIELD_NUMBER: _ClassVar[int]
     DIAGNOSIS_DEADLINE_FIELD_NUMBER: _ClassVar[int]
-    DIAGNOSIS_SETTLE_DELAY_FIELD_NUMBER: _ClassVar[int]
-    DRIFT_SWEEP_INTERVAL_FIELD_NUMBER: _ClassVar[int]
     DRIFT_BATCH_WINDOW_FIELD_NUMBER: _ClassVar[int]
-    DRIFT_DISPATCHES_PER_HOUR_FIELD_NUMBER: _ClassVar[int]
-    DRIFT_TOKENS_PER_HOUR_FIELD_NUMBER: _ClassVar[int]
     FORCE_REFLECTION_FIELD_NUMBER: _ClassVar[int]
     DEPLOYED_MANIFEST_PATHS_FIELD_NUMBER: _ClassVar[int]
-    PROGRAM_FAST_PATH_FIELD_NUMBER: _ClassVar[int]
-    PROGRAM_TRUST_THRESHOLD_FIELD_NUMBER: _ClassVar[int]
-    PROGRAM_MIN_DURATION_FIELD_NUMBER: _ClassVar[int]
     METRICS_URL_FIELD_NUMBER: _ClassVar[int]
     METRICS_PUBLISH_URL_FIELD_NUMBER: _ClassVar[int]
     METRICS_TOKEN_FILE_FIELD_NUMBER: _ClassVar[int]
     TOOLCHAIN_IMAGE_FIELD_NUMBER: _ClassVar[int]
+    CLOSURE_STABILITY_WINDOW_FIELD_NUMBER: _ClassVar[int]
+    RESPONDER_REPORT_GRACE_FIELD_NUMBER: _ClassVar[int]
+    RESPONDER_STANDBY_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_IMAGE_FIELD_NUMBER: _ClassVar[int]
+    MEMORY_UPSTREAM_FIELD_NUMBER: _ClassVar[int]
+    CODE_PATH_FIELD_NUMBER: _ClassVar[int]
     memory_host_binary: str
     memory_host_digest: str
     namespace: str
@@ -98,8 +97,6 @@ class ControllerConfig(_message.Message):
     duration: _duration_pb2.Duration
     response_timeout: _duration_pb2.Duration
     verification_timeout: _duration_pb2.Duration
-    max_follow_ups: int
-    follow_up_cooldown: _duration_pb2.Duration
     repair_policy: str
     lease_name: str
     lease_duration: _duration_pb2.Duration
@@ -120,24 +117,59 @@ class ControllerConfig(_message.Message):
     broker_mode: str
     responder_backend: str
     responder_model: str
+    agent_effort: str
+    replay: str
     worker_mount_mode: str
     reflection_session: str
     reflection_guidance: str
     healthy_baseline: bool
     max_response_loops: int
     diagnosis_deadline: _duration_pb2.Duration
-    diagnosis_settle_delay: _duration_pb2.Duration
-    drift_sweep_interval: _duration_pb2.Duration
     drift_batch_window: _duration_pb2.Duration
-    drift_dispatches_per_hour: int
-    drift_tokens_per_hour: int
     force_reflection: bool
     deployed_manifest_paths: _containers.RepeatedScalarFieldContainer[str]
-    program_fast_path: bool
-    program_trust_threshold: int
-    program_min_duration: _duration_pb2.Duration
     metrics_url: str
     metrics_publish_url: str
     metrics_token_file: str
     toolchain_image: str
-    def __init__(self, memory_host_binary: _Optional[str] = ..., memory_host_digest: _Optional[str] = ..., namespace: _Optional[str] = ..., control_namespace: _Optional[str] = ..., app_root: _Optional[str] = ..., application: _Optional[str] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., dispatcher: _Optional[str] = ..., dispatcher_args: _Optional[_Iterable[str]] = ..., dispatcher_mode: _Optional[str] = ..., responder_image: _Optional[str] = ..., repository_pvc: _Optional[str] = ..., repository_mount_path: _Optional[str] = ..., repository_pvc_subpath: _Optional[str] = ..., responder_credentials_secret: _Optional[str] = ..., responder_env: _Optional[_Iterable[str]] = ..., broker_worktree_root: _Optional[str] = ..., firing_telemetry_path: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., response_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., verification_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., max_follow_ups: _Optional[int] = ..., follow_up_cooldown: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., repair_policy: _Optional[str] = ..., lease_name: _Optional[str] = ..., lease_duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., identity: _Optional[str] = ..., exit_after_closure: _Optional[bool] = ..., maintenance_configmap: _Optional[str] = ..., maintenance_poll_interval: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., resume_sync_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., synthetic_traffic: _Optional[bool] = ..., synthetic_traffic_warmup: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., clean_responder_helpers: _Optional[bool] = ..., state_baseline: _Optional[bool] = ..., agent_registration_directory: _Optional[str] = ..., responder_agent_id: _Optional[str] = ..., diagnostics_fingerprint: _Optional[str] = ..., controller_artifact_digest: _Optional[str] = ..., controller_revision: _Optional[str] = ..., broker_mode: _Optional[str] = ..., responder_backend: _Optional[str] = ..., responder_model: _Optional[str] = ..., worker_mount_mode: _Optional[str] = ..., reflection_session: _Optional[str] = ..., reflection_guidance: _Optional[str] = ..., healthy_baseline: _Optional[bool] = ..., max_response_loops: _Optional[int] = ..., diagnosis_deadline: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., diagnosis_settle_delay: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., drift_sweep_interval: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., drift_batch_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., drift_dispatches_per_hour: _Optional[int] = ..., drift_tokens_per_hour: _Optional[int] = ..., force_reflection: _Optional[bool] = ..., deployed_manifest_paths: _Optional[_Iterable[str]] = ..., program_fast_path: _Optional[bool] = ..., program_trust_threshold: _Optional[int] = ..., program_min_duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., metrics_url: _Optional[str] = ..., metrics_publish_url: _Optional[str] = ..., metrics_token_file: _Optional[str] = ..., toolchain_image: _Optional[str] = ...) -> None: ...
+    closure_stability_window: _duration_pb2.Duration
+    responder_report_grace: _duration_pb2.Duration
+    responder_standby: bool
+    script_image: str
+    memory_upstream: MemoryUpstream
+    code_path: CodePathConfig
+    def __init__(self, memory_host_binary: _Optional[str] = ..., memory_host_digest: _Optional[str] = ..., namespace: _Optional[str] = ..., control_namespace: _Optional[str] = ..., app_root: _Optional[str] = ..., application: _Optional[str] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., dispatcher: _Optional[str] = ..., dispatcher_args: _Optional[_Iterable[str]] = ..., dispatcher_mode: _Optional[str] = ..., responder_image: _Optional[str] = ..., repository_pvc: _Optional[str] = ..., repository_mount_path: _Optional[str] = ..., repository_pvc_subpath: _Optional[str] = ..., responder_credentials_secret: _Optional[str] = ..., responder_env: _Optional[_Iterable[str]] = ..., broker_worktree_root: _Optional[str] = ..., firing_telemetry_path: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., response_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., verification_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., repair_policy: _Optional[str] = ..., lease_name: _Optional[str] = ..., lease_duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., identity: _Optional[str] = ..., exit_after_closure: _Optional[bool] = ..., maintenance_configmap: _Optional[str] = ..., maintenance_poll_interval: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., resume_sync_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., synthetic_traffic: _Optional[bool] = ..., synthetic_traffic_warmup: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., clean_responder_helpers: _Optional[bool] = ..., state_baseline: _Optional[bool] = ..., agent_registration_directory: _Optional[str] = ..., responder_agent_id: _Optional[str] = ..., diagnostics_fingerprint: _Optional[str] = ..., controller_artifact_digest: _Optional[str] = ..., controller_revision: _Optional[str] = ..., broker_mode: _Optional[str] = ..., responder_backend: _Optional[str] = ..., responder_model: _Optional[str] = ..., agent_effort: _Optional[str] = ..., replay: _Optional[str] = ..., worker_mount_mode: _Optional[str] = ..., reflection_session: _Optional[str] = ..., reflection_guidance: _Optional[str] = ..., healthy_baseline: _Optional[bool] = ..., max_response_loops: _Optional[int] = ..., diagnosis_deadline: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., drift_batch_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., force_reflection: _Optional[bool] = ..., deployed_manifest_paths: _Optional[_Iterable[str]] = ..., metrics_url: _Optional[str] = ..., metrics_publish_url: _Optional[str] = ..., metrics_token_file: _Optional[str] = ..., toolchain_image: _Optional[str] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., responder_report_grace: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., responder_standby: _Optional[bool] = ..., script_image: _Optional[str] = ..., memory_upstream: _Optional[_Union[MemoryUpstream, _Mapping]] = ..., code_path: _Optional[_Union[CodePathConfig, _Mapping]] = ...) -> None: ...
+
+class MemoryUpstream(_message.Message):
+    __slots__ = ("url", "branch", "ssh_dir")
+    URL_FIELD_NUMBER: _ClassVar[int]
+    BRANCH_FIELD_NUMBER: _ClassVar[int]
+    SSH_DIR_FIELD_NUMBER: _ClassVar[int]
+    url: str
+    branch: str
+    ssh_dir: str
+    def __init__(self, url: _Optional[str] = ..., branch: _Optional[str] = ..., ssh_dir: _Optional[str] = ...) -> None: ...
+
+class CodePathConfig(_message.Message):
+    __slots__ = ("name", "overrides")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    OVERRIDES_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    overrides: CodePathOverrides
+    def __init__(self, name: _Optional[str] = ..., overrides: _Optional[_Union[CodePathOverrides, _Mapping]] = ...) -> None: ...
+
+class CodePathOverrides(_message.Message):
+    __slots__ = ("detector_source", "coverage", "response_stages", "memory_validation", "activation", "agent_guidance")
+    DETECTOR_SOURCE_FIELD_NUMBER: _ClassVar[int]
+    COVERAGE_FIELD_NUMBER: _ClassVar[int]
+    RESPONSE_STAGES_FIELD_NUMBER: _ClassVar[int]
+    MEMORY_VALIDATION_FIELD_NUMBER: _ClassVar[int]
+    ACTIVATION_FIELD_NUMBER: _ClassVar[int]
+    AGENT_GUIDANCE_FIELD_NUMBER: _ClassVar[int]
+    detector_source: str
+    coverage: str
+    response_stages: _containers.RepeatedScalarFieldContainer[str]
+    memory_validation: str
+    activation: str
+    agent_guidance: str
+    def __init__(self, detector_source: _Optional[str] = ..., coverage: _Optional[str] = ..., response_stages: _Optional[_Iterable[str]] = ..., memory_validation: _Optional[str] = ..., activation: _Optional[str] = ..., agent_guidance: _Optional[str] = ...) -> None: ...

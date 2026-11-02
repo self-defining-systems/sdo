@@ -1,0 +1,38 @@
+[
+ {
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+   "namespace": "demo",
+   "name": "widget"
+  },
+  "spec": {
+   "replicas": 1,
+   "selector": {
+    "matchLabels": {
+     "app": "widget"
+    }
+   },
+   "template": {
+    "metadata": {
+     "labels": {
+      "app": "widget"
+     }
+    },
+    "spec": {
+     "containers": [
+      {
+       "name": "widget",
+       "image": "widget:1",
+       "resources": {
+        "requests": {
+         "cpu": "100m"
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+]

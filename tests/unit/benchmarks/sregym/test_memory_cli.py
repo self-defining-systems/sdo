@@ -18,6 +18,8 @@ from benchmarks.sregym.memory_cli import (
     read_outcomes,
 )
 
+pytestmark = pytest.mark.go_integration
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "sdo"
 GOOD_MEMORY = REPO_ROOT / "sdo" / "operator" / "memory" / "validate" / "testdata" / "good"

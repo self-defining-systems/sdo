@@ -14,7 +14,9 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.protocol import request_with_retry
+from benchmarks.sregym.protocol.injection import InvalidInjectionError, check_injection
 
 if TYPE_CHECKING:
     import subprocess
@@ -22,17 +24,21 @@ if TYPE_CHECKING:
 
 INJECT_FAULT_ENDPOINT = "/inject_fault"
 AWAITING_FAULT_INJECTION = "awaiting_fault_injection"
-BASELINE_TIMEOUT_SECONDS = 1800
+BASELINE_TIMEOUT_SECONDS = int(wait_for(WaitKind.CLUSTER_OP))
 # Reuse needs an informer resync and a fresh evaluation, not lifecycle setup.
-RESUMED_BASELINE_TIMEOUT_SECONDS = 300
-BASELINE_POLL_SECONDS = 1.0
+RESUMED_BASELINE_TIMEOUT_SECONDS = int(wait_for(WaitKind.ROLLOUT))
+BASELINE_POLL_SECONDS = wait_for(WaitKind.POLL_FAST)
 PERSISTENT_LOG_TAIL = 2000
-BASELINE_PROGRESS_SECONDS = 30.0
+BASELINE_PROGRESS_SECONDS = wait_for(WaitKind.COMMAND)
 logger = logging.getLogger(__name__)
 
 
 class FaultGateError(RuntimeError):
     """Raised when the fault cannot be injected into a monitored baseline."""
+
+
+class InvalidFaultInjection(InvalidInjectionError, FaultGateError):
+    """Deferred injection ended without opening a valid incident."""
 
 
 class KubectlRunner(Protocol):
@@ -68,9 +74,16 @@ def controller_baseline_clear(controller_logs: str) -> bool:
 def request_fault_injection(api_base: str) -> None:
     """Ask the conductor to inject the deferred fault and open the incident."""
 
-    response = request_with_retry("POST", f"{api_base.rstrip('/')}{INJECT_FAULT_ENDPOINT}", max_retries=2, timeout=300)
-    stage = response.json().get("stage")
-    if stage in (None, AWAITING_FAULT_INJECTION):
+    response = request_with_retry(
+        "POST", f"{api_base.rstrip('/')}{INJECT_FAULT_ENDPOINT}", max_retries=2, timeout=wait_for(WaitKind.ROLLOUT)
+    )
+    reply = response.json()
+    try:
+        check_injection(reply)
+    except InvalidInjectionError as exc:
+        raise InvalidFaultInjection(exc.details, reply=reply) from exc
+    stage = reply.get("stage")
+    if stage in (None, AWAITING_FAULT_INJECTION, "done", "finished", "completed"):
         raise FaultGateError(f"conductor did not open an incident stage after injection (stage={stage!r})")
 
 

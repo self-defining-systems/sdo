@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,46 @@ def _task(path: Path) -> AgentTask:
 
 def _result() -> IncidentResult:
     return parse_json((FIXTURES / "incident_result.json").read_text(), IncidentResult())
+
+
+def test_worker_preserves_rate_limit_through_typed_transport(tmp_path: Path) -> None:
+    from libs.agent_cli.provider_capacity import ProviderCapacity, RateLimitPolicy
+    from libs.agent_cli.structured import run_structured_turn
+    from sdo.contracts import validate
+    from tests.structured_turns import ScriptedAgent, failure
+
+    path = tmp_path / "agent-task.json"
+    _task(path)
+    publisher = RecordingPublisher()
+    seconds = [0.0]
+    capacity = ProviderCapacity(
+        environment={},
+        policy=RateLimitPolicy(initial_delay_seconds=1, max_delay_seconds=1, max_wait_seconds=1),
+        monotonic=lambda: seconds[0],
+        sleep=lambda value: seconds.__setitem__(0, seconds[0] + value),
+    )
+    cli = ScriptedAgent(lambda _: failure(stderr="You've hit your limit · resets 5pm (America/Los_Angeles)"))
+
+    def limited(_request):
+        run_structured_turn(
+            "claude",
+            "prompt",
+            output_schema={"type": "object"},
+            cwd=tmp_path,
+            model="sonnet",
+            access="read-only",
+            executor=cli.executor,
+            provider_capacity=capacity,
+        )
+        pytest.fail("exhausted Claude call returned")
+
+    result = run_worker_task(path, "result-map", publisher, executor=limited)
+    validate(result)
+    assert result.status == "failed"
+    assert result.failure_reason == "rate_limited"
+    assert not result.HasField("response")
+    assert publisher.published is not None
+    assert parse_json(publisher.published[2], AgentResult()).failure_reason == "rate_limited"
 
 
 def test_worker_uses_typed_envelope_and_returns_typed_response(tmp_path: Path) -> None:
@@ -168,3 +209,72 @@ def test_worker_rejects_invalid_go_late_findings_receipt(tmp_path: Path, monkeyp
         run_worker_task(path, "result-map", publisher, executor=lambda _: result)
 
     assert publisher.published is None
+
+
+def test_warm_worker_validates_canonical_task_before_local_workspace_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "agent-task.json"
+    _task(path)
+    expected = _result()
+    for playbook in expected.applied_playbooks:
+        playbook.playbook_id = "missing-configmap"
+        playbook.script_names[:] = ["verify.sh"]
+    del expected.proposed_artifact_ids[:]
+    monkeypatch.setenv("SDO_WORKSPACE_ALIAS", "/sdo/proposal")
+    seen = []
+
+    def execute(request: IncidentRequest) -> IncidentResult:
+        seen.append(request.repository_worktree)
+        return expected
+
+    publisher = RecordingPublisher()
+    run_worker_task(path, "result-map", publisher, executor=execute)
+    assert seen == ["/sdo/proposal"]
+    assert "SDO_WORKSPACE_ALIAS" not in os.environ
+    assert publisher.published is not None
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_model_controller_fields_cannot_prevent_typed_worker_publication(
+    provider: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.protobuf import json_format
+
+    from sdo.agents.responder.codex import execute_incident
+    from tests.structured_turns import ScriptedAgent, reply
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path / "scratch"))
+    path = tmp_path / "agent-task.json"
+    task = _task(path)
+    request = IncidentRequest()
+    assert task.request.Unpack(request)
+    request.repository_worktree = str(tmp_path)
+    task.workspace.checkout_path = str(tmp_path)
+    task.request.Pack(request)
+    path.write_text(to_canonical_json(task))
+    model_result = _result()
+    del model_result.applied_playbooks[:]
+    del model_result.proposed_artifact_ids[:]
+    payload = json_format.MessageToDict(model_result, preserving_proto_field_name=True)
+    payload["drift_reprompt"] = {"findings_before": 0, "findings_after": 0}
+    payload["plan_applications"] = [{"invalid": True}]
+    agent = ScriptedAgent(lambda _: reply(provider, payload, session_id="worker-session", branch="incident_result"))
+    publisher = RecordingPublisher()
+
+    run_worker_task(
+        path,
+        "result-map",
+        publisher,
+        executor=lambda request: execute_incident(request, provider=provider, executor=agent.executor),
+    )
+
+    assert publisher.published is not None
+    envelope = parse_json(publisher.published[2], AgentResult())
+    result = IncidentResult()
+    assert envelope.response.Unpack(result)
+    assert result.status == "completed"
+    assert not result.HasField("drift_reprompt")
+    assert not result.plan_applications

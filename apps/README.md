@@ -6,6 +6,7 @@ Some applications also participate in SREGym or deployment experiments. Applicat
 
 ## Applications
 
+- [astronomy_shop](./astronomy_shop)
 - [deathstarbench/hotelReservation](./deathstarbench/hotelReservation)
 - [deathstarbench/mediaMicroservices](./deathstarbench/mediaMicroservices)
 - [deathstarbench/socialNetwork](./deathstarbench/socialNetwork)
@@ -17,3 +18,6 @@ Some applications also participate in SREGym or deployment experiments. Applicat
 - [teastore](./teastore)
 - [teastore-saga](./teastore-saga)
 - [train-ticket](./train-ticket)
+
+Astronomy Shop and Social Network declare their pinned source builds and
+[image input scopes](./BUILD_INPUTS.md) for fresh builds and deployment evidence.

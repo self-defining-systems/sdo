@@ -1,6 +1,7 @@
 """Hand-authored scripts replace the CLI, retaining the real provider parser."""
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -258,6 +259,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
     unpublished = tools / "requests/.unpublished.json"
     unpublished.write_text(json.dumps({"command": "apply", "plan_ids": ["synthetic-repair"]}))
     monkeypatch.setenv("SDO_TOOLS_DIR", str(tools))
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tools / "scratch"))
     monkeypatch.setenv("SDO_AGENT_SCRIPT_INCIDENT", incident)
     bin_dir = Path(os.environ["PATH"].split(":")[0])
     import sys
@@ -265,6 +267,10 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
     binary = bin_dir / "sdo"
     binary.write_text(f'#!/bin/sh\nexec {sys.executable} -m sdo.agents.responder.tools_cli "$@"\n')
     binary.chmod(0o755)
+    # The reflection worker runs the shared memory check itself before it returns.
+    memory = bin_dir / "sdo-operator"
+    memory.write_text("#!/bin/sh\nexit 0\n")
+    memory.chmod(0o755)
     path.write_text(
         json.dumps(
             {
@@ -276,8 +282,8 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                         "steps": [
                             {
                                 "kind": "tool",
-                                "argv": ["sdo", "apply", "synthetic-repair"],
-                                "contains": '"applied": true',
+                                "argv": ["sdo", "--json", "apply", "synthetic-repair"],
+                                "contains": "details_file",
                             }
                         ],
                         "result": result,
@@ -295,7 +301,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                         "result": {
                             "summary": "Added synthetic incident detector",
                             "learning_decision": "updated",
-                            "playbook_ids": ["synthetic"],
+                            "proposed_artifact_ids": ["synthetic"],
                             "no_change_reason": None,
                             "sdk_gaps": [],
                         },
@@ -339,9 +345,18 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
         thread = threading.Thread(target=controller)
         thread.start()
         try:
-            completed = execute_incident(
-                parse_json(json.dumps(request_payload), IncidentRequest()), provider="codex", model="unused"
+            incident_request = parse_json(json.dumps(request_payload), IncidentRequest())
+            # The worker's mounted task carries the request; the prompt only summarizes it.
+            from sdo.contracts import AgentTask, to_canonical_json
+
+            task = AgentTask(
+                schema_version="sdo.dev/v1alpha1", task_id="t", agent_id="a", task_type="incident-response"
             )
+            task.request.Pack(incident_request)
+            task_path = root.parent / "agent-task.json"
+            task_path.write_text(to_canonical_json(task), encoding="utf-8")
+            monkeypatch.setenv("SDO_TASK_PATH", str(task_path))
+            completed = execute_incident(incident_request, provider="codex", model="unused")
             assert completed.status == "completed"
             assert (
                 completed.confirmed_root_causes[0].resources[0].name
@@ -577,3 +592,116 @@ def test_go_composite_literals_are_not_template_references():
     source = '[]sdk.ObjectRef{{APIVersion: "v1", Kind: "Pod"}}'
     plan = AgentScript.model_validate(script(steps=[{"kind": "write", "path": "detector.go", "text": source}]))
     assert expand(plan.turns[0].steps[0].text, {}) == source
+
+
+def test_scripted_session_persists_a_rollout_before_the_worker_checkpoints_it(scripted_cli, tmp_path, monkeypatch):
+    """The production responder's session recovery needs the transcript the moment the session starts."""
+    from libs.agent_cli.structured import run_structured_turn
+
+    path, root = scripted_cli
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "turns": [
+                    {"role": "responder", "index": index, "result": {"confirmed_root_causes": "turn"}}
+                    for index in range(2)
+                ],
+            }
+        )
+    )
+    started: list[list[Path]] = []
+
+    def run(resume=None):
+        return run_structured_turn(
+            provider="codex",
+            model="unused",
+            cwd=root,
+            prompt="test",
+            output_schema={
+                "type": "object",
+                "properties": {"confirmed_root_causes": {"type": "string"}},
+                "required": ["confirmed_root_causes"],
+                "additionalProperties": False,
+            },
+            access="danger-full-access",
+            resume_session_id=resume,
+            on_session_started=lambda session: started.append(list(home.glob(f"sessions/**/rollout-*{session}.jsonl"))),
+        )
+
+    first = run()
+    run(first.session_id)
+    assert [len(found) for found in started] == [1, 1]
+    assert started[0][0].stat().st_size > 0
+
+
+def test_sandboxed_commands_can_persist_tool_replies_for_later_commands(scripted_cli, tmp_path, monkeypatch):
+    """`sdo` writes each reply under /tmp/sdo and the next command reads it back."""
+    from libs.agent_cli.structured import run_structured_turn
+
+    path, root = scripted_cli
+    marker = f"probe-{root.name}"
+    scratch = tmp_path / "scratch"
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(scratch))
+    path.write_text(
+        json.dumps(
+            script(
+                steps=[
+                    {
+                        "kind": "command",
+                        "command": f"mkdir -p /tmp/sdo/{marker} && echo kept > /tmp/sdo/{marker}/reply",
+                    },
+                    {"kind": "command", "command": f"cat /tmp/sdo/{marker}/reply", "contains": "kept"},
+                    {"kind": "command", "command": f"mkdir -p {scratch}/context && echo ok > {scratch}/context/x"},
+                ],
+                result={"confirmed_root_causes": []},
+            )
+        )
+    )
+    try:
+        run_structured_turn(
+            provider="codex",
+            model="unused",
+            cwd=root,
+            prompt="test",
+            output_schema={
+                "type": "object",
+                "properties": {"confirmed_root_causes": {"type": "array", "items": {"type": "string"}}},
+                "required": ["confirmed_root_causes"],
+                "additionalProperties": False,
+            },
+            access="danger-full-access",
+        )
+    finally:
+        shutil.rmtree(f"/tmp/sdo/{marker}", ignore_errors=True)
+
+
+def test_write_steps_larger_than_one_command_argument_succeed(scripted_cli):
+    """A captured corpus file exceeds the ~128 KiB single-argument limit of a shell command line."""
+    from libs.agent_cli.structured import run_structured_turn
+
+    path, root = scripted_cli
+    text = "x" * (300 * 1024)
+    path.write_text(
+        json.dumps(
+            script(
+                steps=[{"kind": "write", "path": "big/corpus.json", "text": text}], result={"confirmed_root_causes": []}
+            )
+        )
+    )
+    run_structured_turn(
+        provider="codex",
+        model="unused",
+        cwd=root,
+        prompt="test",
+        output_schema={
+            "type": "object",
+            "properties": {"confirmed_root_causes": {"type": "array", "items": {"type": "string"}}},
+            "required": ["confirmed_root_causes"],
+            "additionalProperties": False,
+        },
+        access="danger-full-access",
+    )
+    assert (root / "big/corpus.json").read_text() == text

@@ -1,0 +1,130 @@
+[
+ {
+  "method": "AdmissionWebhooksFor",
+  "arguments": [
+   {
+    "api_version": "v1",
+    "kind": "Namespace",
+    "name": "demo"
+   }
+  ],
+  "result": [
+   {
+    "configuration": {
+     "api_version": "admissionregistration.k8s.io/v1",
+     "kind": "MutatingWebhookConfiguration",
+     "name": "pod-policy"
+    },
+    "webhook": "pod-policy.example.dev",
+    "failure_policy": "Fail",
+    "service": {
+     "api_version": "v1",
+     "kind": "Service",
+     "namespace": "policy",
+     "name": "pod-policy"
+    },
+    "port": 443,
+    "ready_endpoints": 1,
+    "serving_secrets": [
+     {
+      "namespace": "policy",
+      "name": "pod-policy-tls",
+      "key": "ca.crt"
+     }
+    ],
+    "ca_bundle": "sha256:old"
+   }
+  ]
+ },
+ {
+  "method": "WebhookCAMatchesSecret",
+  "arguments": [
+   {
+    "Ref": {
+     "api_version": "admissionregistration.k8s.io/v1",
+     "kind": "MutatingWebhookConfiguration",
+     "name": "pod-policy"
+    },
+    "Webhook": "pod-policy.example.dev",
+    "SecretNamespace": "policy",
+    "SecretName": "pod-policy-tls",
+    "SecretKey": "ca.crt"
+   }
+  ],
+  "result": false
+ },
+ {
+  "phase": "fixed",
+  "method": "AdmissionWebhooksFor",
+  "arguments": [
+   {
+    "api_version": "v1",
+    "kind": "Namespace",
+    "name": "demo"
+   }
+  ],
+  "result": [
+   {
+    "configuration": {
+     "api_version": "admissionregistration.k8s.io/v1",
+     "kind": "MutatingWebhookConfiguration",
+     "name": "pod-policy"
+    },
+    "webhook": "pod-policy.example.dev",
+    "failure_policy": "Fail",
+    "service": {
+     "api_version": "v1",
+     "kind": "Service",
+     "namespace": "policy",
+     "name": "pod-policy"
+    },
+    "port": 443,
+    "ready_endpoints": 1,
+    "serving_secrets": [
+     {
+      "namespace": "policy",
+      "name": "pod-policy-tls",
+      "key": "ca.crt"
+     }
+    ],
+    "ca_bundle": "sha256:new"
+   }
+  ]
+ },
+ {
+  "phase": "fixed",
+  "method": "WebhookCAMatchesSecret",
+  "arguments": [
+   {
+    "Ref": {
+     "api_version": "admissionregistration.k8s.io/v1",
+     "kind": "MutatingWebhookConfiguration",
+     "name": "pod-policy"
+    },
+    "Webhook": "pod-policy.example.dev",
+    "SecretNamespace": "policy",
+    "SecretName": "pod-policy-tls",
+    "SecretKey": "ca.crt"
+   }
+  ],
+  "result": true
+ },
+ {
+  "method": "RepairReceipt",
+  "arguments": {},
+  "result": {
+   "id": "example-act-2",
+   "incident_id": "worked-example",
+   "success": true,
+   "started_at": "2026-01-01T00:00:20Z",
+   "completed_at": "2026-01-01T00:00:21Z",
+   "resources": [
+    {
+     "api_version": "admissionregistration.k8s.io/v1",
+     "kind": "MutatingWebhookConfiguration",
+     "name": "pod-policy"
+    }
+   ]
+  }
+ }
+]

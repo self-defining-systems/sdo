@@ -15,7 +15,7 @@ func (Program) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "image-pull-failure", Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}}}
 }
 func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
-	ref := b["deployment"]
+	ref := b.Objects["deployment"]
 	diff, err := v.DiffAgainstSource(ref)
 	if err != nil {
 		return program.Verdict{}, err
@@ -51,5 +51,5 @@ func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bin
 	if err != nil || verdict.Result != program.Match {
 		return program.Plan{}, err
 	}
-	return program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: b["deployment"]}}}, nil
+	return program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: b.Objects["deployment"]}}}, nil
 }

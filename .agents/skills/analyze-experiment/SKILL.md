@@ -34,7 +34,7 @@ Agent-specific trajectories may exist for generic CLI benchmark agents. Treat th
 3. For an SDO run, validate the strict receipt shape and correlate its incident and commits with lifecycle provenance, outcomes, and broker evidence.
 4. Reconstruct the timeline: lifecycle bootstrap or reuse, detector firing, batching, dispatch, proposal, independent verification, outcome, reflection, rollout, acknowledgement, and cleanup.
 5. Compare agent logs or trajectories with authoritative state. Flag contradictions instead of choosing the more favorable source.
-6. Identify failed invariants, detours, repeated hypotheses, stale memory, uncorrelated commits, or missing evidence.
+6. Identify failed invariants, detours, repeated hypotheses, stale memory, uncorrelated commits, or missing evidence. Rule out eval confounds before attributing a result to SDO (see the eval rule in [run-experiment](../run-experiment/SKILL.md#rules)).
 7. Report configuration, evidence paths, findings, and confidence. Separate production-lifecycle completion from benchmark diagnosis/mitigation scores.
 
 When multiple runs are in scope and subagents are available, assign one run or one evidence layer per subagent, then reconcile incident IDs, commits, timestamps, and classifications centrally.
@@ -51,11 +51,38 @@ When multiple runs are in scope and subagents are available, assign one run or o
 
 At evidence discovery, read [evidence hierarchy and provenance](references/trajectory-schema.md).
 Before judging mitigation or learning, read [outcomes and program evidence](references/outcome-records.md).
+For synthetic latency, timeout counts and effective scenario SLOs, read [traffic health evidence](references/traffic-health.md).
+When Pods are Ready but creation or admission fails, read [admission health evidence](references/admission-health.md).
+For offline fake-cluster checks, simulated effects and false positives, read [offline closed-loop reports](references/offline-closed-loop.md).
+For menu selections, round reports and recovery receipts, read [mitigation menu receipts](references/mitigation-menu.md).
+For first-mutation capture and evidence-gap semantics, read [capture boundaries](references/capture-boundaries.md).
 For acceptance, ownership and restart analysis, read [native broker and memory](references/native-broker.md).
+For traffic settling between recovery proof and broker closure, read [closure recovery observations](references/closure-recovery.md).
+For incident deadlines and restart recovery, read [native incident recovery](references/native-incident-recovery.md).
+For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md); for cleared lifecycle effects and repair-encoding counts, read [reflection settlement](references/reflection-settlement.md).
+For setup costs and interrupted responder accounting, read [phase-bound usage evidence](references/setup-usage.md).
+Before pricing Claude responder/reflection phases, read [Claude cost completeness](references/claude-cost.md).
 Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).
-For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md).
+Before attributing throttled rows to SDO, read [provider capacity evidence](references/provider-capacity.md).
+For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md) and [restartable lane/conversion receipts](references/fastloop-sequences.md).
+For injection identity, grade checkpoints and per-fault timings, read [fault tracking evidence](references/fault-tracking.md).
+For scripted repair gates, read [scripted rehearsal evidence](references/scripted-rehearsals.md).
+For persistent lane preparation and restart bind repair, read [warm-lane evidence](references/warm-lane.md).
+Before judging mixed-app slot validity or recovery, read [slot cleanup evidence](references/slot-cleanup.md).
+For fresh-memory installs and legacy onboarding references, read [fresh memory control state](references/fresh-memory.md).
 Before reconstructing a timeline, read [telemetry and trajectories](references/telemetry.md).
+For missing recordings and offline replay, read [checkpoint recording evidence](references/checkpoint-recording.md).
+For replay-on/off measurements, read [replay run policy](references/replay-policy.md).
+For oversized responder outputs, default stdout budgets and offline size audits, read [tool output audits](references/tool-output-audit.md).
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
 also read [drift and toy failures](references/drift-failures.md).
 
 For offline worker replay use `fastloop replay --run-dir <results/run> --incident N --stage responder|reflection|broker`: agent scripts are the only execution path, with no live fallback. Prompts, rollouts, tool calls and outcomes remain readable analysis evidence. See [the testing guide](../../../docs/testing-guide.md).
+
+For automatic repair gate changes, defaults, match selection and historical receipt provenance, read [automatic repair evidence](references/automatic-repair.md).
+
+For fastloop capability, infrastructure, ordered dispatch and image-delivery interpretation, read [dispatch evidence](references/fastloop-dispatch.md).
+
+For ordered stage reports and pending rollout handoffs, read [ordered response stages](references/response-stages.md).
+
+- Remote offline catch-up and derived-index conflicts: [shared memory synchronization](references/shared-memory-sync.md).

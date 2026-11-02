@@ -1,0 +1,15 @@
+# Agent-selected repair checks
+
+Automatic repair relies on save-time compile, vet, tests and recorded-corpus repair replay; independent post-apply verification; and explicit responder rollback when requested. The broker still enforces artifact ownership, including the health-judge/responder split. State budgets and the benchmark submission guard are unchanged.
+
+Plans execute within the controller-derived incident namespace. Application identity does not require a hand-maintained mapping from a benchmark name to a deployed chart name. Control and other namespaces remain excluded. Cluster-scoped targets, including webhook configurations, are outside this namespace scope; no cluster webhook mutation grant is installed. Upgrades revoke the retired named webhook grants.
+
+There is no source-plan policy file, reviewed-fixture digest policy, policy TTL, content predicate, credential-delta check, ServiceAccount identity check, or source-value restoration requirement. Structured actions need no separate policy authorization. Explicit `FromSource` values and `CreateFromSource` still read the matching immutable accepted manifest at the incident commit. `DeleteObject` no longer requires accepted-source absence. Kubernetes schema validation, RBAC, named object identity, conditional writes, lifecycle exclusivity within a batch, direct write observation, and rollback conflict checks remain correctness constraints. Deletion and exec effects remain explicitly irreversible; compensation attempts every reversible write and records irreversible effects without recreating them.
+
+At incident open, Go builds deterministic coverage from all matching diagnoses and detector findings. It sends all matches and unexplained finding fingerprints to the responder; the agent chooses every mitigation or raw action. Failed verification leaves completed writes in place. Only the agent requests rollback, with compensation retained for a partially failed write batch.
+
+Defaults are repair policy `recorded-actions`, 10 response loops, 5 validation retries and 5 minutes for verification. `SDO_RESPONDER_MENU` defaults on; `0` disables it. Verified program success/failure counts remain durable information, without execution thresholds. Save-time replay remains required after edits.
+
+Plan patch receipts retain the existing Authorization field as value provenance: `accepted-source`, `parameter`, `observed`, or `incident-namespace` for actions without a selected value. It no longer denotes an administrator policy grant. Action reports retain value-level provenance. Retired controller-config tags 72–74 and their field names are reserved.
+
+The application controller Role gains only lifecycle verbs for the native plan transport: create/delete on Deployments, StatefulSets, HPAs and PDBs, plus explicit create/delete for ConfigMaps, Services, Pods and NetworkPolicies (already available in the former unsplit role). Existing get/patch grants remain. No Secret-data, credential API, wildcard, cross-namespace, or cluster mutation grant is added. The obsolete tokenless-ServiceAccount get grant is removed.

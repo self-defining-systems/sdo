@@ -1,5 +1,7 @@
 #!/bin/bash
-# Format Python code using ruff format
+# Format Python code using the locked ruff (default dev group).
+# `python -m ruff` fails when ruff is missing from the project environment
+# instead of falling back to a different ruff on PATH.
 
 set -e
 
@@ -11,10 +13,10 @@ cd "$PROJECT_ROOT"
 
 if [ "$1" == "--check" ]; then
     echo "Checking code formatting (dry-run)..."
-    uv run ruff format --check .
+    uv run python -m ruff format --check .
 else
     echo "Formatting code..."
-    uv run ruff format .
+    uv run python -m ruff format .
 fi
 
 echo "Formatting check complete."

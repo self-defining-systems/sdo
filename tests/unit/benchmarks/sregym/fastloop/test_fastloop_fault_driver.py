@@ -8,12 +8,14 @@ import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.fault_driver import FastloopFaultError, SregymFaultDriver
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
 
 
 @dataclass
 class FakeWorker:
     health_sequence: list[bool] = field(default_factory=lambda: [True])
     requests: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    seed_contract: bool = False
 
     def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
         self.requests.append((op, args))
@@ -22,7 +24,17 @@ class FakeWorker:
         if op == "oracle":
             return {"kind": "sregym-mitigation-oracle", "success": True, "details": {"success": True}}
         if op == "recover":
+            if self.seed_contract:
+                return {
+                    "seconds": 4.0,
+                    "protocol_version": 2,
+                    "recovery_contract": "seed-compatible/v1",
+                    "success": True,
+                }
             return {"seconds": 4.0}
+        if op == "refresh":
+            assert self.seed_contract
+            return {"protocol_version": 2, "recovery_contract": "seed-compatible/v1", "success": True}
         if op == "health":
             healthy = self.health_sequence.pop(0) if len(self.health_sequence) > 1 else self.health_sequence[0]
             return {"healthy": healthy, "unready": [] if healthy else ["mongodb-geo"]}
@@ -56,7 +68,41 @@ def test_recovery_waits_until_the_app_is_healthy_again() -> None:
     assert seconds == pytest.approx(2 * 1.0)
 
 
-def test_recovery_poll_interval_can_follow_the_run_time_scale() -> None:
+@pytest.mark.parametrize("component_only", [False, True])
+def test_recovery_failure_identifies_component_without_sensitive_worker_details(component_only: bool) -> None:
+    class FailedWorker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            assert op == "recover"
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"component_index": 2, "status": "error", "error": "SYNTHETIC_SENSITIVE_CANARY"}],
+            }
+
+    driver = _driver(FailedWorker())
+    with pytest.raises(FastloopFaultError) as caught:
+        driver.recover_fault(2) if component_only else driver.recover()
+
+    assert "component 2: error" in str(caught.value)
+    assert "CANARY" not in str(caught.value)
+
+
+def test_recovery_failure_does_not_echo_unrecognized_component_metadata() -> None:
+    class FailedWorker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"component_index": "SYNTHETIC_CANARY", "status": "SYNTHETIC_CANARY"}],
+            }
+
+    with pytest.raises(FastloopFaultError, match="warm lane cannot be reused") as caught:
+        _driver(FailedWorker()).recover()
+
+    assert "CANARY" not in str(caught.value)
+
+
+def test_recovery_poll_interval_is_configurable() -> None:
     now = [0.0]
     worker = FakeWorker(health_sequence=[False, True])
 
@@ -108,7 +154,7 @@ def test_recovery_waits_for_rollouts_in_every_application_namespace() -> None:
             raise AssertionError(value)
 
     cluster = Cluster()
-    driver = _driver(FakeWorker())
+    driver = _driver(FakeWorker(seed_contract=True))
     driver._baselines = tuple(
         ApplicationBaseline(
             namespace,
@@ -146,7 +192,7 @@ def test_recovery_rollout_timeout_reports_unready_workload() -> None:
         def apply(self, namespace: str, value: dict[str, Any]) -> None:
             raise AssertionError(value)
 
-    driver = _driver(FakeWorker(), timeout=5.0)
+    driver = _driver(FakeWorker(seed_contract=True), timeout=5.0)
     driver._baselines = (
         ApplicationBaseline(
             "hotel-reservation",
@@ -190,19 +236,20 @@ def test_recovery_reconciles_before_waiting_for_health() -> None:
             return super().request(op, timeout=timeout, **args)
 
     driver = SregymFaultDriver(
-        Worker(),
+        Worker(seed_contract=True),
         namespace="hotel-reservation",
         baseline=ApplicationBaseline("hotel-reservation", []),
         cluster=Cluster(),
+        accepted_source=fixed_source_provider(ApplicationBaseline("hotel-reservation", []), "hotel-reservation"),
     )
 
     driver.recover()
 
-    assert events == ["recover", "list", "delete", "health", "list"]
+    assert events == ["recover", "list", "delete", "refresh", "health", "list"]
     assert driver.last_cleanup.deleted_counts == {"Job": 1}
 
 
-def test_recovery_cleans_every_recorded_application_namespace() -> None:
+def test_recovery_does_not_treat_captured_foreign_namespaces_as_source() -> None:
     class Cluster:
         def list_objects(self, namespace: str) -> list[dict[str, Any]]:
             return [{"kind": "Job", "metadata": {"namespace": namespace, "name": "agent-fix"}, "spec": {}}]
@@ -215,16 +262,19 @@ def test_recovery_cleans_every_recorded_application_namespace() -> None:
 
     deleted: list[tuple[str, str, str]] = []
     driver = SregymFaultDriver(
-        FakeWorker(),
+        FakeWorker(seed_contract=True),
         namespace="hotel-reservation",
         baseline=(ApplicationBaseline("hotel-reservation", []), ApplicationBaseline("hotel-db", [])),
         cluster=Cluster(),
+        accepted_source=fixed_source_provider(
+            (ApplicationBaseline("hotel-reservation", []), ApplicationBaseline("hotel-db", [])), "hotel-reservation"
+        ),
     )
 
     driver.recover()
 
-    assert deleted == [("hotel-reservation", "Job", "agent-fix"), ("hotel-db", "Job", "agent-fix")]
-    assert driver.last_cleanup.deleted_counts == {"Job": 2}
+    assert deleted == [("hotel-reservation", "Job", "agent-fix")]
+    assert driver.last_cleanup.deleted_counts == {"Job": 1}
 
 
 def test_oracle_verdict_is_typed() -> None:
@@ -280,7 +330,7 @@ def test_recovering_one_fault_of_a_composition_does_not_wait_for_health() -> Non
 
     seconds = driver.recover_fault(1)
 
-    assert worker.requests[-1] == ("recover", {"fault": 1})
+    assert worker.requests[-1] == ("recover", {"mode": "full", "fault": 1})
     assert seconds == pytest.approx(1.5)
     assert all(op != "health" for op, _ in worker.requests)
 
@@ -317,3 +367,300 @@ def test_partial_composite_injection_recovers_the_first_fault() -> None:
     with pytest.raises(FastloopFaultError, match="second fault unavailable"):
         _driver(worker).inject_composite(["a", "b"])
     assert [op for op, _ in worker.requests][-2:] == ["recover", "health"]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"seconds": 0},
+        {"protocol_version": 2, "success": False},
+        {"protocol_version": 2, "recovery_contract": "seed-compatible/v1", "success": True},
+    ],
+)
+def test_full_cleanup_requires_v2_success_and_baseline_reconciliation(reply: dict[str, Any]) -> None:
+    events: list[str] = []
+
+    class Worker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            events.append(op)
+            if op == "recover":
+                assert args["mode"] == "full"
+                return reply
+            if op == "refresh":
+                return {"protocol_version": 2, "recovery_contract": "seed-compatible/v1", "success": True}
+            return super().request(op, timeout=timeout, **args)
+
+    class Cluster:
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            events.append("list")
+            return []
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            raise AssertionError("no objects to delete")
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            raise AssertionError("no objects to restore")
+
+    driver = SregymFaultDriver(
+        Worker(),
+        namespace="app",
+        baseline=ApplicationBaseline("app", []),
+        cluster=Cluster(),
+        require_full_cleanup=True,
+        accepted_source=fixed_source_provider(ApplicationBaseline("app", []), "app"),
+    )
+    assert driver.last_full_cleanup_verified is False
+    if reply.get("success") is True:
+        driver.recover()
+        assert events == ["recover", "list", "refresh", "health", "list"]
+        assert driver.last_full_cleanup_verified is True
+        # A later failed cleanup must not inherit the prior slot's success.
+        reply["success"] = False
+        with pytest.raises(FastloopFaultError):
+            driver.recover()
+        assert driver.last_full_cleanup_verified is False
+    else:
+        with pytest.raises(FastloopFaultError):
+            driver.recover()
+        assert events == ["recover"]
+        assert driver.last_full_cleanup_verified is False
+
+
+def test_full_cleanup_rejects_missing_baseline_before_injection() -> None:
+    with pytest.raises(ValueError, match="baseline"):
+        SregymFaultDriver(FakeWorker(), namespace="app", require_full_cleanup=True)
+
+
+@pytest.mark.parametrize(
+    ("success", "details"),
+    [(True, {}), (False, {"infra_error": "oracle unavailable"}), (False, {"oracles": [{"error": "query failed"}]})],
+)
+def test_rehearsal_rejects_unproven_fault_before_responder(success, details) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            if op == "oracle":
+                return {"kind": "composition", "success": success, "details": details}
+            return super().request(op, timeout=timeout, **args)
+
+    with pytest.raises(InvalidInjectionError, match="injection_invalid"):
+        SregymFaultDriver(Worker(), namespace="app", require_faulty_oracle=True).inject("composite")
+
+
+def test_rehearsal_accepts_faulty_official_oracle() -> None:
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            if op == "oracle":
+                return {"kind": "composition", "success": False, "details": {"oracles": [{"success": False}]}}
+            return super().request(op, timeout=timeout, **args)
+
+    driver = SregymFaultDriver(Worker(), namespace="app", require_faulty_oracle=True)
+    driver.inject("composite")
+    assert driver.last_pre_repair_oracle is not None
+    assert not driver.last_pre_repair_oracle.success
+
+
+def test_composite_rehearsal_checks_oracle_after_all_injections() -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            reply = super().request(op, timeout=timeout, **args)
+            if op == "inject":
+                index = sum(name == "inject" for name, _ in self.requests) - 1
+                return {**reply, "fault": index, "faults": [index]}
+            return reply
+
+    worker = Worker()
+    driver = SregymFaultDriver(worker, namespace="app", require_faulty_oracle=True)
+    with pytest.raises(InvalidInjectionError):
+        driver.inject_composite(["one", "two"])
+    assert [op for op, _ in worker.requests] == ["inject", "inject", "oracle"]
+
+
+@pytest.mark.parametrize("valkey_success", [True, False, None])
+def test_required_component_fault_cannot_be_masked_by_another_fault(valkey_success) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            if op == "oracle":
+                return {
+                    "kind": "composition",
+                    "success": False,
+                    "details": {
+                        "oracles": [
+                            {"name": "fault_0:ReadinessProbeMisconfiguration", "success": False},
+                            {"name": "fault_1:ValkeyMemoryDisruption", "success": valkey_success},
+                        ]
+                    },
+                }
+            return super().request(op, timeout=timeout, **args)
+
+    driver = SregymFaultDriver(
+        Worker(),
+        namespace="app",
+        require_faulty_oracle=True,
+        required_faulty_components=("fault_1:ValkeyMemoryDisruption",),
+    )
+    if valkey_success is False:
+        driver.inject("composite")
+    else:
+        with pytest.raises(InvalidInjectionError) as error:
+            driver.inject("composite")
+        assert "required component fault_1:ValkeyMemoryDisruption" in error.value.details["reason"]
+
+
+def test_invalid_injection_retains_worker_event_and_next_attempt_clears_it() -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class InvalidWorker(FakeWorker):
+        unavailable = False
+
+        def request(self, op, **args):
+            if self.unavailable:
+                raise RuntimeError("worker unavailable")
+            return super().request(op, **args) | {"protocol_version": 2, "injection": {"valid": False, "details": {}}}
+
+    worker = InvalidWorker()
+    driver = _driver(worker)
+    with pytest.raises(InvalidInjectionError):
+        driver.inject("toy")
+    assert driver.last_injection_window is not None
+    assert driver.last_injection_window.started_at == datetime.fromtimestamp(1790000000.0, tz=timezone.utc)
+    worker.unavailable = True
+    with pytest.raises(RuntimeError, match="worker unavailable"):
+        driver.inject("next-toy")
+    assert driver.last_injection_window is None
+
+
+def test_partial_composite_failure_keeps_full_recorded_injection_span() -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class PartialWorker(FakeWorker):
+        count = 0
+
+        def request(self, op, **args):
+            assert op == "inject"
+            position = self.count
+            self.count += 1
+            return {
+                "protocol_version": 2,
+                "injection": {"valid": position == 0, "details": {}},
+                "started_at": 1790000000.0 + position * 10,
+                "finished_at": 1790000005.0 + position * 10,
+                "fault": position,
+                "faults": [position],
+            }
+
+    driver = _driver(PartialWorker())
+    with pytest.raises(InvalidInjectionError):
+        driver.inject_composite(("toy-one", "toy-two"))
+    assert driver.last_injection_window is not None
+    assert driver.last_injection_window.started_at == datetime.fromtimestamp(1790000000.0, tz=timezone.utc)
+    assert driver.last_injection_window.finished_at == datetime.fromtimestamp(1790000015.0, tz=timezone.utc)
+
+
+@pytest.mark.parametrize("recreate", [False, True])
+def test_partial_composite_failure_has_one_reset_owner(recreate: bool) -> None:
+    class PartialWorker(FakeWorker):
+        injections = 0
+
+        def request(self, op, **kwargs):
+            if op == "inject":
+                self.injections += 1
+                if self.injections == 2:
+                    raise RuntimeError("partial injection")
+                return {**super().request(op, **kwargs), "fault": 0, "faults": [0]}
+            return super().request(op, **kwargs)
+
+    worker = PartialWorker()
+    driver = SregymFaultDriver(worker, namespace="hotel", row_start_tier2=recreate)
+    with pytest.raises(FastloopFaultError, match="partial injection"):
+        driver.inject_composite(("first", "second"))
+    assert ("recover" in [op for op, _ in worker.requests]) is (not recreate)
+
+
+@pytest.mark.parametrize("step", ["recover", "refresh"])
+@pytest.mark.parametrize(("status", "code"), [("error", "execution_failed"), ("timeout", "timeout")])
+def test_recovery_failure_has_safe_typed_reasons(step: str, status: str, code: str) -> None:
+    class Worker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            if op != step:
+                return super().request(op, timeout=timeout, **args)
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"incident": 1, "component_index": 3, "status": status, "error": "SENSITIVE_CANARY"}],
+            }
+
+    with pytest.raises(FastloopFaultError) as caught:
+        _driver(Worker(seed_contract=True)).recover()
+    assert [reason.model_dump() for reason in caught.value.recovery_failures] == [
+        {
+            "incident_index": 1,
+            "component_index": 3,
+            "step": step,
+            "code": code,
+        }
+    ]
+    assert "CANARY" not in str(caught.value)
+    assert "CANARY" not in repr(caught.value.recovery_failures)
+
+
+@pytest.mark.requires_sregym
+def test_real_worker_recovery_failure_reaches_typed_adapter_reason(monkeypatch, request) -> None:
+    """The real worker's exception->lifecycle result flows through the real consumer."""
+    import importlib
+    import sys
+    from pathlib import Path
+    from types import ModuleType, SimpleNamespace
+
+    root = Path(__file__).resolve().parents[5] / "third_party/sregym"
+    original = set(sys.modules)
+
+    def cleanup():
+        for name in set(sys.modules) - original:
+            if name == "sregym" or name.startswith("sregym."):
+                sys.modules.pop(name, None)
+
+    request.addfinalizer(cleanup)
+    for name in ("sregym", "sregym.conductor", "sregym.conductor.problems"):
+        package = ModuleType(name)
+        package.__path__ = [str(root / name.replace(".", "/"))]
+        monkeypatch.setitem(sys.modules, name, package)
+    module = importlib.import_module("sregym.fastloop.worker")
+
+    def recover():
+        raise RuntimeError("PRIVATE_CREDENTIAL_CANARY")
+
+    worker = module.FastloopWorker(
+        problem_factory=lambda _: SimpleNamespace(
+            app=SimpleNamespace(namespace="synthetic"),
+            inject_fault=lambda: None,
+            recover_fault=recover,
+        ),
+        deployer=lambda *_: None,
+        health_probe=lambda _: {"healthy": True},
+        cluster_factory=lambda *_: ("unused", "unused"),
+        cluster_inventory=SimpleNamespace(list_objects=lambda _: frozenset()),
+    )
+
+    class Transport:
+        def request(self, op, *, timeout=0, **args):
+            return worker.handle({"op": op, **args})
+
+    driver = SregymFaultDriver(Transport(), namespace="synthetic")
+    driver.inject("synthetic")
+    with pytest.raises(FastloopFaultError) as caught:
+        driver.recover()
+    assert [reason.model_dump() for reason in caught.value.recovery_failures] == [
+        {
+            "incident_index": 0,
+            "component_index": None,
+            "step": "recover",
+            "code": "execution_failed",
+        }
+    ]
+    assert "CANARY" not in str(caught.value)

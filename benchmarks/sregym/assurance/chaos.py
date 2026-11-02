@@ -142,9 +142,9 @@ def concurrent_memory_commit(ctx: ChaosContext) -> None:
         raise ChaosError("no running controller pod to commit through")
     script = (
         "set -e; cd /workspace/application; "
-        "printf '\\n- [Operator note](health-objective/README.md)\\n' >> .sdo/playbooks/README.md; "
+        "printf '\\nOperator note.\\n' >> .sdo/playbooks/health-objective/README.md; "
         "git -c user.name=operator -c user.email=operator@example.com commit -qam "
-        "'operator: concurrent edit to the playbook index'; git rev-parse HEAD"
+        "'operator: concurrent edit to the health-objective playbook'; git rev-parse HEAD"
     )
     completed = kubectl(
         ["exec", pods[0], "-c", "controller", "--", "sh", "-c", script], namespace=ctx.control_namespace, check=False

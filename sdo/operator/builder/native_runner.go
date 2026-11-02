@@ -13,12 +13,16 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory"
 )
 
 // RunConfig binds a built application controller to its transport-neutral
 // protobuf launch contract. Storage projections and cache publication come
 // from the repository edge.
 type RunConfig struct {
+	ShellControllerBinary string
+	PrepareShell          func(context.Context) error
+
 	Build              Config
 	Controller         *contractsv1alpha1.ControllerConfig
 	ResolveDiagnostics func(context.Context, string) (DiagnosticsProjection, error)
@@ -31,10 +35,21 @@ type DiagnosticsProjection struct {
 }
 
 // RunOnce builds the currently accepted diagnostics and runs one controller
-// process. The workspace remains intact until that process exits.
+// process. The workspace remains intact until that process exits. Accepted
+// memory changes reach the running controller through its memory host, so the
+// controller is never rebuilt or relaunched for them.
 func RunOnce(ctx context.Context, config RunConfig) error {
 	if config.Controller == nil {
 		return errors.New("controller config is required")
+	}
+	source := config.Controller.GetCodePath().GetOverrides().GetDetectorSource()
+	if source == "shell" || (source == "" && config.Controller.GetCodePath().GetName() == "shell") {
+		if config.PrepareShell != nil {
+			if err := config.PrepareShell(ctx); err != nil {
+				return err
+			}
+		}
+		return runShellController(ctx, config)
 	}
 	if config.ResolveDiagnostics == nil {
 		return errors.New("accepted diagnostics resolver is required")
@@ -45,12 +60,16 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 	}
 	buildConfig := config.Build
 	buildConfig.DiagnosticsRoot = projected.Directory
+	buildConfig.CompileOnly, err = memory.AdoptedBuild(ctx, config.Build.ApplicationRoot, projected.AcceptedRevision)
+	if err != nil {
+		return err
+	}
 	workspace, err := BuildWorkspace(ctx, buildConfig)
 	if err != nil {
 		return err
 	}
 	defer workspace.Close()
-	binary, err := workspace.ValidateAndBuild(ctx)
+	binary, err := workspace.BuildForLaunch(ctx)
 	if err != nil {
 		return err
 	}
@@ -105,5 +124,31 @@ func controllerConfigJSON(config RunConfig, built provenance) ([]byte, error) {
 	launch.DiagnosticsFingerprint = built.Fingerprint
 	launch.ControllerArtifactDigest = built.ArtifactDigest
 	launch.ControllerRevision = built.Revision
+	// Tasks investigate the source compiled with this accepted policy; deployed
+	// identity remains separate evidence for image/rendered-lock comparisons.
+	launch.SourceCommit = built.Revision
 	return wire.Marshal(launch)
+}
+
+// runShellController starts the image-bound controller directly. Accepted shell
+// scripts are activated by the runner and never enter the Go builder.
+func runShellController(ctx context.Context, config RunConfig) error {
+	directory, err := os.MkdirTemp("", "sdo-shell-controller-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(directory)
+	data, err := wire.Marshal(config.Controller)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(directory, "controller-config.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	binary := config.ShellControllerBinary
+	if binary == "" {
+		binary = "/usr/local/bin/sdo-shell-controller"
+	}
+	return buildio.RunController(ctx, binary, path, "")
 }

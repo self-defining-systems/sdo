@@ -1,0 +1,83 @@
+//go:build integration
+
+package runtime
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
+	"sdo.dev/operator/sdk"
+)
+
+// Exercise actual Kubernetes old-template observation through the executor and
+// persisted repair projection, including old Pods outliving complete status.
+func TestSourceConvergenceWaitsForKubernetesOldObjects(t *testing.T) {
+	for _, mode := range []string{"drains", "bounded-residual", "rollout-blocked"} {
+		drains := mode == "drains"
+		t.Run(mode, func(t *testing.T) {
+			deployment, current, stale := reconcileRolloutObjects(t)
+			if mode != "rollout-blocked" {
+				deployment.Status.Replicas = 1
+			}
+			controller := true
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old-pod", Namespace: stale.Namespace, OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: stale.Name, UID: stale.UID, Controller: &controller}}}}
+			kube := fake.NewSimpleClientset(deployment, current, stale, pod)
+			observations := 0
+			kube.PrependReactor("list", "replicasets", func(ktesting.Action) (bool, kruntime.Object, error) {
+				observations++
+				if drains && observations == 3 {
+					stale.Spec.Replicas = new(int32)
+					stale.Status.Replicas = 0
+					if err := kube.Tracker().Update(appsv1.SchemeGroupVersion.WithResource("replicasets"), stale, stale.Namespace); err != nil {
+						t.Fatal(err)
+					}
+					if err := kube.Tracker().Delete(corev1.SchemeGroupVersion.WithResource("pods"), pod.Namespace, pod.Name); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return false, nil, nil
+			})
+			source := addedFieldsSource()
+			live := source.DeepCopy()
+			live.SetUID(deployment.UID)
+			if err := RecordAcceptance(live, source); err != nil {
+				t.Fatal(err)
+			}
+			ref := addedFieldsRef()
+			executor := PlanExecutor{Client: contextAwareSourceClient{&planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}}, Source: planFakeSource{source: source}, Rollouts: KubernetesPlanRollouts{Client: kube}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: time.Second}
+			started := time.Now()
+			deadline := started.Add(350 * time.Millisecond)
+			result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions", ResponseDeadline: deadline}, reconcilePlan(ref), false)
+			report := result.ActionReports[0].SourceReconcile
+			if drains {
+				if err != nil || !report.Converged || !result.VerificationPassed || observations < 3 {
+					t.Fatalf("draining rollout failed: report=%v observations=%d err=%v", report, observations, err)
+				}
+			} else {
+				var pending *RolloutPendingError
+				// Waiting keeps at most a quarter of the bound for the final readback.
+				if !errors.As(err, &pending) || result.RolloutPending == nil || result.ActionReports[0].Status != "applied" || report.Converged || report.ObservationError != "" || result.VerificationPassed || time.Now().Before(started.Add(deadline.Sub(started)*3/4)) || !strings.Contains(strings.Join(report.ResidualPaths, " "), "old-pod") {
+					t.Fatalf("deadline lost residual: report=%v err=%v", report, err)
+				}
+			}
+			encoded, encodeErr := result.Proto()
+			if encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
+			repairs := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "kubernetes-source", Result: planApplicationState(encoded).Result}}, nil)
+			if len(repairs) != 1 || repairs[0].Success != drains {
+				t.Fatalf("wrong source repair credit: %+v", repairs)
+			}
+		})
+	}
+}

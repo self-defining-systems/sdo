@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 
 	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -19,6 +20,12 @@ import (
 func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []RepairActionReceipt) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	for index := range l.applicationsLog {
+		if l.applicationsLog[index].Result.Applied {
+			l.applicationsLog[index].Result.FinalEquivalenceVerified = nil
+			l.applicationsLog[index].Result.FinalVerificationBasis = ""
+		}
+	}
 	if l.Executor.Client == nil || len(repairs) == 0 {
 		return
 	}
@@ -26,23 +33,62 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 	if err != nil {
 		return
 	}
+	// Completion performs at most one final GET per distinct object, shared
+	// by direct applications and equivalent repair candidates. Errors are
+	// cached too; a later retry cannot silently change this completion proof.
+	objects := map[sdk.ObjectRef]*unstructured.Unstructured{}
+	getFinal := func(ref sdk.ObjectRef) *unstructured.Unstructured {
+		if object, ok := objects[ref]; ok {
+			return object
+		}
+		object, err := l.Executor.Client.Get(ctx, ref)
+		if err != nil {
+			object = nil
+		}
+		objects[ref] = object
+		return object
+	}
+	// Final equivalence is separate from the historical application result.
+	// A later different-field repair is a question and earns no credit.
+	for index := range l.applicationsLog {
+		app := &l.applicationsLog[index]
+		if app.Result.Applied {
+			if hasAppliedScript(app.Result.Plan.Actions) {
+				if l.finalScriptApplication(ctx, *app, view) {
+					app.Result.FinalVerificationBasis = "observed-transition"
+				}
+				continue
+			}
+			exact := finalPlanFieldsMatch(app.Result, getFinal)
+			app.Result.FinalEquivalenceVerified = &exact
+		}
+	}
 	seen := map[string]bool{}
 	for _, application := range l.applicationsLog {
-		if application.Result.Applied {
-			for _, id := range application.ProgramIDs {
-				seen[id] = true
+		if !application.Result.Applied || !application.Result.VerificationPassed || ((application.Result.FinalEquivalenceVerified == nil || !*application.Result.FinalEquivalenceVerified) && application.Result.FinalVerificationBasis != "observed-transition") {
+			continue
+		}
+		for _, call := range l.calls {
+			var response ToolResponse
+			if call.Command != "apply" || json.Unmarshal([]byte(call.ResponseJSON), &response) != nil || response.ApplicationID != application.ID {
+				continue
+			}
+			for _, run := range response.ProgramRuns {
+				if run.Verdict.Result == program.NoMatch {
+					seen[matchedViewKey(run.ProgramID, run.Bindings)] = true
+				}
 			}
 		}
 	}
 	for _, run := range l.runs {
-		if run.Verdict.Result != program.Match || seen[run.ProgramID] {
+		if run.Verdict.Result != program.Match || seen[matchedViewKey(run.ProgramID, run.Bindings)] {
 			continue
 		}
 		preview, ok := l.matchedPlans[matchedViewKey(run.ProgramID, run.Bindings)]
 		if !ok || !equivalentPlanResources(preview, repairs) {
 			continue
 		}
-		if !l.planFieldsMatch(ctx, preview) {
+		if !finalPlanFieldsMatch(preview, getFinal) {
 			continue
 		}
 		diagnoser, ok := l.Programs.Diagnoser(run.ProgramID)
@@ -57,6 +103,8 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 		preview.DryRun = false
 		preview.VerificationCompleted = true
 		preview.VerificationPassed = true
+		exact := true
+		preview.FinalEquivalenceVerified = &exact
 		completed := l.clock().UTC()
 		applicationID := fmt.Sprintf("equivalent-repair-%d", len(l.applicationsLog)+1)
 		planID := applicationID + "-plan"
@@ -73,7 +121,7 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 		applyResponse, _ := json.Marshal(ToolResponse{Command: "apply", ApplicationID: applicationID, ProgramRuns: []ProgramRun{verified}})
 		summary := "controller-verified equivalent responder repair; no program mutation"
 		l.calls = append(l.calls, ToolCall{Command: "plan", At: completed, RequestJSON: string(planRequest), ResponseJSON: string(planResponse), Summary: summary}, ToolCall{Command: "apply", At: completed, RequestJSON: string(applyRequest), ResponseJSON: string(applyResponse), Summary: summary})
-		seen[run.ProgramID] = true
+		seen[matchedViewKey(run.ProgramID, run.Bindings)] = true
 	}
 }
 
@@ -102,15 +150,37 @@ func equivalentPlanResources(preview PlanApplicationResult, repairs []RepairActi
 	return reflect.DeepEqual(planned, touched)
 }
 
-func (l *ResponderLoop) planFieldsMatch(ctx context.Context, preview PlanApplicationResult) bool {
+func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured) bool {
+	if len(preview.PreImages) == 0 {
+		return false
+	}
 	for _, preImage := range preview.PreImages {
-		before, err := json.Marshal(preImage.Object.Object)
+		// A created object has no pre-image: compare the final object with the
+		// object the plan created, starting from an empty baseline.
+		baseline := preImage.Object
+		var start *unstructured.Unstructured
+		switch {
+		case preImage.Absent:
+			baseline = &unstructured.Unstructured{Object: map[string]any{}}
+			for _, patch := range preview.Patches {
+				if patch.Ref == preImage.Ref && patch.Operation == "create" && patch.After != nil {
+					start = patch.After
+					break
+				}
+			}
+		case preImage.Object != nil:
+			start = preImage.Object
+		}
+		if start == nil {
+			return false
+		}
+		before, err := json.Marshal(start.Object)
 		if err != nil {
 			return false
 		}
 		expected := before
 		for _, patch := range preview.Patches {
-			if patch.Ref == preImage.Ref {
+			if patch.Ref == preImage.Ref && patch.Operation != "create" {
 				expected, err = jsonpatch.MergePatch(expected, patch.Patch)
 				if err != nil {
 					return false
@@ -121,35 +191,75 @@ func (l *ResponderLoop) planFieldsMatch(ctx context.Context, preview PlanApplica
 		if err := json.Unmarshal(expected, &want.Object); err != nil {
 			return false
 		}
-		current, err := l.Executor.Client.Get(ctx, preImage.Ref)
-		if err != nil || current == nil || !samePlanRef(current, preImage.Ref) {
+		current := getFinal(preImage.Ref)
+		if current == nil || !samePlanRef(current, preImage.Ref) {
 			return false
 		}
-		owner := preImage.Object
+		if !preImage.Absent && preImage.Object != nil && preImage.Object.GetUID() != "" && current.GetUID() != preImage.Object.GetUID() {
+			return false
+		}
+		owner := baseline
 		if len(owner.GetManagedFields()) == 0 {
 			owner = current
 		}
-		expectedFields := planComparableFields(want, want, owner)
-		if reflect.DeepEqual(planComparableFields(preImage.Object, want, owner), expectedFields) ||
-			!reflect.DeepEqual(planComparableFields(current, want, owner), expectedFields) {
+		// A fault injector may own the broken field before the plan repairs it.
+		// Include explicit plan changes even when SSA ownership moved away from
+		// the deployer; otherwise a verified repair can never earn exact credit.
+		changed := map[string]bool{}
+		beforeFields, afterFields := flattenDriftObject(baseline), flattenDriftObject(want)
+		reconcileSource, explicitWrite := false, false
+		for _, action := range preview.Plan.Actions {
+			ref, err := planActionRef(action)
+			if err != nil || ref != preImage.Ref {
+				continue
+			}
+			switch action.(type) {
+			case program.ReconcileFromSource, *program.ReconcileFromSource:
+				reconcileSource = true
+			default:
+				explicitWrite = true
+			}
+		}
+		for path, value := range beforeFields {
+			// Full source manifests omit server defaults and other controllers'
+			// fields. Keep that existing projection for source-only reconciliation.
+			if _, present := afterFields[path]; !present && reconcileSource && !explicitWrite {
+				continue
+			}
+			if !reflect.DeepEqual(value, afterFields[path]) {
+				changed[path] = true
+			}
+		}
+		for path, value := range afterFields {
+			if !reflect.DeepEqual(value, beforeFields[path]) {
+				changed[path] = true
+			}
+		}
+		expectedFields := planComparableFields(want, want, owner, changed)
+		if reflect.DeepEqual(planComparableFields(baseline, want, owner, changed), expectedFields) ||
+			!reflect.DeepEqual(planComparableFields(current, want, owner, changed), expectedFields) {
 			return false
 		}
 	}
 	return true
 }
 
-// Project both sides onto the plan's declared, deployer-owned fields. This
+// Project both sides onto declared deployer-owned fields and explicit writes. This
 // removes server defaults and unrelated controllers' fields without letting a
 // different value in a repaired field earn equivalent-repair credit.
-func planComparableFields(object, declared, owner *unstructured.Unstructured) map[string]any {
+func planComparableFields(object, declared, owner *unstructured.Unstructured, changed map[string]bool) map[string]any {
 	observed := flattenDriftObject(object)
 	owned := ownedDriftPaths(owner, "sdo-deployer")
 	fields := map[string]any{}
-	for path := range flattenDriftObject(declared) {
-		if path == "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration" || path == "metadata.annotations.sdo.dev/source-tree" {
+	paths := flattenDriftObject(declared)
+	for path := range changed {
+		paths[path] = nil
+	}
+	for path := range paths {
+		if strings.HasPrefix(path, "metadata.annotations.") && sourceBookkeepingAnnotation(strings.TrimPrefix(path, "metadata.annotations.")) {
 			continue
 		}
-		if len(owner.GetManagedFields()) > 0 && !ownsDriftPath(owned, path) {
+		if len(owner.GetManagedFields()) > 0 && !ownsDriftPath(owned, path) && !changed[path] {
 			continue
 		}
 		fields[path] = observed[path]

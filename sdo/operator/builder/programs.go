@@ -5,13 +5,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/builder/internal/buildio"
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
+	"strconv"
 	"strings"
 )
 
 func stagePrograms(ctx context.Context, config Config, workspace, module string) error {
 	root := filepath.Join(config.ApplicationRoot, ".sdo")
 	for _, part := range []string{"playbooks", "lib", "corpus"} {
+		if part == "corpus" && config.Replay == "off" {
+			continue
+		}
 		source := filepath.Join(root, part)
 		if _, err := os.Stat(source); os.IsNotExist(err) {
 			continue
@@ -22,14 +29,100 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 			return err
 		}
 	}
-	programs, err := programvalidation.Inspect(workspace, module)
+	// Keep retired READMEs so immutable corpus labels remain resolvable, but
+	// exclude executable files before any ./... compilation or replay.
+	entries, err := os.ReadDir(filepath.Join(workspace, "playbooks"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		base := filepath.Join(workspace, "playbooks", entry.Name())
+		if _, err := os.Stat(filepath.Join(base, layout.PlaybookFileName)); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		retired, err := layout.ReadPlaybookRetired(base)
+		if err != nil {
+			return fmt.Errorf("playbook %s: %w", entry.Name(), err)
+		}
+		if !retired {
+			continue
+		}
+		files, err := os.ReadDir(base)
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			if file.Name() != layout.PlaybookFileName {
+				if err := os.RemoveAll(filepath.Join(base, file.Name())); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	inspect := programvalidation.Inspect
+	adopted, err := memory.AdoptedBuild(ctx, config.ApplicationRoot, "HEAD")
 	if err != nil {
 		return err
 	}
-	return generatePrograms(workspace, module, programs)
+	if config.CompileOnly || adopted || config.Replay == "off" {
+		inspect = programvalidation.InspectForAdoption
+	}
+	programs, err := inspect(workspace, module)
+	if err != nil {
+		return err
+	}
+	if err := generatePrograms(workspace, module, programs, changedPrograms(ctx, config.ApplicationRoot, programs)); err != nil {
+		return err
+	}
+	if config.Replay == "off" {
+		return os.Remove(filepath.Join(workspace, "generated", "programs_test.go"))
+	}
+	return nil
 }
 
-func generatePrograms(root, module string, programs []programvalidation.Spec) error {
+// changedPrograms names the playbooks the candidate edits: uncommitted changes
+// under .sdo/playbooks, as staged by the broker and left by an agent before its
+// self-check. Accepted programs are not re-judged by declaration rules added
+// later, so an outcome publication never fails on memory it did not touch.
+// Without Git history every program is checked.
+func changedPrograms(ctx context.Context, applicationRoot string, programs []programvalidation.Spec) []string {
+	all := make([]string, 0, len(programs))
+	for _, item := range programs {
+		all = append(all, item.ID)
+	}
+	output, err := buildio.Output(ctx, "git", "-C", applicationRoot, "status", "--porcelain", "--untracked-files=all", "--", layout.PlaybooksDir)
+	if err != nil {
+		return all
+	}
+	changed := map[string]bool{}
+	for _, line := range strings.Split(string(output), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		for _, name := range strings.Split(line[3:], " -> ") {
+			rest, ok := strings.CutPrefix(strings.Trim(name, "\""), layout.PlaybooksDir+"/")
+			if id, _, found := strings.Cut(rest, "/"); ok && found {
+				changed[id] = true
+			}
+		}
+	}
+	var ids []string
+	for _, id := range all {
+		if changed[id] {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// generatePrograms writes the registry and its generated tests. roleChecked
+// names the programs whose object roles must be bindable from unnamed findings.
+func generatePrograms(root, module string, programs []programvalidation.Spec, roleChecked []string) error {
 	var source strings.Builder
 	source.WriteString("package generated\n\nimport (\n\t\"sdo.dev/operator/sdk/program\"\n")
 	for index, item := range programs {
@@ -49,5 +142,28 @@ func generatePrograms(root, module string, programs []programvalidation.Spec) er
 	if err := os.WriteFile(filepath.Join(root, "generated", "programs.go"), []byte(source.String()), 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(root, "generated", "programs_test.go"), []byte(programvalidation.ReplayTests(programs)), 0o644)
+	if err := os.WriteFile(filepath.Join(root, "generated", "programs_test.go"), []byte(programvalidation.ReplayTests(programs)), 0o644); err != nil {
+		return err
+	}
+	// Declaration validation is structural policy, independent of replay results
+	// and available corpus cases. Never make it an informational replay note.
+	checked := make([]string, 0, len(roleChecked))
+	for _, id := range roleChecked {
+		checked = append(checked, strconv.Quote(id))
+	}
+	declarations := `package generated
+import ("testing";"sdo.dev/operator/sdk/program")
+func TestProgramRegistrationContracts(t *testing.T) {
+ registry, err := Programs(); if err != nil { t.Fatal(err) }
+ checked := map[string]bool{}
+ for _, id := range []string{` + strings.Join(checked, ",") + `} { checked[id] = true }
+ for _, spec := range registry.List() {
+  if checked[spec.ID] { if err := program.CheckFindingRoles(spec); err != nil { t.Error(err) } }
+ }
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "generated", "program_declarations_test.go"), []byte(declarations), 0o644); err != nil {
+		return err
+	}
+	return nil
 }

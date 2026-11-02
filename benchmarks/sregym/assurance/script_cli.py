@@ -85,6 +85,9 @@ def run(argv: list[str], stdin: str) -> int:
         def agent_message(self, text: str) -> None:
             nonlocal answer
             answer = json.loads(text)
+            if set(answer) == {"incident_result", "reflection"}:
+                # Turns answer in their own branch of the session wrapper.
+                answer = answer["incident_result"] or answer["reflection"]
             self.response()
             rollout.assistant_message(text)
             super().agent_message(text)
@@ -127,20 +130,18 @@ def run(argv: list[str], stdin: str) -> int:
                 # An asserted live precondition or health check failed. Report
                 # failed investigation, with no credited cause or repair.
                 stream = RecordedStream()
-                stream.agent_message(
-                    json.dumps(
-                        {
-                            "incident_id": incident,
-                            "status": "failed",
-                            "confirmed_root_causes": [],
-                            "applied_playbooks": [],
-                            "repair_actions": [],
-                            "verification_evidence": [],
-                            "repair_changes": [str(exc)],
-                            "timing": {"started_at": started, "completed_at": utc_now()},
-                        }
-                    )
-                )
+                failed = {
+                    "incident_id": incident,
+                    "status": "failed",
+                    "confirmed_root_causes": [],
+                    "applied_playbooks": [],
+                    "repair_actions": [],
+                    "verification_evidence": [],
+                    "repair_changes": [str(exc)],
+                    "timing": {"started_at": started, "completed_at": utc_now()},
+                }
+                # The responder answers in its own branch of the session wrapper.
+                stream.agent_message(json.dumps({"incident_result": failed, "reflection": None}))
                 stream.turn_completed(rollout.totals)
                 code = 0
             return code

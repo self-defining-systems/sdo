@@ -10,13 +10,17 @@ from typing import Any
 import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import (
+    ApplicationBaseline,
     KubectlApplicationCluster,
+    accepted_restore_baselines,
     application_namespaces,
     capture_application_baseline,
     load_application_baseline,
     reconcile_application,
     save_application_baseline,
+    seal_existing_install,
 )
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
 
 def test_recovery_recreates_missing_objects_with_sdo_field_ownership(monkeypatch: Any, tmp_path: Path) -> None:
@@ -307,9 +311,7 @@ def test_baseline_file_preserves_infrastructure_and_older_files_skip_reconciliat
     assert json.loads(path.read_text(encoding="utf-8"))["namespaces"] == ["observe"]
 
 
-def test_capture_discovers_secondary_app_namespaces_without_control_or_observability(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_capture_namespace_ownership_does_not_expand_from_cluster_discovery(tmp_path: Path, monkeypatch: Any) -> None:
     from benchmarks.sregym.fastloop import baseline_recovery
 
     path = tmp_path / "cluster_baseline_state.json"
@@ -321,7 +323,7 @@ def test_capture_discovers_secondary_app_namespaces_without_control_or_observabi
 
     monkeypatch.setattr(baseline_recovery, "kubectl", fake_kubectl)
 
-    assert application_namespaces(path, tmp_path / "kubeconfig", "hotel") == ("hotel", "hotel-db")
+    assert application_namespaces(path, tmp_path / "kubeconfig", "hotel") == ("hotel",)
 
 
 ALLOCATED_CASES = [
@@ -507,3 +509,512 @@ def test_reconciliation_never_deletes_an_extra_pvc(phase: str) -> None:
     assert reconcile_application(cluster, baseline, "hotel").deleted_counts == {}
     assert ("hotel", "PersistentVolumeClaim", "data") in cluster.objects
     assert cluster.touched == []
+
+
+@pytest.mark.parametrize(("source_class", "expected"), [(None, "openebs-hostpath"), ("explicit", "explicit"), ("", "")])
+def test_source_claim_retains_installed_default_only_when_source_omits_class(
+    tmp_path: Path, source_class: str | None, expected: str
+) -> None:
+    value: dict[str, Any] = {
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {"name": "data", "namespace": "hotel-reservation"},
+        "spec": {"accessModes": ["ReadWriteOnce"]},
+    }
+    captured = deepcopy(value)
+    captured["spec"]["storageClassName"] = "openebs-hostpath"
+    if source_class is not None:
+        value["spec"]["storageClassName"] = source_class
+    source = commit_accepted_source(tmp_path, [value])
+    result = accepted_restore_baselines(source, (ApplicationBaseline("hotel-reservation", [captured]),))
+    assert result[0].objects[0]["spec"]["storageClassName"] == expected
+
+
+def _sealed(tmp_path: Path, objects: list[dict[str, Any]]) -> tuple[ApplicationBaseline, ...]:
+    path = tmp_path / "baseline.json"
+    path.write_text("{}")
+    save_application_baseline(path, (ApplicationBaseline("app", objects),), installed=True)
+    baselines = load_application_baseline(path, "app")
+    assert baselines is not None
+    return baselines
+
+
+def test_sealed_restore_never_reverts_passive_objects_to_the_pre_adoption_capture(tmp_path: Path) -> None:
+    """The capture predates SDO's adoption of accepted source; restoring it flips adopted fields back."""
+    config = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "settings", "namespace": "app"}}
+    redirect = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "redirect", "namespace": "app"}}
+    routes = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "routes", "namespace": "app"}}
+    api = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "api", "namespace": "app"}}
+    captured = [
+        {**config, "data": {"app.yml": "pre-adoption", "extra": "kept"}},
+        {**redirect, "spec": {"type": "ExternalName", "externalName": "sink.other.svc", "selector": {"app": "x"}}},
+        {**routes, "spec": {"ports": [{"name": "http", "port": 80, "protocol": "TCP"}, {"name": "m", "port": 90}]}},
+        {**api, "spec": {"template": {"spec": {"containers": [{"name": "api", "image": "installed"}]}}}},
+    ]
+    accepted = [
+        {**config, "data": {"app.yml": "adopted"}},
+        {
+            **redirect,
+            "metadata": {**redirect["metadata"], "labels": {"app.kubernetes.io/name": "redirect"}},
+            "spec": {"type": "ExternalName", "externalName": "sink.other.svc"},
+        },
+        {**routes, "spec": {"ports": [{"name": "http", "port": 80}]}},
+        {
+            **api,
+            "spec": {
+                "template": {"spec": {"containers": [{"name": "api", "image": "installed", "args": ["--declared"]}]}}
+            },
+        },
+    ]
+    source = commit_accepted_source(tmp_path, accepted)
+
+    restored = {
+        value["metadata"]["name"]: value
+        for value in accepted_restore_baselines(source, _sealed(tmp_path, captured))[0].objects
+    }
+
+    assert restored["settings"]["data"] == {"app.yml": "adopted"}
+    assert restored["redirect"]["metadata"]["labels"] == {"app.kubernetes.io/name": "redirect"}
+    assert "selector" not in restored["redirect"]["spec"]
+    # Captured fields and ports outside accepted source do not become desired state.
+    assert restored["routes"] == accepted[2]
+    # Compose the accepted workload policy before restore; the old chart capture
+    # must not drop it and open a baseline incident after onboarding.
+    assert restored["api"] == accepted[3]
+
+
+def test_restore_after_adoption_leaves_adopted_config_in_place(tmp_path: Path) -> None:
+    config = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "settings", "namespace": "app"}}
+    cluster = FakeCluster()
+    cluster.add({**config, "data": {"app.yml": "adopted"}})
+    source = commit_accepted_source(tmp_path, [{**config, "data": {"app.yml": "adopted"}}])
+    (baseline,) = accepted_restore_baselines(
+        source, _sealed(tmp_path, [{**config, "data": {"app.yml": "pre-adoption"}}])
+    )
+
+    reconcile_application(cluster, baseline, "app")
+
+    assert cluster.objects[("app", "ConfigMap", "settings")]["data"] == {"app.yml": "adopted"}
+
+
+def test_deployed_faulty_application_service_remains_captured_and_reported() -> None:
+    service = obj("Service", "app", spec={"selector": {"app": "healthy"}, "ports": [{"port": 80}]})
+    service["metadata"]["managedFields"] = [{"manager": "sdo-deployer", "operation": "Apply"}]
+    cluster = FakeCluster()
+    cluster.add(service)
+    baseline = capture_application_baseline(cluster, "hotel")
+    faulty = deepcopy(service)
+    faulty["spec"]["selector"] = {"app": "wrong"}
+    cluster.add(faulty)
+    assert capture_application_baseline(cluster, "hotel").objects[0]["spec"]["selector"] == {"app": "wrong"}
+    reconcile_application(cluster, baseline, "hotel")
+    assert cluster.touched == [("hotel", "Service", "app")]
+
+
+@pytest.mark.parametrize("ownership", ["label", "ownership-label", "manager", "owner"])
+def test_capture_excludes_sdo_ownership_but_keeps_plain_app_rbac(ownership: str) -> None:
+    # Hand-written fixture: names intentionally do not identify the installer.
+    application = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {"name": "sdo-looking-app-binding", "namespace": "hotel"},
+        "subjects": [],
+        "roleRef": {"kind": "Role", "name": "app"},
+    }
+    installed = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {"name": "ordinary-binding", "namespace": "hotel"},
+        "subjects": [],
+        "roleRef": {"kind": "Role", "name": "control"},
+    }
+    controller = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": "control-index",
+            "namespace": "hotel",
+            "uid": "owner-uid",
+            "labels": {"app.kubernetes.io/managed-by": "sdo"},
+        },
+    }
+    if ownership == "label":
+        installed["metadata"]["labels"] = {"app.kubernetes.io/managed-by": "sdo"}
+    elif ownership == "ownership-label":
+        installed["metadata"]["labels"] = {"sdo.dev/responder-read-owner": "control"}
+    elif ownership == "manager":
+        installed["metadata"]["managedFields"] = [{"manager": "sdo-operator", "operation": "Update"}]
+    else:
+        installed["metadata"]["ownerReferences"] = [{"uid": "owner-uid", "kind": "ConfigMap", "name": "control-index"}]
+    cluster = FakeCluster()
+    for value in (application, installed, controller):
+        cluster.add(value)
+    assert capture_application_baseline(cluster, "hotel").objects == [application]
+
+
+def test_capture_keeps_app_rbac_with_repair_field_ownership() -> None:
+    cluster = FakeCluster()
+    app = obj("RoleBinding", "application")
+    app["metadata"]["managedFields"] = [{"manager": "sdo-deployer", "operation": "Apply"}]
+    cluster.add(app)
+    expected = deepcopy(app)
+    expected["metadata"].pop("managedFields")
+    assert capture_application_baseline(cluster, "hotel").objects == [expected]
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "Deployment",
+        "DaemonSet",
+        "StatefulSet",
+        "Service",
+        "ConfigMap",
+        "Job",
+        "CronJob",
+        "Pod",
+        "NetworkPolicy",
+        "PersistentVolumeClaim",
+        "ServiceAccount",
+        "Role",
+        "RoleBinding",
+    ],
+)
+@pytest.mark.parametrize("ownership", ["label", "ownership-label", "manager"])
+@pytest.mark.parametrize("created_after_capture", [False, True])
+def test_application_restore_leaves_sdo_objects_and_descendants_untouched(
+    kind: str, ownership: str, created_after_capture: bool
+) -> None:
+    cluster = FakeCluster()
+    app = obj("Service", "application", spec={"ports": [{"port": 80}]})
+    cluster.add(app)
+    baseline = capture_application_baseline(cluster, "hotel")
+    root = obj(kind, "controller-state", spec={"synthetic": "owned"})
+    root["metadata"]["uid"] = "controller-uid"
+    if ownership == "label":
+        root["metadata"]["labels"] = {"app.kubernetes.io/managed-by": "sdo"}
+    elif ownership == "ownership-label":
+        root["metadata"]["labels"] = {"sdo.dev/observation-owner": "controller"}
+    else:
+        root["metadata"]["managedFields"] = [{"manager": "sdo-operator", "operation": "Update"}]
+    child = obj("Job", "worker", spec={"synthetic": "child"})
+    child["metadata"].update(uid="worker-uid", ownerReferences=[{"uid": "controller-uid", "kind": kind}])
+    descendant = obj("ConfigMap", "worker-state", data={"state": "owned"})
+    descendant["metadata"]["ownerReferences"] = [{"uid": "worker-uid", "kind": "Job"}]
+    pod = obj("Pod", "worker-pod", spec={})
+    pod["metadata"]["ownerReferences"] = [{"uid": "worker-uid", "kind": "Job"}]
+    # Reverse graph order ensures ownership propagation reaches a fixed point.
+    for value in (descendant, pod, child, root):
+        cluster.add(value)
+    if not created_after_capture:
+        baseline = capture_application_baseline(cluster, "hotel")
+    assert baseline.objects == [app]
+    before = deepcopy(cluster.objects)
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cluster.touched == []
+    assert cluster.objects == before
+    assert cleanup.deleted_counts == {}
+    assert cleanup.restored == []
+
+
+def test_legacy_baseline_cannot_restore_over_live_sdo_ownership() -> None:
+    cluster = FakeCluster()
+    owned = obj("ConfigMap", "controller-state", data={"state": "current"})
+    owned["metadata"]["managedFields"] = [{"manager": "sdo-operator", "operation": "Update"}]
+    cluster.add(owned)
+    stale = obj("ConfigMap", "controller-state", data={"state": "stale"})
+    baseline = ApplicationBaseline("hotel", [stale])
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cluster.touched == []
+    assert cleanup.restored == []
+    assert cluster.objects[("hotel", "ConfigMap", "controller-state")] == owned
+
+
+def test_installed_seal_compares_only_application_ownership(tmp_path: Path) -> None:
+    cluster = FakeCluster()
+    cluster.add(obj("Service", "application", spec={"ports": [{"port": 80}]}))
+    baseline = capture_application_baseline(cluster, "hotel")
+    path = tmp_path / "baseline.json"
+    path.write_text("{}")
+    save_application_baseline(path, (baseline,))
+    owned = obj("ConfigMap", "controller-state", data={"state": "current"})
+    owned["metadata"]["labels"] = {"app.kubernetes.io/managed-by": "sdo"}
+    cluster.add(owned)
+
+    seal_existing_install(path, cluster, "hotel")
+
+    loaded = load_application_baseline(path, "hotel")
+    assert loaded is not None
+    assert loaded[0].installed_digest
+    assert loaded[0].objects == baseline.objects
+    assert cluster.touched == []
+
+
+@pytest.mark.parametrize("kind", ["ConfigMap", "Service", "Job", "Deployment", "NetworkPolicy"])
+def test_application_extras_are_deleted_beside_sdo_owned_objects(kind: str) -> None:
+    cluster = FakeCluster()
+    baseline = capture_application_baseline(cluster, "hotel")
+    owned = obj(kind, "controller-state")
+    owned["metadata"].update(uid="controller-uid", labels={"app.kubernetes.io/managed-by": "sdo"})
+    extra = obj(kind, "application-extra")
+    # A stale or unrelated owner UID is not proof of SDO ownership.
+    extra["metadata"]["ownerReferences"] = [{"kind": kind, "uid": "unrelated-uid"}]
+    cluster.add(owned)
+    cluster.add(extra)
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cluster.touched == [("hotel", kind, "application-extra")]
+    assert cleanup.deleted_counts == {kind: 1}
+    assert cluster.objects == {("hotel", kind, "controller-state"): owned}
+
+
+@pytest.mark.parametrize("operation", ["restore", "seal"])
+def test_application_helper_migration_leaves_sdo_owned_deployments_untouched(operation: str, tmp_path: Path) -> None:
+    namespace = "hotel-reservation"
+    cluster = FakeCluster()
+    owned = obj(
+        "Deployment",
+        "mongodb-geo",
+        namespace,
+        spec={
+            "template": {
+                "spec": {
+                    "volumes": [{"name": "failure-script", "configMap": {"name": "failure-admin-geo"}}],
+                    "containers": [
+                        {
+                            "name": "hotel-reserv-geo-mongo",
+                            "volumeMounts": [
+                                {"name": "failure-script", "mountPath": "/scripts"},
+                            ],
+                        }
+                    ],
+                }
+            },
+        },
+    )
+    owned["metadata"]["labels"] = {"app.kubernetes.io/managed-by": "sdo"}
+    cluster.add(owned)
+    baseline = capture_application_baseline(cluster, namespace)
+    assert baseline.objects == []
+
+    if operation == "restore":
+        cleanup = reconcile_application(cluster, baseline, namespace)
+        assert cleanup.restored == []
+        assert cleanup.deleted_counts == {}
+    else:
+        path = tmp_path / "baseline.json"
+        path.write_text("{}")
+        save_application_baseline(path, (baseline,))
+        seal_existing_install(path, cluster, namespace)
+
+    assert cluster.touched == []
+    assert cluster.objects[(namespace, "Deployment", "mongodb-geo")] == owned
+
+
+def test_sealed_restore_uses_only_source_service_ports(tmp_path: Path) -> None:
+    routes = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "routes", "namespace": "app"}}
+    captured = [
+        {
+            **routes,
+            "spec": {
+                "ports": [
+                    {"name": "http", "port": 80, "targetPort": 8080, "protocol": "TCP"},
+                    {"name": "metrics", "port": 90, "protocol": "TCP"},
+                    {"port": 100, "protocol": "TCP"},
+                ]
+            },
+        }
+    ]
+    source = commit_accepted_source(
+        tmp_path,
+        [
+            {
+                **routes,
+                "spec": {
+                    "ports": [{"name": "http", "port": 80, "targetPort": 9090}, {"port": 100, "targetPort": 1000}]
+                },
+            }
+        ],
+    )
+
+    ports = accepted_restore_baselines(source, _sealed(tmp_path, captured))[0].objects[0]["spec"]["ports"]
+
+    assert ports == [
+        {"name": "http", "port": 80, "targetPort": 9090},
+        {"port": 100, "targetPort": 1000},
+    ]
+
+
+def redirect(name: str, namespace: str = "social-network", target: str = "otel-collector.observe") -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": name, "namespace": namespace, "labels": {"app": name}},
+        "spec": {"type": "ExternalName", "externalName": f"{target}.svc.cluster.local", "selector": {"app": name}},
+    }
+
+
+def test_harness_redirect_removed_by_sdo_stays_removed_across_restores() -> None:
+    """Fixture of the delete-then-restore loop: re-creating would mint a new identity."""
+    cluster = FakeCluster()
+    cluster.add(obj("Deployment", "compose-post", namespace="social-network", spec={"replicas": 1}))
+    for name in ("jaeger", "jaeger-agent", "jaeger-collector"):
+        cluster.add(redirect(name))
+    baseline = capture_application_baseline(cluster, "social-network")
+    cluster.delete("social-network", "Service", "jaeger-agent")
+    cluster.touched.clear()
+
+    for _ in range(2):
+        cleanup = reconcile_application(cluster, baseline, "social-network")
+        assert ("social-network", "Service", "jaeger-agent") not in cluster.objects
+        assert cluster.touched == []
+        assert cleanup.restored == []
+        assert cleanup.harness_absent == ["Service/jaeger-agent"]
+
+
+def test_source_declared_harness_redirect_is_recreated() -> None:
+    cluster = FakeCluster()
+    cluster.add(redirect("jaeger", namespace="hotel"))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.delete("hotel", "Service", "jaeger")
+
+    cleanup = reconcile_application(cluster, baseline, "hotel", declared=frozenset({("Service", "jaeger")}))
+
+    assert cluster.objects[("hotel", "Service", "jaeger")]["spec"]["type"] == "ExternalName"
+    assert [entry.to_dict() for entry in cleanup.reapplied] == [
+        {"kind": "Service", "namespace": "hotel", "name": "jaeger", "recreated": True, "harness_owned": True}
+    ]
+    assert cleanup.undeclared_recreated == []
+
+
+def test_changed_harness_redirect_is_patched_and_extra_redirect_is_kept() -> None:
+    cluster = FakeCluster()
+    cluster.add(redirect("jaeger", namespace="hotel"))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.objects[("hotel", "Service", "jaeger")]["spec"]["externalName"] = "elsewhere.example"
+    cluster.add(redirect("jaeger-query", namespace="hotel"))
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cluster.objects[("hotel", "Service", "jaeger")]["spec"] == baseline.objects[0]["spec"]
+    assert ("hotel", "Service", "jaeger-query") in cluster.objects
+    assert cleanup.deleted_counts == {}
+    assert [(e.name, e.recreated, e.harness_owned) for e in cleanup.reapplied] == [("jaeger", False, True)]
+
+
+def test_application_redirect_to_an_application_namespace_is_an_ordinary_object() -> None:
+    cluster = FakeCluster()
+    cluster.add(redirect("search", namespace="hotel", target="search.hotel"))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.delete("hotel", "Service", "search")
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert ("hotel", "Service", "search") in cluster.objects
+    assert cleanup.harness_absent == []
+    assert [(e.name, e.recreated, e.harness_owned) for e in cleanup.reapplied] == [("search", True, False)]
+
+
+def test_recreated_object_outside_accepted_source_is_reported_as_unexplained() -> None:
+    cluster = FakeCluster()
+    cluster.add(obj("Deployment", "geo", spec={"replicas": 1}))
+    cluster.add(obj("ConfigMap", "runtime-extra", data={"a": "b"}))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.delete("hotel", "Deployment", "geo")
+    cluster.delete("hotel", "ConfigMap", "runtime-extra")
+
+    cleanup = reconcile_application(cluster, baseline, "hotel", declared=frozenset({("Deployment", "geo")}))
+
+    assert cleanup.undeclared_recreated == ["ConfigMap/runtime-extra"]
+
+
+def test_restore_composition_reaches_cluster_with_source_labels_and_policy(tmp_path: Path) -> None:
+    """The restore producer's accepted fields reach the real reconcile consumer."""
+    accepted = obj(
+        "Deployment",
+        "api",
+        namespace="app",
+        spec={"template": {"spec": {"containers": [{"name": "api", "image": "same", "args": ["--accepted"]}]}}},
+    )
+    accepted["metadata"]["labels"] = {"app": "api"}
+    captured = deepcopy(accepted)
+    del captured["metadata"]["labels"]
+    captured["spec"]["template"]["spec"]["containers"][0].pop("args")
+    source = commit_accepted_source(tmp_path, [accepted])
+    baseline = accepted_restore_baselines(source, _sealed(tmp_path, [captured]))[0]
+    cluster = FakeCluster()
+    cluster.add(captured)
+    reconcile_application(cluster, baseline, "app")
+    assert cluster.objects["app", "Deployment", "api"] == accepted
+    # A missing source label alone is still a real restore write; extra live
+    # labels are retained rather than granting source authority over them.
+    current = cluster.objects["app", "Deployment", "api"]
+    current["metadata"]["labels"] = {"runtime.example/owner": "controller"}
+    cluster.touched.clear()
+    reconcile_application(cluster, baseline, "app")
+    assert cluster.touched == [("app", "Deployment", "api")]
+
+
+def test_kubectl_restore_writes_labels_without_replacing_other_metadata(monkeypatch: Any, tmp_path: Path) -> None:
+    desired = obj("Service", "redirect", spec={"type": "ExternalName", "externalName": "synthetic.example"})
+    desired["metadata"]["labels"] = {"app": "redirect"}
+    current = deepcopy(desired)
+    current["metadata"].update(labels={"runtime.example/owner": "controller"}, resourceVersion="17")
+    patches = []
+
+    def api(args: list[str], **_kwargs: Any) -> Any:
+        if args[0] == "get":
+            return SimpleNamespace(stdout=json.dumps(current))
+        patches.extend(json.loads(Path(args[4]).read_text()))
+        return SimpleNamespace(stdout="patched")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+    KubectlApplicationCluster(tmp_path / "kube").apply("hotel", desired)
+    metadata_patches = [patch for patch in patches if patch["path"].startswith("/metadata/")]
+    assert metadata_patches == [
+        {"op": "test", "path": "/metadata/resourceVersion", "value": "17"},
+        {"op": "add", "path": "/metadata/labels", "value": {"runtime.example/owner": "controller", "app": "redirect"}},
+    ]
+
+
+@pytest.mark.parametrize("kind", ["Deployment", "StatefulSet", "DaemonSet"])
+@pytest.mark.parametrize(
+    ("field", "declared", "installed"),
+    [
+        ("args", ["first", "second"], ["second", "first"]),
+        ("args", [], ["--old-chart-option"]),
+        ("args", ["first", "first"], ["first", "second"]),
+        ("volumes", [], [{"name": "old", "emptyDir": {}}]),
+        ("volumes", [], None),
+    ],
+)
+def test_restore_preserves_declared_list_order_and_explicit_empty(
+    tmp_path: Path, kind: str, field: str, declared: list[Any], installed: list[Any] | None
+) -> None:
+    accepted = obj(
+        kind, "api", namespace="app", spec={"template": {"spec": {"containers": [{"name": "api", "image": "same"}]}}}
+    )
+    captured = deepcopy(accepted)
+    wanted_pod = accepted["spec"]["template"]["spec"]
+    installed_pod = captured["spec"]["template"]["spec"]
+    wanted = wanted_pod["containers"][0] if field == "args" else wanted_pod
+    previous = installed_pod["containers"][0] if field == "args" else installed_pod
+    wanted[field] = declared
+    if installed is not None:
+        previous[field] = installed
+    installed_pod["containers"][0]["terminationMessagePolicy"] = "File"
+    source = commit_accepted_source(tmp_path, [accepted])
+    baseline = accepted_restore_baselines(source, _sealed(tmp_path, [captured]))[0]
+    cluster = FakeCluster()
+    cluster.add(captured)
+    reconcile_application(cluster, baseline, "app")
+    restored_pod = cluster.objects["app", kind, "api"]["spec"]["template"]["spec"]
+    actual = restored_pod["containers"][0] if field == "args" else restored_pod
+    assert field in actual
+    assert actual[field] == declared
+    assert "terminationMessagePolicy" not in restored_pod["containers"][0]

@@ -1,0 +1,611 @@
+"""Admission invariants apply to every app, including real harness manifests."""
+
+import ast
+import json
+import os
+import shutil
+import subprocess
+from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from benchmarks.sregym.fastloop import clean_start
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
+
+
+@pytest.mark.parametrize("namespace", ["hotel-reservation", "astronomy-shop", "social-network"])
+def test_probe_placement_preserves_app_dns(namespace):
+    value = {
+        "kind": "Pod",
+        "metadata": {"namespace": namespace, "labels": {"app.kubernetes.io/managed-by": "sregym-composite-probe"}},
+        "spec": {"containers": [{"command": ["sh", "-c", f"wget http://frontend.{namespace}.svc.cluster.local"]}]},
+    }
+    original = deepcopy(value)
+    isolated = clean_start.isolate_benchmark_probe(value)
+    assert isolated["metadata"]["namespace"] == "sregym"
+    assert isolated["spec"] == original["spec"]
+    assert value == original
+
+
+@pytest.mark.parametrize("kind", ["Pod", "Job", "ConfigMap"])
+def test_admission_rejects_any_benchmark_labelled_object(monkeypatch, kind):
+    monkeypatch.setattr(clean_start, "_injected_objects", lambda _: [])
+
+    def api(args, **kwargs):
+        if args[args.index("-o") + 1] == "name":
+            return SimpleNamespace(stdout="")
+        return SimpleNamespace(
+            stdout='{"items":[{"kind":"'
+            + kind
+            + '","metadata":{"name":"foreign","labels":{"app.kubernetes.io/managed-by":"sregym-composite-probe"}}}]}'
+        )
+
+    monkeypatch.setattr(clean_start, "kubectl", api)
+    with pytest.raises(RuntimeError, match="benchmark objects"):
+        clean_start.assert_clean_baseline(Path("unused"), namespace="any-app")
+
+
+def test_pending_traffic_with_reason_is_not_injection_proof():
+    from benchmarks.sregym.adapter.eval_guards import controller_proof
+
+    state = {
+        "history": [
+            {
+                "detector_id": "traffic-health",
+                "status": "pending",
+                "reason": "unqualified scenarios: checkout",
+                "evaluated_at": "2026-10-25T20:00:00Z",
+            }
+        ]
+    }
+    proof = controller_proof(state, {"traffic-health"}, "2026-10-25T19:59:00Z")
+    assert not proof["passed"]
+    assert "unqualified scenarios" in str(proof)
+
+
+def test_old_clear_cannot_prove_health_after_resume():
+    from benchmarks.sregym.adapter.eval_guards import controller_proof
+
+    state = {"history": [{"detector_id": "traffic-health", "status": "clear", "evaluated_at": "2026-10-25T19:58:00Z"}]}
+    assert not controller_proof(state, {"traffic-health"}, "2026-10-25T19:59:00Z")["passed"]
+
+
+def test_setup_commits_need_only_a_passed_broker_validation():
+    from benchmarks.sregym.adapter.eval_guards import validate_setup_commit
+
+    validate_setup_commit("passed")
+    for validation in ("failed", "", "skipped"):
+        with pytest.raises(ValueError, match="unvalidated setup commit"):
+            validate_setup_commit(validation)
+
+
+@pytest.mark.parametrize(
+    ("actor", "phase", "paths", "expected"),
+    [
+        ("health_judge", "initial", [".sdo/diagnostics/traffic/workloads/frontend.yaml"], True),
+        (
+            "health_judge",
+            "initial",
+            [".sdo/diagnostics/detectors/health/x/detector.go", ".sdo/playbooks/README.md"],
+            True,
+        ),
+        ("controller", "outcome", [".sdo/outcomes/x.json"], False),
+        ("health_judge", "initial", [".sdo/outcomes/x.json"], False),
+        ("responder", "initial", [".sdo/diagnostics/traffic/workloads/frontend.yaml"], False),
+        ("health_judge", "initial", [], False),
+    ],
+)
+def test_lineage_labels_commits_beyond_health_setup(actor, phase, paths, expected):
+    from benchmarks.sregym.adapter.eval_guards import is_health_setup
+
+    assert is_health_setup(actor, phase, paths) is expected
+
+
+def _commit(repository, name, trailers):
+    (repository / name).write_text(name)
+    subprocess.run(["git", "-C", str(repository), "add", name], check=True)
+    message = "\n".join(["change", "", *trailers])
+    subprocess.run(
+        ["git", "-C", str(repository), "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", message],
+        check=True,
+    )
+
+
+def test_lineage_admits_a_controller_outcome_commit_and_reports_it(tmp_path):
+    """A pre-injection incident outcome (controller, phase outcome) must not stop the row; it is labelled."""
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+
+    repository = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    _commit(repository, "seed", [])
+    seed = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    judge = ["SDO-Actor: health_judge", "SDO-Phase: initial", "SDO-Validation: passed"]
+    outcome = ["SDO-Actor: controller", "SDO-Phase: outcome", "SDO-Validation: passed"]
+    _commit(repository, "setup", judge)
+    _commit(repository, "outcome", outcome)
+    lineage = setup_lineage(repository, seed)
+    assert [commit["health_setup"] for commit in lineage["commits"]] == [False, False]  # paths are not health-owned
+    assert lineage["non_setup_commits"] == [commit["sha"] for commit in lineage["commits"]]
+    _commit(repository, "unvalidated", ["SDO-Actor: controller", "SDO-Phase: outcome", "SDO-Validation: failed"])
+    with pytest.raises(ValueError, match="unvalidated setup commit"):
+        setup_lineage(repository, seed)
+
+
+def test_stabilization_observes_until_deadline_then_fails_without_injecting():
+    from benchmarks.sregym.adapter.eval_guards import StabilizationError, wait_for_proof
+
+    class Clock:
+        now = 0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    clock = Clock()
+    samples = []
+    with pytest.raises(StabilizationError):
+        wait_for_proof(
+            lambda: {"passed": False, "reason": "pending"},
+            samples.append,
+            timeout_seconds=5,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+        )
+    assert clock.now == 5
+    assert samples[-1]["passed"] is False
+
+
+def test_late_dependency_roll_fails_even_when_all_pods_ready():
+    from benchmarks.sregym.adapter.eval_guards import assert_stable_workloads
+
+    before = {"Deployment/registry": {"pods": ["uid-a"]}}
+    after = {"Deployment/registry": {"pods": ["uid-b"]}}
+    with pytest.raises(ValueError, match="rolled after Ready"):
+        assert_stable_workloads(before, after)
+
+
+def test_restore_uses_one_accepted_spec_instead_of_stale_capture(tmp_path):
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, accepted_restore_baselines
+
+    stale = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"namespace": "app", "name": "registry"},
+        "spec": {"template": {"spec": {"containers": [{"name": "registry", "image": "old"}]}}},
+    }
+    accepted = deepcopy(stale)
+    accepted["spec"]["template"]["spec"]["containers"][0]["image"] = "installed"
+    source = commit_accepted_source(tmp_path, [accepted])
+    baselines = accepted_restore_baselines(source, (ApplicationBaseline("app", [stale]),))
+    assert baselines[0].objects == [accepted]
+    assert stale["spec"]["template"]["spec"]["containers"][0]["image"] == "old"
+
+
+@pytest.mark.go_integration
+def test_rbac_equality_uses_real_installer_and_rejects_extra_grants():
+    from benchmarks.sregym.fastloop.rbac import installer_rbac, require_rbac_equality
+
+    expected = installer_rbac("fixture-app")
+    listing = []
+    for key in ("ClusterRoles", "ClusterBindings"):
+        for original in expected[key]:
+            row = deepcopy(original)
+            row["kind"] = "ClusterRoleBinding" if key.endswith("Bindings") else "ClusterRole"
+            listing.append(row)
+    assert require_rbac_equality(expected, listing, "fixture-app")["passed"]
+    for row in listing:
+        if row["kind"] == "ClusterRole":
+            row["rules"].append({"apiGroups": ["example.dev"], "resources": ["widgets"], "verbs": ["get"]})
+            break
+    with pytest.raises(ValueError, match="RBAC differs"):
+        require_rbac_equality(expected, listing, "fixture-app")
+
+
+def test_no_fault_dry_run_has_no_fault_selection_and_has_a_five_minute_cap(tmp_path):
+    from benchmarks.sregym.fastloop.cli import build_parser
+
+    args = build_parser().parse_args(["eval-dry-run", "--run-dir", str(tmp_path)])
+    assert args.timeout == 300
+    assert not hasattr(args, "problem")
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["eval-dry-run", "--run-dir", str(tmp_path), "--timeout", "301"])
+
+
+def test_restore_retires_unlabelled_admission_objects_outside_captured_and_accepted_sets(tmp_path, monkeypatch):
+    from benchmarks.sregym.fastloop.clean_start import restore_admission_baseline
+
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps({"mutating_webhook_configs": ["installed"], "validating_webhook_configs": []}))
+    calls = []
+
+    def api(args, **kwargs):
+        calls.append(args)
+        items = [
+            {"kind": "MutatingWebhookConfiguration", "metadata": {"name": name}}
+            for name in ["installed", "source-owned", "stale-unlabelled"]
+        ]
+        return SimpleNamespace(stdout=json.dumps({"items": items}))
+
+    monkeypatch.setattr(clean_start, "kubectl", api)
+    owned = {"apiVersion": "admissionregistration.k8s.io/v1", "kind": "MutatingWebhookConfiguration"}
+    owned["metadata"] = {"name": "source-owned"}
+    source = commit_accepted_source(tmp_path / "workspace", [owned], namespace="app")
+    restore_admission_baseline(Path("unused"), baseline, source)
+    deletes = [call for call in calls if call[0] == "delete"]
+    assert len(deletes) == 1
+    assert deletes[0][1] == "MutatingWebhookConfiguration/stale-unlabelled"
+
+
+def test_restore_retires_generated_failed_replicas_without_reapplying_app_specs():
+    from benchmarks.sregym.fastloop.baseline_recovery import stalled_replica_sets
+
+    deployment = {
+        "kind": "Deployment",
+        "metadata": {"name": "api", "uid": "deployment"},
+        "spec": {"replicas": 1},
+        "status": {"readyReplicas": 0},
+    }
+    replica = {
+        "kind": "ReplicaSet",
+        "metadata": {
+            "name": "api-old",
+            "ownerReferences": [{"kind": "Deployment", "uid": "deployment", "controller": True}],
+        },
+        "status": {"conditions": [{"type": "ReplicaFailure", "status": "True", "reason": "FailedCreate"}]},
+    }
+    assert stalled_replica_sets([deployment, replica]) == ["api-old"]
+    deployment["status"]["readyReplicas"] = 1
+    assert stalled_replica_sets([deployment, replica]) == []
+
+
+def test_fresh_reset_removes_only_prior_responder_grants(monkeypatch):
+    from benchmarks.sregym.fastloop import rbac
+
+    calls = []
+
+    def binding(name, subject_namespace):
+        return {
+            "kind": "RoleBinding",
+            "metadata": {"name": name, "namespace": "app"},
+            "subjects": [{"kind": "ServiceAccount", "name": "sdo-responder", "namespace": subject_namespace}],
+        }
+
+    def api(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(
+            stdout=json.dumps({"items": [binding("prior-permissive", "app-sdo"), binding("unrelated", "peer-sdo")]})
+        )
+
+    monkeypatch.setattr(rbac, "kubectl", api)
+    rbac.reset_responder_grants(Path("unused"), "app")
+    assert [call[1] for call in calls if call[0] == "delete"] == ["RoleBinding/prior-permissive"]
+
+
+def test_fresh_reset_keeps_the_lifecycle_grant_the_controller_runs_under(monkeypatch):
+    """One wildcard binding covers controller and responder; deleting it strands a restart without the installer."""
+    from benchmarks.sregym.fastloop import rbac
+
+    calls = []
+    accounts = ["sdo-controller", "sdo-operate", "sdo-responder", "sdo-image-builder"]
+    lifecycle = {
+        "kind": "ClusterRoleBinding",
+        "metadata": {"name": "sdo-admin-app-sdo"},
+        "roleRef": {"kind": "ClusterRole", "name": "sdo-admin-app-sdo"},
+        "subjects": [{"kind": "ServiceAccount", "name": name, "namespace": "app-sdo"} for name in accounts],
+    }
+
+    def api(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout=json.dumps({"items": [lifecycle]}))
+
+    monkeypatch.setattr(rbac, "kubectl", api)
+    rbac.reset_responder_grants(Path("unused"), "app")
+    assert [call for call in calls if call[0] == "delete"] == []
+
+
+@pytest.mark.parametrize("history", [None, []])
+def test_absent_controller_observations_are_unproven(history):
+    from benchmarks.sregym.adapter.eval_guards import controller_proof
+
+    assert not controller_proof({"history": history}, {"traffic-health"}, "2026-10-25T20:00:00Z")["passed"]
+
+
+@pytest.mark.parametrize("windows", [None, {}, {"health": {"scenarios": None}}])
+def test_unstarted_prober_windows_are_unproven(windows):
+    from benchmarks.sregym.adapter.eval_guards import qualified_scenarios
+
+    assert not qualified_scenarios({"windows": windows}, {"frontend"})
+
+
+def test_dependency_restart_requires_clients_newer_than_dependency_for_any_app():
+    from benchmarks.sregym.fastloop.seed_recovery import StartupDependency, require_dependency_order
+
+    dependency = StartupDependency("registry-x", ("api-y",))
+    with pytest.raises(ValueError, match="register after"):
+        require_dependency_order(
+            dependency, {"registry-x": ["2026-10-25T20:00:02Z"], "api-y": ["2026-10-25T20:00:01Z"]}
+        )
+    require_dependency_order(dependency, {"registry-x": ["2026-10-25T20:00:02Z"], "api-y": ["2026-10-25T20:00:03Z"]})
+
+
+def test_astronomy_fetcher_uses_harness_namespace_and_app_service_dns(monkeypatch):
+    manager = SimpleNamespace(namespace="astronomy-shop", locust_url="load-generator:8089")
+    created = []
+    manager.start = lambda: created.append((manager.namespace, manager.locust_url))
+    app = SimpleNamespace(namespace="astronomy-shop", frontend_service="frontend-proxy", wrk=manager)
+    app.create_workload = lambda: None
+    monkeypatch.setattr(clean_start, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(stdout=""))
+    assert clean_start.prepare_harness_traffic(app, Path("unused"))
+    app.start_workload()
+    assert created == [("sregym", "load-generator.astronomy-shop.svc.cluster.local:8089")]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        {"observedGeneration": 1, "replicas": 1, "updatedReplicas": 1, "readyReplicas": 1},
+        {"observedGeneration": 2, "replicas": 2, "updatedReplicas": 1, "readyReplicas": 1},
+        {"observedGeneration": 2, "replicas": 1, "updatedReplicas": 0, "readyReplicas": 1},
+    ],
+)
+def test_old_ready_pods_do_not_prove_current_workload_rollout(monkeypatch, status):
+    from benchmarks.sregym.fastloop import admission
+
+    workload = {
+        "kind": "Deployment",
+        "metadata": {"name": "api", "generation": 2},
+        "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "api"}}},
+        "status": status,
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {"uid": "old", "labels": {"app": "api"}},
+        "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+    }
+    monkeypatch.setattr(
+        admission, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]}))
+    )
+    with pytest.raises(ValueError, match="rollout not complete"):
+        admission.workload_identity(Path("unused"), "any-app")
+
+
+def test_go_fixture_compilation_has_no_execution_deadline():
+    """Cold compilation must finish before a fixture's bounded execution starts."""
+    violations = []
+    for path in sorted(Path(__file__).parent.glob("test_*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            if not any(keyword.arg == "timeout" for keyword in node.keywords):
+                continue
+            command = node.args[0]
+            if not isinstance(command, (ast.List, ast.Tuple)):
+                continue
+            prefix = [item.value if isinstance(item, ast.Constant) else None for item in command.elts[:2]]
+            if prefix == ["go", "run"]:
+                violations.append(f"{path.name}:{node.lineno}")
+    assert not violations, f"Build Go fixtures before timed execution: {violations}"
+
+
+def _bootstrap_repository(repository: Path) -> str:
+    """Identical accepted inputs for cache preparation and the fresh-guard contract."""
+    root = Path(__file__).resolve().parents[5]
+    shutil.copytree(root / "apps/toy/seed", repository)
+    (repository / "service.yaml").write_text(
+        "apiVersion: v1\nkind: Service\nmetadata:\n  name: frontend\nspec:\n  ports:\n  - port: 80\n"
+    )
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "-qm", "installed seed"],
+    ):
+        subprocess.run(["git", "-C", str(repository), *args], check=True, capture_output=True)
+    return subprocess.check_output(["git", "-C", str(repository), "rev-parse", "HEAD"], text=True).strip()
+
+
+@pytest.fixture(scope="module")
+def broker_health_bootstrap_binary(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict[str, str]]:
+    root = Path(__file__).resolve().parents[5]
+    fixture = Path(__file__).with_name("fixtures") / "setup.go"
+    directory = tmp_path_factory.mktemp("broker-health-bootstrap")
+    binary = directory / "setup"
+    # The bootstrap itself compiles generated detector/controller packages. Warm
+    # that exact graph, including vet/test archives, before the operation deadline.
+    # trimpath lets the real test's isolated proposal reuse the warm archives.
+    env = dict(os.environ)
+    env["GOFLAGS"] = env.get("GOFLAGS", "") + " -trimpath"
+    subprocess.run(
+        ["go", "build", "-o", str(binary), str(fixture)],
+        cwd=root / "sdo/operator",
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    repository = directory / "warm-accepted"
+    _bootstrap_repository(repository)
+    subprocess.run(
+        [str(binary), str(repository)],
+        cwd=root / "sdo/operator",
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return binary, env
+
+
+@pytest.mark.go_integration
+def test_fresh_guard_accepts_actual_broker_health_bootstrap(
+    tmp_path: Path, broker_health_bootstrap_binary: tuple[Path, dict[str, str]]
+):
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+
+    binary, env = broker_health_bootstrap_binary
+    root = Path(__file__).resolve().parents[5]
+    repository = tmp_path / "accepted"
+    seed = _bootstrap_repository(repository)
+    actual = subprocess.run(
+        [str(binary), str(repository)],
+        cwd=root / "sdo/operator",
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    published = json.loads(actual.stdout)
+    assert ".sdo/playbooks/health-objective/README.md" in published["health_paths"]
+    lineage = setup_lineage(repository, seed)
+    assert lineage["accepted_commit"] == published["head"]
+    assert [row["actor"] for row in lineage["commits"]] == ["health_judge"]
+
+
+def test_lane_resources_reject_before_any_health_wait_or_restore(monkeypatch, tmp_path):
+    from benchmarks.sregym.fastloop import admission
+    from benchmarks.sregym.fastloop.admission import LaneAdmission
+
+    def reject(*args, **kwargs):
+        raise ValueError("eval: resource admission rejected foreign app")
+
+    monkeypatch.setattr(admission, "assert_lane_resources", reject)
+    env = SimpleNamespace(kubeconfig=tmp_path / "kubeconfig", namespace="application")
+    gate = LaneAdmission(env, object(), tmp_path / "proof")
+    with pytest.raises(ValueError, match="foreign app"):
+        gate.prove("application-sdo")
+
+
+def test_new_lane_restore_uses_source_instead_of_a_conflicting_sealed_install(tmp_path):
+    from benchmarks.sregym.fastloop.baseline_recovery import (
+        ApplicationBaseline,
+        accepted_restore_baselines,
+        load_application_baseline,
+        save_application_baseline,
+    )
+
+    path = tmp_path / "baseline.json"
+    path.write_text("{}")
+    installed = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "api", "namespace": "app"},
+        "spec": {"replicas": 1, "template": {"spec": {"containers": [{"name": "api", "image": "new-lane"}]}}},
+    }
+    save_application_baseline(path, (ApplicationBaseline("app", [installed]),), installed=True)
+    other = deepcopy(installed)
+    other["spec"]["template"]["spec"]["containers"][0]["image"] = "inherited"
+    source = commit_accepted_source(tmp_path / "workspace", [other])
+    baseline = load_application_baseline(path, "app")
+    assert accepted_restore_baselines(source, baseline)[0].objects == [other]
+    value = json.loads(path.read_text())
+    value["fastloop_application"]["namespaces"][0]["objects"][0]["spec"]["replicas"] = 0
+    path.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="installed baseline digest"):
+        load_application_baseline(path, "app")
+
+
+def test_reusing_a_lane_cannot_reseal_runtime_drift_as_installed_source(tmp_path):
+    from benchmarks.sregym.fastloop.baseline_recovery import (
+        ApplicationBaseline,
+        save_application_baseline,
+        seal_existing_install,
+    )
+
+    path = tmp_path / "baseline.json"
+    path.write_text("{}")
+    installed = {"kind": "Deployment", "metadata": {"name": "api", "namespace": "app"}, "spec": {"replicas": 1}}
+    save_application_baseline(path, (ApplicationBaseline("app", [installed]),))
+    original = path.read_bytes()
+    changed = deepcopy(installed)
+    changed["spec"]["replicas"] = 0
+    cluster = SimpleNamespace(list_objects=lambda _: [changed])
+    with pytest.raises(ValueError, match="original clean up capture"):
+        seal_existing_install(path, cluster, "app")
+    assert path.read_bytes() == original
+
+
+def test_sealed_install_preserves_metadata_setup_but_yields_to_accepted_source_repair(tmp_path):
+    from benchmarks.sregym.fastloop.baseline_recovery import (
+        ApplicationBaseline,
+        accepted_restore_baselines,
+        load_application_baseline,
+        save_application_baseline,
+    )
+
+    workspace = tmp_path / "workspace"
+    installed = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"namespace": "app", "name": "api"},
+        "spec": {"template": {"spec": {"containers": [{"name": "api", "image": "installed"}]}}},
+    }
+    repaired = deepcopy(installed)
+    repaired["spec"]["template"]["spec"]["containers"][0]["image"] = "accepted-source-repair"
+    commit_accepted_source(workspace, [installed])
+    seed = subprocess.check_output(["git", "-C", str(workspace), "rev-parse", "HEAD"], text=True).strip()
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text("{}")
+    save_application_baseline(baseline_path, (ApplicationBaseline("app", [installed]),), installed=True)
+    baselines = load_application_baseline(baseline_path, "app")
+
+    # The controller can publish metadata without changing installed source.
+    (workspace / ".sdo").mkdir()
+    (workspace / ".sdo/goal.md").write_text("metadata")
+    source = commit_accepted_source(workspace)
+    assert accepted_restore_baselines(source, baselines, seed_commit=seed)[0].objects == [installed]
+
+    source = commit_accepted_source(workspace, [repaired])
+    assert accepted_restore_baselines(source, baselines, seed_commit=seed)[0].objects == [repaired]
+
+
+def test_stabilization_rejects_late_success_and_does_not_renew_budget():
+    from benchmarks.sregym.adapter.eval_guards import StabilizationError, wait_for_proof
+
+    now = [0.0]
+    records = []
+
+    def slow_sample():
+        now[0] += 6
+        return {"passed": True}
+
+    with pytest.raises(StabilizationError):
+        wait_for_proof(
+            slow_sample,
+            records.append,
+            timeout_seconds=5,
+            monotonic=lambda: now[0],
+            sleep=lambda seconds: None,
+        )
+    assert not records[-1]["passed"]
+
+
+def test_replaced_pod_under_unchanged_template_is_named_as_readiness_loss_not_rollout(monkeypatch):
+    """Lane 52: a responder replaced the only pod; the ReplicaSet and template never changed."""
+    from benchmarks.sregym.fastloop import admission
+
+    workload = {
+        "kind": "Deployment",
+        "metadata": {"name": "currency", "generation": 1},
+        "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "currency"}}},
+        "status": {"observedGeneration": 1, "replicas": 1, "updatedReplicas": 1},
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {"uid": "new", "name": "currency-z4xmb", "labels": {"app": "currency"}},
+        "status": {"phase": "Pending", "conditions": [{"type": "Ready", "status": "False"}]},
+    }
+    monkeypatch.setattr(
+        admission, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]}))
+    )
+    with pytest.raises(ValueError, match="workload not Ready: Deployment/currency") as refused:
+        admission.workload_identity(Path("unused"), "any-app")
+    message = str(refused.value)
+    assert "rollout not complete" not in message
+    assert "ready 0/1" in message
+    assert "currency-z4xmb Pending" in message

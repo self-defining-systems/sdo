@@ -14,7 +14,7 @@ func TestObserveRetriesWithInjectedWaitAndCommands(t *testing.T) {
 	workload := map[string]any{
 		"kind":     "Deployment",
 		"metadata": map[string]any{"namespace": "default", "name": "app", "uid": "uid", "generation": 1, "annotations": map[string]any{"sdo.dev/source-tree": "tree"}},
-		"spec":     map[string]any{"replicas": 1, "template": map[string]any{"metadata": map[string]any{"annotations": map[string]any{"sdo.dev/source-tree": "tree"}}, "spec": map[string]any{"containers": []any{map[string]any{"image": image}}}}},
+		"spec":     map[string]any{"replicas": 1, "template": map[string]any{"metadata": map[string]any{"annotations": map[string]any{"sdo.dev/source-tree": "tree"}}, "spec": map[string]any{"containers": []any{map[string]any{"name": "app", "image": image}}}}},
 		"status":   map[string]any{"observedGeneration": 1, "updatedReplicas": 1, "readyReplicas": 1, "availableReplicas": 1},
 	}
 	reads, waits := 0, 0

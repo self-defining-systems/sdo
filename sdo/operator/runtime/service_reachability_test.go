@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -253,5 +254,16 @@ func TestEvaluateOnceRejectsReachabilityWithoutAHost(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("err %v stdout %q stderr %q", err, stdout.String(), stderr.String())
+	}
+}
+
+func TestSeedAcceptanceCannotUseInventoryOnlyEvaluation(t *testing.T) {
+	var stdout bytes.Buffer
+	err := RunWithOptions(context.Background(), nil, RuntimeOptions{
+		Args:   []string{"--evaluate-once", "--namespace", "shop", "--accept-seed", "--source-drift-report", "unused.json"},
+		Stdout: &stdout, Provider: staticProvider{snapshot: reachabilityApp(8083)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "seed acceptance cannot use source-drift-report") || stdout.Len() != 0 {
+		t.Fatalf("inventory-only evaluation accepted as seed health: %v %s", err, stdout.String())
 	}
 }

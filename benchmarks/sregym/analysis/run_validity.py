@@ -69,7 +69,9 @@ from benchmarks.sregym.analysis.incident_cost import (
     with_mitigation_applied,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
+from benchmarks.sregym.protocol.infrastructure import has_injection_evidence, infrastructure_error
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
+from benchmarks.sregym.protocol.provider_capacity import capacity_prevented_completion, read_provider_waits
 from sdo.contracts import ReceiptFailure, RejectedProductionReceipt
 
 Classification = Literal["valid", "invalid_infra", "agent_failure"]
@@ -661,7 +663,15 @@ def classify_problem_run(
     result_check, row = _check_result(results)
     checks.append(result_check)
     receipt: dict[str, Any] | None = None
-    if row is not None:
+    terminal_infra = infrastructure_error(row) if row is not None else None
+    capacity = read_provider_waits(results)
+    if capacity_prevented_completion(capacity, str((row or {}).get("agent_error") or (row or {}).get("error") or "")):
+        terminal_infra = capacity.exhausted_reason
+    if terminal_infra is not None:
+        checks.append(Check("infrastructure", "fail", f"infra_error={terminal_infra}"))
+        if terminal_infra == "injection_invalid" and not has_injection_evidence(row or {}):
+            checks.append(Check("injection-evidence", "fail", "injection_invalid row has no injection evidence"))
+    if row is not None and terminal_infra is None:
         rollouts = sorted(results.rglob("sessions/**/rollout-*.jsonl"))
         verdict = read_verdict(results) or Verdict(None, None, None)
         if agent == "sdo_codex":

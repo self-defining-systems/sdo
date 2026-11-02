@@ -30,6 +30,7 @@ from benchmarks.sregym.adapter import (
     REJECTED_RECEIPT_FILENAME,
     STRICT_RECEIPT_FILENAME,
     control_namespace_for,
+    incident_work_open,
     kubectl,
 )
 from benchmarks.sregym.assurance.chaos import ChaosContext, ChaosThread
@@ -51,7 +52,7 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.assurance.scenarios import IncidentSpec
     from benchmarks.sregym.fastloop.loop import AgentOutcome, IncidentAgent, InjectionWindow
-    from benchmarks.sregym.fastloop.records import AgentName
+    from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +322,13 @@ class ScriptedAgent:
         self._append(record)
         return learned
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
+        return self._inner.prepare_recovery(outcome)
+
+    @property
+    def last_recovery_trigger(self) -> str | None:
+        return getattr(self._inner, "last_recovery_trigger", None)
+
     def close(self) -> None:
         try:
             self._settle()
@@ -355,10 +363,9 @@ class ScriptedAgent:
         incident_id = record.incident_id or self._abandoned_incident_id(state)
         record.incident_id = incident_id
         record.metrics["controller_state_after_settle"] = {
-            key: state.get(key)
-            for key in ("incident_open", "closure_state", "last_acknowledged_incident_id", "detector_review_required")
+            key: state.get(key) for key in ("incident_open", "closure_state", "last_acknowledged_incident_id")
         }
-        settled = not state.get("incident_open") and not state.get("pending_closure")
+        settled = not incident_work_open(state)
         record.checks.append(
             Check(
                 "controller-settled",
@@ -416,14 +423,8 @@ class ScriptedAgent:
         state: dict[str, Any] = {}
         while time.monotonic() < deadline:
             state = ops.runtime_state(self._control)
-            closure = state.get("closure_state")
-            if (
-                not state.get("incident_open")
-                and not state.get("pending_closure")
-                and closure in (None, "", "idle", "acknowledged")
-            ):
-                return state
-            if closure == "failed":
+            # The shared rule: an acknowledged, permanently failed or retired closure is over.
+            if not incident_work_open(state):
                 return state
             time.sleep(5)
         return state
@@ -718,5 +719,5 @@ def _open_summary(state: dict[str, Any]) -> str:
     result = state.get("incident_result") or {}
     return (
         f"incident {request.get('incident_id')!r}, responder {result.get('status')!r}, "
-        f"review {state.get('detector_review_reason')!r}, closure {state.get('closure_state')!r}"
+        f"closure {state.get('closure_state')!r}"
     )

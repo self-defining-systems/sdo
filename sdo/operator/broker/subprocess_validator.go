@@ -3,12 +3,15 @@ package broker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/broker/internal/processio"
 	"sdo.dev/operator/sdk/sdktest"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 )
 
@@ -24,6 +27,10 @@ type SubprocessValidator struct {
 
 func (v SubprocessValidator) Validator() Validator {
 	return func(ctx context.Context, candidate string, paths []string) error {
+		if len(paths) > 0 && !layout.RequiresValidatorJob(paths) {
+			slog.Info("validation_subprocess_skipped", "reason", "no executable or corpus change", "changed_paths", len(paths))
+			return nil
+		}
 		binary := v.Binary
 		if binary == "" {
 			var err error
@@ -51,8 +58,12 @@ func (v SubprocessValidator) Validator() Validator {
 		baseline := ""
 		if needed {
 			baseline = v.HealthyBaseline
+			if override := compileBaseline(ctx); override != "" {
+				baseline = override
+			}
 		}
-		args = append(args, baseline)
+		replay, _ := ctx.Value(replayKey{}).(string)
+		args = append(args, baseline, replay)
 		scratch, err := os.MkdirTemp("", "sdo-validation-")
 		if err != nil {
 			return err
@@ -66,7 +77,17 @@ func (v SubprocessValidator) Validator() Validator {
 		if memory <= 0 {
 			memory = 3 << 30
 		}
-		return processio.RunValidationProcess(ctx, binary, args, scratch, timeout, memory)
+		output, err := processio.RunValidationProcess(ctx, binary, args, scratch, timeout, memory)
+		if err != nil {
+			return err
+		}
+		if collected, ok := ctx.Value(coverageGapsKey{}).(*[]validate.Diagnostic); ok {
+			*collected = append(*collected, output.Gaps...)
+		}
+		if collected, ok := ctx.Value(replayNotesKey{}).(*[]*contracts.MitigationReplayNote); ok {
+			*collected = append(*collected, output.ReplayNotes...)
+		}
+		return nil
 	}
 }
 
@@ -76,17 +97,18 @@ func RunValidationChild() {
 	if len(os.Args) < 2 || os.Args[1] != "validation-child" {
 		return
 	}
-	if len(os.Args) != 5 {
+	if len(os.Args) != 6 {
 		fmt.Fprintln(os.Stderr, "invalid validation child arguments")
 		os.Exit(2)
 	}
 	var notes []sdktest.MitigationReplayResult
-	ds, err := validate.CompileCandidate(context.Background(), validate.Request{MitigationReplayNotes: &notes, Root: os.Args[2], OperatorRoot: os.Args[3], HealthyBaseline: os.Args[4], Layers: validate.Compile})
+	var gaps []validate.Diagnostic
+	ds, err := validate.CompileCandidate(context.Background(), validate.Request{MitigationReplayNotes: &notes, CoverageGaps: &gaps, Replay: os.Args[5], Root: os.Args[2], OperatorRoot: os.Args[3], HealthyBaseline: os.Args[4], Layers: validate.Compile})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	if err = validate.WriteReport(os.Stdout, ds, notes...); err != nil {
+	if err = validate.WriteReport(os.Stdout, ds, gaps, notes...); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}

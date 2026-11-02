@@ -14,18 +14,31 @@ func TestDerivedClassificationsHaveSharedReceiptAndLearningRules(t *testing.T) {
 		repairCommit         string
 	}{
 		{"success", "success", func(*contractsv1alpha1.IncidentClosure) {}, "repair"},
-		{"partial", "partial", func(c *contractsv1alpha1.IncidentClosure) { c.FinalDetectorStates[0].Status = "firing" }, "repair"},
-		{"external_recovery", "external_recovery", func(c *contractsv1alpha1.IncidentClosure) {
-			c.Result.RepairActions[0].Resources[0].Name = "other"
-		}, "repair"},
+		{"verification_timeout", "failed", func(c *contractsv1alpha1.IncidentClosure) { c.FinalDetectorStates = nil }, "repair"},
 		{"cleared_without_action", "cleared_without_action", func(c *contractsv1alpha1.IncidentClosure) {
 			c.Result.RepairActions = nil
 		}, ""},
-		{"false_positive", "false_positive", func(c *contractsv1alpha1.IncidentClosure) {
+		{"failed", "failed", func(c *contractsv1alpha1.IncidentClosure) { c.Result.Status = "failed" }, "repair"},
+		{"recheck_window_incomplete", "unconfirmed", func(c *contractsv1alpha1.IncidentClosure) {
+			c.PartialDetectorStates, c.FinalDetectorStates = c.FinalDetectorStates, nil
+			c.UnconfirmedReason = contractsv1alpha1.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+		}, "repair"},
+		{"unconfirmed_failed_responder_still_fails", "failed", func(c *contractsv1alpha1.IncidentClosure) {
+			c.Result.Status = "failed"
+			c.UnconfirmedReason = contractsv1alpha1.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+		}, "repair"},
+		{"cancelled_with_repair", "success", func(c *contractsv1alpha1.IncidentClosure) { c.Result.Status = "cancelled" }, "repair"},
+		{"cancelled_without_action", "cleared_without_action", func(c *contractsv1alpha1.IncidentClosure) {
+			c.Result.Status = "cancelled"
+			c.Result.RepairActions = nil
+		}, ""},
+		{"unattributed_repair_still_succeeds", "success", func(c *contractsv1alpha1.IncidentClosure) {
+			c.Result.RepairActions[0].Resources[0].Name = "other"
+		}, "repair"},
+		{"no_root_cause_still_succeeds", "success", func(c *contractsv1alpha1.IncidentClosure) {
 			c.Result.ConfirmedRootCauses = nil
 		}, "repair"},
-		{"failed", "failed", func(c *contractsv1alpha1.IncidentClosure) { c.Result.Status = "failed" }, "repair"},
-		{"cancelled", "cancelled", func(c *contractsv1alpha1.IncidentClosure) { c.Result.Status = "cancelled" }, "repair"},
+		{"action_without_commit_succeeds", "success", func(*contractsv1alpha1.IncidentClosure) {}, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

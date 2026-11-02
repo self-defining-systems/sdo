@@ -217,3 +217,7 @@ func (c Config) MetricsSource() *contracts.MetricsSource {
 	}
 	return source
 }
+
+func rule(group string, resources []string, verbs ...string) rbacv1.PolicyRule {
+	return rbacv1.PolicyRule{APIGroups: []string{group}, Resources: resources, Verbs: verbs}
+}

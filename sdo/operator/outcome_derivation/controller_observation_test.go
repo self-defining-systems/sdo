@@ -20,7 +20,7 @@ func observationJSON(t testing.TB, request *c.ControllerObservationRequest) []by
 }
 
 func observationRequest() *c.ControllerObservationRequest {
-	return &c.ControllerObservationRequest{State: &c.ControllerState{IncidentOpen: true, IncidentRequest: &c.IncidentRequest{IncidentId: "two"}, PendingClosure: &c.IncidentClosure{Request: &c.IncidentRequest{IncidentId: "two"}, VerifiedAt: timestamppb.New(time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC))}, LastAcknowledgedIncidentId: "one"}, KnownIncidentIds: []string{"one"}, IncidentId: "two", StopOnReview: true}
+	return &c.ControllerObservationRequest{State: &c.ControllerState{IncidentOpen: true, IncidentRequest: &c.IncidentRequest{IncidentId: "two"}, PendingClosure: &c.IncidentClosure{Request: &c.IncidentRequest{IncidentId: "two"}, VerifiedAt: timestamppb.New(time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC))}, LastAcknowledgedIncidentId: "one"}, KnownIncidentIds: []string{"one"}, IncidentId: "two"}
 }
 
 func TestControllerObservationUsesGeneratedClosureState(t *testing.T) {
@@ -78,24 +78,6 @@ func TestControllerObservationCorrelatesVerifiedAndAcknowledgedIncidents(t *test
 	got = ObserveController(observationJSON(t, req))
 	if got.GetVerifiedIncidentId() != "" {
 		t.Fatal("known incident was rediscovered", got)
-	}
-}
-
-func TestControllerObservationOrdersReviewAfterVerifiedHealth(t *testing.T) {
-	req := observationRequest()
-	req.State.DetectorReviewRequired = true
-	req.State.DetectorReviewReason = "health detector is stale"
-	if got := ObserveController(observationJSON(t, req)); got.GetFailure() != nil {
-		t.Fatal("verified closure lost to later review", got)
-	}
-	req.State.PendingClosure = nil
-	got := ObserveController(observationJSON(t, req))
-	if got.GetFailure().GetCode() != c.ControllerObservationFailure_CODE_DETECTOR_REVIEW_REQUIRED {
-		t.Fatal(got)
-	}
-	req.StopOnReview = false
-	if got := ObserveController(observationJSON(t, req)); got.GetFailure() != nil {
-		t.Fatal(got)
 	}
 }
 

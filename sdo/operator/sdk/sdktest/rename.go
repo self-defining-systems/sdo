@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -169,6 +170,7 @@ func renameCorpusCase(c CorpusCase) (CorpusCase, error) {
 	}
 	for _, snapshot := range []*Snapshot{&renamed.Open, &renamed.Fixed, &renamed.Healthy} {
 		renameExactValues(snapshot, m)
+		renameGenericObjects(snapshot, m)
 	}
 	renamed.Bindings = renameBindings(c.Bindings, c.Open.NamespaceName, m)
 	renamed.PeerBindings = renameBindings(c.PeerBindings, c.Healthy.NamespaceName, m)
@@ -180,13 +182,14 @@ func renameCorpusCase(c CorpusCase) (CorpusCase, error) {
 }
 
 func renameBindings(bindings program.Bindings, namespace string, m *renameMapping) program.Bindings {
-	renamed := make(program.Bindings, len(bindings))
-	for key, ref := range bindings {
-		if ref.Namespace == namespace || ref.Namespace == "" {
+	renamed := program.Bindings{Objects: make(program.ObjectBindings, len(bindings.Objects))}
+	for key, ref := range bindings.Objects {
+		if ref.Namespace == namespace || ref.Namespace == "" && ref.Kind != "Node" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
 			ref.Name = m.value(ref.Name)
 		}
-		renamed[key] = ref
+		renamed.Objects[key] = ref
 	}
+	renamed.Values = bindings.Clone().Values
 	return renamed
 }
 
@@ -218,7 +221,7 @@ func renameSelector(selector *metav1.LabelSelector, m *renameMapping) {
 }
 
 func renameObjectRef(ref *corev1.ObjectReference, namespace string, m *renameMapping) {
-	if ref != nil && (ref.Namespace == "" || ref.Namespace == namespace) {
+	if ref != nil && (ref.Namespace == namespace || ref.Namespace == "" && ref.Kind != "Node" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster()) {
 		ref.Name = m.value(ref.Name)
 	}
 }
@@ -646,6 +649,9 @@ func renameRecordings(calls []PrimitiveCall, namespace string, m *renameMapping)
 	renamed := make([]PrimitiveCall, len(calls))
 	for index, call := range calls {
 		renamed[index] = call
+		if strings.HasPrefix(call.Method, "Scoped") || strings.HasPrefix(call.Method, "MutatingWebhookConfiguration") || strings.HasPrefix(call.Method, "ValidatingWebhookConfiguration") {
+			continue
+		}
 		var args []json.RawMessage
 		if err := json.Unmarshal(call.Arguments, &args); err != nil {
 			return nil, fmt.Errorf("recording %d %s arguments: %w", index, call.Method, err)
@@ -657,25 +663,56 @@ func renameRecordings(calls []PrimitiveCall, namespace string, m *renameMapping)
 		if err := json.Unmarshal(args[0], &ref); err != nil {
 			return nil, fmt.Errorf("recording %d %s reference: %w", index, call.Method, err)
 		}
-		if ref.Namespace == "" || ref.Namespace == namespace {
+		if ref.Namespace == namespace || ref.Namespace == "" && ref.Kind != "Node" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
 			ref.Name = m.value(ref.Name)
 		}
 		args[0], _ = json.Marshal(ref)
 		switch call.Method {
-		case "Logs":
-			if len(args) != 3 {
-				return nil, fmt.Errorf("recording %d Logs needs reference, container and duration", index)
+		case "Logs", "LogsWithOptions":
+			expected := 3
+			if call.Method == "LogsWithOptions" {
+				expected = 2
 			}
-			var container, logs string
-			if err := json.Unmarshal(args[1], &container); err != nil {
-				return nil, fmt.Errorf("recording %d Logs container: %w", index, err)
+			if len(args) != expected {
+				return nil, fmt.Errorf("recording %d %s has invalid arguments", index, call.Method)
 			}
-			args[1], _ = json.Marshal(m.exact(container))
+			if call.Method == "Logs" {
+				var container string
+				if err := json.Unmarshal(args[1], &container); err != nil {
+					return nil, err
+				}
+				args[1], _ = json.Marshal(m.exact(container))
+			} else {
+				var options corev1.PodLogOptions
+				if err := json.Unmarshal(args[1], &options); err != nil {
+					return nil, err
+				}
+				options.Container = m.exact(options.Container)
+				args[1], _ = json.Marshal(options)
+			}
 			if len(call.Result) > 0 && string(call.Result) != "null" {
+				var logs string
 				if err := json.Unmarshal(call.Result, &logs); err != nil {
-					return nil, fmt.Errorf("recording %d Logs result: %w", index, err)
+					return nil, err
 				}
 				renamed[index].Result, _ = json.Marshal(m.text(logs))
+			}
+		case "PodUsage", "NodeUsage":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("recording %d %s needs one reference", index, call.Method)
+			}
+			if len(call.Result) > 0 && string(call.Result) != "null" && call.Method == "PodUsage" {
+				var sample metricsv1beta1.PodMetrics
+				if err := json.Unmarshal(call.Result, &sample); err != nil {
+					return nil, err
+				}
+				if sample.Namespace == namespace {
+					sample.Name = m.value(sample.Name)
+				}
+				for i := range sample.Containers {
+					sample.Containers[i].Name = m.exact(sample.Containers[i].Name)
+				}
+				renamed[index].Result, _ = json.Marshal(sample)
 			}
 		case "ProbeTCP":
 			if len(args) != 2 {
@@ -728,4 +765,51 @@ func renameRecordings(calls []PrimitiveCall, namespace string, m *renameMapping)
 		renamed[index].Arguments, _ = json.Marshal(args)
 	}
 	return renamed, nil
+}
+
+// Generic fixtures undergo the same identity and port substitution as the
+// legacy typed views. Preserve unknown resource fields while renaming known
+// references; never replace the object with a typed decoding.
+func renameGenericObjects(snapshot *Snapshot, m *renameMapping) {
+	for index := range snapshot.Objects {
+		object := &snapshot.Objects[index]
+		if object.GetNamespace() != snapshot.NamespaceName {
+			continue
+		}
+		object.SetName(m.value(object.GetName()))
+		labels := object.GetLabels()
+		for key, value := range labels {
+			labels[key] = m.value(value)
+		}
+		object.SetLabels(labels)
+		renameGenericTree(object.Object, m)
+	}
+}
+func renameGenericTree(value any, m *renameMapping) {
+	switch v := value.(type) {
+	case []any:
+		for _, item := range v {
+			renameGenericTree(item, m)
+		}
+	case map[string]any:
+		for key, item := range v {
+			if key == "namespace" || key == "apiVersion" || key == "kind" {
+				continue
+			}
+			if text, ok := item.(string); ok {
+				v[key] = m.exact(text)
+				continue
+			}
+			switch key {
+			case "port", "targetPort", "containerPort", "hostPort", "nodePort", "healthCheckNodePort":
+				switch number := item.(type) {
+				case int64:
+					v[key] = int64(m.port(int32(number)))
+				case float64:
+					v[key] = float64(m.port(int32(number)))
+				}
+			}
+			renameGenericTree(item, m)
+		}
+	}
 }

@@ -66,6 +66,12 @@ message MemoryObservation {
   google.protobuf.Struct alerts = 5;
   google.protobuf.Struct usage = 6;
   map<string, google.protobuf.Struct> logs = 7;
+  // Frozen scoped observation (sdk.ScopedSnapshot JSON): declared foreign
+  // Deployments, Services, Endpoints and admission webhooks with statuses.
+  // Absent means the controller observed no scope.
+  google.protobuf.Struct scoped = 9;
+  // Frozen server-side dry-run Pod admission result (sdk.PodAdmissionResult).
+  google.protobuf.Struct pod_admission = 10;
 }
 message EvaluateRequest {
   repeated string detector_ids = 1;

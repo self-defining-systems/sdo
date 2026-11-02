@@ -4,17 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sdo.dev/operator/sdk/inputs"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"sdo.dev/operator/sdk/inputs"
+
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
 	"sdo.dev/operator/sdk"
@@ -29,7 +31,8 @@ type fakePrimitiveProber struct {
 
 type changingBaseline struct{ changes *StateChanges }
 
-func (b *changingBaseline) Observe(time.Time, bool)         {}
+func (b *changingBaseline) Observe(time.Time, bool) {}
+
 func (b *changingBaseline) Changes(time.Time) *StateChanges { return b.changes }
 
 func (p *fakePrimitiveProber) Probe(_ context.Context, ref sdk.ObjectRef, port int32, request *program.HTTPProbe) (program.ProbeResult, error) {
@@ -54,7 +57,12 @@ func TestLiveReadViewDiffsSnapshotAgainstAcceptedManifest(t *testing.T) {
 
 func TestLiveReadViewIgnoresKubernetesDefaultsAbsentFromSource(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.1", Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}}}}), SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}
+	accepted := func(service corev1.Service) corev1.Service {
+		service.Annotations = withAcceptance(t, &service, source)
+		return service
+	}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{accepted(corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.1", Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}})}}), SourceCommit: "accepted", Source: planFakeSource{source: source}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || diff.Changed {
 		t.Fatalf("Kubernetes defaults are not source drift: %+v %v", diff, err)
@@ -63,8 +71,16 @@ func TestLiveReadViewIgnoresKubernetesDefaultsAbsentFromSource(t *testing.T) {
 
 func TestLiveReadViewNormalizesSourceWithServerSideDryRun(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}
+	accepted := func(service corev1.Service) corev1.Service {
+		service.Annotations = withAcceptance(t, &service, source)
+		return service
+	}
 	called := false
 	server := newHandlerTransport(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDiscovery(writer, request) {
+			return
+		}
 		called = request.Method == http.MethodPatch && request.URL.Query().Get("fieldManager") == "sdo-deployer" && request.URL.Query().Get("dryRun") == metav1.DryRunAll && request.URL.Query().Get("force") == "true" && request.Header.Get("Content-Type") == "application/apply-patch+yaml"
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(&corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}})
@@ -74,7 +90,7 @@ func TestLiveReadViewNormalizesSourceWithServerSideDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}}}}), Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{accepted(corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}})}}), Client: client, SourceCommit: "accepted", Source: planFakeSource{source: source}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || diff.Changed || !called {
 		t.Fatalf("source was not normalized by dry run: %+v, %v, called=%v", diff, err, called)
@@ -84,6 +100,9 @@ func TestLiveReadViewNormalizesSourceWithServerSideDryRun(t *testing.T) {
 func TestLiveReadViewDiffsDeclaredLabelsAgainstSource(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"}
 	server := newHandlerTransport(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDiscovery(writer, request) {
+			return
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app", Labels: map[string]string{"app": "accepted"}}})
 	}))
@@ -102,6 +121,9 @@ func TestLiveReadViewDiffsDeclaredLabelsAgainstSource(t *testing.T) {
 func TestLiveReadViewIgnoresDeploymentRevisionStamp(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"}
 	server := newHandlerTransport(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveTestDiscovery(writer, request) {
+			return
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app"}})
 	}))
@@ -119,7 +141,7 @@ func TestLiveReadViewIgnoresDeploymentRevisionStamp(t *testing.T) {
 
 func TestLiveReadViewReportsDeletedAcceptedObject(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	view := LiveReadView{Carrier: inputs.New(clusterEvidenceSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, err: apierrors.NewNotFound(schema.GroupResource{Resource: "services"}, ref.Name)}), SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || !diff.Changed {
 		t.Fatalf("deleted source object was not drift: %+v, %v", diff, err)
@@ -139,37 +161,12 @@ func TestLiveReadViewRefreshesHealthyBaselineAfterRepair(t *testing.T) {
 	}
 }
 
-func TestLiveReadViewUsesSnapshotAndReadOnlyPrimitives(t *testing.T) {
-	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
-	client := fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}})
-	prober := &fakePrimitiveProber{}
-	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}}}}}), Client: client, Prober: prober, Context: context.Background(), Baseline: &StateChanges{Changes: []StateChange{{Kind: "Service", Name: "api", Change: StateChangeModified, Fields: []StateFieldChange{{Field: "spec.ports", Before: "80", After: "81"}}}}}}
-	if len(view.Services()) != 1 {
-		t.Fatal("snapshot was not exposed")
-	}
-	if _, err := view.Logs(pod, "", time.Minute); err != nil {
-		t.Fatalf("pod logs: %v", err)
-	}
-	if got, err := view.ProbeTCP(ref, 80); err != nil || !got.Success {
-		t.Fatalf("tcp: %+v %v", got, err)
-	}
-	if got, err := view.ProbeHTTP(ref, program.HTTPProbe{Method: "GET", Path: "/"}); err != nil || !got.Success {
-		t.Fatalf("http: %+v %v", got, err)
-	}
-	if diff, err := view.DiffAgainstBaseline(ref); err != nil || !diff.Changed || !strings.Contains(diff.Text, "spec.ports") {
-		t.Fatalf("baseline diff: %+v %v", diff, err)
-	}
-	if len(prober.calls) != 2 {
-		t.Fatalf("unexpected probes: %v", prober.calls)
-	}
-}
-
 type unavailableCapabilityProgram struct{ method string }
 
 func (p unavailableCapabilityProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "capability"}
 }
+
 func (p unavailableCapabilityProgram) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	switch p.method {
@@ -180,10 +177,11 @@ func (p unavailableCapabilityProgram) Diagnose(_ context.Context, v program.Read
 	}
 	return program.Verdict{Result: program.NoMatch}, nil
 }
+
 func TestUnavailableSweepCapabilityCannotClearFault(t *testing.T) {
 	for _, method := range []string{"prober", "baseline"} {
 		t.Run(method, func(t *testing.T) {
-			verdict := program.RunDiagnose(context.Background(), unavailableCapabilityProgram{method: method}, LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"})}, nil, time.Second)
+			verdict := program.RunDiagnose(context.Background(), unavailableCapabilityProgram{method: method}, LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"})}, program.Bindings{Objects: program.ObjectBindings{}}, time.Second)
 			if verdict.Result != program.Unknown {
 				t.Fatalf("unavailable %s cleared fault: %+v", method, verdict)
 			}

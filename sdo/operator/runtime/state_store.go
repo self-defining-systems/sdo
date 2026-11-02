@@ -42,14 +42,15 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	// reject null (a cold incident surfaces no playbook and no outcome).
 	copy.Findings = append(make([]sdk.Finding, 0, len(request.Findings)), request.Findings...)
 	copy.DriftEvents = append([]sdk.DriftEvent(nil), request.DriftEvents...)
+	copy.NamespaceOnboarding = cloneNamespaceOnboarding(request.NamespaceOnboarding)
+	copy.DisabledSetupDetectors = cloneDisabledSetupDetectors(request.DisabledSetupDetectors)
 	copy.DetectorHistory = cloneEvaluations(request.DetectorHistory)
 	copy.SurfacedPlaybooks = append(make([]SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)), request.SurfacedPlaybooks...)
 	copy.RelevantOutcomes = append(make([]PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)), request.RelevantOutcomes...)
 	copy.StateChanges = cloneStateChanges(request.StateChanges)
-	if request.FollowUp != nil {
-		followUp := *request.FollowUp
-		copy.FollowUp = &followUp
-	}
+	copy.PlaybookCoverage = cloneCoverage(request.PlaybookCoverage)
+	copy.PriorStages = cloneStageReports(request.PriorStages)
+	copy.PriorResponseProgress = cloneResponseProgress(request.PriorResponseProgress)
 	return &copy
 }
 
@@ -69,6 +70,8 @@ func cloneIncidentResult(result *IncidentResult) *IncidentResult {
 		return nil
 	}
 	copy := *result
+	copy.DriftReprompt = cloneDriftReprompt(result.DriftReprompt)
+	copy.UnresolvedFindings = append([]sdk.Finding(nil), result.UnresolvedFindings...)
 	copy.DriftEvents = driftEventsState(driftEventsContract(result.DriftEvents))
 	copy.ConfirmedRootCauses = append(make([]ConfirmedRootCause, 0, len(result.ConfirmedRootCauses)), result.ConfirmedRootCauses...)
 	for index := range copy.ConfirmedRootCauses {
@@ -106,24 +109,18 @@ func cloneIncidentClosure(closure *IncidentClosure) *IncidentClosure {
 		return nil
 	}
 	copy := *closure
+	copy.StatePersistenceFailure = clonePersistenceFailure(closure.StatePersistenceFailure)
 	copy.Request = *cloneIncidentRequest(&closure.Request)
 	copy.Result = cloneIncidentResult(closure.Result)
 	copy.FinalDetectorStates = cloneEvaluations(closure.FinalDetectorStates)
 	copy.IncidentDetectorStates = cloneEvaluations(closure.IncidentDetectorStates)
+	copy.PartialDetectorStates = cloneEvaluations(closure.PartialDetectorStates)
 	copy.DetectorTimeline = cloneTimeline(closure.DetectorTimeline)
+	copy.SourceCheckNotes = append([]string(nil), closure.SourceCheckNotes...)
 	copy.FinalStateChanges = cloneStateChanges(closure.FinalStateChanges)
-	if closure.ObservedStateChanges != nil {
-		copy.ObservedStateChanges = append(
-			make([]ObservedStateChange, 0, len(closure.ObservedStateChanges)), closure.ObservedStateChanges...,
-		)
-	}
 	if closure.HealthClearedAt != nil {
 		clearedAt := *closure.HealthClearedAt
 		copy.HealthClearedAt = &clearedAt
-	}
-	if closure.DetectorReviewRequiredAt != nil {
-		reviewAt := *closure.DetectorReviewRequiredAt
-		copy.DetectorReviewRequiredAt = &reviewAt
 	}
 	return &copy
 }

@@ -38,6 +38,7 @@ func (s *ConfigMapStateStore) stageEvidence(state *contracts.ControllerState) (*
 	document := proto.Clone(state).(*contracts.ControllerState)
 	compactRequest := func(request *contracts.IncidentRequest) {
 		if request != nil {
+			request.PriorResponseProgress = nil
 			request.InitialProgramRuns = nil
 			request.PreparedAgentTask = ""
 		}

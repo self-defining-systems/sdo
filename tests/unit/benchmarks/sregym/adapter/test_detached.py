@@ -64,8 +64,9 @@ def test_detached_survives_parent_shell_sigkill_and_record_abort_quiesces(tmp_pa
         assert detached.status(record_path) == record
         assert all(ref.alive() for ref in refs)
         wait_for(
-            lambda: "worker ready" in record.stdout_path.read_text()
-            and "worker stderr" in record.stderr_path.read_text()
+            lambda: (
+                "worker ready" in record.stdout_path.read_text() and "worker stderr" in record.stderr_path.read_text()
+            )
         )
         seed_state(record.state_path)
         ops = AbortOps()

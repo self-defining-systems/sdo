@@ -33,6 +33,39 @@ PROBLEM_A = "missing_configmap_hotel_reservation"
 PROBLEM_B = "missing_configmap_mongodb_rate_hotel_reservation"
 
 
+def test_ttm_excludes_provider_wait_without_double_subtracting_judge_wait(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from benchmarks.sregym.analysis.incident_cost import with_provider_waits
+    from benchmarks.sregym.protocol.provider_capacity import ProviderWaitEvidence, ProviderWaitInterval
+
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with (tmp_path / "sdo_ALL_results.csv").open("w") as stream:
+        writer = csv.DictWriter(
+            stream, fieldnames=["fault_injected_at", "diagnosis_submitted_at", "mitigation_submitted_at", "TTL"]
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "fault_injected_at": start.timestamp(),
+                "diagnosis_submitted_at": start.timestamp() + 20,
+                "mitigation_submitted_at": start.timestamp() + 100,
+                "TTL": 40,
+            }
+        )
+    verdict = read_verdict(tmp_path)
+    assert verdict is not None
+    verdict = replace(verdict, last_mitigation_seconds=90)
+    interval = ProviderWaitInterval(
+        kind="rate_limit", started_at=start + timedelta(seconds=10), finished_at=start + timedelta(seconds=60)
+    )
+    verdict = with_provider_waits(verdict, tmp_path, evidence=ProviderWaitEvidence((interval,)))
+    assert verdict.rate_limit_wait_seconds == 50
+    assert verdict.judge_excluded_seconds == 80
+    assert verdict.ttm_seconds == 50  # raw 100 - judge 20 - nonoverlapping provider wait 30
+    assert verdict.last_mitigation_seconds == 90
+
+
 def _usage(input_tokens: int, output_tokens: int, cached: int = 0) -> dict[str, int]:
     return {"input_tokens": input_tokens, "cached_input_tokens": cached, "output_tokens": output_tokens}
 
@@ -975,6 +1008,23 @@ def test_native_receipt_responder_usage_comes_from_the_ledger_closure_result() -
     assert receipt_responder_usage({}).input_tokens == 0
 
 
+def test_stage_reports_go_no_repair_counts_and_actual_declines(pipeline: Path) -> None:
+    receipt = next(
+        pipeline.glob("stage_0_*/runs/*/worker_0/results/sdo_codex/*/run_1/sdo_production_receipt_strict.json")
+    )
+    document = json.loads(receipt.read_text())
+    document["native_ledger"] = {
+        "reflection_no_repair_count": 2,
+        "reflection_decision": {"decline_reason": "no_recorded_repair"},
+    }
+    receipt.write_text(json.dumps(document))
+    stages = load_sdo_pipeline(pipeline)
+    assert stages[0].reflection_no_repair_count == 2
+    assert stages[0].no_repair_declined is True
+    assert stages[1].reflection_no_repair_count is None
+    assert stages[1].no_repair_declined is None
+
+
 def test_command_execution_events_supply_the_mutation_floor(tmp_path: Path) -> None:
     """Synthetic completed-item events use execution times, not the later export timestamp."""
     rollout = Path(__file__).parent / "fixtures" / "command_execution.jsonl"
@@ -1019,3 +1069,57 @@ def test_mutation_floor_ignores_incomplete_or_malformed_command_items(tmp_path: 
     rollout.write_text(json.dumps(record) + "\n", encoding="utf-8")
     assert first_mutation_at([rollout], after=1790510410.0) is None
     assert last_mutation_done_at([rollout], after=1790510410.0, before=1790510470.0) is None
+
+
+def test_stage_reflection_total_includes_every_logged_turn_of_its_incident(tmp_path: Path) -> None:
+    import hashlib
+
+    incident = "incident-9"
+    run = tmp_path / "run"
+    log = (
+        run / "sdo_runtime" / "sessions" / hashlib.sha256(incident.encode()).hexdigest()[:32] / "reflection-usage.jsonl"
+    )
+    log.parent.mkdir(parents=True)
+    turns = [_usage(100, 10), _usage(200, 20), _usage(50, 5)]
+    log.write_text("".join(json.dumps({"session_id": "s", "usage": turn}) + "\n" for turn in turns), encoding="utf-8")
+    from benchmarks.sregym.analysis.incident_cost import logged_reflection_cost
+
+    receipt = {"reflection_usage": turns[-1]}
+    usage = _reflection_usage(receipt, [], None, logged_reflection_cost(run, incident))
+    assert (usage.input_tokens, usage.output_tokens) == (350, 35)
+    # A receipt that already totals the turns is kept.
+    assert _reflection_usage({"reflection_usage": _usage(350, 35)}, [], None, None).input_tokens == 350
+
+
+def _reflection_log(run: Path, incident: str, turns: list[dict[str, int]]) -> None:
+    import hashlib
+
+    digest = hashlib.sha256(incident.encode()).hexdigest()[:32]
+    log = run / "sdo_runtime" / "sessions" / digest / "reflection-usage.jsonl"
+    log.parent.mkdir(parents=True)
+    log.write_text("".join(json.dumps({"session_id": "s", "usage": turn}) + "\n" for turn in turns), encoding="utf-8")
+
+
+@pytest.mark.parametrize("mode", ["resume", "fresh"])
+def test_reflection_cost_keeps_a_failed_turn_the_exported_rollouts_lack(tmp_path: Path, mode: str) -> None:
+    """Two reflection turns, the first failed: its rollout turn never completed, so only the usage log has it."""
+
+    from benchmarks.sregym.analysis.incident_cost import logged_reflection_cost
+
+    failed, retried = _usage(700, 7), _usage(300, 20)
+    run = tmp_path / "run"
+    _reflection_log(run, "incident-3", [failed, retried])
+    responder_rollout = tmp_path / "rollout-responder.jsonl"
+    own_rollout = tmp_path / "rollout-reflection.jsonl"
+    if mode == "resume":
+        _token_turns(responder_rollout, [[_usage(500, 10)], [retried]])
+        own = None
+    else:
+        _token_turns(responder_rollout, [[_usage(500, 10)]])
+        _token_turns(own_rollout, [[retried]])
+        own = [own_rollout]
+    receipt = {"reflection_session_mode": mode, "reflection_usage": retried}
+
+    usage = _reflection_usage(receipt, [responder_rollout], own, logged_reflection_cost(run, "incident-3"))
+
+    assert (usage.input_tokens, usage.output_tokens) == (1000, 27)

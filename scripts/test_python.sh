@@ -10,21 +10,56 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 echo "Running Python tests..."
 cd "$PROJECT_ROOT"
 
+# xdist workers swallow a missing-prerequisite error as an INTERNALERROR with no
+# reason; fail here, once, with the remedy printed.
+python3 scripts/init_test_prereqs.py --check
+
 # Build the benchmark protocol tools once for this invocation, from this checkout.
 # xdist workers otherwise independently compile/link the same executables on their
 # first receipt/submission test. Only compiler entries persist; never trust a
 # restored executable from another source revision.
 TOOLS="$(mktemp -d)"
 trap 'rm -rf "$TOOLS"' EXIT
+builds=()
 for spec in 'native_receipt_go sdo-native-receipt' 'submission_go sdo-submission-guard'; do
     read -r module binary <<< "$spec"
-    (cd "benchmarks/sregym/protocol/$module" && go build -o "$TOOLS/$binary" "./cmd/$binary")
+    (cd "benchmarks/sregym/protocol/$module" && go build -o "$TOOLS/$binary" "./cmd/$binary") &
+    builds+=($!)
 done
+for build in "${builds[@]}"; do wait "$build"; done
+echo "==> protocol tools built after ${SECONDS}s"
 export SDO_NATIVE_RECEIPT_BIN="$TOOLS/sdo-native-receipt"
 export SDO_SUBMISSION_GUARD_BIN="$TOOLS/sdo-submission-guard"
 
-# Parallelize across cores with pytest-xdist; pytest-cov combines the per-worker
+# Bound shared-host parallelism; pytest-cov combines the per-worker
 # coverage so the fail_under gate still sees the whole suite. Override with
 # SDO_PYTEST_WORKERS (e.g. 0 to run in-process for a targeted local run).
-WORKERS="${SDO_PYTEST_WORKERS:-auto}"
-uv run --extra test pytest -n "$WORKERS" --cov --cov-report=term-missing "$@" tests
+if [[ -v SDO_PYTEST_WORKERS ]]; then
+    WORKERS="$SDO_PYTEST_WORKERS"
+else
+    WORKERS="$(nproc)"
+    if (( WORKERS > 4 )); then
+        WORKERS=4
+    fi
+fi
+# The two hosted Python runners share the suite without adding another job.
+# Every path outside fastloop belongs to core, including new test directories.
+# Shards publish raw data; Required PR CI combines it before enforcing coverage.
+paths=(tests)
+coverage=(--cov --cov-report=term-missing)
+case "${SDO_PYTEST_SHARD:-}" in
+    "") ;;
+    core)
+        paths=(--ignore=tests/unit/benchmarks/sregym/fastloop tests)
+        coverage=(--cov --cov-report= --cov-fail-under=0)
+        ;;
+    fastloop)
+        paths=(tests/unit/benchmarks/sregym/fastloop)
+        coverage=(--cov --cov-report= --cov-fail-under=0)
+        ;;
+    *) echo "unknown Python test shard: $SDO_PYTEST_SHARD" >&2; exit 2 ;;
+esac
+# Tach's plugin only selects impacted tests when asked (--tach); otherwise it
+# adds about ten seconds of git analysis to every xdist worker's collection.
+# Module boundaries are enforced by `tach check` in check_errors.sh.
+uv run --extra test pytest -p no:tach -n "$WORKERS" "${coverage[@]}" "$@" "${paths[@]}"

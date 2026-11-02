@@ -6,7 +6,6 @@ import pytest
 
 from benchmarks.sregym.adapter import submission
 from benchmarks.sregym.adapter.submission import SubmissionBridgeError, submit_solution
-from sdo.agents.responder import IncidentStatusReport, IncidentStatusState, VerifyBurstResult
 
 
 class Response:
@@ -166,60 +165,18 @@ def test_repeated_mitigation_after_the_problem_ended_returns_at_once_without_res
     assert result == {"mitigation": {"status": "already_submitted"}, "done": {"status": terminal_stage}}
 
 
-def _status(state: IncidentStatusState) -> IncidentStatusReport:
-    burst = None
-    if state != IncidentStatusState.UNAVAILABLE:
-        verdict = {"scenario": "search-hotels", "healthy": state == IncidentStatusState.HEALTHY, "qualified": True}
-        if state == IncidentStatusState.UNHEALTHY:
-            verdict["recentFailures"] = ["iteration 3 step search GET /hotels: connection refused"]
-        burst = VerifyBurstResult.model_validate(
-            {"workload": "verify", "healthy": state == IncidentStatusState.HEALTHY, "verdicts": [verdict]}
-        )
-    return IncidentStatusReport(state=state, burst=burst, detail="test")
-
-
-@pytest.mark.parametrize(
-    ("state", "submitted", "exit_code"),
-    [
-        (IncidentStatusState.HEALTHY, True, 0),
-        (IncidentStatusState.UNAVAILABLE, True, 0),
-        (IncidentStatusState.UNHEALTHY, False, submission.EXIT_VERIFICATION_FAILED),
-    ],
-)
-def test_mitigation_is_submitted_only_after_incident_status_allows_it(
-    state: IncidentStatusState,
-    submitted: bool,
-    exit_code: int,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    calls: list[str] = []
+@pytest.mark.parametrize("phase", ["diagnosis", "mitigation"])
+def test_main_submits_each_phase_without_a_status_gate(phase: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str]] = []
     monkeypatch.setenv("SDO_SREGYM_API_BASE", "http://bridge:18000")
     monkeypatch.setattr(
-        submission, "submit_solution", lambda solution, **_: calls.append(solution) or {"done": {"status": "done"}}
+        submission,
+        "submit_solution",
+        lambda solution, *, phase, **_: calls.append((phase, solution)) or {"done": {"status": "done"}},
     )
 
-    code = submission.main(["mitigation", "removed the stray selector label"], status_check=lambda: _status(state))
-
-    assert code == exit_code
-    assert calls == (["removed the stray selector label"] if submitted else [])
-    if not submitted:
-        error = capsys.readouterr().err
-        assert "not submitted" in error
-        assert "GET /hotels: connection refused" in error
-
-
-def test_diagnosis_is_not_gated_on_incident_status(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-    monkeypatch.setenv("SDO_SREGYM_API_BASE", "http://bridge:18000")
-    monkeypatch.setattr(submission, "submit_solution", lambda solution, **_: calls.append(solution) or {})
-
-    code = submission.main(
-        ["diagnosis", "frontend selector matches no pods"], status_check=lambda: pytest.fail("diagnosis ran the gate")
-    )
-
-    assert code == 0
-    assert calls == ["frontend selector matches no pods"]
+    assert submission.main([phase, "removed the stray selector label"]) == 0
+    assert calls == [(phase, "removed the stray selector label")]
 
 
 @pytest.mark.parametrize("stage", [42, ["mitigation"], {"bad": "stage"}])

@@ -43,6 +43,14 @@ def convert_recording(paths: list[Path], *, role: Role, file_edits: Path | None 
             )
         if not isinstance(answer, dict):
             raise ValueError(f"no structured Codex answer in {path}")
+        if set(answer) == {"incident_result", "reflection"}:
+            # Responder and reflection turns share one wrapper; the script holds the role's own branch.
+            branch = "incident_result" if role == "responder" else "reflection"
+            answer = (
+                answer[branch]
+                if isinstance(answer[branch], dict)
+                else next((value for value in answer.values() if isinstance(value, dict)), answer)
+            )
         turns.append(ScriptTurn(role=role, index=payload["turn_index"], steps=steps, result=answer))
     turns.sort(key=lambda turn: turn.index)
     if file_edits is not None:

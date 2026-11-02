@@ -3,16 +3,28 @@ import datetime
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import struct_pb2 as _struct_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
+from sdodev.contracts.v1alpha1 import controller_config_pb2 as _controller_config_pb2
+from google.protobuf import duration_pb2 as _duration_pb2
 from sdodev.contracts.v1alpha1 import common_pb2 as _common_pb2
 from sdodev.contracts.v1alpha1 import program_pb2 as _program_pb2
 from sdodev.contracts.v1alpha1 import traffic_pb2 as _traffic_pb2
 from google.protobuf.internal import containers as _containers
+from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
 from collections.abc import Iterable as _Iterable, Mapping as _Mapping
 from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
+
+class ClosureUnconfirmedReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED: _ClassVar[ClosureUnconfirmedReason]
+    CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE: _ClassVar[ClosureUnconfirmedReason]
+    CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE: _ClassVar[ClosureUnconfirmedReason]
+CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED: ClosureUnconfirmedReason
+CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE: ClosureUnconfirmedReason
+CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE: ClosureUnconfirmedReason
 
 class Finding(_message.Message):
     __slots__ = ("detector_id", "rule_id", "status", "severity", "summary", "evidence", "primary_resource", "related_resources", "playbook_ids", "parameter_bindings", "fingerprint", "metadata")
@@ -102,18 +114,20 @@ class DriftEvidence(_message.Message):
     def __init__(self, kind: _Optional[str] = ..., observation: _Optional[str] = ...) -> None: ...
 
 class DetectorEvaluation(_message.Message):
-    __slots__ = ("detector_id", "evaluated_at", "status", "fingerprints", "error")
+    __slots__ = ("detector_id", "evaluated_at", "status", "fingerprints", "error", "reason")
     DETECTOR_ID_FIELD_NUMBER: _ClassVar[int]
     EVALUATED_AT_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
     detector_id: str
     evaluated_at: _timestamp_pb2.Timestamp
     status: str
     fingerprints: _containers.RepeatedScalarFieldContainer[str]
     error: str
-    def __init__(self, detector_id: _Optional[str] = ..., evaluated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., status: _Optional[str] = ..., fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ...) -> None: ...
+    reason: str
+    def __init__(self, detector_id: _Optional[str] = ..., evaluated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., status: _Optional[str] = ..., fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class SurfacedPlaybook(_message.Message):
     __slots__ = ("playbook_id", "parameter_bindings")
@@ -159,16 +173,20 @@ class StateFieldChange(_message.Message):
     def __init__(self, field: _Optional[str] = ..., before: _Optional[str] = ..., after: _Optional[str] = ...) -> None: ...
 
 class StateChange(_message.Message):
-    __slots__ = ("kind", "name", "change", "fields")
+    __slots__ = ("kind", "name", "change", "fields", "api_version", "namespace")
     KIND_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     CHANGE_FIELD_NUMBER: _ClassVar[int]
     FIELDS_FIELD_NUMBER: _ClassVar[int]
+    API_VERSION_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     kind: str
     name: str
     change: str
     fields: _containers.RepeatedCompositeFieldContainer[StateFieldChange]
-    def __init__(self, kind: _Optional[str] = ..., name: _Optional[str] = ..., change: _Optional[str] = ..., fields: _Optional[_Iterable[_Union[StateFieldChange, _Mapping]]] = ...) -> None: ...
+    api_version: str
+    namespace: str
+    def __init__(self, kind: _Optional[str] = ..., name: _Optional[str] = ..., change: _Optional[str] = ..., fields: _Optional[_Iterable[_Union[StateFieldChange, _Mapping]]] = ..., api_version: _Optional[str] = ..., namespace: _Optional[str] = ...) -> None: ...
 
 class StateChanges(_message.Message):
     __slots__ = ("baseline_at", "observed_at", "changes", "omitted", "unobserved_kinds")
@@ -183,32 +201,6 @@ class StateChanges(_message.Message):
     omitted: int
     unobserved_kinds: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, baseline_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., changes: _Optional[_Iterable[_Union[StateChange, _Mapping]]] = ..., omitted: _Optional[int] = ..., unobserved_kinds: _Optional[_Iterable[str]] = ...) -> None: ...
-
-class ObservedStateChange(_message.Message):
-    __slots__ = ("kind", "name", "first_observed_at")
-    KIND_FIELD_NUMBER: _ClassVar[int]
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    FIRST_OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
-    kind: str
-    name: str
-    first_observed_at: _timestamp_pb2.Timestamp
-    def __init__(self, kind: _Optional[str] = ..., name: _Optional[str] = ..., first_observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
-
-class FollowUpContext(_message.Message):
-    __slots__ = ("original_incident_id", "parent_incident_id", "attempt", "max_follow_ups", "prior_responder_summary", "drift_labels_only")
-    ORIGINAL_INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
-    PARENT_INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
-    MAX_FOLLOW_UPS_FIELD_NUMBER: _ClassVar[int]
-    PRIOR_RESPONDER_SUMMARY_FIELD_NUMBER: _ClassVar[int]
-    DRIFT_LABELS_ONLY_FIELD_NUMBER: _ClassVar[int]
-    original_incident_id: str
-    parent_incident_id: str
-    attempt: int
-    max_follow_ups: int
-    prior_responder_summary: str
-    drift_labels_only: bool
-    def __init__(self, original_incident_id: _Optional[str] = ..., parent_incident_id: _Optional[str] = ..., attempt: _Optional[int] = ..., max_follow_ups: _Optional[int] = ..., prior_responder_summary: _Optional[str] = ..., drift_labels_only: _Optional[bool] = ...) -> None: ...
 
 class MemoryWatch(_message.Message):
     __slots__ = ("api_version", "kind")
@@ -261,20 +253,22 @@ class MemoryPlaybook(_message.Message):
     def __init__(self, id: _Optional[str] = ..., markdown: _Optional[str] = ..., scripts: _Optional[_Iterable[_Union[MemoryScript, _Mapping]]] = ...) -> None: ...
 
 class OperationalMemorySnapshot(_message.Message):
-    __slots__ = ("accepted_commit", "goal_markdown", "architecture_markdown", "playbook_index_markdown", "detectors", "playbooks")
+    __slots__ = ("code_path", "accepted_commit", "goal_markdown", "architecture_markdown", "playbook_index_markdown", "detectors", "playbooks")
+    CODE_PATH_FIELD_NUMBER: _ClassVar[int]
     ACCEPTED_COMMIT_FIELD_NUMBER: _ClassVar[int]
     GOAL_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     ARCHITECTURE_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     PLAYBOOK_INDEX_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     DETECTORS_FIELD_NUMBER: _ClassVar[int]
     PLAYBOOKS_FIELD_NUMBER: _ClassVar[int]
+    code_path: _controller_config_pb2.CodePathConfig
     accepted_commit: str
     goal_markdown: str
     architecture_markdown: str
     playbook_index_markdown: str
     detectors: _containers.RepeatedCompositeFieldContainer[MemoryDetector]
     playbooks: _containers.RepeatedCompositeFieldContainer[MemoryPlaybook]
-    def __init__(self, accepted_commit: _Optional[str] = ..., goal_markdown: _Optional[str] = ..., architecture_markdown: _Optional[str] = ..., playbook_index_markdown: _Optional[str] = ..., detectors: _Optional[_Iterable[_Union[MemoryDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[MemoryPlaybook, _Mapping]]] = ...) -> None: ...
+    def __init__(self, code_path: _Optional[_Union[_controller_config_pb2.CodePathConfig, _Mapping]] = ..., accepted_commit: _Optional[str] = ..., goal_markdown: _Optional[str] = ..., architecture_markdown: _Optional[str] = ..., playbook_index_markdown: _Optional[str] = ..., detectors: _Optional[_Iterable[_Union[MemoryDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[MemoryPlaybook, _Mapping]]] = ...) -> None: ...
 
 class ProposedGoSource(_message.Message):
     __slots__ = ("name", "content")
@@ -366,9 +360,46 @@ class MetricsSource(_message.Message):
     otlp_metrics_url: str
     def __init__(self, query_url: _Optional[str] = ..., annotated_pod_scraping: _Optional[bool] = ..., otlp_metrics_url: _Optional[str] = ...) -> None: ...
 
+class DisabledSetupDetector(_message.Message):
+    __slots__ = ("detector_id", "accepted_revision", "fingerprints", "disabled_at", "reason")
+    DETECTOR_ID_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_REVISION_FIELD_NUMBER: _ClassVar[int]
+    FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    DISABLED_AT_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    detector_id: str
+    accepted_revision: str
+    fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    disabled_at: _timestamp_pb2.Timestamp
+    reason: str
+    def __init__(self, detector_id: _Optional[str] = ..., accepted_revision: _Optional[str] = ..., fingerprints: _Optional[_Iterable[str]] = ..., disabled_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class NamespaceOnboarding(_message.Message):
+    __slots__ = ("disabled_setup_detectors", "namespace", "accepted_commit", "established_at", "objects", "environment_objects")
+    DISABLED_SETUP_DETECTORS_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_COMMIT_FIELD_NUMBER: _ClassVar[int]
+    ESTABLISHED_AT_FIELD_NUMBER: _ClassVar[int]
+    OBJECTS_FIELD_NUMBER: _ClassVar[int]
+    ENVIRONMENT_OBJECTS_FIELD_NUMBER: _ClassVar[int]
+    disabled_setup_detectors: _containers.RepeatedCompositeFieldContainer[DisabledSetupDetector]
+    namespace: str
+    accepted_commit: str
+    established_at: _timestamp_pb2.Timestamp
+    objects: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    environment_objects: _containers.RepeatedCompositeFieldContainer[InstallEnvironmentObject]
+    def __init__(self, disabled_setup_detectors: _Optional[_Iterable[_Union[DisabledSetupDetector, _Mapping]]] = ..., namespace: _Optional[str] = ..., accepted_commit: _Optional[str] = ..., established_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., objects: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., environment_objects: _Optional[_Iterable[_Union[InstallEnvironmentObject, _Mapping]]] = ...) -> None: ...
+
+class InstallEnvironmentObject(_message.Message):
+    __slots__ = ("ref", "digest")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    DIGEST_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    digest: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., digest: _Optional[str] = ...) -> None: ...
+
 class IncidentRequest(_message.Message):
-    __slots__ = ("metrics_source", "schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "follow_up", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "fast_path_summary", "prepared_agent_task", "prior_stages")
-    METRICS_SOURCE_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "prepared_agent_task", "observation_generation", "playbook_coverage", "namespace_onboarding", "prior_stages", "compaction", "prior_response_progress", "disabled_setup_detectors", "metrics_source")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -385,15 +416,19 @@ class IncidentRequest(_message.Message):
     CANCELLATION_TOKEN_FIELD_NUMBER: _ClassVar[int]
     REPAIR_POLICY_FIELD_NUMBER: _ClassVar[int]
     STATE_CHANGES_FIELD_NUMBER: _ClassVar[int]
-    FOLLOW_UP_FIELD_NUMBER: _ClassVar[int]
     MEMORY_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     INITIAL_PROGRAM_RUNS_FIELD_NUMBER: _ClassVar[int]
     MAX_RESPONSE_LOOPS_FIELD_NUMBER: _ClassVar[int]
     DRIFT_EVENTS_FIELD_NUMBER: _ClassVar[int]
-    FAST_PATH_SUMMARY_FIELD_NUMBER: _ClassVar[int]
     PREPARED_AGENT_TASK_FIELD_NUMBER: _ClassVar[int]
+    OBSERVATION_GENERATION_FIELD_NUMBER: _ClassVar[int]
+    PLAYBOOK_COVERAGE_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_ONBOARDING_FIELD_NUMBER: _ClassVar[int]
     PRIOR_STAGES_FIELD_NUMBER: _ClassVar[int]
-    metrics_source: MetricsSource
+    COMPACTION_FIELD_NUMBER: _ClassVar[int]
+    PRIOR_RESPONSE_PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    DISABLED_SETUP_DETECTORS_FIELD_NUMBER: _ClassVar[int]
+    METRICS_SOURCE_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     application: str
     namespace: str
@@ -410,15 +445,36 @@ class IncidentRequest(_message.Message):
     cancellation_token: str
     repair_policy: str
     state_changes: StateChanges
-    follow_up: FollowUpContext
     memory_snapshot: OperationalMemorySnapshot
     initial_program_runs: _containers.RepeatedCompositeFieldContainer[_program_pb2.ProgramRun]
     max_response_loops: int
     drift_events: _containers.RepeatedCompositeFieldContainer[DriftEvent]
-    fast_path_summary: str
     prepared_agent_task: str
+    observation_generation: str
+    playbook_coverage: _program_pb2.PlaybookCoverage
+    namespace_onboarding: NamespaceOnboarding
     prior_stages: _containers.RepeatedCompositeFieldContainer[StageReport]
-    def __init__(self, metrics_source: _Optional[_Union[MetricsSource, _Mapping]] = ..., schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., follow_up: _Optional[_Union[FollowUpContext, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., fast_path_summary: _Optional[str] = ..., prepared_agent_task: _Optional[str] = ..., prior_stages: _Optional[_Iterable[_Union[StageReport, _Mapping]]] = ...) -> None: ...
+    compaction: _containers.RepeatedScalarFieldContainer[str]
+    prior_response_progress: _containers.RepeatedCompositeFieldContainer[ResponseProgress]
+    disabled_setup_detectors: _containers.RepeatedCompositeFieldContainer[DisabledSetupDetector]
+    metrics_source: MetricsSource
+    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., prepared_agent_task: _Optional[str] = ..., observation_generation: _Optional[str] = ..., playbook_coverage: _Optional[_Union[_program_pb2.PlaybookCoverage, _Mapping]] = ..., namespace_onboarding: _Optional[_Union[NamespaceOnboarding, _Mapping]] = ..., prior_stages: _Optional[_Iterable[_Union[StageReport, _Mapping]]] = ..., compaction: _Optional[_Iterable[str]] = ..., prior_response_progress: _Optional[_Iterable[_Union[ResponseProgress, _Mapping]]] = ..., disabled_setup_detectors: _Optional[_Iterable[_Union[DisabledSetupDetector, _Mapping]]] = ..., metrics_source: _Optional[_Union[MetricsSource, _Mapping]] = ...) -> None: ...
+
+class ResponseProgress(_message.Message):
+    __slots__ = ("incident_id", "successful_actions", "blockers", "error", "truncated", "omitted_episodes")
+    INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
+    SUCCESSFUL_ACTIONS_FIELD_NUMBER: _ClassVar[int]
+    BLOCKERS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    OMITTED_EPISODES_FIELD_NUMBER: _ClassVar[int]
+    incident_id: str
+    successful_actions: _containers.RepeatedCompositeFieldContainer[RepairActionReceipt]
+    blockers: _containers.RepeatedCompositeFieldContainer[_program_pb2.RolloutPending]
+    error: str
+    truncated: bool
+    omitted_episodes: int
+    def __init__(self, incident_id: _Optional[str] = ..., successful_actions: _Optional[_Iterable[_Union[RepairActionReceipt, _Mapping]]] = ..., blockers: _Optional[_Iterable[_Union[_program_pb2.RolloutPending, _Mapping]]] = ..., error: _Optional[str] = ..., truncated: _Optional[bool] = ..., omitted_episodes: _Optional[int] = ...) -> None: ...
 
 class RootCauseEvidence(_message.Message):
     __slots__ = ("kind", "source", "observation")
@@ -474,7 +530,7 @@ class VerificationEvidence(_message.Message):
     def __init__(self, name: _Optional[str] = ..., passed: _Optional[bool] = ..., details: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class UsageMetrics(_message.Message):
-    __slots__ = ("llm_calls", "input_tokens", "output_tokens", "cached_input_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cache_write_1h_input_tokens", "uncached_input_tokens", "reasoning_output_tokens", "model_requests", "total_cost_usd")
+    __slots__ = ("llm_calls", "input_tokens", "output_tokens", "cached_input_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cache_write_1h_input_tokens", "uncached_input_tokens", "reasoning_output_tokens", "model_requests", "total_cost_usd", "partial")
     LLM_CALLS_FIELD_NUMBER: _ClassVar[int]
     INPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
@@ -486,6 +542,7 @@ class UsageMetrics(_message.Message):
     REASONING_OUTPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
     MODEL_REQUESTS_FIELD_NUMBER: _ClassVar[int]
     TOTAL_COST_USD_FIELD_NUMBER: _ClassVar[int]
+    PARTIAL_FIELD_NUMBER: _ClassVar[int]
     llm_calls: int
     input_tokens: int
     output_tokens: int
@@ -497,7 +554,8 @@ class UsageMetrics(_message.Message):
     reasoning_output_tokens: int
     model_requests: int
     total_cost_usd: float
-    def __init__(self, llm_calls: _Optional[int] = ..., input_tokens: _Optional[int] = ..., output_tokens: _Optional[int] = ..., cached_input_tokens: _Optional[int] = ..., cache_read_input_tokens: _Optional[int] = ..., cache_write_input_tokens: _Optional[int] = ..., cache_write_1h_input_tokens: _Optional[int] = ..., uncached_input_tokens: _Optional[int] = ..., reasoning_output_tokens: _Optional[int] = ..., model_requests: _Optional[int] = ..., total_cost_usd: _Optional[float] = ...) -> None: ...
+    partial: bool
+    def __init__(self, llm_calls: _Optional[int] = ..., input_tokens: _Optional[int] = ..., output_tokens: _Optional[int] = ..., cached_input_tokens: _Optional[int] = ..., cache_read_input_tokens: _Optional[int] = ..., cache_write_input_tokens: _Optional[int] = ..., cache_write_1h_input_tokens: _Optional[int] = ..., uncached_input_tokens: _Optional[int] = ..., reasoning_output_tokens: _Optional[int] = ..., model_requests: _Optional[int] = ..., total_cost_usd: _Optional[float] = ..., partial: _Optional[bool] = ...) -> None: ...
 
 class TimingMetrics(_message.Message):
     __slots__ = ("started_at", "completed_at")
@@ -508,7 +566,7 @@ class TimingMetrics(_message.Message):
     def __init__(self, started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class RepairActionReceipt(_message.Message):
-    __slots__ = ("action_id", "kind", "target", "resources", "summary", "details", "started_at", "completed_at", "success", "reversible")
+    __slots__ = ("action_id", "kind", "target", "resources", "summary", "details", "started_at", "completed_at", "success", "reversible", "failure_reason", "owners", "script_digest")
     ACTION_ID_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     TARGET_FIELD_NUMBER: _ClassVar[int]
@@ -519,6 +577,9 @@ class RepairActionReceipt(_message.Message):
     COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     REVERSIBLE_FIELD_NUMBER: _ClassVar[int]
+    FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
+    OWNERS_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_DIGEST_FIELD_NUMBER: _ClassVar[int]
     action_id: str
     kind: str
     target: str
@@ -529,10 +590,21 @@ class RepairActionReceipt(_message.Message):
     completed_at: _timestamp_pb2.Timestamp
     success: bool
     reversible: bool
-    def __init__(self, action_id: _Optional[str] = ..., kind: _Optional[str] = ..., target: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., summary: _Optional[str] = ..., details: _Optional[str] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., success: _Optional[bool] = ..., reversible: _Optional[bool] = ...) -> None: ...
+    failure_reason: str
+    owners: _containers.RepeatedCompositeFieldContainer[ResourceOwners]
+    script_digest: str
+    def __init__(self, action_id: _Optional[str] = ..., kind: _Optional[str] = ..., target: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., summary: _Optional[str] = ..., details: _Optional[str] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., success: _Optional[bool] = ..., reversible: _Optional[bool] = ..., failure_reason: _Optional[str] = ..., owners: _Optional[_Iterable[_Union[ResourceOwners, _Mapping]]] = ..., script_digest: _Optional[str] = ...) -> None: ...
+
+class ResourceOwners(_message.Message):
+    __slots__ = ("resource", "owner_chain")
+    RESOURCE_FIELD_NUMBER: _ClassVar[int]
+    OWNER_CHAIN_FIELD_NUMBER: _ClassVar[int]
+    resource: _common_pb2.ObjectRef
+    owner_chain: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    def __init__(self, resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., owner_chain: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ...) -> None: ...
 
 class IncidentResult(_message.Message):
-    __slots__ = ("schema_version", "incident_id", "status", "confirmed_root_causes", "applied_playbooks", "repair_changes", "repair_actions", "final_detector_states", "proposed_artifact_ids", "verification_evidence", "usage", "timing", "responder_session_id", "error", "late_findings_pull", "program_tool_calls", "program_runs", "plan_applications", "response_loops_used", "response_loop_exhausted", "program_failure_signals", "resolution_path", "fast_path_programs", "fast_path_skipped_reason", "fast_path_relation_covered_findings", "drift_events", "prior_stages")
+    __slots__ = ("schema_version", "incident_id", "status", "confirmed_root_causes", "applied_playbooks", "repair_changes", "repair_actions", "final_detector_states", "proposed_artifact_ids", "verification_evidence", "usage", "timing", "responder_session_id", "error", "late_findings_pull", "program_tool_calls", "program_runs", "plan_applications", "response_loops_used", "response_loop_exhausted", "program_failure_signals", "resolution_path", "drift_events", "unresolved_findings", "drift_reprompt")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -555,11 +627,9 @@ class IncidentResult(_message.Message):
     RESPONSE_LOOP_EXHAUSTED_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_FAILURE_SIGNALS_FIELD_NUMBER: _ClassVar[int]
     RESOLUTION_PATH_FIELD_NUMBER: _ClassVar[int]
-    FAST_PATH_PROGRAMS_FIELD_NUMBER: _ClassVar[int]
-    FAST_PATH_SKIPPED_REASON_FIELD_NUMBER: _ClassVar[int]
-    FAST_PATH_RELATION_COVERED_FINDINGS_FIELD_NUMBER: _ClassVar[int]
     DRIFT_EVENTS_FIELD_NUMBER: _ClassVar[int]
-    PRIOR_STAGES_FIELD_NUMBER: _ClassVar[int]
+    UNRESOLVED_FINDINGS_FIELD_NUMBER: _ClassVar[int]
+    DRIFT_REPROMPT_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     incident_id: str
     status: str
@@ -582,12 +652,10 @@ class IncidentResult(_message.Message):
     response_loop_exhausted: bool
     program_failure_signals: _containers.RepeatedScalarFieldContainer[str]
     resolution_path: str
-    fast_path_programs: _containers.RepeatedScalarFieldContainer[str]
-    fast_path_skipped_reason: str
-    fast_path_relation_covered_findings: _containers.RepeatedCompositeFieldContainer[_program_pb2.RelationCoveredFinding]
     drift_events: _containers.RepeatedCompositeFieldContainer[DriftEvent]
-    prior_stages: _containers.RepeatedCompositeFieldContainer[StageReport]
-    def __init__(self, schema_version: _Optional[str] = ..., incident_id: _Optional[str] = ..., status: _Optional[str] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[ConfirmedRootCause, _Mapping]]] = ..., applied_playbooks: _Optional[_Iterable[_Union[AppliedPlaybook, _Mapping]]] = ..., repair_changes: _Optional[_Iterable[str]] = ..., repair_actions: _Optional[_Iterable[_Union[RepairActionReceipt, _Mapping]]] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., verification_evidence: _Optional[_Iterable[_Union[VerificationEvidence, _Mapping]]] = ..., usage: _Optional[_Union[UsageMetrics, _Mapping]] = ..., timing: _Optional[_Union[TimingMetrics, _Mapping]] = ..., responder_session_id: _Optional[str] = ..., error: _Optional[str] = ..., late_findings_pull: _Optional[_Union[LateFindingsPull, _Mapping]] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., resolution_path: _Optional[str] = ..., fast_path_programs: _Optional[_Iterable[str]] = ..., fast_path_skipped_reason: _Optional[str] = ..., fast_path_relation_covered_findings: _Optional[_Iterable[_Union[_program_pb2.RelationCoveredFinding, _Mapping]]] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., prior_stages: _Optional[_Iterable[_Union[StageReport, _Mapping]]] = ...) -> None: ...
+    unresolved_findings: _containers.RepeatedCompositeFieldContainer[Finding]
+    drift_reprompt: DriftReprompt
+    def __init__(self, schema_version: _Optional[str] = ..., incident_id: _Optional[str] = ..., status: _Optional[str] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[ConfirmedRootCause, _Mapping]]] = ..., applied_playbooks: _Optional[_Iterable[_Union[AppliedPlaybook, _Mapping]]] = ..., repair_changes: _Optional[_Iterable[str]] = ..., repair_actions: _Optional[_Iterable[_Union[RepairActionReceipt, _Mapping]]] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., verification_evidence: _Optional[_Iterable[_Union[VerificationEvidence, _Mapping]]] = ..., usage: _Optional[_Union[UsageMetrics, _Mapping]] = ..., timing: _Optional[_Union[TimingMetrics, _Mapping]] = ..., responder_session_id: _Optional[str] = ..., error: _Optional[str] = ..., late_findings_pull: _Optional[_Union[LateFindingsPull, _Mapping]] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., resolution_path: _Optional[str] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., unresolved_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., drift_reprompt: _Optional[_Union[DriftReprompt, _Mapping]] = ...) -> None: ...
 
 class LateFindingsPull(_message.Message):
     __slots__ = ("incident_id", "pull_count", "detector_ids", "playbook_ids", "report_digest")
@@ -657,7 +725,7 @@ class DetectorTimelineEntry(_message.Message):
     def __init__(self, detector_id: _Optional[str] = ..., detector_class: _Optional[str] = ..., owner: _Optional[str] = ..., rule_id: _Optional[str] = ..., fingerprint: _Optional[str] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., surfaced_playbook_ids: _Optional[_Iterable[str]] = ..., first_activated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_seen_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., relation: _Optional[str] = ..., activations: _Optional[int] = ...) -> None: ...
 
 class IncidentClosure(_message.Message):
-    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "observed_state_changes", "detector_review_required_at", "detector_review_reason", "cleaned_helpers")
+    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers", "observation_generation", "partial_detector_states", "verified_while_responder_running", "closure_stability_window", "unconfirmed_reason", "unconfirmed_detail", "source_check_notes", "state_persistence_failure", "frozen")
     REQUEST_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_ERROR_FIELD_NUMBER: _ClassVar[int]
@@ -673,10 +741,16 @@ class IncidentClosure(_message.Message):
     RESPONDER_COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
     VERIFIED_AT_FIELD_NUMBER: _ClassVar[int]
     HEALTH_CLEARED_AT_FIELD_NUMBER: _ClassVar[int]
-    OBSERVED_STATE_CHANGES_FIELD_NUMBER: _ClassVar[int]
-    DETECTOR_REVIEW_REQUIRED_AT_FIELD_NUMBER: _ClassVar[int]
-    DETECTOR_REVIEW_REASON_FIELD_NUMBER: _ClassVar[int]
     CLEANED_HELPERS_FIELD_NUMBER: _ClassVar[int]
+    OBSERVATION_GENERATION_FIELD_NUMBER: _ClassVar[int]
+    PARTIAL_DETECTOR_STATES_FIELD_NUMBER: _ClassVar[int]
+    VERIFIED_WHILE_RESPONDER_RUNNING_FIELD_NUMBER: _ClassVar[int]
+    CLOSURE_STABILITY_WINDOW_FIELD_NUMBER: _ClassVar[int]
+    UNCONFIRMED_REASON_FIELD_NUMBER: _ClassVar[int]
+    UNCONFIRMED_DETAIL_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_CHECK_NOTES_FIELD_NUMBER: _ClassVar[int]
+    STATE_PERSISTENCE_FAILURE_FIELD_NUMBER: _ClassVar[int]
+    FROZEN_FIELD_NUMBER: _ClassVar[int]
     request: IncidentRequest
     result: IncidentResult
     dispatch_error: str
@@ -692,28 +766,36 @@ class IncidentClosure(_message.Message):
     responder_completed_at: _timestamp_pb2.Timestamp
     verified_at: _timestamp_pb2.Timestamp
     health_cleared_at: _timestamp_pb2.Timestamp
-    observed_state_changes: _containers.RepeatedCompositeFieldContainer[ObservedStateChange]
-    detector_review_required_at: _timestamp_pb2.Timestamp
-    detector_review_reason: str
     cleaned_helpers: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., observed_state_changes: _Optional[_Iterable[_Union[ObservedStateChange, _Mapping]]] = ..., detector_review_required_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_reason: _Optional[str] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ...) -> None: ...
+    observation_generation: str
+    partial_detector_states: _containers.RepeatedCompositeFieldContainer[DetectorEvaluation]
+    verified_while_responder_running: bool
+    closure_stability_window: _duration_pb2.Duration
+    unconfirmed_reason: ClosureUnconfirmedReason
+    unconfirmed_detail: str
+    source_check_notes: _containers.RepeatedScalarFieldContainer[str]
+    state_persistence_failure: StatePersistenceFailure
+    frozen: bool
+    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ..., partial_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., unconfirmed_reason: _Optional[_Union[ClosureUnconfirmedReason, str]] = ..., unconfirmed_detail: _Optional[str] = ..., source_check_notes: _Optional[_Iterable[str]] = ..., state_persistence_failure: _Optional[_Union[StatePersistenceFailure, _Mapping]] = ..., frozen: _Optional[bool] = ...) -> None: ...
 
 class StageReport(_message.Message):
-    __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints")
+    __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints", "recovery_wait")
     STAGE_FIELD_NUMBER: _ClassVar[int]
     MITIGATIONS_FIELD_NUMBER: _ClassVar[int]
     REMAINING_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     CLEARED_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    RECOVERY_WAIT_FIELD_NUMBER: _ClassVar[int]
     stage: str
     mitigations: _containers.RepeatedCompositeFieldContainer[StageMitigation]
     remaining_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
     error: str
     cleared_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
+    recovery_wait: _program_pb2.RecoveryWait
+    def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., recovery_wait: _Optional[_Union[_program_pb2.RecoveryWait, _Mapping]] = ...) -> None: ...
 
 class StageMitigation(_message.Message):
-    __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error", "target_finding_fingerprints", "kept_reason")
+    __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error", "plan_action_start", "plan_action_count", "touched_objects", "kept_reason")
     PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
@@ -725,7 +807,9 @@ class StageMitigation(_message.Message):
     CLEARED_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     REMAINING_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
-    TARGET_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    PLAN_ACTION_START_FIELD_NUMBER: _ClassVar[int]
+    PLAN_ACTION_COUNT_FIELD_NUMBER: _ClassVar[int]
+    TOUCHED_OBJECTS_FIELD_NUMBER: _ClassVar[int]
     KEPT_REASON_FIELD_NUMBER: _ClassVar[int]
     playbook_id: str
     program_revision: str
@@ -738,6 +822,24 @@ class StageMitigation(_message.Message):
     cleared_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
     remaining_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
     error: str
-    target_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    plan_action_start: int
+    plan_action_count: int
+    touched_objects: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
     kept_reason: str
-    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., plan_id: _Optional[str] = ..., apply_receipt: _Optional[_Union[_program_pb2.PlanApplication, _Mapping]] = ..., result: _Optional[str] = ..., skip_reason: _Optional[str] = ..., post_apply_diagnose: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., target_finding_fingerprints: _Optional[_Iterable[str]] = ..., kept_reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., plan_id: _Optional[str] = ..., apply_receipt: _Optional[_Union[_program_pb2.PlanApplication, _Mapping]] = ..., result: _Optional[str] = ..., skip_reason: _Optional[str] = ..., post_apply_diagnose: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., plan_action_start: _Optional[int] = ..., plan_action_count: _Optional[int] = ..., touched_objects: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., kept_reason: _Optional[str] = ...) -> None: ...
+
+class DriftReprompt(_message.Message):
+    __slots__ = ("findings_before", "findings_after")
+    FINDINGS_BEFORE_FIELD_NUMBER: _ClassVar[int]
+    FINDINGS_AFTER_FIELD_NUMBER: _ClassVar[int]
+    findings_before: int
+    findings_after: int
+    def __init__(self, findings_before: _Optional[int] = ..., findings_after: _Optional[int] = ...) -> None: ...
+
+class StatePersistenceFailure(_message.Message):
+    __slots__ = ("reason", "detail")
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    reason: str
+    detail: str
+    def __init__(self, reason: _Optional[str] = ..., detail: _Optional[str] = ...) -> None: ...

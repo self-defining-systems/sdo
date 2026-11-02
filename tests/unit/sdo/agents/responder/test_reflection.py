@@ -30,6 +30,7 @@ from sdo.contracts import (
     StateChanges,
     datetime_timestamp,
 )
+from tests.context_helpers import expand_context
 from tests.proto_messages import evolve, from_dict
 from tests.structured_turns import ScriptedAgent, failure, reply
 
@@ -95,7 +96,11 @@ def _fresh_closure(worktree: Path, *, evidence: str = "Deployment unavailable") 
     )
 
 
-def test_codex_reflection_resumes_structured_session_in_incident_worktree(tmp_path: Path) -> None:
+def test_codex_reflection_resumes_structured_session_in_incident_worktree(
+    tmp_path: Path, prepare_reflection_memory
+) -> None:
+    prepare_reflection_memory(tmp_path)
+
     def respond(request: CommandRequest) -> FakeRun:
         return reply(
             "codex",
@@ -103,9 +108,10 @@ def test_codex_reflection_resumes_structured_session_in_incident_worktree(tmp_pa
                 "summary": "already covered",
                 "learning_decision": "no_change",
                 "no_change_reason": "existing detector covers it",
-                "playbook_ids": [],
+                "proposed_artifact_ids": [],
             },
             session_id="session-1",
+            branch="reflection",
         )
 
     agent = ScriptedAgent(respond)
@@ -125,10 +131,11 @@ def test_codex_reflection_resumes_structured_session_in_incident_worktree(tmp_pa
     assert parse_sandbox(argv) == CodexSandboxConfig(mode="danger-full-access")
     assert argv[argv.index("--model") + 1] == "gpt-test"
     assert request.cwd == str(tmp_path.resolve())
-    assert request.timeout == 456
+    assert request.timeout == pytest.approx(304, abs=1)  # final check retains one third
 
 
-def test_claude_reflection_resumes_structured_session(tmp_path: Path) -> None:
+def test_claude_reflection_resumes_structured_session(tmp_path: Path, prepare_reflection_memory) -> None:
+    prepare_reflection_memory(tmp_path)
     agent = ScriptedAgent(
         lambda _request: reply(
             "claude",
@@ -136,9 +143,10 @@ def test_claude_reflection_resumes_structured_session(tmp_path: Path) -> None:
                 "summary": "already covered",
                 "learning_decision": "no_change",
                 "no_change_reason": "existing detector covers it",
-                "playbook_ids": [],
+                "proposed_artifact_ids": [],
             },
             session_id="session-1",
+            branch="reflection",
         )
     )
     result = ClaudeSessionBackend(model="haiku", executor=agent.executor).resume(
@@ -178,17 +186,64 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     )
     (call,) = backend.calls
     assert call["mode"] == "fresh"
-    prompt = str(call["prompt"])
+    prompt = expand_context(str(call["prompt"]))
+    assert "accepted source expresses intent." in prompt
+    assert "memory is fallible advice" in prompt
     assert "artifact_proposal" not in prompt
-    assert "until it exits zero" in prompt
-    assert "sdo-operator memory check" in prompt
+    assert "broker checks" in prompt
     assert "draft-test" not in prompt
-    assert "sdo-detector-authoring" in prompt
+    assert "sdo-playbook-authoring/SKILL.md" in prompt
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
-    assert "Accepted architecture summary" in prompt
-    assert "Edit the final files directly" in prompt
+    assert '"playbooks"' in prompt
+    assert "Edit only authorized operational-memory files" in prompt
+    assert "in the `reflection` field and leave `incident_result` null" in prompt
     assert "sdo.operational_memory" not in prompt
     assert json.dumps({"incident_id": "inc-1"}) not in prompt
+
+
+@pytest.mark.parametrize("session_mode", ["fresh", "resume"])
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("classification", ["success", "failed"])
+def test_reflection_saves_partial_learning_for_verified_parts(
+    tmp_path: Path, session_mode: str, retry: bool, classification: str
+) -> None:
+    backend = _CapturingBackend()
+    outcome = _outcome()
+    outcome.classification = classification
+    outcome.repair_actions.add(
+        action_id="restore-port",
+        kind="kubectl-patch",
+        target="Service/api",
+        summary="Restore the observed listener port",
+        details='$ kubectl patch service api -p \'{"spec":{"ports":[{"port":80,"targetPort":8080}]}}\'\nexit 0',
+        success=True,
+    )
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id=outcome.incident_id,
+        worktree=tmp_path,
+        outcome=outcome,
+        history=[],
+        outcome_commit="outcome-sha",
+        session_mode=session_mode,  # type: ignore[arg-type]
+        closure=_fresh_closure(tmp_path),
+        validation_attempt=2 if retry else 1,
+        diagnostics=[MemoryDiagnostic(rule="program.replay", message="Correct the fixed case")] if retry else [],
+    )
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
+    if retry and session_mode == "resume":
+        # The resumed session already holds the request; a correction carries
+        # only the rejection and keeps the rejected edits in the checkout.
+        assert "Original reflection request" not in prompt
+        assert "Your edits are kept" in prompt
+        return
+    assert "Preserve verified partial steps" in prompt
+    assert "Use recorded actions as repair evidence" in prompt
+    assert "Replay is informational" in prompt
+    assert "README holds only judgement and ordering" in prompt
+    current = json.JSONDecoder().raw_decode(prompt.split("Current outcome:\n", 1)[1].lstrip())[0]
+    assert current["classification"] == classification
+    assert current["repair_actions"][0]["details"] == outcome.repair_actions[0].details
 
 
 def test_reflection_retry_prompt_carries_typed_broker_diagnostics(tmp_path: Path) -> None:
@@ -206,8 +261,33 @@ def test_reflection_retry_prompt_carries_typed_broker_diagnostics(tmp_path: Path
         diagnostics=[MemoryDiagnostic(rule="detector.manifest", path="m.yaml", line=4, message="bad id", hint="kebab")],
     )
     (call,) = backend.calls
-    assert call["mode"] == "fresh"
+    assert call["mode"] == "resume"
     assert "[detector.manifest] m.yaml:4: bad id (hint: kebab)" in str(call["prompt"])
+
+
+def test_reflection_conflict_retry_resolves_marked_collisions_in_kept_edits(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    conflict = MemoryDiagnostic(rule="memory.conflict", message="memory conflict at accepted commit peer")
+    conflict.memory_conflict.accepted_commit = "peer"
+    conflict.memory_conflict.conflicting_paths.append("playbook:shared")
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        session_mode="resume",
+        closure=_fresh_closure(tmp_path),
+        validation_attempt=2,
+        diagnostics=[conflict],
+    )
+    prompt = str(backend.calls[0]["prompt"])
+    assert "rolled it back" not in prompt
+    assert "clean" not in prompt
+    assert "conflict markers" in prompt
+    assert "playbook:shared" in prompt
+    assert len(prompt) < 2000
 
 
 def test_reflection_first_attempt_prompt_has_no_rejection_text(tmp_path: Path) -> None:
@@ -230,11 +310,11 @@ def test_reflection_output_schema_is_strict_and_carries_only_decision_and_ids() 
     assert schema["additionalProperties"] is False
     assert "artifact_proposal" not in schema["properties"]
     assert "proposed_changes" not in schema["properties"]
-    assert "playbook_ids" in schema["properties"]
+    assert "proposed_artifact_ids" in schema["properties"]
     assert schema["required"] == list(schema["properties"])
 
 
-def test_broker_diagnostic_correction_starts_a_fresh_file_edit_session(tmp_path: Path) -> None:
+def test_broker_diagnostic_correction_keeps_the_incident_session(tmp_path: Path) -> None:
     backend = _CapturingBackend()
     SessionReflector(backend).resume(
         session_id="prior-session",
@@ -248,16 +328,15 @@ def test_broker_diagnostic_correction_starts_a_fresh_file_edit_session(tmp_path:
         diagnostics=[MemoryDiagnostic(rule="document.parse", path="README.md", line=1, message="missing front matter")],
     )
     (call,) = backend.calls
-    assert call["mode"] == "fresh"
+    assert call["mode"] == "resume"
     assert "document.parse" in str(call["prompt"])
     assert "Author corrected final files" in str(call["prompt"])
     assert "artifact_proposal" not in str(call["prompt"])
 
 
-def test_reflection_prompt_requires_program_authoring_and_direct_corpus_checks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR", raising=False)
+def test_reflection_prompt_routes_to_one_shipped_guide_without_protocol_recipes(tmp_path: Path) -> None:
+    from sdo.agents.responder.credentials import SKILLS_ROOT
+
     backend = _CapturingBackend()
     SessionReflector(backend).resume(
         session_id="session-1",
@@ -268,55 +347,15 @@ def test_reflection_prompt_requires_program_authoring_and_direct_corpus_checks(
         outcome_commit="outcome-sha",
         closure=_fresh_closure(tmp_path),
     )
-    prompt = str(backend.calls[0]["prompt"])
-    for required in (
-        "for each confirmed fault",
-        "diagnose.go",
-        "mitigate.go",
-        "open and return NoMatch at fixed and healthy",
-        "recordings",
-        "labels",
-        "root_cause_program_ids",
-        "peer_bindings",
-        "open_sha256",
-        "ReconcileFromSource or Rollback",
-        "Keep mitigate.go",
-        "skipped_unreplayable_effect",
-        "declared ports alone never establish a listener",
-        "captured ProbeTCP",
-        "three independently verified live successes",
-        "container status reasons",
-        "sdo.dev/operator/sdk/program",
-        "diagnostics-module library helpers",
-        "diagnostics module path",
-        "Params",
-        "derive names, ports and images from bindings and the ReadView",
-        "every name, port and image renamed",
-        "allowed imports",
-        "/opt/sdo/examples/playbook-programs/playbooks/service-targetport-mismatch/diagnose.go",
-        "/opt/sdo/examples/playbook-programs/corpus/targetport-mismatch/",
-        "sdk_gap",
-        "Record each reused program ID",
-        "NoMatch",
-        "no shell commands",
-        "rerun",
-    ):
-        assert required in prompt
-
-
-def test_reflection_prompt_uses_configured_example_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR", "/custom/examples")
-    backend = _CapturingBackend()
-    SessionReflector(backend).resume(
-        session_id="session-1",
-        incident_id="inc-1",
-        worktree=tmp_path,
-        outcome=_outcome(),
-        history=[],
-        outcome_commit="outcome-sha",
-        closure=_fresh_closure(tmp_path),
-    )
-    assert "/custom/examples/playbooks/service-targetport-mismatch/diagnose.go" in str(backend.calls[0]["prompt"])
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
+    assert str(SKILLS_ROOT / "sdo-playbook-authoring/SKILL.md") in prompt
+    for tool in ("authoring_reference", "create_corpus", "check_memory"):
+        assert tool not in prompt
+    assert "--" not in prompt
+    assert "open_at" not in prompt
+    assert "open@settle" not in prompt
+    assert "open@pre-apply" not in prompt
+    assert "Unknown" in prompt
 
 
 def test_fresh_reflection_brief_keeps_observed_state_for_corpus(tmp_path: Path) -> None:
@@ -345,9 +384,9 @@ def test_fresh_reflection_brief_keeps_observed_state_for_corpus(tmp_path: Path) 
         from_dict(StateChanges, {"baseline_at": observed, "observed_at": observed, "changes": []})
     )
     brief = incident_brief(closure, worktree=tmp_path)
-    assert "State changes at dispatch" in brief
-    assert "targetPort" in brief
-    assert "State changes at verification" in brief
+    assert "State changes at dispatch" in expand_context(brief)
+    assert "targetPort" in expand_context(brief)
+    assert "State changes at verification" in expand_context(brief)
 
 
 def test_fresh_reflection_brief_summarizes_program_diagnosis_and_application(tmp_path: Path) -> None:
@@ -371,30 +410,30 @@ def test_fresh_reflection_brief_summarizes_program_diagnosis_and_application(tmp
     ]
     closure.result.CopyFrom(from_dict(IncidentResult, payload))
     brief = incident_brief(closure, worktree=tmp_path)
-    assert "targetport: Match" in brief
-    assert "other: NoMatch" in brief
-    assert "application-1" in brief
-    assert "verification NoMatch" in brief
+    assert "targetport: Match" in expand_context(brief)
+    assert "other: NoMatch" in expand_context(brief)
+    assert "application-1" in expand_context(brief)
+    assert "verification NoMatch" in expand_context(brief)
 
 
-def test_missing_provider_session_restarts_reflection_fresh(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_missing_provider_session_fails_without_fresh_fallback(tmp_path: Path) -> None:
     class MissingSession(_CapturingBackend):
         def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
+            self.calls.append({"mode": "resume"})
             raise ResponderSessionUnavailable("session not found")
 
     backend = MissingSession()
-    turn = SessionReflector(backend).resume(
-        session_id="missing",
-        incident_id="inc-1",
-        worktree=tmp_path,
-        outcome=_outcome(),
-        history=[],
-        outcome_commit="outcome-sha",
-        closure=_fresh_closure(tmp_path),
-    )
-    assert turn.learning_decision == "no_change"
-    assert backend.calls[0]["mode"] == "fresh"
-    assert "session not found" in capsys.readouterr().err
+    with pytest.raises(ResponderSessionUnavailable, match="session not found"):
+        SessionReflector(backend).resume(
+            session_id="missing",
+            incident_id="inc-1",
+            worktree=tmp_path,
+            outcome=_outcome(),
+            history=[],
+            outcome_commit="outcome-sha",
+            closure=_fresh_closure(tmp_path),
+        )
+    assert backend.calls == [{"mode": "resume"}]
 
 
 def test_generic_resume_failure_propagates_without_fresh_retry(tmp_path: Path) -> None:
@@ -435,3 +474,150 @@ def test_provider_missing_session_raises_typed_error(provider: str, backend_type
     backend = backend_type(executor=ScriptedAgent(lambda _request: scripted_resume_failure(provider)).executor)
     with pytest.raises(ResponderSessionUnavailable):
         backend.resume(session_id="missing", worktree=tmp_path, prompt="reflect", idempotency_key="key")
+
+
+def _verified_repeat_closure(worktree: Path) -> IncidentClosure:
+    closure = _fresh_closure(worktree)
+    closure.request.memory_snapshot.playbooks.add(id="service-targetport-mismatch", markdown="# programs")
+    closure.request.memory_snapshot.playbooks.add(id="image-pull-source-drift", markdown="# programs")
+    return closure
+
+
+def _verified_repeat_outcome() -> OutcomeRecord:
+    return from_dict(
+        OutcomeRecord,
+        {
+            "schema_version": 1,
+            "incident_id": "inc-1",
+            "classification": "success",
+            "confirmed_root_causes": [{"summary": "Service targetPort does not match the container port"}],
+            "repair_actions": [
+                {
+                    "action_id": "a1",
+                    "kind": "program-plan",
+                    "target": "Service/reservation",
+                    "summary": "set targetPort",
+                }
+            ],
+            "plan_applications": [
+                {
+                    "program_ids": ["service-targetport-mismatch"],
+                    "applied": True,
+                    "verification": {"result": "RESULT_NO_MATCH"},
+                }
+            ],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "no recorded repair",
+        "No successful repair was recorded.",
+        "The controller observed recovery without intervention.",
+    ],
+)
+def test_typed_no_recorded_repair_decline_preserves_the_specific_reason(reason: str) -> None:
+    from sdo.agents.responder.reflection import ReflectionTurn
+
+    turn = ReflectionTurn.from_model_output(
+        {
+            "summary": "No recorded repair touched the cause.",
+            "learning_decision": "no_change",
+            "no_change_reason": reason,
+            "decline_reason": "no_recorded_repair",
+        }
+    )
+    assert turn.decline_reason == "no_recorded_repair"
+    assert turn.to_result().no_change_reason == reason
+
+
+def test_large_evidence_principle_is_stated_once(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
+    assert prompt.count("never infer from truncated output") == 1
+
+
+def test_reflection_exposes_verified_onboarding_separately_from_findings(tmp_path: Path) -> None:
+    from sdo.agents.responder.incident_context import incident_data_view
+    from sdo.agents.responder.reflection import _logical_learning_request
+    from sdo.agents.responder.reflection_brief import incident_brief
+
+    closure = _fresh_closure(tmp_path)
+    record = closure.request.namespace_onboarding
+    record.namespace = closure.request.namespace
+    record.accepted_commit = "a" * 40
+    record.established_at.CopyFrom(datetime_timestamp(datetime(2026, 10, 25, tzinfo=timezone.utc)))
+    record.objects.add(api_version="v1", kind="ConfigMap", namespace=record.namespace, name="installer-script")
+    data = incident_data_view(closure.request)
+    assert data["namespace_onboarding"]["objects"][0]["name"] == "installer-script"
+    for prompt in (
+        incident_brief(closure, worktree=tmp_path),
+        _logical_learning_request(
+            outcome=_outcome(), history=[], outcome_commit="accepted", closure=closure, guidance="baseline"
+        ),
+    ):
+        assert "installer-script" in expand_context(prompt)
+        assert "Acknowledged at verified onboarding" in prompt
+        assert "content unverified" in prompt
+
+
+def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_path: Path) -> None:
+    from sdo.agents.responder.reflection import ReflectionTurn
+
+    turn = ReflectionTurn.from_model_output(
+        {
+            "summary": "Learned routing; catalog observation is unavailable",
+            "learning_decision": "updated",
+            "proposed_artifact_ids": ["service-targetport-mismatch"],
+            "sdk_gaps": [
+                {
+                    "fault_class": "database-user",
+                    "primitive": "DatabaseUsers",
+                    "reason": "authentication reference missing",
+                    "scratch_script": "scratch/catalog",
+                    "resources": [{"kind": "Deployment", "namespace": "demo", "name": "geo"}],
+                }
+            ],
+        }
+    )
+    result = turn.to_result()
+    assert result.learning_decision == "updated"
+    assert list(result.proposed_artifact_ids) == ["service-targetport-mismatch"]
+    assert result.sdk_gaps[0].resources[0].name == "geo"
+    backend = _CapturingBackend()
+    outcome = _outcome()
+    transition = outcome.undetected_causes.add(
+        resource={"kind": "Service", "namespace": "demo", "name": "front"},
+        repair_action_id="recorded-patch",
+        open_digest="a" * 64,
+        fixed_digest="b" * 64,
+    )
+    transition.open_observed_at.FromSeconds(100)
+    transition.fixed_observed_at.FromSeconds(103)
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id=outcome.incident_id,
+        worktree=tmp_path,
+        outcome=outcome,
+        history=[],
+        outcome_commit="accepted-outcome",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = expand_context(str(backend.calls[0]["prompt"]))
+    current_text = prompt.split("Current outcome:\n", 1)[1].lstrip()
+    decoder = json.JSONDecoder()
+    required, end = decoder.raw_decode(current_text)
+    details, _ = decoder.raw_decode(current_text[end:].lstrip())
+    assert required["classification"] == outcome.classification
+    assert details["undetected_causes"][0]["repair_action_id"] == "recorded-patch"

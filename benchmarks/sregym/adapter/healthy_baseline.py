@@ -16,6 +16,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 if TYPE_CHECKING:
     import subprocess
 
@@ -25,7 +27,12 @@ if TYPE_CHECKING:
 BASELINE_DIRECTORY = "/workspace/.sdo-baseline/healthy"
 CONTROLLER_JOB = "job/sdo-controller-run"
 DEFAULT_SNAPSHOT_COUNT = 3
-DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 2.0
+DEFAULT_SNAPSHOT_INTERVAL_SECONDS = wait_for(WaitKind.SAMPLE)
+# Match operatorcli.RunBaselineWrite before opening kubectl's stdin stream.
+# A remote size rejection can close its reader before kubectl finishes sending,
+# leaving kubectl blocked until the outer command timeout.
+MAX_BASELINE_BYTES = 8 << 20
+MAX_BASELINE_SNAPSHOTS = 16
 
 # Kubernetes kind -> sdktest.Snapshot JSON key.
 _SNAPSHOT_KEYS: dict[str, str] = {
@@ -145,13 +152,22 @@ def publish_snapshots(
 
     if directory != BASELINE_DIRECTORY:
         raise ValueError("Go baseline writer uses the fixed healthy baseline directory")
+    if not 1 <= len(snapshots) <= MAX_BASELINE_SNAPSHOTS:
+        raise HealthyBaselineCaptureError("healthy baseline requires 1-16 snapshots")
     for name in snapshots:
         if not _FILE_NAME.fullmatch(name):
             raise ValueError(f"unsafe healthy baseline file name: {name!r}")
+    payload = json.dumps(snapshots)
+    size = len(payload.encode("utf-8"))
+    if size > MAX_BASELINE_BYTES:
+        raise HealthyBaselineCaptureError(
+            f"healthy baseline exceeds 8 MiB ({size} bytes across {len(snapshots)} complete snapshots); "
+            "refusing remote publication before injection"
+        )
     completed = kubectl_runner(
         ["exec", "-i", CONTROLLER_JOB, "-c", "controller", "--", "/usr/local/bin/sdo-operator", "baseline-write"],
         namespace=control_namespace,
-        input_text=json.dumps(snapshots),
+        input_text=payload,
         check=False,
     )
     if completed.returncode != 0:

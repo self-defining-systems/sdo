@@ -29,6 +29,15 @@ var Edges = map[string]bool{
 	"sdo/operator/devmount":                                  true, // development mount process adapter
 	"sdo/operator/runtime/sim":                               true, // simulation world: virtual time inside synctest bubbles, seed replay, in-memory transport; tests only
 	"sdo/operator/deployment/internal/deploymentio":          true, // Deployment process, socket and wait adapter
+	"sdo/operator/apihistory/internal/apiio":                 true, // API-history clock, timers and identifier randomness
+	"sdo/operator/kubeproxy/internal/proxyio":                true, // API proxy clock and request-ID randomness
+	"sdo/operator/rendered/internal/renderio":                true, // Rendered-source Git reads
+	"sdo/operator/shellpath/internal/shellio":                true, // Shell detector processes, runner server, timers and environment
+	"sdo/operator/worker_registry/internal/workerio":         true, // Worker clocks, warm-standby processes, sockets and environment
+	"sdo/operator/cmd/sdo-go-cache/internal/cacheio":         true, // Go cache helper environment and clock
+	"sdo/operator/internal/testutil/gitio":                   true, // Integration-test fixture Git runner; waits for every command
+	"sdo/operator/cmd/sdo-replay/internal/replayio":          true, // Replay command child-process launcher
+	"sdo/operator/sdk/kubeclient/internal/clientio":          true, // In-memory observation HTTP client
 
 	"sdo/operator/core/internal/kubeio":           true, // Kubernetes configuration and default clock
 	"sdo/operator/sdk/internal/clockio":           true, // SDK default wall clock

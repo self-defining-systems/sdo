@@ -2,31 +2,64 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, RecoveryCleanup, reconcile_application
+from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.fastloop.baseline_recovery import (
+    ApplicationBaseline,
+    RecoveryCleanup,
+    accepted_restore_baselines,
+    reconcile_application,
+)
 from benchmarks.sregym.fastloop.loop import InjectionWindow
-from benchmarks.sregym.fastloop.records import OracleVerdict
+from benchmarks.sregym.fastloop.records import EvalNote, OracleVerdict
+from benchmarks.sregym.protocol.injection import FaultComponent, InvalidInjectionError, check_injection
+from benchmarks.sregym.protocol.recovery import RecoveryError, RecoveryFailureReason, recovery_failure_reasons
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
+    from pathlib import Path
 
+    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationCluster
+    from benchmarks.sregym.fastloop.wipe import LaneInjectionState
 
-HEALTH_POLL_SECONDS = 1.0
+HEALTH_POLL_SECONDS = wait_for(WaitKind.POLL_FAST)
 #: The oracle waits up to 60 s for rollouts itself; injection and recovery wait on rollouts too.
-WORKER_OP_TIMEOUT_SECONDS = 900.0
+WORKER_OP_TIMEOUT_SECONDS = wait_for(WaitKind.LONG_OPERATION)
+logger = logging.getLogger(__name__)
+SEED_RECOVERY_CONTRACT = "seed-compatible/v1"
 
 
-class FastloopFaultError(RuntimeError):
+class FastloopFaultError(RecoveryError):
     """Raised when a fault cannot be recovered to a healthy application."""
 
 
 class WorkerRequester(Protocol):
     def request(self, op: str, *, timeout: float = ..., **args: Any) -> dict[str, Any]: ...
+
+
+def _check_recovery(reply: dict[str, Any]) -> None:
+    if reply.get("protocol_version") == 2 and reply.get("success") is not True:
+        # Harness exception text can contain credential-bearing commands. Retain
+        # only typed component identity and known lifecycle status for diagnosis.
+        failures = []
+        errors = reply.get("errors")
+        for error in errors if isinstance(errors, list) else []:
+            if not isinstance(error, dict):
+                continue
+            index, status = error.get("component_index"), error.get("status")
+            if type(index) is int and index >= 0 and status in ("error", "timeout"):
+                failures.append(f"component {index}: {status}")
+        details = f" ({'; '.join(failures)})" if failures else ""
+        raise FastloopFaultError(
+            f"full recovery failed; warm lane cannot be reused{details}",
+            recovery_failures=recovery_failure_reasons(reply, "recover"),
+        )
 
 
 def _utc(epoch: object) -> datetime:
@@ -37,6 +70,10 @@ def _utc(epoch: object) -> datetime:
 
 def _window(reply: dict[str, Any]) -> InjectionWindow:
     return InjectionWindow(started_at=_utc(reply.get("started_at")), finished_at=_utc(reply.get("finished_at")))
+
+
+def _notes(reply: dict[str, Any], key: str) -> list[EvalNote]:
+    return [EvalNote.model_validate(note) for note in reply.get(key) or []]
 
 
 @dataclass(frozen=True)
@@ -73,36 +110,86 @@ class SregymFaultDriver:
         baseline_problem_id: str | None = None,
         baseline: ApplicationBaseline | tuple[ApplicationBaseline, ...] | None = None,
         cluster: ApplicationCluster | None = None,
-        health_timeout_seconds: float = 300.0,
+        health_timeout_seconds: float = wait_for(WaitKind.ROLLOUT),
         health_poll_seconds: float = HEALTH_POLL_SECONDS,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         before_inject: Callable[[str], None] | None = None,
+        injection_state: LaneInjectionState | None = None,
+        data_faults: Mapping[str, Sequence[str]] | None = None,
+        require_full_cleanup: bool = False,
+        row_start_tier2: bool = False,
+        require_faulty_oracle: bool = False,
+        pre_repair_oracle_path: Path | None = None,
+        required_faulty_components: tuple[str, ...] = (),
+        accepted_source: Callable[[], AcceptedSource] | None = None,
     ) -> None:
         if baseline_problem_id is not None and (not isinstance(baseline_problem_id, str) or not baseline_problem_id):
             raise ValueError("baseline_problem_id must be a nonempty string")
+        if type(row_start_tier2) is not bool:
+            raise TypeError("row_start_tier2 must be a boolean")
+        self._row_start_tier2 = row_start_tier2
         self._baseline_problem_id = baseline_problem_id
         self._seed_recovery_verified = False
         if health_timeout_seconds <= 0:
             raise ValueError("health_timeout_seconds must be positive")
         if health_poll_seconds <= 0:
             raise ValueError("health_poll_seconds must be positive")
+        if require_full_cleanup and (not baseline or cluster is None):
+            raise ValueError("full cleanup requires an application baseline and cluster")
+        if baseline is not None and accepted_source is None:
+            raise ValueError("application restore requires an accepted source provider")
+        if accepted_source is not None and not callable(accepted_source):
+            raise TypeError("accepted source provider must be callable")
+        self._accepted_source = accepted_source
+        if type(require_faulty_oracle) is not bool:
+            raise TypeError("require_faulty_oracle must be a boolean")
+        if not isinstance(required_faulty_components, tuple) or any(
+            not isinstance(name, str) or not name for name in required_faulty_components
+        ):
+            raise TypeError("required_faulty_components must be a tuple of nonempty names")
+        if required_faulty_components and not require_faulty_oracle:
+            raise ValueError("required components need require_faulty_oracle")
+        self._required_faulty_components = required_faulty_components
+        self._require_faulty_oracle = require_faulty_oracle
+        self._pre_repair_oracle_path = pre_repair_oracle_path
+        self.last_pre_repair_oracle: OracleVerdict | None = None
+        self._require_full_cleanup = require_full_cleanup
+        self.last_full_cleanup_verified = False
         self._worker = worker
         self._namespace = namespace
         self._baselines = (baseline,) if isinstance(baseline, ApplicationBaseline) else baseline
         self._cluster = cluster
         self.last_cleanup = RecoveryCleanup()
+        self.last_components: list[FaultComponent] = []
         self._health_timeout = health_timeout_seconds
         self._health_poll = health_poll_seconds
         self._monotonic = monotonic
         self._sleep = sleep
         self._before_inject = before_inject
+        self._injection_state = injection_state
+        self._data_faults = data_faults if data_faults is not None else {}
+        self.last_injection_window: InjectionWindow | None = None
+        #: Eval notes from the last full recovery, and those the last injection inherited.
+        self.last_eval_notes: list[EvalNote] = []
+        self.last_confounds: list[EvalNote] = []
 
     def inject(self, problem_id: str) -> InjectionWindow:
+        self.last_injection_window = None
+        self.last_confounds = []
         if self._before_inject is not None:
             self._before_inject(problem_id)
+        if self._injection_state is not None:
+            self._injection_state.begin((problem_id,))
         reply = self._worker.request("inject", problem_id=problem_id, timeout=WORKER_OP_TIMEOUT_SECONDS)
-        return _window(reply)
+        self.last_injection_window = _window(reply)
+        self.last_confounds = _notes(reply, "confounds")
+        self.last_components = [FaultComponent.model_validate(item) for item in reply.get("components", [])]
+        check_injection(reply)
+        if self._injection_state is not None:
+            self._injection_state.finish((problem_id,), self._data_faults)
+        self._check_faulty_oracle()
+        return self.last_injection_window
 
     def inject_composite(self, problem_ids: Sequence[str]) -> CompositeInjection:
         """Inject several problems so their faults are live at once, in the given order.
@@ -110,23 +197,51 @@ class SregymFaultDriver:
         ``recover`` then reverts all of them, and ``recover_fault`` one of them.
         """
 
+        self.last_injection_window = None
+        self.last_confounds = []
         problems = list(problem_ids)
         if not problems or not all(isinstance(problem, str) and problem for problem in problems):
             raise ValueError("a composite fault needs at least one non-empty problem id")
         if len(set(problems)) != len(problems):
             raise ValueError(f"a composite fault lists a problem more than once: {problems}")
+        if self._injection_state is not None:
+            self._injection_state.begin(problems)
         faults: list[InjectedFault] = []
+        self.last_components = []
         for position, problem_id in enumerate(problems):
             try:
                 reply = self._worker.request(
                     "inject", problem_id=problem_id, compose=position > 0, timeout=WORKER_OP_TIMEOUT_SECONDS
                 )
+                current_window = _window(reply)
+                if position == 0:
+                    self.last_confounds = _notes(reply, "confounds")
+                self.last_injection_window = InjectionWindow(
+                    started_at=self.last_injection_window.started_at
+                    if self.last_injection_window
+                    else current_window.started_at,
+                    finished_at=current_window.finished_at,
+                )
+                self.last_components.extend(FaultComponent.model_validate(item) for item in reply.get("components", []))
+                check_injection(reply)
+                indices = reply.get("faults", [reply.get("fault")])
+                if (
+                    not isinstance(indices, list)
+                    or not indices
+                    or indices != list(range(len(faults), len(faults) + len(indices)))
+                ):
+                    raise FastloopFaultError(f"worker returned invalid component indices for {problem_id}: {indices!r}")
                 index = reply.get("fault")
-                if index != position:
-                    raise FastloopFaultError(f"worker placed {problem_id} at fault {index!r}, expected {position}")
-                faults.append(InjectedFault(problem_id=problem_id, index=position, window=_window(reply)))
+                if index != len(faults):
+                    raise FastloopFaultError(f"worker placed {problem_id} at fault {index!r}, expected {len(faults)}")
+                faults.extend(
+                    InjectedFault(problem_id=problem_id, index=index, window=_window(reply)) for index in indices
+                )
+            except InvalidInjectionError:
+                # The loop owns terminal recording and cleanup, including the failed component.
+                raise
             except Exception as exc:
-                if faults:
+                if faults and not self._row_start_tier2:
                     try:
                         self.recover()
                     except Exception as recovery_error:
@@ -134,11 +249,50 @@ class SregymFaultDriver:
                             f"composite injection failed at {problem_id}: {exc}; recovery failed: {recovery_error}"
                         ) from recovery_error
                 raise FastloopFaultError(f"composite injection failed at {problem_id}: {exc}") from exc
+        if self._injection_state is not None:
+            self._injection_state.finish(problems, self._data_faults)
+        self._check_faulty_oracle()
         return CompositeInjection(faults=tuple(faults))
+
+    def _check_faulty_oracle(self) -> None:
+        if not self._require_faulty_oracle:
+            return
+        verdict = self.oracle()
+        self.last_pre_repair_oracle = verdict
+        if self._pre_repair_oracle_path is not None:
+            self._pre_repair_oracle_path.parent.mkdir(parents=True, exist_ok=True)
+            self._pre_repair_oracle_path.write_text(verdict.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+        def ungradable(value: Any) -> bool:
+            if isinstance(value, dict):
+                return bool(value.get("error") or value.get("infra_error")) or any(
+                    ungradable(v) for v in value.values()
+                )
+            if isinstance(value, list):
+                return any(ungradable(v) for v in value)
+            return False
+
+        components = verdict.details.get("oracles", [])
+        if not isinstance(components, list):
+            components = []
+        for name in self._required_faulty_components:
+            matches = [
+                component for component in components if isinstance(component, dict) and component.get("name") == name
+            ]
+            if len(matches) != 1 or matches[0].get("success") is not False:
+                raise InvalidInjectionError(
+                    {"reason": f"required component {name} did not grade faulty", "oracle": verdict.model_dump()}
+                )
+
+        if verdict.success or ungradable(verdict.details):
+            raise InvalidInjectionError(
+                {"reason": "pre-repair official oracle did not prove a fault", "oracle": verdict.model_dump()}
+            )
 
     def oracle(self, *, fault: int | None = None) -> OracleVerdict:
         args: dict[str, Any] = {} if fault is None else {"fault": fault}
-        return OracleVerdict.model_validate(self._worker.request("oracle", timeout=WORKER_OP_TIMEOUT_SECONDS, **args))
+        reply = self._worker.request("oracle", timeout=WORKER_OP_TIMEOUT_SECONDS, **args)
+        return OracleVerdict(kind=reply["kind"], success=reply["success"], details=reply.get("details", {}))
 
     def recovery_oracle(self) -> OracleVerdict | None:
         """Verify seed recovery independently from the injected fault's mitigation."""
@@ -159,22 +313,47 @@ class SregymFaultDriver:
 
         if index < 0:
             raise ValueError("fault index must not be negative")
-        reply = self._worker.request("recover", fault=index, timeout=WORKER_OP_TIMEOUT_SECONDS)
+        reply = self._worker.request("recover", mode="full", fault=index, timeout=WORKER_OP_TIMEOUT_SECONDS)
+        _check_recovery(reply)
         seconds = reply.get("seconds")
         if not isinstance(seconds, (int, float)):
             raise FastloopFaultError(f"worker returned a non-numeric recovery time {seconds!r}")
         return float(seconds)
 
     def recover(self) -> float:
-        """Recover faults, restore the application baseline, then wait for health and rollouts."""
+        """Reset faults for seed reuse, restore manifests, refresh clients, and verify health.
+
+        Retrying this entire operation is safe after a partial manifest restore or client refresh.
+        The harness owns credential resets; this adapter never reads credential material.
+        """
 
         started = self._monotonic()
+        if self._baselines is not None and self._accepted_source is not None:
+            self._baselines = accepted_restore_baselines(self._accepted_source(), self._baselines)
         self._seed_recovery_verified = False
         self.last_cleanup = RecoveryCleanup()
-        self._worker.request("recover", timeout=WORKER_OP_TIMEOUT_SECONDS)
+        self.last_full_cleanup_verified = False
+        self.last_eval_notes = []
+        reply = self._worker.request("recover", mode="full", timeout=WORKER_OP_TIMEOUT_SECONDS)
+        self.last_eval_notes = _notes(reply, "eval_notes")
+        if self._require_full_cleanup and reply.get("protocol_version") != 2:
+            raise FastloopFaultError("full cleanup requires protocol v2 recovery")
+        _check_recovery(reply)
+        seed_compatible = (
+            reply.get("protocol_version") == 2
+            and reply.get("success") is True
+            and reply.get("recovery_contract") == SEED_RECOVERY_CONTRACT
+            and not reply.get("pending")
+            and not reply.get("errors")
+        )
+        restoring_seed = self._baselines is not None and self._cluster is not None
+        if (self._require_full_cleanup or restoring_seed) and not seed_compatible:
+            raise FastloopFaultError("full cleanup requires seed-compatible/v1 recovery; update the SREGym harness")
         if self._baselines is not None and self._cluster is not None:
             for baseline in self._baselines:
                 cleaned = reconcile_application(self._cluster, baseline, baseline.namespace)
+                if cleaned.recreated_namespace:
+                    logger.info("restore recreated absent namespace %s", baseline.namespace)
                 for kind, count in cleaned.deleted_counts.items():
                     self.last_cleanup.deleted_counts[kind] = self.last_cleanup.deleted_counts.get(kind, 0) + count
                 self.last_cleanup.restored.extend(
@@ -182,20 +361,42 @@ class SregymFaultDriver:
                 )
         else:
             self.last_cleanup.skipped_reason = "application baseline unavailable"
+        if seed_compatible:
+            refreshed = self._worker.request("refresh", timeout=WORKER_OP_TIMEOUT_SECONDS)
+            if (
+                refreshed.get("protocol_version") != 2
+                or refreshed.get("recovery_contract") != SEED_RECOVERY_CONTRACT
+                or refreshed.get("success") is not True
+                or refreshed.get("pending")
+                or refreshed.get("errors")
+            ):
+                raise FastloopFaultError(
+                    "full cleanup client refresh failed; warm lane cannot be reused",
+                    recovery_failures=recovery_failure_reasons(refreshed, "refresh"),
+                )
         deadline = started + self._health_timeout
         health: dict[str, Any] = {}
         unready_rollouts: list[str] = []
         while True:
-            health = self._worker.request("health", namespace=self._namespace, timeout=60)
+            health = self._worker.request("health", namespace=self._namespace, timeout=wait_for(WaitKind.SLOW_COMMAND))
             if health.get("healthy"):
                 unready_rollouts = self._unready_rollouts()
                 if not unready_rollouts:
+                    self.last_full_cleanup_verified = (
+                        reply.get("protocol_version") == 2
+                        and reply.get("success") is True
+                        and seed_compatible
+                        and self.last_cleanup.skipped_reason is None
+                    )
                     self._seed_recovery_verified = self._baselines is not None and self._cluster is not None
                     return self._monotonic() - started
             if self._monotonic() >= deadline:
                 raise FastloopFaultError(
                     f"{self._namespace} is not healthy {self._health_timeout:.0f}s after recovery; "
-                    f"unready: {health.get('unready')}; rollouts: {unready_rollouts}"
+                    f"unready: {health.get('unready')}; rollouts: {unready_rollouts}",
+                    recovery_failures=(
+                        RecoveryFailureReason(step="health", code="rollout_failed" if unready_rollouts else "timeout"),
+                    ),
                 )
             self._sleep(self._health_poll)
 

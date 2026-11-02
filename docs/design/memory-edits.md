@@ -31,7 +31,8 @@ and `docs/design/drift-and-invariants.md` (foreign NetworkPolicy admission).
 
 Reflection edits `.sdo/` as the responder already edits application source.
 Its result carries decisions and logical IDs, never artifact contents. The
-broker derives the diff, independently repeats the check, and commits exactly
+broker derives the diff, accepts only an exact-input broker-owned validation result
+(or independently repeats the check), and commits exactly
 the checked tree. Outcomes remain controller-authored through the Go broker.
 
 | Requirement | Enforcement |
@@ -94,9 +95,9 @@ conflict is an error. The context binds task/proposal ID and contains:
 - Complete accepted corpus and prior outcomes used by replay, their hashes,
   accepted mapping baseline, healthy detector baselines and source identities.
   Prompt history may be bounded; validation history is never truncated.
-- Read-only controller captures: `open@detect`, `open@settle`,
-  `open@pre-apply`, `fixed`, legacy `open` when present, and recordings per
-  phase. A drift case names its original detect capture explicitly.
+- Read-only controller captures: `open@detect`, `fixed`, legacy `open`,
+  `open@settle` and `open@pre-apply` when present in older accepted corpus
+  cases, and recordings per phase. A drift case names its original detect capture explicitly.
 - Accepted rendered source, baseline manifests, rollback revisions and
   recorded action/effect evidence needed by plan replay; no live-cluster read
   or external verdict is needed for an acceptance decision.
@@ -109,6 +110,12 @@ The worker image includes the same hermetic runner as the bounded controller sub
 candidate/inputs, writable scratch and private caches, no egress, publishing
 credentials or cluster credentials. Provider access stays in the outer agent
 process. The local runner checks isolation with the same canary as the Job.
+The broker keeps one shared default-deny NetworkPolicy and reruns the allow/deny
+canaries only when no proof for the validator image is under 30 minutes old or the
+policy changed. It skips the Job when a candidate changes only goal/architecture
+prose, playbook READMEs and scripts or outcomes (`layout.RequiresValidatorJob`);
+detector, program, library, traffic, corpus and application paths keep it,
+because the Job is the only place a new corpus case is replayed.
 Image CI exercises this from both supported providers' actual confinement.
 No nested privileged Docker or permission escalation is required; an image
 without the supported isolation helper fails dispatch preflight.

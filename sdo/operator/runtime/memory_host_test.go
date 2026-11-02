@@ -32,6 +32,13 @@ import (
 	"sdo.dev/operator/sdk/usage"
 )
 
+type timingDetector struct{ sdk.DetectorSpec }
+
+func (d timingDetector) Spec() sdk.DetectorSpec { return d.DetectorSpec }
+func (d timingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	return nil, nil
+}
+
 func TestRemoteMemoryUnavailableFailsClosed(t *testing.T) {
 	s, _ := memoryhost.NewServer("c", "d", []sdk.Detector{timingDetector{DetectorSpec: sdk.DetectorSpec{ID: "test"}}})
 	ready, _ := s.Ready(context.Background(), nil)
@@ -162,12 +169,12 @@ func TestRemoteMemoryPreservesInputsAndCorpusReceipts(t *testing.T) {
 		count := 0
 		view := &sdktest.RecordingReadView{ReadView: &sdktest.ReplayReadView{Snapshot: snapshot}, OnRecord: func(sdktest.PrimitiveCall) { count++ }}
 		p, _ := remote.Programs.Diagnoser("remote")
-		verdict := program.RunDiagnose(ctx, p, view, nil, time.Second)
+		verdict := program.RunDiagnose(ctx, p, view, program.Bindings{}, time.Second)
 		if verdict.Result != program.Match || count != 1 || len(view.SnapshotCalls()) != 1 {
 			t.Fatal(verdict, count, view.SnapshotCalls())
 		}
 		m, _ := remote.Programs.Mitigator("remote")
-		plan, err := runBoundedMitigator(ctx, m, view, nil, time.Second)
+		plan, err := m.Mitigate(ctx, view, program.Bindings{})
 		if err != nil || len(plan.Actions) != 1 || count != 2 {
 			t.Fatal(plan, err, count)
 		}
@@ -240,7 +247,7 @@ func TestSimMemoryHostParityAndCrash(t *testing.T) {
 			t.Fatal(err)
 		}
 		host.WithPrograms(registry).WithReadFactory(func(ctx context.Context, s sdktest.Snapshot) (program.ReadView, error) {
-			return hostio.NewLiveReadView(ctx, s, client), nil
+			return hostio.NewLiveReadView(ctx, s, hostio.ReadBackends{Client: client}), nil
 		})
 		rpc, stop := memoryTestRPC(t, host)
 		ready, _ := host.Ready(ctx, nil)
@@ -277,25 +284,25 @@ func TestSimMemoryHostParityAndCrash(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		localView := hostio.NewLiveReadView(ctx, captured, client)
+		localView := hostio.NewLiveReadView(ctx, captured, hostio.ReadBackends{Client: client})
 		p, _ := registry.Diagnoser("sim-logs")
-		expectedVerdict, err := p.Diagnose(ctx, localView, nil)
+		expectedVerdict, err := p.Diagnose(ctx, localView, program.Bindings{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		recorder := &sdktest.RecordingReadView{ReadView: &sdktest.ReplayReadView{Snapshot: captured}}
 		rp, _ := remote.Programs.Diagnoser("sim-logs")
-		verdict := program.RunDiagnose(ctx, rp, recorder, nil, time.Second)
+		verdict := program.RunDiagnose(ctx, rp, recorder, program.Bindings{}, time.Second)
 		if !reflect.DeepEqual(verdict, expectedVerdict) {
 			t.Fatal(verdict, expectedVerdict)
 		}
 		m, _ := registry.Mitigator("sim-logs")
-		expectedPlan, err := m.Mitigate(ctx, localView, nil)
+		expectedPlan, err := m.Mitigate(ctx, localView, program.Bindings{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		rm, _ := remote.Programs.Mitigator("sim-logs")
-		plan, err := runBoundedMitigator(ctx, rm, recorder, nil, time.Second)
+		plan, err := rm.Mitigate(ctx, recorder, program.Bindings{})
 		if err != nil || !reflect.DeepEqual(plan, expectedPlan) {
 			t.Fatal(plan, expectedPlan, err)
 		}

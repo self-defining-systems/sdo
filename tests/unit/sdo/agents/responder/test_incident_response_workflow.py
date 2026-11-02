@@ -1,0 +1,210 @@
+"""The shipped workflow and shortened prompts are loadable without a model call."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from string import Template
+
+import pytest
+import yaml
+
+from sdo.agents.responder.credentials import AGENT_SKILLS, SKILLS_ROOT, prepare_claude_home, prepare_codex_home
+
+PROMPTS = Path(__file__).resolve().parents[5] / "sdo/agents/responder/prompts"
+WORKFLOW = "sdo-incident-response"
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, provider: str) -> None:
+    destination = tmp_path / provider
+    if provider == "codex":
+        prepare_codex_home(
+            credentials_root=tmp_path / "absent", codex_home=destination, skills=AGENT_SKILLS["responder"]
+        )
+    else:
+        prepare_claude_home(
+            credentials_root=tmp_path / "absent", claude_home=destination, skills=AGENT_SKILLS["responder"]
+        )
+
+    assert {path.name for path in (destination / "skills").iterdir()} == set(AGENT_SKILLS["responder"])
+    installed = destination / "skills" / WORKFLOW / "SKILL.md"
+    document = installed.read_text(encoding="utf-8")
+    assert document == (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8")
+    _, frontmatter, body = document.split("---", 2)
+    metadata = yaml.safe_load(frontmatter)
+    assert metadata["name"] == WORKFLOW
+    assert 0 < len(metadata["description"]) <= 200
+    assert len(document) <= 3000
+    body += (installed.parent / "references/live-repairs.md").read_text()
+    body += (installed.parent / "references/coverage.md").read_text()
+    assert "SDO's independent verification is the source of truth" in body
+    assert "wait on it instead of sleeping" in body
+    assert "verification_status=awaiting_responder_completion" in body
+    assert "finish with evidence" in body
+    assert "one cause per independently fixable fault" in body
+    assert "Start independent repairs together" in body
+    assert "combine edits to one object" in body
+    assert "keeping each cause's evidence separate" in body
+    assert "possible regressions" in body
+    assert "complete JSON report" in body
+    assert "Once SDO verifies, mutations are rejected" in body
+    assert "closure does not wait for final narration" in body
+    assert "still_broken" in body
+    assert "Use only help-confirmed options" in body
+    assert "on a usage error, read help, don't guess" in body
+    assert "Inspect rollout blockers and old-template Pods before repeating writes" in body
+    assert "When an admission control blocks recovery and its backend is gone, restore the backend if you can" in body
+    assert "a scoped fail-open or removal that restores availability is acceptable; report it" in body
+    assert "never widen a selector or policy to other namespaces" in body
+    assert "Restore unexplained source differences or justify them" in body
+
+
+@pytest.mark.parametrize(
+    ("name", "values", "limit"),
+    [
+        (
+            "incident_response_instructions",
+            {
+                "incident_id": "inc-1",
+                "skills_root": "/opt/sdo/sdo/skills",
+                "repair_policy": "strict",
+                "branch_instruction": "Return incident_result and leave reflection null.",
+            },
+            1500,
+        ),
+    ],
+)
+def test_short_workflow_templates_render_strictly(name: str, values: dict[str, str], limit: int) -> None:
+    template = Template((PROMPTS / f"{name}.md").read_text(encoding="utf-8"))
+    rendered = template.substitute(values)
+    assert "$" not in rendered
+    assert len(rendered) <= limit
+    for key in values:
+        missing = {field: value for field, value in values.items() if field != key}
+        with pytest.raises(KeyError, match=key):
+            template.substitute(missing)
+
+
+def test_responder_role_installs_and_lists_the_workflow() -> None:
+    from sdo.agents.responder.codex import _responder_prompt
+    from sdo.contracts import IncidentRequest, OperationalMemorySnapshot
+
+    assert WORKFLOW in AGENT_SKILLS["responder"]
+    request = IncidentRequest(
+        incident_id="incident", memory_snapshot=OperationalMemorySnapshot(accepted_commit="accepted")
+    )
+    from sdo.agents.responder.incident_context import prepared_incident_data
+
+    with prepared_incident_data(request) as data:
+        prompt = _responder_prompt(request, incident_data=data)
+    assert str(SKILLS_ROOT / WORKFLOW / "SKILL.md") in prompt
+    assert "playbook_coverage" in prompt
+    assert len(prompt.split("Incident request:", 1)[0]) <= 1500
+
+
+def test_optional_pull_guidance_fits_with_the_actual_skill_root(monkeypatch) -> None:
+    from sdo.agents.responder.codex import _responder_prompt
+    from sdo.agents.responder.incident_context import prepared_incident_data
+    from sdo.contracts import IncidentRequest, OperationalMemorySnapshot
+
+    monkeypatch.setenv("SDO_LATE_FINDINGS", "pull")
+    request = IncidentRequest(
+        incident_id="incident-with-a-normal-identifier",
+        repair_policy="recorded-actions",
+        memory_snapshot=OperationalMemorySnapshot(accepted_commit="accepted"),
+    )
+    with prepared_incident_data(request) as data:
+        prompt = _responder_prompt(request, incident_data=data)
+    assert len(prompt.split("Incident request:", 1)[0]) <= 1500
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypatch, provider: str) -> None:
+    import json
+
+    from google.protobuf import json_format
+
+    from sdo.agents.responder.codex import execute_incident
+    from sdo.contracts import IncidentRequest
+    from tests.structured_turns import ScriptedAgent, reply
+
+    destination = tmp_path / provider
+    variable = "CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"
+    monkeypatch.setenv(variable, str(destination))
+    if provider == "codex":
+        prepare_codex_home(
+            credentials_root=tmp_path / "absent", codex_home=destination, skills=AGENT_SKILLS["responder"]
+        )
+    else:
+        prepare_claude_home(
+            credentials_root=tmp_path / "absent", claude_home=destination, skills=AGENT_SKILLS["responder"]
+        )
+    fixtures = PROMPTS.parents[3] / "tests/fixtures/sdo/contracts"
+    request = json_format.Parse((fixtures / "incident_request.json").read_text(encoding="utf-8"), IncidentRequest())
+    request.memory_snapshot.accepted_commit = request.repository_base_commit
+    request.repository_worktree = str(tmp_path)
+    output = json.loads((fixtures / "incident_result.json").read_text(encoding="utf-8"))
+
+    def respond(command):
+        installed = Path(command.env[variable]) / "skills" / WORKFLOW / "SKILL.md"
+        assert installed.read_text(encoding="utf-8") == (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        assert str(SKILLS_ROOT / WORKFLOW / "SKILL.md") in command.stdin
+        return reply(provider, output, session_id="workflow-session", branch="incident_result")
+
+    agent = ScriptedAgent(respond)
+    result = execute_incident(request, provider=provider, model="synthetic", executor=agent.executor)
+    assert result.responder_session_id
+    assert len(agent.requests) == 1
+
+
+def test_actual_benchmark_transport_and_pull_guidance_fit_the_instruction_cap(monkeypatch) -> None:
+    from benchmarks.sregym.adapter.runtime import _responder_instructions
+    from sdo.agents.responder.codex import _responder_prompt
+    from sdo.agents.responder.incident_context import prepared_incident_data
+    from tests.unit.sdo.agents.prompts.cases import incident
+
+    monkeypatch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", _responder_instructions())
+    monkeypatch.setenv("SDO_LATE_FINDINGS", "pull")
+    request = incident()
+    with prepared_incident_data(request) as data:
+        prompt = _responder_prompt(request, incident_data=data)
+    assert len(prompt.split("Incident request", 1)[0]) <= 1500
+
+
+def test_act_help_and_workflow_preserve_separate_causes_for_combined_edits() -> None:
+    commands = (SKILLS_ROOT / WORKFLOW / "references/commands.md").read_text(encoding="utf-8")
+    commands += "\n".join(file.read_text() for file in (SKILLS_ROOT / WORKFLOW / "references/commands").glob("*.md"))
+    act_help = commands.split("\n## act\n", 1)[1].split("\n## ", 1)[0]
+    body = (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8")
+    for principle in (
+        "one cause per independently fixable fault",
+        "combine edits to one object",
+        "keeping each cause's evidence separate",
+    ):
+        assert principle in body
+        assert principle in act_help
+
+
+def test_partial_reuse_prompt_starts_from_receipts_without_mandatory_discovery() -> None:
+    from sdo.agents.responder.codex import _responder_prompt
+    from sdo.agents.responder.incident_context import prepared_incident_data
+    from sdo.contracts import IncidentRequest, OperationalMemorySnapshot
+
+    request = IncidentRequest(
+        incident_id="partial-repeat", memory_snapshot=OperationalMemorySnapshot(accepted_commit="accepted")
+    )
+    request.prior_stages.add(stage="deterministic")
+    with prepared_incident_data(request) as data:
+        prompt = _responder_prompt(request, incident_data=data)
+    instructions = str(prompt).split("Incident request:", 1)[0]
+    assert "Use stage_actions, checked_stage_receipts" in instructions
+    assert "residual findings" in instructions
+    assert "Clear admission/quota/scheduling/policy blockers first" in instructions
+    assert "re-trigger stalled saved repairs" in instructions
+    assert "Start independent repairs together" in instructions
+    assert "combine edits to one object" in instructions
+    assert "re-check saved diagnoses" in instructions
+    assert "Read " not in instructions
+    assert len(instructions) <= 1500

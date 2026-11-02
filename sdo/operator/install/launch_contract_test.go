@@ -15,13 +15,12 @@ func optionalLaunchConfig() install.Config {
 	return install.Config{
 		Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo",
 		ControllerImage: "controller:test", ResponderImage: "responder:test",
-		RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "test-model", AgentProvider: "claude",
+		RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "test-model", AgentProvider: "claude", AgentEffort: "medium", Replay: "off",
 		AcceptedCommit: strings.Repeat("a", 40), NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		TimeoutSeconds: 180, VerificationTimeoutSeconds: 45, RepairPolicy: "recorded-actions",
 		ReflectionSession: "fresh", ReflectionGuidance: "generalize-spec", ForceReflection: true,
-		MaxFollowUps: 2, FollowUpCooldownSeconds: 25, MaxResponseLoops: 7,
-		ProgramFastPath: true, ProgramTrustThreshold: 4, DriftTokensPerHour: 250000,
-		HealthyBaseline: true, LateFindings: "pull", ControllerDurationSeconds: 90, ExitAfterClosure: true, WaitForCompletion: true,
+		MaxResponseLoops: 7,
+		HealthyBaseline:  true, LateFindings: "pull", ControllerDurationSeconds: 90, ExitAfterClosure: true, WaitForCompletion: true,
 		ResponderEnv:          []string{"EXAMPLE_MODE=contract", "EXAMPLE_URL=http://example:8000"},
 		RegistrationConfigMap: "sdo-agents", RegistrationDirectory: "/sdo/custom-registrations",
 		BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("b", 64), RegistryPushSecret: "registry-push",
@@ -34,6 +33,12 @@ func TestInstallerOperateOptionalArgumentsRoundTripToController(t *testing.T) {
 	job, err := install.OperateJob(cfg, "requests succeed", "operation-contract", 2)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Parse inside the environment the real operate Pod receives, including opt-out.
+	for _, entry := range job.Spec.Template.Spec.Containers[0].Env {
+		if entry.Name == "SDO_RESPONDER_MENU" {
+			t.Setenv(entry.Name, entry.Value)
+		}
 	}
 	launch, err := operatorcli.ParseOperateLaunch(job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil {
@@ -96,37 +101,34 @@ func assertControllerLaunchRoundTrip(t *testing.T, cfg install.Config, launch *c
 		wantResponderEnv = append(wantResponderEnv, "SDO_LATE_FINDINGS=pull")
 	}
 	for name, pair := range map[string][2]any{
-		"namespace":               {launch.GetNamespace(), cfg.Namespace},
-		"control namespace":       {launch.GetControlNamespace(), cfg.ControlNamespace},
-		"application":             {launch.GetApplication(), cfg.Application},
-		"app root":                {launch.GetAppRoot(), "/workspace/application"},
-		"responder image":         {launch.GetResponderImage(), cfg.ResponderImage},
-		"toolchain image":         {launch.GetToolchainImage(), cfg.ControllerImage},
-		"repository PVC":          {launch.GetRepositoryPvc(), cfg.RepositoryPVC},
-		"repository mount":        {launch.GetRepositoryMountPath(), "/workspace"},
-		"worktree root":           {launch.GetBrokerWorktreeRoot(), "/workspace/worktrees"},
-		"credentials":             {launch.GetResponderCredentialsSecret(), cfg.CredentialsSecret},
-		"model":                   {launch.GetResponderModel(), cfg.Model},
-		"provider":                {launch.GetResponderBackend(), cfg.AgentProvider},
-		"repair policy":           {launch.GetRepairPolicy(), cfg.RepairPolicy},
-		"reflection session":      {launch.GetReflectionSession(), cfg.ReflectionSession},
-		"reflection guidance":     {launch.GetReflectionGuidance(), cfg.ReflectionGuidance},
-		"force reflection":        {launch.GetForceReflection(), cfg.ForceReflection},
-		"follow-ups":              {launch.GetMaxFollowUps(), int32(cfg.MaxFollowUps)},
-		"follow-up cooldown":      {launch.GetFollowUpCooldown().AsDuration(), time.Duration(cfg.FollowUpCooldownSeconds) * time.Second},
-		"response loops":          {launch.GetMaxResponseLoops(), int32(cfg.MaxResponseLoops)},
-		"program fast path":       {launch.GetProgramFastPath(), cfg.ProgramFastPath},
-		"program trust threshold": {launch.GetProgramTrustThreshold(), int32(cfg.ProgramTrustThreshold)},
-		"drift tokens per hour":   {launch.GetDriftTokensPerHour(), cfg.DriftTokensPerHour},
-		"healthy baseline":        {launch.GetHealthyBaseline(), cfg.HealthyBaseline},
-		"duration":                {launch.GetDuration().AsDuration(), time.Duration(cfg.ControllerDurationSeconds) * time.Second},
-		"exit after closure":      {launch.GetExitAfterClosure(), cfg.ExitAfterClosure},
-		"response timeout":        {launch.GetResponseTimeout().AsDuration(), time.Duration(cfg.TimeoutSeconds) * time.Second},
-		"verification timeout":    {launch.GetVerificationTimeout().AsDuration(), time.Duration(cfg.VerificationTimeoutSeconds) * time.Second},
-		"responder environment":   {launch.GetResponderEnv(), wantResponderEnv},
-		"registration directory":  {launch.GetAgentRegistrationDirectory(), cfg.RegistrationDirectory},
-		"broker mode":             {launch.GetBrokerMode(), "native"},
-		"worker mount mode":       {launch.GetWorkerMountMode(), "proposal-only"},
+		"namespace":              {launch.GetNamespace(), cfg.Namespace},
+		"control namespace":      {launch.GetControlNamespace(), cfg.ControlNamespace},
+		"application":            {launch.GetApplication(), cfg.Application},
+		"app root":               {launch.GetAppRoot(), "/workspace/application"},
+		"responder image":        {launch.GetResponderImage(), cfg.ResponderImage},
+		"toolchain image":        {launch.GetToolchainImage(), cfg.ControllerImage},
+		"repository PVC":         {launch.GetRepositoryPvc(), cfg.RepositoryPVC},
+		"repository mount":       {launch.GetRepositoryMountPath(), "/workspace"},
+		"worktree root":          {launch.GetBrokerWorktreeRoot(), "/workspace/worktrees"},
+		"credentials":            {launch.GetResponderCredentialsSecret(), cfg.CredentialsSecret},
+		"model":                  {launch.GetResponderModel(), cfg.Model},
+		"provider":               {launch.GetResponderBackend(), cfg.AgentProvider},
+		"effort":                 {launch.GetAgentEffort(), cfg.AgentEffort},
+		"replay":                 {launch.GetReplay(), cfg.Replay},
+		"repair policy":          {launch.GetRepairPolicy(), cfg.RepairPolicy},
+		"reflection session":     {launch.GetReflectionSession(), cfg.ReflectionSession},
+		"reflection guidance":    {launch.GetReflectionGuidance(), cfg.ReflectionGuidance},
+		"force reflection":       {launch.GetForceReflection(), cfg.ForceReflection},
+		"response loops":         {launch.GetMaxResponseLoops(), int32(cfg.MaxResponseLoops)},
+		"healthy baseline":       {launch.GetHealthyBaseline(), cfg.HealthyBaseline},
+		"duration":               {launch.GetDuration().AsDuration(), time.Duration(cfg.ControllerDurationSeconds) * time.Second},
+		"exit after closure":     {launch.GetExitAfterClosure(), cfg.ExitAfterClosure},
+		"response timeout":       {launch.GetResponseTimeout().AsDuration(), time.Duration(cfg.TimeoutSeconds) * time.Second},
+		"verification timeout":   {launch.GetVerificationTimeout().AsDuration(), time.Duration(cfg.VerificationTimeoutSeconds) * time.Second},
+		"responder environment":  {launch.GetResponderEnv(), wantResponderEnv},
+		"registration directory": {launch.GetAgentRegistrationDirectory(), cfg.RegistrationDirectory},
+		"broker mode":            {launch.GetBrokerMode(), "native"},
+		"worker mount mode":      {launch.GetWorkerMountMode(), "proposal-only"},
 	} {
 		if !reflect.DeepEqual(pair[0], pair[1]) {
 			t.Errorf("%s: got %v, want %v", name, pair[0], pair[1])
@@ -160,38 +162,19 @@ func TestInstallerOperateLateFindingsOffAddsNoResponderSetting(t *testing.T) {
 	}
 }
 
-func TestOperateDriftBudgetDefaultsAndValidation(t *testing.T) {
+func TestPermissiveResponderOperateLaunchRoundTrip(t *testing.T) {
 	cfg := optionalLaunchConfig()
-	cfg.DriftTokensPerHour = 0 // Omission selects the same default at both CLI edges.
-	job, err := install.OperateJob(cfg, "requests succeed", "operation-default", 1)
+	cfg.PermissiveResponder = true
+	cfg.ResponderNamespaces = []string{"policy-system"}
+	job, err := install.OperateJob(cfg, "requests succeed", "permissive-contract", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := job.Spec.Template.Spec.Containers[0].Args
-	launch, err := operatorcli.ParseOperateLaunch(args)
+	launch, err := operatorcli.ParseOperateLaunch(job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := install.Resources(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	controllerArgs := plan.Job.Spec.Template.Spec.Containers[0].Args
-	controller, err := operatorcli.ParseControllerLaunch(controllerArgs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if launch.Install.DriftTokensPerHour != 1000000 || launch.Install.DriftTokensPerHour != controller.Controller.GetDriftTokensPerHour() {
-		t.Fatalf("drift defaults disagree: operate=%d, controller=%d", launch.Install.DriftTokensPerHour, controller.Controller.GetDriftTokensPerHour())
-	}
-	for _, value := range []string{"0", "-1", "9223372036854775808"} {
-		t.Run(value, func(t *testing.T) {
-			if _, err := operatorcli.ParseOperateLaunch(append(append([]string{}, args...), "--drift-tokens-per-hour", value)); err == nil {
-				t.Fatal("operate accepted invalid drift token budget")
-			}
-			if _, err := operatorcli.ParseControllerLaunch(append(append([]string{}, controllerArgs...), "--drift-tokens-per-hour", value)); err == nil {
-				t.Fatal("controller accepted invalid drift token budget")
-			}
-		})
+	if !launch.Install.PermissiveResponder || !reflect.DeepEqual(launch.Install.ResponderNamespaces, cfg.ResponderNamespaces) {
+		t.Fatalf("permissions lost in operate launch: %+v", launch.Install)
 	}
 }

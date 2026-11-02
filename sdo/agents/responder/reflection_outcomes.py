@@ -12,12 +12,13 @@ raw evidence.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
+
+from sdo.agents.context_output import save_context
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,7 +31,7 @@ def _timestamp(evaluation: DetectorEvaluation) -> str:
 
 
 def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list[dict[str, Any]]:
-    """Run-length encode each detector's evaluations by (status, fingerprints, error).
+    """Run-length encode each detector's evaluations by (status, fingerprints, error, reason).
 
     Consecutive identical evaluations of one detector become a single run with
     its first and last timestamps and count; every status or fingerprint
@@ -41,7 +42,7 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
     for evaluation in evaluations:
         detector_runs = runs.setdefault(evaluation.detector_id, [])
         error = evaluation.error if evaluation.HasField("error") else None
-        signature = (evaluation.status, tuple(evaluation.fingerprints), error)
+        signature = (evaluation.status, tuple(evaluation.fingerprints), error, evaluation.reason)
         if detector_runs and detector_runs[-1]["_signature"] == signature:
             detector_runs[-1]["last_evaluated_at"] = _timestamp(evaluation)
             detector_runs[-1]["evaluations"] += 1
@@ -53,6 +54,7 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
                 "status": evaluation.status,
                 "fingerprints": list(evaluation.fingerprints),
                 "error": error,
+                **({"reason": evaluation.reason} if evaluation.reason else {}),
                 "first_evaluated_at": _timestamp(evaluation),
                 "last_evaluated_at": _timestamp(evaluation),
                 "evaluations": 1,
@@ -76,12 +78,18 @@ def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
     view = json_format.MessageToDict(
         outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
     )
+    if not view.get("disabled_setup_detectors"):
+        view.pop("disabled_setup_detectors", None)
+    view.pop("reflection_eligibility", None)  # supplied once as controller-owned work
+    if not view.get("source_check_notes"):
+        view.pop("source_check_notes", None)  # information only; shown when the closure recorded any
     view["detector_history"] = collapse_detector_history(outcome.detector_history)
     compaction = {}
     if view["program_runs"]:
         original = view["program_runs"]
-        view["program_runs"] = _collapse_program_runs(original)
-        compaction["program_runs_omitted_duplicates"] = len(original) - len(view["program_runs"])
+        collapsed = _collapse_program_runs(original)
+        compaction["program_runs_omitted_duplicates"] = len(original) - len(collapsed)
+        view["program_runs"], view["program_run_summary"] = split_quiet_program_runs(collapsed)
     if view["program_tool_calls"]:
         original = view["program_tool_calls"]
         calls = _collapse_tool_calls(original)
@@ -95,7 +103,6 @@ def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
 # Keep head and tail so command failures and final status remain visible. Full
 # responses can be retrieved from the committed outcome, rather than replayed
 # into every reflection model request.
-_TOOL_RESPONSE_MAX_CHARS = 4000
 
 
 def _canonical(value: Any) -> str:
@@ -123,6 +130,67 @@ def _collapse_program_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         retained.append(entry)
         latest[identity] = (signature, entry)
     return retained
+
+
+#: Verdicts that carry no per-binding signal worth replaying: the program did not fire, or could not tell.
+_QUIET_RESULTS = {"RESULT_NO_MATCH": "no_match", "RESULT_UNKNOWN": "unknown"}
+_SUMMARY_MAX_PROGRAMS = 30
+_SUMMARY_MAX_REASONS = 3
+_SUMMARY_MAX_BINDINGS = 5
+
+
+def split_quiet_program_runs(runs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep runs with a signal; reduce NO_MATCH and UNKNOWN runs to one summary per program revision.
+
+    ``runs`` are collapsed runs, each weighted by its ``evaluations`` count. The
+    summary names the program, its revision, the evaluation count per status, the
+    distinct reasons its UNKNOWN runs gave and the objects (up to five) they were
+    bound to, so a reflection still sees which programs ran and why some could not decide.
+    """
+
+    kept: list[dict[str, Any]] = []
+    summaries: dict[tuple[str, str], dict[str, Any]] = {}
+    reasons: dict[tuple[str, str], list[str]] = {}
+    bindings: dict[tuple[str, str], list[str]] = {}
+    for run in runs:
+        status = _QUIET_RESULTS.get(run["verdict"]["result"])
+        if status is None:
+            kept.append(run)
+            continue
+        key = (run["program_id"], run.get("program_revision", ""))
+        summary = summaries.setdefault(
+            key, {"program_id": key[0], "program_revision": key[1], "no_match": 0, "unknown": 0}
+        )
+        summary[status] += run.get("evaluations", 1)
+        if status == "unknown" and run.get("error") and run["error"] not in reasons.setdefault(key, []):
+            reasons[key].append(run["error"])
+        if status == "unknown":
+            names = bindings.setdefault(key, [])
+            for binding in run.get("bindings", []):
+                name = _binding_name(binding)
+                if name and name not in names and len(names) < _SUMMARY_MAX_BINDINGS:
+                    names.append(name)
+    ordered = list(summaries.items())
+    result = []
+    for key, summary in ordered[:_SUMMARY_MAX_PROGRAMS]:
+        distinct = reasons.get(key, [])
+        if distinct:
+            summary["unknown_reasons"] = list(distinct[:_SUMMARY_MAX_REASONS])
+            if len(distinct) > _SUMMARY_MAX_REASONS:
+                summary["unknown_reasons_omitted"] = len(distinct) - _SUMMARY_MAX_REASONS
+        if bindings.get(key):
+            summary["unknown_bindings"] = bindings[key]
+        result.append(summary)
+    if len(ordered) > _SUMMARY_MAX_PROGRAMS:
+        result.append({"programs_omitted": len(ordered) - _SUMMARY_MAX_PROGRAMS})
+    return kept, result
+
+
+def _binding_name(binding: dict[str, Any]) -> str:
+    """The bound object as ``Kind/name``; real UNKNOWN runs carry no error text, so this says where they ran."""
+
+    target = binding.get("object", {})
+    return f"{target['kind']}/{target['name']}" if target.get("kind") and target.get("name") else ""
 
 
 def _corpus_refs(value: Any) -> list[str]:
@@ -166,18 +234,13 @@ def _collapse_tool_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
             previous[1]["last_at"] = call.get("at")
             continue
         entry = {**call, "evaluations": 1, "last_at": call.get("at"), "outcome_call_index": index}
-        if len(response) > _TOOL_RESPONSE_MAX_CHARS:
-            half = _TOOL_RESPONSE_MAX_CHARS // 2
-            entry["response_json"] = response[:half] + "\n[... omitted ...]\n" + response[-half:]
-            entry["response_json_omitted_chars"] = len(response) - _TOOL_RESPONSE_MAX_CHARS
-            entry["response_json_sha256"] = hashlib.sha256(call["response_json"].encode()).hexdigest()
-            entry["corpus_refs"] = _corpus_refs(parsed_response if parsed_response is not None else response)
-            if isinstance(parsed_response, dict):
-                entry["response_status"] = {
-                    key: parsed_response[key]
-                    for key in ("error", "summary", "application_id", "plan_id", "healthy", "unresolved")
-                    if key in parsed_response
-                }
+        entry["corpus_refs"] = _corpus_refs(parsed_response if parsed_response is not None else response)
+        if isinstance(parsed_response, dict):
+            entry["response_status"] = {
+                key: parsed_response[key]
+                for key in ("error", "summary", "application_id", "plan_id", "healthy", "unresolved")
+                if key in parsed_response
+            }
         retained.append(entry)
         latest[identity] = (signature, entry)
     return retained
@@ -187,10 +250,15 @@ def _resource(ref: ObjectRef) -> str:
     return f"{ref.kind}/{ref.name}"
 
 
-def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
-    """A past incident reduced to the signal learning generalizes from."""
+# Prior history is context, not the current repair's evidence. Bound both the
+# number of entries and each narrative so a single long incident stays small.
+_HISTORY_ITEMS = 2
 
-    return {
+
+def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
+    """A bounded orientation summary; the full prior record is available by reference."""
+
+    view: dict[str, Any] = {
         "incident_id": record.incident_id,
         "classification": record.classification,
         "findings": [
@@ -201,32 +269,52 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
                 "fingerprint": finding.fingerprint,
                 "primary_resource": _resource(finding.primary_resource),
             }
-            for finding in record.findings
+            for finding in record.findings[:_HISTORY_ITEMS]
         ],
         "confirmed_root_causes": [
             {
                 "summary": cause.summary,
-                "resources": [_resource(ref) for ref in cause.resources],
-                "explained_detectors": list(cause.explained_detectors),
+                "resources": [_resource(ref) for ref in cause.resources[:_HISTORY_ITEMS]],
             }
-            for cause in record.confirmed_root_causes
+            for cause in record.confirmed_root_causes[:_HISTORY_ITEMS]
         ],
         "repair_actions": [
-            {"kind": action.kind, "target": action.target, "summary": action.summary, "success": action.success}
-            for action in record.repair_actions
+            {
+                "kind": action.kind,
+                "target": action.target,
+                "summary": action.summary,
+                "success": action.success,
+            }
+            for action in record.repair_actions[:_HISTORY_ITEMS]
         ],
-        "applied_playbooks": list(record.applied_playbooks),
-        "confirmed_playbooks": list(record.confirmed_playbooks),
-        "rejected_playbooks": list(record.rejected_playbooks),
-        "diagnosis_verification": [
-            {"verdict": check.verdict, "summary": check.summary} for check in record.diagnosis_verification
-        ],
-        "detector_history": collapse_detector_history(record.detector_history),
+        "applied_playbooks": list(record.applied_playbooks[:_HISTORY_ITEMS]),
+        "confirmed_playbooks": list(record.confirmed_playbooks[:_HISTORY_ITEMS]),
+        "rejected_playbooks": list(record.rejected_playbooks[:_HISTORY_ITEMS]),
+        "detector_evaluations": len(record.detector_history),
         "memory_commit": record.memory_commit if record.HasField("memory_commit") else None,
     }
+    for field in (
+        "findings",
+        "confirmed_root_causes",
+        "repair_actions",
+        "applied_playbooks",
+        "confirmed_playbooks",
+        "rejected_playbooks",
+    ):
+        omitted = len(getattr(record, field)) - len(view[field])
+        if omitted:
+            view[field + "_omitted"] = omitted
+    return {key: value for key, value in view.items() if value is not None and value != [] and value != 0}
 
 
 def history_view(history: Sequence[OutcomeRecord], *, current_incident_id: str) -> list[dict[str, Any]]:
-    """Prior incidents only: the current incident is already shown separately."""
-
-    return [prior_outcome_view(record) for record in history if record.incident_id != current_incident_id]
+    """Index each prior outcome; complete records survive every turn in the session."""
+    views = []
+    for record in history:
+        if record.incident_id == current_incident_id:
+            continue
+        view = prior_outcome_view(record)
+        path, _ = save_context(json_format.MessageToJson(record, preserving_proto_field_name=True))
+        view["full_outcome_path"] = str(path)
+        views.append(view)
+    return views

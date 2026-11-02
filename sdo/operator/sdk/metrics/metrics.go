@@ -243,6 +243,12 @@ type Source interface {
 	MetricResult(id string) (Result, bool)
 }
 
+// QuerySource evaluates a typed PromQL query through the runtime.
+// Results (including failures) are frozen for the evaluation cycle.
+type QuerySource interface {
+	QueryMetrics(Query) Result
+}
+
 // AlertSource is implemented by detection contexts that carry frozen alerts.
 type AlertSource interface {
 	AlertsResult() (AlertsResult, bool)

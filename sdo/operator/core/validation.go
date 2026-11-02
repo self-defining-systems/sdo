@@ -40,6 +40,12 @@ func ValidateDetectors(detectors []sdk.Detector) error {
 	return err
 }
 
+// SupportedWatches lists, sorted, the "apiVersion/Kind" resources a detector
+// may watch.
+func SupportedWatches() []string {
+	return sdk.SupportedWatchKinds()
+}
+
 func validateDetectorSpec(spec sdk.DetectorSpec) error {
 	if spec.Interval <= 0 {
 		return fmt.Errorf("interval must be greater than zero")
@@ -83,7 +89,7 @@ func validateDetectorSpec(spec sdk.DetectorSpec) error {
 		}
 		resourceKey := watch.APIVersion + "/" + watch.Kind
 		if !sdk.IsSupportedWatchKind(watch) {
-			return fmt.Errorf("watch %d uses unsupported resource %q", index, resourceKey)
+			return fmt.Errorf("watch %d uses unsupported resource %q; the controller watches only %s", index, resourceKey, strings.Join(SupportedWatches(), ", "))
 		}
 		key := resourceKey + "/" + watch.Namespace
 		if _, ok := seenWatches[key]; ok {

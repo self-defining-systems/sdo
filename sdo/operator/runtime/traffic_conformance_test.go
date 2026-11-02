@@ -61,7 +61,7 @@ func TestTrafficProtoSchemaModelsGoWorkloadJSON(t *testing.T) {
 		"verify-burst": {
 			APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "verify",
 			Purpose: traffic.PurposeVerifyBurst, Duration: traffic.Duration(3 * time.Second),
-			Scenarios: []traffic.WorkloadScenario{{ID: "search", SLO: &traffic.SLO{Window: 10, MinSamples: 2}}},
+			Scenarios: []traffic.WorkloadScenario{{ID: "search", SLO: &traffic.SLO{Window: 10, MinSamples: 2, MinTimeouts: 1}}},
 		},
 		"link-probe": {
 			APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "links",

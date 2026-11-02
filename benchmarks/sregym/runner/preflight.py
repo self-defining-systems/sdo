@@ -65,8 +65,10 @@ except ModuleNotFoundError:  # Python 3.10
 
 from collections.abc import Callable
 
+from benchmarks.sregym.adapter import BENCHMARK_IMAGE_ENTRY_POINTS, image_entrypoint_script
 from benchmarks.sregym.runner.experiment import ExperimentConfig, load_experiment_config, resolve_config
 from benchmarks.sregym.runner.pipeline import is_pipeline_config, load_pipeline_config, merge_stage_config
+from sdo.agents.provider import MODEL_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -81,7 +83,6 @@ GB = 10**9
 DEFAULT_KIND_CLUSTER_PREFIX = "sregym-w"
 #: SREGym's default kind topology when ``kind_worker_nodes`` is 0.
 DEFAULT_KIND_WORKERS = 3
-AGENT_BASE_IMAGE = "sregym-agent-base:latest"
 #: Where each SDO image is defaulted when ``[agent.sdo_codex]`` names none (``config_to_env``).
 SDO_IMAGE_DEFAULTS = {
     "controller_image": "sdo-controller:v0.1.0",
@@ -92,13 +93,14 @@ SDO_IMAGE_DEFAULTS = {
 SDO_IMAGE_ENTRY_POINTS = {
     "controller_image": (),
     "responder_image": ("sdo.agents.responder.worker", "libs.agent_cli", "agentshim"),
+    "benchmark_image": ("sdo.agents.responder.worker", *BENCHMARK_IMAGE_ENTRY_POINTS),
 }
 #: Only the worker image runs agent turns and needs these Python/CLI pins.
-AGENT_IMAGES = ("responder_image",)
+AGENT_IMAGES = ("responder_image", "benchmark_image")
 #: The SDO driver's model when neither ``[agent.sdo_codex].model`` nor ``MODEL_ID`` is set.
 SDO_DRIVER_DEFAULT_MODEL = "gpt-6-luna"
 #: Env overrides some SDO entry points read when they are given no model.
-SDO_MODEL_ENV_OVERRIDES = ("SDO_RESPONDER_MODEL", "SDO_LIFECYCLE_MODEL", "SDO_DEPLOYMENT_MODEL")
+SDO_MODEL_ENV_OVERRIDES = tuple(dict.fromkeys(MODEL_ENV.values()))
 JUDGE_EFFORT_ENV = "JUDGE_REASONING_EFFORT"
 #: SREGym's Codex judge effort when ``JUDGE_REASONING_EFFORT`` is unset.
 SREGYM_DEFAULT_JUDGE_EFFORT = "xhigh"
@@ -117,7 +119,7 @@ class ModelPolicy:
     judge use only Codex gpt-6-luna; the Codex baselines use gpt-6-luna; the
     SREGym judge is only ``codex-gpt-6-luna`` at ``xhigh``. ``agent_effort`` is
     the effort SDO pins its incident agents to in code
-    (``sdo.agents.responder.INCIDENT_REASONING_EFFORT``; a test keeps
+    (``sdo.agents.provider.DEFAULT_AGENT_EFFORT``; a test keeps
     the two equal), so every compared arm declares it.
     """
 
@@ -249,6 +251,7 @@ class HostProbe(Protocol):
 
     home: Path
 
+    def suite_descriptions(self, config: ExperimentConfig, sregym_dir: Path) -> dict[str, Any]: ...
     def ipv4_neighbor_limit(self) -> int | None: ...
     def kickoff_import(self, command: str, workdir: Path, sregym_dir: Path, env: Mapping[str, str]) -> str | None: ...
     def free_bytes(self, path: Path) -> int | None: ...
@@ -282,6 +285,11 @@ class SystemHost:
         except (OSError, subprocess.SubprocessError):
             return None
         return completed.stdout if completed.returncode == 0 else None
+
+    def suite_descriptions(self, config: ExperimentConfig, sregym_dir: Path) -> dict[str, Any]:
+        from benchmarks.sregym.runner.suite import describe_suite
+
+        return {key: value.model_dump(mode="json") for key, value in describe_suite(config, sregym_dir).items()}
 
     def ipv4_neighbor_limit(self) -> int | None:
         """Read the Linux host's global IPv4 neighbor allocation ceiling."""
@@ -366,23 +374,13 @@ class SystemHost:
             if "memory check" not in identity:
                 return ImageVersions(codex=None, agentshim=None, import_error="Go operator memory help is unavailable")
             return ImageVersions(codex=None, agentshim=None)
-        codex_out = self._text(["docker", "run", "--rm", "--entrypoint", "codex", ref, "--version"], timeout=120)
-        script = (
-            "import importlib, importlib.metadata as m, json, sys\n"
-            "error = None\n"
-            f"for name in {list(modules)!r}:\n"
-            "    try:\n"
-            "        importlib.import_module(name)\n"
-            "    except Exception as exc:\n"
-            "        error = f'{name}: {type(exc).__name__}: {exc}'\n"
-            "        break\n"
-            "try:\n"
-            "    version = m.version('agentshim')\n"
-            "except m.PackageNotFoundError:\n"
-            "    version = None\n"
-            "print(json.dumps({'agentshim': version, 'import_error': error}))\n"
+        codex_out = self._text(
+            ["docker", "run", "--rm", "--network", "none", "--entrypoint", "codex", ref, "--version"], timeout=120
         )
-        python_out = self._text(["docker", "run", "--rm", "--entrypoint", "python3", ref, "-c", script], timeout=120)
+        script = image_entrypoint_script(modules)
+        python_out = self._text(
+            ["docker", "run", "--rm", "--network", "none", "--entrypoint", "python3", ref, "-c", script], timeout=120
+        )
         if python_out is None and codex_out is None:
             return None
         python = cast("dict[str, Any]", json.loads(python_out.strip().splitlines()[-1])) if python_out else {}
@@ -752,6 +750,37 @@ def _check_application_sources(ctx: _Context) -> PreflightCheck | None:
     return PreflightCheck("application-sources", "pass", f"{len(entries)} application sources present")
 
 
+def _check_suite_capabilities(ctx: _Context) -> PreflightCheck | None:
+    from benchmarks.sregym.faults.description import ProblemDescription, validate_suite
+
+    selected = [config for config in ctx.configs if config.agent == "sdo_codex"]
+    if not selected:
+        return None
+    descriptions: dict[str, Any] = {}
+    evidence: list[dict[str, Any]] = []
+    try:
+        for config in selected:
+            catalog = {
+                key: ProblemDescription.model_validate(value)
+                for key, value in ctx.host.suite_descriptions(config, ctx.sregym_dir).items()
+            }
+            if not catalog:
+                raise ValueError("suite selection resolved no problems")
+            evidence.append(validate_suite(catalog, capability_mode=config.capability_mode).model_dump(mode="json"))
+            descriptions.update({key: value.model_dump(mode="json") for key, value in catalog.items()})
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        return PreflightCheck(
+            "suite-capabilities", "fail", str(exc), "select faults within SDO's application Role and snapshot scope"
+        )
+    ctx.facts["fault_descriptions"] = descriptions
+    ctx.facts["fault_capabilities"] = evidence
+    return PreflightCheck(
+        "suite-capabilities",
+        "pass",
+        f"{len(descriptions)} problems checked; capability modes: {sorted({item['mode'] for item in evidence})}",
+    )
+
+
 def _check_codex_pins(ctx: _Context) -> PreflightCheck:
     dockerfile = ctx.project_root / "sdo" / "operator" / "Dockerfile.runtime"
     pin = dockerfile_arg(dockerfile, "CODEX_VERSION") if dockerfile.is_file() else None
@@ -816,8 +845,6 @@ def _check_sdo_images(ctx: _Context) -> PreflightCheck | None:
     images: dict[str, str] = {}
     for config in sdo_configs:
         images.update({f"{key}:{ref}": ref for key, ref in sdo_images(config).items()})
-    if "codex" in ctx.agents:
-        images[f"agent_base:{AGENT_BASE_IMAGE}"] = AGENT_BASE_IMAGE
     if ctx.images is not None:
         images = {f"{key}:{ref}": ref for key, ref in ctx.images.items()}
     if not images:
@@ -840,7 +867,8 @@ def _check_sdo_images(ctx: _Context) -> PreflightCheck | None:
             continue
         if key not in SDO_IMAGE_ENTRY_POINTS:
             continue
-        versions = ctx.host.image_versions(ref, SDO_IMAGE_ENTRY_POINTS[key])
+        profile = "benchmark_image" if key == "responder_image" and sdo_configs else key
+        versions = ctx.host.image_versions(ref, SDO_IMAGE_ENTRY_POINTS[profile])
         if versions is None:
             problems.append(f"image {ref} could not be probed")
             continue
@@ -1085,6 +1113,7 @@ def run_preflight(
         _check_kickoff_import(ctx),
         _check_disk(ctx),
         _check_application_sources(ctx),
+        _check_suite_capabilities(ctx),
         _check_codex_pins(ctx),
         _check_agentshim(ctx),
         _check_sdo_images(ctx),

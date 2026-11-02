@@ -2,7 +2,12 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
+	"testing"
+	"time"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,9 +18,6 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"strings"
-	"testing"
-	"time"
 )
 
 type fastloopObjects struct{ client *fake.Clientset }
@@ -33,7 +35,15 @@ func (f fastloopObjects) Snapshot(ctx context.Context) (sdk.DetectionContext, er
 	if err != nil {
 		return nil, err
 	}
-	return sdktest.Snapshot{NamespaceName: "app", ServiceList: services.Items, PodList: pods.Items, DeploymentList: deployments.Items}, nil
+	sets, err := f.client.AppsV1().ReplicaSets("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	events, err := f.client.CoreV1().Events("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return sdktest.Snapshot{NamespaceName: "app", ServiceList: services.Items, PodList: pods.Items, DeploymentList: deployments.Items, ReplicaSetList: sets.Items, EventList: events.Items}, nil
 }
 
 type fastloopDetector struct{}
@@ -63,12 +73,12 @@ func (fastloopDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]
 type fastloopPortProgram struct{}
 
 func (fastloopPortProgram) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: "service-targetport-mismatch", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
+	return program.ProgramSpec{ID: "service-targetport-mismatch", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}, {Name: "port", ValueKind: program.IntValue, Default: 8080}}}
 }
 
 func (fastloopPortProgram) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
 	for _, service := range view.Services() {
-		if service.Name == bindings["service"].Name && service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+		if service.Name == bindings.Objects["service"].Name && service.Spec.Ports[0].TargetPort.IntVal == 9999 {
 			return program.Verdict{Result: program.Match}, nil
 		}
 	}
@@ -76,18 +86,18 @@ func (fastloopPortProgram) Diagnose(_ context.Context, view program.ReadView, bi
 }
 
 func (fastloopPortProgram) Mitigate(_ context.Context, _ program.ReadView, bindings program.Bindings) (program.Plan, error) {
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings["service"], Path: "spec.ports[0].targetPort", Value: 8080, Reason: "restore declared port"}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromParam("port"), Reason: "restore declared port"}}}, nil
 }
 
 type fastloopImageProgram struct{}
 
 func (fastloopImageProgram) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: "image-pull-failure", Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}}}
+	return program.ProgramSpec{ID: "image-pull-failure", Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}, {Name: "image", ValueKind: program.StringValue, Default: "good:v1"}}}
 }
 
 func (fastloopImageProgram) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
 	for _, deployment := range view.Deployments() {
-		if deployment.Name == bindings["deployment"].Name && deployment.Spec.Template.Spec.Containers[0].Image == "missing:v1" {
+		if deployment.Name == bindings.Objects["deployment"].Name && deployment.Spec.Template.Spec.Containers[0].Image == "missing:v1" {
 			for _, pod := range view.Pods() {
 				if pod.Labels["app"] != deployment.Name || len(pod.Status.ContainerStatuses) == 0 {
 					continue
@@ -103,14 +113,14 @@ func (fastloopImageProgram) Diagnose(_ context.Context, view program.ReadView, b
 }
 
 func (fastloopImageProgram) Mitigate(_ context.Context, _ program.ReadView, bindings program.Bindings) (program.Plan, error) {
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings["deployment"], Path: "spec.template.spec.containers[0].image", Value: "good:v1", Reason: "restore image"}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings.Objects["deployment"], Path: "spec.template.spec.containers[0].image", Value: program.FromParam("image"), Reason: "restore image"}}}, nil
 }
 
 func fastloopClient(loadedImages ...string) *fake.Clientset {
 	client := fake.NewSimpleClientset(
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(9999)}}}},
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "missing:v1", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}}}}}}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "missing:v1", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}}}}, Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{ResourceVersion: "fixture", Name: "api-pod", Namespace: "app", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "missing:v1", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}}}}, Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}}}},
 	)
 	limit := func(action ktesting.Action) (bool, kruntime.Object, error) {
 		var object kruntime.Object
@@ -208,11 +218,30 @@ func TestImageProgramsRecognizeBothPullFailurePhases(t *testing.T) {
 		t.Run(reason, func(t *testing.T) {
 			snapshot := sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "missing:v1"}}}}}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", Labels: map[string]string{"app": "api"}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}}}}}}}}
 			for _, p := range []program.Diagnoser{fastloopImageProgram{}, transientImageProgram{}} {
-				verdict := program.RunDiagnose(context.Background(), p, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{"deployment": ref}, time.Second)
+				verdict := program.RunDiagnose(context.Background(), p, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}, time.Second)
 				if verdict.Result != program.Match {
 					t.Errorf("%s missed %s: %+v", p.Spec().ID, reason, verdict)
 				}
 			}
 		})
 	}
+}
+
+// The scripted client follows the production file contract instead of treating
+// compact display metadata as the completed execution result.
+func fullCommandReportPayload(t *testing.T, encoded []byte) []byte {
+	t.Helper()
+	var report struct {
+		Actions []json.RawMessage `json:"actions"`
+	}
+	if err := json.Unmarshal(encoded, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Actions == nil {
+		return encoded
+	}
+	if len(report.Actions) != 1 {
+		t.Fatalf("single command has %d full action results", len(report.Actions))
+	}
+	return report.Actions[0]
 }

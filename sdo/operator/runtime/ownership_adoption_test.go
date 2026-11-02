@@ -5,20 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"net/http"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"testing"
-	"time"
 )
 
 type adoptionSource struct {
@@ -48,21 +50,81 @@ type adoptionServiceAPI struct {
 	afterDryRun func(*corev1.Service)
 	conflicts   int
 	lastApply   *corev1.Service
+	records     int
+	renders     int
+	// owners models server-side apply for annotations: a manager's apply
+	// removes the keys it applied before and omits now.
+	owners map[string]string
+}
+
+func (a *adoptionServiceAPI) applyAnnotations(manager string, applied map[string]string) {
+	if a.owners == nil {
+		a.owners = map[string]string{}
+	}
+	for key, owner := range a.owners {
+		if _, kept := applied[key]; owner == manager && !kept {
+			delete(a.service.Annotations, key)
+			delete(a.owners, key)
+		}
+	}
+	for key, value := range applied {
+		if a.service.Annotations == nil {
+			a.service.Annotations = map[string]string{}
+		}
+		a.service.Annotations[key] = value
+		a.owners[key] = manager
+	}
 }
 
 func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if serveTestDiscovery(writer, request) {
+		return
+	}
 	writer.Header().Set("Content-Type", "application/json")
 	if request.Method == http.MethodGet {
 		_ = json.NewEncoder(writer).Encode(&a.service)
 		return
 	}
-	if request.Method != http.MethodPatch || request.URL.Query().Get("fieldManager") != "sdo-deployer" || request.URL.Query().Get("force") != "true" {
-		writer.WriteHeader(http.StatusBadRequest)
-		return
-	}
 	var applied corev1.Service
 	if json.NewDecoder(request.Body).Decode(&applied) != nil {
 		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	// Default rendering is a dry-run CREATE of source alone, never an apply
+	// that could merge with a live object at the probe name.
+	if request.Method == http.MethodPost {
+		if request.URL.Query().Get("dryRun") != metav1.DryRunAll || request.URL.Path != "/api/v1/namespaces/"+a.service.Namespace+"/services" || !strings.HasSuffix(applied.Name, defaultRenderSuffix) {
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		a.renders++
+		if applied.Spec.Type == "" {
+			applied.Spec.Type = corev1.ServiceTypeClusterIP
+		}
+		if applied.Spec.SessionAffinity == "" {
+			applied.Spec.SessionAffinity = corev1.ServiceAffinityNone
+		}
+		_ = json.NewEncoder(writer).Encode(&applied)
+		return
+	}
+	manager := request.URL.Query().Get("fieldManager")
+	if request.Method != http.MethodPatch || (manager != "sdo-deployer" && manager != acceptanceFieldManager) || request.URL.Query().Get("force") != "true" {
+		writer.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if !strings.HasSuffix(request.URL.Path, "/"+a.service.Name) {
+		writer.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if manager == acceptanceFieldManager {
+		if request.URL.Query().Get("dryRun") != "" || len(applied.Spec.Ports) != 0 {
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		a.records++
+		a.applyAnnotations(manager, applied.Annotations)
+		a.service.ResourceVersion = fmt.Sprint(a.patches + a.records + 1)
+		_ = json.NewEncoder(writer).Encode(&a.service)
 		return
 	}
 	if request.URL.Query().Get("dryRun") == "" {
@@ -78,9 +140,10 @@ func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http
 	result.Spec.Ports[0].TargetPort = applied.Spec.Ports[0].TargetPort
 	if request.URL.Query().Get("dryRun") == "" {
 		a.patches++
-		result.ResourceVersion = fmt.Sprint(a.patches + 1)
+		result.ResourceVersion = fmt.Sprint(a.patches + a.records + 1)
 		result.ManagedFields = append(result.ManagedFields, metav1.ManagedFieldsEntry{Manager: "sdo-deployer", Operation: metav1.ManagedFieldsOperationApply, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:ports":{"k:{\"port\":80,\"protocol\":\"TCP\"}":{"f:port":{},"f:protocol":{},"f:targetPort":{}}}}}`)}})
 		a.service = result
+		a.applyAnnotations(manager, applied.Annotations)
 	} else {
 		a.dryRuns++
 		if a.afterDryRun != nil {
@@ -280,7 +343,7 @@ func adoptionController(t *testing.T, target int32, detectors ...sdk.Detector) (
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Source: source, Client: client, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	controller.ConfigureDrift(DriftControllerConfig{Source: source, Client: client, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: api.service.Spec.Ports[0].TargetPort.IntVal != 8080}}
 	}})
 	return controller, api, source, func() {}

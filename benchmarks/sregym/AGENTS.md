@@ -9,6 +9,7 @@ All first-party SREGym integration code lives here. This package may depend on p
 - `runner/` — experiment and pipeline configuration plus harness process orchestration
 - `experiments/` — a few example configs (`sdo_example.toml`, `codex_baseline_example.toml`; copy and edit for your own runs) plus the assurance catalog and seeds (`assurance/composites.toml`, `assurance/seeds/`) that code reads at runtime. Incident-stream configs are generated with `uv run python -m benchmarks.sregym.runner.incident_stream --out-dir <dir>`, not checked in
 - `analysis/` — benchmark result summarization
+- `skilleval/` — offline reflection scenarios: `scenario` cuts a recorded row back to reflection start, `runner` resumes it in the recorded responder image with a chosen skills root and tabulates calls, tokens, time, memory check, programs per hand repair and replay. Scenarios and runs are run outputs and stay outside the repository
 - `registry.yaml` — agent registry consumed by the benchmark runner
 - `run.py` — benchmark experiment entry point
 
@@ -25,6 +26,7 @@ The external SREGym implementation is a separately pinned Git submodule at `thir
 - Put reusable production lifecycle, responder, contracts, and operational-memory behavior under `sdo/`.
 - Keep benchmark verdicts, oracle answers, hidden fault identity, and injection metadata out of production requests, detectors, memory, and prompts.
 - Keep changes to the external harness in `third_party/sregym/`; do not copy its implementation into first-party packages.
+- The harness deploys exactly the image refs the app source declares. SDO accepts the source as desired state, so a harness-only tag is unexplained drift at time zero (a baseline incident before any injection) and the first reconcile would write the source's ref back. Source builds use a lane-private tag only to build and load; the harness then publishes the image on the lane's nodes under the declared ref (`source_deploy._declare_image`) and applies the unmodified manifests and charts.
 
 ## Grading
 
@@ -42,6 +44,7 @@ Report timing without judge time, the same way for every arm (`benchmarks.sregym
 ## Run assurance
 
 - Every launch runs the preflight in `runner/preflight.py`. It aborts on low disk, floating or mismatched Codex CLI and agentshim pins, broken images, lane-isolation problems, any role or judge off `codex:gpt-6-luna` / `codex-gpt-6-luna` at `xhigh`, arm-parity differences, or an exhausted Codex quota. Check the arms of a comparison before launching them: `uv run python -m benchmarks.sregym.runner.preflight <arm.toml>...`.
+- Reused images must prove their runtime entrypoints before injection. Controller/validator images in fastloop remain bound to the run source revision; an unlabelled or older responder must pass the real Python entrypoint import smoke, including the required benchmark recorder/transport imports. SREGym experiment and fastloop preflight checks select that explicit benchmark profile; production responder image checks keep the production profile. Runner image checks also accept the `benchmark_image` role. For development mounts, the smoke uses the current source projection returned by production `devmount.ApplyWorker`, including its benchmark file allowlist; checking only the older image entrypoint cannot establish compatibility. A missing transitive module rejects the named image before worker discovery.
 - Shared Linux kind hosts need `net.ipv4.neigh.default.gc_thresh3 >= 65536`; the launch preflight rejects smaller values. Neighbor exhaustion can stall node loopback API/etcd connections as well as pod traffic. An administrator must approve any host-wide runtime `sysctl -w` increase; preflight never changes kernel settings. For remote Docker or hosts without the Linux proc knob, verify capacity directly on the Docker host (the check reports `unknown`).
 - Every run directory gets a `run_manifest.json` (`runner/manifest.py`).
 - Report only runs that `uv run python -m benchmarks.sregym.analysis.run_validity` classifies as `valid` or `agent_failure`. `incident_cost` excludes `invalid_infra` runs itself and prints why. Do not rename run directories by hand to mark them invalid.
@@ -62,3 +65,6 @@ Report tokens the same way for every arm (SDO responder, SDO reflection, one-tim
   - Codex numbers come from the exported rollouts (per-request `last_token_usage`), which carry reasoning and request counts that receipts written before agentshim 0.7 lack. Receipts are the fallback.
   - A Claude baseline is read from its `stream-json` result frames, because SREGym's own `usage_metrics` for Claude excludes cache reads from input and drops cache writes.
   - Old SDO records whose `cached_input_tokens` counted Claude cache writes are split back into reads and writes by `agentshim.TokenUsage.from_dict`.
+
+The fault-observation tooling map and offline plan gate are documented in
+[`faults/README.md`](faults/README.md).

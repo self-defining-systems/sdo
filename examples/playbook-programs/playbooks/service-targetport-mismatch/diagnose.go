@@ -20,7 +20,7 @@ func (Program) Spec() program.ProgramSpec {
 // declared TCP port on every selected ready Pod. Declarations choose probes;
 // they never establish a listener without a successful TCP observation.
 func replacement(v program.ReadView, b program.Bindings) (corev1.Service, []corev1.Pod, int32, bool) {
-	ref := b["service"]
+	ref := b.Objects["service"]
 	for _, service := range v.Services() {
 		if service.Namespace != ref.Namespace || service.Name != ref.Name {
 			continue
@@ -103,5 +103,5 @@ func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Binding
 	if targetPort == port {
 		return program.Verdict{Result: program.NoMatch}, nil
 	}
-	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: b["service"], Fact: "selected ready Pods accept declared port and refuse numeric targetPort", Observed: fmt.Sprint(targetPort), Expected: fmt.Sprint(port)}}}, nil
+	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: b.Objects["service"], Fact: "selected ready Pods accept declared port and refuse numeric targetPort", Observed: fmt.Sprint(targetPort), Expected: fmt.Sprint(port)}}}, nil
 }

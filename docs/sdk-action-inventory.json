@@ -1,0 +1,183 @@
+[
+  {
+    "operation": "patch-json",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "patch-merge",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "patch-strategic",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "patch-list-match",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "scale",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "rollout-restart",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "rollout-undo",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "rollout-pause",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "rollout-resume",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "set-image",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "set-env",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "set-resources",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "label",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "annotate",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "taint",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "cordon",
+    "primitive": "PatchObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "apply",
+    "primitive": "ApplyObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "create",
+    "primitive": "ApplyObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "replace",
+    "primitive": "ApplyObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "autoscale",
+    "primitive": "ApplyObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "delete",
+    "primitive": "DeleteObject",
+    "replay": "api-object"
+  },
+  {
+    "operation": "exec",
+    "primitive": "EnsureExec",
+    "replay": "external-transition"
+  },
+  {
+    "operation": "cp",
+    "primitive": "EnsureExec",
+    "replay": "external-transition"
+  },
+  {
+    "operation": "container-admin",
+    "primitive": "EnsureExec",
+    "replay": "external-transition"
+  },
+  {
+    "operation": "container-reload",
+    "primitive": "EnsureExec",
+    "replay": "external-transition"
+  },
+  {
+    "operation": "container-files",
+    "primitive": "EnsureExec",
+    "replay": "external-transition"
+  },
+  {
+    "operation": "drain",
+    "primitive": "KubernetesRequest",
+    "replay": "recorded-api-effect"
+  },
+  {
+    "operation": "top",
+    "primitive": "KubernetesRead",
+    "replay": "recorded-api-read"
+  },
+  {
+    "operation": "get",
+    "primitive": "Object",
+    "replay": "api-read"
+  },
+  {
+    "operation": "describe",
+    "primitive": "Object+Events",
+    "replay": "api-read"
+  },
+  {
+    "operation": "logs",
+    "primitive": "Logs",
+    "replay": "recorded-read"
+  },
+  {
+    "operation": "events",
+    "primitive": "Events",
+    "replay": "api-read"
+  },
+  {
+    "operation": "in-cluster-http",
+    "primitive": "EnsureHTTP",
+    "replay": "external-transition"
+  },
+  {
+    "operation": "one-off-job",
+    "primitive": "RunJob",
+    "replay": "job-completion"
+  },
+  {
+    "operation": "wait",
+    "primitive": "WaitFor",
+    "replay": "api-object"
+  },
+  {
+    "operation": "secret-data-read",
+    "primitive": "",
+    "replay": "",
+    "exclusion": "Kubernetes Secret data is never read. Use container environment credential references."
+  }
+]

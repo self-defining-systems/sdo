@@ -11,6 +11,7 @@ from google.protobuf import json_format
 
 from sdo.agents.responder.result_output import normalize_usage, parse_incident_result, validate_incident_result
 from sdo.contracts import IncidentRequest, IncidentResult, UsageMetrics, parse_json, to_canonical_json, validate
+from sdo.contracts.model_schema import controller_owned
 
 FIXTURE_DIR = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts"
 USAGE = {"llm_calls": 1, "input_tokens": 10, "output_tokens": 4, "reasoning_output_tokens": 1}
@@ -172,46 +173,29 @@ class TestUsageMetrics:
             validate(usage)
 
 
-def test_incident_request_carries_optional_follow_up_context() -> None:
-    payload = _fixture("incident_request.json")
-    assert not json_format.ParseDict(payload, IncidentRequest()).HasField("follow_up")
-    payload["follow_up"] = {
-        "original_incident_id": "inc-1",
-        "parent_incident_id": "inc-2",
-        "attempt": 2,
-        "max_follow_ups": 3,
-        "prior_responder_summary": "fixed geo",
-    }
-
-    request = json_format.ParseDict(payload, IncidentRequest())
-
-    assert request.follow_up.attempt == 2
-    assert parse_json(to_canonical_json(request), IncidentRequest()) == request
-
-
-def test_state_change_source_must_name_exactly_one_object() -> None:
+def test_controller_owned_drift_is_removed_before_worker_validation() -> None:
     reply = _model_reply()
-    reply["confirmed_root_causes"][0]["evidence"] = [
-        {"kind": "state-change", "source": "Service/geo; Service/recommendation", "observation": "ports changed"}
-    ]
-    with pytest.raises(ValueError, match=r"exactly one object reference.*own evidence entry"):
-        parse_incident_result(reply, USAGE)
+    reply["drift_reprompt"] = {"findings_before": 0, "findings_after": 0}
+    reply["unresolved_findings"] = [{"not_a_finding": True}]
+    result = parse_incident_result(reply, USAGE)
+    assert not result.HasField("drift_reprompt")
+    assert not result.unresolved_findings
 
 
-@pytest.mark.parametrize("source", ["Service/geo", "Service/hotel/geo"])
-def test_state_change_source_accepts_one_object_reference(source: str) -> None:
-    reply = _model_reply()
-    reply["confirmed_root_causes"][0]["evidence"] = [
-        {"kind": "state-change", "source": source, "observation": "port changed"}
-    ]
-    assert parse_incident_result(reply, USAGE).confirmed_root_causes[0].evidence[0].source == source
+def test_controller_records_keep_positive_before_count_invariant() -> None:
+    from sdo.contracts.proto import messages_pb2
+
+    with pytest.raises(ValueError, match="findings_before"):
+        validate(messages_pb2.DriftReprompt(findings_before=0, findings_after=0))
+    validate(messages_pb2.DriftReprompt(findings_before=2, findings_after=0))
 
 
-def test_two_object_cause_cites_each_object_in_its_own_entry() -> None:
-    reply = _model_reply()
-    reply["confirmed_root_causes"][0]["evidence"] = [
-        {"kind": "state-change", "source": "Service/geo", "observation": "targetPort changed"},
-        {"kind": "state-change", "source": "Service/recommendation", "observation": "targetPort changed"},
-    ]
-    sources = [e.source for e in parse_incident_result(reply, USAGE).confirmed_root_causes[0].evidence]
-    assert sources == ["Service/geo", "Service/recommendation"]
+@pytest.mark.parametrize(
+    "field",
+    [field for field in IncidentResult.DESCRIPTOR.fields if controller_owned(field)],
+    ids=lambda field: field.name,
+)
+def test_worker_never_validates_any_controller_owned_result_field(field: Any) -> None:
+    for key in {field.name, field.json_name}:
+        result = parse_incident_result({**_model_reply(), key: {"invalid": None}}, USAGE)
+        assert field.name not in {present.name for present, _ in result.ListFields()}

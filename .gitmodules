@@ -28,3 +28,9 @@
 [submodule "third_party/sregym"]
 	path = third_party/sregym
 	url = git@github.com:vic-lsh/SREGym.git
+[submodule "apps/astronomy_shop/upstream"]
+	path = apps/astronomy_shop/upstream
+	url = https://github.com/open-telemetry/opentelemetry-demo.git
+[submodule "apps/astronomy_shop/charts"]
+	path = apps/astronomy_shop/charts
+	url = https://github.com/xlab-uiuc/opentelemetry-helm-charts.git

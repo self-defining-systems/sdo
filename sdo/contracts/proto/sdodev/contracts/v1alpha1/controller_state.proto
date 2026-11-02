@@ -4,11 +4,11 @@ package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
-import "sdodev/contracts/v1alpha1/memory.proto";
+import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
 import "sdodev/contracts/v1alpha1/worker.proto";
-import "sdodev/contracts/v1alpha1/program.proto";
+import "sdodev/contracts/v1alpha1/mitigation_menu.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
@@ -22,7 +22,8 @@ enum DispatchState {
   DISPATCH_STATE_PENDING = 4;
   DISPATCH_STATE_RUNNING = 5;
   DISPATCH_STATE_COMPLETED = 6;
-  DISPATCH_STATE_ADMISSION_DEFERRED = 7;
+  reserved 7;
+  reserved "DISPATCH_STATE_ADMISSION_DEFERRED";
 }
 
 // ClosureState is the lifecycle of an incident's durable memory commit.
@@ -78,6 +79,13 @@ enum ClosureFailureReason {
   CLOSURE_FAILURE_REASON_INVALID_RECEIPT = 2;
   CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED = 3;
   CLOSURE_FAILURE_REASON_AGENT_TIMEOUT = 4;
+  // The closure recheck was denied its observation scope (RBAC, undeclared or
+  // unsupported dependency). A misconfiguration, never a contradicted repair.
+  CLOSURE_FAILURE_REASON_OBSERVER_DENIED = 5;
+  // The incident's work lost its owner: no live responder execution or
+  // harvested result remains past its response bound plus a grace. A harvested
+  // response stays controller-owned through closure, including after restart.
+  CLOSURE_FAILURE_REASON_OWNER_LOST = 6;
 }
 
 // FailedIncidentClosure preserves terminal evidence independently of the next
@@ -110,13 +118,6 @@ message ControllerState {
     id: "state.open_incident_has_request"
     message: "an open incident requires its request"
     expression: "!this.incident_open || has(this.incident_request)"
-  };
-  option (buf.validate.message).cel = {
-    id: "state.detector_review_complete"
-    message: "detector review requires an open incident whose responder finished, plus a time and a reason"
-    expression:
-      "!this.detector_review_required || (this.incident_open && this.responder_done && "
-      "has(this.detector_review_required_at) && this.detector_review_reason != '')"
   };
   option (buf.validate.message).cel = {
     id: "state.failed_closure_has_permanent_failure"
@@ -154,12 +155,12 @@ message ControllerState {
   google.protobuf.Timestamp incident_detected_at = 11;
   google.protobuf.Timestamp incident_dispatched_at = 12;
   google.protobuf.Timestamp responder_completed_at = 13;
-  bool detector_review_required = 14;
-  google.protobuf.Timestamp detector_review_required_at = 15;
-  string detector_review_reason = 16;
+  reserved 14, 15, 16;
+  reserved "detector_review_required", "detector_review_required_at", "detector_review_reason";
   // Start of each detector's current clear streak.
   map<string, google.protobuf.Timestamp> detector_clear_since = 17;
-  repeated ObservedStateChange incident_observed_changes = 18;
+  reserved 18;
+  reserved "incident_observed_changes";
   DispatchState dispatch_state = 19 [(buf.validate.field).enum.defined_only = true];
   repeated string incident_finding_keys = 20;
   IncidentClosure pending_closure = 21;
@@ -167,23 +168,54 @@ message ControllerState {
   ClosureReceipt closure_receipt = 23;
   ClosureFailure closure_failure = 24;
   string last_acknowledged_incident_id = 25;
-  repeated string pending_releases = 26;
+  reserved 26;
+  reserved "pending_releases";
   int32 evaluation_iteration = 27;
   repeated DetectorTimelineEntry detector_timeline = 28 [(buf.validate.field).repeated.max_items = 64];
   IncidentView incident_view = 29;
   repeated DriftEvent drift_events = 30;
   OwnershipAdoptionStatus ownership_adoption = 31;
-  DriftAdmissionState drift_admission = 33;
-  // Next namespace assignment per learned program, preserved across restarts.
-  map<string, string> program_sweep_cursors = 34;
   // Incident-scoped attempt counts, limits and failure outcomes. Never stores
   // plans, applications, rollback progress or pending mutations.
   bytes responder_tool_state_json = 35 [(buf.validate.field).bytes.max_len = 700000];
   // An outbox of failures not yet confirmed in the per-incident archive. The
   // ConfigMap edge archives these before the main CAS and omits them there.
   repeated FailedIncidentClosure failed_closures = 36;
-  reserved 32;
-  reserved "drift_investigation";
+  // Separate incident-scoped CAS document; retained across source adoption.
+  SelectionLedger selection_ledger = 37;
+  // Exact accepted-source drift assessments survive restart without reopening
+  // an unchanged object. Changing source or observed configuration invalidates them.
+  repeated DriftEvent accepted_source_drift = 38;
+  string accepted_source_drift_revision = 39;
+  NamespaceOnboarding namespace_onboarding = 40;
+  // Incidents whose failed-attempt reflection is queued or running after its
+  // closure was acknowledged, or whose accepted detector change still awaits
+  // its controller rollout, oldest first. The broker ledger is the source of
+  // truth; this projection lets observers treat it as open work.
+  repeated string queued_reflection_incident_ids = 41;
+  // The broker ledger could not be read, so the queue above is unknown and
+  // observers must treat reflection work as open.
+  bool queued_reflections_unknown = 42;
+  // Unset while the controller owns no incident work: no open incident, no
+  // closure in flight and no queued or running reflection. Otherwise the latest
+  // time the controller can still be working, from its own response timeout,
+  // verification timeout and closure retry policy, anchored at the moment the
+  // work began so it never slides. Observers wait on this one fact.
+  google.protobuf.Timestamp busy_until = 43;
+  // Heartbeat: Step passes begun since the controller first ran, counted once
+  // observationMu is held, whether or not the pass found work, took a
+  // snapshot, or failed. It stops only when the step loop is blocked, so
+  // observers judge a hung controller by it and never by evaluation_iteration.
+  int64 step_count = 44;
+  // First completed response starts this absolute verification bound. An
+  // unconfirmed continuation or controller restart never extends it. A healthy
+  // optional source turn starts its own fresh verification window on return.
+  // The original response deadline caps both; cleared with the incident.
+  google.protobuf.Timestamp verification_deadline_at = 45;
+  string setup_evaluated_revision = 46;
+  repeated DisabledSetupDetector disabled_setup_detectors = 47;
+  reserved 32, 33, 34;
+  reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
@@ -195,15 +227,10 @@ message ReflectionDecision {
   string error = 4;
   repeated SdkGap sdk_gaps = 5;
   UsageMetrics usage = 6;
-}
-
-// ProposalRejection is one broker rejection of an agent proposal, with the
-// typed diagnostics the next attempt receives.
-message ProposalRejection {
-  // 1-based attempt that was rejected.
-  uint32 attempt = 1 [(buf.validate.field).uint32.gte = 1];
-  repeated MemoryDiagnostic diagnostics = 2 [(buf.validate.field).repeated.min_items = 1];
-  google.protobuf.Timestamp rejected_at = 3;
+  string decline_reason = 7 [(buf.validate.field).string = {in: ["", "no_recorded_repair"]}];
+  // Terminal execution failure; never a model-authored verdict. "timeout" is the
+  // controller's frozen task deadline; the others are the worker's typed failure.
+  string failure_reason = 8 [(buf.validate.field).string = {in: ["", "timeout", "agent_timeout", "agent_failed", "rate_limited", "account_exhausted", "session_handoff_timeout", "session_handoff_invalid", "session_unavailable", "result_too_large", "request_too_large", "worker_oom_killed", "worker_resources_rewritten"]}];
 }
 
 // ProposalRejectionLog is the broker's durable retry state for one proposal
@@ -277,8 +304,8 @@ message BrokerLedger {
   bool reflection_rejected = 16;
   string reflection_skipped_reason = 17;
   map<string, google.protobuf.Timestamp> closure_phase_timestamps = 18;
-  string fast_path_skipped_reason = 19;
-  repeated RelationCoveredFinding fast_path_relation_covered_findings = 20;
+  reserved 19;
+  reserved 20;
   ReflectionPhase reflection_phase = 21 [(buf.validate.field).enum.defined_only = true];
   ProposalWorkspace reflection_workspace = 22;
   repeated string reflection_paths = 23;
@@ -286,6 +313,16 @@ message BrokerLedger {
   repeated ReflectionDecision reflection_results = 24;
   uint32 reflection_max_retries = 25;
   google.protobuf.Timestamp reflection_dispatch_at = 26;
+  // Distinct resource/phase observations absent from protected recordings.
+  optional uint32 reflection_no_repair_count = 27;
+  // A failed attempt's reflection is queued behind its acknowledgment so the
+  // incident's follow-up does not wait for it. Replayed after restart.
+  bool reflection_queued = 28;
+  google.protobuf.Timestamp reflection_queued_at = 29;
+  // Non-blocking coverage gaps the accepted reflection commit carries (a verified
+  // cause without a program, a skipped healthy replay, an unreachable repeat).
+  // The count is the number of entries; the committed outcome file stays immutable.
+  repeated MemoryDiagnostic reflection_coverage_gaps = 30;
 }
 
 // Source field ownership adoption survives controller restarts.
@@ -298,16 +335,13 @@ message OwnershipAdoptionStatus {
   string skipped_reason = 6;
   google.protobuf.Timestamp retry_at = 7;
   int32 failures = 8;
+  // Objects SDO has recorded as accepted ("apiVersion/kind/namespace/name"),
+  // across source commits. A later record loss on one of them is re-stamped
+  // without absorbing other managers' undeclared fields.
+  repeated string accepted_objects = 9;
+  // Declared objects this pass left alone because adoption cannot handle
+  // their kind ("apiVersion/kind/namespace/name: reason"). They stay in the
+  // source inventory; they carry no acceptance record.
+  repeated string unadopted_objects = 10;
 }
 
-// Admission accounting for ordinary drift-only responder incidents. No worker
-// requests or verdicts are stored here; pending work is the normal batcher.
-message DriftAdmissionState {
-  repeated string seen_keys = 1;
-  repeated google.protobuf.Timestamp dispatch_at = 2;
-  repeated DriftAdmissionUse token_usage = 3;
-}
-message DriftAdmissionUse {
-  google.protobuf.Timestamp at = 1;
-  int64 tokens = 2;
-}

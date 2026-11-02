@@ -1,0 +1,1 @@
+## Responder structured result

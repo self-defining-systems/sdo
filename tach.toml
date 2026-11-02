@@ -10,12 +10,16 @@ ignore_type_checking_imports = true
 # --- Layer 0: libs (no internal deps) ---
 
 [[modules]]
+path = "benchmarks.sregym.faults"
+depends_on = []
+
+[[modules]]
 path = "libs.agent_cli"
 depends_on = []
 
 [[modules]]
 path = "benchmarks.sregym.protocol"
-depends_on = ["sdo.contracts"]
+depends_on = ["sdo.contracts", "libs.agent_cli"]
 
 [[modules]]
 path = "sdo.contracts"
@@ -55,6 +59,9 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.adapter"
 depends_on = [
+    "benchmarks.sregym.repository_git",
+    "libs.agent_cli",
+    "sdo.agents.health_judge",
     "benchmarks.sregym.protocol",
     "sdo.contracts",
     "sdo.agents.responder",
@@ -63,6 +70,9 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.fastloop"
 depends_on = [
+    "benchmarks.sregym.repository_git",
+    "libs.agent_cli",
+    "benchmarks.sregym.faults",
     "benchmarks.sregym.adapter",
     "benchmarks.sregym.protocol",
     "sdo.agents.responder",
@@ -70,8 +80,17 @@ depends_on = [
 ]
 
 [[modules]]
+path = "benchmarks.sregym.skilleval"
+depends_on = [
+    "benchmarks.sregym.repository_git",
+    "libs.agent_cli",
+    "sdo.agents.responder",
+]
+
+[[modules]]
 path = "benchmarks.sregym.assurance"
 depends_on = [
+    "benchmarks.sregym.repository_git",
     "benchmarks.sregym.adapter",
     "benchmarks.sregym.fastloop",
     "benchmarks.sregym.protocol",
@@ -79,8 +98,15 @@ depends_on = [
 ]
 
 [[modules]]
+path = "benchmarks.sregym.pool"
+depends_on = [
+    "benchmarks.sregym.fastloop",
+]
+
+[[modules]]
 path = "benchmarks.sregym.runner"
 depends_on = [
+    "benchmarks.sregym.faults",
     "benchmarks.sregym.adapter",
     "benchmarks.sregym.protocol",
 ]
@@ -90,3 +116,7 @@ path = "benchmarks.sregym.run"
 depends_on = [
     "benchmarks.sregym.runner",
 ]
+
+[[modules]]
+path = "benchmarks.sregym.repository_git"
+depends_on = []

@@ -1,13 +1,19 @@
 // One build graph shares the Go/runtime stages and passes the responder directly
 // to the benchmark extension, including with a docker-container builder.
+variable "SDO_SOURCE_REVISION" { default = "unknown" }
+variable "SDO_CONTROLLER_SOURCE_TREE" { default = "unknown" }
 variable "SDO_IMAGE_TAG" { default = "v0.1.0" }
 variable "SDO_WORKER_TARGET" { default = "sregym-responder" }
 
 group "default" {
-  targets = ["controller", "responder", "benchmark"]
+  targets = ["controller", "responder", "benchmark", "script-tools"]
 }
 
 target "controller" {
+  labels = {
+    "org.opencontainers.image.revision" = SDO_SOURCE_REVISION
+    "dev.sdo.source-tree" = SDO_CONTROLLER_SOURCE_TREE
+  }
   context = "."
   dockerfile = "sdo/operator/Dockerfile.runtime"
   target = "controller"
@@ -35,4 +41,11 @@ target "scripted-runtime" {
  context = "."
  dockerfile = "sdo/operator/Dockerfile.runtime"
  target = "scripted-runtime"
+}
+
+target "script-tools" {
+  context = "."
+  dockerfile = "sdo/operator/Dockerfile.runtime"
+  target = "script-tools"
+  tags = ["sdo-script-tools:${SDO_IMAGE_TAG}"]
 }

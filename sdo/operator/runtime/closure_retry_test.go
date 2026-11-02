@@ -41,10 +41,6 @@ func (b *rejectingIncidentBroker) AcknowledgeClosure(context.Context, ClosureRec
 	return nil
 }
 
-func (b *rejectingIncidentBroker) ReleaseIncident(context.Context, string) error {
-	return nil
-}
-
 func (b *rejectingIncidentBroker) processCalls() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -57,7 +53,7 @@ func newClosureRetryController(t *testing.T, policy ClosureRetryPolicy, broker I
 	config.ClosureRetry = policy
 	controller, err := NewController(
 		config,
-		[]sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))},
+		[]sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault")), controllerDetector("health", time.Hour, sdk.Finding{})},
 		staticProvider{snapshot: sdktest.Snapshot{}},
 		&recordingDispatcher{requests: make(chan IncidentRequest, 1)},
 		// The detector is not due for an hour, so NextWake reflects retries.

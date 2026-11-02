@@ -106,6 +106,7 @@ func (d *remoteDetector) ConsumesUsage() bool                   { return d.UsesU
 func (d *remoteDetector) UsageRequirements() usage.Requirements { return d.Usage }
 func (d *remoteDetector) ConsumesServiceReachability() bool     { return d.Reachability }
 func (d *remoteDetector) ConsumesAlerts() bool                  { return d.Alerts }
+func (d *remoteDetector) ConsumesPodAdmission() bool            { return d.PodAdmission }
 func (d *remoteDetector) TrafficWorkloads() []string            { return d.Traffic }
 func (d *remoteDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
 	rpc, sequence, release, err := d.remote.capture(ctx, view)
@@ -157,7 +158,20 @@ func (r *RemoteMemory) observation(view sdk.DetectionContext) (*pb.MemoryObserva
 		}
 	}
 	var err error
-
+	if len(source.ObservationStatuses()) > 0 {
+		scoped, _, e := sdktest.CaptureScoped(source)
+		if e != nil {
+			return nil, e
+		}
+		if out.Scoped, err = wireStruct(scoped); err != nil {
+			return nil, err
+		}
+	}
+	if v, ok := source.PodAdmission(); ok {
+		if out.PodAdmission, err = wireStruct(v); err != nil {
+			return nil, err
+		}
+	}
 	if v, ok := source.ServiceReachability(); ok {
 		out.Reachability, err = wireStruct(v)
 		if err != nil {
@@ -220,15 +234,12 @@ func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequenc
 		return nil, err
 	}
 	input := &pb.MemoryProgramInput{ProgramId: p.spec.ID, MirrorSequence: sequence, Observation: observation}
-	names := make([]string, 0, len(b))
-	for name := range b {
+	names := make([]string, 0, len(b.Objects))
+	for name := range b.Objects {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	for _, name := range names {
-		ref := b[name]
-		input.Bindings = append(input.Bindings, &pb.Binding{Name: name, Object: objectRefContract(ref)})
-	}
+	input.Bindings = programBindingsContract(b)
 	refs, err := memoryhost.SnapshotRefs(view)
 	if err != nil {
 		return nil, err
@@ -238,7 +249,7 @@ func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequenc
 		seen[ref] = true
 	}
 	for _, name := range names {
-		if ref := b[name]; !seen[ref] {
+		if ref := b.Objects[name]; !seen[ref] {
 			refs = append(refs, ref)
 			seen[ref] = true
 		}

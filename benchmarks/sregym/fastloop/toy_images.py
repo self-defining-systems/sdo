@@ -7,17 +7,50 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
+from benchmarks.sregym.adapter import (
+    ImageRetentionError,
+    LaneResourcePolicy,
+    WaitKind,
+    assert_host_disk_headroom,
+    retain_lane_images,
+    wait_for,
+)
+from benchmarks.sregym.fastloop.host_limits import HostLimits
 from benchmarks.sregym.fastloop.image_delivery import registry_delivery, save_delivery, warn_fallback
 
 
-def load_images(cluster: str, images: list[str], *, record_path: Path | None = None) -> dict[str, dict[str, str]]:
+def load_images(
+    cluster: str,
+    images: list[str],
+    *,
+    record_path: Path | None = None,
+    resource_policy: LaneResourcePolicy | None = None,
+    host_limits: HostLimits | None = None,
+) -> dict[str, dict[str, str]]:
+    with (host_limits or HostLimits.from_env()).admit("image-delivery"):
+        try:
+            disk = assert_host_disk_headroom(policy=resource_policy)
+        except ValueError as exc:
+            raise ValueError(f"eval: image-delivery disk floor: {exc}") from exc
+        return _deliver_images(cluster, images, record_path=record_path, disk=disk)
+
+
+def _deliver_images(
+    cluster: str,
+    images: list[str],
+    *,
+    record_path: Path | None,
+    disk: dict[str, Any],
+) -> dict[str, dict[str, str]]:
     started = time.monotonic()
     reason = ""
     path = "registry"
     evidence: dict[str, dict[str, str]] = {}
+    registry: dict[str, Any] = {}
     try:
-        evidence = registry_delivery(cluster, images)
+        evidence = registry_delivery(cluster, images, metrics=registry)
     except (subprocess.SubprocessError, RuntimeError, ValueError, KeyError, OSError) as error:
         reason = str(error)
         if isinstance(error, subprocess.CalledProcessError):
@@ -32,26 +65,44 @@ def load_images(cluster: str, images: list[str], *, record_path: Path | None = N
         fallback_started = time.monotonic()
         try:
             _load_archive_images(cluster, images)
-        finally:
+        except BaseException:
             seconds = time.monotonic() - fallback_started
             warn_fallback(reason, images, seconds)
             if record_path is not None:
                 save_delivery(
                     record_path,
-                    {"path": path, "reason": reason, "seconds": seconds, "images": images, "cluster": cluster},
+                    {
+                        "path": path,
+                        "reason": reason,
+                        "seconds": seconds,
+                        "images": images,
+                        "cluster": cluster,
+                        "success": False,
+                        "disk": disk,
+                        "registry": registry,
+                    },
                 )
-        return evidence
+            raise
+        warn_fallback(reason, images, time.monotonic() - fallback_started)
+    record = {
+        "path": path,
+        "reason": reason,
+        "seconds": time.monotonic() - started,
+        "images": images,
+        "cluster": cluster,
+        "success": True,
+        "disk": disk,
+        "registry": registry,
+    }
+    try:
+        record["retention"] = retain_lane_images(cluster, images)
+    except (subprocess.SubprocessError, RuntimeError, ValueError, KeyError, OSError, TypeError) as exc:
+        record["retention"] = {"error": str(exc), **(exc.evidence if isinstance(exc, ImageRetentionError) else {})}
+        if record_path is not None:
+            save_delivery(record_path, record)
+        raise RuntimeError(f"eval: image retention failed after delivery to {cluster}: {exc}") from exc
     if record_path is not None:
-        save_delivery(
-            record_path,
-            {
-                "path": path,
-                "reason": reason,
-                "seconds": time.monotonic() - started,
-                "images": images,
-                "cluster": cluster,
-            },
-        )
+        save_delivery(record_path, record)
     return evidence
 
 
@@ -135,6 +186,10 @@ def _load_archive_images(cluster: str, images: list[str]) -> None:
             subprocess.run(
                 ["docker", "image", "save", "--platform", image_platform, "-o", str(archive), *sorted(missing)],
                 check=True,
-                timeout=180,
+                timeout=wait_for(WaitKind.ROLLOUT),
             )
-            subprocess.run(["kind", "load", "image-archive", "--name", cluster, str(archive)], check=True, timeout=180)
+            subprocess.run(
+                ["kind", "load", "image-archive", "--name", cluster, str(archive)],
+                check=True,
+                timeout=wait_for(WaitKind.ROLLOUT),
+            )

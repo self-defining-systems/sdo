@@ -101,3 +101,6 @@ exp_config/*/*.log
 
 # Stable abort locators for launcher-owned runs
 .sdo-runs/
+
+# XV1 local validation logs
+.xv1-logs/

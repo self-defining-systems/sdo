@@ -31,8 +31,6 @@ def _catalog() -> list[dict]:
 
 
 def _specs() -> dict:
-    if not SPECS.is_file():
-        pytest.skip("SREGym submodule is not checked out at a commit with composite problems")
     return json.loads(SPECS.read_text(encoding="utf-8"))
 
 
@@ -45,6 +43,7 @@ def _component_key(component: dict) -> tuple:
     )
 
 
+@pytest.mark.requires_sregym
 def test_every_catalog_composite_is_a_submodule_composite_with_the_same_components_in_order() -> None:
     specs = _specs()
     catalog = _catalog()

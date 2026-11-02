@@ -67,13 +67,11 @@ func recordRoutingProbeUnavailable(dir, incidentID, phase, reason, detail string
 // captureRoutingEvidence samples real TCP observations even before a program
 // exists. It uses the protected phase snapshot and never probes on corpus replay.
 func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string, findings []sdk.Finding, view program.ReadView) error {
-	live, ok := view.(LiveReadView)
-	if !ok {
-		if pointer, yes := view.(*LiveReadView); yes && pointer != nil {
-			live = *pointer
-			ok = true
-		}
-	}
+	releaseSessionStorage := memory.SessionStorageUse()
+	defer releaseSessionStorage()
+
+	live, ok := routingLiveView(view)
+
 	routingCaptureMu.Lock()
 	defer routingCaptureMu.Unlock()
 	dir, err := memory.IncidentCorpusDir(root, incidentID)
@@ -108,7 +106,7 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 	if phase == "fixed" {
 		observationPhase = "fixed"
 		destinations = nil
-		for _, open := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+		for _, open := range []string{"open@detect"} {
 			if _, err := os.Stat(filepath.Join(dir, open+"-recordings.json")); err == nil {
 				destinations = append(destinations, open)
 			} else if !os.IsNotExist(err) {
@@ -173,6 +171,10 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 				recorded[destination][string(args)] = true
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		// A cancelled sweep is truncated; leave no marker so it is not final.
+		return err
 	}
 	return os.WriteFile(marker, []byte("sampled\n"), 0444)
 }
@@ -344,4 +346,28 @@ func routingPodReady(pod corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// A routing sweep rebinds the protected boundary snapshot and its own timeout;
+// unwrap only runtime-owned cache/recording layers to obtain that live capability.
+func routingLiveView(view program.ReadView) (LiveReadView, bool) {
+	for {
+		switch v := view.(type) {
+		case LiveReadView:
+			return v, true
+		case *LiveReadView:
+			if v == nil {
+				return LiveReadView{}, false
+			}
+			return *v, true
+		case *CycleReadView:
+			view = v.RecordingReadView
+		case *sdktest.RecordingReadView:
+			view = v.ReadView
+		case *cachedReadView:
+			view = v.ReadView
+		default:
+			return LiveReadView{}, false
+		}
+	}
 }

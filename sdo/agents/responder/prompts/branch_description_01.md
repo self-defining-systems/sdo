@@ -1,0 +1,1 @@
+Fill this on the incident-response turn. It is null on the reflection turn.

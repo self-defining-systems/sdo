@@ -16,20 +16,42 @@ import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
-from benchmarks.sregym.protocol.native_receipt import native_production_receipt
-from sdo.contracts import ControllerObservation, ControllerObservationRequest, validate
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.repository_git import host_git_command
+
+if TYPE_CHECKING:
+    from sdo.contracts import ControllerObservation
 
 _OPERATOR_MODULE = Path(__file__).resolve().parents[3] / "sdo" / "operator"
+# SREGym's venv imports this module without SDO's agent dependencies, so the
+# effort settings come from the shared worker-environment manifest itself.
+_AGENT_ENVIRONMENT = json.loads(
+    (Path(__file__).resolve().parents[3] / "sdo" / "contracts" / "agent_env.json").read_text("utf-8")
+)
+DEFAULT_AGENT_EFFORT: str = _AGENT_ENVIRONMENT["default_effort"]
+AGENT_EFFORTS: tuple[str, ...] = tuple(_AGENT_ENVIRONMENT["efforts"])
 _IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 _REGISTRY_HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?\Z")
 
 
 class NativeOperatorError(RuntimeError):
     """The native Go operation failed or returned an invalid receipt."""
+
+
+class SharedRepositoryControllerNotReady(NativeOperatorError):
+    """Repository identity cannot be checked until the controller is Ready."""
+
+
+class SharedRepositoryExecFailed(NativeOperatorError):
+    """The controller identity read failed; it does not establish an ID mismatch."""
+
+
+class SharedRepositoryIdentityMismatch(NativeOperatorError):
+    """A successful identity read disagrees with the configured shared repository."""
 
 
 @dataclass(frozen=True)
@@ -45,27 +67,35 @@ class NativeInstallConfig:
     model: str
     kubeconfig: Path | None = None
     agent_provider: str = "codex"
-    repair_policy: str = "commit"
+    replay: str = "on"
+    agent_effort: str = DEFAULT_AGENT_EFFORT
+    repair_policy: str = "recorded-actions"
     late_findings: str = "off"
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
-    program_fast_path: bool = False
-    program_trust_threshold: int = 3
-    drift_tokens_per_hour: int = 1_000_000
-    max_follow_ups: int = 0
-    max_response_loops: int = 5
-    follow_up_cooldown_seconds: int = 30
-    response_timeout_seconds: int = 1800
-    verification_timeout_seconds: int = 120
+    code_path: str = "go"
+
+    max_response_loops: int = 10
+    response_timeout_seconds: int = int(wait_for(WaitKind.RESPONSE))
+    verification_timeout_seconds: int = int(wait_for(WaitKind.VERIFICATION_SAMPLE))
     duration_seconds: int | None = None
     exit_after_closure: bool = False
     healthy_baseline: bool = False
+    permissive_responder: bool = False
+    responder_namespaces: tuple[str, ...] = ()
     registration_configmap: str | None = None
     responder_env: tuple[str, ...] = ()
     deployed_manifest_paths: tuple[str, ...] = ()
+    shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
+        if self.shared_accepted_id and not re.fullmatch(r"[0-9a-f]{32}", self.shared_accepted_id):
+            raise ValueError("shared accepted identity must be a 128-bit hexadecimal ID")
+        if type(self.permissive_responder) is not bool:
+            raise TypeError("permissive_responder must be a boolean")
+        if self.responder_namespaces and not self.permissive_responder:
+            raise ValueError("responder_namespaces requires permissive_responder")
         if not self.repository.is_absolute():
             raise ValueError("accepted repository path must be absolute")
         if self.kubeconfig is not None and not self.kubeconfig.is_absolute():
@@ -84,22 +114,23 @@ class NativeInstallConfig:
                 raise ValueError(f"{field} must be non-empty")
         if self.agent_provider not in ("codex", "claude"):
             raise ValueError("agent_provider must be codex or claude")
+        if self.replay not in ("on", "off"):
+            raise ValueError("replay must be on or off")
+        if self.agent_effort not in AGENT_EFFORTS:
+            raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
         if self.repair_policy not in ("commit", "recorded-actions"):
             raise ValueError("repair_policy must be commit or recorded-actions")
-        if self.program_trust_threshold <= 0:
-            raise ValueError("program_trust_threshold must be positive")
-        if self.drift_tokens_per_hour <= 0:
-            raise ValueError("drift_tokens_per_hour must be positive")
-        if self.program_fast_path and self.repair_policy != "recorded-actions":
-            raise ValueError("program fast path requires recorded-actions repair policy")
+
         if self.late_findings not in ("off", "pull"):
             raise ValueError("late_findings must be off or pull")
         if self.reflection_session not in ("fresh", "resume"):
             raise ValueError("reflection_session must be fresh or resume")
+        if self.code_path not in ("go", "shell"):
+            raise ValueError("code_path must be go or shell")
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
             raise ValueError("reflection_guidance must be baseline, generalize, or generalize-spec")
-        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0 or self.max_response_loops <= 0:
-            raise ValueError("follow-up count must be nonnegative and cooldown positive")
+        if self.max_response_loops <= 0:
+            raise ValueError("max_response_loops must be positive")
         if self.response_timeout_seconds <= 0 or self.verification_timeout_seconds <= 0:
             raise ValueError("controller timeouts must be positive")
         if self.duration_seconds is not None and self.duration_seconds <= 0:
@@ -131,6 +162,10 @@ class NativeInstallConfig:
             self.model,
             "--agent-provider",
             self.agent_provider,
+            "--replay",
+            self.replay,
+            "--agent-effort",
+            self.agent_effort,
         ]
         if self.kubeconfig is not None:
             args.extend(("--kubeconfig", str(self.kubeconfig)))
@@ -138,6 +173,10 @@ class NativeInstallConfig:
             args.extend(("--agent-registration-configmap", self.registration_configmap))
         if self.healthy_baseline:
             args.append("--healthy-baseline")
+        if self.permissive_responder:
+            args.append("--permissive-responder")
+        for namespace in self.responder_namespaces:
+            args.extend(("--responder-namespace", namespace))
         for value in self.responder_env:
             args.extend(("--responder-env", value))
         return args
@@ -188,7 +227,7 @@ class NativeExistingReceipt:
 
 
 # A cold build downloads modules and compiles the whole controller graph.
-_OPERATOR_BUILD_TIMEOUT_SECONDS = 300
+_OPERATOR_BUILD_TIMEOUT_SECONDS = int(wait_for(WaitKind.ROLLOUT))
 
 
 @lru_cache(maxsize=1)
@@ -247,12 +286,12 @@ def observe_controller_state(
     *,
     known: set[str] | None = None,
     incident_id: str = "",
-    stop_on_review: bool = False,
-    timeout: float = 30.0,
+    timeout: float = wait_for(WaitKind.COMMAND),
 ) -> ControllerObservation:
-    request = ControllerObservationRequest(
-        known_incident_ids=sorted(known or ()), incident_id=incident_id, stop_on_review=stop_on_review
-    )
+    # The SREGym worker runs execute_operator without SDO's contract dependencies.
+    from sdo.contracts import ControllerObservation, ControllerObservationRequest, validate
+
+    request = ControllerObservationRequest(known_incident_ids=sorted(known or ()), incident_id=incident_id)
     payload = json_format.MessageToDict(request, preserving_proto_field_name=True)
     payload["state"] = state
     stdout = execute_operator("observe-controller", [], timeout=timeout, input_text=json.dumps(payload))
@@ -277,6 +316,9 @@ def _run(command: str, args: list[str], *, timeout: int) -> dict[str, Any]:
 
 
 def sync_existing(config: NativeInstallConfig) -> None:
+    if config.shared_accepted_id:
+        assert_shared_repository(config)
+        return
     args = [
         "--repository",
         str(config.repository),
@@ -289,9 +331,90 @@ def sync_existing(config: NativeInstallConfig) -> None:
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
-    output = execute_operator("sync-existing", args, timeout=600)
+    output = execute_operator("sync-existing", args, timeout=wait_for(WaitKind.OPERATION))
     if output.strip():
         raise NativeOperatorError("Go sync-existing returned unexpected stdout")
+
+
+MEMORY_MIRROR_MARKER = "sdo-memory-remote"
+
+
+def refresh_memory_mirror(repository: Path) -> None:
+    """Bring a host mirror of a remote memory branch to the branch head; no-op for other checkouts.
+
+    Lanes sharing memory through a remote branch have no host-visible accepted checkout.
+    Their host workspace is a mirror marked by ``.git/sdo-memory-remote`` ({url, branch});
+    every shared-identity read refreshes it first, so evidence reads see what the brokers pushed.
+    """
+    marker = repository / ".git" / MEMORY_MIRROR_MARKER
+    if not marker.is_file():
+        return
+    remote = json.loads(marker.read_text(encoding="utf-8"))
+    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    for args in (
+        ("fetch", "--no-tags", "--quiet", "--", remote["url"], f"+refs/heads/{remote['branch']}:refs/sdo/upstream"),
+        ("reset", "--hard", "--quiet", "refs/sdo/upstream"),
+    ):
+        subprocess.run(
+            host_git_command(repository, *args),
+            check=True,
+            capture_output=True,
+            env=environment,
+            timeout=wait_for(WaitKind.COMMAND),
+        )
+
+
+def assert_shared_repository(config: NativeInstallConfig) -> None:
+    """Prove the controller and host share identity before bypassing archive transport."""
+    refresh_memory_mirror(config.repository)
+    identity = config.repository / ".git" / "sdo-shared-id"
+    if not config.shared_accepted_id or identity.read_text().strip() != config.shared_accepted_id:
+        raise SharedRepositoryIdentityMismatch(
+            f"shared accepted repository host identity differs: repository={config.repository}, "
+            f"control_namespace={config.control_namespace}; verify the host shared-ID file"
+        )
+    pods = _kubectl_json(config, "get", "pods", "--selector", "job-name=sdo-controller-run").get("items", [])
+    active = [pod for pod in pods if pod.get("status", {}).get("phase") == "Running"]
+    context = f"control_namespace={config.control_namespace}"
+    if len(active) != 1 or not any(
+        condition.get("type") == "Ready" and condition.get("status") == "True"
+        for condition in active[0].get("status", {}).get("conditions", [])
+    ):
+        raise SharedRepositoryControllerNotReady(
+            f"shared identity requires one Ready controller: {context}, running_pods={len(active)}; "
+            "inspect controller Pod readiness and container runtime before retrying"
+        )
+    context += f", pod={active[0]['metadata']['name']}"
+    args = ["kubectl"]
+    if config.kubeconfig:
+        args.extend(["--kubeconfig", str(config.kubeconfig)])
+    args.extend(
+        [
+            "-n",
+            config.control_namespace,
+            "exec",
+            active[0]["metadata"]["name"],
+            "--",
+            "cat",
+            "/workspace/application/.git/sdo-shared-id",
+        ]
+    )
+    try:
+        observed = subprocess.run(args, text=True, capture_output=True, check=False, timeout=wait_for(WaitKind.COMMAND))
+    except (subprocess.TimeoutExpired, OSError) as error:
+        raise SharedRepositoryExecFailed(
+            f"controller shared identity exec failed: {context}, failure={type(error).__name__}; "
+            "inspect Pod exec connectivity and container runtime"
+        ) from None
+    if observed.returncode:
+        raise SharedRepositoryExecFailed(
+            f"controller shared identity exec failed: {context}, exit_code={observed.returncode}; "
+            "inspect Pod exec connectivity and container runtime"
+        )
+    if observed.stdout.strip() != config.shared_accepted_id:
+        raise SharedRepositoryIdentityMismatch(
+            f"controller shared accepted repository identity differs: {context}; verify the shared repository mount"
+        )
 
 
 def set_maintenance(
@@ -299,6 +422,7 @@ def set_maintenance(
     *,
     paused: bool,
     generation: str,
+    preserve_baseline: bool = False,
     kubeconfig: Path | None = None,
 ) -> None:
     if not control_namespace.strip() or not generation.strip():
@@ -306,9 +430,11 @@ def set_maintenance(
     if kubeconfig is not None and not kubeconfig.is_absolute():
         raise ValueError("kubeconfig path must be absolute")
     args = ["--control-namespace", control_namespace, f"--paused={str(paused).lower()}", "--generation", generation]
+    if preserve_baseline:
+        args.append("--preserve-baseline")
     if kubeconfig is not None:
         args.extend(("--kubeconfig", str(kubeconfig)))
-    output = execute_operator("maintenance", args, timeout=120)
+    output = execute_operator("maintenance", args, timeout=wait_for(WaitKind.SLOW_COMMAND))
     if output.strip():
         raise NativeOperatorError("Go maintenance returned unexpected stdout")
 
@@ -331,8 +457,11 @@ def read_incident_evidence(
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
     if sync_repository:
-        args.extend(("--repository", str(config.repository)))
-    value = _run("incident-evidence", args, timeout=120)
+        if config.shared_accepted_id:
+            assert_shared_repository(config)
+        else:
+            args.extend(("--repository", str(config.repository)))
+    value = _run("incident-evidence", args, timeout=int(wait_for(WaitKind.SLOW_COMMAND)))
     ledger = value.get("ledger")
     if (
         value.get("incident_id") != incident_id
@@ -350,7 +479,9 @@ def _kubectl_json(config: NativeInstallConfig, *args: str) -> dict[str, Any]:
         command.extend(("--kubeconfig", str(config.kubeconfig)))
     command.extend(("--namespace", config.control_namespace, *args, "-o", "json"))
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=wait_for(WaitKind.SLOW_COMMAND), check=False
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         raise NativeOperatorError(f"Kubernetes receipt query failed: {exc}") from exc
     if completed.returncode != 0:
@@ -367,24 +498,11 @@ def _kubectl_json(config: NativeInstallConfig, *args: str) -> dict[str, Any]:
 def collect_native_receipt(
     config: NativeInstallConfig, incident_id: str, *, sync_repository: bool = False
 ) -> dict[str, Any]:
+    from benchmarks.sregym.protocol.native_receipt import native_production_receipt
+
     evidence = read_incident_evidence(config, incident_id, sync_repository=sync_repository)
-    job_name = evidence["responder_job_name"]
-    ledger = evidence["ledger"]
-    outcome = ledger.get("outcome_document")
-    fast_path = isinstance(outcome, dict) and outcome.get("resolution_path") == "fast_path"
-    responder_job_evidence: list[dict[str, Any]] = []
-    if not fast_path:
-        job = _kubectl_json(config, "get", f"job/{job_name}")
-        job_metadata = job.get("metadata")
-        job_status = job.get("status")
-        if not isinstance(job_metadata, dict) or not isinstance(job_status, dict):
-            raise NativeOperatorError("responder Job has no metadata or status")
-        job_uid = job_metadata.get("uid")
-        if not isinstance(job_uid, str) or not job_uid or job_status.get("succeeded") != 1:
-            raise NativeOperatorError("responder Job is not durably successful")
-        responder_job_evidence = [
-            {"incident_id": incident_id, "job_name": job_name, "job_uid": job_uid, "succeeded": True}
-        ]
+    # Early closure intentionally retires responder Jobs. The frozen request,
+    # lifecycle timestamps, result and acknowledged broker decision outlive them.
     controller_job = _kubectl_json(config, "get", "job/sdo-controller-run")
     controller_metadata = controller_job.get("metadata")
     controller_job_uid = controller_metadata.get("uid") if isinstance(controller_metadata, dict) else None
@@ -417,7 +535,7 @@ def collect_native_receipt(
         controller_image=config.controller_image,
         responder_image=config.responder_image,
         controller_pod_uid=controller_uid,
-        responder_job_evidence=responder_job_evidence,
+        responder_job_evidence=[],
     )
 
 
@@ -436,10 +554,106 @@ def export_runtime_artifacts(config: NativeInstallConfig, output_dir: Path) -> P
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
-    value = _run("runtime-artifacts", args, timeout=600)
+    value = _run("runtime-artifacts", args, timeout=int(wait_for(WaitKind.OPERATION)))
     expected = output_dir / "sdo_runtime"
     if value.get("directory") != str(expected):
         raise NativeOperatorError("Go runtime artifact export returned an unexpected directory")
+    return expected
+
+
+@dataclass(frozen=True)
+class RuntimeEvidenceTarget:
+    """Where one lane's sealed runtime evidence lives; contains no credential."""
+
+    control_namespace: str
+    repository_pvc: str
+    controller_image: str
+    kubeconfig: Path | None = None
+
+    def __post_init__(self) -> None:
+        if not self.control_namespace or not self.repository_pvc or not self.controller_image:
+            raise ValueError("runtime evidence target requires namespace, PVC and controller image")
+        if self.kubeconfig is not None and not self.kubeconfig.is_absolute():
+            raise ValueError("runtime evidence kubeconfig must be absolute")
+
+    @classmethod
+    def of(cls, config: NativeInstallConfig) -> RuntimeEvidenceTarget:
+        return cls(config.control_namespace, config.repository_pvc, config.controller_image, config.kubeconfig)
+
+    def args(self) -> list[str]:
+        args = [
+            "--control-namespace",
+            self.control_namespace,
+            "--repository-pvc",
+            self.repository_pvc,
+            "--controller-image",
+            self.controller_image,
+        ]
+        if self.kubeconfig is not None:
+            args.extend(("--kubeconfig", str(self.kubeconfig)))
+        return args
+
+
+@dataclass(frozen=True)
+class RuntimeSnapshot:
+    """One immutable archive of the whitelisted runtime evidence sealed at an incident boundary."""
+
+    snapshot_id: str
+    sha256: str
+    bytes: int
+    created: bool
+    # "controller" when sealed by exec in the running controller, "sync" via a sync Pod.
+    sealed_by: str = ""
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", self.snapshot_id):
+            raise ValueError("runtime snapshot ID is not a lowercase DNS label")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.sha256):
+            raise ValueError("runtime snapshot digest must be SHA-256 hex")
+        if self.bytes < 0:
+            raise ValueError("runtime snapshot size must be non-negative")
+
+
+def snapshot_runtime_artifacts(target: RuntimeEvidenceTarget, snapshot_id: str) -> RuntimeSnapshot:
+    """Seal the current evidence; a repeated ID returns the sealed archive, never a recapture."""
+
+    args = [*target.args(), "--mode", "snapshot", "--snapshot-id", snapshot_id]
+    value = _run("runtime-artifacts", args, timeout=int(wait_for(WaitKind.OPERATION)))
+    try:
+        snapshot = RuntimeSnapshot(
+            snapshot_id=str(value["snapshot_id"]),
+            sha256=str(value["sha256"]),
+            bytes=int(value.get("bytes", 0)),
+            created=bool(value.get("created", False)),
+            sealed_by=str(value.get("sealed_by", "")),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise NativeOperatorError(f"Go runtime snapshot returned an invalid report: {exc}") from exc
+    if snapshot.snapshot_id != snapshot_id:
+        raise NativeOperatorError("Go runtime snapshot returned a different snapshot")
+    return snapshot
+
+
+def deliver_runtime_snapshot(target: RuntimeEvidenceTarget, snapshot: RuntimeSnapshot, output_dir: Path) -> Path:
+    """Copy exactly one sealed archive into ``output_dir/sdo_runtime`` after verifying its digest."""
+
+    if not output_dir.is_absolute():
+        raise ValueError("runtime artifact output directory must be absolute")
+    args = [
+        *target.args(),
+        "--mode",
+        "deliver",
+        "--snapshot-id",
+        snapshot.snapshot_id,
+        "--sha256",
+        snapshot.sha256,
+        "--output-dir",
+        str(output_dir),
+    ]
+    value = _run("runtime-artifacts", args, timeout=int(wait_for(WaitKind.OPERATION)))
+    expected = output_dir / "sdo_runtime"
+    if value.get("directory") != str(expected) or value.get("sha256") != snapshot.sha256:
+        raise NativeOperatorError("Go runtime snapshot delivery returned an unexpected result")
     return expected
 
 
@@ -451,23 +665,24 @@ def _record_launch(config: NativeInstallConfig) -> None:
 
 
 def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
+    if config.shared_accepted_id:
+        raise NativeOperatorError(
+            "shared accepted memory requires its prepared running controller; seeding is forbidden"
+        )
     _record_launch(config)
     args = config.common_args()
     args.extend(("--repair-policy", config.repair_policy))
     args.extend(("--late-findings", config.late_findings))
     args.extend(("--reflection-session", config.reflection_session))
     args.extend(("--reflection-guidance", config.reflection_guidance))
+    if config.code_path != "go":
+        args.extend(("--code-path", config.code_path))
     if config.force_reflection:
         args.append("--force-reflection")
     for path in config.deployed_manifest_paths:
         args.extend(("--deployed-manifest-path", path))
-    if config.program_fast_path:
-        args.append("--program-fast-path")
-    args.extend(("--program-trust-threshold", str(config.program_trust_threshold)))
-    args.extend(("--drift-tokens-per-hour", str(config.drift_tokens_per_hour)))
-    args.extend(("--max-follow-ups", str(config.max_follow_ups)))
+
     args.extend(("--max-response-loops", str(config.max_response_loops)))
-    args.extend(("--follow-up-cooldown", f"{config.follow_up_cooldown_seconds}s"))
     args.extend(("--response-timeout", f"{config.response_timeout_seconds}s"))
     args.extend(("--verification-timeout", f"{config.verification_timeout_seconds}s"))
     if config.duration_seconds is not None:
@@ -504,7 +719,7 @@ def inspect_existing(config: NativeInstallConfig) -> NativeExistingReceipt:
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
-    value = _run("inspect-existing", args, timeout=120)
+    value = _run("inspect-existing", args, timeout=int(wait_for(WaitKind.SLOW_COMMAND)))
     for field in ("job_uid", "pod_uid", "fingerprint"):
         if not isinstance(value.get(field), str) or not value[field].strip():
             raise NativeOperatorError(f"Go inspect-existing lacks {field}")
@@ -520,15 +735,12 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     args.extend(("--late-findings", config.install.late_findings))
     args.extend(("--reflection-session", config.install.reflection_session))
     args.extend(("--reflection-guidance", config.install.reflection_guidance))
+    if config.install.code_path != "go":
+        args.extend(("--code-path", config.install.code_path))
     if config.install.force_reflection:
         args.append("--force-reflection")
-    if config.install.program_fast_path:
-        args.append("--program-fast-path")
-    args.extend(("--program-trust-threshold", str(config.install.program_trust_threshold)))
-    args.extend(("--drift-tokens-per-hour", str(config.install.drift_tokens_per_hour)))
-    args.extend(("--max-follow-ups", str(config.install.max_follow_ups)))
+
     args.extend(("--max-response-loops", str(config.install.max_response_loops)))
-    args.extend(("--follow-up-cooldown", f"{config.install.follow_up_cooldown_seconds}s"))
     args.extend(("--repair-policy", config.install.repair_policy))
     args.extend(("--response-timeout", f"{config.install.response_timeout_seconds}s"))
     args.extend(("--verification-timeout", f"{config.install.verification_timeout_seconds}s"))
@@ -565,10 +777,31 @@ def stop_runtime(
         args.extend(("--kubeconfig", kubeconfig))
     if inspect:
         args.append("--inspect")
-    result = json.loads(execute_operator("stop", args, timeout=75))
+    result = json.loads(execute_operator("stop", args, timeout=wait_for(WaitKind.SLOW_COMMAND)))
     if not isinstance(result, dict) or any(
         not isinstance(result.get(key), list) or any(not isinstance(item, str) for item in result[key])
         for key in ("removed", "leftovers")
     ):
         raise NativeOperatorError("Go stop returned an invalid runtime inventory")
+    return result
+
+
+def reset_control_state(control_namespace: str, *, kubeconfig: str | None = None) -> dict[str, Any]:
+    """Explicitly retire SDO onboarding authority before a fresh-memory install.
+
+    The caller must stop the previous runtime before invoking this command.
+    """
+    if not control_namespace:
+        raise ValueError("reset control state requires an explicit control namespace")
+    args = ["--control-namespace", control_namespace, "--timeout", "60s"]
+    if kubeconfig:
+        args.extend(("--kubeconfig", kubeconfig))
+    result = json.loads(execute_operator("reset-control-state", args, timeout=wait_for(WaitKind.SLOW_COMMAND)))
+    if (
+        not isinstance(result, dict)
+        or result.get("control_namespace") != control_namespace
+        or not isinstance(result.get("deleted"), list)
+        or any(not isinstance(name, str) for name in result["deleted"])
+    ):
+        raise NativeOperatorError("Go reset-control-state returned an invalid audit receipt")
     return result

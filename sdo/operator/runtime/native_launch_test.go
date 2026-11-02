@@ -75,8 +75,8 @@ func TestAgentWorkerEnvironmentRejectsUnknownProvider(t *testing.T) {
 	if _, err := AgentWorkerEnvironment(&contracts.ControllerConfig{ResponderBackend: "gemini", ResponderModel: "m"}); err == nil {
 		t.Fatal("unknown provider accepted")
 	}
-	if environment, err := AgentWorkerEnvironment(&contracts.ControllerConfig{}); err != nil || len(environment) != 0 {
-		t.Fatalf("unconfigured provider must add nothing: %v %v", environment, err)
+	if environment, err := AgentWorkerEnvironment(&contracts.ControllerConfig{}); err != nil || len(environment) != 1 || environment["SDO_REPLAY"] != "on" {
+		t.Fatalf("unconfigured provider retains default-on replay: %v %v", environment, err)
 	}
 }
 
@@ -98,7 +98,7 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
+	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", Replay: "off", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
 	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
 	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
 		t.Fatal(err)
@@ -117,18 +117,51 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 		environments = append(environments, executor.(worker_registry.KubernetesExecutor).Environment)
 	}
 	for i, environment := range environments {
-		if environment["SDO_AGENT_PROVIDER"] != "claude" || environment["SDO_REFLECTION_MODEL"] != "claude-haiku-5-5" {
+		if environment["SDO_AGENT_PROVIDER"] != "claude" || environment["SDO_REFLECTION_MODEL"] != "claude-haiku-5-5" || environment["SDO_REPLAY"] != "off" {
 			t.Errorf("reflection executor %d lost provider/model: %v", i, environment)
 		}
 	}
 }
 
-func TestWithAgentEnvironmentOverridesResponderEnv(t *testing.T) {
-	merged, err := withAgentEnvironment(map[string]string{"SDO_AGENT_PROVIDER": "codex", "KEEP": "1"}, &contracts.ControllerConfig{ResponderBackend: "claude", ResponderModel: "m"})
+// Every reflection executor (fresh Job, resumed session, fresh-in-session) must
+// carry the config's storage and credential routes, not only provider and model.
+func TestNativeReflectionExecutorsCarryConfiguredStorageAndCredentials(t *testing.T) {
+	root := t.TempDir()
+	registry, err := worker_registry.New(builtInReflectorRegistration("agent:test"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if merged["SDO_AGENT_PROVIDER"] != "claude" || merged["SDO_RESPONDER_MODEL"] != "m" || merged["KEEP"] != "1" {
+	config := &contracts.ControllerConfig{
+		AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", RepositoryPvcSubpath: "sub", ReflectionSession: "resume",
+		ResponderCredentialsSecret: "creds", HealthyBaseline: true,
+	}
+	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
+	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	worker := native.Reflector.(RegisteredReflectionWorker)
+	executors := map[string]worker_registry.KubernetesExecutor{"fresh": worker.Executor.(worker_registry.KubernetesExecutor)}
+	for name, factory := range map[string]func(string) (ReflectionTaskExecutor, error){"resume": worker.SessionExecutor, "fresh-in-session": worker.FreshSessionExecutor} {
+		executor, err := factory("incident-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		executors[name] = executor.(worker_registry.KubernetesExecutor)
+	}
+	for name, executor := range executors {
+		if executor.RepositoryPVC != "repo" || executor.RepositoryMountPath != root || executor.RepositoryPVCSubPath != "sub" ||
+			executor.CredentialsSecret != "creds" || !executor.HealthyBaseline {
+			t.Errorf("%s executor lost config routes: %+v", name, executor)
+		}
+	}
+}
+
+func TestWithAgentEnvironmentOverridesResponderEnv(t *testing.T) {
+	merged, err := withAgentEnvironment(map[string]string{"SDO_AGENT_PROVIDER": "codex", "SDO_AGENT_EFFORT": "high", "KEEP": "1"}, &contracts.ControllerConfig{ResponderBackend: "claude", ResponderModel: "m", AgentEffort: "medium"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged["SDO_AGENT_PROVIDER"] != "claude" || merged["SDO_RESPONDER_MODEL"] != "m" || merged["SDO_AGENT_EFFORT"] != "medium" || merged["KEEP"] != "1" {
 		t.Fatalf("launch config must be authoritative: %v", merged)
 	}
 	if untouched, err := withAgentEnvironment(map[string]string{"A": "b"}, nil); err != nil || untouched["A"] != "b" {

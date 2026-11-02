@@ -5,15 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"reflect"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 	"sort"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	kruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
 
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
@@ -31,6 +33,16 @@ type OwnershipAdoptionStatus struct {
 	SkippedReason      string    `json:"skipped_reason,omitempty"`
 	RetryAt            time.Time `json:"retry_at,omitempty"`
 	Failures           int       `json:"failures,omitempty"`
+	// AcceptedObjects lists the objects SDO has recorded as accepted, kept
+	// across source commits (see acceptedObjectKey).
+	AcceptedObjects []string `json:"accepted_objects,omitempty"`
+	// UnadoptedObjects lists declared objects adoption left alone because it
+	// cannot handle their kind, each with the reason (see inventoryKind).
+	UnadoptedObjects []string `json:"unadopted_objects,omitempty"`
+}
+
+func acceptedObjectKey(ref sdk.ObjectRef) string {
+	return ref.APIVersion + "/" + ref.Kind + "/" + ref.Namespace + "/" + ref.Name
 }
 
 func (c *Controller) recordAdoptionError(now time.Time, err error) {
@@ -38,7 +50,7 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 	defer c.mu.Unlock()
 	status := c.ownershipAdoption
 	if status.SourceCommit != c.config.SourceCommit {
-		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit}
+		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit, AcceptedObjects: status.AcceptedObjects}
 	}
 	if errors.Is(err, deployment.ErrManifestSelectionUnavailable) {
 		status.SkippedReason = err.Error()
@@ -60,14 +72,15 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 	c.ownershipAdoption = status
 }
 
-func supportsAcceptedSource(ref sdk.ObjectRef) bool {
-	switch ref.APIVersion + "/" + ref.Kind {
-	case "v1/Service", "v1/ConfigMap", "v1/Pod", "apps/v1/Deployment", "apps/v1/ReplicaSet", "v1/Endpoints", "discovery.k8s.io/v1/EndpointSlice", "networking.k8s.io/v1/NetworkPolicy":
-		return true
-	default:
-		return false
-	}
-}
+// acceptanceSettleRetry spaces adoption passes that wait for an object to
+// settle before its acceptance record is taken. The spacing doubles while
+// the wait continues, up to acceptanceSettleRetryMax: an object may never
+// settle (a declared bare Pod the scheduler cannot place), and every pass
+// dry-runs all accepted objects.
+const (
+	acceptanceSettleRetry    = 5 * time.Second
+	acceptanceSettleRetryMax = 2 * time.Minute
+)
 
 func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) error {
 	if c.CanAct != nil && !c.CanAct() {
@@ -95,37 +108,93 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	status.FromManagers = append([]string(nil), status.FromManagers...)
 	record := status.SourceCommit != c.config.SourceCommit || status.AdoptedObjects == 0
 	if status.SourceCommit != c.config.SourceCommit {
-		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit}
+		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit, AcceptedObjects: status.AcceptedObjects}
+	}
+	// A retry pass follows a failed one. Objects it already adopted and
+	// recorded are not dry-run again: one permanently refused object would
+	// otherwise cost a sweep of every accepted object per retry.
+	retrying := status.Failures > 0
+	accepted := map[string]bool{}
+	for _, key := range status.AcceptedObjects {
+		accepted[key] = true
 	}
 	managerSet := map[string]bool{}
 	for _, manager := range status.FromManagers {
 		managerSet[manager] = true
 	}
-	changes := make([]ObjectChange, 0)
+	type adoptionChange struct {
+		ref    sdk.ObjectRef
+		change ObjectChange
+	}
+	changes := make([]adoptionChange, 0)
 	type candidate struct {
 		ref        sdk.ObjectRef
+		resource   acceptedResource
 		source     *unstructured.Unstructured
 		normalized *unstructured.Unstructured
 		conflicts  int
 		managers   []string
+		record     string
 	}
 	pending := make([]candidate, 0)
+	unsettled := false
+	// An object the API server refuses (or that cannot be adopted) leaves
+	// only that object without an acceptance point; the pass continues and
+	// the failure is retried with the adoption backoff.
+	objectFailures := []error{}
+	unadopted := []string{}
+	objectFailed := func(ref sdk.ObjectRef, err error) {
+		objectFailures = append(objectFailures, &ObjectAdoptionError{Ref: ref, Err: err})
+	}
 	for _, source := range objects {
 		ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
-		if !supportsAcceptedSource(ref) || ref.Namespace != c.config.Namespace {
-			return fmt.Errorf("unsupported accepted manifest %s/%s/%s", ref.Kind, ref.Namespace, ref.Name)
+		// Identity-only declarations have no configuration fields to adopt.
+		// Presence remains an inventory/source obligation without requiring an
+		// otherwise unnecessary API write (for example a bare ServiceAccount).
+		if len(flattenDriftPaths(source)) == 0 {
+			continue
 		}
-		live, err := getAdoptionObject(actionCtx, c.drift.Client, ref)
-		if err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("read live %s/%s for adoption: %w", ref.Kind, ref.Name, err)
+		// Secret values are never read, so adoption cannot compare or claim
+		// them; a declared Secret remains an inventory/source obligation.
+		if isSecretRef(ref) {
+			continue
 		}
-		normalized, err := dryRunAcceptedSource(actionCtx, c.drift.Client, ref, source)
+		if reason := adoptionNotAdopted(ref); reason != "" {
+			unadopted = append(unadopted, acceptedObjectKey(ref)+": "+reason)
+			continue
+		}
+		resource, err := resolveAcceptedResource(c.drift.Client, ref)
 		if err != nil {
-			return fmt.Errorf("dry run adoption of %s/%s: %w", ref.Kind, ref.Name, err)
+			objectFailed(ref, fmt.Errorf("unsupported accepted manifest %s/%s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err))
+			continue
+		}
+		if resource.namespaced && ref.Namespace != c.config.Namespace {
+			objectFailed(ref, fmt.Errorf("accepted manifest %s/%s/%s is outside namespace %s", ref.Kind, ref.Namespace, ref.Name, c.config.Namespace))
+			continue
+		}
+		// Shared cluster objects (CRDs, StorageClasses, webhooks, ...) are not
+		// the app's to own: another tenant's edit must not become its drift.
+		// Only the app's own RBAC grants are adopted at cluster scope.
+		if !resource.namespaced && !inventoryClusterKind(ref.Kind) {
+			continue
+		}
+		live, err := resource.get(actionCtx, ref)
+		if err != nil && !apierrors.IsNotFound(err) {
+			objectFailed(ref, fmt.Errorf("read live %s/%s for adoption: %w", ref.Kind, ref.Name, err))
+			continue
+		}
+		if retrying && live != nil && adoptedAndRecorded(live, source) {
+			accepted[acceptedObjectKey(ref)] = true
+			continue
+		}
+		normalized, err := resource.apply(actionCtx, ref, source, true)
+		if err != nil {
+			objectFailed(ref, fmt.Errorf("dry run adoption of %s/%s: %w", ref.Kind, ref.Name, err))
+			continue
 		}
 		declared := flattenDriftPaths(source)
 		if live == nil || declaredFieldDifference(normalized, live, declared) {
-			changes = append(changes, ObjectChange{Old: normalized, New: live, Adoption: true})
+			changes = append(changes, adoptionChange{ref: ref, change: ObjectChange{Old: normalized, New: live, Adoption: true}})
 			continue
 		}
 		owned := ownedDriftPaths(live, "sdo-deployer")
@@ -136,33 +205,64 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 				break
 			}
 		}
+		if acceptanceRecordCurrent(live, source) {
+			accepted[acceptedObjectKey(ref)] = true
+		}
+		recorded := acceptanceRecordBound(live, source)
+		if allOwned && recorded {
+			continue
+		}
+		// The record waits until controllers have caught up with the
+		// object; until then its source comparison fails closed.
+		record := ""
+		lost := !recorded && recordLost(live, accepted[acceptedObjectKey(ref)])
+		if !recorded {
+			if !acceptanceSettled(live) {
+				unsettled = true
+			} else if encoded, fits, err := buildAcceptanceRecord(source, normalized, live, lostRecordDefaults(actionCtx, resource, ref, source, live, lost), lost); err != nil {
+				objectFailed(ref, fmt.Errorf("record accepted paths of %s/%s: %w", ref.Kind, ref.Name, err))
+				continue
+			} else if fits {
+				record = encoded
+			}
+		}
 		if allOwned {
+			if record != "" {
+				pending = append(pending, candidate{ref: ref, resource: resource, normalized: normalized, record: record})
+			}
 			continue
 		}
 		conflicts, managers := adoptionConflicts(live, declared)
 		if live.GetUID() == "" || live.GetResourceVersion() == "" {
-			return fmt.Errorf("live %s/%s lacks UID or resourceVersion for conditional adoption", ref.Kind, ref.Name)
+			objectFailed(ref, fmt.Errorf("live %s/%s lacks UID or resourceVersion for conditional adoption", ref.Kind, ref.Name))
+			continue
 		}
 		conditional := source.DeepCopy()
 		conditional.SetUID(live.GetUID())
 		conditional.SetResourceVersion(live.GetResourceVersion())
-		pending = append(pending, candidate{ref: ref, source: conditional, normalized: normalized, conflicts: conflicts, managers: managers})
+		pending = append(pending, candidate{ref: ref, resource: resource, source: conditional, normalized: normalized, conflicts: conflicts, managers: managers, record: record})
 	}
-	persistDifferences := func(changes []ObjectChange, view program.ReadView) error {
-		if len(changes) == 0 {
-			return nil
-		}
-		classifier := DriftClassifier{Programs: c.drift.Programs, Deadline: c.drift.Deadline}
+	// Classifying or persisting one object's pre-adoption difference fails
+	// only that object: classification re-runs its source comparison, which
+	// can fail like the scan's dry run.
+	persistFailures := []error{}
+	persistDifferences := func(changes []adoptionChange, view program.ReadView) {
+		classifier := DriftClassifier{}
 		events := make([]sdk.DriftEvent, 0, len(changes))
-		for _, change := range changes {
-			event, _, err := classifier.Classify(actionCtx, change, view, now)
+		for _, item := range changes {
+			event, err := classifier.Classify(actionCtx, item.change, view, now)
 			if err != nil {
-				return fmt.Errorf("classify pre-adoption difference: %w", err)
+				objectFailed(item.ref, fmt.Errorf("classify pre-adoption difference: %w", err))
+				continue
 			}
 			if event == nil {
-				return fmt.Errorf("pre-adoption difference was not classified")
+				objectFailed(item.ref, fmt.Errorf("pre-adoption difference was not classified"))
+				continue
 			}
 			events = append(events, *event)
+		}
+		if len(events) == 0 {
+			return
 		}
 		for _, event := range events {
 			c.mu.Lock()
@@ -176,19 +276,32 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			}
 		}
 		if err := c.PersistState(actionCtx); err != nil {
-			return fmt.Errorf("persist pre-adoption drift: %w", err)
+			persistFailures = append(persistFailures, fmt.Errorf("persist pre-adoption drift: %w", err))
 		}
-		return nil
 	}
-	if err := persistDifferences(changes, c.drift.View(snapshot)); err != nil {
-		return err
+	persistDifferences(changes, c.drift.View(snapshot))
+	// A failed record write leaves only that object without an acceptance
+	// point (its comparison fails closed); the pass continues and the
+	// failure is retried with the adoption backoff.
+	recordFailures := []error{}
+	writeRecord := func(item candidate) {
+		if err := item.resource.recordAcceptance(actionCtx, item.ref, item.record); err != nil {
+			recordFailures = append(recordFailures, &AcceptanceRecordError{Ref: item.ref, Err: err})
+			return
+		}
+		accepted[acceptedObjectKey(item.ref)] = true
 	}
 	for _, item := range pending {
-		if _, err := applyAcceptedSource(actionCtx, c.drift.Client, item.ref, item.source, false); err != nil {
+		if item.source == nil {
+			writeRecord(item)
+			continue
+		}
+		if _, err := item.resource.apply(actionCtx, item.ref, item.source, false); err != nil {
 			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
-				live, readErr := getAdoptionObject(actionCtx, c.drift.Client, item.ref)
+				live, readErr := item.resource.get(actionCtx, item.ref)
 				if readErr != nil && !apierrors.IsNotFound(readErr) {
-					return fmt.Errorf("re-read %s/%s after adoption conflict: %w", item.ref.Kind, item.ref.Name, readErr)
+					objectFailed(item.ref, fmt.Errorf("re-read %s/%s after adoption conflict: %w", item.ref.Kind, item.ref.Name, readErr))
+					continue
 				}
 				if live == nil || declaredFieldDifference(item.normalized, live, flattenDriftPaths(item.source)) {
 					// The informer snapshot may predate the conflicting write.
@@ -196,15 +309,18 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 					// admission, without attempting another write.
 					expected, marshalErr := json.Marshal(comparableFields(item.normalized.Object))
 					if marshalErr != nil {
-						return marshalErr
+						objectFailed(item.ref, fmt.Errorf("encode accepted projection of %s/%s: %w", item.ref.Kind, item.ref.Name, marshalErr))
+						continue
 					}
 					view := adoptionConflictView{ReadView: c.drift.View(snapshot), ref: item.ref, diff: program.Diff{Changed: true, Text: "accepted: " + string(expected)}}
-					if classifyErr := persistDifferences([]ObjectChange{{Old: item.normalized, New: live, Adoption: true}}, view); classifyErr != nil {
-						return classifyErr
-					}
+					persistDifferences([]adoptionChange{{ref: item.ref, change: ObjectChange{Old: item.normalized, New: live, Adoption: true}}}, view)
 				}
 			}
-			return fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err)
+			objectFailed(item.ref, fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err))
+			continue
+		}
+		if item.record != "" {
+			writeRecord(item)
 		}
 		if record {
 			status.AdoptedObjects++
@@ -219,18 +335,85 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		status.FromManagers = append(status.FromManagers, manager)
 	}
 	sort.Strings(status.FromManagers)
-	status.LastError = ""
+	status.AcceptedObjects = status.AcceptedObjects[:0]
+	for key := range accepted {
+		status.AcceptedObjects = append(status.AcceptedObjects, key)
+	}
+	sort.Strings(status.AcceptedObjects)
+	recordErr := errors.Join(append(append(objectFailures, recordFailures...), persistFailures...)...)
+	if recordErr == nil {
+		status.LastError = ""
+		status.Failures = 0
+	}
 	status.SkippedReason = ""
 	status.RetryAt = time.Time{}
-	status.Failures = 0
+	sort.Strings(unadopted)
+	status.UnadoptedObjects = unadopted
 	c.mu.Lock()
 	c.ownershipAdoption = status
 	c.mu.Unlock()
 	if renderErr != nil {
-		return fmt.Errorf("render accepted manifests for ownership adoption (partial coverage): %w", renderErr)
+		return errors.Join(fmt.Errorf("render accepted manifests for ownership adoption (partial coverage): %w", renderErr), recordErr)
 	}
+	if recordErr != nil {
+		return recordErr
+	}
+	if unsettled {
+		delay := acceptanceSettleRetry
+		for step := 0; step < c.acceptanceSettleWaits && delay < acceptanceSettleRetryMax; step++ {
+			delay *= 2
+		}
+		c.acceptanceSettleWaits++
+		c.mu.Lock()
+		c.ownershipAdoption.RetryAt = now.Add(min(delay, acceptanceSettleRetryMax))
+		c.mu.Unlock()
+		return nil
+	}
+	c.acceptanceSettleWaits = 0
 	c.adoptionNeeded = false
 	return nil
+}
+
+// adoptedAndRecorded reports whether live already has every declared field
+// owned by the deployer and a current acceptance record bound to its UID:
+// adoption has nothing left to do for it.
+func adoptedAndRecorded(live, source *unstructured.Unstructured) bool {
+	if !acceptanceRecordBound(live, source) {
+		return false
+	}
+	owned := ownedDriftPaths(live, "sdo-deployer")
+	for path := range flattenDriftPaths(source) {
+		if !ownsDriftPath(owned, path) {
+			return false
+		}
+	}
+	return true
+}
+
+// recordLost reports whether live, which needs a new record, lost the one
+// SDO took earlier: it carries a record taken on another object instance, or
+// it carries none although SDO accepted it before. A record of this instance
+// (taken against older source, or before UID binding) is not lost: its
+// additions carry forward.
+func recordLost(live *unstructured.Unstructured, acceptedBefore bool) bool {
+	if record, ok := readAcceptanceRecord(live); ok {
+		return record.UID != "" && record.UID != string(live.GetUID())
+	}
+	return acceptedBefore
+}
+
+// lostRecordDefaults renders accepted source's server defaults for an object
+// that lost its record with no earlier copy to carry. Without them every
+// default the recreating writer owns would stay an addition forever.
+func lostRecordDefaults(ctx context.Context, resource acceptedResource, ref sdk.ObjectRef, source, live *unstructured.Unstructured, lost bool) *unstructured.Unstructured {
+	if _, carried := readAcceptanceRecord(live); !lost || carried {
+		return nil
+	}
+	rendered, err := resource.renderDefaults(ctx, ref, source)
+	if err != nil {
+		return nil
+	}
+	return rendered
 }
 
 func declaredFieldDifference(expected, observed *unstructured.Unstructured, declared map[string]bool) bool {
@@ -271,42 +454,6 @@ func adoptionConflicts(live *unstructured.Unstructured, declared map[string]bool
 	return count, result
 }
 
-func getAdoptionObject(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	var object any
-	var err error
-	switch ref.APIVersion + "/" + ref.Kind {
-	case "v1/Service":
-		object, err = client.CoreV1().Services(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "v1/ConfigMap":
-		object, err = client.CoreV1().ConfigMaps(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "v1/Pod":
-		object, err = client.CoreV1().Pods(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "apps/v1/Deployment":
-		object, err = client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "apps/v1/ReplicaSet":
-		object, err = client.AppsV1().ReplicaSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "v1/Endpoints":
-		object, err = client.CoreV1().Endpoints(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "discovery.k8s.io/v1/EndpointSlice":
-		object, err = client.DiscoveryV1().EndpointSlices(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	case "networking.k8s.io/v1/NetworkPolicy":
-		object, err = client.NetworkingV1().NetworkPolicies(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	default:
-		return nil, fmt.Errorf("unsupported adoption object %s/%s", ref.APIVersion, ref.Kind)
-	}
-	if err != nil {
-		return nil, err
-	}
-	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
-	if err != nil {
-		return nil, err
-	}
-	result := &unstructured.Unstructured{Object: content}
-	result.SetAPIVersion(ref.APIVersion)
-	result.SetKind(ref.Kind)
-	return result, nil
-}
-
 // adoptionConflictView binds source comparison to the API state already read
 // after a conditional write failed, rather than a potentially stale informer.
 type adoptionConflictView struct {
@@ -321,3 +468,86 @@ func (v adoptionConflictView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff
 	}
 	return v.ReadView.DiffAgainstSource(ref)
 }
+
+func (v adoptionConflictView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	return sdk.ScopedSource(v.ReadView).ScopedDeployments(namespace)
+}
+
+func (v adoptionConflictView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	return sdk.ScopedSource(v.ReadView).ScopedServices(namespace)
+}
+
+func (v adoptionConflictView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	return sdk.ScopedSource(v.ReadView).ScopedEndpoints(namespace)
+}
+
+func (v adoptionConflictView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	return sdk.ScopedSource(v.ReadView).MutatingWebhookConfigurations()
+}
+
+func (v adoptionConflictView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	return sdk.ScopedSource(v.ReadView).ValidatingWebhookConfigurations()
+}
+
+func (v adoptionConflictView) ObservationStatuses() []sdk.ObservationStatus {
+	return sdk.ScopedSource(v.ReadView).ObservationStatuses()
+}
+func (v adoptionConflictView) ObservationGeneration() string {
+	return sdk.ScopedSource(v.ReadView).ObservationGeneration()
+}
+
+func (v adoptionConflictView) ObservedAt() time.Time {
+	if clock, ok := v.ReadView.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
+func (v adoptionConflictView) TrafficWindow(name string) (traffic.Window, bool) {
+	if source, ok := v.ReadView.(traffic.Source); ok {
+		return source.TrafficWindow(name)
+	}
+	return traffic.Window{}, false
+}
+
+func (v adoptionConflictView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := v.ReadView.(servicehealth.ReachabilitySource); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
+}
+
+func (v adoptionConflictView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfiguration(name)
+	return result, err
+}
+
+func (v adoptionConflictView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
+	return result, err
+}
+
+// AcceptanceRecordError reports one object whose acceptance record could not
+// be written.
+type AcceptanceRecordError struct {
+	Ref sdk.ObjectRef
+	Err error
+}
+
+func (e *AcceptanceRecordError) Error() string {
+	return fmt.Sprintf("record acceptance of %s/%s: %v", e.Ref.Kind, e.Ref.Name, e.Err)
+}
+
+func (e *AcceptanceRecordError) Unwrap() error { return e.Err }
+
+// ObjectAdoptionError reports one accepted object that a pass could not read,
+// dry-run or adopt. The pass continues with the other objects, so one refused
+// object never leaves the rest without an acceptance record.
+type ObjectAdoptionError struct {
+	Ref sdk.ObjectRef
+	Err error
+}
+
+func (e *ObjectAdoptionError) Error() string { return e.Err.Error() }
+
+func (e *ObjectAdoptionError) Unwrap() error { return e.Err }

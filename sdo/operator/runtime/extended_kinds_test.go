@@ -46,7 +46,7 @@ func TestExtendedInformerChangesTriggerEvaluation(t *testing.T) {
 			client := fake.NewSimpleClientset()
 			watch := sdk.WatchKind{APIVersion: tt.version, Kind: tt.kind}
 			detector := scheduledDetector{spec: sdk.DetectorSpec{ID: tt.kind, Interval: time.Hour, Watches: []sdk.WatchKind{watch}}}
-			c, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, []sdk.Detector{detector})
+			c, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: client, TrackDrift: true}, []sdk.Detector{detector})
 			if err != nil {
 				t.Fatal(err)
 			}

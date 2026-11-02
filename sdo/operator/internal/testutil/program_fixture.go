@@ -25,6 +25,8 @@ func CopyPortProgram(t *testing.T, appRoot, fixtureMemory string) {
 		"playbooks/service-targetport-mismatch/diagnose.go",
 		"playbooks/service-targetport-mismatch/mitigate.go",
 		"lib/ports/ports.go",
+		"diagnostics/detectors/incidents/routing-relations/detector.go",
+		"diagnostics/detectors/incidents/routing-relations/manifest.yaml",
 	} {
 		data, err := os.ReadFile(filepath.Join(fixtureMemory, name))
 		if err != nil {

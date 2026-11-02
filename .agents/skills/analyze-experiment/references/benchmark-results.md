@@ -4,15 +4,17 @@
 
 Path in an SREGym problem run: `agent/sdo_production_receipt_strict.json`.
 
-The active schema is `sdo.production-receipt/v2`, assembled by the benchmark adapter from native Go `incident-evidence` and correlated Kubernetes observations. The receipt embeds the raw `native_ledger`, the controller image and Pod UID, responder Job UID/success evidence, proposal/outcome/reflection commit hashes, outcome classification, and a resolution derived from that classification. Native reflection usage is in `native_ledger.reflection_decision.usage` and copied to top-level `reflection_usage`; the latter is the analysis fallback when rollouts are unavailable. `broker_mode=native` and `worker_mount_mode=proposal-only` are required. Validate it with `benchmarks.sregym.protocol.native_receipt.validate_native_production_receipt` before interpreting fields.
+The schema is `sdo.production-receipt/v2`, assembled by the benchmark adapter from native Go `incident-evidence` and correlated Kubernetes observations. The receipt embeds the raw `native_ledger`, the controller image and Pod UID, responder Job UID/success evidence, proposal/outcome/reflection commit hashes, outcome classification, and a resolution derived from that classification. Native reflection usage is in `native_ledger.reflection_decision.usage` and copied to top-level `reflection_usage`; the latter is the analysis fallback when rollouts are unavailable. It totals every reflection turn of the incident (`llm_calls` is the turn count; resumed turns, retries and corrections each append one record to `sdo_runtime/sessions/<sha256(incident_id)[:32]>/reflection-usage.jsonl`). Receipts written before this fix kept only the last turn and understate cost (seen 5x); re-derive an old row with `uv run python -m benchmarks.sregym.analysis.reflection_cost <row-dir>...`, which sums only the receipt incident's own log (an exported `sessions/` also holds other incidents' stale sessions, so never sum every session directory). `incident_cost` applies the same total whenever it exceeds the receipt's or the exported rollouts' (a failed turn leaves no complete rollout turn). `broker_mode=native` and `worker_mount_mode=proposal-only` are required. Validate it with `benchmarks.sregym.protocol.native_receipt.validate_native_production_receipt` before interpreting fields.
 
 Native responder usage and its session ID are in `native_ledger.closure.result.{usage,responder_session_id}`; `native_ledger.outcome_document.usage` also records responder usage. Usage counts, including `model_requests`, are ProtoJSON int64 decimal strings; omitted counts are zero, while an omitted optional request count is unknown. The analysis tools accept these strings and legacy numeric counts, join the responder rollout by this session ID, and use receipt usage when rollouts are unavailable. Search both `sdo_runtime/sessions/<session-dir>/codex/sessions/YYYY/MM/DD/rollout-*-<session-id>.jsonl` and the legacy `sdo_runtime/codex/sessions/...` layout. Use only the matching responder's rollout for the TTM mutation floor; other retained incident and reflection sessions must not contribute.
 
 For rollout command schemas and mutation-floor clocks, read [command execution telemetry](telemetry.md#codex-command-execution).
 
-A valid v2 receipt binds one incident ID across request, result, outcome, closure receipt, responder Job, and acknowledged broker ledger. It requires independently clear detector states, a verified outcome diagnosis and repair, reflection when required, and a matching controller detector rollout. A benchmark verdict alone proves none of these. `resolution` distinguishes `sdo_mitigated`, `external_recovery`, and `cleared_without_sdo_action`; count only the first as SDO mitigation. Older `sdo.production-receipt/v1` documents are archived evidence and must be interpreted using their declared schema, never silently normalized into v2.
+A valid v2 receipt correlates the request, result, outcome, receipt, responder Job and acknowledged ledger. It requires independently clear detector states, a `success` or `cleared_without_action` outcome, reflection when required, and a matching controller detector rollout. A benchmark verdict alone proves none of these. Current `resolution` distinguishes `sdo_mitigated` and `cleared_without_sdo_action` (historically also `external_recovery`); a rejected receipt labels an `unconfirmed` or `failed` outcome `sdo_unconfirmed` or `sdo_failed` (before RT1 both read `external_recovery`); diagnosis and repair citations are not independently checked. Count only the first as SDO mitigation. Interpret archived `sdo.production-receipt/v1` using its declared schema; never normalize it into v2.
 
 Controller runtime artifacts are exported under `agent/sdo_runtime/`. Durable usage and telemetry streams remain cumulative across incidents, so scope by incident ID and timestamps. The export allowlist includes corpus snapshots, model I/O, session JSONL, and Codex/Claude rollout JSONL under `sdo_runtime/sessions/<incident-hash>/`; it excludes credentials and provider caches. Worker `checkpoints/<request-digest>/request.json` and `result.json` preserve dispatches even after ConfigMap cleanup, including failed reflection results. Model I/O records carry `turn_index`; repeated prompt hashes have separate occurrence files. Stage replay converts these captures to agent scripts and runs real workers through the stand-in; it reports broker acceptance or exact rejection. It never substitutes recorded tool output or falls back to a model. Prompt and rollout readers remain read-only analysis. A corpus hardlink export failure can leave an older run with only an early snapshot: check the resolution's stage-end artifact error before interpreting absent reflection I/O. A resumed reflection may share the responder session; use its turn timing and session ID to attribute cost, not the whole transcript. Persistent benchmark stages may publish a deferred receipt after the following stage drains the previous incident; require the receipt's incident ID and native ledger to agree before joining it to an oracle result.
+
+For grading before reflection completes, see [closure grading evidence](native-reflection.md#closure-grading-evidence).
 
 ## SREGym result tree
 
@@ -35,7 +37,6 @@ third_party/sregym/logs/<run-or-pipeline>/
         │   ├── sdo_production_receipt_strict.json
         │   ├── sdo_incident_resolution.json   # persistent-controller runs
         │   ├── sdo_rejected_production_receipt.json  # persistent runs whose drained receipt failed validation
-        │   ├── sdo_detector_review.json    # persistent runs whose controller stopped for detector review (no strict receipt)
         │   ├── detector_firings.jsonl      # controller firing telemetry (rotated file first), cumulative over a persistent pipeline
         │   ├── sdo_turn_usage.jsonl        # host-side lifecycle turns
         │   └── sdo_runtime/                # exported from the workspace PVC
@@ -86,10 +87,6 @@ For multi-stage SDO pipelines compared against stock Codex, `uv run python -m be
 
 ## Typed receipt rejection
 
-`sdo_detector_review.json` stands in for the strict receipt when the controller never verified
-the incident healthy: `status` (`detector_review_required`), `incident_id`, `reason`,
-`blocking_detectors`, and the responder `usage` (also copied to `sdo_incident_resolution.json`).
-
 Native receipt v2 is defined by `benchmark_receipt.proto`; its acceptance,
 classification summary and evidence checks run in the benchmark-only Go receipt
 checker. `sdo_rejected_production_receipt.json` keeps `validation_error`, the
@@ -108,3 +105,10 @@ a controller; this rejection does not prove reflection completed. Correlate the
 loss with the harness cluster-reuse log before attributing it to a controller
 crash. Pod inventory command failures remain errors, not evidence of pod loss.
 Flat reflection usage follows ProtoJSON: int64 token counts may be strings.
+
+First-party incident rows include `reflection_no_repair_count`, copied from the Go incident ledger. Missing
+historical values remain unknown. Count typed `decline_reason=no_recorded_repair` decisions to distinguish actual
+learning declines from causes with no recorded repair; see [outcomes](outcome-records.md).
+
+
+sdo3 outcomes: see [fastloop results](fastloop-results.md#sdo3-infrastructure-outcomes-and-composites).

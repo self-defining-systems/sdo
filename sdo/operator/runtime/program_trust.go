@@ -2,8 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
-	"fmt"
-	"maps"
+	"google.golang.org/protobuf/proto"
 	"sort"
 	"strings"
 
@@ -16,17 +15,12 @@ type ProgramTrust struct {
 	VerifiedSuccesses int    `json:"verified_successes"`
 	Failures          int    `json:"failures"`
 	LastChange        string `json:"last_change"`
-	Trusted           bool   `json:"trusted"`
 }
 
 // ProgramTrustStats derives counters from durable outcomes. A changed
-// program revision or any failed application breaks its success streak.
+// failed application breaks its success streak; broker-validated revisions retain credit.
 // Accepted program revisions have passed the broker's corpus replay gate.
-func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) map[string]ProgramTrust {
-	minimum := 3
-	if len(threshold) > 0 && threshold[0] > 0 {
-		minimum = threshold[0]
-	}
+func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTrust {
 	ordered := append([]*contracts.OutcomeRecord(nil), outcomes...)
 	sort.SliceStable(ordered, func(i, j int) bool { return outcomeCompletedAt(ordered[i]).Before(outcomeCompletedAt(ordered[j])) })
 	stats := map[string]ProgramTrust{}
@@ -35,7 +29,8 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 	stateForRevision := func(id, revision string) ProgramTrust {
 		state := stats[id]
 		if revision != state.LastChange {
-			state = ProgramTrust{LastChange: revision, Failures: failures[id][revision]}
+			state.LastChange = revision
+			state.Failures = failures[id][revision]
 		}
 		return state
 	}
@@ -64,8 +59,19 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 		}
 		failedInApplication := map[string]bool{}
 		creditedInOutcome := map[string]bool{}
+		rejectedInOutcome := map[string]bool{}
 		for _, application := range outcome.GetPlanApplications() {
-			if !application.GetApplied() && !strings.HasPrefix(application.GetApplicationId(), "fast-path") {
+			if application.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+				for _, id := range application.GetProgramIds() {
+					rejectedInOutcome[id] = true
+				}
+			}
+			// Pending rollout is neither an independent success nor a failure.
+			// Explicit settlement and failure signals below remain authoritative.
+			if application.GetRolloutPending() != nil && !applicationExecutionFailed(application) {
+				continue
+			}
+			if !application.GetApplied() && len(application.GetActionsApplied()) == 0 && !applicationExecutionFailed(application) {
 				continue
 			}
 			for _, id := range application.GetProgramIds() {
@@ -75,33 +81,49 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 					revision = outcome.GetSourceCommit()
 				}
 				state = stateForRevision(id, revision)
-				failed := outcome.GetClassification() != "success" || application.GetDryRun() || application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH
-				for _, signal := range outcome.GetProgramFailureSignals() {
-					// Count durable responder failures after applications, so the
-					// same failure does not also count against a successful retry.
-					if strings.HasPrefix(signal, "application_verification_failure:") {
-						continue
-					}
-					failedID, failedRevision, fastFailure := parseFastPathTrustFailureSignal(signal)
-					if strings.HasSuffix(signal, ":"+id) || (fastFailure && failedID == id && (failedRevision == "" || failedRevision == revision)) {
-						failed = true
-						break
-					}
-				}
+				failed := applicationExecutionFailed(application)
 				if failed {
 					state.Failures = recordFailure(id, revision)
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
-				} else if !boundPostApplyNoMatch(outcome, application, id, revision) {
-					// Incomplete or inconclusive evidence cannot extend a streak.
-					state.VerifiedSuccesses = 0
-					failedInApplication[id] = true
-				} else if !creditedInOutcome[id] && !failedInApplication[id] {
-					creditedInOutcome[id] = true
-					state.VerifiedSuccesses++
 				}
-				state.Trusted = state.VerifiedSuccesses >= minimum && state.Failures == 0
+				if !failed && recoveryApplicationSucceeded(outcome, application, id, revision) && !creditedInOutcome[id] {
+					state.VerifiedSuccesses++
+					creditedInOutcome[id] = true
+				}
 				stats[id] = state
+			}
+		}
+		// Success comes only from the controller's persisted exact settlement.
+		// Historical outcomes without this versioned proof earn no new credit.
+		eligibility := outcome.GetReflectionEligibility()
+		if eligibility.GetVersion() == 1 {
+			items := append([]*contracts.ReflectionWorkItem{}, eligibility.GetUnassigned()...)
+			for _, cause := range eligibility.GetCauses() {
+				items = append(items, cause.GetItems()...)
+			}
+			for _, item := range items {
+				id, revision := item.GetProgramId(), item.GetProgramRevision()
+				if item.GetDisposition() != "false_match" || id == "" || revision == "" {
+					continue
+				}
+				state := stateForRevision(id, revision)
+				if !failedInApplication[id] {
+					state.Failures = recordFailure(id, revision)
+				}
+				state.VerifiedSuccesses = 0
+				failedInApplication[id] = true
+				stats[id] = state
+			}
+			for _, item := range items {
+				id, revision := item.GetProgramId(), item.GetProgramRevision()
+				if item.GetDisposition() != "covered" || id == "" || revision == "" || revision != revisions[id] || failedInApplication[id] || creditedInOutcome[id] || rejectedInOutcome[id] {
+					continue
+				}
+				state := stateForRevision(id, revision)
+				state.VerifiedSuccesses++
+				stats[id] = state
+				creditedInOutcome[id] = true
 			}
 		}
 		seenFailures := map[string]bool{}
@@ -136,11 +158,30 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 			state.LastChange = revision
 			state.Failures = count
 			state.VerifiedSuccesses = 0
-			state.Trusted = false
 			stats[id] = state
 		}
 	}
 	return stats
+}
+
+// parseProgramToolCall decodes one recorded program tool call, rejecting
+// errored or self-inconsistent records.
+func parseProgramToolCall(call *contracts.ProgramToolCall) (ToolRequest, ToolResponse, bool) {
+	var request ToolRequest
+	var response ToolResponse
+	if call.GetError() != "" || json.Unmarshal([]byte(call.GetRequestJson()), &request) != nil || json.Unmarshal([]byte(call.GetResponseJson()), &response) != nil || response.Error != "" || request.Command != call.GetCommand() || response.Command != call.GetCommand() {
+		return ToolRequest{}, ToolResponse{}, false
+	}
+	return request, response, true
+}
+
+// programRunRevisions is the revision each program ran at; a later run wins.
+func programRunRevisions(outcome *contracts.OutcomeRecord) map[string]string {
+	revisions := make(map[string]string)
+	for _, run := range outcome.GetProgramRuns() {
+		revisions[run.GetProgramId()] = run.GetProgramRevision()
+	}
+	return revisions
 }
 
 // boundPostApplyNoMatch requires controller-recorded tool evidence. The plan
@@ -164,11 +205,27 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 			return false
 		}
 	}
+	for _, stage := range outcome.GetPriorStages() {
+		for _, attempt := range stage.GetMitigations() {
+			receipt, run := attempt.GetApplyReceipt(), attempt.GetPostApplyDiagnose()
+			if attempt.GetPlaybookId() != id || attempt.GetProgramRevision() != revision || receipt.GetApplicationId() != application.GetApplicationId() {
+				continue
+			}
+			if attempt.GetResult() != "applied_cleared" || !receipt.GetApplied() || receipt.GetRolledBack() || receipt.GetRolloutPending() != nil || receipt.GetError() != "" {
+				continue
+			}
+			if !proto.Equal(receipt.GetCompletedAt(), application.GetCompletedAt()) || !proto.Equal(receipt.GetPlan(), application.GetPlan()) {
+				continue
+			}
+			if run.GetProgramId() == id && run.GetProgramRevision() == revision && run.GetError() == "" && run.GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH && programBindingsState(attempt.GetBindings()).Equal(programBindingsState(run.GetBindings())) {
+				return true
+			}
+		}
+	}
 	plans := map[string]ToolRequest{}
 	for _, call := range outcome.GetProgramToolCalls() {
-		var request ToolRequest
-		var response ToolResponse
-		if call.GetError() != "" || json.Unmarshal([]byte(call.GetRequestJson()), &request) != nil || json.Unmarshal([]byte(call.GetResponseJson()), &response) != nil || response.Error != "" || request.Command != call.GetCommand() || response.Command != call.GetCommand() {
+		request, response, ok := parseProgramToolCall(call)
+		if !ok {
 			continue
 		}
 		if call.GetCommand() == "plan" && response.PlanID != "" {
@@ -194,7 +251,7 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 			selected = true
 			verified := false
 			for _, run := range response.ProgramRuns {
-				if run.ProgramID != id || !maps.Equal(run.Bindings, plan.Bindings) {
+				if run.ProgramID != id || !run.Bindings.Equal(plan.Bindings) {
 					continue
 				}
 				if run.ProgramRevision != "" && run.ProgramRevision != revision {
@@ -214,64 +271,7 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 	return false
 }
 
-// fastPathTrustFailureSignals is the durable trust input for a fast-path
-// marker. Persist its JSON string array under "trust_failure_signals" before
-// application, retain it through failed verification, and restore it on handoff.
-// The revision comes from the accepted trust snapshot, not the source commit
-// of a later responder outcome.
-func (l *ResponderLoop) fastPathTrustFailureSignals(ids []string) []string {
-	signals := make([]string, 0, len(ids))
-	for _, id := range ids {
-		revision := l.Trust[id].LastChange
-		if revision == "" {
-			revision = l.Request.SourceCommit
-		}
-		signal := "fast_path_failure:" + id
-		if revision != "" {
-			signal += "@" + revision
-		}
-		signals = append(signals, signal)
-	}
-	return signals
-}
-
-// restoreFastPathTrustFailureSignals restores only trust evidence. The marker
-// owner rechecks live state without restoring applications or rollback state.
-func (l *ResponderLoop) restoreFastPathTrustFailureSignals(encoded string) error {
-	if encoded == "" {
-		return nil
-	}
-	var signals []string
-	if err := json.Unmarshal([]byte(encoded), &signals); err != nil {
-		return fmt.Errorf("decode fast-path trust failures: %w", err)
-	}
-	for _, signal := range signals {
-		if _, _, ok := parseFastPathTrustFailureSignal(signal); !ok {
-			return fmt.Errorf("invalid fast-path trust failure signal %q", signal)
-		}
-	}
-	for _, signal := range signals {
-		id, _, _ := parseFastPathTrustFailureSignal(signal)
-		l.addFailureSignal(signal)
-		exists := false
-		for _, prior := range l.fastPathPrograms {
-			exists = exists || prior == id
-		}
-		if !exists {
-			l.fastPathPrograms = append(l.fastPathPrograms, id)
-		}
-	}
-	return nil
-}
-
-func parseFastPathTrustFailureSignal(signal string) (id, revision string, ok bool) {
-	return parseTrustFailureSignal(signal, "fast_path_failure:")
-}
-
 func parseProgramTrustFailureSignal(signal string) (id, revision string, ok bool) {
-	if id, revision, ok = parseFastPathTrustFailureSignal(signal); ok {
-		return id, revision, true
-	}
 	return parseTrustFailureSignal(signal, "application_verification_failure:")
 }
 
@@ -285,4 +285,22 @@ func parseTrustFailureSignal(signal, prefix string) (id, revision string, ok boo
 		return "", "", false
 	}
 	return id, revision, true
+}
+
+// Observation, health and incident summaries cannot prove an execution failure.
+// Only immutable adverse execution facts (or an exact false match) do so.
+func applicationExecutionFailed(app *contracts.PlanApplication) bool {
+	if app.GetDryRun() {
+		return false
+	}
+	if app.GetRolledBack() || app.GetRollbackError() != "" {
+		return true
+	}
+	for _, report := range app.GetActionReports() {
+		if report.GetFailureReason() != "" && report.GetFailureReason() != "source_residual" && report.GetFailureReason() != "outcome_unknown" {
+			return true
+		}
+	}
+	// Missing/truncated reports and presentation errors prove no adverse write.
+	return false
 }
