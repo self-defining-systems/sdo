@@ -247,7 +247,7 @@ func TestSimMemoryHostParityAndCrash(t *testing.T) {
 			t.Fatal(err)
 		}
 		host.WithPrograms(registry).WithReadFactory(func(ctx context.Context, s sdktest.Snapshot) (program.ReadView, error) {
-			return hostio.NewLiveReadView(ctx, s, client), nil
+			return hostio.NewLiveReadView(ctx, s, hostio.ReadBackends{Client: client}), nil
 		})
 		rpc, stop := memoryTestRPC(t, host)
 		ready, _ := host.Ready(ctx, nil)
@@ -284,7 +284,7 @@ func TestSimMemoryHostParityAndCrash(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		localView := hostio.NewLiveReadView(ctx, captured, client)
+		localView := hostio.NewLiveReadView(ctx, captured, hostio.ReadBackends{Client: client})
 		p, _ := registry.Diagnoser("sim-logs")
 		expectedVerdict, err := p.Diagnose(ctx, localView, program.Bindings{})
 		if err != nil {

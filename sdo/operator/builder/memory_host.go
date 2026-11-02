@@ -62,10 +62,10 @@ func main(){
  engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads});if err!=nil{log.Fatal(err)}
  trafficHost:=prober.NewHost(engine);defer trafficHost.Close()
  server.WithTraffic(trafficHost)
- reader,err:=core.NewKubernetesClient();if err!=nil{log.Fatal(err)}
+ reader,restConfig,err:=core.NewKubernetesClientAndConfig();if err!=nil{log.Fatal(err)}
  objects,err:=core.NewGenericCapture(*namespace);if err!=nil{log.Fatal(err)}
  server.WithObjects(objects,*protected)
- server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,reader),nil})
+ server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,hostio.ReadBackends{Client:reader,Config:restConfig,ProtectedNamespace:*protected}),nil})
  ctx,cancel:=signal.NotifyContext(context.Background(),syscall.SIGTERM,syscall.SIGINT);defer cancel()
  if err=hostio.Serve(ctx,*socket,*capBytes,server);err!=nil{log.Fatal(err)}
 }

@@ -4,17 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
-	"strings"
 
 	"errors"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/remotecommand"
-	spdytransport "k8s.io/client-go/transport/spdy"
-	utilexec "k8s.io/client-go/util/exec"
+	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -175,70 +168,12 @@ func (c TypedPlanClient) RunOperation(ctx context.Context, o program.ExternalOpe
 	if o.Exec != nil {
 		return c.runCommand(ctx, *o.Exec)
 	}
-	return c.runCommand(ctx, httpCommand(*o.HTTP))
-}
-func httpCommand(h program.HTTPRequest) program.Command {
-	args := []string{"curl", "--silent", "--show-error", "--fail", "--output", "/dev/null", "--max-time", "30", "--request", h.Method}
-	keys := make([]string, 0, len(h.Headers))
-	for k := range h.Headers {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		args = append(args, "--header", k+": "+h.Headers[k])
-	}
-	if h.Body != "" {
-		args = append(args, "--data-binary", "@-")
-	}
-	args = append(args, "--", h.URL)
-	if h.Bearer != nil || len(h.HeaderEnv) > 0 {
-		script := `exec "$0"`
-		if h.Bearer != nil {
-			script += ` --header "Authorization: Bearer ${` + h.Bearer.Env + `}"`
-		}
-		keys = keys[:0]
-		for name := range h.HeaderEnv {
-			keys = append(keys, name)
-		}
-		sort.Strings(keys)
-		quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
-		for _, name := range keys {
-			script += ` --header ` + quote(name+": ") + `"${` + h.HeaderEnv[name].Env + `}"`
-		}
-		script += ` "$@"`
-		args = append([]string{"sh", "-c", script}, args...)
-	}
-	return program.Command{Pod: h.Pod, Container: h.Container, Args: args, Stdin: h.Body}
+	return c.runCommand(ctx, kubereads.HTTPCommand(*o.HTTP))
 }
 func (c TypedPlanClient) runCommand(ctx context.Context, command program.Command) (int32, error) {
-	if err := c.checkPlanNamespace(command.Pod.Namespace); err != nil {
-		return 0, err
-	}
-	if err := command.Validate(); err != nil {
-		return 0, err
-	}
-	if c.Client == nil || c.ExecConfig == nil || c.Client.CoreV1().RESTClient() == nil {
+	code, err := kubereads.RunCommand(ctx, kubereads.SPDYExec{Client: c.Client, Config: c.ExecConfig}, c.ProtectedNamespace, command)
+	if errors.Is(err, kubereads.ErrExecUnavailable) {
 		return 0, fmt.Errorf("%w: controller exec transport unavailable", errPlanExecRefused)
 	}
-	request := c.Client.CoreV1().RESTClient().Post().Resource("pods").Name(command.Pod.Name).Namespace(command.Pod.Namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: command.Container, Command: command.Args, Stdin: true, Stdout: false, Stderr: false, TTY: false}, scheme.ParameterCodec)
-	transport, upgrader, err := spdytransport.RoundTripperFor(c.ExecConfig)
-	if err != nil {
-		return 0, fmt.Errorf("exec transport unavailable")
-	}
-	executor, err := remotecommand.NewSPDYExecutorRejectRedirects(transport, upgrader, "POST", request.URL())
-	if err != nil {
-		return 0, fmt.Errorf("exec transport unavailable")
-	}
-	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader(command.Stdin)})
-	if err == nil {
-		return 0, nil
-	}
-	var exited utilexec.ExitError
-	if errors.As(err, &exited) {
-		return int32(exited.ExitStatus()), nil
-	}
-	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
-		return 0, err
-	}
-	return 0, fmt.Errorf("exec transport failed")
+	return code, err
 }

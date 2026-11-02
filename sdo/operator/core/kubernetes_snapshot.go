@@ -60,18 +60,25 @@ func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvide
 // DefaultKubernetesClientQPS/Burst and honors SDO_KUBE_API_QPS and
 // SDO_KUBE_API_BURST.
 func NewKubernetesClient() (kubernetes.Interface, error) {
+	client, _, err := NewKubernetesClientAndConfig()
+	return client, err
+}
+
+// NewKubernetesClientAndConfig also returns the REST configuration, for read
+// transports that need raw API access or pod exec next to the typed client.
+func NewKubernetesClientAndConfig() (kubernetes.Interface, *rest.Config, error) {
 	config, err := kubeio.Config()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := applyClientRateLimits(config, kubeio.LookupEnv); err != nil {
-		return nil, fmt.Errorf("configure kubernetes client rate limit: %w", err)
+		return nil, nil, fmt.Errorf("configure kubernetes client rate limit: %w", err)
 	}
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("create kubernetes client: %w", err)
+		return nil, nil, fmt.Errorf("create kubernetes client: %w", err)
 	}
-	return client, nil
+	return client, config, nil
 }
 
 // NewKubernetesMetadataClient creates a metadata-only decoder using the same

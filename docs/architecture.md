@@ -145,6 +145,7 @@ equivalence for a script.
 | `sdo/operator/rendered/` | Production deployment renderer and selected-manifest reader; no benchmark dependencies. |
 | `sdo/operator/broker/`, `memory/` (including `memory/layout` and `memory/validate`), `outcome_derivation/` | Go commit authority (including repository-wide serialization, optional remote-branch replication, validated stale-diff replay, source-only repair projection, working playbook carry into reflection and append-only reflection SDK-gap annotations), logical snapshots and explicit generic-health preparation, the single operational-memory validator, outcome store with physical JSON adapter, controller-derived three-class outcomes without diagnosis verification, and read-only controller observations |
 | `sdo/operator/memoryhost/`, `memoryhost/hostio/` | Sole accepted-memory execution path: mirror barriers, immutable activation, read-only execution and host process transport; no publication authority |
+| `sdo/operator/kubereads/` | Read-only Kubernetes reads shared by the controller's live view and the memory host (admission webhooks, webhook CA match, catalog users, Pod exec observation, raw API reads, usage); no write path |
 | `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector and program SDK with canonical object-ref text parsing, deterministic execution, drift feed to responders, namespace-scoped verified plans, controller state and its typed projection, stable controller and host builds, Kubernetes installation, and controller-only named write grants derived from accepted cluster source |
 | `sdo/operator/runtime/{plan_script.go,script_job.go,script_provenance.go}`, `operatorcli/script_{runner,capture}.go` | App-local RunScript Jobs, durable application/Job identity, existing Kubernetes proxy recording with private first-write preimages and settled postimages; selected scope remains separate from measured writes |
 | `benchmarks/sregym/` | First-party benchmark adapter, Go receipt checker and submission guard, versioned fault descriptions, suite capability preflight, runner, experiments, and analysis |
@@ -830,7 +831,8 @@ No mutation client or controller callback is exposed to programs.
 | Component | Responsibility |
 | --- | --- |
 | `memoryhost/` | Protocol server, registrations, deterministic snapshot execution, receipts, mirror fan-out and manager leases |
-| `memoryhost/hostio/` | Declared nondeterminism edge: child launch/reaping, memory bound, Unix transport and read-only live reads |
+| `memoryhost/hostio/` | Declared nondeterminism edge: child launch/reaping, memory bound, Unix transport and read-only live reads (`KubernetesRead`, `DatabaseUsers`, `Observe`, `PodUsage`/`NodeUsage`, `WebhookCAMatchesSecret`, `AdmissionWebhooksFor`, logs, probes) confined to the observed namespace, refusing the control namespace |
+| `kubereads/` | Shared read-only Kubernetes reads (transports injected by the controller or the host edge) |
 | `runtime/memory_host.go` | Remote SDK detector/program adapters, input transport and evidence forwarding |
 | `builder/memory_host.go` | Staged host build; digest binds the launched executable |
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"strings"
@@ -21,19 +22,7 @@ func (v LiveReadView) Observe(o program.ExternalOperation) (int32, error) {
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
 	client := TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig, ProtectedNamespace: v.ProtectedNamespace}
-	before, err := client.Get(ctx, o.Pod())
-	if err != nil || before == nil || before.GetUID() != captured.GetUID() {
-		return 0, fmt.Errorf("command Pod identity changed")
-	}
-	code, err := client.RunOperation(ctx, o)
-	if err != nil {
-		return 0, err
-	}
-	after, err := client.Get(ctx, o.Pod())
-	if err != nil || after == nil || after.GetUID() != captured.GetUID() {
-		return 0, fmt.Errorf("command Pod identity changed")
-	}
-	return code, nil
+	return kubereads.Observe(ctx, client.Get, kubereads.SPDYExec{Client: client.Client, Config: client.ExecConfig}, client.ProtectedNamespace, captured, o)
 }
 func (v LiveReadView) KubernetesRead(r program.KubernetesRequest) (json.RawMessage, error) {
 	if err := program.ValidateKubernetesRead(r); err != nil {
