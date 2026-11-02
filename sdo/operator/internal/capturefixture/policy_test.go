@@ -79,6 +79,9 @@ func asExpr(n ast.Node) ast.Expr {
 	return e
 }
 
+// rawSnapshotJSON reports JSON shaped like a snapshot. Every snapshot carries
+// its namespace, so other wire documents that share one field name (a kubelet
+// stats summary has only "pods") are not mistaken for captures.
 func rawSnapshotJSON(text string) bool {
 	var object map[string]json.RawMessage
 	if json.Unmarshal([]byte(strings.TrimSpace(text)), &object) != nil {
@@ -89,7 +92,8 @@ func rawSnapshotJSON(text string) bool {
 			return false
 		}
 	}
-	return len(object) > 0
+	_, namespace := object["namespace"]
+	return namespace
 }
 
 // handBuiltCaptures finds capture boundaries built outside the capture path:

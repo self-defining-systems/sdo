@@ -616,6 +616,8 @@ var informerResources = map[string]struct{ Group, Resource string }{
 	"rbac.authorization.k8s.io/v1/ClusterRole":        {"rbac.authorization.k8s.io", "clusterroles"},
 	"rbac.authorization.k8s.io/v1/ClusterRoleBinding": {"rbac.authorization.k8s.io", "clusterrolebindings"},
 	"v1/Event":                                        {"", "events"},
+	"autoscaling/v2/HorizontalPodAutoscaler":          {"autoscaling", "horizontalpodautoscalers"},
+	"policy/v1/PodDisruptionBudget":                   {"policy", "poddisruptionbudgets"},
 }
 
 func informerFor(factory informers.SharedInformerFactory, key string) (cache.SharedIndexInformer, error) {

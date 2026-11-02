@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/runtime/internal/testprotocol"
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
@@ -76,7 +77,7 @@ func TestHermeticNewDetectorInputs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	t.Cleanup(cancel)
 	var snapshot any
-	if err := json.Unmarshal([]byte(`{"namespace":"app","statefulSets":[{"metadata":{"name":"db","namespace":"app"},"spec":{"replicas":2},"status":{"readyReplicas":2}}],"pods":[{"metadata":{"name":"db-0","namespace":"app","uid":"uid"},"spec":{"nodeName":"node","containers":[{"name":"db","resources":{"limits":{"memory":"1000"}}}]}}]}`), &snapshot); err != nil {
+	if err := json.Unmarshal(capturefixture.Raw(t, "fake API server serves a raw snapshot view, not a capture boundary", []byte(`{"namespace":"app","statefulSets":[{"metadata":{"name":"db","namespace":"app"},"spec":{"replicas":2},"status":{"readyReplicas":2}}],"pods":[{"metadata":{"name":"db-0","namespace":"app","uid":"uid"},"spec":{"nodeName":"node","containers":[{"name":"db","resources":{"limits":{"memory":"1000"}}}]}}]}`)), &snapshot); err != nil {
 		t.Fatal(err)
 	}
 	url, control := newInputsAPI(t, ctx, snapshot)

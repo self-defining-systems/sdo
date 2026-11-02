@@ -165,7 +165,7 @@ func TestLegacyTreeCaptureIsIgnored(t *testing.T) {
 		observer.Cycle(ctx)
 	}
 	window, _ := observer.Window()
-	legacy, err := servicehealth.CaptureReachabilityBaseline(withReachability(snapshots.snapshot, window), servicehealth.BaselineAuthorization{SourceInputs: revision.SourceInputs, Reason: "healthy-baseline", GoalHealthy: true})
+	legacy, err := servicehealth.CaptureReachabilityBaseline(withReachability(snapshots.snapshot, window), servicehealth.BaselineAuthorization{SourceInputs: revision.SourceInputs, ObjectiveDigest: objectiveDigest(revision.Objective), Reason: "healthy-baseline", GoalHealthy: true})
 	if err != nil || len(legacy.Exclusions) != 1 {
 		t.Fatalf("legacy fixture: %+v %v", legacy, err)
 	}

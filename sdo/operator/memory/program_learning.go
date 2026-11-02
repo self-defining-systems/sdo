@@ -32,9 +32,9 @@ func ReadProgramLearningEvidence(ctx context.Context, repository, commit string)
 		return nil, nil
 	}
 	git := func(args ...string) ([]byte, error) {
-		output, err := memoryio.Git(ctx, repository, false, nil, args...)
+		output, stderr, err := memoryio.GitWithDiagnostics(ctx, repository, args...)
 		if err != nil {
-			return nil, fmt.Errorf("git %s in %q at %s: %w", strings.Join(args, " "), repository, commit, err)
+			return nil, fmt.Errorf("git %s in %q at %s: %w: %s", strings.Join(args, " "), repository, commit, err, strings.TrimSpace(stderr))
 		}
 		return output, nil
 	}

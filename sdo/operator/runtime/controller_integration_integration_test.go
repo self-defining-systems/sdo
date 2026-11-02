@@ -53,7 +53,7 @@ func TestControllerIntegrationInformerPersistenceAndRestart(t *testing.T) {
 		)
 		detector := missingConfigMapDetector{}
 		cache, err := newCacheForTest(t, KubernetesCacheConfig{
-			Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
+			Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state", ResyncPeriod: time.Hour,
 		}, []sdk.Detector{detector})
 		if err != nil {
 			t.Fatalf("new cache: %v", err)
