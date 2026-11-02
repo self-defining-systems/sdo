@@ -82,16 +82,17 @@ def assert_image_entrypoints(
                 "--entrypoint",
                 "/usr/local/bin/sdo-operator",
                 ref,
-                "schema-identity",
+                "memory",
+                "--help",
             ],
             check=False,
             text=True,
             capture_output=True,
             timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
-        if result.returncode or not result.stdout.strip().startswith("sdo.dev/"):
+        if result.returncode or not result.stdout.startswith("usage: sdo-operator memory"):
             raise ValueError(
-                f"eval: image {ref} entrypoint smoke failed: {result.stderr.strip() or 'invalid Go schema identity'}"
+                f"eval: image {ref} entrypoint smoke failed: {result.stderr.strip() or 'invalid operator usage'}"
             )
         return
     mounts = _source_mount_args(source_root, run) if source_root is not None else []

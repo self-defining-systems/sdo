@@ -120,8 +120,8 @@ def test_explicit_mount_opt_out_warns(monkeypatch):
 
     def command(argv, **kwargs):
         if argv[0] == "docker":
-            if argv[-1] == "schema-identity":
-                return CompletedProcess(argv, 0, "sdo.dev/fixture\n", "")
+            if argv[-2:] == ["memory", "--help"]:
+                return CompletedProcess(argv, 0, "usage: sdo-operator memory <command> [flags]\n", "")
             if "python3" in argv:
                 return CompletedProcess(argv, 0, '{"agentshim": null, "import_error": null}\n', "")
             return CompletedProcess(argv, 0, "", "")
