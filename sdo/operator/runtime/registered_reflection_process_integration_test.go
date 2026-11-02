@@ -24,6 +24,7 @@ import (
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/runtime/sim"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/worker_registry"
 )
@@ -401,193 +402,214 @@ func TestRegisteredReflectionRequestFitsTheTransportBudgetByConstruction(t *test
 }
 
 func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
+	for _, scenario := range []string{"detector and README", "malformed then fixed"} {
+		t.Run(scenario, func(t *testing.T) { reflectionDirectFilesScenario(t, scenario) })
+	}
+}
+
+// No-change and SDK-gap decisions publish nothing, so the broker's compile gate
+// is a simulated edge (sim.Compiler) and no CLI check runs. The real validator
+// and CLI are exercised by the two scenarios above.
+func TestReflectionNoChangeAndSDKGapNeverCommit(t *testing.T) {
+	for _, scenario := range []string{"no change", "SDK gap"} {
+		t.Run(scenario, func(t *testing.T) { reflectionDirectFilesScenario(t, scenario) })
+	}
+}
+
+func reflectionDirectFilesScenario(t *testing.T, scenario string) {
 	ctx := context.Background()
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := operatorCLIFixture(t)
-	for _, scenario := range []string{"detector and README", "malformed then fixed", "no change", "SDK gap"} {
-		t.Run(scenario, func(t *testing.T) {
-			target := nativeRepository(t)
-			if err := os.CopyFS(target, os.DirFS("../memory/validate/testdata/good")); err != nil {
-				t.Fatal(err)
-			}
-			// Accepted executable and session observations bind the detector to
-			// the independently verified Service cause used below.
-			fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
-			module, err := os.ReadFile(filepath.Join(fixture, "diagnostics/go.mod"))
+	realValidator := scenario != "no change" && scenario != "SDK gap"
+	var binary string
+	if realValidator {
+		binary = operatorCLIFixture(t)
+	}
+	target := nativeRepository(t)
+	if err := os.CopyFS(target, os.DirFS("../memory/validate/testdata/good")); err != nil {
+		t.Fatal(err)
+	}
+	// Accepted executable and session observations bind the detector to
+	// the independently verified Service cause used below.
+	fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
+	module, err := os.ReadFile(filepath.Join(fixture, "diagnostics/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, ".sdo/diagnostics/go.mod"), module, 0644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.CopyPortProgram(t, target, fixture)
+	copyFastloopTree(t, filepath.Join(fixture, "corpus"), filepath.Join(target, ".sdo/corpus"))
+	for _, relative := range []string{".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", ".sdo/diagnostics/detectors/incidents/cache/detector.go"} {
+		path := filepath.Join(target, relative)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = []byte(strings.ReplaceAll(string(data), "base", "service-targetport-mismatch"))
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	index := filepath.Join(target, ".sdo/playbooks/README.md")
+	data, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, target, "add", "-A")
+	nativeGit(t, target, "commit", "-qm", "memory")
+	var simCompiler sim.Compiler
+	compile := simCompiler.Compile
+	if realValidator {
+		compile = func(ctx context.Context, root string, _ []string) error {
+			ds, err := validate.CompileCandidate(ctx, validate.Request{Root: root, OperatorRoot: operatorRoot})
 			if err != nil {
-				t.Fatal(err)
+				return err
 			}
-			if err := os.WriteFile(filepath.Join(target, ".sdo/diagnostics/go.mod"), module, 0644); err != nil {
-				t.Fatal(err)
-			}
-			testutil.CopyPortProgram(t, target, fixture)
-			copyFastloopTree(t, filepath.Join(fixture, "corpus"), filepath.Join(target, ".sdo/corpus"))
-			for _, relative := range []string{".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", ".sdo/diagnostics/detectors/incidents/cache/detector.go"} {
-				path := filepath.Join(target, relative)
-				data, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				data = []byte(strings.ReplaceAll(string(data), "base", "service-targetport-mismatch"))
-				if err := os.WriteFile(path, data, 0644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			index := filepath.Join(target, ".sdo/playbooks/README.md")
-			data, err := os.ReadFile(index)
+			return validate.Err(ds)
+		}
+	}
+	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), compile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := t.TempDir()
+	capture, err := memory.IncidentCorpusDir(sessions, "direct-files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reflectionFixtureHealthy(t, capture)
+	t.Setenv("SDO_CAPTURED_CORPUS_DIR", capture)
+	calls := 0
+	var authoredREADME, authoredGo []byte
+	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: time.Minute, SessionMode: "fresh"}
+	worker.Executor = reflectionTaskExecutorFunc(func(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		calls++
+		checkout, base := task.Workspace.CheckoutPath, task.Workspace.BaseCommit
+		readme := filepath.Join(checkout, ".sdo/playbooks/base/README.md")
+		detector := filepath.Join(checkout, ".sdo/diagnostics/detectors/incidents/cache/detector.go")
+		response := &contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "already covered"}
+		if scenario == "SDK gap" {
+			response.SdkGaps = []*contracts.SdkGap{{FaultClass: "fault", Primitive: "ProbeUDP", Reason: "UDP", ScratchScript: "probe"}}
+			response.LearningDecision = "sdk_gap"
+			response.NoChangeReason = "No deterministic SDK observation for this cause"
+		}
+		if scenario != "no change" && scenario != "SDK gap" {
+			original, err := os.ReadFile(readme)
 			if err != nil {
-				t.Fatal(err)
+				return nil, err
 			}
-			if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
-				t.Fatal(err)
-			}
-			nativeGit(t, target, "add", "-A")
-			nativeGit(t, target, "commit", "-qm", "memory")
-			compile := func(ctx context.Context, root string, _ []string) error {
-				ds, err := validate.CompileCandidate(ctx, validate.Request{Root: root, OperatorRoot: operatorRoot})
-				if err != nil {
-					return err
-				}
-				return validate.Err(ds)
-			}
-			repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), compile)
+			authoredREADME = append(original, []byte("\n## Verification\nThe controller confirmed recovery.\n")...)
+			source, err := os.ReadFile(detector)
 			if err != nil {
-				t.Fatal(err)
+				return nil, err
 			}
-			sessions := t.TempDir()
-			capture, err := memory.IncidentCorpusDir(sessions, "direct-files")
+			authoredGo = append(source, []byte("\n// Confirmed signature retained after reflection.\n")...)
+			if err := os.WriteFile(detector, authoredGo, 0o644); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(readme, authoredREADME, 0o644); err != nil {
+				return nil, err
+			}
+			programReadme := filepath.Join(checkout, ".sdo/playbooks/service-targetport-mismatch/README.md")
+			programText, err := os.ReadFile(programReadme)
 			if err != nil {
-				t.Fatal(err)
+				return nil, err
 			}
-			reflectionFixtureHealthy(t, capture)
-			t.Setenv("SDO_CAPTURED_CORPUS_DIR", capture)
-			calls := 0
-			var authoredREADME, authoredGo []byte
-			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(target), Catalog: memory.OpenCatalogReader(target), Timeout: time.Minute, SessionMode: "fresh"}
-			worker.Executor = reflectionTaskExecutorFunc(func(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
-				calls++
-				checkout, base := task.Workspace.CheckoutPath, task.Workspace.BaseCommit
-				readme := filepath.Join(checkout, ".sdo/playbooks/base/README.md")
-				detector := filepath.Join(checkout, ".sdo/diagnostics/detectors/incidents/cache/detector.go")
-				response := &contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "already covered"}
-				if scenario == "SDK gap" {
-					response.SdkGaps = []*contracts.SdkGap{{FaultClass: "fault", Primitive: "ProbeUDP", Reason: "UDP", ScratchScript: "probe"}}
-					response.LearningDecision = "sdk_gap"
-					response.NoChangeReason = "No deterministic SDK observation for this cause"
-				}
-				if scenario != "no change" && scenario != "SDK gap" {
-					original, err := os.ReadFile(readme)
-					if err != nil {
-						return nil, err
-					}
-					authoredREADME = append(original, []byte("\n## Verification\nThe controller confirmed recovery.\n")...)
-					source, err := os.ReadFile(detector)
-					if err != nil {
-						return nil, err
-					}
-					authoredGo = append(source, []byte("\n// Confirmed signature retained after reflection.\n")...)
-					if err := os.WriteFile(detector, authoredGo, 0o644); err != nil {
-						return nil, err
-					}
-					if err := os.WriteFile(readme, authoredREADME, 0o644); err != nil {
-						return nil, err
-					}
-					programReadme := filepath.Join(checkout, ".sdo/playbooks/service-targetport-mismatch/README.md")
-					programText, err := os.ReadFile(programReadme)
-					if err != nil {
-						return nil, err
-					}
-					if err := os.WriteFile(programReadme, append(programText, []byte("\nThe current controller receipt confirms this repair step.\n")...), 0644); err != nil {
-						return nil, err
-					}
-					caseDir := filepath.Join(checkout, ".sdo/corpus/current-repair")
-					if err := os.MkdirAll(caseDir, 0755); err != nil {
-						return nil, err
-					}
-					labels, err := os.ReadFile(filepath.Join(checkout, ".sdo/corpus/targetport-mismatch/labels.json"))
-					if err != nil {
-						return nil, err
-					}
-					if err := os.WriteFile(filepath.Join(caseDir, "labels.json"), labels, 0644); err != nil {
-						return nil, err
-					}
-					appendControllerRepairReceipts(t, checkout, "current-repair", reflectionFixtureOutcome("direct-files"))
-					response = &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base", "service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}}
-					if scenario == "malformed then fixed" {
-						if err := os.WriteFile(readme, []byte("malformed README\n"), 0o644); err != nil {
-							return nil, err
-						}
-						writeReflectionCheckDecision(t, checkout, response)
-						report, code := runReflectionMemoryCheck(t, binary, checkout, base, operatorRoot)
-						if code != 1 || len(report.Diagnostics) == 0 {
-							t.Fatalf("malformed README passed CLI: %d %v", code, report)
-						}
-						_, rejected := repository.Publish(ctx, "direct-files", broker.Responder, broker.ReflectionPhase)
-						var failure *validate.Failure
-						if !errors.As(rejected, &failure) {
-							t.Fatalf("broker did not return named diagnostics: %v", rejected)
-						}
-						ds := failure.Diagnostics
-						if !proto.Equal(report, &contracts.MemoryCheckReport{Root: checkout, Actor: "responder", Phase: "reflection", Base: base, Diagnostics: validate.ProtoDiagnostics(ds)}) {
-							t.Fatalf("CLI/broker diagnostics differ: CLI %v broker %v", report, ds)
-						}
-						if err := os.WriteFile(readme, authoredREADME, 0o644); err != nil {
-							return nil, err
-						}
-					}
+			if err := os.WriteFile(programReadme, append(programText, []byte("\nThe current controller receipt confirms this repair step.\n")...), 0644); err != nil {
+				return nil, err
+			}
+			caseDir := filepath.Join(checkout, ".sdo/corpus/current-repair")
+			if err := os.MkdirAll(caseDir, 0755); err != nil {
+				return nil, err
+			}
+			labels, err := os.ReadFile(filepath.Join(checkout, ".sdo/corpus/targetport-mismatch/labels.json"))
+			if err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(filepath.Join(caseDir, "labels.json"), labels, 0644); err != nil {
+				return nil, err
+			}
+			appendControllerRepairReceipts(t, checkout, "current-repair", reflectionFixtureOutcome("direct-files"))
+			response = &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base", "service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{reflectionFixtureGap()}}
+			if scenario == "malformed then fixed" {
+				if err := os.WriteFile(readme, []byte("malformed README\n"), 0o644); err != nil {
+					return nil, err
 				}
 				writeReflectionCheckDecision(t, checkout, response)
 				report, code := runReflectionMemoryCheck(t, binary, checkout, base, operatorRoot)
-				if code != 0 {
-					t.Fatalf("final memory check failed: %d %v", code, report)
+				if code != 1 || len(report.Diagnostics) == 0 {
+					t.Fatalf("malformed README passed CLI: %d %v", code, report)
 				}
-				packed, err := anypb.New(response)
-				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: packed}, err
-			})
-			native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), SessionRoot: sessions, Reflector: worker, ResponderBackend: "fake", ResponderModel: "fake", Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-				derived := testDerivedOutcome(c.Request.IncidentID, "success", true)
-				if scenario != "no change" && scenario != "SDK gap" {
-					derived.Record = reflectionFixtureOutcome(c.Request.IncidentID)
+				_, rejected := repository.Publish(ctx, "direct-files", broker.Responder, broker.ReflectionPhase)
+				var failure *validate.Failure
+				if !errors.As(rejected, &failure) {
+					t.Fatalf("broker did not return named diagnostics: %v", rejected)
 				}
-				return derived, nil
-			})}
-			workspace, err := native.PrepareIncident(ctx, "direct-files")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(workspace.Worktree, "app.txt"), []byte("repaired\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			receipt, err := native.ProcessClosure(ctx, nativeClosure(workspace))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if calls != 1 {
-				t.Fatalf("worker dispatched %d times", calls)
-			}
-			if scenario == "no change" || scenario == "SDK gap" {
-				if receipt.ReflectionCommit != "" {
-					t.Fatal("no-change created a commit")
+				ds := failure.Diagnostics
+				if !proto.Equal(report, &contracts.MemoryCheckReport{Root: checkout, Actor: "responder", Phase: "reflection", Base: base, Diagnostics: validate.ProtoDiagnostics(ds)}) {
+					t.Fatalf("CLI/broker diagnostics differ: CLI %v broker %v", report, ds)
 				}
-			} else {
-				if receipt.ReflectionCommit == "" {
-					t.Fatal("update was not committed")
-				}
-				ledger, err := native.readLedger("direct-files")
-				if err != nil || len(ledger.GetReflectionDecision().GetPlaybookIds()) != 2 || ledger.GetReflectionDecision().GetPlaybookIds()[0] != "base" {
-					t.Fatalf("accepted playbook IDs not durable: %v %v", ledger, err)
-				}
-				for rel, want := range map[string][]byte{".sdo/playbooks/base/README.md": authoredREADME, ".sdo/diagnostics/detectors/incidents/cache/detector.go": authoredGo} {
-					got, err := os.ReadFile(filepath.Join(target, rel))
-					if err != nil || string(got) != string(want) {
-						t.Fatalf("authored bytes changed in %s: %v", rel, err)
-					}
+				if err := os.WriteFile(readme, authoredREADME, 0o644); err != nil {
+					return nil, err
 				}
 			}
-		})
+		}
+		writeReflectionCheckDecision(t, checkout, response)
+		if realValidator {
+			report, code := runReflectionMemoryCheck(t, binary, checkout, base, operatorRoot)
+			if code != 0 {
+				t.Fatalf("final memory check failed: %d %v", code, report)
+			}
+		}
+		packed, err := anypb.New(response)
+		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: packed}, err
+	})
+	native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), SessionRoot: sessions, Reflector: worker, ResponderBackend: "fake", ResponderModel: "fake", Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+		derived := testDerivedOutcome(c.Request.IncidentID, "success", true)
+		if scenario != "no change" && scenario != "SDK gap" {
+			derived.Record = reflectionFixtureOutcome(c.Request.IncidentID)
+		}
+		return derived, nil
+	})}
+	workspace, err := native.PrepareIncident(ctx, "direct-files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace.Worktree, "app.txt"), []byte("repaired\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := native.ProcessClosure(ctx, nativeClosure(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("worker dispatched %d times", calls)
+	}
+	if scenario == "no change" || scenario == "SDK gap" {
+		if receipt.ReflectionCommit != "" {
+			t.Fatal("no-change created a commit")
+		}
+	} else {
+		if receipt.ReflectionCommit == "" {
+			t.Fatal("update was not committed")
+		}
+		ledger, err := native.readLedger("direct-files")
+		if err != nil || len(ledger.GetReflectionDecision().GetPlaybookIds()) != 2 || ledger.GetReflectionDecision().GetPlaybookIds()[0] != "base" {
+			t.Fatalf("accepted playbook IDs not durable: %v %v", ledger, err)
+		}
+		for rel, want := range map[string][]byte{".sdo/playbooks/base/README.md": authoredREADME, ".sdo/diagnostics/detectors/incidents/cache/detector.go": authoredGo} {
+			got, err := os.ReadFile(filepath.Join(target, rel))
+			if err != nil || string(got) != string(want) {
+				t.Fatalf("authored bytes changed in %s: %v", rel, err)
+			}
+		}
 	}
 }
 
