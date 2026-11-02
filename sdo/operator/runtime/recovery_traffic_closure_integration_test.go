@@ -65,7 +65,7 @@ func TestRecoveryProofRequiresFreshTrafficAtPublication(t *testing.T) {
 		t.Helper()
 		now := start.Add(time.Duration(seconds) * time.Second)
 		p.snapshot = recoveryTrafficSnapshot(t, now, latency)
-		if err := c.Step(context.Background(), now, nil); err != nil {
+		if err := stepSettled(context.Background(), c, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -110,7 +110,7 @@ func TestClosureActiveTrafficWaitsThenRecoversOrHandsOff(t *testing.T) {
 			for _, seconds := range []int{0, 10, 15} {
 				now = start.Add(time.Duration(seconds) * time.Second)
 				p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
-				if err := c.Step(context.Background(), now, nil); err != nil {
+				if err := stepSettled(context.Background(), c, now); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -149,7 +149,7 @@ func TestClosureActiveTrafficWaitsThenRecoversOrHandsOff(t *testing.T) {
 				if c.closureFailure != nil || !c.IncidentOpen() {
 					t.Fatalf("red traffic became permanent failure instead of residual: %+v", c.closureFailure)
 				}
-				if err := c.Step(context.Background(), now, nil); err != nil {
+				if err := stepSettled(context.Background(), c, now); err != nil {
 					t.Fatal(err)
 				}
 				effect, ok := c.PendingDispatchEffect()
@@ -195,7 +195,7 @@ func TestClosureTrafficRestartRetainsProofAndBudget(t *testing.T) {
 			for _, second := range []int{0, 10, 15} {
 				now = start.Add(time.Duration(second) * time.Second)
 				p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
-				if err := c.Step(context.Background(), now, nil); err != nil {
+				if err := stepSettled(context.Background(), c, now); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -254,7 +254,7 @@ func TestRecoveryClearNearDeadlineDoesNotExtendVerificationBudget(t *testing.T) 
 	for _, second := range []int{0, 10, 15} {
 		now = start.Add(time.Duration(second) * time.Second)
 		p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
-		if err := c.Step(context.Background(), now, nil); err != nil {
+		if err := stepSettled(context.Background(), c, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -272,7 +272,7 @@ func TestRecoveryClearNearDeadlineDoesNotExtendVerificationBudget(t *testing.T) 
 	if !c.IncidentOpen() {
 		t.Fatal("expired proof did not return to bounded verification")
 	}
-	if err := c.Step(context.Background(), now, nil); err != nil {
+	if err := stepSettled(context.Background(), c, now); err != nil {
 		t.Fatal(err)
 	}
 	closure, ok := c.PendingIncidentClosure()
@@ -293,7 +293,7 @@ func TestClosureTrafficSharesClearingPersistenceWithoutSerialWindow(t *testing.T
 	for _, second := range []int{0, 10, 15} {
 		now = start.Add(time.Duration(second) * time.Second)
 		p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
-		if err := c.Step(context.Background(), now, nil); err != nil {
+		if err := stepSettled(context.Background(), c, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -621,7 +621,7 @@ func TestRecoverySourceInformationCannotBypassRenewedHealthWindow(t *testing.T) 
 	for _, second := range []int{0, 10, 15} {
 		now = start.Add(time.Duration(second) * time.Second)
 		p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
-		if err := c.Step(context.Background(), now, nil); err != nil {
+		if err := stepSettled(context.Background(), c, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -671,7 +671,7 @@ func TestRecoveryResidualCannotDispatchPastOriginalResponseBudget(t *testing.T) 
 	for _, second := range []int{0, 10, 15} {
 		now = start.Add(time.Duration(second) * time.Second)
 		p.snapshot = recoveryTrafficSnapshot(t, now, 100*time.Millisecond)
-		if err := c.Step(context.Background(), now, nil); err != nil {
+		if err := stepSettled(context.Background(), c, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -681,7 +681,7 @@ func TestRecoveryResidualCannotDispatchPastOriginalResponseBudget(t *testing.T) 
 	now = start.Add(time.Minute)
 	p.snapshot = recoveryTrafficSnapshot(t, now, 330*time.Millisecond)
 	executeRecheck(t, c)
-	if err := c.Step(context.Background(), now, nil); err != nil {
+	if err := stepSettled(context.Background(), c, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := c.PendingDispatchEffect(); ok {

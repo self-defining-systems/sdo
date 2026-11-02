@@ -47,7 +47,7 @@ func assertRecoveryFixtureWindow(t *testing.T, c *Controller, ctx context.Contex
 	}
 	defer func() { c.OnIncidentClosed = previous }()
 	for _, elapsed := range []time.Duration{0, c.config.ClosureStabilityWindow - time.Second, c.config.ClosureStabilityWindow} {
-		if err := c.Step(ctx, at.Add(elapsed), nil); err != nil {
+		if err := stepSettled(ctx, c, at.Add(elapsed)); err != nil {
 			t.Fatal(err)
 		}
 		got := c.cachedResponderVerification(ctx, id, 0)

@@ -554,8 +554,7 @@ func (c *Controller) responderVerification(ctx context.Context, incidentID strin
 	return c.responderResultVerification(ctx, incidentID, nil)
 }
 func (c *Controller) responderResultVerification(ctx context.Context, incidentID string, result *IncidentResult) ToolResponse {
-	c.observationMu.Lock()
-	defer c.observationMu.Unlock()
+	defer c.lockObservation("responder_verify")()
 	snapshot, err := c.provider.Snapshot(ctx)
 	if err != nil {
 		return ToolResponse{Command: "verify", Error: "create verification snapshot: " + err.Error()}

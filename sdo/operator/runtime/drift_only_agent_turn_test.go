@@ -29,7 +29,7 @@ func driftOnlyController(t *testing.T) (*Controller, *blockingDispatcher, func(i
 	c.ConfigureDrift(DriftControllerConfig{BatchWindow: time.Nanosecond})
 	step := func(i int) {
 		t.Helper()
-		if err := c.Step(context.Background(), time.Unix(int64(i), 0), nil); err != nil {
+		if err := stepSettled(context.Background(), c, time.Unix(int64(i), 0)); err != nil {
 			t.Fatal(err)
 		}
 	}

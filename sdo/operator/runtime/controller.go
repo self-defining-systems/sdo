@@ -222,9 +222,14 @@ type Controller struct {
 	OnResult         func(IncidentResult)
 	OnEvaluation     func([]sdk.Finding)
 	OnIncidentClosed func(IncidentClosure)
-	OnClosureFailed  func(ClosureFailure)
-	CanAct           func() bool
-	GuardAction      func(context.Context) (context.Context, context.CancelFunc, error)
+	// closureEvidence replaces the default capture and settlement of a verified
+	// closure; tests use it to make that work slow or fail.
+	closureEvidence func(context.Context, closureEvidenceInput) (closureEvidence, error)
+	closurePrep     *closurePreparation
+	closurePrepared chan struct{}
+	OnClosureFailed func(ClosureFailure)
+	CanAct          func() bool
+	GuardAction     func(context.Context) (context.Context, context.CancelFunc, error)
 	// now overrides the wall clock for closure and dispatch retry backoff in
 	// tests.
 	now func() time.Time
@@ -329,7 +334,7 @@ func NewController(
 		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
 		results: make(chan dispatchCompletion, 1), healthDetectorIDs: healthDetectorIDs,
 		detectorSpecs:    detectorSpecs,
-		workspaceResults: make(chan workspaceCompletion, 1), closureResults: make(chan closureCompletion, 1),
+		workspaceResults: make(chan workspaceCompletion, 1), closureResults: make(chan closureCompletion, 1), closurePrepared: make(chan struct{}, 1),
 		acknowledgmentResults: make(chan acknowledgmentCompletion, 1),
 		reflectionResults:     make(chan reflectionCompletion, 1), reflections: reflectionQueueState{rescan: true},
 		dispatchJitter: lifecycleio.DispatchJitter,
@@ -357,8 +362,7 @@ func (c *Controller) beatLocked() {
 // maintenance pause suspends observation/admission, not the report deadline or
 // outcome and reflection bookkeeping. Persist before exposing broker effects.
 func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
-	c.observationMu.Lock()
-	defer c.observationMu.Unlock()
+	defer c.lockObservation("step_paused")()
 	c.beatLocked()
 	if err := c.requireAdoptedHealth(ctx); err != nil {
 		return err
@@ -406,8 +410,7 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 // StepEvents evaluates, against one snapshot, every detector that is due or
 // watches any of the coalesced watch events.
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
-	c.observationMu.Lock()
-	defer c.observationMu.Unlock()
+	defer c.lockObservation("step_events")()
 	c.beatLocked()
 	if err := c.requireAdoptedHealth(ctx); err != nil {
 		return err
@@ -1291,7 +1294,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	early := !c.responderDone
 	driftOnly := early && c.driftOnlyIncidentLocked()
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
-	if early && c.responseStagesRunning {
+	if early && c.responseStagesRunning || !early && c.closurePreparingLocked() {
 		c.mu.Unlock()
 		return
 	}
@@ -1546,39 +1549,37 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 		finalStates = nil
 	}
-	if verified && c.config.CorpusSessionRoot != "" {
-		// Detection does not run while these captures do, so their cost is reported.
-		captureStart := c.clock()
-		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, c.currentIncidentRequest.IncidentID, "fixed", snapshot, c.config.Namespace, findingCaptureRefs(c.currentIncidentRequest.Findings)...); err != nil {
-			c.mu.Unlock()
-			c.reportBrokerError("capture verified snapshot", err)
-			return
+	verifiedAt := now.UTC()
+	if verifiedAt.Before(c.responderCompletedAt) {
+		verifiedAt = c.responderCompletedAt
+	}
+	var evidence *closureEvidence
+	if verified {
+		input := closureEvidenceInput{
+			IncidentID: c.currentIncidentRequest.IncidentID, Findings: append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...),
+			Snapshot: snapshot, Loop: loop, VerifiedAt: verifiedAt, ResponderCompletedAt: c.responderCompletedAt,
 		}
-		if err := memory.BindClosureHealthyBaseline(c.config.CorpusSessionRoot, c.currentIncidentRequest.IncidentID); err != nil {
-			c.mu.Unlock()
-			c.reportBrokerError("bind closure healthy baseline", err)
-			return
+		if !early && c.currentIncidentResult != nil {
+			input.Result, input.Stages = cloneIncidentResult(c.currentIncidentResult), cloneIncidentRequest(c.currentIncidentRequest).PriorStages
 		}
-		snapshotMs := c.clock().Sub(captureStart).Milliseconds()
-		if c.drift != nil && c.drift.View != nil {
-			incidentID := c.currentIncidentRequest.IncidentID
-			findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)
+		if early {
+			// The closure guard holds the responder's locks, so the capture stays
+			// on this pass; settlement joins it below under the same guard.
 			c.mu.Unlock()
-			readsStart := c.clock()
-			err := memory.CaptureRepairedProgramReads(c.config.CorpusSessionRoot, incidentID, boundedProbeView{c.drift.View(snapshot)})
-			readsMs := c.clock().Sub(readsStart).Milliseconds()
-			routingStart := c.clock()
-			if err == nil {
-				err = captureRoutingEvidence(ctx, c.config.CorpusSessionRoot, incidentID, "fixed", findings, c.drift.View(snapshot))
-			}
-			slog.Info("verified_capture_timing", "incident_id", incidentID, "snapshot_ms", snapshotMs, "program_reads_ms", readsMs, "routing_ms", c.clock().Sub(routingStart).Milliseconds())
+			err := c.captureClosureEvidence(ctx, input)
 			c.mu.Lock()
 			if err != nil {
 				c.mu.Unlock()
-				c.reportBrokerError("capture verified program reads", err)
+				c.reportBrokerError("capture closure evidence", err)
 				return
 			}
-			if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
+			if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != input.IncidentID {
+				c.mu.Unlock()
+				return
+			}
+		} else if c.closureEvidenceNeeded(input) {
+			var ready bool
+			if evidence, ready = c.closureEvidenceLocked(ctx, input); !ready {
 				c.mu.Unlock()
 				return
 			}
@@ -1590,10 +1591,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			c.reportBrokerError("fence verified responder", err)
 			return
 		}
-	}
-	verifiedAt := now.UTC()
-	if verifiedAt.Before(c.responderCompletedAt) {
-		verifiedAt = c.responderCompletedAt
 	}
 	finalChanges := c.finalStateChangesLocked(now)
 	var healthClearedAt *time.Time
@@ -1644,14 +1641,13 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			closure.Result = &merged
 		}
 	}
-	if verified && loop != nil && closure.Result != nil {
+	if early && verified && loop != nil && closure.Result != nil {
 		c.mu.Unlock()
-		if early {
-			*closure.Result, closure.Request.PriorStages = loop.settleRecoveryApplicationsLocked(ctx, *closure.Result, closure.Request.PriorStages, verifiedAt)
-		} else {
-			*closure.Result, closure.Request.PriorStages = loop.SettleRecoveryApplications(ctx, *closure.Result, closure.Request.PriorStages, verifiedAt)
-		}
+		*closure.Result, closure.Request.PriorStages = loop.settleRecoveryApplicationsLocked(ctx, *closure.Result, closure.Request.PriorStages, verifiedAt)
 		c.mu.Lock()
+	}
+	if evidence != nil && evidence.Settled && closure.Result != nil {
+		*closure.Result, closure.Request.PriorStages = evidence.Result, evidence.Stages
 	}
 	if verified {
 		c.retainSourceInventoryAcceptancesLocked(c.currentIncidentResult)

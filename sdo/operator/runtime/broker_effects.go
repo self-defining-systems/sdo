@@ -117,8 +117,7 @@ func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 }
 
 func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEffect) error {
-	c.observationMu.Lock()
-	defer c.observationMu.Unlock()
+	defer c.lockObservation("closure_effect")()
 	if err := c.requireAdoptedHealth(ctx); err != nil {
 		return err
 	}
@@ -180,7 +179,9 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	var recoveryStates []DetectorEvaluation
 	var expiredHealth *closureHealthObservation
 	if needsRecheck && verificationErr == nil {
+		recheckStart := c.clock()
 		recheck := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
+		slog.Info("closure_recheck_timing", "incident_id", effect.Closure.Request.IncidentID, "recheck_ms", c.clock().Sub(recheckStart).Milliseconds())
 		for _, observation := range recheck.Observations {
 			if effect.Closure.ClosureStabilityWindow == 0 && observation.Status == DetectorEvaluationClear {
 				continue

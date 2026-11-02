@@ -294,7 +294,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	if err := controller.StepEvents(context.Background(), start.Add(3*time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)
 	}
-	if err := controller.Step(context.Background(), start.Add(3*time.Second+controller.config.ClosureStabilityWindow), nil); err != nil {
+	if err := stepSettled(context.Background(), controller, start.Add(3*time.Second+controller.config.ClosureStabilityWindow)); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := controller.PendingIncidentClosure(); !ok {

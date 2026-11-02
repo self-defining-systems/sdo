@@ -299,7 +299,7 @@ func (c *Controller) onboardingConfirmationExpired(now time.Time, snapshot sdk.D
 // sampling clock, retaining all identity, configuration and invalidation facts.
 // The driver resets observer samples before invoking this entry point.
 func (c *Controller) ResumeObservation(ctx context.Context, now time.Time) error {
-	c.observationMu.Lock()
+	unlock := c.lockObservation("resume_observation")
 	if c.pendingOnboarding != nil && c.onboardingReachability != nil {
 		state := c.onboardingReachability
 		state.startedAt = time.Time{}
@@ -307,7 +307,7 @@ func (c *Controller) ResumeObservation(ctx context.Context, now time.Time) error
 		state.candidate = nil
 		slog.InfoContext(ctx, "namespace onboarding sampling resumed", "sample_not_before", now)
 	}
-	c.observationMu.Unlock()
+	unlock()
 	return c.EvaluateAll(ctx, now)
 }
 

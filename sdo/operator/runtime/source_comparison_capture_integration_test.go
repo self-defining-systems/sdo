@@ -92,7 +92,7 @@ func TestControllerRecordsSourceComparisonsOnLiveSnapshots(t *testing.T) {
 	provider.snapshot = flagSnapshot("off")
 	awaitDispatchCompletionQueued(t, controller)
 	for i := 2; i < 19; i++ {
-		if err := controller.Step(context.Background(), time.Unix(int64(i), 0), nil); err != nil {
+		if err := stepSettled(context.Background(), controller, time.Unix(int64(i), 0)); err != nil {
 			t.Fatal(err)
 		}
 	}

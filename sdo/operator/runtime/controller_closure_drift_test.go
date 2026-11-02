@@ -46,7 +46,7 @@ type closureDriftFixture struct {
 
 func (f *closureDriftFixture) step(t *testing.T, seconds int) {
 	t.Helper()
-	if err := f.c.Step(context.Background(), f.start.Add(time.Duration(seconds)*time.Second), nil); err != nil {
+	if err := stepSettled(context.Background(), f.c, f.start.Add(time.Duration(seconds)*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 }

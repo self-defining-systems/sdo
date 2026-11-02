@@ -52,7 +52,7 @@ func TestResponderPendingRecoveryProofRequiresCompletion(t *testing.T) {
 		return value
 	}
 	for _, elapsed := range []time.Duration{0, 15 * time.Second} {
-		if err := c.Step(context.Background(), now.Add(elapsed), nil); err != nil {
+		if err := stepSettled(context.Background(), c, now.Add(elapsed)); err != nil {
 			t.Fatal(err)
 		}
 		response := exchangeSelfCheck(t, &server, `{"command":"verify"}`)
@@ -73,7 +73,7 @@ func TestResponderPendingRecoveryProofRequiresCompletion(t *testing.T) {
 	result := completedResult(request.IncidentID)
 	result.Timing.StartedAt, result.Timing.CompletedAt = now, finished
 	c.handleDispatchCompletion(dispatchCompletion{incidentID: request.IncidentID, result: result}, finished)
-	if err := c.Step(context.Background(), finished.Add(time.Second), nil); err != nil {
+	if err := stepSettled(context.Background(), c, finished.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	final := c.cachedResponderVerification(context.Background(), request.IncidentID, 0)

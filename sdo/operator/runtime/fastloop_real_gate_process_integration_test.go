@@ -149,7 +149,7 @@ func fastloopGateClose(t *testing.T, ctx context.Context, controller *Controller
 		// Step and the subsequent closure-effect recheck must observe the
 		// same simulated epoch; wall time still precedes this verified window.
 		controller.now = func() time.Time { return at.Add(wait) }
-		if err := controller.Step(ctx, at.Add(wait), nil); err != nil {
+		if err := stepSettled(ctx, controller, at.Add(wait)); err != nil {
 			t.Fatal(err)
 		}
 	}

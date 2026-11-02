@@ -1421,6 +1421,28 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			return renewErr
+		case <-controller.ClosurePrepared():
+			// Evidence gathered off this loop is ready: make the pass that
+			// freezes the closure now, not at the next detector deadline.
+			if stopTimerForRuntimeEvent(runCtx, timer) {
+				return nil
+			}
+			if applied != desired || applied.Paused {
+				continue
+			}
+			if err := controller.Step(runCtx, clock.Now().UTC(), nil); err != nil {
+				if runCtx.Err() != nil {
+					return nil
+				}
+				return err
+			}
+			persistControllerState()
+			if err := executePendingEffects(runCtx, controller); err != nil {
+				if runCtx.Err() != nil {
+					return nil
+				}
+				return err
+			}
 		case <-timer.C():
 			if stopTimerForRuntimeEvent(runCtx, timer) {
 				return nil
