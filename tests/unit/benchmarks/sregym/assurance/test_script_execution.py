@@ -477,9 +477,20 @@ def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
 
 
 @pytest.mark.parametrize("mode", ["learn", "no_change", "crash_once", "crash_always", "invalid_then_learn"])
-def test_reflection_scripts_consume_turns_across_checkouts(scripted: dict[str, Path], mode: str) -> None:
+def test_reflection_scripts_consume_turns_across_checkouts(
+    scripted: dict[str, Path], mode: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Worker replacement must not reset one-shot crash/correction selection."""
     _script(scripted["store"], reflection=mode)
+    # The checkouts are bare: a stub accepts the check, so this test covers only turn selection.
+    stub_dir = scripted["tmp"] / "stub-bin"
+    stub_dir.mkdir()
+    _executable(
+        stub_dir / "sdo-operator",
+        '#!/bin/sh\ntest "$1 $2" = "memory check" || exit 2\n'
+        'if grep -q "malformed README" .sdo/playbooks/*/README.md; then echo "frontmatter.missing"; exit 1; fi\n',
+    )
+    monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ['PATH']}")
     schema = scripted["tmp"] / "reflection-schema.json"
     schema.write_text('{"properties":{"learning_decision":{}}}')
     prompt = f"Idempotency key: reflection:unit-incident:{'a' * 40}"
@@ -499,7 +510,7 @@ def test_reflection_scripts_consume_turns_across_checkouts(scripted: dict[str, P
         results.append(result)
         if mode == "invalid_then_learn":
             readme = root / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md"
-            assert ("malformed README" in readme.read_text()) == (index == 0)
+            assert "malformed README" not in readme.read_text()
     assert [r.returncode for r in results] == (
         [1, 1] if mode == "crash_always" else [1, 0] if mode == "crash_once" else [0, 0]
     )

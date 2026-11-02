@@ -144,7 +144,7 @@ def _sections(text: str) -> list[list[str]]:
 
 
 def _index(blocks: list[list[str]]) -> str:
-    """Headings in full, Go declarations by name, grouped under their file."""
+    """Headings in full, Go declarations by name, grouped under their file (the heading names the package)."""
     lines: list[str] = []
     names: list[str] = []
     for block in blocks:
@@ -154,7 +154,7 @@ def _index(blocks: list[list[str]]) -> str:
                 lines.append("  " + ", ".join(names))
                 names = []
             lines.append(title)
-        elif declared := re.match(r"(?:type|func|package) \w+", title):
+        elif declared := re.match(r"(?:type|func) \w+", title):
             names.append(declared.group())
     if names:
         lines.append("  " + ", ".join(names))

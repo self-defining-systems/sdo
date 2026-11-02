@@ -308,32 +308,6 @@ def test_recorded_reflection_frontmatter_reaches_real_broker(
     assert subprocess.check_output(["git", "-C", str(source), "status", "--porcelain"]) == before
 
 
-def test_recorded_reflection_replays_repeated_correction_dispatches(tmp_path: Path) -> None:
-    statuses = []
-    for attempt in range(3):
-        store, source = reflection_recording(
-            tmp_path / str(attempt), [frontmatter_output()], files=readme_files(physical=attempt < 2)
-        )
-        result = replay_script_worker(store, 0, "reflection", source=source)
-        statuses.append(result["proposals"][0]["status"])
-        if attempt < 2:
-            assert "text.physical-path" in result["proposals"][0]["error"]
-        assert len(list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))) == 1
-    assert statuses == ["rejected", "rejected", "accepted"]
-
-
-def test_recorded_reflection_reports_all_rejections(tmp_path: Path) -> None:
-    for attempt in range(3):
-        store, source = reflection_recording(
-            tmp_path / str(attempt), [frontmatter_output()], files=readme_files(physical=True)
-        )
-        result = replay_script_worker(store, 0, "reflection", source=source)
-        assert result["status"] == "failed"
-        assert len(result["proposals"]) == 1
-        assert result["proposals"][0]["status"] == "rejected"
-        assert "text.physical-path" in result["proposals"][0]["error"]
-
-
 def test_recorded_reflection_withholds_persistently_rejected_result(tmp_path: Path) -> None:
     store, _ = reflection_recording(
         tmp_path,

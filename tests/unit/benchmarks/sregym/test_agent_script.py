@@ -266,6 +266,10 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
     binary = bin_dir / "sdo"
     binary.write_text(f'#!/bin/sh\nexec {sys.executable} -m sdo.agents.responder.tools_cli "$@"\n')
     binary.chmod(0o755)
+    # The reflection worker runs the shared memory check itself before it returns.
+    memory = bin_dir / "sdo-operator"
+    memory.write_text("#!/bin/sh\nexit 0\n")
+    memory.chmod(0o755)
     path.write_text(
         json.dumps(
             {

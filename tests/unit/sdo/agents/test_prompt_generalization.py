@@ -22,6 +22,7 @@ GENERIC_TERMS = {
     "llm": "Generic language-model runtime prohibition.",
     "mongodb user": "Generic database principal in command help.",
     "profile": "Generic workload profile in the traffic SDK.",
+    "payment": "Generic example call in the traffic SDK documentation.",
     "rate": "Generic traffic and sampling rate.",
     "readiness": "Generic Kubernetes readiness observation.",
     "search": "Generic instruction to search evidence or memory.",

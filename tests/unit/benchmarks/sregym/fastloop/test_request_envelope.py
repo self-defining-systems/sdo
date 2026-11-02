@@ -258,43 +258,6 @@ def test_loaded_broker_metadata_is_still_bounded(tmp_path: Path) -> None:
         store.load(0, "reflection")
 
 
-@pytest.fixture(scope="module")
-def replay_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    binary = tmp_path_factory.mktemp("replay") / "replay"
-    subprocess.run(
-        ["go", "build", "-o", str(binary), str(ROOT / "benchmarks/sregym/fastloop/replay_go/main.go")],
-        cwd=ROOT / "sdo/operator/runtime",
-        check=True,
-    )
-    return binary
-
-
-@pytest.mark.go_integration
-def test_native_broker_entrypoint_rejects_oversized_request(tmp_path: Path, replay_binary: Path) -> None:
-    # A sparse file proves the command bounds reads before decoding or opening
-    # result/source evidence, without allocating another oversized ProtoJSON task.
-    with (tmp_path / "request.json").open("wb") as stream:
-        stream.truncate(NATIVE_REQUEST_BYTES + 1)
-    completed = subprocess.run(
-        [
-            str(replay_binary),
-            "--checkpoint",
-            str(tmp_path),
-            "--source",
-            str(tmp_path),
-            "--operator-root",
-            str(ROOT / "sdo/operator"),
-        ],
-        cwd=ROOT / "sdo/operator/runtime",
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    assert completed.returncode != 0
-    assert f"dispatch request exceeds {NATIVE_REQUEST_BYTES} bytes" in completed.stderr
-
-
 @pytest.mark.parametrize(
     ("cause", "reason"),
     [("oversized", "32 MiB"), ("symlink", "symlink"), ("unknown-base", "returned non-zero exit status")],

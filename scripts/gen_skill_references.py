@@ -67,7 +67,7 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "Reads (ReadView)",
         (
             "program.ReadView:names",
-            "sdk.DetectionContext",
+            "sdk.DetectionContext:names",
             "sdk.ObjectReader.Object",
             "program.ReadView.LogsWithOptions",
         ),
@@ -304,7 +304,7 @@ def main() -> None:
     bundles = (
         (
             "sdo-detector-authoring",
-            "Detector SDK reference",
+            "SDK",
             (
                 ".",
                 "./servicehealth",
@@ -320,7 +320,7 @@ def main() -> None:
         ),
         ("sdo-detector-authoring", "Synthetic traffic SDK reference", ("./traffic",), "traffic"),
         ("sdo-detector-authoring", "Detector replay reference", ("./sdktest",), "replay"),
-        ("sdo-playbook-authoring", "Program SDK reference", ("./program", "./routing"), "program-sdk"),
+        ("sdo-playbook-authoring", "Program SDK", ("./program", "./routing"), "program-sdk"),
     )
     failures = []
     for skill, title, packages, stem in bundles:

@@ -6,6 +6,7 @@ agent-script steps and literal results, with task-bound references and clocks.
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 from typing import Any
@@ -201,6 +202,12 @@ def assurance_script(
         "no_change_reason": "This incident teaches nothing new",
         "proposed_artifact_ids": [],
     }
+    # The shared memory check reads the explicit decision the reflection will return.
+    decision = json.dumps({"learning_decision": "updated", "proposed_artifact_ids": [proposal.playbook_id]})
+    decision_step = {
+        "kind": "command",
+        "command": f"printf %s {shlex.quote(decision)} > \"$(git rev-parse --git-dir)/sdo-reflection-decision.json\"",
+    }
     for index in range(4):
         reflection_steps: list[dict[str, Any]] = list(writes)
         answer = learned
@@ -218,10 +225,14 @@ def assurance_script(
                         "text": "malformed README\n",
                     }
                 )
+                reflection_steps.append(decision_step)
                 reflection_steps.append({"kind": "tool", "argv": ["sdo-operator", "memory", "check"], "exit_code": 1})
-                # Publish the invalid proposal to exercise broker rejection and a
-                # separate correction turn, rather than quietly fixing it locally.
+                # The same session reads the diagnostics, repairs the final files and checks again.
+                readme = f".sdo/playbooks/{proposal.playbook_id}/README.md"
+                reflection_steps.append({"kind": "write", "path": readme, "text": proposal.files[readme]})
+                reflection_steps.append({"kind": "tool", "argv": ["sdo-operator", "memory", "check"]})
             else:
+                reflection_steps.append(decision_step)
                 reflection_steps.append({"kind": "tool", "argv": ["sdo-operator", "memory", "check"]})
         turns.append({"role": "reflector", "index": index, "steps": reflection_steps, "result": answer})
     return AgentScript.model_validate({"version": 1, "turns": turns})

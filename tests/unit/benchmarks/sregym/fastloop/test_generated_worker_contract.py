@@ -170,7 +170,7 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
         capture=capture,
     )
     output = io.StringIO()
-    turn = ReflectionTurn.model_validate(
+    turn = ReflectionTurn.from_model_output(
         execute(
             script.select("reflector", "scripted-incident", 0),
             app,
