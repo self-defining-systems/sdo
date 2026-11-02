@@ -168,7 +168,7 @@ def test_nightly_compile_integrations_keep_fast_pr_contracts() -> None:
     for path in re.findall(r"--ignore=([^\s]+)", pr_commands):
         assert (ROOT / path).is_file()
         assert path in shlex.split(nightly_commands)
-    for filename in ("test_reflection_script.py", "test_responder_script.py"):
+    for filename in ("test_reflection_script.py",):
         path = f"tests/unit/benchmarks/sregym/fastloop/{filename}"
         assert (ROOT / path).is_file()
         assert f"--ignore={path}" not in pr_commands

@@ -102,7 +102,20 @@ jobs:
             --ignore=tests/unit/benchmarks/sregym/test_agent_script.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_replay.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_sdo3_descriptions.py \
-            --ignore=tests/unit/benchmarks/sregym/fastloop/test_attach_recovery.py || status=1
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_attach_recovery.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_responder_script.py \
+            --ignore=tests/unit/libs/agent_cli/test_structured.py \
+            --ignore=tests/unit/benchmarks/sregym/adapter/test_reflection_drain.py \
+            --ignore=tests/unit/libs/agent_cli/test_provider_capacity.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_phase4_probes.py \
+            --ignore=tests/unit/libs/agent_cli/test_claude_accounts.py \
+            --ignore=tests/unit/benchmarks/sregym/test_memory_cli.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_shared_image_registry.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_fake_kube.py \
+            --ignore=tests/unit/benchmarks/sregym/adapter/test_processes.py \
+            --ignore=tests/unit/sdo/agents/lifecycle/test_supplied_reads.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_sequence_scripted.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py || status=1
           wait "$checks" || status=1
           cat /tmp/checks.log
           exit "$status"
