@@ -280,7 +280,12 @@ def test_toy_controller_publishes_selected_registrations(tmp_path, monkeypatch, 
     selected = tmp_path / "script-registrations" if custom else None
     config = SimpleNamespace(agent_registrations=selected)
     images = SimpleNamespace(controller="controller:test", responder="worker:test", validator="validator:test")
-    environment = SimpleNamespace(dev_mount=tmp_path, kubeconfig=tmp_path / "config", images=images)
+    environment = SimpleNamespace(
+        dev_mount=tmp_path,
+        kubeconfig=tmp_path / "config",
+        images=images,
+        apply_operator_env=lambda environ: environ.update(SDO_DEV_MOUNT="1", SDO_OPERATOR_BIN="synthetic"),
+    )
     published = []
     for name in ("KUBECONFIG", "SDO_DEV_MOUNT", "SDO_OPERATOR_BIN"):
         monkeypatch.setenv(name, "synthetic")

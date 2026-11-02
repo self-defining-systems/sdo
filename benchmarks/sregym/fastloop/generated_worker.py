@@ -8,9 +8,10 @@ import tempfile
 from pathlib import Path
 
 from benchmarks.sregym.agent_script.cli import launch
+from benchmarks.sregym.fastloop.judge_script import judge_script
 from benchmarks.sregym.fastloop.reflection_script import reflection_script
 from benchmarks.sregym.fastloop.responder_script import responder_script
-from sdo.contracts import AgentTask, IncidentRequest, ReflectionRequest, parse_json
+from sdo.contracts import AgentTask, HealthJudgeRequest, IncidentRequest, ReflectionRequest, parse_json
 
 
 def _launch_task() -> int:
@@ -36,6 +37,11 @@ def _launch_task() -> int:
                 closure=reflection.closure,
                 capture=Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus")),
             )
+        elif role == "health-judge":
+            judged = HealthJudgeRequest()
+            if not task.request.Unpack(judged):
+                raise ValueError("expected HealthJudgeRequest")
+            script = judge_script(checkout=Path(task.workspace.checkout_path), request=judged)
         else:
             raise ValueError(f"unknown generated role: {role}")
         path = Path(temporary) / "script.json"

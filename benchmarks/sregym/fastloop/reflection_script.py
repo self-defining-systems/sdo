@@ -112,9 +112,11 @@ def reflection_script(
 
     steps: list[Any] = []
     incident = incident_id
-    open_at = (
-        "detect" if any(event.investigation_verdict == "bug" for event in closure.request.drift_events) else "pre-apply"
-    )
+    # Verified drift keeps its original evidence; an ordinary repair prefers the capture taken just before
+    # apply, and falls back to detection when the runtime recorded no later one.
+    drift = any(event.investigation_verdict == "bug" for event in closure.request.drift_events)
+    preferred = ("detect",) if drift else ("pre-apply", "detect")
+    open_at = next((phase for phase in preferred if (capture / f"open@{phase}.json").is_file()), preferred[0])
     policy_pair = _captured_policy_pair(capture, open_at)
     program_id = NETWORKPOLICY_PROGRAM_ID if policy_pair else PROGRAM_ID
     program_source = policy_program_source if policy_pair else program_source
