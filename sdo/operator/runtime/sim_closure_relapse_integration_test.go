@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -86,6 +87,26 @@ func (w *simWorld) relapse(rng interface{ IntN(int) int }) string {
 	return name
 }
 
+// flapIncidentService breaks the Service the pending closure's own incident
+// was about and is now repaired: the finding the recovery trackers hold.
+func (w *simWorld) flapIncidentService() string {
+	effect, ok := w.controller.PendingClosureEffect()
+	if !ok {
+		return ""
+	}
+	for _, finding := range effect.Closure.Request.Findings {
+		ref := finding.PrimaryResource
+		if ref.Kind != "Service" {
+			continue
+		}
+		if ports, _, _ := unstructuredPorts(w.kube.objects[simServiceRef(ref.Name)].Object); ports[0].(map[string]any)["targetPort"] != int64(9999) {
+			w.setPort(ref.Name, 9999)
+			return ref.Name
+		}
+	}
+	return ""
+}
+
 // The verified-close invariants of simWorld ("never closed verified while a
 // health detector still fires", "never committed inside the stability window")
 // only bind if health can break after the first clear. This schedule breaks it
@@ -128,7 +149,13 @@ func TestSimClosureRelapseSchedules(t *testing.T) {
 				// A flap: health breaks, the controller observes it, and it is
 				// healthy again before the recheck. Only the recovery trackers
 				// and the stability window still know it happened.
-				if name := w.relapse(rr); name != "" {
+				if name := w.flapIncidentService(); name != "" || rr.Float64() < 0.3 {
+					if name == "" {
+						name = w.relapse(rr)
+					}
+					if name == "" {
+						return
+					}
 					w.clock.Advance(time.Second)
 					w.step()
 					w.setPort(name, 8080)
@@ -211,4 +238,51 @@ func TestSimClosureRelapseSchedules(t *testing.T) {
 			t.Fatalf("invariants violated (replay with SDO_SIM_SEED=%d):\n%v", seed, w.violations)
 		}
 	})
+}
+
+// Clearing persistence outlasts the 15 s stability window, and the repaired
+// Service flaps once before its closure executes. The window alone would let
+// the closure commit; only the recovery trackers, which still hold the
+// finding, keep it open until the detector has cleared for its full streak.
+func TestSimClosureFlapHeldByRecoveryTrackers(t *testing.T) {
+	for _, clearing := range []int{25, 40} {
+		t.Run(fmt.Sprint(clearing), func(t *testing.T) {
+			w := newSimWorld(t, 61)
+			w.client.ReactionChain = w.client.ReactionChain[2:]
+			w.responder.behavior = func() simBehavior { return simFixAll }
+			w.broker.reject = func() bool { return false }
+			w.detectors = []sdk.Detector{simPersistentDetector{clearing: clearing}}
+			w.restart()
+			flapped := 0
+			w.beforeClosure = func() {
+				if flapped >= 2 {
+					return
+				}
+				if name := w.flapIncidentService(); name != "" {
+					flapped++
+					w.clock.Advance(time.Second)
+					w.step()
+					w.setPort(name, 8080)
+				}
+			}
+			w.setPort(simServiceName(0), 9999)
+			for tick := 0; tick < 600 && !w.idle(); tick++ {
+				w.clock.Advance(time.Second)
+				w.step()
+				w.drain()
+			}
+			verified := 0
+			for _, closure := range w.closed {
+				if len(closure.FinalDetectorStates) > 0 {
+					verified++
+				}
+			}
+			if flapped == 0 || verified == 0 || !w.idle() {
+				t.Fatalf("flaps=%d verified closures=%d idle=%t: the scenario no longer reaches a flapped, verified closure", flapped, verified, w.idle())
+			}
+			if len(w.violations) > 0 {
+				t.Fatal(w.violations)
+			}
+		})
+	}
 }
