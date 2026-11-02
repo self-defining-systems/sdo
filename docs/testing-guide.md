@@ -782,7 +782,7 @@ turns:
       summary: Authored example playbook
       learning_decision: updated
       no_change_reason: null
-      playbook_ids: [example]
+      proposed_artifact_ids: [example]
       sdk_gaps: []
 ```
 

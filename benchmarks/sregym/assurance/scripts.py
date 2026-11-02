@@ -193,13 +193,13 @@ def assurance_script(
         "summary": f"Encoded {proposal.detector_id}",
         "learning_decision": "updated",
         "no_change_reason": None,
-        "playbook_ids": [proposal.playbook_id],
+        "proposed_artifact_ids": [proposal.playbook_id],
     }
     no_change = {
         "summary": "No new learning",
         "learning_decision": "no_change",
         "no_change_reason": "This incident teaches nothing new",
-        "playbook_ids": [],
+        "proposed_artifact_ids": [],
     }
     for index in range(4):
         reflection_steps: list[dict[str, Any]] = list(writes)

@@ -258,6 +258,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
     unpublished = tools / "requests/.unpublished.json"
     unpublished.write_text(json.dumps({"command": "apply", "plan_ids": ["synthetic-repair"]}))
     monkeypatch.setenv("SDO_TOOLS_DIR", str(tools))
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tools / "scratch"))
     monkeypatch.setenv("SDO_AGENT_SCRIPT_INCIDENT", incident)
     bin_dir = Path(os.environ["PATH"].split(":")[0])
     import sys
@@ -276,8 +277,8 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                         "steps": [
                             {
                                 "kind": "tool",
-                                "argv": ["sdo", "apply", "synthetic-repair"],
-                                "contains": '"applied": true',
+                                "argv": ["sdo", "--json", "apply", "synthetic-repair"],
+                                "contains": "details_file",
                             }
                         ],
                         "result": result,
@@ -295,7 +296,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                         "result": {
                             "summary": "Added synthetic incident detector",
                             "learning_decision": "updated",
-                            "playbook_ids": ["synthetic"],
+                            "proposed_artifact_ids": ["synthetic"],
                             "no_change_reason": None,
                             "sdk_gaps": [],
                         },
@@ -339,9 +340,18 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
         thread = threading.Thread(target=controller)
         thread.start()
         try:
-            completed = execute_incident(
-                parse_json(json.dumps(request_payload), IncidentRequest()), provider="codex", model="unused"
+            incident_request = parse_json(json.dumps(request_payload), IncidentRequest())
+            # The worker's mounted task carries the request; the prompt only summarizes it.
+            from sdo.contracts import AgentTask, to_canonical_json
+
+            task = AgentTask(
+                schema_version="sdo.dev/v1alpha1", task_id="t", agent_id="a", task_type="incident-response"
             )
+            task.request.Pack(incident_request)
+            task_path = root.parent / "agent-task.json"
+            task_path.write_text(to_canonical_json(task), encoding="utf-8")
+            monkeypatch.setenv("SDO_TASK_PATH", str(task_path))
+            completed = execute_incident(incident_request, provider="codex", model="unused")
             assert completed.status == "completed"
             assert (
                 completed.confirmed_root_causes[0].resources[0].name

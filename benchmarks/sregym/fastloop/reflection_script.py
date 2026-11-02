@@ -124,7 +124,7 @@ def reflection_script(
             summary=f"{program_id} program is already accepted",
             learning_decision="no_change",
             no_change_reason="Accepted program covers this class",
-            playbook_ids=[],
+            proposed_artifact_ids=[],
         )
     pair = policy_pair or _captured_pair(capture, open_at)
     if pair is None:
@@ -132,7 +132,7 @@ def reflection_script(
             summary="No captured target port repair",
             learning_decision="no_change",
             no_change_reason="Captured incident has no target port transition and healthy peer",
-            playbook_ids=[],
+            proposed_artifact_ids=[],
         )
     target = worktree / ".sdo/playbooks" / program_id
 
@@ -224,7 +224,7 @@ def reflection_script(
     tools = Path(os.environ.get("SDO_AGENT_SCRIPT_WORK_DIR", os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
     decision = tools / ("reflection-decision-" + hashlib.sha256(incident.encode()).hexdigest() + ".json")
     encoded = base64.b64encode(
-        json.dumps({"learning_decision": "updated", "playbook_ids": [program_id]}).encode()
+        json.dumps({"learning_decision": "updated", "proposed_artifact_ids": [program_id]}).encode()
     ).decode()
     steps.append(
         Command(
@@ -237,7 +237,7 @@ def reflection_script(
     return finish(
         summary=f"Compiled {program_id} program from captured repair",
         learning_decision="updated",
-        playbook_ids=[program_id],
+        proposed_artifact_ids=[program_id],
     )
 
 
