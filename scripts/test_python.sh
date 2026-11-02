@@ -20,10 +20,13 @@ python3 scripts/init_test_prereqs.py --check
 # restored executable from another source revision.
 TOOLS="$(mktemp -d)"
 trap 'rm -rf "$TOOLS"' EXIT
+builds=()
 for spec in 'native_receipt_go sdo-native-receipt' 'submission_go sdo-submission-guard'; do
     read -r module binary <<< "$spec"
-    (cd "benchmarks/sregym/protocol/$module" && go build -o "$TOOLS/$binary" "./cmd/$binary")
+    (cd "benchmarks/sregym/protocol/$module" && go build -o "$TOOLS/$binary" "./cmd/$binary") &
+    builds+=($!)
 done
+for build in "${builds[@]}"; do wait "$build"; done
 export SDO_NATIVE_RECEIPT_BIN="$TOOLS/sdo-native-receipt"
 export SDO_SUBMISSION_GUARD_BIN="$TOOLS/sdo-submission-guard"
 
@@ -55,4 +58,7 @@ case "${SDO_PYTEST_SHARD:-}" in
         ;;
     *) echo "unknown Python test shard: $SDO_PYTEST_SHARD" >&2; exit 2 ;;
 esac
-uv run --extra test pytest -n "$WORKERS" "${coverage[@]}" "$@" "${paths[@]}"
+# Tach's plugin only selects impacted tests when asked (--tach); otherwise it
+# adds about ten seconds of git analysis to every xdist worker's collection.
+# Module boundaries are enforced by `tach check` in check_errors.sh.
+uv run --extra test pytest -p no:tach -n "$WORKERS" "${coverage[@]}" "$@" "${paths[@]}"
