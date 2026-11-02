@@ -75,7 +75,7 @@ for target in "${selected[@]}"; do
     '
     docker run --rm --user 65532:65532 \
       --volume "${repo_root}/tests/fixtures/sdo/playbook_program_app:/fixture:ro" \
-      "${image}:${tag}" sdo-operator validation-child /fixture /opt/sdo/sdo/operator ""
+      "${image}:${tag}" sdo-operator validation-child /fixture /opt/sdo/sdo/operator "" ""
   else
     docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
       ! command -v go
