@@ -101,19 +101,6 @@ func TestAcceptedCommitChangesInstallFingerprint(t *testing.T) {
 	}
 }
 
-func TestBoundedTransportDoesNotEnableSupervision(t *testing.T) {
-	cfg := testConfig()
-	cfg.ExtraControllerArgs = []string{"--exit-after-closure"}
-	plan, err := Resources(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	args := plan.Job.Spec.Template.Spec.Containers[0].Args
-	if contains(args, "--supervise") {
-		t.Fatal("bounded controller also selected long-running supervision")
-	}
-}
-
 func TestMaintenanceRequiresGenerationAndRecordsState(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	if err := SetMaintenance(context.Background(), client, "demo-sdo", true, ""); err == nil {

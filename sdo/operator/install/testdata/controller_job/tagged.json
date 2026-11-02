@@ -105,8 +105,6 @@
               "responder:test",
               "--toolchain-image",
               "sdo-controller:tag",
-              "--prober-image",
-              "sdo-controller:tag",
               "--repository-pvc",
               "repository",
               "--repository-mount-path",
@@ -123,8 +121,6 @@
               "demo-sdo",
               "--broker-mode=native",
               "--worker-mount-mode=proposal-only",
-              "--validator-image",
-              "sdo-detector-validator:tag",
               "--model",
               "gpt-test",
               "--responder-backend",
@@ -133,7 +129,10 @@
               "resume",
               "--reflection-guidance",
               "baseline",
-              "--supervise"
+              "--metrics-publish-url",
+              "http://sdo-prometheus.demo-sdo.svc:9090",
+              "--metrics-url",
+              "http://sdo-prometheus.demo-sdo.svc:9090"
             ],
             "envFrom": [
               {

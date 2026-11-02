@@ -153,8 +153,6 @@
               "responder:test",
               "--toolchain-image",
               "registry.test/sdo/images@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "--prober-image",
-              "registry.test/sdo/images@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "--repository-pvc",
               "repository",
               "--repository-mount-path",
@@ -171,8 +169,6 @@
               "demo-sdo",
               "--broker-mode=native",
               "--worker-mount-mode=proposal-only",
-              "--validator-image",
-              "registry.test/sdo/images@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
               "--model",
               "gpt-test",
               "--responder-backend",
@@ -181,7 +177,10 @@
               "resume",
               "--reflection-guidance",
               "baseline",
-              "--supervise"
+              "--metrics-publish-url",
+              "http://sdo-prometheus.demo-sdo.svc:9090",
+              "--metrics-url",
+              "http://sdo-prometheus.demo-sdo.svc:9090"
             ],
             "envFrom": [
               {

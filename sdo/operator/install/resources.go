@@ -399,9 +399,6 @@ func controllerJob(c Config) *batchv1.Job {
 			args = append(args, "--memory-upstream-ssh-dir", MemoryUpstreamSSHDir)
 		}
 	}
-	if !hasArg(args, "--exit-after-closure") && !hasArg(args, "--duration") {
-		args = append(args, "--supervise")
-	}
 	ttl, backoff := int32(600), int32(6)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: ControllerJobName, Namespace: control},
