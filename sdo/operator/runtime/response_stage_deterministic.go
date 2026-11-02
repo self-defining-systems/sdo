@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"google.golang.org/protobuf/encoding/protojson"
 	"runtime/debug"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
@@ -889,6 +890,8 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		}
 		view, viewErr := loop.snapshotView(observe)
 		if viewErr != nil {
+			// The stage cannot observe recovery, so another actor takes over; say why.
+			slog.Warn("recovery_wait_snapshot_unavailable", "incident_id", state.Request.IncidentID, "error", viewErr)
 			return nil
 		}
 		state.Findings = retireDisappearedRecoveryEffects(view, state.Findings)
