@@ -21,10 +21,13 @@ func newRejectionHarness(t *testing.T, incident string, behave func(call int, w 
 	return newRejectionHarnessValidator(t, incident, behave, func(context.Context, string, []string) error { return nil })
 }
 
-func newRejectionHarnessValidator(t *testing.T, incident string, behave func(int, IncidentWorkspace) (ReflectionDecision, error), validator broker.Validator) *rejectionHarness {
+func newRejectionHarnessValidator(t *testing.T, incident string, behave func(int, IncidentWorkspace) (ReflectionDecision, error), validator broker.Validator, setup ...func(string)) *rejectionHarness {
 	t.Helper()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
+	for _, prepare := range setup {
+		prepare(target)
+	}
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), validator)
 	if err != nil {
 		t.Fatal(err)
@@ -113,8 +116,11 @@ func TestNativeBrokerRecordsTerminalRejectionAfterRetryBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ledger.ReflectionRejected || !ledger.ReflectionProcessed || len(ledger.ReflectionRejections) != 3 {
+	if !ledger.ReflectionRejected || !ledger.ReflectionProcessed || len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries {
 		t.Fatalf("terminal state not recorded: %+v", ledger)
+	}
+	if ledger.GetReflectionDecision().GetLearningDecision() != "failed" || ledger.GetReflectionDecision().GetError() == "" {
+		t.Fatalf("completed rejected reflection lacks terminal failure evidence: %v", ledger)
 	}
 	for _, rejection := range ledger.ReflectionRejections {
 		if len(rejection.GetDiagnostics()) == 0 {
@@ -126,7 +132,7 @@ func TestNativeBrokerRecordsTerminalRejectionAfterRetryBound(t *testing.T) {
 	}
 	// A further call returns the stored receipt without dispatching again.
 	again, err := h.native.ProcessClosure(context.Background(), h.closure)
-	if err != nil || again != receipt || len(h.calls) != 3 {
+	if err != nil || again != receipt || len(h.calls) != 1+broker.MaxValidationRetries {
 		t.Fatalf("terminal rejection reopened: %+v %v calls=%d", again, err, len(h.calls))
 	}
 }
@@ -158,14 +164,14 @@ func TestNativeBrokerRestartKeepsRejectionAttempts(t *testing.T) {
 	if h.calls[3].Attempt != 3 {
 		t.Fatalf("attempts after restart = %+v", h.calls)
 	}
-	if len(h.calls) != 4 {
-		t.Fatalf("total dispatches = %d, want 4 (bound spans the restart)", len(h.calls))
+	if want := 2 + broker.MaxValidationRetries; len(h.calls) != want {
+		t.Fatalf("total dispatches = %d, want %d (bound spans the restart)", len(h.calls), want)
 	}
 	ledger, err := h.native.readLedger("inc-restart")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger.ReflectionRejections) != 3 || !ledger.ReflectionRejected || receipt.ReflectionCommit != "" {
+	if len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries || !ledger.ReflectionRejected || receipt.ReflectionCommit != "" {
 		t.Fatalf("ledger = %+v receipt = %+v", ledger, receipt)
 	}
 	for i, rejection := range ledger.ReflectionRejections {
@@ -212,7 +218,7 @@ func TestNativeBrokerRejectionRecordedBeforeProposalReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger.ReflectionRejections) != 3 {
+	if len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries {
 		t.Fatalf("recovery lost the retry budget: %v", ledger.ReflectionRejections)
 	}
 	for i, rejection := range ledger.ReflectionRejections {
@@ -242,7 +248,7 @@ func TestNativeBrokerBindsDurableReflectionIDsToAcceptedDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger.ReflectionRejections) != 3 || !ledger.ReflectionRejected {
+	if len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries || !ledger.ReflectionRejected {
 		t.Fatalf("decision rejection bypassed retry accounting: %+v", ledger)
 	}
 	for i, rejection := range ledger.ReflectionRejections {
@@ -286,5 +292,31 @@ func TestNativeBrokerCompileRejectionAdvancesAttempt(t *testing.T) {
 	}
 	if len(ledger.ReflectionRejections) != 1 || ledger.ReflectionRejections[0].Attempt != 1 {
 		t.Fatalf("compile rejection not durable: %+v", ledger.ReflectionRejections)
+	}
+}
+
+// A rejected reflection's correction turn is a separate step on the closure
+// timeline; it must not be charged to the next first-seen phase.
+func TestNativeBrokerClosureTimelineSeparatesReflectionRetry(t *testing.T) {
+	h := newRejectionHarness(t, "inc-timeline", func(call int, w IncidentWorkspace) (ReflectionDecision, error) {
+		if call == 1 {
+			return writeBadPlaybook(w)
+		}
+		return writeGoodPlaybook(w)
+	})
+	if _, err := h.native.ProcessClosure(context.Background(), h.closure); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := h.native.readLedger("inc-timeline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var previous time.Time
+	for _, phase := range []string{"reflection_dispatch", "worker_result_picked_up", "reflection_rejected", "reflection_retry_dispatch", "retry_worker_result_picked_up"} {
+		at := controllerTime(ledger.ClosurePhaseTimestamps[phase])
+		if at.IsZero() || at.Before(previous) {
+			t.Fatalf("phase %s is missing or out of order: %v", phase, ledger.ClosurePhaseTimestamps)
+		}
+		previous = at
 	}
 }

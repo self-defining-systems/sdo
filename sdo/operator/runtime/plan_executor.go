@@ -132,9 +132,9 @@ type PlanExecutor struct {
 	// Jitter draws a value in [0, bound); nil uses the production RNG.
 	Jitter func(bound int64) int64
 	// Sleep waits between conflict retries and diagnosis settling; nil uses the production timer.
-	Sleep func(context.Context, time.Duration) error
-	Values   program.ValueInputs
-	report   *PlanActionReport
+	Sleep  func(context.Context, time.Duration) error
+	Values program.ValueInputs
+	report *PlanActionReport
 }
 
 // clock returns the injected time source, or the production clock at the edge.

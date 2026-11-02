@@ -21,6 +21,7 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/program/testdata/driftbound"
 	"sdo.dev/operator/sdk/sdktest"
@@ -40,7 +41,7 @@ func TestHermeticSourceAbsentDriftSelectsLearnedPlaybook(t *testing.T) {
 		if phase == "fixed" {
 			snapshot = fixed
 		}
-		view := NewCycleReadView(LiveReadView{DetectionContext: driftBindingObservation(snapshot), Source: source, SourceCommit: commit})
+		view := NewCycleReadView(LiveReadView{Carrier: inputs.New(driftBindingObservation(snapshot)), Source: source, SourceCommit: commit})
 		findings, err := sdk.DetectObserved(ctx, detector, view)
 		if err != nil {
 			t.Fatal(err)
@@ -62,7 +63,7 @@ func TestHermeticSourceAbsentDriftSelectsLearnedPlaybook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := NewCycleReadView(LiveReadView{DetectionContext: driftBindingObservation(open), Source: source, SourceCommit: commit})
+	live := NewCycleReadView(LiveReadView{Carrier: inputs.New(driftBindingObservation(open)), Source: source, SourceCommit: commit})
 	findings, err := sdk.DetectObserved(ctx, detector, live)
 	if err != nil {
 		t.Fatal(err)

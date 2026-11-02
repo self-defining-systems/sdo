@@ -79,11 +79,7 @@ func hotelObjects() []k8sruntime.Object {
 
 func startedTracker(t *testing.T, client *fake.Clientset) *StateTracker {
 	t.Helper()
-<<<<<<< HEAD
-	tracker := NewStateTracker(StateTrackerConfig{Client: client, Namespace: hotel, Settle: time.Minute, ResyncPeriod: time.Hour})
-=======
-	tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: hotel, Settle: time.Minute})
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: hotel, Settle: time.Minute, ResyncPeriod: time.Hour})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	t.Cleanup(tracker.Stop)
@@ -129,86 +125,18 @@ func field(change *StateChange, name string) *StateFieldChange {
 }
 
 func TestStateChangesShowOnlyWhatChangedSinceTheHealthyBaseline(t *testing.T) {
-<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		client := fake.NewSimpleClientset(hotelObjects()...)
+		// Deployment provenance must not exempt an application Service from drift.
+		deployed, _ := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
+		deployed.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "sdo-deployer", Operation: metav1.ManagedFieldsOperationApply}}
+		_, _ = client.CoreV1().Services(hotel).Update(ctx, deployed, metav1.UpdateOptions{})
 		tracker := startedTracker(t, client)
 		start := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 		tracker.Observe(start, true)
 		if changes := tracker.Changes(start); changes == nil || len(changes.Changes) != 0 {
 			t.Fatalf("no change right after the baseline: %+v", changes)
-=======
-	ctx := context.Background()
-	client := fake.NewSimpleClientset(hotelObjects()...)
-	// Deployment provenance must not exempt an application Service from drift.
-	deployed, _ := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
-	deployed.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "sdo-deployer", Operation: metav1.ManagedFieldsOperationApply}}
-	_, _ = client.CoreV1().Services(hotel).Update(ctx, deployed, metav1.UpdateOptions{})
-	tracker := startedTracker(t, client)
-	start := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
-	tracker.Observe(start, true)
-	if changes := tracker.Changes(start); changes == nil || len(changes.Changes) != 0 {
-		t.Fatalf("no change right after the baseline: %+v", changes)
-	}
-
-	// wrong_service_selector, a new deny-all NetworkPolicy, a scaled
-	// Deployment with a changed env value, and changed ConfigMap data.
-	service, _ := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
-	service.Spec.Selector["current_service_name"] = "frontend"
-	_, _ = client.CoreV1().Services(hotel).Update(ctx, service, metav1.UpdateOptions{})
-	_, _ = client.NetworkingV1().NetworkPolicies(hotel).Create(ctx, &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "deny-all", Namespace: hotel},
-		Spec:       networkingv1.NetworkPolicySpec{PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}},
-	}, metav1.CreateOptions{})
-	deployment, _ := client.AppsV1().Deployments(hotel).Get(ctx, "frontend", metav1.GetOptions{})
-	zero := int32(0)
-	deployment.Spec.Replicas = &zero
-	deployment.Spec.Template.Spec.Containers[0].Env[1].Value = "wrong"
-	_, _ = client.AppsV1().Deployments(hotel).Update(ctx, deployment, metav1.UpdateOptions{})
-	configMap, _ := client.CoreV1().ConfigMaps(hotel).Get(ctx, "mongo-geo-script", metav1.GetOptions{})
-	configMap.Data["k8s-geo-mongo.sh"] = "echo broken"
-	_, _ = client.CoreV1().ConfigMaps(hotel).Update(ctx, configMap, metav1.UpdateOptions{})
-	state, _ := client.CoreV1().ConfigMaps(hotel).Get(ctx, "sdo-controller-state", metav1.GetOptions{})
-	state.Data["state"] = "v2"
-	_, _ = client.CoreV1().ConfigMaps(hotel).Update(ctx, state, metav1.UpdateOptions{})
-
-	var changes *StateChanges
-	eventually(t, "four application changes", func() bool {
-		changes = tracker.Changes(start.Add(5 * time.Second))
-		return changes != nil && len(changes.Changes) == 4
-	})
-	if !changes.BaselineAt.Equal(start) {
-		t.Fatalf("baseline time: %s", changes.BaselineAt)
-	}
-	selector := findChange(changes, "Service", "frontend")
-	if selector == nil || selector.Change != StateChangeModified {
-		t.Fatalf("the selector change must be reported: %+v", changes)
-	}
-	if got := field(selector, "selector"); got == nil || got.Before != "io.kompose.service=frontend" ||
-		got.After != "current_service_name=frontend,io.kompose.service=frontend" {
-		t.Fatalf("selector before/after: %+v", selector.Fields)
-	}
-	if policy := findChange(changes, "NetworkPolicy", "deny-all"); policy == nil || policy.Change != StateChangeAdded {
-		t.Fatalf("a new NetworkPolicy must be reported as added: %+v", changes)
-	}
-	workload := findChange(changes, "Deployment", "frontend")
-	if workload == nil || field(workload, "replicas") == nil || field(workload, "replicas").After != "0" {
-		t.Fatalf("replicas must be reported: %+v", workload)
-	}
-	env := field(workload, "container[hotel-reserv-frontend].env")
-	if env == nil || strings.Contains(env.After, "wrong") || strings.Contains(env.Before, "hunter2") ||
-		!strings.Contains(env.After, "JAEGER_SAMPLE_RATIO=1") {
-		t.Fatalf("env changes are shown, secret-looking values only as digests: %+v", env)
-	}
-	data := findChange(changes, "ConfigMap", "mongo-geo-script")
-	if data == nil || field(data, "data[k8s-geo-mongo.sh]") == nil || field(data, "data[extra.sh]") != nil {
-		t.Fatalf("a ConfigMap change names the changed key only: %+v", data)
-	}
-	for _, change := range changes.Changes {
-		if strings.HasPrefix(change.Name, "failure-admin") || strings.HasPrefix(change.Name, "sdo-") {
-			t.Fatalf("decoys present at baseline and SDO's own state must not appear: %+v", change)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 
 		// wrong_service_selector, a new deny-all NetworkPolicy, a scaled
@@ -369,10 +297,9 @@ func TestStateChangesBounded(t *testing.T) {
 // NetworkPolicy created 1.5 s before dispatch because the informers had
 // stopped with the start context.
 func TestStateTrackerKeepsObservingAfterItsStartContextEnds(t *testing.T) {
-<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		client := fake.NewSimpleClientset(hotelObjects()...)
-		tracker := NewStateTracker(StateTrackerConfig{Client: client, Namespace: hotel, ResyncPeriod: time.Hour})
+		tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: hotel, ResyncPeriod: time.Hour})
 		startCtx, cancelStart := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := tracker.Start(startCtx); err != nil {
 			t.Fatal(err)
@@ -381,18 +308,6 @@ func TestStateTrackerKeepsObservingAfterItsStartContextEnds(t *testing.T) {
 		t.Cleanup(tracker.Stop)
 		start := time.Date(2026, 9, 28, 7, 58, 49, 0, time.UTC)
 		tracker.Observe(start, true)
-=======
-	client := fake.NewSimpleClientset(hotelObjects()...)
-	tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: hotel})
-	startCtx, cancelStart := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := tracker.Start(startCtx); err != nil {
-		t.Fatal(err)
-	}
-	cancelStart()
-	t.Cleanup(tracker.Stop)
-	start := time.Date(2026, 9, 28, 7, 58, 49, 0, time.UTC)
-	tracker.Observe(start, true)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 		_, _ = client.NetworkingV1().NetworkPolicies(hotel).Create(context.Background(), &networkingv1.NetworkPolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: "deny-all-recommendation", Namespace: hotel},
@@ -410,10 +325,9 @@ func TestStateTrackerKeepsObservingAfterItsStartContextEnds(t *testing.T) {
 
 // Stop still ends observation when the start context lives on.
 func TestStateTrackerStopEndsObservation(t *testing.T) {
-<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		client := fake.NewSimpleClientset(hotelObjects()...)
-		tracker := NewStateTracker(StateTrackerConfig{Client: client, Namespace: hotel, ResyncPeriod: time.Hour})
+		tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: hotel, ResyncPeriod: time.Hour})
 		if err := tracker.Start(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -429,17 +343,6 @@ func TestStateTrackerRejectsNegativeResyncPeriod(t *testing.T) {
 	tracker := NewStateTracker(StateTrackerConfig{ResyncPeriod: -time.Second})
 	if err := tracker.Start(context.Background()); err == nil {
 		t.Fatal("negative resync period accepted")
-=======
-	client := fake.NewSimpleClientset(hotelObjects()...)
-	tracker := newTrackerForTest(t, StateTrackerConfig{Client: client, Namespace: hotel})
-	if err := tracker.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	tracker.Observe(time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC), true)
-	tracker.Stop()
-	if changes := tracker.Changes(time.Date(2026, 9, 28, 8, 0, 1, 0, time.UTC)); changes != nil {
-		t.Fatalf("a stopped tracker reports no diff: %+v", changes)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 }
 

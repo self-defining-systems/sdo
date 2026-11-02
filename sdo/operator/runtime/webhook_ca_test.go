@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
@@ -32,7 +33,7 @@ func TestWebhookCASyncPrivateRuntimeBoundary(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: "policy"}
 	target := program.WebhookCA{Ref: ref, Webhook: "policy.example", SecretNamespace: "other", SecretName: "serving", SecretKey: "ca.crt"}
 	client := fake.NewSimpleClientset(&admissionv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, UID: "one", ResourceVersion: "1"}, Webhooks: []admissionv1.ValidatingWebhook{{Name: target.Webhook, ClientConfig: admissionv1.WebhookClientConfig{CABundle: []byte("wrong")}}}}, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "serving"}, Data: map[string][]byte{"ca.crt": []byte(canary)}})
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client}
 	record := &sdktest.RecordingReadView{ReadView: view}
 	matched, err := record.WebhookCAMatchesSecret(target)
 	if err != nil || matched {
@@ -207,7 +208,7 @@ func TestWebhookRawRuntimeReadRedactsBeforeClientAndCapture(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"apiVersion": "admissionregistration.k8s.io/v1", "kind": "ValidatingWebhookConfiguration", "metadata": map[string]any{"name": "policy", "annotations": map[string]any{"kubectl.kubernetes.io/last-applied-configuration": fmt.Sprintf(`{"caBundle":%q}`, base64.StdEncoding.EncodeToString([]byte(canary)))}}, "webhooks": []any{map[string]any{"name": "policy.example", "clientConfig": map[string]any{"caBundle": base64.StdEncoding.EncodeToString([]byte(canary))}}}})
 	}))
 	defer server.Close()
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, DatabaseExecConfig: &rest.Config{Host: server.URL}}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), DatabaseExecConfig: &rest.Config{Host: server.URL}}
 	record := &sdktest.RecordingReadView{ReadView: view}
 	client, err := program.Kubernetes(record)
 	if err != nil {

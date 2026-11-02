@@ -16,6 +16,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -69,7 +70,7 @@ func TestAdoptedDeploymentDNSPolicyDriftIsNamedAndRestoredWithoutImageEvidence(t
 		t.Fatal(err)
 	}
 	controller.ConfigureDrift(DriftControllerConfig{Source: source, Client: sourceClient, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: locked, Client: sourceClient}
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: locked, Client: sourceClient}
 	}})
 	if err := controller.adoptOwnership(ctx, time.Unix(11, 0).UTC(), sdktest.Snapshot{NamespaceName: "app"}); err != nil {
 		t.Fatalf("ownership adoption: %v", err)
@@ -95,7 +96,7 @@ func TestAdoptedDeploymentDNSPolicyDriftIsNamedAndRestoredWithoutImageEvidence(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	diff, err := (LiveReadView{DetectionContext: captured, Source: source, SourceCommit: locked, Client: sourceClient}).DiffAgainstSource(ref)
+	diff, err := (LiveReadView{Carrier: inputs.New(captured), Source: source, SourceCommit: locked, Client: sourceClient}).DiffAgainstSource(ref)
 	if err != nil {
 		t.Fatalf("adopted Deployment cannot be compared with accepted source: %v", err)
 	}

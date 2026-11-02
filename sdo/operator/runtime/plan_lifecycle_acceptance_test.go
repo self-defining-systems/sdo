@@ -17,6 +17,7 @@ import (
 	clienttesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -120,7 +121,7 @@ func TestCreatedAcceptanceUsesAdoptionWriterThroughAPI(t *testing.T) {
 				t.Fatal("write barrier does not include the acceptance publication version")
 			}
 			snapshot := &sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}
-			view := LiveReadView{DetectionContext: snapshot, Source: e.Source, SourceCommit: "accepted"}
+			view := LiveReadView{Carrier: inputs.New(snapshot), Source: e.Source, SourceCommit: "accepted"}
 			diff, err := view.DiffAgainstSource(ref)
 			if err != nil || diff.Changed {
 				t.Fatalf("defaulted create not comparable: %+v %v", diff, err)

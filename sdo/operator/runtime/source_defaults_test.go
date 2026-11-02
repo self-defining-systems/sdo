@@ -16,6 +16,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -256,7 +257,7 @@ func TestAPIDefaultRenderFeedsSourceComparison(t *testing.T) {
 			}))
 			defer server.Close()
 			client := kubernetes.NewForConfigOrDie(&rest.Config{Host: server.URL})
-			view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: source.GetNamespace(), Objects: []unstructured.Unstructured{*live}}, Client: client, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+			view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: source.GetNamespace(), Objects: []unstructured.Unstructured{*live}}), Client: client, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 			diff, err := view.DiffAgainstSource(addedFieldsRef())
 			if err != nil || diff.Changed != real || renders != 1 {
 				t.Fatalf("API defaults not used: diff=%+v err=%v renders=%d", diff, err, renders)

@@ -104,18 +104,10 @@ func TestControllerOpensUnexplainedIncidentAfterBatchWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-<<<<<<< HEAD
-	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(context.Context, program.Bindings) program.Verdict { return program.Verdict{Result: program.Match} }}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	server := newHandlerTransport(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-=======
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if serveTestDiscovery(writer, request) {
 			return
 		}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		if request.Method != http.MethodPatch || request.URL.Query().Get("dryRun") != metav1.DryRunAll {
 			t.Errorf("unexpected source normalization request: %s %s", request.Method, request.URL)
 		}
@@ -128,13 +120,8 @@ func TestControllerOpensUnexplainedIncidentAfterBatchWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "app"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80), "targetPort": float64(8080)}}}}}}
-<<<<<<< HEAD
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{Carrier: inputs.New(snapshot), Client: apiClient, Source: source, SourceCommit: "accepted"}
-=======
 	controller.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Client: apiClient, Source: source, SourceCommit: "accepted"}
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		return LiveReadView{Carrier: inputs.New(snapshot), Client: apiClient, Source: source, SourceCommit: "accepted"}
 	}})
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)

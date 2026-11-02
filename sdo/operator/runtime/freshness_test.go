@@ -14,6 +14,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -128,7 +129,7 @@ func TestRV10bFreshDiagnosisAfterSameGenerationDenial(t *testing.T) {
 	// This is the operational view used by InitialDiagnose, including after restart.
 	loop := NewResponderLoop(request, nil, provider, nil, PlanExecutor{}, 1)
 	loop.CorpusSessionRoot, loop.capturePhase = root, "open@detect"
-	loop.ReadView = func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s} }
+	loop.ReadView = func(s sdk.DetectionContext) program.ReadView { return LiveReadView{Carrier: inputs.New(s)} }
 	view, err := loop.snapshotView(context.Background())
 	if err != nil {
 		t.Fatal(err)

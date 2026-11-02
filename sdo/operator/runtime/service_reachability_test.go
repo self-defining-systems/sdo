@@ -7,11 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-<<<<<<< HEAD
-=======
-	"net/http/httptest"
-	"strings"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -250,7 +245,6 @@ func TestEvaluateOnceCollectsReachabilityRounds(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestEvaluateOnceRejectsReachabilityWithoutAHost(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
@@ -260,38 +254,6 @@ func TestEvaluateOnceRejectsReachabilityWithoutAHost(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("err %v stdout %q stderr %q", err, stdout.String(), stderr.String())
-=======
-func TestEvaluateOnceSkipsReachabilityWithoutAProber(t *testing.T) {
-	for _, seed := range []bool{false, true} {
-		t.Run(fmt.Sprintf("accept-seed=%t", seed), func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
-			args := []string{"--evaluate-once", "--namespace", "shop"}
-			if seed {
-				args = append(args, "--accept-seed")
-			}
-			err := RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
-				Args: args, Stdout: &stdout, Stderr: &stderr,
-				Provider: staticProvider{snapshot: reachabilityApp(8083)},
-			})
-			var output struct {
-				Status      string        `json:"status"`
-				Findings    []sdk.Finding `json:"findings"`
-				Unavailable []struct {
-					DetectorID string `json:"detector_id"`
-					Reason     string `json:"reason"`
-				} `json:"unavailable"`
-			}
-			if decodeErr := json.Unmarshal(stdout.Bytes(), &output); decodeErr != nil {
-				t.Fatalf("decode %q: %v (evaluation error: %v)", stdout.String(), decodeErr, err)
-			}
-			if (err != nil) != seed || output.Status != "unavailable" || len(output.Findings) != 0 ||
-				len(output.Unavailable) != 1 || output.Unavailable[0].DetectorID != "service-reachability" ||
-				!strings.Contains(output.Unavailable[0].Reason, "requires --prober-url") ||
-				!bytes.Contains(stderr.Bytes(), []byte("service reachability unavailable")) {
-				t.Fatalf("err %v stdout %q stderr %q", err, stdout.String(), stderr.String())
-			}
-		})
 	}
 }
 
@@ -303,6 +265,5 @@ func TestSeedAcceptanceCannotUseInventoryOnlyEvaluation(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "seed acceptance cannot use source-drift-report") || stdout.Len() != 0 {
 		t.Fatalf("inventory-only evaluation accepted as seed health: %v %s", err, stdout.String())
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 }

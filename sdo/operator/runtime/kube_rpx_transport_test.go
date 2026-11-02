@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -39,7 +40,7 @@ func TestRPXConvenienceReadsUseRecordedClientTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client, Context: context.Background()}
+	v := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client, Context: context.Background()}
 	pod := sdk.ObjectRef{Kind: "Pod", Namespace: "app", Name: "api"}
 	if logs, err := v.LogsWithOptions(pod, corev1.PodLogOptions{Container: "main", Previous: true}); err != nil || logs != "previous crash" {
 		t.Fatalf("logs=%q err=%v", logs, err)

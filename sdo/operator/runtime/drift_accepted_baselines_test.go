@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -72,7 +73,7 @@ func TestAcceptedAppBaselineFixturesAddNoDriftFindings(t *testing.T) {
 				}))
 				client := kubernetes.NewForConfigOrDie(&rest.Config{Host: server.URL})
 				snapshot := sdktest.Snapshot{NamespaceName: ref.Namespace, Objects: []unstructured.Unstructured{*live}}
-				view := LiveReadView{DetectionContext: snapshot, Client: client, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+				view := LiveReadView{Carrier: inputs.New(snapshot), Client: client, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 				diff, err := view.DiffAgainstSource(ref)
 				if err != nil || diff.Changed {
 					server.Close()
@@ -176,7 +177,7 @@ func TestAcceptedAstronomyAddedFieldsReachRestoration(t *testing.T) {
 			}
 			ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
 			snapshot := sdktest.Snapshot{NamespaceName: ref.Namespace, Objects: []unstructured.Unstructured{*live}}
-			view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+			view := LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 			config := testControllerConfig()
 			config.Namespace = ref.Namespace
 			c, err := NewController(config, nil, staticProvider{snapshot: snapshot}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Now())

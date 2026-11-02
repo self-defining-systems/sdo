@@ -1,27 +1,9 @@
 package runtime
 
 import (
-<<<<<<< HEAD
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-=======
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
-
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -44,84 +26,7 @@ func main() {
 }
 `
 
-<<<<<<< HEAD
-=======
-// Execute the actual scripted Go artifact, not a second implementation of its
-// predicate. Only primitive reads are recorded at the process boundary.
-type compiledForeignInvariant struct{ binary string }
-
-func (compiledForeignInvariant) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: "networkpolicy-service-isolation", Params: []program.ParamSpec{{Name: "policy", Kind: "NetworkPolicy", Required: true}}}
-}
-func (p compiledForeignInvariant) Diagnose(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
-	snapshot, err := sdktest.CaptureSnapshot(view, view.Namespace())
-	if err != nil {
-		return program.Verdict{}, err
-	}
-	recording := &sdktest.RecordingReadView{ReadView: view}
-	if _, err := recording.DiffAgainstSource(bindings.Objects["policy"]); err != nil {
-		return program.Verdict{}, err
-	}
-	for _, service := range view.Services() {
-		if _, err := recording.DiffAgainstSource(sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: service.Namespace, Name: service.Name}); err != nil {
-			return program.Verdict{}, err
-		}
-	}
-	data, err := json.Marshal(struct {
-		Snapshot sdktest.Snapshot
-		Calls    []sdktest.PrimitiveCall
-		Bindings program.Bindings
-	}{snapshot, recording.Calls, bindings})
-	if err != nil {
-		return program.Verdict{}, err
-	}
-	cmd := exec.CommandContext(ctx, p.binary)
-	cmd.Stdin = bytes.NewReader(data)
-	output, stderr, err := commandStdout(cmd)
-	if err != nil {
-		return program.Verdict{}, fmt.Errorf("scripted invariant: %w: %s%s", err, output, stderr)
-	}
-	var verdict program.Verdict
-	if err := json.Unmarshal(output, &verdict); err != nil {
-		return program.Verdict{}, err
-	}
-	return verdict, nil
-}
-func compileForeignInvariant(t *testing.T) compiledForeignInvariant {
-	t.Helper()
-	root := t.TempDir()
-	sdkRoot, err := filepath.Abs("../sdk")
-	if err != nil {
-		t.Fatal(err)
-	}
-	module := fmt.Sprintf("module foreign-invariant\n\ngo 1.26.0\n\nrequire sdo.dev/operator/sdk v0.0.0\nreplace sdo.dev/operator/sdk => %s\n", sdkRoot)
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(module), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(root, "candidate"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	source, err := os.ReadFile("../../../benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "candidate", "diagnose.go"), source, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(foreignInvariantRunner), 0600); err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(root, "diagnose")
-	cmd := exec.Command("go", "build", "-mod=mod", "-o", binary, ".")
-	cmd.Dir = root
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("compile scripted learned invariant: %v: %s", err, output)
-	}
-	return compiledForeignInvariant{binary: binary}
-}
-
 // policyWorkloadSnapshot serves foreignSource's Service as adoption left it.
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func policyWorkloadSnapshot(policies ...networkingv1.NetworkPolicy) sdktest.Snapshot {
 	service := corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: driftService(8080).Spec.Ports[0].TargetPort}}}}
 	accepted := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api"}, "spec": map[string]any{"selector": map[string]any{"app": "api"}, "ports": []any{map[string]any{"port": int64(80), "targetPort": int64(8080)}}}}}
@@ -135,40 +40,3 @@ func policyWorkloadSnapshot(policies ...networkingv1.NetworkPolicy) sdktest.Snap
 		PodList:     []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}}}}}},
 	}
 }
-<<<<<<< HEAD
-=======
-
-func TestForeignNetworkPolicyInvariantNearMisses(t *testing.T) {
-	source, commit := foreignSource(t)
-	learned := compileForeignInvariant(t)
-	for _, tc := range []struct {
-		name     string
-		policies []networkingv1.NetworkPolicy
-		want     program.Result
-	}{
-		{"deny ingress", []networkingv1.NetworkPolicy{*foreignPolicy("deny")}, program.Match},
-		{"no policy", nil, program.NoMatch},
-		{"unrelated selector", func() []networkingv1.NetworkPolicy {
-			p := foreignPolicy("deny")
-			p.Spec.PodSelector.MatchLabels = map[string]string{"app": "elsewhere"}
-			return []networkingv1.NetworkPolicy{*p}
-		}(), program.NoMatch},
-		{"additive allow", func() []networkingv1.NetworkPolicy {
-			allow := foreignPolicy("allow")
-			allow.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{{}}
-			return []networkingv1.NetworkPolicy{*foreignPolicy("deny"), *allow}
-		}(), program.NoMatch},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			view := LiveReadView{DetectionContext: policyWorkloadSnapshot(tc.policies...), Source: source, SourceCommit: commit}
-			if len(tc.policies) == 0 {
-				view.DetectionContext = confirmedAbsentSnapshot{Snapshot: policyWorkloadSnapshot(), Ref: sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}}
-			}
-			verdict, err := learned.Diagnose(context.Background(), view, program.Bindings{Objects: program.ObjectBindings{"policy": {APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}}})
-			if err != nil || verdict.Result != tc.want {
-				t.Fatalf("verdict=%+v error=%v", verdict, err)
-			}
-		})
-	}
-}
->>>>>>> origin/vic-lsh/dev/sdo-improve

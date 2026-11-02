@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -57,7 +58,7 @@ func TestSourceDiffPreservesIndependentCompletionAndDetectsMissingController(t *
 	live.SetAnnotations(map[string]string{"another-controller.example/completed": "true"})
 	live.SetAnnotations(withAcceptance(t, live, source))
 	snapshot := sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}
-	view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+	view := LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
 		t.Fatalf("external completion annotation flagged: %+v %v", diff, err)
 	}

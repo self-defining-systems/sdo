@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -98,7 +99,7 @@ func (p uncachedPolicyProvider) Snapshot(context.Context) (sdk.DetectionContext,
 	for _, object := range p.client.objects {
 		snapshot.Objects = append(snapshot.Objects, *object.DeepCopy())
 	}
-	return LiveReadView{DetectionContext: uncachedPolicySnapshot{Snapshot: snapshot, client: p.client}, Source: p.source, SourceCommit: "accepted"}, nil
+	return LiveReadView{Carrier: inputs.New(uncachedPolicySnapshot{Snapshot: snapshot, client: p.client}), Source: p.source, SourceCommit: "accepted"}, nil
 }
 
 // Like core.GenericCapture, the uncached object edge performs a direct named

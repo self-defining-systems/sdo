@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
@@ -62,7 +63,7 @@ func TestAdmissionWebhooksFollowFailingNamespaceAndWorkload(t *testing.T) {
 		secretReads++
 		return false, nil, nil
 	})
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client}
 	for _, subject := range []sdk.ObjectRef{
 		{APIVersion: "v1", Kind: "Namespace", Name: "app"},
 		{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"},
@@ -106,7 +107,7 @@ func TestAdmissionWebhooksAreBounded(t *testing.T) {
 		}}})
 	}
 	objects = append(objects, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "app"}})
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: fake.NewSimpleClientset(objects...)}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: fake.NewSimpleClientset(objects...)}
 	got, err := view.AdmissionWebhooksFor(sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: "app"})
 	if err != nil || len(got) != program.MaxAdmissionWebhooks {
 		t.Fatalf("got %d err=%v, want %d", len(got), err, program.MaxAdmissionWebhooks)
@@ -114,7 +115,7 @@ func TestAdmissionWebhooksAreBounded(t *testing.T) {
 }
 
 func TestAdmissionWebhooksRejectSubjectsWithoutANamespace(t *testing.T) {
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: admissionCluster()}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: admissionCluster()}
 	for _, subject := range []sdk.ObjectRef{{APIVersion: "v1", Kind: "Node", Name: "n1"}, {APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "s"}, {}} {
 		if _, err := view.AdmissionWebhooksFor(subject); err == nil {
 			t.Fatalf("subject %+v accepted", subject)
@@ -169,7 +170,7 @@ func TestAdmissionFindingsBindWebhookRepairAndRepair(t *testing.T) {
 				t.Fatalf("finding does not bind the program: %v", err)
 			}
 			client := admissionCluster()
-			view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client}
+			view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client}
 			plan, err := (webhookRepair{}).Mitigate(context.Background(), view, bindings)
 			if err != nil || len(plan.Actions) != 1 {
 				t.Fatalf("plan %+v err=%v", plan, err)

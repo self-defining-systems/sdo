@@ -12,6 +12,7 @@ import (
 
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -94,7 +95,7 @@ func TestOpenDetectRoutingSweepNeverDelaysDispatch(t *testing.T) {
 	prober := newGatedProber()
 	t.Cleanup(prober.Release)
 	controller, dispatcher := openCaptureController(t, root, func(s sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: s, Prober: prober}
+		return LiveReadView{Carrier: inputs.New(s), Prober: prober}
 	})
 	openIncident(t, controller)
 	// The responder is dispatched while the sweep is still blocked on its first probe.
@@ -120,7 +121,7 @@ func TestOpenDetectCaptureFailureNeverBlocksIncident(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller, dispatcher := openCaptureController(t, filepath.Join(blocker, "corpus"), func(s sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: s, Prober: &routingTestProber{}}
+		return LiveReadView{Carrier: inputs.New(s), Prober: &routingTestProber{}}
 	})
 	var mu sync.Mutex
 	var reported []error
@@ -148,7 +149,7 @@ func TestIncidentIsOpenBeforeTheCorpusCaptureIO(t *testing.T) {
 	controller, _ = openCaptureController(t, t.TempDir(), func(s sdk.DetectionContext) program.ReadView {
 		state := exportState(t, controller)
 		busyDuringCapture, openDuringCapture = state.GetBusyUntil(), state.GetIncidentOpen()
-		return LiveReadView{DetectionContext: s, Prober: &routingTestProber{}}
+		return LiveReadView{Carrier: inputs.New(s), Prober: &routingTestProber{}}
 	})
 	openIncident(t, controller)
 	if !openDuringCapture || busyDuringCapture == nil {

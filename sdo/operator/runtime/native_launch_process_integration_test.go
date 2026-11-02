@@ -15,7 +15,7 @@ func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
 	config := &contracts.ControllerConfig{
 		ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "linked", AppRoot: root, Namespace: "default",
 		BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository",
-		ResponderBackend: "codex", ResponderModel: "model",
+		ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model",
 	}
 	if _, _, err := nativeBrokerFromLaunch(context.Background(), config, fake.NewSimpleClientset()); err == nil {
 		t.Fatal("linked worker mount accepted for native broker")
@@ -27,5 +27,8 @@ func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
 	}
 	if native.Repository == nil || native.Deriver == nil || native.ResponderBackend != "codex" {
 		t.Fatalf("incomplete native broker: %+v", native)
+	}
+	if deriver, ok := native.Deriver.(ProtoOutcomeDeriver); !ok || deriver.SessionRoot != config.GetRepositoryMountPath() {
+		t.Fatal("production outcome derivation must retain the protected incident API history")
 	}
 }

@@ -13,6 +13,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -207,7 +208,7 @@ func TestRecoveryEffectsControllerClosureConsumesSameObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: recoveryAPISnapshot{s, loop.Executor.Client.(TypedPlanClient)}, Source: recoveryAcceptedSource{loop.Executor.Source}, SourceCommit: state.Request.SourceCommit}
+		return LiveReadView{Carrier: inputs.New(recoveryAPISnapshot{s, loop.Executor.Client.(TypedPlanClient)}), Source: recoveryAcceptedSource{loop.Executor.Source}, SourceCommit: state.Request.SourceCommit}
 	}})
 	request := *cloneIncidentRequest(&state.Request)
 	request.Findings = append(request.Findings, f)
@@ -279,7 +280,7 @@ func TestRecoveryEffectsAlreadyDisappearedBeforeStageWait(t *testing.T) {
 	snapshot.PodList = snapshot.PodList[:len(snapshot.PodList)-1]
 	loop.Provider = staticProvider{snapshot: snapshot}
 	loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: recoveryAPISnapshot{s, loop.Executor.Client.(TypedPlanClient)}, Source: recoveryAcceptedSource{loop.Executor.Source}, SourceCommit: state.Request.SourceCommit}
+		return LiveReadView{Carrier: inputs.New(recoveryAPISnapshot{s, loop.Executor.Client.(TypedPlanClient)}), Source: recoveryAcceptedSource{loop.Executor.Source}, SourceCommit: state.Request.SourceCommit}
 	}
 	state.Findings = []sdk.Finding{f}
 	if err := (&DeterministicResponseStage{ObservationCeiling: time.Millisecond}).awaitApplications(context.Background(), loop, state, state.PriorStages[0], &responseStageProgress{}, func(bool) error { return nil }); err != nil {

@@ -8,6 +8,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -25,7 +26,7 @@ func TestMitigationBindsMissingWebhookCAReferencesFromLiveRelation(t *testing.T)
 	client := admissionCluster()
 	secretReads := 0
 	client.PrependReactor("*", "secrets", func(ktesting.Action) (bool, kruntime.Object, error) { secretReads++; return false, nil, nil })
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client}
 	want := program.WebhookCA{Ref: sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "MutatingWebhookConfiguration", Name: "pod-policy"}, Webhook: "pod-policy.validation.k8s.io", SecretNamespace: "platform", SecretName: "pod-policy-tls", SecretKey: "tls.crt"}
 	for _, mask := range []int{1, 2, 3, 4, 5, 6, 7} {
 		target := want
@@ -92,7 +93,7 @@ func (v webhookBindingView) AdmissionWebhooksFor(sdk.ObjectRef) ([]program.Admis
 func TestCompiledMitigatorBindsWebhookReferencesBeforePlanValidation(t *testing.T) {
 	body := `target:=program.WebhookCA{};target.Ref.APIVersion="admissionregistration.k8s.io/v1";target.Ref.Kind="MutatingWebhookConfiguration";target.Ref.Name="pod-policy";target.Webhook="pod-policy.validation.k8s.io";return program.Plan{Actions:[]program.Action{program.SyncWebhookCA{Target:target,Reason:"synthetic relation-bound CA repair"}}},nil`
 	p := compiledTerminalPlanProgram(t, body)
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: admissionCluster()}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: admissionCluster()}
 	bindings := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
 	plan, err := BuildMitigationPlan(context.Background(), p, view, bindings, 10*time.Second)
 	if err != nil {

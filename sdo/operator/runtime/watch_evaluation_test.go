@@ -109,61 +109,15 @@ func TestKubernetesCacheRetainsListedObjectBeforeFirstEdit(t *testing.T) {
 }
 
 func TestKubernetesCacheDeliversConfigMapDeleteQueuedBehindPodBacklog(t *testing.T) {
-<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		client := fake.NewSimpleClientset(&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "mongo-geo-script", Namespace: "demo"},
 		})
-		informerCache, err := NewKubernetesCache(KubernetesCacheConfig{
+		informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
 			Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state", ResyncPeriod: time.Hour,
 		}, []sdk.Detector{configMapPresenceDetector{spec: healthSpec(podWatch, configMapWatch), configMap: "mongo-geo-script"}})
 		if err != nil {
 			t.Fatalf("new cache: %v", err)
-=======
-	client := fake.NewSimpleClientset(&corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "mongo-geo-script", Namespace: "demo"},
-	})
-	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
-		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
-	}, []sdk.Detector{configMapPresenceDetector{spec: healthSpec(podWatch, configMapWatch), configMap: "mongo-geo-script"}})
-	if err != nil {
-		t.Fatalf("new cache: %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	informerCache.Start(ctx)
-	if err := informerCache.WaitForSync(ctx); err != nil {
-		t.Fatalf("wait for sync: %v", err)
-	}
-	drainWatchEvents(informerCache)
-
-	// More Pod notifications than the former 256-slot channel held, all before
-	// the loop drains any of them, followed by the fault's ConfigMap delete.
-	// The fake watcher buffers only 100 events, so the Pod burst is delivered
-	// through the informer handler directly.
-	podHandler := informerCache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Pod", Namespace: "demo"})
-	for index := 0; index < 300; index++ {
-		podHandler.OnAdd(&corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("pod-%d", index), Namespace: "demo"},
-		}, false)
-	}
-	if err := client.CoreV1().ConfigMaps("demo").Delete(ctx, "mongo-geo-script", metav1.DeleteOptions{}); err != nil {
-		t.Fatalf("delete ConfigMap: %v", err)
-	}
-	awaitConfigMapAbsent(t, informerCache, "mongo-geo-script")
-
-	events := takeEventsThrough(t, informerCache, "Pod", "ConfigMap")
-	want := map[sdk.WatchKind]bool{
-		{APIVersion: "v1", Kind: "Pod", Namespace: "demo"}:       false,
-		{APIVersion: "v1", Kind: "ConfigMap", Namespace: "demo"}: false,
-	}
-	for _, event := range events {
-		want[event] = true
-	}
-	for kind, seen := range want {
-		if !seen {
-			t.Fatalf("watch kind %#v was not delivered; got %#v", kind, events)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -208,13 +162,8 @@ func TestKubernetesCacheDeliversConfigMapDeleteQueuedBehindPodBacklog(t *testing
 }
 
 func TestKubernetesCacheRoutesDeleteTombstones(t *testing.T) {
-<<<<<<< HEAD
-	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{
-		Namespace: "demo", Client: fake.NewSimpleClientset(), StateConfigMapName: "sdo-controller-state", ResyncPeriod: time.Hour,
-=======
 	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
-		Namespace: "demo", Client: fake.NewSimpleClientset(), StateConfigMapName: "sdo-controller-state",
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		Namespace: "demo", Client: fake.NewSimpleClientset(), StateConfigMapName: "sdo-controller-state", ResyncPeriod: time.Hour,
 	}, []sdk.Detector{configMapPresenceDetector{spec: incidentSpec(configMapWatch), configMap: "settings"}})
 	if err != nil {
 		t.Fatalf("new cache: %v", err)
@@ -248,7 +197,6 @@ func TestKubernetesCacheRoutesDeleteTombstones(t *testing.T) {
 // ConfigMaps. One runtime-loop iteration must evaluate and record the incident
 // detector, and its Firing:2 confirmation must land in the same incident.
 func TestControllerEvaluatesConfigMapWatcherAfterDeleteBehindPodBacklog(t *testing.T) {
-<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "mongodb-geo", Namespace: "demo"}}
 		client := fake.NewSimpleClientset(deployment, &corev1.ConfigMap{
@@ -257,7 +205,7 @@ func TestControllerEvaluatesConfigMapWatcherAfterDeleteBehindPodBacklog(t *testi
 		health := configMapPresenceDetector{spec: healthSpec(podWatch, configMapWatch), configMap: "mongo-geo-script"}
 		incident := configMapPresenceDetector{spec: incidentSpec(deploymentWatch, configMapWatch), configMap: "mongo-geo-script"}
 		detectors := []sdk.Detector{health, incident}
-		informerCache, err := NewKubernetesCache(KubernetesCacheConfig{
+		informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
 			Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state", ResyncPeriod: time.Hour,
 		}, detectors)
 		if err != nil {
@@ -281,46 +229,6 @@ func TestControllerEvaluatesConfigMapWatcherAfterDeleteBehindPodBacklog(t *testi
 		}
 		if err := controller.Step(ctx, start, nil); err != nil {
 			t.Fatalf("baseline step: %v", err)
-=======
-	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "mongodb-geo", Namespace: "demo"}}
-	client := fake.NewSimpleClientset(deployment, &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "mongo-geo-script", Namespace: "demo"},
-	})
-	health := configMapPresenceDetector{spec: healthSpec(podWatch, configMapWatch), configMap: "mongo-geo-script"}
-	incident := configMapPresenceDetector{spec: incidentSpec(deploymentWatch, configMapWatch), configMap: "mongo-geo-script"}
-	detectors := []sdk.Detector{health, incident}
-	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
-		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
-	}, detectors)
-	if err != nil {
-		t.Fatalf("new cache: %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	informerCache.Start(ctx)
-	if err := informerCache.WaitForSync(ctx); err != nil {
-		t.Fatalf("wait for sync: %v", err)
-	}
-	drainWatchEvents(informerCache)
-	start := time.Unix(0, 0).UTC()
-	config := testControllerConfig()
-	config.BatchDebounce = 500 * time.Millisecond
-	config.ConfirmationInterval = time.Second
-	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
-	controller, err := NewController(config, detectors, informerCache, dispatcher, start)
-	if err != nil {
-		t.Fatalf("new controller: %v", err)
-	}
-	if err := controller.Step(ctx, start, nil); err != nil {
-		t.Fatalf("baseline step: %v", err)
-	}
-
-	for index := 0; index < 50; index++ {
-		if _, err := client.CoreV1().Pods("demo").Create(ctx, &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("pod-%d", index)},
-		}, metav1.CreateOptions{}); err != nil {
-			t.Fatalf("create pod: %v", err)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 
 		for index := 0; index < 50; index++ {

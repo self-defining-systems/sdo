@@ -21,6 +21,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -100,7 +101,7 @@ func adoptValueApp(t *testing.T) adoptedValueApp {
 		t.Fatal(err)
 	}
 	controller.ConfigureDrift(DriftControllerConfig{Source: source, Client: bridge, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit, Client: bridge}
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit, Client: bridge}
 	}})
 	if err := controller.adoptOwnership(context.Background(), time.Unix(11, 0).UTC(), sdktest.Snapshot{NamespaceName: "app"}); err != nil {
 		t.Fatalf("ownership adoption: %v", err)
@@ -116,7 +117,7 @@ func adoptValueApp(t *testing.T) adoptedValueApp {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return LiveReadView{DetectionContext: captured, Source: source, SourceCommit: commit, Client: bridge}
+		return LiveReadView{Carrier: inputs.New(captured), Source: source, SourceCommit: commit, Client: bridge}
 	}
 	app.liveView = func(t *testing.T) program.ReadView {
 		t.Helper()
@@ -124,7 +125,7 @@ func adoptValueApp(t *testing.T) adoptedValueApp {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit, Client: bridge}
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit, Client: bridge}
 	}
 	return app
 }

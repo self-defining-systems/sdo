@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
@@ -130,7 +131,7 @@ func TestScopedWebhookSourceAdmissionAndRedaction(t *testing.T) {
 		}
 		object := scopedObjects(scoped)[target.Key()]["policy"]
 		snapshot := sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: scoped}
-		view := LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
+		view := LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}
 		for _, initial := range []bool{true, false} {
 			event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{New: object, Initial: initial}, view, time.Unix(20, 0))
 			if err != nil || (event != nil) == initial {
@@ -179,7 +180,7 @@ func TestScopedWrappersKeepDenialUnknown(t *testing.T) {
 	target := sdk.ObservationTarget{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "foreign"}
 	scoped := sdk.ScopedSnapshot{Version: 1, Scope: sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}, Statuses: []sdk.ObservationStatus{{Target: target, State: "forbidden"}}}
 	base := sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: scoped}
-	live := LiveReadView{DetectionContext: base}
+	live := LiveReadView{Carrier: inputs.New(base)}
 	recording := &sdktest.RecordingReadView{ReadView: live}
 	for _, view := range []sdk.DetectionContext{base, trafficContext{DetectionContext: base, ScopedObservationSource: base}, live, recording, struct{ sdk.DetectionContext }{base}} {
 		if _, err := sdk.DetectObserved(context.Background(), scopedIgnoringDetector{}, view); err == nil {
@@ -349,7 +350,7 @@ func TestScopedPendingWebhookDriftSurvivesDenial(t *testing.T) {
 		t.Fatal(err)
 	}
 	controller.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(view sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: view, Source: source, SourceCommit: commit}
+		return LiveReadView{Carrier: inputs.New(view), Source: source, SourceCommit: commit}
 	}})
 	denied := observed
 	denied.Statuses = append([]sdk.ObservationStatus(nil), observed.Statuses...)
@@ -408,7 +409,7 @@ func TestScopedDeclaredSourceWebhookCannotClearWhileChanged(t *testing.T) {
 	policy := admissionv1.Fail
 	target := sdk.ObservationTarget{APIVersion: ref.APIVersion, Kind: ref.Kind, Name: ref.Name}
 	scoped := sdk.ScopedSnapshot{Version: 1, Scope: sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}, Statuses: []sdk.ObservationStatus{{Target: target, State: sdk.ObservationObserved}}, Validating: []admissionv1.ValidatingWebhookConfiguration{{ObjectMeta: metav1.ObjectMeta{Name: "policy"}, Webhooks: []admissionv1.ValidatingWebhook{{Name: "policy.example", FailurePolicy: &policy, ClientConfig: admissionv1.WebhookClientConfig{Service: &admissionv1.ServiceReference{Name: "backend", Namespace: "policy-system"}}}}}}}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: scoped}, Source: source, SourceCommit: commit}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: scoped}), Source: source, SourceCommit: commit}
 	changed := scopedObjects(scoped)[target.Key()]["policy"]
 	event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: accepted, New: changed}, view, time.Unix(200, 0))
 	if err != nil || event == nil {
@@ -535,7 +536,7 @@ func TestScopedWebhookDefaultsChangedThenRestored(t *testing.T) {
 			f.c.currentIncidentRequest.Findings = []sdk.Finding{{DetectorID: "drift.unexplained", Status: sdk.FindingActive, PrimaryResource: ref, Metadata: map[string]any{"drift_event": *event}}}
 			current := snapshot(20)
 			f.c.drift.View = func(sdk.DetectionContext) program.ReadView {
-				return LiveReadView{DetectionContext: current, Source: source, SourceCommit: commit}
+				return LiveReadView{Carrier: inputs.New(current), Source: source, SourceCommit: commit}
 			}
 			f.step(t, 1)
 			if len(f.closed) != 0 {
@@ -566,7 +567,7 @@ func TestScopedCompositionPreservesObservationClock(t *testing.T) {
 	scoped := sdk.ScopedSnapshot{Version: 1, Generation: "commit", Scope: sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}, Statuses: []sdk.ObservationStatus{{Target: target, State: sdk.ObservationObserved}}}
 	base := sdktest.Snapshot{NamespaceName: "app", ObservedAtTime: &now, ScopedSnapshot: scoped}
 	trafficView := trafficContext{DetectionContext: base, ScopedObservationSource: base}
-	live := LiveReadView{DetectionContext: trafficView}
+	live := LiveReadView{Carrier: inputs.New(trafficView)}
 	recorded := &sdktest.RecordingReadView{ReadView: live}
 	for _, view := range []sdk.DetectionContext{trafficView, live, recorded} {
 		if !sdk.ObservationTime(view).Equal(now) {

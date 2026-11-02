@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -34,7 +35,7 @@ func TestPreviousLogsOptionsRecordReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := NewCycleReadView(LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client})
+	view := NewCycleReadView(LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client})
 	pod := sdk.ObjectRef{Kind: "Pod", Namespace: "app", Name: "api"}
 	tail := int64(5)
 	options := corev1.PodLogOptions{Container: "main", Previous: true, SinceTime: &metav1.Time{Time: time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)}, TailLines: &tail, Timestamps: true, LimitBytes: int64ptr(1024)}
@@ -83,7 +84,7 @@ func TestUsageSamplesAndUnavailableReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client}
+	live := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client}
 	view := NewCycleReadView(live)
 	pod := sdk.ObjectRef{Kind: "Pod", Namespace: "app", Name: "api"}
 	samples, err := view.PodUsage(pod)
@@ -143,7 +144,7 @@ func TestUsageMalformedSamplesNeverBecomeZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client}
+	live := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client}
 	pod := sdk.ObjectRef{Kind: "Pod", Namespace: "app", Name: "api"}
 	for _, tc := range []struct{ name, old, replacement string }{
 		{"wrong identity", `"name":"api"`, `"name":"other"`},
@@ -189,7 +190,7 @@ func TestTypedLogsEnforceByteCapAndDuration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: client}
+	live := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: client}
 	pod := sdk.ObjectRef{Kind: "Pod", Namespace: "app", Name: "api"}
 	if got, err := live.LogsWithOptions(pod, corev1.PodLogOptions{Container: "main", SinceSeconds: int64ptr(1), LimitBytes: int64ptr(4)}); err == nil || got != "" {
 		t.Fatalf("unbounded logs returned: %q %v", got, err)

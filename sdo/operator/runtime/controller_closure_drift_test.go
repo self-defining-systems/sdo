@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -88,7 +89,7 @@ func newClosureDriftFixture(t *testing.T, owned, declared bool, namespace string
 		if !declared {
 			return driftReadView{ReplayReadView: &sdktest.ReplayReadView{}, diff: program.Diff{Changed: true, SourceAbsent: true}}
 		}
-		return LiveReadView{DetectionContext: s, Source: planFakeSource{source: f.source}, SourceCommit: "accepted"}
+		return LiveReadView{Carrier: inputs.New(s), Source: planFakeSource{source: f.source}, SourceCommit: "accepted"}
 	}})
 	f.cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: namespace}).OnUpdate(before, broken)
 	f.step(t, 0)
@@ -252,7 +253,7 @@ func TestClosureDriftUsesSourceFieldsWhenReconcileIsNoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*snapshot}}, Source: planFakeSource{source: f.source}, SourceCommit: "accepted"}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*snapshot}}), Source: planFakeSource{source: f.source}, SourceCommit: "accepted"}
 	diff, err := view.DiffAgainstSource(sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "reservation"})
 	if err != nil {
 		t.Fatal(err)
@@ -311,7 +312,7 @@ func TestClosureDriftRemovedExtraFieldsAgreeWithStatus(t *testing.T) {
 			event := sdk.DriftEvent{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: test.kind, Namespace: "app", Name: "restored"}, Fields: []sdk.DriftField{{Path: test.path, New: "injected"}}}
 			finding := sdk.Finding{DetectorID: "drift.unexplained", Status: sdk.FindingActive, Fingerprint: test.path, PrimaryResource: event.Ref, Metadata: map[string]any{"drift_event": event}}
 			viewFor := func(snapshot sdk.DetectionContext) program.ReadView {
-				return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+				return LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 			}
 			view := viewFor(snapshot)
 			diff, err := view.DiffAgainstSource(event.Ref)

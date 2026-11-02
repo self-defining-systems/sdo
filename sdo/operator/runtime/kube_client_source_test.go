@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -32,7 +33,7 @@ func TestClientGoSourceBindingBecomesStaleAfterAcceptedRoleRemoval(t *testing.T)
 	accepted := write("api")
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	snapshot := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80}}}}}}
-	view := LiveReadView{DetectionContext: snapshot, Source: GitPlanSource{Repository: root, ManifestPaths: []string{"app.yaml"}}, SourceCommit: accepted}
+	view := LiveReadView{Carrier: inputs.New(snapshot), Source: GitPlanSource{Repository: root, ManifestPaths: []string{"app.yaml"}}, SourceCommit: accepted}
 	bindings := program.Bindings{Objects: program.ObjectBindings{"frontend": ref}}
 	if _, err := program.Kubernetes(view, bindings); err != nil {
 		t.Fatalf("accepted role: %v", err)

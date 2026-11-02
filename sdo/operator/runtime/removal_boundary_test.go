@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sync/atomic"
@@ -97,7 +98,7 @@ func TestReadViewCannotExecuteWithControlIdentity(t *testing.T) {
 	}))
 	defer server.Close()
 	client := fake.NewSimpleClientset(&pod)
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{pod}}, Client: client, DatabaseExecConfig: &rest.Config{Host: server.URL}, ProtectedNamespace: "control"}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{pod}}), Client: client, DatabaseExecConfig: &rest.Config{Host: server.URL}, ProtectedNamespace: "control"}
 	if _, err := view.Object(ref); !apierrors.IsForbidden(err) {
 		t.Fatalf("control Pod admitted by diagnosis view: %v", err)
 	}

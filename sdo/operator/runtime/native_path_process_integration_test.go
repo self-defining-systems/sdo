@@ -23,6 +23,20 @@ import (
 	"time"
 )
 
+type nativePathInstaller struct {
+	t        *testing.T
+	accepted string
+	commit   string
+}
+
+func (i *nativePathInstaller) Install(_ context.Context, commit, namespace string) error {
+	if namespace != "demo" || commit != nativeGit(i.t, i.accepted, "rev-parse", "HEAD") {
+		return fmt.Errorf("installer did not receive accepted revision")
+	}
+	i.commit = commit
+	return nil
+}
+
 // This exercises accepted Git and outcome memory across the native lifecycle
 // and controller. Worker turns and cluster side effects are deterministic fakes.
 func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
@@ -50,11 +64,11 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 		Workers: workers, Readiness: strategies,
 		Verifier: deployment.IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: "..", Readiness: strategies, Probe: nativePathProbe{}}, Installer: installer,
 	}
-	result, err := coordinator.Run(ctx, lifecycle.Config{OperationID: "native-bootstrap", Application: "demo", Namespace: "demo", HealthObjective: "The application stays healthy.", DeployerAgentID: "sdo-source-deployment", JudgeAgentID: "sdo-health-judge", MaxAttempts: 1})
+	result, err := coordinator.Run(ctx, lifecycle.Config{OperationID: "native-bootstrap", Application: "demo", Namespace: "demo", HealthObjective: "The application stays healthy.", DeployerAgentID: "sdo-deployer", JudgeAgentID: "sdo-health-judge", MaxAttempts: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(workers.tasks, ",") != "source-deployment,health-judgment-direct-v1" {
+	if strings.Join(workers.tasks, ",") != "source-deployment,source-architecture,health-judgment-direct-v1" {
 		t.Fatalf("registered workers did not run in role order: %v", workers.tasks)
 	}
 	if backend.applies != 1 || backend.observes < 2 {
@@ -75,7 +89,7 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 
 	native := NativeIncidentBroker{
 		Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), Deriver: ProtoOutcomeDeriver{},
-		Reflector:        RegisteredReflectionWorker{Executor: workers, AgentID: "sdo-reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(accepted), Timeout: time.Minute},
+		Reflector:        RegisteredReflectionWorker{Executor: workers, AgentID: "sdo-reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(accepted), Timeout: time.Minute, SessionMode: "fresh"},
 		ResponderBackend: "test", ResponderModel: "test",
 	}
 	workspace, err := native.PrepareIncident(ctx, "native-incident")
@@ -86,17 +100,16 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	closure := nativeClosure(workspace)
+	closure.Result.ResponderSessionID = "native-responder-session"
+	closure.Request.Findings[0].PrimaryResource = sdk.ObjectRef{Kind: "Deployment", Name: "app"}
 	closure.Request.SourceCommit, closure.Request.DeployedCommit = result.SourceCommit, result.SourceCommit
 	closure.Request.DetectorHistory = []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: closure.DetectedAt, Status: DetectorEvaluationFiring}}
 	closure.Result.ConfirmedRootCauses = []ConfirmedRootCause{{
 		Summary: "bad replica", Resources: []sdk.ObjectRef{{Kind: "Deployment", Name: "app"}},
 		Evidence: []RootCauseEvidence{{Kind: "detector-finding", Source: "health", Observation: "health detector fired"}}, ExplainedDetectors: []string{"health"},
 	}}
-	closure.Result.RepairActions = []RepairActionReceipt{{
-		ActionID: "repair-1", Kind: "kubectl", Target: "Deployment/app", Summary: "restored replica", Details: "repaired source was applied", Success: true,
-		StartedAt: closure.DetectedAt.Add(100 * time.Millisecond), CompletedAt: closure.DetectedAt.Add(200 * time.Millisecond),
-		Resources: []sdk.ObjectRef{{Kind: "Deployment", Name: "app"}},
-	}}
+	// The repair is the source edit above; the broker publishes it. No hand
+	// cluster receipt is recorded, so the typed SDK gap needs no executable step.
 	clearedAt := closure.DetectedAt.Add(500 * time.Millisecond)
 	closure.HealthClearedAt = &clearedAt
 	closure.FinalDetectorStates = []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: closure.VerifiedAt, Status: DetectorEvaluationClear}}
@@ -104,12 +117,23 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.ProposalCommit == "" || receipt.OutcomeCommit == "" || receipt.OutcomeCommit != nativeGit(t, accepted, "rev-parse", "HEAD") {
+	if receipt.ProposalCommit == "" || receipt.OutcomeCommit == "" {
 		t.Fatalf("closure did not accept repair and outcome: %+v", receipt)
 	}
 	stored, err := memory.OpenReader(accepted).Get(ctx, "native-incident")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Reflection's typed SDK gaps append to the accepted outcome without
+	// changing the immutable commit that identified its original request.
+	head := nativeGit(t, accepted, "rev-parse", "HEAD")
+	nativeGit(t, accepted, "merge-base", "--is-ancestor", receipt.OutcomeCommit, head)
+	if head == receipt.OutcomeCommit || len(stored.Record.GetSdkGaps()) != 1 {
+		t.Fatalf("reflection SDK gap was not committed after the original outcome: head=%s receipt=%+v outcome=%v", head, receipt, stored.Record)
+	}
+	original := nativeGit(t, accepted, "show", receipt.OutcomeCommit+":"+layout.OutcomePath("native-incident"))
+	if strings.Contains(original, "fixture-capability") {
+		t.Fatal("reflection changed its original committed outcome")
 	}
 	if stored.Record.GetClassification() != "success" || stored.Record.GetSourceCommit() != result.SourceCommit {
 		t.Fatalf("logical outcome lost verified source: %+v", stored.Record)
@@ -118,7 +142,7 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 	if len(prior) != 1 || prior[0].IncidentID != "native-incident" {
 		t.Fatalf("runtime could not read broker outcome: %+v", prior)
 	}
-	if len(workers.tasks) != 3 || workers.tasks[2] != reflectionTaskType(t) {
+	if len(workers.tasks) != 4 || workers.tasks[3] != reflectionTaskType(t) {
 		t.Fatalf("verified success did not dispatch registered typed reflection: %v", workers.tasks)
 	}
 	if err := native.AcknowledgeClosure(ctx, receipt); err != nil {
@@ -164,6 +188,12 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 			return nil, packErr
 		}
 		response, err = anypb.New(&contracts.SourceDeploymentResult{Proposed: true, Summary: "source prepared", AgentSessionId: "source-session", Plan: &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: config}})
+	case nativeArchitectureTask():
+		request := &contracts.ArchitectureRequest{}
+		if err = task.GetRequest().UnmarshalTo(request); err != nil {
+			return nil, err
+		}
+		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded demo.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
 	case nativeHealthJudgeTask():
 		request := &contracts.HealthJudgeRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
@@ -172,34 +202,37 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 		if request.GetArchitectureSummaryMarkdown() == "" {
 			return nil, fmt.Errorf("judge did not receive accepted architecture")
 		}
-		repoRoot, err := filepath.Abs("../../..")
-		if err != nil {
-			return nil, err
+		manifest := layout.DetectorManifest{
+			APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion,
+			ID: "health-objective", Constructor: "New", Class: "health", Owner: "health_judge",
+			Watches:  []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Endpoints"}, {APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}},
+			Interval: "30s", Persistence: layout.Persistence{Firing: 2, Clearing: 2},
+			Batching:          layout.Batching{Severity: "critical", Debounce: "500ms"},
+			PossiblePlaybooks: []string{"health-objective"}, OriginatingCommit: "lifecycle-bootstrap",
 		}
-		taskPath := filepath.Join(w.t.TempDir(), "task.json")
-		resultPath := filepath.Join(w.t.TempDir(), "result.json")
-		data, err := protojson.Marshal(task)
-		if err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(taskPath, data, 0600); err != nil {
-			return nil, err
-		}
-		cmd := exec.Command("python3", "-m", "benchmarks.sregym.agent_script.synthetic_health_judge", taskPath, resultPath)
-		cmd.Dir = repoRoot
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("scripted judge: %w: %s", err, output)
-		}
-		data, err = os.ReadFile(resultPath)
-		if err != nil {
-			return nil, err
-		}
-		scripted := &contracts.AgentResult{}
-		if err := protojson.Unmarshal(data, scripted); err != nil {
-			return nil, err
-		}
-		return scripted, nil
+		if err := layout.WriteDetector(checkout, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: []layout.File{{Name: "detector.go", Content: formattedNativePathSource(w.t, `package objective
 
+import (
+ "time"
+ "sdo.dev/operator/sdk"
+ "sdo.dev/operator/sdk/servicehealth"
+)
+
+func New() sdk.Detector { return servicehealth.NewReadyEndpointsDetector(sdk.DetectorSpec{ID:"health-objective", Class:sdk.DetectorClassHealth, Owner:sdk.DetectorOwnerHealthJudge, Watches:servicehealth.EndpointWatches(), Interval:30*time.Second, Persistence:sdk.PersistencePolicy{Firing:2,Clearing:2}, Batching:sdk.BatchingPolicy{Severity:sdk.SeverityCritical,Debounce:500*time.Millisecond}, Playbooks:[]string{"health-objective"}, OriginatingCommit:"lifecycle-bootstrap"}) }
+`)}}}); err != nil {
+			return nil, err
+		}
+		playbooks := filepath.Join(checkout, layout.PlaybooksDir)
+		if err := os.MkdirAll(filepath.Join(playbooks, "health-objective"), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(playbooks, "health-objective", "README.md"), []byte("---\nschema_version: 1\nowner: responder\nfault_class: health-objective-failure\noriginating_incident: lifecycle-bootstrap\n---\n# Repair <AFFECTED_RESOURCE>\n"), 0o644); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(playbooks, "README.md"), []byte("# Playbooks\n\n- [health-objective](health-objective/README.md)\n"), 0o644); err != nil {
+			return nil, err
+		}
+		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "health checks authored", AgentSessionId: "judge-session", ObjectiveDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(request.GetHealthObjective()))), DetectorIds: []string{"health-objective"}})
 	case reflectionTaskType(w.t):
 		request := &contracts.ReflectionRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
@@ -208,7 +241,11 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 		if request.GetOutcomeCommit() != task.GetWorkspace().GetBaseCommit() || request.GetOutcome() == nil {
 			return nil, fmt.Errorf("reflection did not start from committed outcome")
 		}
-		response, err = anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "the accepted playbook already covers this incident"})
+		var gaps []*contracts.SdkGap
+		for _, cause := range request.Outcome.ConfirmedRootCauses {
+			gaps = append(gaps, &contracts.SdkGap{FaultClass: "synthetic-fixture", Primitive: "fixture-capability", Reason: "lifecycle transport test has no executable observation fixture", ScratchScript: "scratch/test", Resources: cause.Resources})
+		}
+		response, err = anypb.New(&contracts.ReflectionResult{LearningDecision: "sdk_gap", NoChangeReason: "synthetic lifecycle fixture lacks executable observations", SdkGaps: gaps})
 	default:
 		return nil, fmt.Errorf("unexpected task %q", task.GetTaskType())
 	}
@@ -220,18 +257,4 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 		return nil, err
 	}
 	return result, nil
-}
-
-type nativePathInstaller struct {
-	t        *testing.T
-	accepted string
-	commit   string
-}
-
-func (i *nativePathInstaller) Install(_ context.Context, commit, namespace string) error {
-	if namespace != "demo" || commit != nativeGit(i.t, i.accepted, "rev-parse", "HEAD") {
-		return fmt.Errorf("installer did not receive accepted revision")
-	}
-	i.commit = commit
-	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -49,7 +50,7 @@ rules:
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}, Source: source, SourceCommit: commit}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}), Source: source, SourceCommit: commit}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || !diff.Changed || !strings.Contains(diff.Text, "rules") {
 		t.Fatalf("source RBAC drift: %+v %v", diff, err)
@@ -147,7 +148,7 @@ func TestAcceptedClusterSourceMissingObservationIsNotAbsence(t *testing.T) {
 		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Group: "rbac.authorization.k8s.io", Resource: "clusterroles"}, ref.Name, errors.New("denied"))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			view := LiveReadView{DetectionContext: clusterEvidenceSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, err: tc.err}, Source: planFakeSource{}, SourceCommit: "accepted"}
+			view := LiveReadView{Carrier: inputs.New(clusterEvidenceSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, err: tc.err}), Source: planFakeSource{}, SourceCommit: "accepted"}
 			_, err := view.snapshotObject(ref)
 			if !errors.Is(err, tc.err) {
 				t.Fatalf("missing observation became absence: %v", err)

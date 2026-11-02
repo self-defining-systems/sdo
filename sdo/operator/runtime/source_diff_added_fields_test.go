@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -129,7 +130,7 @@ func diffEveryViewResults(t *testing.T, live *unstructured.Unstructured) map[str
 	}
 	results := map[string]viewResult{}
 	for _, name := range []string{"snapshot", "apply-dry-run", "replayed-capture"} {
-		view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: addedFieldsSource()}, SourceCommit: "accepted"}
+		view := LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: addedFieldsSource()}, SourceCommit: "accepted"}
 		switch name {
 		case "apply-dry-run":
 			client := fake.NewSimpleClientset()
@@ -280,7 +281,7 @@ func TestReconcileFromSourceClearsAddedFieldDrift(t *testing.T) {
 			diff := func() bool {
 				t.Helper()
 				snapshot := sdktest.Snapshot{NamespaceName: ref.Namespace, Objects: []unstructured.Unstructured{*client.objects[ref].DeepCopy()}}
-				result, err := (LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: addedFieldsSource()}, SourceCommit: "accepted"}).DiffAgainstSource(ref)
+				result, err := (LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: addedFieldsSource()}, SourceCommit: "accepted"}).DiffAgainstSource(ref)
 				if err != nil {
 					t.Fatal(err)
 				}

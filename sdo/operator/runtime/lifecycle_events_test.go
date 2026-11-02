@@ -159,15 +159,14 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 		closed := make(chan IncidentClosure, 1)
 		controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
 
-<<<<<<< HEAD
 		step(0)
 		step(1) // health reaches its firing threshold and opens the incident
 		drainWorkspace(t, controller)
 		executePendingEffect(t, controller)
 		request := awaitRequest(t, dispatcher.requests)
 		awaitDispatchCompletionQueued(t, controller)
-		for second := int64(2); second <= 5; second++ {
-			step(second) // health clears, verification succeeds, closure is cut
+		for second := int64(2); second <= 20; second++ {
+			step(second) // health clears, holds for the stability window, closure is cut
 		}
 		select {
 		case <-closed:
@@ -193,41 +192,6 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 		}
 		awaitBrokerResult(t, controller.acknowledgmentResults)
 		controller.processBrokerCompletions()
-=======
-	step(0)
-	step(1) // health reaches its firing threshold and opens the incident
-	drainWorkspace(t, controller)
-	executePendingEffect(t, controller)
-	request := awaitRequest(t, dispatcher.requests)
-	awaitDispatchCompletionQueued(t, controller)
-	for second := int64(2); second <= 20; second++ {
-		step(second) // health clears, holds for the stability window, closure is cut
-	}
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("incident never closed")
-	}
-	// Commit and acknowledge the closure through the broker.
-	closureEffect, ok := controller.PendingClosureEffect()
-	if !ok {
-		t.Fatal("closure was not pending after the incident closed")
-	}
-	if err := controller.ExecuteClosureEffect(context.Background(), closureEffect); err != nil {
-		t.Fatalf("execute closure: %v", err)
-	}
-	awaitBrokerResult(t, controller.closureResults)
-	controller.processBrokerCompletions()
-	ack, ok := controller.PendingClosureAcknowledgmentEffect()
-	if !ok {
-		t.Fatal("acknowledgment was not pending after the closure committed")
-	}
-	if err := controller.ExecuteClosureAcknowledgmentEffect(context.Background(), ack); err != nil {
-		t.Fatalf("execute acknowledgment: %v", err)
-	}
-	awaitBrokerResult(t, controller.acknowledgmentResults)
-	controller.processBrokerCompletions()
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 		wantPhases := []string{
 			PhaseOpened, PhaseWorkspacePrepared, PhaseDispatched, PhaseResponderCompleted,
@@ -278,61 +242,6 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 	})
 }
 
-<<<<<<< HEAD
-// TestLifecycleStreamRecordsSupersedeAndRelease drives a follow-up that
-// supersedes an open incident in place and strands the parent worktree, and
-// asserts the stranded-worktree lifecycle -- the exact class of bug (a worktree
-// leak on supersede) this stream exists to make diagnosable in seconds -- is
-// fully observable: the parent is superseded once, the follow-up opens once with
-// its parent linked, and the stranded worktree is released once.
-func TestLifecycleStreamRecordsSupersedeAndRelease(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		controller, dispatcher := newFollowUpController(t, 2, healthBPersistent())
-		broker := &recordingIncidentBroker{workspace: IncidentWorkspace{Worktree: "/worktrees/incident", BaseCommit: "base"}}
-		if err := controller.SetIncidentBroker(broker); err != nil {
-			t.Fatalf("set broker: %v", err)
-		}
-		lifecycle := &memoryLifecycleSink{}
-		controller.SetLifecycleSink(lifecycle)
-
-		first := completeFirstResponderWithBroker(t, controller, dispatcher)
-		stepAt(t, controller, 3) // the residual health finding supersedes the parent
-		drainRelease(t, controller)
-
-		superseded := lifecycle.byPhase(PhaseSuperseded)
-		if len(superseded) != 1 || superseded[0].IncidentId != first.IncidentID || superseded[0].SupersededBy == "" {
-			t.Fatalf("parent supersede not recorded exactly once: %#v", lifecycle.events)
-		}
-		childID := superseded[0].SupersededBy
-		if superseded[0].EventId != lifecycleEventID(first.IncidentID, string(PhaseSuperseded), childID) {
-			t.Fatalf("supersede id is not content-addressed over the parent and child: %#v", superseded[0])
-		}
-		released := lifecycle.byPhase(PhaseWorktreeReleased)
-		if len(released) != 1 || released[0].IncidentId != first.IncidentID {
-			t.Fatalf("stranded parent worktree release not recorded exactly once: %#v", lifecycle.events)
-		}
-		var childOpened *contracts.LifecycleEvent
-		for index := range lifecycle.events {
-			event := lifecycle.events[index]
-			if event.Event == PhaseOpened && event.IncidentId == childID {
-				childOpened = event
-			}
-		}
-		if childOpened == nil || childOpened.ParentIncidentId != first.IncidentID || childOpened.FollowUpAttempt != 1 {
-			t.Fatalf("follow-up open did not link its superseded parent: %#v", lifecycle.events)
-		}
-		// The parent's timeline reconstructs through its supersede; the child's is a
-		// separate incident id reachable via ParentIncidentID / SupersededBy.
-		parentTimeline := ReconstructIncidentTimeline(first.IncidentID, lifecycle.events, nil)
-		if last := parentTimeline[len(parentTimeline)-1]; last.Kind != string(PhaseWorktreeReleased) {
-			t.Fatalf("parent timeline does not end at worktree_released: %#v", last)
-		}
-		assertLifecycleTransportNeutral(t, lifecycle.events)
-	})
-}
-
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 // TestLifecycleFileSinkIsIdempotentAcrossReopen pins the crash-replay contract:
 // re-emitting every event after reopening the durable sink is a no-op, so the
 // stream is byte-for-byte unchanged, exactly as a restarted controller relies on.

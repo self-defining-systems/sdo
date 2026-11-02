@@ -37,8 +37,8 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
-	Workload      string           `json:"workload,omitempty"`
-	Scenarios     []string         `json:"scenarios,omitempty"`
+	Workload            string                                 `json:"workload,omitempty"`
+	Scenarios           []string                               `json:"scenarios,omitempty"`
 	SelectionSet        *contracts.MitigationSelectionSet      `json:"-"`
 	WaitSeconds         float64                                `json:"wait_seconds,omitempty"`
 	PreviousFindings    []sdk.Finding                          `json:"previous_findings,omitempty"`
@@ -76,10 +76,10 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
-	Burst         *prober.BurstResult `json:"burst,omitempty"`
-	VerificationStatus  VerificationStatus `json:"verification_status,omitempty"`
-	MemoryCheckReport   json.RawMessage    `json:"memory_check_report,omitempty"`
-	MemoryCheckTimedOut bool               `json:"memory_check_timed_out,omitempty"`
+	Burst               *prober.BurstResult `json:"burst,omitempty"`
+	VerificationStatus  VerificationStatus  `json:"verification_status,omitempty"`
+	MemoryCheckReport   json.RawMessage     `json:"memory_check_report,omitempty"`
+	MemoryCheckTimedOut bool                `json:"memory_check_timed_out,omitempty"`
 
 	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
 	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
@@ -199,7 +199,7 @@ type ResponderLoop struct {
 	CurrentEvidence    func() *IncidentRequest
 	Request            IncidentRequest
 	Programs           program.ProgramRegistry
-	Traffic ProberAPI
+	Traffic            ProberAPI
 	Provider           SnapshotProvider
 	Detectors          []sdk.Detector
 	Executor           PlanExecutor

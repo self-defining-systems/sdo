@@ -22,6 +22,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -221,7 +222,7 @@ func TestDriftClassifierComparesAdoptedPDBWithSource(t *testing.T) {
 	next := driftPDB(0, "kubectl-patch", metav1.ManagedFieldsOperationUpdate)
 	next.ManagedFields = append(old.ManagedFields, next.ManagedFields...)
 	client := bridgeFake(t, fake.NewSimpleClientset(next.DeepCopy()))
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", PDBList: []policyv1.PodDisruptionBudget{*next}}, Client: client, Source: multiAdoptionSource{objects: []*unstructured.Unstructured{acceptedPDB}}, SourceCommit: "accepted"}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", PDBList: []policyv1.PodDisruptionBudget{*next}}), Client: client, Source: multiAdoptionSource{objects: []*unstructured.Unstructured{acceptedPDB}}, SourceCommit: "accepted"}
 	diff, err := view.DiffAgainstSource(sdk.ObjectRef{APIVersion: "policy/v1", Kind: "PodDisruptionBudget", Namespace: "app", Name: "opensearch-pdb"})
 	if err != nil || !diff.Changed {
 		t.Fatalf("PDB source diff = %+v, %v", diff, err)
@@ -243,7 +244,7 @@ func TestAdoptionRecordsPreexistingPDBDifferenceOnce(t *testing.T) {
 	controller, api := genericAdoptionController(t, []*unstructured.Unstructured{acceptedPDB}, map[string]map[string]any{"/apis/policy/v1/namespaces/app/poddisruptionbudgets/opensearch-pdb": content})
 	client := controller.drift.Client
 	controller.drift.View = func(sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", PDBList: []policyv1.PodDisruptionBudget{*live}}, Client: client, Source: multiAdoptionSource{objects: []*unstructured.Unstructured{acceptedPDB}}, SourceCommit: "accepted"}
+		return LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", PDBList: []policyv1.PodDisruptionBudget{*live}}), Client: client, Source: multiAdoptionSource{objects: []*unstructured.Unstructured{acceptedPDB}}, SourceCommit: "accepted"}
 	}
 	start := time.Unix(10, 0).UTC()
 	for step := 0; step < 3; step++ {

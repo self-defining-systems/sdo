@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -102,7 +103,7 @@ func TestScopedDiagnosisSurvivesScopeChange(t *testing.T) {
 	request := IncidentRequest{IncidentID: "generation", Namespace: "app", ObservationGeneration: "S1"}
 	phase := "open@detect"
 	snapshot := sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: sdk.ScopedSnapshot{Version: 1, Generation: "S1"}}
-	loop := ResponderLoop{Request: request, CorpusSessionRoot: root, capturePhase: phase, Provider: staticProvider{snapshot: snapshot}, ReadView: func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s} }}
+	loop := ResponderLoop{Request: request, CorpusSessionRoot: root, capturePhase: phase, Provider: staticProvider{snapshot: snapshot}, ReadView: func(s sdk.DetectionContext) program.ReadView { return LiveReadView{Carrier: inputs.New(s)} }}
 	if _, err := loop.snapshotView(context.Background()); err != nil {
 		t.Fatal(err)
 	}

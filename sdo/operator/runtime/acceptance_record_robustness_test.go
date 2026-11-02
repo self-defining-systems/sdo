@@ -17,6 +17,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -77,7 +78,7 @@ func TestLostAcceptanceRecordKeepsOtherManagersAdditions(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	diff := func() (program.Diff, error) {
 		snapshot := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*api.service.DeepCopy()}}
-		return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}.DiffAgainstSource(ref)
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}.DiffAgainstSource(ref)
 	}
 	start := time.Unix(10, 0).UTC()
 	if err := controller.StepEvents(ctx, start, nil); err != nil {
@@ -150,7 +151,7 @@ func TestRecreatedObjectKeepsItsCarriedAcceptanceRecord(t *testing.T) {
 			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 			diff := func() (program.Diff, error) {
 				snapshot := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*api.service.DeepCopy()}}
-				return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}.DiffAgainstSource(ref)
+				return LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}.DiffAgainstSource(ref)
 			}
 			// Server defaults present when SDO first accepts the Service.
 			api.service.Spec.Type, api.service.Spec.SessionAffinity = corev1.ServiceTypeClusterIP, corev1.ServiceAffinityNone
@@ -240,7 +241,7 @@ func fakeAdoptionController(t *testing.T, fakeClient *fake.Clientset, sources ad
 		t.Fatal(err)
 	}
 	controller.ConfigureDrift(DriftControllerConfig{Source: sources, Client: client, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: snapshot, Source: sources, SourceCommit: "accepted", Client: client}
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: sources, SourceCommit: "accepted", Client: client}
 	}})
 	return controller, client
 }
@@ -455,7 +456,7 @@ func TestAdoptionUpgradesRecordWithoutUID(t *testing.T) {
 	api.service.Annotations["example.com/maintenance"] = "true"
 	diff := func() (program.Diff, error) {
 		snapshot := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*api.service.DeepCopy()}}
-		return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}.DiffAgainstSource(ref)
+		return LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}.DiffAgainstSource(ref)
 	}
 	if result, err := diff(); err != nil || !result.Changed {
 		t.Fatalf("record without UID not read: %+v %v", result, err)

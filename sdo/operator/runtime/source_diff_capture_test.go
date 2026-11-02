@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -33,7 +34,7 @@ func TestSourceDiffRecordingPreservesAbsentAcceptedProbe(t *testing.T) {
 		client kubernetes.Interface
 	}{{"live", bridgeFake(t, client)}, {"offline", nil}} {
 		t.Run(tc.name, func(t *testing.T) {
-			recorder := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{live}}, Source: planFakeSource{source: source}, SourceCommit: "accepted", Client: tc.client}}
+			recorder := &sdktest.RecordingReadView{ReadView: LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{live}}), Source: planFakeSource{source: source}, SourceCommit: "accepted", Client: tc.client}}
 			diff, err := recorder.DiffAgainstSource(ref)
 			if err != nil {
 				t.Fatal(err)
@@ -77,7 +78,7 @@ func TestSourceDiffIgnoresLastAppliedAnnotationNoise(t *testing.T) {
 		obj.Annotations = nil
 		return true, obj, nil
 	})
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{live}}, Source: planFakeSource{source: source}, SourceCommit: "accepted", Client: bridgeFake(t, client)}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{live}}), Source: planFakeSource{source: source}, SourceCommit: "accepted", Client: bridgeFake(t, client)}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
 		t.Fatalf("bookkeeping annotation is not source drift: %+v %v", diff, err)
 	}

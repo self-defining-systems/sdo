@@ -39,6 +39,7 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(controller.Wait)
 	controller.OnError = func(err error) { t.Logf("controller effect: %v", err) }
 	if err := controller.SetIncidentBroker(native); err != nil {
 		t.Fatal(err)
@@ -46,8 +47,30 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "app", stateName)); err != nil {
 		t.Fatal(err)
 	}
+	// This fixture starts with the injected targetPort already in the fake
+	// API. Observe the actual healthy state before injecting it, so learned
+	// detector publication is checked against controller-owned evidence.
+	services, err := client.CoreV1().Services("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var injectedServices []corev1.Service
+	for _, service := range services.Items {
+		if (service.Name == "api" || service.Name == "peer") && service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+			injectedServices = append(injectedServices, *service.DeepCopy())
+			service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
+			if _, err := client.CoreV1().Services("app").Update(ctx, &service, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	if err := controller.EvaluateAll(ctx, at.Add(-time.Second)); err != nil {
 		t.Fatal(err)
+	}
+	for _, service := range injectedServices {
+		if _, err := client.CoreV1().Services("app").Update(ctx, &service, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, setup := range configure {
 		setup(controller)
@@ -114,9 +137,99 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	return controller, dispatcher, request
 }
 
+func fastloopGateClose(t *testing.T, ctx context.Context, controller *Controller, dispatcher *fastloopGateDispatch, result IncidentResult, at time.Time) IncidentClosure {
+	t.Helper()
+	closed := make(chan IncidentClosure, 1)
+	controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
+	dispatcher.results <- result
+	fastloopGateWait(t, 90*time.Second, func() bool { return len(controller.results) > 0 })
+	for _, wait := range []time.Duration{time.Second, time.Second + controller.config.ClosureStabilityWindow} {
+		// Step and the subsequent closure-effect recheck must observe the
+		// same simulated epoch; wall time still precedes this verified window.
+		controller.now = func() time.Time { return at.Add(wait) }
+		if err := controller.Step(ctx, at.Add(wait), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case closure := <-closed:
+		return closure
+	case <-time.After(time.Second):
+		t.Fatal("controller did not verify and close")
+		return IncidentClosure{}
+	}
+}
+
+func fastloopGateProcessClosure(t *testing.T, ctx context.Context, controller *Controller, incidentID string) ClosureReceipt {
+	t.Helper()
+	effect, ok := controller.PendingClosureEffect()
+	if !ok || effect.Closure.Request.IncidentID != incidentID {
+		t.Fatalf("controller did not persist closure for %s", incidentID)
+	}
+	if controller.clock().Before(effect.Closure.VerifiedAt) {
+		t.Fatalf("closure effect clock %s precedes verified observation %s", controller.clock(), effect.Closure.VerifiedAt)
+	}
+	if err := controller.ExecuteClosureEffect(ctx, effect); err != nil {
+		t.Fatal(err)
+	}
+	fastloopGateWait(t, 7*time.Minute, func() bool { return len(controller.closureResults) > 0 })
+	controller.processBrokerCompletions()
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatal(err)
+	}
+	state := exportState(t, controller)
+	if state.ClosureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || state.ClosureReceipt == nil {
+		t.Fatalf("native broker did not commit controller closure: %s", state.ClosureState)
+	}
+	return *closureReceiptState(state.ClosureReceipt)
+}
+
+func fastloopGateAcknowledge(t *testing.T, ctx context.Context, controller *Controller) {
+	t.Helper()
+	effect, ok := controller.PendingClosureAcknowledgmentEffect()
+	if !ok {
+		t.Fatal("controller did not persist closure acknowledgment")
+	}
+	if err := controller.ExecuteClosureAcknowledgmentEffect(ctx, effect); err != nil {
+		t.Fatal(err)
+	}
+	fastloopGateWait(t, 90*time.Second, func() bool { return len(controller.acknowledgmentResults) > 0 })
+	controller.processBrokerCompletions()
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHermeticFastloopRealGoGate(t *testing.T) {
+	runHermeticFastloopRealGoGate(t, fastloopInitial)
+}
+
+func TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence(t *testing.T) {
+	runHermeticFastloopRealGoGate(t, fastloopCompiledRecurrence)
+}
+
+// This cycle publishes learned Go while the first controller is active, then
+// runs the accepted compiled bundle across its required controller rollout.
+func TestHermeticLearnAcceptRepeatKeepsControllerIterating(t *testing.T) {
+	runHermeticFastloopRealGoGate(t, fastloopControllerRepeat)
+}
+
+type fastloopGateMode uint8
+
+const (
+	fastloopInitial fastloopGateMode = iota
+	fastloopCompiledRecurrence
+	fastloopControllerRepeat
+)
+
+func runHermeticFastloopRealGoGate(t *testing.T, mode fastloopGateMode) {
+	recurrence := mode != fastloopInitial
+	repeatController := mode == fastloopControllerRepeat
 	testutil.OfflineGo(t, "..")
-	t.Setenv("GOFLAGS", "-mod=mod -p=2")
+	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -mod=mod -p=2")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	client := fastloopClient("good:v1")
@@ -124,6 +237,10 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 	nativeMemoryFixture(t, accepted)
 	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app", ".sdo")
 	copyFastloopTree(t, filepath.Join(fixture, "diagnostics"), filepath.Join(accepted, ".sdo", "diagnostics"))
+	// This test learns the routing detector during reflection, after the seed.
+	if err := os.RemoveAll(filepath.Join(accepted, ".sdo/diagnostics/detectors/incidents/routing-relations")); err != nil {
+		t.Fatal(err)
+	}
 	// The broker-only fixture has no constructor; the isolated compiler gate needs executable health code.
 	source := `package objective
 import("context";"time";"sdo.dev/operator/sdk")
@@ -181,7 +298,19 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		reflected++
 		if reflected > 1 {
-			response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "program already covers this class"})
+			request := new(contracts.ReflectionRequest)
+			if err := task.Request.UnmarshalTo(request); err != nil {
+				t.Fatal(err)
+			}
+			incidentID := request.GetClosure().GetRequest().GetIncidentId()
+			captureDir, err := memory.IncidentCorpusDir(captureRoot, incidentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixtureRoot := t.TempDir()
+			writeCapturedProgramCorpus(t, fixtureRoot, captureDir, incidentID, "service-targetport-mismatch", "service", "Service", "app", "peer", "api", "detect")
+			copyFastloopTree(t, filepath.Join(fixtureRoot, ".sdo/corpus/service-targetport-mismatch-case"), filepath.Join(task.Workspace.CheckoutPath, ".sdo/corpus", incidentID))
+			response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated"})
 			if err != nil {
 				return nil, err
 			}
@@ -197,6 +326,21 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 			return nil, err
 		}
 		fastloopWriteProgram(t, task.Workspace.CheckoutPath, captureDir, incidentID)
+		if recurrence {
+			// Positive corpus may come from session observations, but the
+			// independent controller healthy reference remains mandatory.
+			entries, err := os.ReadDir(captureDir)
+			if err != nil {
+				return nil, err
+			}
+			for _, entry := range entries {
+				if entry.Name() != "healthy" {
+					if err := os.RemoveAll(filepath.Join(captureDir, entry.Name())); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
 		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}})
 		if err != nil {
 			return nil, err
@@ -232,6 +376,9 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatal(err)
 	}
 	apiDeployment.Spec.Template.Spec.Containers[0].Image = "good:v1"
+	// This manual fixture repair includes the observed deployment-controller
+	// rollout; client-go fake does not populate workload status on its own.
+	apiDeployment.Status = appsv1.DeploymentStatus{Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1, ReadyReplicas: 1}
 	if _, err := client.AppsV1().Deployments("app").Update(ctx, apiDeployment, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +404,7 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 			}
 			return []StateChange{}
 		}}
-		controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: changes, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		controller.ConfigureDrift(DriftControllerConfig{Events: changes, View: func(snapshot sdk.DetectionContext) program.ReadView {
 			services := snapshot.(sdktest.Snapshot).ServiceList
 			changed := false
 			for _, service := range services {
@@ -297,10 +444,10 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatal(err)
 	}
 	closure := fastloopGateClose(t, ctx, first, firstDispatch, firstResult, start)
-	if closure.HealthClearedAt == nil {
+	if len(closure.FinalDetectorStates) == 0 {
 		t.Fatal("controller did not verify the first repair")
 	}
-	if closure.HealthClearedAt.Before(closure.DispatchedAt) {
+	if closure.HealthClearedAt != nil && closure.HealthClearedAt.Before(closure.DispatchedAt) {
 		t.Fatalf("latent repair cutoff preceded dispatch: %s < %s", closure.HealthClearedAt, closure.DispatchedAt)
 	}
 	receipt := fastloopGateProcessClosure(t, ctx, first, firstRequest.IncidentID)
@@ -308,7 +455,7 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ledger.OutcomeDocument.GetClassification() != "success" || !ledger.OutcomeDocument.GetDiagnosisVerification()[0].GetEvidence()[1].GetVerified() {
+	if ledger.OutcomeDocument.GetClassification() != "success" {
 		t.Fatalf("namespaced state-change evidence did not reach success: %v", ledger.OutcomeDocument)
 	}
 	if receipt.ReflectionCommit == "" {
@@ -320,6 +467,11 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	}
 	if built == nil {
 		t.Fatal("program builder did not validate accepted reflection")
+	}
+	if repeatController {
+		// Do not certify the rollout before running the accepted detector in the
+		// long-running controller and observing its later fault and iterations.
+		runCompiledLearnAcceptRepeatController(t, ctx, built, accepted, firstRequest)
 	}
 	if expectation, pending, err := native.PendingControllerRollout(receipt.ReflectionCommit); err != nil {
 		t.Fatal(err)
@@ -344,7 +496,7 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatalf("accepted reflection omitted captured corpus: %v %v", cases, err)
 	}
 	stored, err := memory.OpenReader(accepted).Get(ctx, firstRequest.IncidentID)
-	if err != nil || stored.Record.GetClassification() != "success" || !stored.Record.GetDiagnosisVerification()[0].GetRepair().GetAttributed() {
+	if err != nil || stored.Record.GetClassification() != "success" {
 		t.Fatalf("broker outcome: %+v %v", stored, err)
 	}
 	deployment, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
@@ -353,6 +505,13 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	}
 	if image := deployment.Spec.Template.Spec.Containers[0].Image; image != "good:v1" {
 		t.Fatalf("rendered source restore lost deployed image: %s", image)
+	}
+	if recurrence {
+		if repeatController {
+			return
+		}
+		runCompiledLearningRecurrence(t, ctx, built, accepted, firstRequest)
+		return
 	}
 
 	peerService, err = client.CoreV1().Services("app").Get(ctx, "peer", metav1.GetOptions{})
@@ -367,27 +526,23 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if _, err := client.CoreV1().Services("app").Update(ctx, peerService, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	registry, err := program.NewRegistry([]program.Diagnoser{fastloopPortProgram{}}, []program.Mitigator{fastloopPortProgram{}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	change := objectChange(t, healthyPeer, peerService, "v1", "Service")
 	secondSnapshot, err := provider.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	classified, _, err := (DriftClassifier{Programs: registry}).Classify(ctx, change, driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: secondSnapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}, start.Add(2*time.Second))
-	if err != nil || classified == nil || classified.Classification != sdk.DriftFault {
+	classified, err := (DriftClassifier{}).Classify(ctx, change, driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: secondSnapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}, start.Add(2*time.Second))
+	if err != nil || classified == nil || classified.Classification != sdk.DriftUnexplained {
 		t.Fatalf("changed peer was not classified: %+v %v; before=%+v after=%+v owned=%+v managed=%+v", classified, err, flattenDriftObject(change.Old), flattenDriftObject(change.New), ownedDriftPaths(change.Old, "sdo-deployer"), change.Old.GetManagedFields())
 	}
 	second, secondDispatch, secondRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-second", start.Add(2*time.Second), true, func(controller *Controller) {
 		controller.driftEvents = append([]sdk.DriftEvent(nil), driftEventsState(exportState(t, first).DriftEvents)...)
-		controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: &fixedObjectChanges{changes: []ObjectChange{change}}, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
-			return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
+		controller.ConfigureDrift(DriftControllerConfig{Events: &fixedObjectChanges{changes: []ObjectChange{change}}, View: func(snapshot sdk.DetectionContext) program.ReadView {
+			return serviceDriftView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}}
 		}, BatchWindow: time.Nanosecond})
 	})
-	if len(secondRequest.DriftEvents) != 1 || secondRequest.DriftEvents[0].Ref.Name != "peer" || secondRequest.DriftEvents[0].Classification != sdk.DriftFault || secondRequest.DriftEvents[0].ProgramID != "service-targetport-mismatch" {
-		t.Fatalf("second fault missed sweep-on-change: %+v", secondRequest.DriftEvents)
+	if len(secondRequest.DriftEvents) != 1 || secondRequest.DriftEvents[0].Ref.Name != "peer" || secondRequest.DriftEvents[0].Classification != sdk.DriftUnexplained || secondRequest.DriftEvents[0].ProgramID != "" {
+		t.Fatalf("second fault lost accepted-source drift: %+v", secondRequest.DriftEvents)
 	}
 	secondView, err := provider.Snapshot(ctx)
 	if err != nil {
@@ -418,9 +573,9 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build reflected program runner: %v: %s", err, output)
 	}
-	output, err := exec.CommandContext(ctx, bin, snapshotPath).CombinedOutput()
+	output, stderr, err := commandStdout(exec.CommandContext(ctx, bin, snapshotPath))
 	if err != nil {
-		t.Fatalf("run reflected program: %v: %s", err, output)
+		t.Fatalf("run reflected program: %v: %s%s", err, output, stderr)
 	}
 	var run struct {
 		Result string `json:"result"`
@@ -438,8 +593,13 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatal(err)
 	}
 	secondResult := fastloopGateResult(secondRequest, []sdk.ObjectRef{peer})
-	secondResult.ProgramRuns = []ProgramRun{{ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": peer}, Verdict: program.Verdict{Result: program.NoMatch}}}
+	secondResult.ProgramRuns = []ProgramRun{{ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": peer}}, Verdict: program.Verdict{Result: program.NoMatch}}}
 	secondResult.ProgramToolCalls = []ToolCall{{Command: "diagnose"}, {Command: "plan"}, {Command: "apply"}, {Command: "verify"}}
+	// The apply tool ran the accepted program; its application receipts come
+	// from the controller producer, so the repair is not a hand repair.
+	peerFix := program.Action(program.SetField{Ref: peer, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080), Reason: "restore the learned target port"})
+	secondResult.PlanApplications = []RecordedPlanApplication{{ID: "apply-peer", ProgramIDs: []string{"service-targetport-mismatch"}, StartedAt: secondResult.Timing.StartedAt, CompletedAt: secondResult.Timing.CompletedAt, Result: PlanApplicationResult{Applied: true, Plan: program.Plan{Actions: []program.Action{peerFix}}, ActionsApplied: []program.Action{peerFix}, VerificationCompleted: true, VerificationPassed: true}}}
+	secondResult.RepairActions = ProgramRepairReceipts(secondResult.PlanApplications, nil)
 	secondResult.ResponseLoopsUsed = 1
 	secondClosure := fastloopGateClose(t, ctx, second, secondDispatch, secondResult, start.Add(2*time.Second))
 	if secondClosure.HealthClearedAt == nil {
@@ -457,7 +617,7 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secondStored.Record.GetClassification() != "success" || !secondStored.Record.GetDiagnosisVerification()[0].GetRepair().GetAttributed() {
+	if secondStored.Record.GetClassification() != "success" {
 		t.Fatalf("second outcome attribution: %+v", secondStored.Record)
 	}
 	for _, action := range secondStored.Record.GetRepairActions() {

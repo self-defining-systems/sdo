@@ -353,7 +353,6 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 		controller.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 		controller.mu.Unlock()
 
-<<<<<<< HEAD
 		closure, ok := controller.PendingClosureEffect()
 		if !ok {
 			t.Fatal("expected closure effect")
@@ -361,8 +360,10 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 		if err := controller.ExecuteClosureEffect(ctx, closure); !errors.Is(err, ErrEffectNotDurable) {
 			t.Fatalf("closure committed before incident close was durable: got %v", err)
 		}
-		if err := executePausedEffects(ctx, controller); err != nil || len(broker.observed) != 0 {
-			t.Fatalf("paused controller stopped or committed undurable closure: %v", err)
+		// A pause persists pending bookkeeping itself. The broker checks the
+		// API's durable state when the effect runs, including on the first save.
+		if err := executePausedEffects(ctx, controller); err != nil {
+			t.Fatalf("paused closure: %v", err)
 		}
 		if err := controller.PersistState(ctx); err != nil {
 			t.Fatalf("persist incident close: %v", err)
@@ -381,8 +382,8 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 		if err := controller.ExecuteClosureAcknowledgmentEffect(ctx, ack); !errors.Is(err, ErrEffectNotDurable) {
 			t.Fatalf("closure acknowledged before its receipt was durable: got %v", err)
 		}
-		if err := executePausedEffects(ctx, controller); err != nil || len(broker.observed) != 0 {
-			t.Fatalf("paused controller stopped or acknowledged undurable receipt: %v", err)
+		if err := executePausedEffects(ctx, controller); err != nil {
+			t.Fatalf("paused acknowledgment: %v", err)
 		}
 		if err := controller.PersistState(ctx); err != nil {
 			t.Fatalf("persist closure receipt: %v", err)
@@ -401,54 +402,4 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 			t.Fatalf("acknowledged closure is not durable: err=%v state=%#v", err, state)
 		}
 	})
-=======
-	closure, ok := controller.PendingClosureEffect()
-	if !ok {
-		t.Fatal("expected closure effect")
-	}
-	if err := controller.ExecuteClosureEffect(ctx, closure); !errors.Is(err, ErrEffectNotDurable) {
-		t.Fatalf("closure committed before incident close was durable: got %v", err)
-	}
-	// A pause persists pending bookkeeping itself. The broker checks the
-	// API's durable state when the effect runs, including on the first save.
-	if err := executePausedEffects(ctx, controller); err != nil {
-		t.Fatalf("paused closure: %v", err)
-	}
-	if err := controller.PersistState(ctx); err != nil {
-		t.Fatalf("persist incident close: %v", err)
-	}
-	if err := executePendingEffects(ctx, controller); err != nil {
-		t.Fatalf("execute closure: %v", err)
-	}
-	awaitObservation(t, broker.observed, "process")
-	awaitBrokerResult(t, controller.closureResults)
-	controller.processBrokerCompletions()
-
-	ack, ok := controller.PendingClosureAcknowledgmentEffect()
-	if !ok {
-		t.Fatal("expected acknowledgment effect")
-	}
-	if err := controller.ExecuteClosureAcknowledgmentEffect(ctx, ack); !errors.Is(err, ErrEffectNotDurable) {
-		t.Fatalf("closure acknowledged before its receipt was durable: got %v", err)
-	}
-	if err := executePausedEffects(ctx, controller); err != nil {
-		t.Fatalf("paused acknowledgment: %v", err)
-	}
-	if err := controller.PersistState(ctx); err != nil {
-		t.Fatalf("persist closure receipt: %v", err)
-	}
-	if err := executePendingEffects(ctx, controller); err != nil {
-		t.Fatalf("execute acknowledgment: %v", err)
-	}
-	awaitObservation(t, broker.observed, "ack")
-	awaitBrokerResult(t, controller.acknowledgmentResults)
-	controller.processBrokerCompletions()
-	if err := controller.PersistState(ctx); err != nil {
-		t.Fatalf("persist acknowledgment: %v", err)
-	}
-	state, err := durableState(client)
-	if err != nil || state.LastAcknowledgedIncidentId != request.IncidentID || state.PendingClosure != nil {
-		t.Fatalf("acknowledged closure is not durable: err=%v state=%#v", err, state)
-	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }

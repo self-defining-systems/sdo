@@ -12,32 +12,6 @@ import (
 	"time"
 )
 
-<<<<<<< HEAD
-=======
-func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
-	root := nativeRepository(t)
-	config := &contracts.ControllerConfig{
-		ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "linked", AppRoot: root, Namespace: "default",
-		BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository",
-		ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model",
-	}
-	if _, _, err := nativeBrokerFromLaunch(context.Background(), config, fake.NewSimpleClientset()); err == nil {
-		t.Fatal("linked worker mount accepted for native broker")
-	}
-	config.WorkerMountMode = "proposal-only"
-	native, _, err := nativeBrokerFromLaunch(context.Background(), config, fake.NewSimpleClientset())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if native.Repository == nil || native.Deriver == nil || native.ResponderBackend != "codex" {
-		t.Fatalf("incomplete native broker: %+v", native)
-	}
-	if deriver, ok := native.Deriver.(ProtoOutcomeDeriver); !ok || deriver.SessionRoot != config.GetRepositoryMountPath() {
-		t.Fatal("production outcome derivation must retain the protected incident API history")
-	}
-}
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func TestNativeReflectionSharesIncidentSessionWithResponder(t *testing.T) {
 	root := t.TempDir()
 	registry, err := worker_registry.New(builtInReflectorRegistration("agent:test"))
@@ -124,11 +98,7 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-<<<<<<< HEAD
-	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
-=======
-	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", ProberImage: "traffic-only:test", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", Replay: "off", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
->>>>>>> origin/vic-lsh/dev/sdo-improve
+	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", Replay: "off", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
 	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
 	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
 		t.Fatal(err)

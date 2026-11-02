@@ -32,7 +32,7 @@ func TestRecordedClientPreviousAndEmptyLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: upstream, DatabaseExecConfig: config}}
+	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: upstream, DatabaseExecConfig: config}}
 	for _, container := range []string{"api", "empty"} {
 		options := &corev1.PodLogOptions{Container: container, Previous: true}
 		client, err := program.Kubernetes(captured)
@@ -72,7 +72,7 @@ func TestRecordedClientSecretReadsNeverReachTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: upstream, DatabaseExecConfig: config}}
+	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: upstream, DatabaseExecConfig: config}}
 	client, err := program.Kubernetes(captured)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestRecordedClientPreservesProxyReadBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: upstream, DatabaseExecConfig: config}}
+	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: upstream, DatabaseExecConfig: config}}
 	client, err := program.Kubernetes(captured)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestRecordedClientFiniteWatchReplaysEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, Client: upstream, DatabaseExecConfig: config}}
+	captured := &sdktest.RecordingReadView{ReadView: LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), Client: upstream, DatabaseExecConfig: config}}
 	for _, view := range []program.ReadView{captured, &sdktest.ReplayReadView{Calls: nil}} {
 		if replay, ok := view.(*sdktest.ReplayReadView); ok {
 			replay.Calls = captured.Calls

@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -42,7 +43,7 @@ func TestAddedFieldDriftProducerReachesRepairStage(t *testing.T) {
 			live := old.DeepCopy()
 			inject(live)
 			snapshot := sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}
-			view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+			view := LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 			start := time.Now()
 			config := testControllerConfig()
 			config.Namespace = "app"
@@ -116,7 +117,7 @@ func TestAddedFieldControllerOwnershipIsNotDrift(t *testing.T) {
 			live := old.DeepCopy()
 			_ = unstructured.SetNestedField(live.Object, int64(3), "spec", "replicas")
 			live.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "horizontal-pod-autoscaler", Subresource: "scale", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:replicas":{}}}`)}}})
-			view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+			view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}), Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 			event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: old, New: live}, view, time.Now())
 			if err != nil || event != nil {
 				t.Fatalf("controller churn admitted: %+v %v", event, err)
@@ -151,7 +152,7 @@ func TestHealthySeedTopologyAddsNoDriftFindings(t *testing.T) {
 					addAnnotation(next, "deployment.kubernetes.io/revision", "2")
 					_ = unstructured.SetNestedField(next.Object, int64(1), "status", "readyReplicas")
 					snapshot := sdktest.Snapshot{NamespaceName: namespace, Objects: []unstructured.Unstructured{*next}}
-					view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+					view := LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 					config := testControllerConfig()
 					config.Namespace = namespace
 					c, err := NewController(config, nil, staticProvider{snapshot: snapshot}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Now())
@@ -178,7 +179,7 @@ func TestAddedFieldDriftOnAutoscaledWorkload(t *testing.T) {
 	containers[0].(map[string]any)["resources"] = map[string]any{"limits": map[string]any{"cpu": "100m"}}
 	_ = unstructured.SetNestedSlice(live.Object, containers, "spec", "template", "spec", "containers")
 	snapshot := sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}, HPAList: []autoscalingv2.HorizontalPodAutoscaler{{ObjectMeta: metav1.ObjectMeta{Name: "autoscaler", Namespace: "app"}, Spec: autoscalingv2.HorizontalPodAutoscalerSpec{ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "search"}}}}}
-	view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+	view := LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 	event, err := (DriftClassifier{}).Classify(context.Background(), ObjectChange{Old: old, New: live}, view, time.Now())
 	if err != nil || event == nil || len(event.Fields) != 1 || event.Fields[0].Path != "spec.template.spec.containers[0].resources.limits.cpu" {
 		t.Fatalf("HPA hid unrelated addition: %+v %v", event, err)

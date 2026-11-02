@@ -23,82 +23,6 @@ import (
 	"time"
 )
 
-// Execute the actual scripted Go artifact, not a second implementation of its
-// predicate. Only primitive reads are recorded at the process boundary.
-type compiledForeignInvariant struct{ binary string }
-
-func (compiledForeignInvariant) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: "networkpolicy-service-isolation", Params: []program.ParamSpec{{Name: "policy", Kind: "NetworkPolicy", Required: true}}}
-}
-
-func (p compiledForeignInvariant) Diagnose(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
-	snapshot, err := sdktest.CaptureSnapshot(view, view.Namespace())
-	if err != nil {
-		return program.Verdict{}, err
-	}
-	recording := &sdktest.RecordingReadView{ReadView: view}
-	if _, err := recording.DiffAgainstSource(bindings["policy"]); err != nil {
-		return program.Verdict{}, err
-	}
-	for _, service := range view.Services() {
-		if _, err := recording.DiffAgainstSource(sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: service.Namespace, Name: service.Name}); err != nil {
-			return program.Verdict{}, err
-		}
-	}
-	data, err := json.Marshal(struct {
-		Snapshot sdktest.Snapshot
-		Calls    []sdktest.PrimitiveCall
-		Bindings program.Bindings
-	}{snapshot, recording.Calls, bindings})
-	if err != nil {
-		return program.Verdict{}, err
-	}
-	cmd := exec.CommandContext(ctx, p.binary)
-	cmd.Stdin = bytes.NewReader(data)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return program.Verdict{}, fmt.Errorf("scripted invariant: %w: %s", err, output)
-	}
-	var verdict program.Verdict
-	if err := json.Unmarshal(output, &verdict); err != nil {
-		return program.Verdict{}, err
-	}
-	return verdict, nil
-}
-
-func compileForeignInvariant(t *testing.T) compiledForeignInvariant {
-	t.Helper()
-	root := t.TempDir()
-	sdkRoot, err := filepath.Abs("../sdk")
-	if err != nil {
-		t.Fatal(err)
-	}
-	module := fmt.Sprintf("module foreign-invariant\n\ngo 1.26.0\n\nrequire sdo.dev/operator/sdk v0.0.0\nreplace sdo.dev/operator/sdk => %s\n", sdkRoot)
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(module), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(root, "candidate"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	source, err := os.ReadFile("../../../benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "candidate", "diagnose.go"), source, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(foreignInvariantRunner), 0600); err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(root, "diagnose")
-	cmd := exec.Command("go", "build", "-p", "8", "-mod=mod", "-o", binary, ".")
-	cmd.Dir = root
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("compile scripted learned invariant: %v: %s", err, output)
-	}
-	return compiledForeignInvariant{binary: binary}
-}
-
 func compileReflectedForeignInvariant(t *testing.T, captureRoot, incidentID string) compiledForeignInvariant {
 	t.Helper()
 	capture, err := memory.IncidentCorpusDir(captureRoot, incidentID)
@@ -210,7 +134,6 @@ func TestHermeticForeignNetworkPolicyInvariantRepeat(t *testing.T) {
 }
 
 func TestForeignNetworkPolicyInvariantNearMisses(t *testing.T) {
-	t.Parallel()
 	source, commit := foreignSource(t)
 	learned := compileForeignInvariant(t)
 	for _, tc := range []struct {
@@ -233,10 +156,87 @@ func TestForeignNetworkPolicyInvariantNearMisses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view := LiveReadView{Carrier: inputs.New(policyWorkloadSnapshot(tc.policies...)), Source: source, SourceCommit: commit}
-			verdict, err := learned.Diagnose(context.Background(), view, program.Bindings{"policy": {APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}})
+			if len(tc.policies) == 0 {
+				view.DetectionContext = confirmedAbsentSnapshot{Snapshot: policyWorkloadSnapshot(), Ref: sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}}
+			}
+			verdict, err := learned.Diagnose(context.Background(), view, program.Bindings{Objects: program.ObjectBindings{"policy": {APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}}})
 			if err != nil || verdict.Result != tc.want {
 				t.Fatalf("verdict=%+v error=%v", verdict, err)
 			}
 		})
 	}
+}
+
+// Execute the actual scripted Go artifact, not a second implementation of its
+// predicate. Only primitive reads are recorded at the process boundary.
+type compiledForeignInvariant struct{ binary string }
+
+func (compiledForeignInvariant) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "networkpolicy-service-isolation", Params: []program.ParamSpec{{Name: "policy", Kind: "NetworkPolicy", Required: true}}}
+}
+func (p compiledForeignInvariant) Diagnose(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
+	snapshot, err := sdktest.CaptureSnapshot(view, view.Namespace())
+	if err != nil {
+		return program.Verdict{}, err
+	}
+	recording := &sdktest.RecordingReadView{ReadView: view}
+	if _, err := recording.DiffAgainstSource(bindings.Objects["policy"]); err != nil {
+		return program.Verdict{}, err
+	}
+	for _, service := range view.Services() {
+		if _, err := recording.DiffAgainstSource(sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: service.Namespace, Name: service.Name}); err != nil {
+			return program.Verdict{}, err
+		}
+	}
+	data, err := json.Marshal(struct {
+		Snapshot sdktest.Snapshot
+		Calls    []sdktest.PrimitiveCall
+		Bindings program.Bindings
+	}{snapshot, recording.Calls, bindings})
+	if err != nil {
+		return program.Verdict{}, err
+	}
+	cmd := exec.CommandContext(ctx, p.binary)
+	cmd.Stdin = bytes.NewReader(data)
+	output, stderr, err := commandStdout(cmd)
+	if err != nil {
+		return program.Verdict{}, fmt.Errorf("scripted invariant: %w: %s%s", err, output, stderr)
+	}
+	var verdict program.Verdict
+	if err := json.Unmarshal(output, &verdict); err != nil {
+		return program.Verdict{}, err
+	}
+	return verdict, nil
+}
+func compileForeignInvariant(t *testing.T) compiledForeignInvariant {
+	t.Helper()
+	root := t.TempDir()
+	sdkRoot, err := filepath.Abs("../sdk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := fmt.Sprintf("module foreign-invariant\n\ngo 1.26.0\n\nrequire sdo.dev/operator/sdk v0.0.0\nreplace sdo.dev/operator/sdk => %s\n", sdkRoot)
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(module), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "candidate"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.ReadFile("../../../benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "candidate", "diagnose.go"), source, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(foreignInvariantRunner), 0600); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(root, "diagnose")
+	cmd := exec.Command("go", "build", "-mod=mod", "-o", binary, ".")
+	cmd.Dir = root
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile scripted learned invariant: %v: %s", err, output)
+	}
+	return compiledForeignInvariant{binary: binary}
 }

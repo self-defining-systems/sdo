@@ -123,7 +123,7 @@ func withOnboardingReference(snapshot sdk.DetectionContext, reference *servicehe
 		view.Reachability = &window
 		return view
 	}
-	return NewCycleReadView(onboardingReadView{ReadView: LiveReadView{DetectionContext: snapshot}, window: window})
+	return NewCycleReadView(onboardingReadView{ReadView: LiveReadView{Carrier: inputs.New(snapshot)}, window: window})
 }
 
 type onboardingReadView struct {

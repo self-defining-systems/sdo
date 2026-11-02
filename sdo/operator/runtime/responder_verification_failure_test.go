@@ -2,12 +2,6 @@ package runtime
 
 import (
 	"context"
-<<<<<<< HEAD
-=======
-	"testing"
-	"time"
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -76,25 +70,6 @@ func TestResponderFailedHealthSurvivesRestart(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-type verificationRollbackClient struct {
-	PlanObjectClient
-	patches        int
-	beforeRollback func() error
-}
-
-func (c *verificationRollbackClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
-	c.patches++
-	if c.patches == 2 {
-		if err := c.beforeRollback(); err != nil {
-			return err
-		}
-	}
-	return c.PlanObjectClient.Patch(ctx, ref, kind, patch)
-}
-
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func TestResponderVerificationFailureTrustIsRevisionBound(t *testing.T) {
 	outcomes := []*contracts.OutcomeRecord{
 		verifiedTrustOutcome(t, "targetport", "revision-a"),

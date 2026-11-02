@@ -4,26 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-<<<<<<< HEAD
 	"fmt"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/anypb"
-=======
 	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/worker_registry"
-	"sdo.dev/operator/worker_registry/registrytest"
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	"os"
 	"path/filepath"
@@ -40,6 +31,11 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 type fixedMemoryCatalog struct{ commit string }
@@ -115,357 +111,6 @@ func TestNativeResponderSessionsAreIsolatedPerIncident(t *testing.T) {
 	})
 }
 
-<<<<<<< HEAD
-type liveShapeImageDetector struct{}
-
-func (liveShapeImageDetector) Spec() sdk.DetectorSpec { return (fastloopDetector{}).Spec() }
-
-func (liveShapeImageDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
-	findings, err := (fastloopDetector{}).Detect(ctx, view)
-	if err != nil || len(findings) == 0 {
-		return findings, err
-	}
-	drift := findings[0]
-	drift.DetectorID = "drift.image-pull-failure"
-	drift.ParameterBindings = map[string]sdk.ObjectRef{"deployment": drift.PrimaryResource}
-	service := sdk.Finding{DetectorID: "availability", RuleID: "service-without-ready-endpoints", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: "no ready endpoint", Evidence: "Service has no ready endpoint", PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}
-	return []sdk.Finding{drift, findings[0], service}, nil
-}
-
-func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		client := fastloopClient("good:v1")
-		service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
-		if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		provider := fastloopObjects{client: client}
-		view, err := provider.Snapshot(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		findings, err := (liveShapeImageDetector{}).Detect(context.Background(), view)
-		if err != nil || len(findings) != 3 {
-			t.Fatalf("live-shaped findings: %+v %v", findings, err)
-		}
-		registry, err := program.NewRegistry([]program.Diagnoser{fastloopImageProgram{}}, []program.Mitigator{fastloopImageProgram{}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		request := goldenRequest(t)
-		request.Namespace = "app"
-		request.RepairPolicy = "recorded-actions"
-		request.SourceCommit = "tree-a"
-		request.Findings = findings
-		request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
-		loop := NewResponderLoop(request, registry, provider, []sdk.Detector{liveShapeImageDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
-		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-			return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
-		}
-		loop.DiagnosisSettleDelay = time.Millisecond
-		loop.CorpusReplayPassed = true
-		loop.InitialDiagnose(context.Background())
-		outcomes := []memory.Outcome{}
-		for index := 0; index < 3; index++ {
-			outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: verifiedTrustOutcome(t, "image-pull-failure", "tree-a")})
-		}
-		dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ProgramFastPath: true,
-			ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
-			Outcomes: priorOutcomeReader{outcomes: outcomes}, LoopFactory: func(request IncidentRequest) *ResponderLoop {
-				loop.Request = request
-				return loop
-			}}
-		request, err = dispatcher.PrepareDispatch(context.Background(), request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		result, err := dispatcher.Dispatch(context.Background(), request)
-		if err != nil || result.ResolutionPath != "fast_path" || len(result.FastPathPrograms) != 1 || result.Usage.GetInputTokens() != 0 {
-			t.Fatalf("fast path result: %+v %v", result, err)
-		}
-		if len(result.FastPathRelationCoveredFindings) != 1 || result.FastPathRelationCoveredFindings[0].FindingFingerprint != FindingFingerprint(findings[2]) || result.FastPathRelationCoveredFindings[0].Bindings["deployment"].Name != "api" {
-			t.Fatalf("Service symptom relation not recorded: %+v", result.FastPathRelationCoveredFindings)
-		}
-		matchedSources := map[string]bool{}
-		for _, run := range result.ProgramRuns {
-			if run.Verdict.Result == program.Match {
-				matchedSources[run.BindingSource] = true
-			}
-		}
-		if !matchedSources["hint"] || !matchedSources["finding"] {
-			t.Fatalf("live-shaped hint and finding runs were lost: %+v", result.ProgramRuns)
-		}
-		dispatcher.LoopFactory = func(request IncidentRequest) *ResponderLoop {
-			restarted := restartPortLoop(loop)
-			restarted.Request = request
-			return restarted
-		}
-		// Cross an explicit virtual restart boundary: cached evidence must retain
-		// its old timestamp and fail the freshness check below.
-		time.Sleep(time.Second)
-		replayed, err := dispatcher.Dispatch(context.Background(), request)
-		if err != nil || replayed.ResolutionPath != "fast_path" || len(replayed.PlanApplications) != 0 || len(replayed.RepairActions) != 0 || len(replayed.VerificationEvidence) == 0 || replayed.ResponseLoopsUsed != 1 {
-			t.Fatalf("restart did not close from fresh live verification without mutation receipts: %+v %v", replayed, err)
-		}
-		if !replayed.VerificationEvidence[0].ObservedAt.After(result.VerificationEvidence[0].ObservedAt) {
-			t.Fatal("restart reused cached verification")
-		}
-
-		jobs, err := client.BatchV1().Jobs("app").List(context.Background(), metav1.ListOptions{})
-		if err != nil || len(jobs.Items) != 0 {
-			t.Fatalf("responder Job dispatched: %+v %v", jobs, err)
-		}
-	})
-}
-
-func TestFailedFastPathRollsBackAndDispatchesResponderWithSummary(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		loop, client := trustedPortLoop(t, false, true, false)
-		request := goldenRequest(t)
-		request.Namespace = "app"
-		request.RepairPolicy = "recorded-actions"
-		request.SourceCommit = "tree-a"
-		request.Findings = loop.Request.Findings
-		request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
-		outcomes := make([]memory.Outcome, 3)
-		for index := range outcomes {
-			outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: verifiedTrustOutcome(t, "service-targetport-mismatch", "tree-a")}
-		}
-		dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
-			ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
-			ProgramFastPath: true, Outcomes: priorOutcomeReader{outcomes: outcomes}, PollInterval: time.Millisecond,
-			LoopFactory: func(request IncidentRequest) *ResponderLoop { loop.Request = request; return loop }}
-		var err error
-		request, err = dispatcher.PrepareDispatch(context.Background(), request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		finished := make(chan error, 1)
-		go func() { _, err := dispatcher.Dispatch(ctx, request); finished <- err }()
-		select {
-		case err := <-finished:
-			t.Fatalf("responder dispatch ended before Job: %v", err)
-		case <-time.After(20 * time.Millisecond):
-		}
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, err := client.BatchV1().Jobs("app").Get(context.Background(), IncidentJobName(request.IncidentID), metav1.GetOptions{}); err == nil {
-				break
-			}
-			select {
-			case err := <-finished:
-				t.Fatalf("responder dispatch ended before Job: %v", err)
-			default:
-			}
-			time.Sleep(time.Millisecond)
-		}
-		if _, err := client.BatchV1().Jobs("app").Get(context.Background(), IncidentJobName(request.IncidentID), metav1.GetOptions{}); err != nil {
-			t.Fatalf("responder Job absent: %v", err)
-		}
-		service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
-		if err != nil || service.Spec.Ports[0].TargetPort.IntVal != 9999 {
-			t.Fatalf("failed fast path left mutation: %+v %v", service, err)
-		}
-		taskMap, err := client.CoreV1().ConfigMaps("app").Get(context.Background(), IncidentJobName(request.IncidentID)+"-request", metav1.GetOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		task := new(contracts.AgentTask)
-		if err := protojson.Unmarshal([]byte(taskMap.Data[jobRequestDataKey]), task); err != nil {
-			t.Fatal(err)
-		}
-		incident := new(contracts.IncidentRequest)
-		if err := task.GetRequest().UnmarshalTo(incident); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(incident.GetFastPathSummary(), "service-targetport-mismatch") || !strings.Contains(incident.GetFastPathSummary(), "rollback true") {
-			t.Fatalf("responder missed failed attempt: %q", incident.GetFastPathSummary())
-		}
-		cancel()
-		<-finished
-	})
-}
-
-func TestRelationCoveredFindingMustClearBeforeFastPathCloses(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		client := fastloopClient("good:v1")
-		service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
-		if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		provider := fastloopObjects{client: client}
-		view, err := provider.Snapshot(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		imageFindings, err := (fastloopDetector{}).Detect(context.Background(), view)
-		if err != nil || len(imageFindings) != 1 {
-			t.Fatalf("image finding: %+v %v", imageFindings, err)
-		}
-		symptom := sdk.Finding{DetectorID: "health", RuleID: "service-without-ready-endpoints", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: "no ready endpoint", Evidence: "Service has no ready endpoint", PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}
-		registry, err := program.NewRegistry([]program.Diagnoser{fastloopImageProgram{}}, []program.Mitigator{fastloopImageProgram{}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		request := goldenRequest(t)
-		request.Namespace, request.SourceCommit, request.RepairPolicy = "app", "tree-a", "recorded-actions"
-		request.Findings = append(imageFindings, symptom)
-		request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
-		loop := NewResponderLoop(request, registry, provider, []sdk.Detector{fastloopDetector{}, loopDetector{finding: symptom}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
-		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-			return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
-		}
-		loop.DiagnosisSettleDelay = time.Millisecond
-		loop.CorpusReplayPassed = true
-		outcomes := make([]memory.Outcome, 3)
-		for index := range outcomes {
-			outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: verifiedTrustOutcome(t, "image-pull-failure", "tree-a")}
-		}
-		dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace", ProgramFastPath: true, Outcomes: priorOutcomeReader{outcomes: outcomes}, PollInterval: time.Millisecond, LoopFactory: func(request IncidentRequest) *ResponderLoop { loop.Request = request; return loop }}
-		request, err = dispatcher.PrepareDispatch(context.Background(), request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		finished := make(chan error, 1)
-		go func() { _, err := dispatcher.Dispatch(ctx, request); finished <- err }()
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, err := client.BatchV1().Jobs("app").Get(context.Background(), IncidentJobName(request.IncidentID), metav1.GetOptions{}); err == nil {
-				break
-			}
-			time.Sleep(time.Millisecond)
-		}
-		if _, err := client.BatchV1().Jobs("app").Get(context.Background(), IncidentJobName(request.IncidentID), metav1.GetOptions{}); err != nil {
-			t.Fatalf("responder handoff absent: %v", err)
-		}
-		taskMap, err := client.CoreV1().ConfigMaps("app").Get(context.Background(), IncidentJobName(request.IncidentID)+"-request", metav1.GetOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		task := new(contracts.AgentTask)
-		if err := protojson.Unmarshal([]byte(taskMap.Data[jobRequestDataKey]), task); err != nil {
-			t.Fatal(err)
-		}
-		incident := new(contracts.IncidentRequest)
-		if err := task.GetRequest().UnmarshalTo(incident); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(incident.GetFastPathSummary(), "image-pull-failure") || !strings.Contains(incident.GetFastPathSummary(), "rollback true") {
-			t.Fatalf("responder missed failed relation verification: %q", incident.GetFastPathSummary())
-		}
-		deployment, err := client.AppsV1().Deployments("app").Get(context.Background(), "api", metav1.GetOptions{})
-		if err != nil || deployment.Spec.Template.Spec.Containers[0].Image != "missing:v1" {
-			t.Fatalf("failed relation verification left mutation: %+v %v", deployment, err)
-		}
-		if len(loop.fastPathRelationCoveredFindings) != 1 || loop.fastPathRelationCoveredFindings[0].ProgramID != "image-pull-failure" || !contains(loop.FailureSignals(), "fast_path_failure:image-pull-failure@tree-a") {
-			t.Fatalf("relation and trust evidence: %+v %+v", loop.fastPathRelationCoveredFindings, loop.FailureSignals())
-		}
-		cancel()
-		<-finished
-	})
-}
-
-func TestResponderJobStartsBeforeSettleCapture(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		root := t.TempDir()
-		client := fake.NewSimpleClientset()
-		request := goldenRequest(t)
-		request.RepositoryWorktree = filepath.Join(root, "proposals", "incident")
-		dispatcher := KubernetesJobDispatcher{
-			Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
-			ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root,
-			Catalog: fixedMemoryCatalog{commit: request.RepositoryBaseCommit}, RequireMemorySnapshot: true,
-			PollInterval: time.Millisecond,
-			LoopFactory: func(request IncidentRequest) *ResponderLoop {
-				loop := NewResponderLoop(request, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: request.Namespace}}, nil, PlanExecutor{}, 5)
-				loop.CorpusSessionRoot = root
-				loop.DiagnosisSettleDelay = time.Second
-				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-					return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
-				}
-				return loop
-			},
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		goUntilCleanup(t, cancel, func() { _, _ = dispatcher.Dispatch(ctx, request) })
-		_ = awaitJob(t, client, IncidentJobName(request.IncidentID))
-		dir, err := memory.IncidentCorpusDir(root, request.IncidentID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := os.Stat(filepath.Join(dir, "open@settle.json")); !os.IsNotExist(err) {
-			t.Fatalf("settle capture preceded responder Job: %v", err)
-		}
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, err := os.Stat(filepath.Join(dir, "open@settle.json")); err == nil {
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		t.Fatal("settle capture did not arrive while responder Job was active")
-	})
-}
-
-func TestColdFastPathDispatchesResponderWithoutSettling(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		loop, client := trustedPortLoop(t, false, false, true)
-		loop.DiagnosisSettleDelay = DefaultDiagnosisSettleDelay
-		request := goldenRequest(t)
-		request.Namespace, request.SourceCommit, request.RepairPolicy = "app", "tree-a", "recorded-actions"
-		request.Findings = loop.Request.Findings
-		request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
-		dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
-			ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace", ProgramFastPath: true,
-			PollInterval: time.Millisecond, LoopFactory: func(request IncidentRequest) *ResponderLoop { loop.Request = request; return loop }}
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		finished := make(chan error, 1)
-		go func() { _, err := dispatcher.Dispatch(ctx, request); finished <- err }()
-		synctest.Wait()
-		if _, err := client.BatchV1().Jobs("app").Get(ctx, IncidentJobName(request.IncidentID), metav1.GetOptions{}); err != nil {
-			t.Fatalf("cold responder Job blocked on settle: %v", err)
-		}
-		marker, err := client.CoreV1().ConfigMaps("app").Get(ctx, IncidentJobName(request.IncidentID)+"-fast-path", metav1.GetOptions{})
-		want := "trusted program fast path skipped: " + string(FastPathSkipUntrustedProgram)
-		if err != nil || marker.Data["summary"] != want || marker.Data["state"] != "failed" {
-			t.Fatalf("missing durable skip reason: %+v %v", marker, err)
-		}
-		taskMap, err := client.CoreV1().ConfigMaps("app").Get(ctx, IncidentJobName(request.IncidentID)+"-request", metav1.GetOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		task := new(contracts.AgentTask)
-		if err := protojson.Unmarshal([]byte(taskMap.Data[jobRequestDataKey]), task); err != nil {
-			t.Fatal(err)
-		}
-		incident := new(contracts.IncidentRequest)
-		if err := task.GetRequest().UnmarshalTo(incident); err != nil {
-			t.Fatal(err)
-		}
-		if incident.GetFastPathSummary() != want {
-			t.Fatalf("responder missed skip reason: %q", incident.GetFastPathSummary())
-		}
-		cancel()
-		if err := <-finished; !errors.Is(err, context.Canceled) {
-			t.Fatalf("dispatcher exit: %v", err)
-		}
-	})
-}
-
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func TestKubernetesJobDispatcherCrashReplayReattachesExactlyOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		// TODO: Add a hermetic e2e case for settle update, restart, and result
@@ -733,7 +378,6 @@ func TestKubernetesJobDispatcherAddsDispatchTimeEnvironment(t *testing.T) {
 }
 
 func TestKubernetesJobDispatcherReturnsFailedJob(t *testing.T) {
-<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		client := fake.NewSimpleClientset()
 		request := goldenRequest(t)
@@ -741,33 +385,6 @@ func TestKubernetesJobDispatcherReturnsFailedJob(t *testing.T) {
 			Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "sdo-responder:test"), AgentID: testIncidentAgentID(t),
 			ServiceAccount: "sdo-responder", RepositoryPVC: "application-repository", CredentialsSecret: "sdo-codex",
 			RepositoryMountPath: "/workspace", PollInterval: time.Millisecond,
-=======
-	client := fake.NewSimpleClientset()
-	request := goldenRequest(t)
-	dispatcher := KubernetesJobDispatcher{
-		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "sdo-responder:test"), AgentID: testIncidentAgentID(t),
-		ServiceAccount: "sdo-responder", RepositoryPVC: "application-repository", CredentialsSecret: "sdo-codex",
-		RepositoryMountPath: "/workspace", PollInterval: time.Millisecond,
-	}
-	result := make(chan error, 1)
-	go func() {
-		_, err := dispatcher.Dispatch(context.Background(), request)
-		result <- err
-	}()
-	jobName := IncidentJobName(request.IncidentID)
-	job := awaitJob(t, client, jobName)
-	job.Status.Failed = 1
-	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", Message: "worker exited before session-open"}}
-	if _, err := client.BatchV1().Jobs("demo").UpdateStatus(context.Background(), job, metav1.UpdateOptions{}); err != nil {
-		t.Fatalf("mark Job failed: %v", err)
-	}
-	select {
-	case err := <-result:
-		var terminal *ResponderJobFailedError
-		var failure *worker_registry.JobFailedError
-		if !errors.As(err, &terminal) || !errors.As(err, &failure) || !strings.Contains(err.Error(), "worker exited before session-open") {
-			t.Fatalf("terminal dispatch discarded worker failure evidence: %v", err)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 		result := make(chan error, 1)
 		go func() {
@@ -777,13 +394,16 @@ func TestKubernetesJobDispatcherReturnsFailedJob(t *testing.T) {
 		jobName := IncidentJobName(request.IncidentID)
 		job := awaitJob(t, client, jobName)
 		job.Status.Failed = 1
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", Message: "worker exited before session-open"}}
 		if _, err := client.BatchV1().Jobs("demo").UpdateStatus(context.Background(), job, metav1.UpdateOptions{}); err != nil {
 			t.Fatalf("mark Job failed: %v", err)
 		}
 		select {
 		case err := <-result:
-			if err == nil {
-				t.Fatal("expected failed Job error")
+			var terminal *ResponderJobFailedError
+			var failure *worker_registry.JobFailedError
+			if !errors.As(err, &terminal) || !errors.As(err, &failure) || !strings.Contains(err.Error(), "worker exited before session-open") {
+				t.Fatalf("terminal dispatch discarded worker failure evidence: %v", err)
 			}
 		case <-time.After(time.Second):
 			t.Fatal("timed out waiting for failed Job result")

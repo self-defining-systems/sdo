@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -47,7 +48,7 @@ func noiseDiff(t *testing.T, source, live *unstructured.Unstructured, hpas []aut
 	if err := json.Unmarshal(data, &stored); err != nil {
 		t.Fatal(err)
 	}
-	diff, err := (LiveReadView{DetectionContext: stored, Source: planFakeSource{source: source}, SourceCommit: "accepted"}).DiffAgainstSource(sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()})
+	diff, err := (LiveReadView{Carrier: inputs.New(stored), Source: planFakeSource{source: source}, SourceCommit: "accepted"}).DiffAgainstSource(sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +198,7 @@ func TestSourceComparisonDryRunIgnoresControllerAndQuantityNoise(t *testing.T) {
 		called = true
 		return true, normalized.DeepCopy(), nil
 	})
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{actual}}, Source: planFakeSource{source: source}, SourceCommit: "accepted", Client: bridgeFake(t, client)}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{actual}}), Source: planFakeSource{source: source}, SourceCommit: "accepted", Client: bridgeFake(t, client)}
 	if diff, err := view.DiffAgainstSource(addedFieldsRef()); err != nil || diff.Changed || !called {
 		t.Fatalf("dry run comparison: %+v %v called=%v", diff, err, called)
 	}

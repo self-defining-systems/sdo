@@ -9,6 +9,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -163,7 +164,7 @@ func TestStageWaitsForAuthoredServiceObjective(t *testing.T) {
 		t.Fatal(err)
 	}
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: v, Context: context.Background(), Source: loop.Executor.Source, SourceCommit: state.Request.SourceCommit}
+		return LiveReadView{Carrier: inputs.New(v), Context: context.Background(), Source: loop.Executor.Source, SourceCommit: state.Request.SourceCommit}
 	}
 	spec := pipelineDetector{}.Spec()
 	spec.ID = "synthetic-authored-objective"

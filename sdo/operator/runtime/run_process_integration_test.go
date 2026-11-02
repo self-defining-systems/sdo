@@ -12,8 +12,8 @@ import (
 
 func TestResolveRepositoryCommitsUsesRealGitHead(t *testing.T) {
 	repository := t.TempDir()
+	testutil.InitGit(t, repository)
 	commands := [][]string{
-		{"git", "init", "-q", repository},
 		{"git", "-C", repository, "config", "user.name", "test"},
 		{"git", "-C", repository, "config", "user.email", "test@example.com"},
 	}

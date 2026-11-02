@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -33,7 +34,7 @@ func TestControllerCapturesHealthyRefusedPortsBeforeIncident(t *testing.T) {
 	}
 	c.OnError = func(err error) { t.Log(err) }
 	c.drift = &DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView {
-		return LiveReadView{DetectionContext: s, Prober: &routingTestProber{}}
+		return LiveReadView{Carrier: inputs.New(s), Prober: &routingTestProber{}}
 	}}
 	if err := c.EvaluateAll(ctx, time.Unix(100, 0)); err != nil {
 		t.Fatal(err)

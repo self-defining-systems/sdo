@@ -43,7 +43,7 @@ func (v *readView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
 			return program.Diff{}, err
 		}
 	}
-	return (operator.LiveReadView{DetectionContext: v, Context: v.ctx, Source: v.source, SourceCommit: "offline-accepted"}).DiffAgainstSource(ref)
+	return (operator.LiveReadView{Carrier: inputs.New(v), Context: v.ctx, Source: v.source, SourceCommit: "offline-accepted"}).DiffAgainstSource(ref)
 }
 func checkDetector(ctx context.Context, d sdk.Detector, c Case) (r Result) {
 	start := time.Now()

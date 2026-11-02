@@ -15,6 +15,7 @@ import (
 
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -372,7 +373,7 @@ func TestSourceCreateEstablishesCurrentInstanceAcceptance(t *testing.T) {
 			}
 			live := client.objects[ref]
 			snapshot := &sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live.DeepCopy()}}
-			view := LiveReadView{DetectionContext: snapshot, Source: e.Source, SourceCommit: "accepted"}
+			view := LiveReadView{Carrier: inputs.New(snapshot), Source: e.Source, SourceCommit: "accepted"}
 			if _, err := view.DiffAgainstSource(ref); err != nil {
 				t.Fatalf("created instance cannot be compared: %v", err)
 			}

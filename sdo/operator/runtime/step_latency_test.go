@@ -84,13 +84,8 @@ func runRestartStorm(t *testing.T, clock kclock.WithTicker, qps float32, burst i
 	podHealth := healthSpec(podWatch)
 	podHealth.Batching.Debounce = 0
 	detectors := []sdk.Detector{clearDetector{spec: podHealth}, probe}
-<<<<<<< HEAD
-	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{
-		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state", ResyncPeriod: time.Hour,
-=======
 	informerCache, err := newCacheForTest(t, KubernetesCacheConfig{
-		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
->>>>>>> origin/vic-lsh/dev/sdo-improve
+		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state", ResyncPeriod: time.Hour,
 	}, detectors)
 	if err != nil {
 		t.Fatalf("new cache: %v", err)

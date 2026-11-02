@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -52,7 +53,7 @@ func TestAstronomyBaselineSourceComparisonTwoMinutes(t *testing.T) {
 					live.SetAnnotations(annotations)
 				}
 				snapshot := sdktest.Snapshot{NamespaceName: source.GetNamespace(), Objects: []unstructured.Unstructured{*live}}
-				view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+				view := LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 				ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
 				diff, err := declaredSourceDiff(view, ref)
 				if err != nil || diff.Changed {
@@ -84,7 +85,7 @@ func TestAstronomyBaselineSourceComparisonTwoMinutes(t *testing.T) {
 				}
 			}
 			snapshot := sdktest.Snapshot{NamespaceName: source.GetNamespace(), Objects: []unstructured.Unstructured{*live}}
-			view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+			view := LiveReadView{Carrier: inputs.New(snapshot), Source: planFakeSource{source: source}, SourceCommit: "accepted"}
 			ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
 			diff, err := declaredSourceDiff(view, ref)
 			if err != nil || !diff.Changed {

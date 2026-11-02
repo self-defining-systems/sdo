@@ -34,7 +34,7 @@ type Dispatcher interface {
 }
 
 type ControllerConfig struct {
-	MetricsSource *contracts.MetricsSource
+	MetricsSource    *contracts.MetricsSource
 	Replay           string
 	CodePath         CodePathConfig
 	CodePathRegistry *CodePathRegistry
@@ -76,7 +76,7 @@ type dispatchCompletion struct {
 
 type Controller struct {
 	memoryRefresh func(context.Context) (bool, error)
-	config ControllerConfig
+	config        ControllerConfig
 	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
 	closureRecheckIdentity      string
 	closureRecheckSince         time.Time

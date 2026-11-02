@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"testing"
@@ -156,7 +157,7 @@ func TestSimSchedulePartialRepairClosesOnHealthWithDriftRecorded(t *testing.T) {
 				w.driftOnly = map[string]bool{simServiceName(1): true}
 				w.configure = func(c *Controller) {
 					c.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView {
-						return LiveReadView{DetectionContext: s, Source: planFakeSource{source: simServiceNamed(simServiceName(1), 8080)}, SourceCommit: "c"}
+						return LiveReadView{Carrier: inputs.New(s), Source: planFakeSource{source: simServiceNamed(simServiceName(1), 8080)}, SourceCommit: "c"}
 					}})
 				}
 				w.restart()

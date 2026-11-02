@@ -37,9 +37,9 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/memoryhost/hostio"
-	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -53,15 +53,15 @@ import (
 
 type RuntimeOptions struct {
 	// Clock controls driver timers and observer timestamps; nil uses production time.
-	Clock    kclock.WithTickerAndDelayedExecution
+	Clock             kclock.WithTickerAndDelayedExecution
 	ShellReportReader shellpath.Reader
 
 	GenericCapture *core.GenericCapture
-	Programs program.ProgramRegistry
-	Args     []string
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Provider SnapshotProvider
+	Programs       program.ProgramRegistry
+	Args           []string
+	Stdout         io.Writer
+	Stderr         io.Writer
+	Provider       SnapshotProvider
 	// Client, when set, replaces the kubeconfig clients of the long-running
 	// controller (observation, state, dispatch, and leader election), so the
 	// production wiring can run against a fake API server.
@@ -1828,7 +1828,7 @@ func evaluateOnce(
 		if *proberURL != "" {
 			probe = HTTPProberClient{BaseURL: StaticProberURL(*proberURL)}
 		}
-		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: readClient, Prober: probe, Source: readSource, SourceCommit: readCommit}
+		return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: readClient, Prober: probe, Source: readSource, SourceCommit: readCommit}
 	}}
 	start := clock.Now().UTC()
 	controller, err := NewController(ControllerConfig{

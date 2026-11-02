@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
@@ -264,7 +265,7 @@ func TestDatabaseLiveReadRejectsReplacedSnapshotPod(t *testing.T) {
 	replacement := pod.DeepCopy()
 	replacement.UID = "replacement"
 	client := kubefake.NewSimpleClientset(replacement)
-	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{pod}}, Client: client}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{pod}}), Client: client}
 	if _, err := view.DatabaseUsers(a.Target); err == nil || !strings.Contains(err.Error(), "identity differs") {
 		t.Fatalf("stale Pod snapshot accepted: %v", err)
 	}

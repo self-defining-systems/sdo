@@ -112,7 +112,6 @@ func TestLiveReadViewPodTCPUsesCapturedAddress(t *testing.T) {
 }
 
 func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
-<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		snapshot := routingCaptureSnapshot()
@@ -122,51 +121,22 @@ func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
 		loop.CorpusSessionRoot = t.TempDir()
 		loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
 			return LiveReadView{Carrier: inputs.New(s), Prober: probe}
-=======
-	ctx := context.Background()
-	snapshot := routingCaptureSnapshot()
-	probe := &routingTestProber{}
-	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	loop := NewResponderLoop(IncidentRequest{IncidentID: "routing", Namespace: "app", Findings: []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: ref}}}, nil, &changingProvider{snapshot: snapshot}, nil, PlanExecutor{}, 1)
-	loop.CorpusSessionRoot = t.TempDir()
-	loop.ReadView = func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }
-	// The controller owns the sweep: the responder's own diagnosis never probes.
-	loop.InitialDiagnose(ctx)
-	if len(probe.calls) != 0 {
-		t.Fatalf("responder diagnosis probed: %+v", probe.calls)
-	}
-	capture := func() {
-		if err := captureRoutingEvidence(ctx, loop.CorpusSessionRoot, "routing", "open@detect", loop.Request.Findings, loop.ReadView(snapshot)); err != nil {
-			t.Fatal(err)
 		}
-	}
-	capture()
-	dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, "routing")
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var calls []sdktest.PrimitiveCall
-	if err := json.Unmarshal(data, &calls); err != nil {
-		t.Fatal(err)
-	}
-	view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
-	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
-	for _, port := range []int32{8080, 9999} {
-		result, err := view.ProbeTCP(pod, port)
-		if err != nil || result.Success != (port == 8080) {
-			t.Fatalf("captured port %d: %+v %v; calls=%+v", port, result, err, calls)
->>>>>>> origin/vic-lsh/dev/sdo-improve
-		}
+		// The controller owns the sweep: the responder's own diagnosis never probes.
 		loop.InitialDiagnose(ctx)
+		if len(probe.calls) != 0 {
+			t.Fatalf("responder diagnosis probed: %+v", probe.calls)
+		}
+		capture := func() {
+			if err := captureRoutingEvidence(ctx, loop.CorpusSessionRoot, "routing", "open@detect", loop.Request.Findings, loop.ReadView(snapshot)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		capture()
 		dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, "routing")
 		if err != nil {
 			t.Fatal(err)
 		}
-<<<<<<< HEAD
 		data, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
 		if err != nil {
 			t.Fatal(err)
@@ -196,19 +166,11 @@ func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
 		}
 		prior := len(probe.calls)
 		loop.InitialDiagnose(ctx)
+		capture()
 		if len(probe.calls) != prior {
 			t.Fatal("repeated detect capture probed again")
 		}
 	})
-=======
-	}
-	prior := len(probe.calls)
-	loop.InitialDiagnose(ctx)
-	capture()
-	if len(probe.calls) != prior {
-		t.Fatal("repeated detect capture probed again")
-	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // incidentOneSnapshot has the shape of a co-injected fault: only Service/user
@@ -398,167 +360,6 @@ func (p *boundedRoutingProber) ProbePod(ctx context.Context, ref sdk.ObjectRef, 
 	return p.Probe(ctx, ref, port, nil)
 }
 
-<<<<<<< HEAD
-=======
-func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
-	ctx := context.Background()
-	snapshot := routingCaptureSnapshot()
-	peer := *snapshot.ServiceList[0].DeepCopy()
-	peer.Name = "peer"
-	peer.Spec.Selector = map[string]string{"app": "peer"}
-	peer.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
-	peerPod := *snapshot.PodList[0].DeepCopy()
-	peerPod.Name = "peer-pod"
-	peerPod.Status.PodIP = "10.0.0.6"
-	peerPod.Labels = map[string]string{"app": "peer"}
-	snapshot.ServiceList = append(snapshot.ServiceList, peer)
-	snapshot.PodList = append(snapshot.PodList, peerPod)
-	provider := &changingProvider{snapshot: snapshot}
-	probe := inProcessProberClient(noTrafficProberHandler(t))
-	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	finding := sdk.Finding{DetectorID: "health", RuleID: "routing", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, PrimaryResource: ref, Summary: "routing unavailable", Evidence: "no Service connection"}
-	detector := controllerDetector("health", time.Second, finding, finding, sdk.Finding{}, sdk.Finding{})
-	detector.spec.Class, detector.spec.Owner = sdk.DetectorClassHealth, sdk.DetectorOwnerHealthJudge
-	detector.spec.Persistence = sdk.PersistencePolicy{Firing: 2, Clearing: 2}
-	detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
-	detector.spec.OriginatingCommit = "health-objective"
-	captureRoot := t.TempDir()
-	config := testControllerConfig()
-	config.Namespace = "app"
-	config.CorpusSessionRoot = captureRoot
-	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
-	controller, err := NewController(config, []sdk.Detector{detector}, provider, dispatcher, time.Unix(0, 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(controller.Wait)
-	controller.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }})
-	for i := 0; i < 2; i++ {
-		if err := controller.Step(ctx, time.Unix(int64(i), 0), nil); err != nil {
-			t.Fatal(err)
-		}
-	}
-	executePendingEffect(t, controller)
-	request := awaitRequest(t, dispatcher.requests)
-	awaitRoutingSweep(t, captureRoot, request.IncidentID)
-	captureDir, err := memory.IncidentCorpusDir(captureRoot, request.IncidentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The routing receipt does not join the independent source-boundary capture.
-	// Join all snapshot readers before mutating this fixture.
-	controller.Wait()
-	snapshot.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
-	provider.snapshot = snapshot
-	awaitDispatchCompletionQueued(t, controller)
-	for i := 2; i < 19; i++ {
-		if err := controller.Step(ctx, time.Unix(int64(i), 0), nil); err != nil {
-			t.Fatal(err)
-		}
-	}
-	controller.Wait()
-	root := nativeRepository(t)
-	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(root, ".sdo"))
-	module, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/diagnostics/go.mod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".sdo/diagnostics/go.mod"), module, 0644); err != nil {
-		t.Fatal(err)
-	}
-	programDir := filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch")
-	if err := os.MkdirAll(programDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"diagnose.go", "mitigate.go"} {
-		source, err := os.ReadFile(filepath.Join("../../../examples/playbook-programs/playbooks/service-targetport-mismatch", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(programDir, name), source, 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	readme := []byte("---\nschema_version: 1\nowner: responder\nfault_class: service-targetport-mismatch\noriginating_incident: " + request.IncidentID + "\n---\n\nRestore `<SERVICE>` target port only after observed selected-Pod listener evidence.\n")
-	if err := os.WriteFile(filepath.Join(programDir, "README.md"), readme, 0644); err != nil {
-		t.Fatal(err)
-	}
-	writeCapturedProgramCorpus(t, root, captureDir, request.IncidentID, "service-targetport-mismatch", "service", "Service", "app", "api", "peer", "detect")
-	fastloopWriteDetector(t, root, request.IncidentID)
-	operatorRoot, err := filepath.Abs("..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var notes []sdktest.MitigationReplayResult
-	diagnostics, err := validate.CompileCandidate(ctx, validate.Request{Root: root, OperatorRoot: operatorRoot, MitigationReplayNotes: &notes})
-	if err != nil || len(diagnostics) != 0 {
-		t.Fatalf("captured routing diagnosis/generalization/mitigation gate: %+v %v", diagnostics, err)
-	}
-	if len(notes) != 1 || notes[0].Status != sdktest.MitigationReplayPassed {
-		t.Fatalf("SetField was not replayed: %+v", notes)
-	}
-
-	// With two faults, the best single binding runs, then whole-incident verification
-	// rolls it back before responder handoff because the other fault remains.
-	nativeGit(t, root, "add", ".")
-	nativeGit(t, root, "commit", "-qm", "accepted recorded routing fixture")
-	commit := nativeGit(t, root, "rev-parse", "HEAD")
-	revision, err := programDependencyRevision(ctx, root, commit, "service-targetport-mismatch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := range snapshot.ServiceList {
-		snapshot.ServiceList[i].Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
-	}
-	client := fake.NewSimpleClientset(&snapshot.ServiceList[0], &snapshot.ServiceList[1], &snapshot.PodList[0], &snapshot.PodList[1])
-	liveProvider := fastloopObjects{client: client}
-	p := routingport.Program{}
-	registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
-	if err != nil {
-		t.Fatal(err)
-	}
-	repeated := goldenRequest(t)
-	repeated.IncidentID = "two-routing-faults"
-	repeated.Namespace = "app"
-	repeated.SourceCommit = commit
-	repeated.RepositoryBaseCommit = commit
-	repeated.RepositoryWorktree = root
-	repeated.RepairPolicy = "recorded-actions"
-	repeated.Findings, err = (fastloopDetector{}).Detect(ctx, snapshot)
-	if err != nil || len(repeated.Findings) != 2 {
-		t.Fatalf("two routing findings: %+v %v", repeated.Findings, err)
-	}
-	outcomes := []memory.Outcome{}
-	for i := 0; i < 3; i++ {
-		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("routing-success-%d", i), Record: verifiedTrustOutcome(t, p.Spec().ID, revision)})
-	}
-	warm := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, Outcomes: priorOutcomeReader{outcomes: outcomes}, LoopFactory: func(request IncidentRequest) *ResponderLoop {
-		loop := NewResponderLoop(request, registry, liveProvider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: liveProvider}}, 1)
-		loop.ReadView = func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }
-		return loop
-	}}
-	loop := warm.LoopFactory(repeated)
-	loop.Trust, err = warm.programTrust(ctx, repeated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loop.InitialDiagnose(ctx)
-	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": serviceRef("api")}}})
-	attempt := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
-	applications := loop.PlanApplications()
-	if attempt.ApplicationID == "" || attempt.Healthy || len(applications) != 1 || len(applications[0].Result.ActionsApplied) != 1 {
-		t.Fatalf("single-binding attempt: %+v applications=%+v", attempt, applications)
-	}
-	for _, name := range []string{snapshot.ServiceList[0].Name, snapshot.ServiceList[1].Name} {
-		live, err := client.CoreV1().Services("app").Get(ctx, name, metav1.GetOptions{})
-		if err != nil || live.Spec.Ports[0].TargetPort.IntVal != map[string]int32{snapshot.ServiceList[0].Name: 8080, snapshot.ServiceList[1].Name: 9999}[name] {
-			t.Fatalf("agent-selected repair did not remain in place: %+v %v", live, err)
-		}
-	}
-	t.Log("captured routing repair passes save-time replay; agent applies one binding and leaves it in place while the peer remains unresolved")
-}
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {
 	unavailable := HTTPProberClient{BaseURL: func(context.Context, bool) (string, error) {
 		return "", errors.New("prober pod is not ready")

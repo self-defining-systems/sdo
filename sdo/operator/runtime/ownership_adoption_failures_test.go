@@ -17,6 +17,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -106,7 +107,7 @@ func TestAdoptionObjectFailureSitesAreIsolated(t *testing.T) {
 			controller, client := fakeAdoptionController(t, fakeClient, test.sources)
 			if test.view {
 				controller.ConfigureDrift(DriftControllerConfig{Source: test.sources, Client: client, View: func(snapshot sdk.DetectionContext) program.ReadView {
-					return failingDiffView{ReadView: LiveReadView{DetectionContext: snapshot, Source: test.sources, SourceCommit: "accepted", Client: client}, ref: test.failing}
+					return failingDiffView{ReadView: LiveReadView{Carrier: inputs.New(snapshot), Source: test.sources, SourceCommit: "accepted", Client: client}, ref: test.failing}
 				}})
 			}
 			controller.adoptionNeeded = true
