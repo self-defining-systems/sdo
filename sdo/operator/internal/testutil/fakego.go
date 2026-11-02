@@ -65,11 +65,22 @@ covers() {
 ARGS_PATTERNS=
 for a in "$@"; do case "$a" in ./*) ARGS_PATTERNS="$ARGS_PATTERNS $a";; esac; done
 args="$*"
+norun=
+prev=
+for a in "$@"; do
+  case "$prev|$a" in "-run|^$") norun=1;; esac
+  case "$a" in "-run=^$") norun=1;; esac
+  prev=$a
+done
 `)
 	for _, rule := range rules {
 		fmt.Fprintf(&script, "if [ %s = \"$verb\" ]", shellQuote(rule.Verb))
 		if rule.Covers != "" {
 			fmt.Fprintf(&script, " && covers %s", shellQuote(rule.Covers))
+		}
+		if rule.Verb == "test" {
+			// A test stage that selects no test (-run '^$') cannot fail on one.
+			script.WriteString(` && [ -z "$norun" ]`)
 		}
 		if rule.Marker != "" {
 			fmt.Fprintf(&script, " && [ -e %s ]", shellQuote(rule.Marker))

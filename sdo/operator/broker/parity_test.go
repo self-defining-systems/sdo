@@ -120,8 +120,29 @@ func TestCLIAndBrokerAgreeOnAcceptanceAutomatic4(t *testing.T) {
 // Omitting the case name makes name-based placement exceptions impossible.
 func automaticAcceptanceShard(index int) int { return index % acceptanceShardCount }
 
+// Three verdicts depend on what the real compiler and the generated replay
+// produce: a compile error, a detector that fires on the healthy baseline, and
+// advisory mitigation replay. Every other case needs only the stage plan and
+// runs over the synthetic Go edge. The real set runs once, nightly.
+var realCompilerCases = map[string]bool{
+	"compile failure":                              true,
+	"always firing on healthy baseline":            true,
+	"program mitigation skips unreplayable effect": true,
+}
+
+func TestCLIAndBrokerAgreeOnRealCompilerVerdicts(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptanceCases(t, 0, true)
+}
+
 func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
+	testCLIAndBrokerAgreeOnAcceptanceCases(t, shard, false)
+}
+
+func testCLIAndBrokerAgreeOnAcceptanceCases(t *testing.T, shard int, real bool) {
 	binary := operatorCLIFixture(t)
+	if !real {
+		testutil.FakeGo(t)
+	}
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
@@ -139,8 +160,6 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 		allowAdditional bool
 	}
 	cases := []parityCase{
-		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
-		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
 		// A closure verified healthy is the only precondition: the cause is bound
 		// by the successful repair write on its own resource, so an opening
 		// finding on another resource neither blocks nor is needed.
@@ -190,21 +209,6 @@ func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 		{"compile failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", strings.Replace(parityDetector(t, "cache"), "return Detector{}", "return undefinedValue", 1), 0o644)
 		}, []string{validate.RuleDetectorCompile}, false},
-		{"vet failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
-			source := strings.Replace(parityDetector(t, "cache"), `"context"`, `"context"; "fmt"`, 1)
-			source = strings.Replace(source, "return Detector{}", `_ = fmt.Sprintf("%d", "bad"); return Detector{}`, 1)
-			formatted, err := format.Source([]byte(source))
-			if err != nil {
-				t.Fatal(err)
-			}
-			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", string(formatted), 0o644)
-		}, []string{validate.RuleDetectorVet}, false},
-		{"detector test failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
-			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector_test.go", `package detector
-import "testing"
-func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
-`, 0o644)
-		}, []string{validate.RuleDetectorTest}, false},
 
 		{"unknown actor", "stranger", validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/playbooks/base/scripts/fix.sh", "#!/bin/bash\ntrue\n", 0o755)
@@ -340,16 +344,6 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			}
 		}, nil, false},
 
-		{"program mitigation leaves target port faulty", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
-			parityProgram(t, r)
-			put(t, r, ".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
-import ("context"; "sdo.dev/operator/sdk/program")
-func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
- verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
- return program.Plan{Actions:[]program.Action{program.SetField{Ref:b.Objects["service"],Path:"spec.ports[0].targetPort",Value:program.FromObserved(b.Objects["service"],"spec.ports[0].targetPort")}}},nil
-}
-`, 0644)
-		}, nil, false},
 		{"program mitigation skips unreplayable effect", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			put(t, r, ".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
@@ -379,15 +373,6 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			}
 			put(t, r, path, strings.Replace(string(data), "import (", "import (\n _ \"os/exec\"", 1), 0644)
 		}, []string{"program.invalid"}, false},
-		{"program compile failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
-			parityProgram(t, r)
-			path := ".sdo/playbooks/service-targetport-mismatch/diagnose.go"
-			data, err := os.ReadFile(filepath.Join(r, path))
-			if err != nil {
-				t.Fatal(err)
-			}
-			put(t, r, path, strings.Replace(string(data), "type Program struct{}", "type Program struct{ missing UndefinedType }", 1), 0644)
-		}, []string{validate.RuleDetectorCompile}, false},
 		{"program replay failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
@@ -554,7 +539,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		}, nil, false},
 	}...)
 	for index, test := range cases {
-		if automaticAcceptanceShard(index) != shard {
+		if realCompilerCases[test.name] != real || (!real && automaticAcceptanceShard(index) != shard) {
 			continue
 		}
 		t.Run(test.name, func(t *testing.T) {

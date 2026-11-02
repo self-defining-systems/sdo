@@ -1,5 +1,3 @@
-//go:build integration
-
 // Package compiletest keeps the real compiler smoke off builder's serial test path.
 package compiletest
 
