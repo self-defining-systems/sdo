@@ -173,3 +173,31 @@ def test_explicit_fastloop_preflight_checks_every_reused_image(tmp_path, monkeyp
         ("controller:reused", ()),
         ("benchmark:reused", adapter.BENCHMARK_IMAGE_ENTRY_POINTS),
     ]
+
+
+def test_toy_preflight_needs_no_sregym_sources(tmp_path, monkeypatch):
+    import shutil
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import cli, source_preflight
+
+    (tmp_path / "sdo/operator").mkdir(parents=True)
+    (tmp_path / "sdo/operator/go.mod").touch()
+    monkeypatch.setattr(shutil, "which", lambda _: "/fixture/tool")
+    monkeypatch.setattr(cli, "check_host_capacity", lambda _: None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, ""))
+
+    def reject(_):
+        raise AssertionError("toy lanes do not use the SREGym checkout")
+
+    monkeypatch.setattr(source_preflight, "assert_harness_sources", reject)
+    cli.up_preflight(
+        SimpleNamespace(
+            app="toy",
+            kind_worker_nodes=1,
+            dev_mount=tmp_path,
+            sregym_dir=tmp_path,
+            controller_image=None,
+            responder_image=None,
+        )
+    )

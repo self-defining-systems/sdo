@@ -263,9 +263,10 @@ def up_preflight(args: argparse.Namespace) -> None:
         warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
     elif not (args.dev_mount.resolve() / "sdo/operator/go.mod").is_file():
         raise ValueError(f"fastloop preflight: not an SDO worktree: {args.dev_mount}")
-    from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
+    if getattr(args, "app", None) != "toy":
+        from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
 
-    assert_harness_sources(getattr(args, "sregym_dir", DEFAULT_SREGYM_DIR))
+        assert_harness_sources(getattr(args, "sregym_dir", DEFAULT_SREGYM_DIR))
     from benchmarks.sregym.adapter import BENCHMARK_IMAGE_ENTRY_POINTS, assert_image_entrypoints
 
     for image, modules in (
