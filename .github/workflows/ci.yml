@@ -17,6 +17,9 @@ concurrency:
 
 env:
   SDO_PYTEST_WORKERS: "4"
+  # Each job runs `uv sync --locked --all-extras` once; later `uv run` calls must not re-resolve
+  # or rebuild the local packages while the checks and pytest start concurrently.
+  UV_NO_SYNC: "1"
   # Generated workspaces have different absolute paths; trimpath permits reuse
   # of identical SDK/runtime compilation across those isolated checkouts.
   GOFLAGS: "-trimpath"
