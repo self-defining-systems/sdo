@@ -265,6 +265,10 @@ func TestClosureCompletesAcrossRepositoryAdvance(t *testing.T) {
 			if c.pendingClosure.Request.SourceCommit != old.Commit {
 				t.Fatal("fixture lost original evidence")
 			}
+			// The verification window is a wall-clock deadline built from
+			// nativeClosure's creation time; slow git work under load must not
+			// run it out and hand an expired-health closure to the broker.
+			c.now = func() time.Time { return closure.ResponderCompletedAt.Add(time.Second) }
 			rv6Guard(c, root, current.Commit)
 			if err := c.CheckHealth(ctx); err != nil {
 				t.Fatalf("repository advance (%s) refused the closure: %v", change, err)
@@ -291,10 +295,12 @@ func TestClosureCompletesAcrossRepositoryAdvance(t *testing.T) {
 				if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.closureFailure != nil {
 					t.Fatalf("active health became terminal instead of awaiting observation: state %v failure %+v", c.closureState, c.closureFailure)
 				}
+				// Handoff steps the closure out of PENDING synchronously, which the
+				// state check above covers; a queued result is the only residue.
 				select {
 				case result := <-c.closureResults:
 					t.Fatalf("closure reached the broker although health is bad after adoption: %+v", result)
-				case <-time.After(200 * time.Millisecond):
+				default:
 				}
 				c.processBrokerCompletions()
 				if c.closureReceipt != nil || nativeGit(t, root, "rev-parse", "HEAD") != head {
