@@ -1,6 +1,7 @@
 """Hand-authored scripts replace the CLI, retaining the real provider parser."""
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -634,3 +635,41 @@ def test_scripted_session_persists_a_rollout_before_the_worker_checkpoints_it(sc
     run(first.session_id)
     assert [len(found) for found in started] == [1, 1]
     assert started[0][0].stat().st_size > 0
+
+
+def test_sandboxed_commands_can_persist_tool_replies_for_later_commands(scripted_cli):
+    """`sdo` writes each reply under /tmp/sdo and the next command reads it back."""
+    from libs.agent_cli.structured import run_structured_turn
+
+    path, root = scripted_cli
+    marker = f"probe-{root.name}"
+    path.write_text(
+        json.dumps(
+            script(
+                steps=[
+                    {
+                        "kind": "command",
+                        "command": f"mkdir -p /tmp/sdo/{marker} && echo kept > /tmp/sdo/{marker}/reply",
+                    },
+                    {"kind": "command", "command": f"cat /tmp/sdo/{marker}/reply", "contains": "kept"},
+                ],
+                result={"confirmed_root_causes": []},
+            )
+        )
+    )
+    try:
+        run_structured_turn(
+            provider="codex",
+            model="unused",
+            cwd=root,
+            prompt="test",
+            output_schema={
+                "type": "object",
+                "properties": {"confirmed_root_causes": {"type": "array", "items": {"type": "string"}}},
+                "required": ["confirmed_root_causes"],
+                "additionalProperties": False,
+            },
+            access="danger-full-access",
+        )
+    finally:
+        shutil.rmtree(f"/tmp/sdo/{marker}", ignore_errors=True)

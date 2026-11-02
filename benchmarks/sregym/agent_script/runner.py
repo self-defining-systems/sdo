@@ -18,6 +18,9 @@ from benchmarks.sregym.agent_script.wire import EventStream
 from .model import Command, Delete, Exit, ScriptTurn, Step, Tool, Wait, Write
 from .template import TemplateContext, expand
 
+#: Where the production `sdo` tool persists complete replies (sdo.agents.responder.tool_output.OUTPUT_ROOT).
+OUTPUT_ROOT = Path("/tmp/sdo")
+
 
 class ScriptExit(Exception):
     """A planned CLI failure; the selected turn has already been consumed."""
@@ -111,6 +114,13 @@ def execute(
                 if go_binary:
                     position = argv.index("--")
                     argv[position:position] = ["--ro-bind", "/bin/false", str(Path(go_binary).resolve())]
+            # Like a real workspace-write turn, `sdo` persists each complete tool reply under /tmp/sdo
+            # and later commands read it back, so that one directory outlives the command.
+            try:
+                OUTPUT_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
+                argv[argv.index("--") : argv.index("--")] = ["--bind", str(OUTPUT_ROOT), str(OUTPUT_ROOT)]
+            except OSError:
+                pass
             tools = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
             if tools.is_dir():
                 argv[argv.index("--") : argv.index("--")] = ["--bind", str(tools.resolve()), str(tools.resolve())]
