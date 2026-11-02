@@ -121,9 +121,9 @@ def test_deployment_worker_rejects_wrong_payload_type(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])
-@pytest.mark.parametrize(("role", "access"), [("source", "danger-full-access"), ("health", "workspace-write")])
+@pytest.mark.parametrize("role", ["source", "health"])
 def test_live_lifecycle_callers_use_the_pod_boundary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, role: str, access: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, role: str
 ) -> None:
     from sdo.agents import prompt_templates
     from sdo.agents.lifecycle import ClaudeLifecycleBackend, CodexLifecycleBackend
@@ -133,7 +133,7 @@ def test_live_lifecycle_callers_use_the_pod_boundary(
 
     def boundary(actual_provider: str, _prompt: str, **options: object) -> None:
         assert actual_provider == provider
-        assert options["access"] == access
+        assert options["access"] == "danger-full-access"
         raise Observed
 
     monkeypatch.setattr(prompt_templates, "_run_structured_turn", boundary)

@@ -26,7 +26,6 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
    [tests](assets/restart-loop/detector_test.go) show the current detector interface.
 5. Use shell tools to inspect and edit the proposal; run the complete memory check before returning. The broker repeats it independently.
 
-Before returning memory edits, run the complete memory check and resolve every diagnostic until it passes.
 For synthetic traffic scenarios, workloads and links, read the [traffic reference](references/traffic.md).
 
 Read [validator rules](references/rules.md) before changing a manifest or when a diagnostic names a detector rule.
@@ -85,5 +84,3 @@ a source exists.
 The controller's opt-in healthy-baseline gate measures exclusions on each cluster and keeps them as that cluster's own state, outside memory. Never write measured values from one cluster (Service UIDs, allocated IPs, probe or capture times) into `.sdo/`: memory holds what to measure and thresholds, not one cluster's measurement, and the check rejects such fields (`memory.cluster-local`). Do not infer exclusions from missing successful dials or author them from an incident. Generic reachability invalidates an exclusion when source, objective or target configuration changes; new wrong targetPort failures remain detectable. Service UID/resourceVersion, allocated ClusterIP/IP-family values, NodePort and health-check NodePort do not identify the application configuration; namespace/Service/port identity, headless routing, selector, targetPort/protocol, selected container configuration, referenced ConfigMaps and selecting network policies do. Inspect `baseline_status` in finding port metadata when an earlier exclusion no longer applies.
 
 For kinds outside the typed getters, use the [generic object interface](references/generic-objects.md).
-
-The controller's verified onboarding window also records immutable measured reachability reference evidence beside the final onboarding record. Consistently refused, never-served declared ports are visible `declared-but-never-served` observations rather than health findings. Unconfirmed probe windows are pending, not clear. Previously serving ports retain the ordinary failure gate; target configuration changes and later successful dials end an exclusion. Agents cannot author or expand this controller-owned install reference.

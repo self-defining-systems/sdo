@@ -330,7 +330,7 @@ def test_reflection_shell_commands_withhold_sensitive_sdo_act_lines(tmp_path: Pa
             {"api_version": "rbac.authorization.k8s.io/v1", "kind": "Role", "namespace": "app", "name": "reader"},
         ),
         ("PersistentVolume/data", {"api_version": "", "kind": "PersistentVolume", "namespace": "", "name": "data"}),
-        ("Node/worker-1", {"api_version": "", "kind": "Node", "namespace": "", "name": "worker-1"}),
+        ("Node/worker-1", {"api_version": "v1", "kind": "Node", "namespace": "", "name": "worker-1"}),
         (
             "deployments.apps/app/api",
             {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"},

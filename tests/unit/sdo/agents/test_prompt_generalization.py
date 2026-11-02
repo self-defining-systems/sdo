@@ -21,6 +21,7 @@ GENERIC_TERMS = {
     "demo": "Synthetic detector example namespace.",
     "llm": "Generic language-model runtime prohibition.",
     "mongodb user": "Generic database principal in command help.",
+    "profile": "Generic workload profile in the traffic SDK.",
     "rate": "Generic traffic and sampling rate.",
     "readiness": "Generic Kubernetes readiness observation.",
     "search": "Generic instruction to search evidence or memory.",

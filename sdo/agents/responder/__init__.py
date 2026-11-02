@@ -37,7 +37,6 @@ _EXPORTS = {
     "records_worker_failure": "termination",
     "prepare_codex_home": "credentials",
     "reflection_output_schema": "reflection",
-    "run_incident_status_cli": "incident_status",
     "run_reflection_task": "reflection_worker",
     "run_worker_task": "worker",
     "session_output_schema": "session_turn",
@@ -75,9 +74,6 @@ if TYPE_CHECKING:
     )
     from sdo.agents.responder.incident_status import (
         live_incident_status as live_incident_status,
-    )
-    from sdo.agents.responder.incident_status import (
-        run_incident_status_cli as run_incident_status_cli,
     )
     from sdo.agents.responder.job import (
         KubernetesResultPublisher as KubernetesResultPublisher,

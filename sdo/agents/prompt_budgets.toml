@@ -144,6 +144,10 @@ reason = "Baseline synthetic fixture maximum: 175 Unicode code points; byte-iden
 max_chars = 200
 reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-identical template extraction."
 
+[skills.sdo-operationalize]
+max_chars = 200
+reason = "Operationalization skill description; shares the existing 200-character skill-index allowance."
+
 [skills.sdo-incident-response]
 max_chars = 200
 reason = "New responder workflow skill description; shares the existing 200-character skill-index allowance."

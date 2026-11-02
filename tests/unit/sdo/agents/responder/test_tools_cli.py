@@ -81,7 +81,9 @@ def test_status_and_apply_help_point_at_stage_results(capsys):
 
 
 def test_skill_explains_prior_stages():
-    skill = (Path(__file__).resolve().parents[5] / "sdo" / "skills" / "sdo-memory" / "SKILL.md").read_text()
+    skill = (
+        Path(__file__).resolve().parents[5] / "sdo/skills/sdo-incident-response/references/coverage.md"
+    ).read_text()
 
     assert "prior_stages" in skill
 

@@ -134,7 +134,8 @@ Mutating commands always store complete per-action results, evidence, program ru
 }
 ```
 
-usage: sdo verify [-h] [--wait SECONDS]
+usage: sdo verify [-h] [--workload WORKLOAD] [--scenario SCENARIO]
+                  [--wait SECONDS]
 
 Reads the controller's shared recovery proof: fresh health after the last
 repair, observed write effects, and the unchanged 15-second stability window.
@@ -156,9 +157,12 @@ waiting for final narration; worker quiescence and outcome/reflection work
 continue during maintenance pauses.
 
 options:
-  -h, --help      show this help message and exit
-  --wait SECONDS  wait for stable verification, a new/reactivated finding, or
-                  this timeout (0: cached and instant)
+  -h, --help           show this help message and exit
+  --workload WORKLOAD  traffic workload to burst (default: the health judge's
+                       verify workload)
+  --scenario SCENARIO  traffic scenario ID to burst; repeatable
+  --wait SECONDS       wait for stable verification, a new/reactivated
+                       finding, or this timeout (0: cached and instant)
 
 Key JSON fields: healthy, verification_status, findings[], detector_states[],
 verification_blockers[{detector_id,reason}], drift[], drift_events[]

@@ -54,6 +54,9 @@ OBJECT_KINDS = {
     "ing": "Ingress", "ingress": "Ingress", "ingresses": "Ingress",
     "job": "Job", "jobs": "Job",
     "netpol": "NetworkPolicy", "networkpolicy": "NetworkPolicy", "networkpolicies": "NetworkPolicy",
+    "node": "Node", "nodes": "Node",
+    "pdb": "PodDisruptionBudget", "poddisruptionbudget": "PodDisruptionBudget",
+    "poddisruptionbudgets": "PodDisruptionBudget",
     "pvc": "PersistentVolumeClaim", "persistentvolumeclaim": "PersistentVolumeClaim",
     "persistentvolumeclaims": "PersistentVolumeClaim",
     "po": "Pod", "pod": "Pod", "pods": "Pod",
@@ -85,6 +88,8 @@ API_VERSIONS = {
     "Service": "v1",
     "ServiceAccount": "v1",
     "PersistentVolumeClaim": "v1",
+    "Node": "v1",
+    "PodDisruptionBudget": "policy/v1",
 }
 _KUBECTL_VALUE_FLAGS = {"-n", "--namespace", "--context", "--kubeconfig", "-l", "--selector", "-f", "--filename"}
 _KUBECTL_COMPOUND_VERBS = {"set", "rollout"}

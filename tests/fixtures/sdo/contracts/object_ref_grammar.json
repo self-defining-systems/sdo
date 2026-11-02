@@ -167,13 +167,13 @@
  {
   "input": "Node/worker-1",
   "go": {
-   "api_version": "",
+   "api_version": "v1",
    "kind": "Node",
    "namespace": "",
    "name": "worker-1"
   },
   "python": {
-   "api_version": "",
+   "api_version": "v1",
    "kind": "Node",
    "namespace": "",
    "name": "worker-1"
@@ -335,12 +335,12 @@
   "python": null
  },
  {
-  "input": "Pod/\u00e9",
+  "input": "Pod/é",
   "go": null,
   "python": null
  },
  {
-  "input": "Pod/\u0661",
+  "input": "Pod/١",
   "go": null,
   "python": null
  },
@@ -410,7 +410,7 @@
   }
  },
  {
-  "input": "Pod/x\u2028",
+  "input": "Pod/x ",
   "go": {
    "api_version": "v1",
    "kind": "Pod",

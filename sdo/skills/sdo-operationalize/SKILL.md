@@ -1,6 +1,6 @@
 ---
 name: sdo-operationalize
-description: Use when deciding what an application's SDO detectors and synthetic traffic should watch - deriving a complete, cheap health detector set from the application's source at bootstrap, or adding detectors after an incident showed a gap. Maps each check to the SDK input that can express it and lists what is already installed.
+description: Decide which detectors and synthetic traffic an application needs, from its source at bootstrap or after an incident gap. Maps each check to the SDK input and lists what is already installed.
 ---
 
 # Operationalizing an application

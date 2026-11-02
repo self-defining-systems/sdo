@@ -11,11 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SDK = ROOT / "sdo/operator/sdk"
 
 
-def render_bundle(title: str, packages: tuple[str, ...], stem: str) -> dict[str, str]:
+def render_bundle(title: str, packages: tuple[str, ...], stem: str, *, full_traffic: bool = False) -> dict[str, str]:
     files: dict[str, str] = {}
     links = []
     for package in packages:
-        flags = [] if package == "./traffic" else ["-all"]
+        flags = [] if package == "./traffic" and not full_traffic else ["-all"]
         text = subprocess.run(
             ["go", "doc", *flags, package], cwd=SDK, check=True, text=True, capture_output=True
         ).stdout
@@ -305,16 +305,27 @@ def main() -> None:
         (
             "sdo-detector-authoring",
             "Detector SDK reference",
-            (".", "./servicehealth", "./workloadhealth", "./observe", "./traffic", "./metrics"),
+            (
+                ".",
+                "./servicehealth",
+                "./workloadhealth",
+                "./generichealth",
+                "./observe",
+                "./traffic",
+                "./metrics",
+                "./usage",
+                "./logs",
+            ),
             "sdk",
         ),
+        ("sdo-detector-authoring", "Synthetic traffic SDK reference", ("./traffic",), "traffic"),
         ("sdo-detector-authoring", "Detector replay reference", ("./sdktest",), "replay"),
         ("sdo-playbook-authoring", "Program SDK reference", ("./program", "./routing"), "program-sdk"),
     )
     failures = []
     for skill, title, packages, stem in bundles:
         directory = ROOT / "sdo/skills" / skill / "references"
-        files = render_bundle(title, packages, stem)
+        files = render_bundle(title, packages, stem, full_traffic=stem == "traffic")
         existing = {f"{stem}.md", *(str(path.relative_to(directory)) for path in (directory / stem).glob("*.md"))}
         for name in sorted(existing | files.keys()):
             path = directory / name

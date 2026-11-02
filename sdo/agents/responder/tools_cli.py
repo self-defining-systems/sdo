@@ -176,7 +176,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print JSON for scripts (mutations: compact envelope and complete report path)",
     )
-    commands.add_parser("status", help="read findings and detector confirmation")
+    commands.add_parser(
+        "status",
+        help="read findings and detector confirmation",
+        description="Read findings and detector confirmation. prior_stages lists what automatic stages already did.",
+    )
     for name, help_text in (
         ("detect", "run fresh detectors; pending health is unproven"),
         ("check", "run detectors and verify closure; --detector ID selects detectors"),
@@ -218,7 +222,12 @@ def _parser() -> argparse.ArgumentParser:
             metavar="NAME=Kind/namespace/name",
             help="named program parameter; repeat for each binding",
         )
-    commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
+    commands.add_parser(
+        "apply",
+        help="apply a previously planned repair",
+        description="Apply plans returned by sdo plan. An attempt recorded as applied in prior_stages already wrote: "
+        "re-check live state before applying it again.",
+    ).add_argument("plan_ids", nargs="+")
     mitigate = commands.add_parser(
         "mitigate",
         help="apply independent options; --finding FINGERPRINT scopes verification; overlapping writes refused",
