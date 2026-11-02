@@ -5,7 +5,6 @@ package checktransport
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +13,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/internal/memoryio"
 )
 
 // Check sends only a decision. Checkout, base, policy and toolchain are selected
@@ -42,7 +42,7 @@ func Check(ctx context.Context, directory string, decision *contracts.Reflection
 		return nil, err
 	}
 	request := body.Bytes()
-	name := "check-" + rand.Text() + ".json"
+	name := "check-" + memoryio.RandomText() + ".json"
 	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func Check(ctx context.Context, directory string, decision *contracts.Reflection
 	}
 	defer root.Remove(requestPath)
 	defer root.Remove(responsePath)
-	timer := time.NewTicker(100 * time.Millisecond)
+	timer := memoryio.NewTicker(100 * time.Millisecond)
 	defer timer.Stop()
 	for {
 		data, err := root.ReadFile(responsePath)

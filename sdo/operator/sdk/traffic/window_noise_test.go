@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,24 +83,25 @@ func TestTimeoutFloorCanBeOverriddenPerScenario(t *testing.T) {
 	}
 }
 
-// Real HTTP producer -> engine samples -> detector, with no hand-authored
-// observations at the decision boundary.
+// HTTP producer -> engine samples -> detector, with no hand-authored
+// observations at the decision boundary. A hung response times out on the
+// injected clock rather than an operating-system deadline.
 func TestEngineTimeoutNoiseFeedsDetector(t *testing.T) {
-	var hang atomic.Bool
-	base := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if hang.Load() {
-			<-r.Context().Done()
-			return
-		}
-		_, _ = w.Write([]byte("ok"))
-	}))
+	base := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	address := base(traffic.Target{})
+	clock := &stepClock{now: time.Unix(0, 0)}
 	w := workload(t, "health", traffic.PurposeHealthProbe, traffic.WorkloadScenario{ID: "search"})
-	w.Timeout = traffic.Duration(100 * time.Millisecond)
+	w.Timeout = traffic.Duration(50 * time.Millisecond)
 	w.SLO.MaxErrorRate, w.SLO.MaxTimeoutRate = 0.1, 0.1
-	e := engine(t, w, traffic.Catalog{search()}, base)
+	e, err := traffic.NewEngine(w, traffic.Catalog{search()}, routedDoer{}, base, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var values []traffic.Sample
 	for i := 0; i < 5; i++ {
-		hang.Store(i >= 3)
+		if i == 3 {
+			applications.Store(address, deadlineDoer{t: t, clock: clock})
+		}
 		_, sample := e.Iterate(context.Background(), uint64(i))
 		want := traffic.OutcomeOK
 		if i >= 3 {

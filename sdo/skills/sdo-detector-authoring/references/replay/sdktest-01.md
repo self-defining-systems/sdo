@@ -226,14 +226,12 @@ func (v *RecordingReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.Pro
 
 func (v *RecordingReadView) QueryMetrics(q metrics.Query) metrics.Result
 
+func (v *RecordingReadView) RecordExternalCalls(calls []PrimitiveCall)
+    RecordExternalCalls feeds subprocess receipts through the same evidence sink
+    used for local primitive reads. It performs no live reads.
+
 func (v *RecordingReadView) RecordedReads() []PrimitiveCall
     RecordedReads returns a detached, concurrency-safe copy of runtime evidence.
 
 func (v *RecordingReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error)
-
-func (v *RecordingReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error)
-
-func (v *RecordingReadView) ScopedServices(namespace string) ([]corev1.Service, error)
-
-func (v *RecordingReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
 ```

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -24,7 +24,7 @@ func AdoptionCommit(ctx context.Context, repository, revision string) (string, e
 	if revision == "" {
 		revision = "HEAD"
 	}
-	raw, err := exec.CommandContext(ctx, "git", "-C", repository, "log", revision, "--format=%H%x00%B%x00").Output()
+	raw, err := memoryio.Git(ctx, repository, false, nil, "log", revision, "--format=%H%x00%B%x00")
 	if err != nil {
 		return "", err
 	}
@@ -45,14 +45,14 @@ func AdoptedBuild(ctx context.Context, repository, revision string) (bool, error
 	if err != nil || adoption == "" {
 		return false, err
 	}
-	dirty, err := exec.CommandContext(ctx, "git", "-C", repository, "status", "--porcelain", "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir, layout.CorpusDir).Output()
+	dirty, err := memoryio.Git(ctx, repository, false, nil, "status", "--porcelain", "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir, layout.CorpusDir)
 	if err != nil {
 		return false, err
 	}
 	if len(dirty) != 0 {
 		return false, nil
 	}
-	others, err := exec.CommandContext(ctx, "git", "-C", repository, "ls-files", "--others", "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir, layout.CorpusDir).Output()
+	others, err := memoryio.Git(ctx, repository, false, nil, "ls-files", "--others", "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir, layout.CorpusDir)
 	if err != nil {
 		return false, err
 	}
@@ -78,7 +78,7 @@ func AfterAdoption(ctx context.Context, repository string, outcomes []Outcome) (
 	if err != nil || adoption == "" {
 		return outcomes, err
 	}
-	listing, err := exec.CommandContext(ctx, "git", "-C", repository, "ls-tree", "-r", "--name-only", adoption, "--", layout.OutcomesDir).Output()
+	listing, err := memoryio.Git(ctx, repository, false, nil, "ls-tree", "-r", "--name-only", adoption, "--", layout.OutcomesDir)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func AfterAdoption(ctx context.Context, repository string, outcomes []Outcome) (
 // validation, outcome, or capture. Callers must compile it before this operation.
 func MarkAdoptedExisting(ctx context.Context, repository string) (string, error) {
 	git := func(args ...string) (string, error) {
-		raw, err := exec.CommandContext(ctx, "git", append([]string{"-C", repository}, args...)...).CombinedOutput()
+		raw, err := memoryio.Git(ctx, repository, true, nil, args...)
 		if err != nil {
 			return "", fmt.Errorf("adopt existing memory git: %w: %s", err, raw)
 		}

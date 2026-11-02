@@ -20,7 +20,7 @@ func ReadFrom(view sdk.DetectionContext) ReadView {
 	if source, ok := view.(interface{ RuntimeReadView() ReadView }); ok {
 		return source.RuntimeReadView()
 	}
-	return snapshotReadView{Carrier: inputs.New(view), ScopedObservationSource: sdk.ScopedSource(view)}
+	return snapshotReadView{inputs.New(view)}
 }
 
 // CheckReads gives one evaluation its own failure tracking. A failed read

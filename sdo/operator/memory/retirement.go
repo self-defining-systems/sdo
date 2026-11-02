@@ -3,8 +3,8 @@ package memory
 import (
 	"context"
 	"fmt"
-	"os/exec"
 
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -18,7 +18,7 @@ func PlaybookActivationChanged(ctx context.Context, repository, before, after st
 		}
 		states := []bool{}
 		for _, revision := range []string{before, after} {
-			listed, err := exec.CommandContext(ctx, "git", "-C", repository, "ls-tree", revision, "--", path).CombinedOutput()
+			listed, err := memoryio.Git(ctx, repository, true, nil, "ls-tree", revision, "--", path)
 			if err != nil {
 				return false, fmt.Errorf("read playbook at %s: %w: %s", revision, err, listed)
 			}
@@ -26,7 +26,7 @@ func PlaybookActivationChanged(ctx context.Context, repository, before, after st
 				states = append(states, false)
 				continue
 			}
-			data, err := exec.CommandContext(ctx, "git", "-C", repository, "show", revision+":"+path).CombinedOutput()
+			data, err := memoryio.Git(ctx, repository, true, nil, "show", revision+":"+path)
 			if err != nil {
 				return false, fmt.Errorf("read playbook at %s: %w: %s", revision, err, data)
 			}

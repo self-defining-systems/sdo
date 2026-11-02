@@ -47,6 +47,10 @@ func FormatObjectRef(ref ObjectRef) (string, error)
     namespace/kind ordering, so parsing the formatted value preserves every
     ObjectRef field.
 
+func IsSupportedWatchKind(watch WatchKind) bool
+    IsSupportedWatchKind reports whether a watch names a snapshot or controller
+    input. Kubernetes kinds require their exact served API version.
+
 func ObservationTime(ctx DetectionContext) time.Time
     ObservationTime returns the time a detection context describes. Detectors
     that judge an age ("Pending longer than a minute", "restarted within five
@@ -98,6 +102,10 @@ func SourceComparisonText(accepted, observed []byte) string
     SourceComparisonText renders the accepted and observed comparable fields of
     one object as SourceDiff.Text. Each side is one JSON document, or null when
     that side is absent. Sides, Field and ContainerChanges parse this form.
+
+func SupportedWatchKinds() []string
+    SupportedWatchKinds lists, sorted, the "apiVersion/Kind" resources a
+    detector may watch.
 
 func TypedObjectFields(target any) []reflect.Value
     TypedObjectFields returns target's typed Kubernetes list fields, the ones
@@ -175,6 +183,18 @@ const (
 	EphemeralContainer ContainerKind = "ephemeral"
 )
 type DetectionContext interface {
+	StatefulSets() []appsv1.StatefulSet
+	DaemonSets() []appsv1.DaemonSet
+	Jobs() []batchv1.Job
+	CronJobs() []batchv1.CronJob
+	PersistentVolumeClaims() []corev1.PersistentVolumeClaim
+	ServiceAccounts() []corev1.ServiceAccount
+	HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	Ingresses() []networkingv1.Ingress
+	Nodes() []corev1.Node
+	Secrets() []SecretMetadata
+
 	// DiffAgainstSource compares a captured resource with accepted source, including
 	// source absence. Runtime reads are frozen per snapshot and recorded for replay.
 	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
@@ -236,25 +256,4 @@ const (
 	DriftFault       DriftClassification = "fault"
 	DriftUnexplained DriftClassification = "unexplained"
 )
-type DriftEvent struct {
-	Ref                    ObjectRef           `json:"ref"`
-	Fields                 []DriftField        `json:"fields"`
-	Source                 string              `json:"source"`
-	Manager                string              `json:"manager,omitempty"`
-	Operation              string              `json:"operation,omitempty"`
-	ManagerAt              *time.Time          `json:"manager_at,omitempty"`
-	ObservedAt             time.Time           `json:"observed_at"`
-	Classification         DriftClassification `json:"classification"`
-	ProgramID              string              `json:"program_id,omitempty"`
-	InvestigationStatus    string              `json:"investigation_status,omitempty"`
-	InvestigationVerdict   string              `json:"investigation_verdict,omitempty"`
-	InvestigationReason    string              `json:"investigation_reason,omitempty"`
-	InvestigationEvidence  []DriftEvidence     `json:"investigation_evidence,omitempty"`
-	InvestigationCaptureID string              `json:"investigation_capture_id,omitempty"`
-}
-
-type DriftEvidence struct {
-	Kind        string `json:"kind"`
-	Observation string `json:"observation"`
-}
 ```

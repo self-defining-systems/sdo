@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -21,7 +21,7 @@ type shellCatalog struct{ *JSONStore }
 
 func OpenShellCatalogReader(root string) CatalogReader { return shellCatalog{NewJSONStore(root)} }
 func (s shellCatalog) Snapshot(ctx context.Context) (*contracts.OperationalMemorySnapshot, error) {
-	output, err := exec.CommandContext(ctx, "git", "-C", s.root, "rev-parse", "HEAD").Output()
+	output, err := memoryio.Git(ctx, s.root, false, nil, "rev-parse", "HEAD")
 	if err != nil {
 		return nil, err
 	}

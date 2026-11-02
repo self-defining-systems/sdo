@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"path"
 	"regexp"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"sdo.dev/operator/rendered/internal/renderio"
 	"sdo.dev/operator/sdk"
 )
 
@@ -58,7 +58,7 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
 		return nil, fmt.Errorf("accepted repository, full commit revision, and namespace are required")
 	}
-	files, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "ls-tree", "-r", "-z", revision).Output()
+	files, err := renderio.Git(ctx, s.Repository, "ls-tree", "-r", "-z", revision)
 	if err != nil {
 		return nil, fmt.Errorf("list manifests at %s: %w", revision, err)
 	}
@@ -83,7 +83,7 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 		if !regular[name] {
 			return nil, fmt.Errorf("accepted input %s is not a tracked regular file", name)
 		}
-		data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "show", revision+":"+name).Output()
+		data, err := renderio.Git(ctx, s.Repository, "show", revision+":"+name)
 		if err != nil || len(data) > 2<<20 {
 			return nil, fmt.Errorf("accepted input %s unavailable or exceeds 2 MiB", name)
 		}

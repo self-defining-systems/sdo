@@ -2,19 +2,18 @@ package memory
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -64,9 +63,7 @@ func (s *JSONStore) snapshotAt(ctx context.Context, commit string, candidate fun
 	// Read raw blobs rather than checkout-index/archive: checkout conversion
 	// filters and newer worktree attributes cannot rewrite historical bytes.
 	run := func(args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = s.root
-		output, err := cmd.CombinedOutput()
+		output, err := memoryio.Git(ctx, s.root, true, nil, args...)
 		if err != nil {
 			return nil, fmt.Errorf("accepted memory git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 		}
@@ -121,55 +118,36 @@ func (s *JSONStore) exportCatalogBlobs(ctx context.Context, root string, blobs [
 		input.WriteString(blob.object)
 		input.WriteByte('\n')
 	}
-	command := exec.CommandContext(ctx, "git", "cat-file", "--batch")
-	command.Dir = s.root
-	command.Stdin = strings.NewReader(input.String())
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	output, err := command.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	if err := command.Start(); err != nil {
-		return err
-	}
-	defer func() {
-		if command.ProcessState == nil {
-			_ = command.Process.Kill()
-			_ = command.Wait()
+	return memoryio.StreamGit(ctx, s.root, []byte(input.String()), func(output io.Reader) error {
+		reader := bufio.NewReader(output)
+		for _, blob := range blobs {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return fmt.Errorf("read accepted memory blob %s: %w", blob.path, err)
+			}
+			fields := strings.Fields(line)
+			if len(fields) != 3 || fields[0] != blob.object || fields[1] != "blob" {
+				return fmt.Errorf("invalid accepted memory blob %s", blob.path)
+			}
+			size, err := strconv.ParseInt(fields[2], 10, 64)
+			if err != nil || size < 0 || size > layout.MaxArtifactBytes {
+				return fmt.Errorf("accepted memory artifact exceeds size bound: %s", blob.path)
+			}
+			data := make([]byte, int(size)+1)
+			if _, err := io.ReadFull(reader, data); err != nil {
+				return err
+			}
+			if data[len(data)-1] != '\n' {
+				return errors.New("invalid accepted memory blob delimiter")
+			}
+			target := filepath.Join(root, filepath.FromSlash(blob.path))
+			if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+				return err
+			}
+			if err := os.WriteFile(target, data[:len(data)-1], 0600); err != nil {
+				return err
+			}
 		}
-	}()
-	reader := bufio.NewReader(output)
-	for _, blob := range blobs {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("read accepted memory blob %s: %w", blob.path, err)
-		}
-		fields := strings.Fields(line)
-		if len(fields) != 3 || fields[0] != blob.object || fields[1] != "blob" {
-			return fmt.Errorf("invalid accepted memory blob %s", blob.path)
-		}
-		size, err := strconv.ParseInt(fields[2], 10, 64)
-		if err != nil || size < 0 || size > layout.MaxArtifactBytes {
-			return fmt.Errorf("accepted memory artifact exceeds size bound: %s", blob.path)
-		}
-		data := make([]byte, int(size)+1)
-		if _, err := io.ReadFull(reader, data); err != nil {
-			return err
-		}
-		if data[len(data)-1] != '\n' {
-			return errors.New("invalid accepted memory blob delimiter")
-		}
-		target := filepath.Join(root, filepath.FromSlash(blob.path))
-		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(target, data[:len(data)-1], 0600); err != nil {
-			return err
-		}
-	}
-	if err := command.Wait(); err != nil {
-		return fmt.Errorf("read accepted memory objects: %w: %s", err, stderr.String())
-	}
-	return nil
+		return nil
+	}, "cat-file", "--batch")
 }

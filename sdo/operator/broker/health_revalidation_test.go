@@ -49,7 +49,7 @@ func TestHealthRevalidationRequiresIndependentValidationAndRecordsNoop(t *testin
 		t.Fatalf("acceptance not reused: %+v %v", again, err)
 	}
 	// A pre-existing malformed policy must be checked even with an empty diff.
-	if err := os.WriteFile(filepath.Join(root, ".sdo/goal.md"), []byte("broken goal"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("99\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	git(t, root, "add", ".")

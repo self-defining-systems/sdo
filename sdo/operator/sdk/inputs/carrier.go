@@ -4,6 +4,12 @@ package inputs
 import (
 	"time"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
+
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
@@ -22,6 +28,10 @@ type Sources interface {
 	metrics.AlertSource
 	usage.Source
 	logs.Source
+	metrics.QuerySource
+	metrics.UsageSource
+	sdk.ObjectCaptureSource
+	sdk.ScopedObservationSource
 }
 
 // Carrier adds all optional inputs to the Kubernetes view. Its updates return a
@@ -37,6 +47,10 @@ type Carrier struct {
 	alerts       metrics.AlertSource
 	usage        usage.Source
 	logs         logs.Source
+	query        metrics.QuerySource
+	podUsage     metrics.UsageSource
+	capture      sdk.ObjectCaptureSource
+	scoped       sdk.ScopedObservationSource
 }
 
 // New adopts existing optional inputs once, or copies an existing carrier.
@@ -55,6 +69,10 @@ func New(base sdk.DetectionContext) Carrier {
 	c.alerts, _ = base.(metrics.AlertSource)
 	c.usage, _ = base.(usage.Source)
 	c.logs, _ = base.(logs.Source)
+	c.query, _ = base.(metrics.QuerySource)
+	c.podUsage, _ = base.(metrics.UsageSource)
+	c.capture, _ = base.(sdk.ObjectCaptureSource)
+	c.scoped, _ = base.(sdk.ScopedObservationSource)
 	return c
 }
 func (c Carrier) WithClock(source sdk.ObservationClock) Carrier { c.clock = source; return c }
@@ -109,5 +127,65 @@ func (c Carrier) LogResult(id string) (logs.Result, bool) {
 	}
 	return c.logs.LogResult(id)
 }
+
+func (c Carrier) WithQuery(source metrics.QuerySource) Carrier { c.query = source; return c }
+func (c Carrier) QueryMetrics(q metrics.Query) metrics.Result {
+	if c.query == nil {
+		return metrics.Result{Query: q, Error: "metric query unavailable"}
+	}
+	return c.query.QueryMetrics(q)
+}
+func (c Carrier) WithPodUsage(source metrics.UsageSource) Carrier { c.podUsage = source; return c }
+func (c Carrier) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error) {
+	if c.podUsage == nil {
+		return nil, &metrics.UsageUnavailableError{Reason: "usage source unavailable"}
+	}
+	return c.podUsage.PodUsage(ref)
+}
+func (c Carrier) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error) {
+	if c.podUsage == nil {
+		return nil, &metrics.UsageUnavailableError{Reason: "usage source unavailable"}
+	}
+	return c.podUsage.NodeUsage(ref)
+}
+func (c Carrier) WithCapture(source sdk.ObjectCaptureSource) Carrier { c.capture = source; return c }
+func (c Carrier) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if c.capture == nil {
+		return sdk.TypedObjects(c.DetectionContext), nil
+	}
+	return c.capture.CaptureObjects(refs)
+}
+func (c Carrier) WithScoped(source sdk.ScopedObservationSource) Carrier { c.scoped = source; return c }
+func (c Carrier) source() sdk.ScopedObservationSource {
+	if c.scoped == nil {
+		return sdk.ScopedSource(nil)
+	}
+	return c.scoped
+}
+func (c Carrier) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	return c.source().ScopedDeployments(namespace)
+}
+func (c Carrier) ScopedServices(namespace string) ([]corev1.Service, error) {
+	return c.source().ScopedServices(namespace)
+}
+func (c Carrier) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	return c.source().ScopedEndpoints(namespace)
+}
+func (c Carrier) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	return c.source().MutatingWebhookConfigurations()
+}
+func (c Carrier) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	return c.source().ValidatingWebhookConfigurations()
+}
+func (c Carrier) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	return c.source().MutatingWebhookConfiguration(name)
+}
+func (c Carrier) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	return c.source().ValidatingWebhookConfiguration(name)
+}
+func (c Carrier) ObservationStatuses() []sdk.ObservationStatus {
+	return c.source().ObservationStatuses()
+}
+func (c Carrier) ObservationGeneration() string { return c.source().ObservationGeneration() }
 
 var _ Sources = Carrier{}

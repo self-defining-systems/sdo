@@ -187,8 +187,10 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 		var legacy map[string]any
 		_ = json.Unmarshal(encoded, &legacy)
 		for key, value := range legacy {
-			if _, isList := value.([]any); isList && key != "objects" {
+			if list, isList := value.([]any); isList && key != "objects" && len(list) > 0 {
 				fixture[key] = value
+				// Typed lists are only valid beside the objects they project.
+				fixture["object_snapshot_version"] = 1
 			}
 		}
 	}

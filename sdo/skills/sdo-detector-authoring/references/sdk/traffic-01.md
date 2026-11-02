@@ -17,7 +17,7 @@ how often, and against which SLO.
 The Engine owns everything about when and how much: scheduling, arrival,
 rate and concurrency caps, timeouts, latency measurement and the random seed
 of every iteration, so a failing probe replays exactly. Generators only build
-requests and judge responses. A separate prober process runs the engine; the
+requests and judge responses. The accepted memory host runs the engine; the
 controller runtime hands its observations to detectors built with NewDetector,
 which judge each scenario against a sliding-window SLO. The default SLO bounds
 median (p50) latency. Timeouts contribute to rate violations only when at least
@@ -33,6 +33,7 @@ const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
 const DefaultHealthMinDuration = 9 * time.Second
+const MaxLinkExcerpt = 256
 const RuleIDPrefix = "scenario-slo."
 var RequiredFaultClasses = []FaultClass{ ... }
 var Watch = sdk.WatchKind{ ... }
@@ -68,9 +69,13 @@ type HTTPEndpoint struct{ ... }
     func PUT(path string, query Params) *HTTPEndpoint
 type Link struct{ ... }
     func UndrivenLinks(catalog Catalog, workloads []Workload) []Link
+type LinkFailureClass string
+    const LinkFailureRefused LinkFailureClass = "refused" ...
+type LinkGRPCOptions struct{ ... }
+type LinkHTTPOptions struct{ ... }
 type LinkObservations struct{ ... }
 type LinkProtocol string
-    const LinkProtocolTCP LinkProtocol = "tcp"
+    const LinkProtocolTCP LinkProtocol = "tcp" ...
 type LinkSample struct{ ... }
     func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool)
 type Outcome string

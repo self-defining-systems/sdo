@@ -6,9 +6,9 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -26,7 +26,7 @@ func (r HealthRevision) RefreshID() string {
 }
 
 func healthGit(ctx context.Context, repository string, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", repository}, args...)...).Output()
+	out, err := memoryio.Git(ctx, repository, false, nil, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read health provenance (%s): %w", strings.Join(args, " "), err)
 	}

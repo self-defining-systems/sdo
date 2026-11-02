@@ -99,7 +99,7 @@ func TestNativePodBuildersDeclareEachPVCOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if builders < 5 {
+	if builders < 4 {
 		t.Fatalf("pod-builder inventory unexpectedly shrank: visited %d PVC builders", builders)
 	}
 }

@@ -63,6 +63,7 @@ type RawMergeSchemaError struct{ Path, Reason string }
 func (e *RawMergeSchemaError) Error() string
 
 type ReadView interface {
+	inputs.Sources
 	// WebhookCAMatchesSecret reports whether one webhook's caBundle equals a Secret key without exposing either value.
 	WebhookCAMatchesSecret(WebhookCA) (bool, error)
 	// AdmissionWebhooksFor lists the webhook entries that admit Pod creation for a Namespace or workload; cluster webhook names need no observation grant.

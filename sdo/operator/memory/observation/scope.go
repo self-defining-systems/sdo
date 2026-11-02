@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/sdk"
 	"strings"
 )
@@ -19,7 +19,7 @@ const CeilingEnvironment = "SDO_OBSERVATION_CEILING"
 // CeilingFromEnvironment is only for trusted process startup, not proposal input.
 func CeilingFromEnvironment() (sdk.ObservationScope, error) {
 	var scope sdk.ObservationScope
-	raw := os.Getenv(CeilingEnvironment)
+	raw := memoryio.Getenv(CeilingEnvironment)
 	if raw == "" {
 		return scope, nil
 	}
@@ -106,14 +106,12 @@ func Parse(data []byte) (sdk.ObservationScope, error) {
 
 // Accepted reads architecture from a fixed accepted revision, never a dirty file.
 func Accepted(ctx context.Context, root string) (sdk.ObservationScope, string, error) {
-	command := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "HEAD")
-	b, err := command.Output()
+	b, err := memoryio.Git(ctx, root, false, nil, "rev-parse", "HEAD")
 	if err != nil {
 		return sdk.ObservationScope{}, "", fmt.Errorf("resolve accepted observation commit: %w", err)
 	}
 	revision := strings.TrimSpace(string(b))
-	command = exec.CommandContext(ctx, "git", "-C", root, "show", revision+":.sdo/arch.md")
-	b, err = command.Output()
+	b, err = memoryio.Git(ctx, root, false, nil, "show", revision+":.sdo/arch.md")
 	if err != nil {
 		return sdk.ObservationScope{}, revision, fmt.Errorf("read accepted architecture: %w", err)
 	}

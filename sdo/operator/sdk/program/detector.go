@@ -7,10 +7,7 @@ import (
 	"time"
 )
 
-type snapshotReadView struct {
-	inputs.Carrier
-	sdk.ScopedObservationSource
-}
+type snapshotReadView struct{ inputs.Carrier }
 
 func (snapshotReadView) Logs(sdk.ObjectRef, string, time.Duration) (string, error) {
 	return "", fmt.Errorf("logs unavailable in detector context")
