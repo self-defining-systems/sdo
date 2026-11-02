@@ -11,11 +11,14 @@ from benchmarks.sregym.agent_script.cli import launch
 from benchmarks.sregym.fastloop.judge_script import judge_script
 from benchmarks.sregym.fastloop.reflection_script import reflection_script
 from benchmarks.sregym.fastloop.responder_script import responder_script
+from sdo.agents.responder.standby import await_standby_claim
 from sdo.contracts import AgentTask, IncidentRequest, ReflectionRequest, parse_json
 
 
 def _launch_task() -> int:
     role, *command = sys.argv[1:]
+    # A preloaded standby has no task until the controller claims it.
+    await_standby_claim()
     task = parse_json(Path(os.environ.get("SDO_TASK_PATH", "/sdo/request/agent-task.json")).read_text(), AgentTask())
     tools = Path(os.environ.setdefault("SDO_TOOLS_DIR", "/sdo/session/tools"))
     exchange = tools / "requests" if (tools / "requests").is_dir() else tools
