@@ -84,51 +84,6 @@ sys.exit(1)
 async def test_validation_tool_timeout_returns_failure_and_stops_children(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-<<<<<<< HEAD
-    # The deadline fires only once a real grandchild is connected. EOF proves
-    # the process-group kill closed its socket, without a post-kill sleep.
-    wait_for = asyncio.wait_for
-    connected = asyncio.Event()
-    connections: list[tuple[asyncio.StreamReader, asyncio.StreamWriter]] = []
-
-    def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        connections.append((reader, writer))
-        connected.set()
-
-    async with await asyncio.start_server(accept, "127.0.0.1", 0) as listener:
-        port = listener.sockets[0].getsockname()[1]
-        child_code = f"import socket; s = socket.create_connection(('127.0.0.1', {port})); s.recv(1)"
-        _validator(
-            tmp_path,
-            f"""import subprocess, sys
-print("checking replay", flush=True)
-child = subprocess.Popen([sys.executable, "-c", {child_code!r}])
-child.wait()
-""",
-            monkeypatch,
-        )
-
-        async def expire_when_ready(awaitable: object, timeout: float) -> None:
-            # Capture the real waiter before injecting the deadline boundary.
-            await wait_for(connected.wait(), 30)
-            raise TimeoutError
-
-        monkeypatch.setattr(asyncio, "wait_for", expire_when_ready)
-        server = validation_server(tmp_path)
-        result = await wait_for(server.call_tool("check_memory", {"decision_path": "decision.json"}), 30)
-        # FastMCP returns both text and structured content for dataclass results.
-        assert isinstance(result, tuple)
-        structured = result[1]
-        assert structured["timed_out"]
-        assert structured["exit_code"] != 0
-        assert "checking replay" in structured["stdout"]
-        reader, writer = connections[0]
-        try:
-            assert await wait_for(reader.read(), 30) == b""
-        finally:
-            writer.close()
-            await writer.wait_closed()
-=======
     from sdo.agents.responder.memory_check import check_reflection_result
     from sdo.contracts import ReflectionResult
 
@@ -181,7 +136,6 @@ time.sleep(600)
     async with asyncio.timeout(60):  # Bounds only a failure: a killed child is already exiting.
         while child.exists() and (child / "stat").read_text().split(") ")[-1][0] != "Z":
             await asyncio.sleep(0.01)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 @pytest.mark.parametrize(

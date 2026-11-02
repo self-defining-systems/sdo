@@ -12,21 +12,6 @@ from sdo.agents.code_paths import SKILLS_ROOT as SKILLS_ROOT
 from sdo.agents.code_paths import skills_for_role as skills_for_role
 from sdo.agents.replay import selected_skills_root
 
-#: The skills each agent worker installs into its CLI home. The registration
-#: manifests (``sdo/agents/registrations``) are protobuf ``AgentRegistration``
-#: messages with no skills field, so the list is a per-worker constant here.
-<<<<<<< HEAD
-AGENT_SKILLS = MappingProxyType(
-    {
-        "responder": ("sdo-memory",),
-        "reflector": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"),
-        "health-judge": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"),
-        "source_deployment": ("sdo-memory",),
-    }
-)
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
-
 
 def install_skills(destination: Path, skills: tuple[str, ...], *, skills_root: Path = SKILLS_ROOT) -> None:
     """Replace ``destination/skills/<name>`` with a copy of each named skill.

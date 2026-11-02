@@ -59,7 +59,6 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
     summary = request.architecture_summary_markdown.strip()
     if not summary:
         raise ValueError("health judge requires accepted architecture summary")
-<<<<<<< HEAD
     resources = [
         TopologyResourceDTO(
             kind=row.kind,
@@ -70,30 +69,10 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
         )
         for row in request.source_resources
     ]
-    resolved = resolve_agent("health_judge", "SDO_LIFECYCLE_MODEL")
-    backend = (ClaudeLifecycleBackend if resolved.provider == "claude" else CodexLifecycleBackend)(model=resolved.model)
-=======
-    deployer = DeployerAssessment(
-        source_commit=request.accepted_source_commit,
-        topology_fingerprint=request.source_topology_fingerprint,
-        architecture_summary_markdown=summary,
-        session_id="accepted-source",
-        resources=[
-            TopologyResourceDTO(
-                kind=row.kind,
-                name=row.name,
-                namespace=row.namespace,
-                source=row.source,
-                dependencies=list(row.dependencies),
-            )
-            for row in request.source_resources
-        ],
-    )
     resolved = resolve_agent("health_judge", "lifecycle")
     backend = (ClaudeLifecycleBackend if resolved.provider == "claude" else CodexLifecycleBackend)(
         model=resolved.model, reasoning_effort=resolved.effort
     )
->>>>>>> origin/vic-lsh/dev/sdo-improve
     artifact = backend.run_health_judge(
         repository=checkout,
         application=request.application,

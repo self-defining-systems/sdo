@@ -1,18 +1,5 @@
-<<<<<<< HEAD
-"""Forward bounded incident verification through the incident tool transport."""
-=======
 """Check incident closure through the controller's incident-scoped transport."""
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
-import sys
-
-<<<<<<< HEAD
-from sdo.agents.responder.tools_cli import main as tools_main
-
-
-def main(argv: list[str] | None = None) -> int:
-    return tools_main(["verify", *(sys.argv[1:] if argv is None else argv)])
-=======
 import argparse
 import json
 import os
@@ -35,7 +22,6 @@ def main(argv: list[str] | None = None) -> int:
     response["state"] = state
     print(json.dumps(response, sort_keys=True) if args.json else response.get("summary", state))
     return {"healthy": 0, "unhealthy": 1, "unavailable": 3}[state]
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 if __name__ == "__main__":

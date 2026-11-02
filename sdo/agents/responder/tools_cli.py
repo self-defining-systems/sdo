@@ -171,17 +171,6 @@ def _parser() -> argparse.ArgumentParser:
         "Examples (incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
-<<<<<<< HEAD
-    commands.add_parser(
-        "status",
-        help="Show current incident findings",
-        description="Show current incident findings. The task's prior_stages lists what automatic stages "
-        "already applied.",
-    )
-    for name in ("diagnose", "plan"):
-        command = commands.add_parser(name, epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2])
-        command.add_argument("program_id", nargs="?" if name == "diagnose" else None)
-=======
     parser.add_argument(
         "--json",
         action="store_true",
@@ -221,7 +210,6 @@ def _parser() -> argparse.ArgumentParser:
                 metavar="FINGERPRINT",
                 help="target finding fingerprint; repeat for each intended finding",
             )
->>>>>>> origin/vic-lsh/dev/sdo-improve
         command.add_argument(
             "--bind",
             action="append",
@@ -230,24 +218,6 @@ def _parser() -> argparse.ArgumentParser:
             metavar="NAME=Kind/namespace/name",
             help="named program parameter; repeat for each binding",
         )
-<<<<<<< HEAD
-    commands.add_parser(
-        "apply",
-        help="Apply plans returned by sdo plan",
-        description="Apply plans returned by sdo plan. An attempt recorded as applied in prior_stages already wrote: "
-        "re-check live state before applying it again.",
-    ).add_argument("plan_ids", nargs="+")
-    commands.add_parser("source", epilog="Example: " + CLI_EXAMPLES[0]).add_argument(
-        "ref", metavar="Kind/namespace/name"
-    )
-    verify = commands.add_parser(
-        "verify",
-        help="Verify current health and run a bounded traffic burst through the controller and active memory host",
-    )
-    verify.add_argument("--workload")
-    verify.add_argument("--scenario", action="append", default=[])
-    commands.add_parser("rollback").add_argument("application_id")
-=======
     commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
     mitigate = commands.add_parser(
         "mitigate",
@@ -384,6 +354,8 @@ def _parser() -> argparse.ArgumentParser:
         "Verified recovery fences writes and publishes the outcome without waiting for final narration; "
         "worker quiescence and outcome/reflection work continue during maintenance pauses.",
     )
+    verify.add_argument("--workload", help="traffic workload to burst (default: the health judge's verify workload)")
+    verify.add_argument("--scenario", action="append", default=[], help="traffic scenario ID to burst; repeatable")
     verify.add_argument(
         "--wait",
         type=float,
@@ -409,7 +381,6 @@ def _parser() -> argparse.ArgumentParser:
             command.epilog = (command.epilog or "") + "\n\n" + OBJECT_REFERENCE_HELP
         command.epilog = (command.epilog or "") + "\n\n" + response_fields_help(name)
         command.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
->>>>>>> origin/vic-lsh/dev/sdo-improve
     return parser
 
 
@@ -479,13 +450,11 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             if len(bindings) != len(args.bind):
                 raise ValueError("duplicate binding name")
             request["bindings"] = bindings
-<<<<<<< HEAD
     elif args.command == "verify":
         if args.workload:
             request["workload"] = args.workload
         if args.scenario:
             request["scenarios"] = args.scenario
-=======
     elif args.command == "mitigate":
         groups = getattr(args, "option_groups", None)
         selection_set = getattr(args, "selection_set", None)
@@ -531,7 +500,6 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             "dispatch_epoch": str(args.epoch),
             "attempt_id": args.attempt_id,
         }
->>>>>>> origin/vic-lsh/dev/sdo-improve
     elif args.command == "apply":
         request["plan_ids"] = args.plan_ids
     elif args.command == "rollback":
@@ -691,15 +659,11 @@ def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
     raise TimeoutError("SDO tool response timed out")
 
 
-<<<<<<< HEAD
 def verify_incident() -> dict[str, object]:
     """Run bounded verification through the controller's incident session."""
     return _exchange({"command": "verify"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-=======
 class _PendingMutationConflict(ValueError):
     pass
 
@@ -739,7 +703,6 @@ def _usage_hint(command: list[str], output: str) -> str | None:
 
 
 def _act(args: argparse.Namespace) -> int:
->>>>>>> origin/vic-lsh/dev/sdo-improve
     try:
         command = _act_command(args)
         if not command:
@@ -870,13 +833,6 @@ def _main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, TimeoutError) as exc:
         _print_client_error(args, exc)
         return 1
-<<<<<<< HEAD
-    print(json.dumps(response, sort_keys=True))
-    print(response.get("summary", ""))
-    if args.command == "verify":
-        return 3 if response.get("error") else (0 if response.get("healthy") else 1)
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
     return 1 if response.get("error") else 0
 
 

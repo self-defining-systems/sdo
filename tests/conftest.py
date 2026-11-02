@@ -8,9 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-<<<<<<< HEAD
-from scripts.operator_test_binary import build_operator
-=======
 from scripts.operator_test_binary import build_operator, source_identity, verify_operator
 from tests.reflection_memory import (
     memory_binary as memory_binary,
@@ -20,7 +17,6 @@ from tests.reflection_memory import (
 )
 
 pytest_plugins = ("tests.sregym_prerequisites",)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -100,7 +96,11 @@ def _isolated_opus_pool(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytes
 @pytest.fixture(scope="session")
 def operator_binary() -> Path:
     repository = Path(__file__).resolve().parents[1]
-<<<<<<< HEAD
+    prepared = os.environ.get("SDO_OPERATOR_BIN")
+    if prepared:
+        binary = Path(prepared)
+        verify_operator(binary, source_identity(repository / "sdo/operator"))
+        return binary
     return build_operator(repository / "sdo/operator", repository / ".fastloop/test-bin")
 
 
@@ -118,14 +118,6 @@ def _no_host_codex_login(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pyte
     monkeypatch.setenv("CODEX_HOME", str(tmp_path_factory.getbasetemp() / "no-host-codex-login"))
     for name in ("CODEX_API_KEY", "OPENAI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
-=======
-    prepared = os.environ.get("SDO_OPERATOR_BIN")
-    if prepared:
-        binary = Path(prepared)
-        verify_operator(binary, source_identity(repository / "sdo/operator"))
-        return binary
-    return build_operator(repository / "sdo/operator", repository / ".fastloop/test-bin")
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -337,21 +337,6 @@ def test_cold_prompt_offers_logical_ids_without_inlining_playbook_content() -> N
     assert ".sdo/" not in prompt
 
 
-<<<<<<< HEAD
-def test_every_path_verifies_with_incident_status_before_submitting(tmp_path: Path) -> None:
-    cold = _request()
-
-    for prompt in (_responder_prompt(cold), _responder_prompt(_warm_request(tmp_path))):
-        assert "`sdo verify`" in prompt
-        assert "same synthetic traffic the controller requires before it closes this incident" in prompt
-        assert "other health detectors still fire" in prompt
-        assert "`sdo status`" in prompt
-        assert "Do not submit mitigation through any channel, and do not return a completed result" in prompt
-        assert "reports unavailable" in prompt
-        assert "`sdo-verify`" in prompt
-    warm = _responder_prompt(_warm_request(tmp_path))
-    assert "Run the playbook's verification and `sdo verify`" in warm
-=======
 def test_every_path_requires_detector_self_check_then_independent_closure(tmp_path: Path) -> None:
     for request in (_request(), _warm_request(tmp_path)):
         prompt = _responder_prompt(request)
@@ -366,7 +351,6 @@ def test_every_path_requires_detector_self_check_then_independent_closure(tmp_pa
     assert "sdo verify" not in workflow
     assert "never claim done without this self-check" in workflow
     assert "controller rechecks" in workflow
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 def test_workflow_prefers_finishing_blocking_operations_to_model_polling() -> None:

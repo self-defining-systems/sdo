@@ -18,7 +18,6 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
     monkeypatch.setenv("SDO_TOOLS_DIR", str(tmp_path))
     seen = []
 
-<<<<<<< HEAD
     def controller(_seconds):
         # _exchange has published its request before its first response poll.
         files = list(requests.glob("*.json"))
@@ -30,32 +29,7 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
         )
 
     monkeypatch.setattr(tools_cli.time, "sleep", controller)
-    assert tools_cli.main(["diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
-=======
-    stop = threading.Event()
-
-    def controller():
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and not stop.is_set():
-            files = [path for path in requests.glob("*.json") if not path.name.startswith(".")]
-            if files:
-                request = json.loads(files[0].read_text())
-                seen.append(request)
-                (responses / files[0].name).write_text(
-                    json.dumps({"command": "diagnose", "summary": "one match", "program_runs": []})
-                )
-                return
-            stop.wait(0.01)
-
-    worker = threading.Thread(target=controller)
-    worker.start()
-    try:
-        assert tools_cli.main(["--json", "diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
-    finally:
-        stop.set()
-        worker.join(timeout=30)
-    assert not worker.is_alive()
->>>>>>> origin/vic-lsh/dev/sdo-improve
+    assert tools_cli.main(["--json", "diagnose", "targetport", "--bind", "service=Service/app/api"]) == 0
     assert seen == [
         {
             "command": "diagnose",

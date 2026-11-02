@@ -1,24 +1,24 @@
 # Unicode code points in production-rendered prompts; measured limits include explicit headroom.
 
-[deployer.incident_data]
+[source_deployment.incident_data]
 max_chars = 100
 reason = "Baseline synthetic fixture maximum: 92 Unicode code points; byte-identical template extraction."
 
-[deployer.instructions]
+[source_deployment.instructions]
 max_chars = 1100
 reason = "Baseline synthetic fixture maximum: 1072 Unicode code points; byte-identical template extraction."
-
-[health_judge.active_payload]
-max_chars = 100
-reason = "Baseline synthetic fixture maximum: 52 Unicode code points; byte-identical template extraction."
-
-[health_judge.deployer]
-max_chars = 500
-reason = "Baseline synthetic fixture maximum: 433 Unicode code points; byte-identical template extraction."
 
 [health_judge.health_objective]
 max_chars = 2000
 reason = "SEEDBUDGET1: real fresh hotel/social/astronomy objectives measure 866/101/972 characters. Preserve the full required goal with at least 100% headroom over the observed maximum; synthetic 17-character fixtures missed seed preparation."
+
+[health_judge.architecture]
+max_chars = 12000
+reason = "Go-generated manifest inventory summary the health judge reads; optional so a very large application spills to a file."
+
+[health_judge.resources]
+max_chars = 12000
+reason = "Go source inventory rows the health judge reads; optional so a very large application spills to a file."
 
 [health_judge.incident_data]
 max_chars = 300
@@ -32,13 +32,9 @@ reason = "Synthetic fixture maximum: 7713 Unicode code points after the critical
 max_chars = 1000
 reason = "Synthetic fixture maximum: 911 Unicode code points after the saturation clause (HEALTH2)."
 
-[health_judge.previous_payload]
-max_chars = 100
-reason = "Baseline synthetic fixture maximum: 4 Unicode code points; byte-identical template extraction."
-
 [health_judge.traffic_authoring]
-max_chars = 5800
-reason = "Synthetic fixture maximum: 5743 Unicode code points after latency bounds and every-record coverage (HEALTH2)."
+max_chars = 7000
+reason = "Synthetic fixture maximum: 6219 Unicode code points after latency bounds, every-record coverage (HEALTH2) and link protocol selection."
 
 [lifecycle.incident_data]
 max_chars = 100
@@ -68,8 +64,12 @@ reason = "Baseline synthetic fixture maximum: 366 Unicode code points; byte-iden
 max_chars = 100
 reason = "Portable fixture configuration maximum: 86 Unicode code points, rounded upward to 100."
 
+[reflection.metrics]
+max_chars = 800
+reason = "Typed metrics-source capabilities (query URL, annotation scraping, OTLP endpoint) in at most a few hundred characters; required so reflection knows what it may publish."
+
 [reflection.instructions]
-max_chars = 2200
+max_chars = 2300
 reason = "CTXFAIL1: fresh-session retries plus preserved history framing and backend API-history guidance require up to 2153 characters. Preserve every instruction through final provider transport, including this combined variant."
 
 [reflection.memory]
@@ -147,6 +147,7 @@ reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-iden
 [skills.sdo-incident-response]
 max_chars = 200
 reason = "New responder workflow skill description; shares the existing 200-character skill-index allowance."
+
 [continuation.instructions]
 max_chars = 270
 reason = "Compact high-level continuation principles; required progress is counted separately under continuation.incident_data and their sum owns the total continuation allowance."
@@ -279,39 +280,27 @@ reason = "Initial production session-file gate for CTX1; future raises require a
 max_chars = 256
 reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
 
-[template_data.deployer-describe_architecture_02-accepted_source_commit]
+[template_data.source_deployment-source_deployment-application]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.deployer-describe_architecture_02-source_topology_fingerprint]
+[template_data.source_deployment-source_deployment-correction_feedback]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.deployer-source_deployment-application]
+[template_data.source_deployment-source_deployment-health_objective]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.deployer-source_deployment-correction_feedback]
+[template_data.source_deployment-source_deployment-namespace]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.deployer-source_deployment-health_objective]
+[template_data.source_deployment-source_deployment-registry_host]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.deployer-source_deployment-namespace]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.deployer-source_deployment-registry_host]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.deployer-source_deployment-registry_host_2]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge-active_payload]
+[template_data.source_deployment-source_deployment-registry_host_2]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
@@ -319,17 +308,9 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.health_judge-health_judge-covered_kinds]
+[template_data.health_judge-health_judge-architecture]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge-deployer]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge-feedback]
-max_chars = 2000
-reason = "SEEDBUDGET1: fresh worker retries render 973/968 characters including diagnostic framing. The health worker joins this required feedback as plain text; reserve 2000 characters so the outer template preserves it with 100% headroom."
 
 [template_data.health_judge-health_judge-health_objective]
 max_chars = 256
@@ -339,19 +320,7 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.health_judge-health_judge-objective_digest]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge-previous_payload]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge-round_index]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge-round_index_2]
+[template_data.health_judge-health_judge-resources]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
@@ -363,35 +332,19 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.health_judge-health_judge-watch_list]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+[template_data.health_judge-health_judge-feedback]
+max_chars = 2000
+reason = "SEEDBUDGET1: fresh worker retries render 973/968 characters including diagnostic framing. The health worker joins this required feedback as plain text; reserve 2000 characters so the outer template preserves it with 100% headroom."
 
 [template_data.health_judge-health_judge_shell-application]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.health_judge-health_judge_shell-deployer]
+[template_data.health_judge-health_judge_shell-architecture]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge_shell-feedback]
-max_chars = 2000
-reason = "SEEDBUDGET1: fresh worker retries render 973/968 characters including diagnostic framing. The health worker joins this required feedback as plain text; reserve 2000 characters so the outer template preserves it with 100% headroom."
 
 [template_data.health_judge-health_judge_shell-health_objective]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge_shell-objective_digest]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge_shell-previous_payload]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.health_judge-health_judge_shell-round_index]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
@@ -399,17 +352,9 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.health_judge-health_judge_shell-source_commit]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.lifecycle-architecture-application]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.lifecycle-architecture-feedback]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+[template_data.health_judge-health_judge_shell-feedback]
+max_chars = 2000
+reason = "SEEDBUDGET1: fresh worker retries render 973/968 characters including diagnostic framing. The health worker joins this required feedback as plain text; reserve 2000 characters so the outer template preserves it with 100% headroom."
 
 [template_data.lifecycle-memory_conflict-conflict_json]
 max_chars = 768

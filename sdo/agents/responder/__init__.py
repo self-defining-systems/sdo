@@ -10,13 +10,6 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 _EXPORTS = {
-<<<<<<< HEAD
-    "IncidentStatusReport": "incident_status",
-    "IncidentStatusState": "incident_status",
-    "VerifyBurstResult": "incident_status",
-    "VerifyScenarioVerdict": "incident_status",
-    "live_incident_status": "incident_status",
-=======
     "render_incident_prompt": "codex",
     "render_reflection_prompt": "reflection",
     "prepared_incident_data": "incident_context",
@@ -24,43 +17,27 @@ _EXPORTS = {
     "command_surface": "tools_cli",
     "await_standby_claim": "standby",
     "capture_sections": "reflection_evidence",
->>>>>>> origin/vic-lsh/dev/sdo-improve
     "AGENT_SKILLS": "credentials",
     "ClaudeSessionBackend": "reflection",
     "CodexSessionBackend": "reflection",
-<<<<<<< HEAD
-    "INCIDENT_REASONING_EFFORT": "reflection",
-=======
     "IncidentStatusReport": "incident_status",
     "IncidentStatusState": "incident_status",
->>>>>>> origin/vic-lsh/dev/sdo-improve
     "KubernetesResultPublisher": "job",
     "REFLECTION_GUIDANCE_MODES": "reflection",
     "ReflectionTurn": "reflection",
     "SessionReflector": "reflection",
-<<<<<<< HEAD
-    "apply_cause_admissibility": "cause_admissibility",
-    "current_outcome_view": "reflection_outcomes",
-    "execute_incident": "codex",
-    "history_view": "reflection_outcomes",
-=======
     "VerifyBurstResult": "incident_status",
     "VerifyScenarioVerdict": "incident_status",
     "current_outcome_view": "reflection_outcomes",
     "execute_incident": "codex",
     "history_view": "reflection_outcomes",
     "live_incident_status": "incident_status",
->>>>>>> origin/vic-lsh/dev/sdo-improve
     "prepare_claude_home": "credentials",
     "record_worker_failure": "termination",
     "records_worker_failure": "termination",
     "prepare_codex_home": "credentials",
     "reflection_output_schema": "reflection",
-<<<<<<< HEAD
-    "review_confirmed_causes": "cause_admissibility",
-=======
     "run_incident_status_cli": "incident_status",
->>>>>>> origin/vic-lsh/dev/sdo-improve
     "run_reflection_task": "reflection_worker",
     "run_worker_task": "worker",
     "session_output_schema": "session_turn",
@@ -83,13 +60,6 @@ if TYPE_CHECKING:
     from sdo.agents.responder.credentials import (
         prepare_codex_home as prepare_codex_home,
     )
-<<<<<<< HEAD
-    from sdo.agents.responder.incident_status import IncidentStatusReport as IncidentStatusReport
-    from sdo.agents.responder.incident_status import IncidentStatusState as IncidentStatusState
-    from sdo.agents.responder.incident_status import VerifyBurstResult as VerifyBurstResult
-    from sdo.agents.responder.incident_status import VerifyScenarioVerdict as VerifyScenarioVerdict
-    from sdo.agents.responder.incident_status import live_incident_status as live_incident_status
-=======
     from sdo.agents.responder.incident_context import prepared_incident_data as prepared_incident_data
     from sdo.agents.responder.incident_status import (
         IncidentStatusReport as IncidentStatusReport,
@@ -109,7 +79,6 @@ if TYPE_CHECKING:
     from sdo.agents.responder.incident_status import (
         run_incident_status_cli as run_incident_status_cli,
     )
->>>>>>> origin/vic-lsh/dev/sdo-improve
     from sdo.agents.responder.job import (
         KubernetesResultPublisher as KubernetesResultPublisher,
     )

@@ -118,68 +118,27 @@ def test_deployment_worker_rejects_wrong_payload_type(tmp_path: Path) -> None:
     path.write_text(to_canonical_json(task), encoding="utf-8")
     with pytest.raises(ValueError, match="wrong type"):
         run_deployment_task(path, "result", Publisher())
-<<<<<<< HEAD
-=======
-
-
-def test_architecture_worker_cites_accepted_source_commit(tmp_path: Path) -> None:
-    request = ArchitectureRequest(application="demo", accepted_source_commit="accepted-source", attempt=1)
-    task = AgentTask(
-        schema_version="sdo.dev/v1alpha1",
-        task_id="initial-arch-1",
-        agent_id="custom-deployer",
-        task_type="source-architecture",
-        workspace=ProposalWorkspace(
-            proposal_id="proposal-arch", checkout_path=str(tmp_path), base_commit="accepted-source"
-        ),
-    )
-    task.request.Pack(request)
-    path = tmp_path / "architecture-task.json"
-    path.write_text(to_canonical_json(task), encoding="utf-8")
-    publisher = Publisher()
-
-    def execute(received: ArchitectureRequest, checkout: Path) -> ArchitectureResult:
-        assert received.accepted_source_commit == "accepted-source"
-        assert checkout == tmp_path
-        return ArchitectureResult(
-            source_commit="accepted-source",
-            topology_fingerprint="a" * 64,
-            summary_markdown="# Architecture\nSource-grounded facts.",
-            agent_session_id="architecture-session",
-        )
-
-    result = run_architecture_task(path, "result", publisher, execute=execute)
-    typed = ArchitectureResult()
-    assert result.response.Unpack(typed)
-    assert typed.source_commit == "accepted-source"
 
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])
-@pytest.mark.parametrize("role", ["source", "architecture", "health"])
+@pytest.mark.parametrize(("role", "access"), [("source", "danger-full-access"), ("health", "workspace-write")])
 def test_live_lifecycle_callers_use_the_pod_boundary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, role: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, role: str, access: str
 ) -> None:
     from sdo.agents import prompt_templates
-    from sdo.agents.lifecycle import ClaudeLifecycleBackend, CodexLifecycleBackend, DeployerAssessment
+    from sdo.agents.lifecycle import ClaudeLifecycleBackend, CodexLifecycleBackend
 
     class Observed(BaseException):
         pass
 
     def boundary(actual_provider: str, _prompt: str, **options: object) -> None:
         assert actual_provider == provider
-        assert options["access"] == "danger-full-access"
+        assert options["access"] == access
         raise Observed
 
     monkeypatch.setattr(prompt_templates, "_run_structured_turn", boundary)
     monkeypatch.setenv("SDO_AGENT_PROVIDER", provider)
     backend = (ClaudeLifecycleBackend if provider == "claude" else CodexLifecycleBackend)()
-    assessment = DeployerAssessment(
-        source_commit="synthetic",
-        topology_fingerprint="0" * 64,
-        architecture_summary_markdown="Synthetic application for provider-boundary checks",
-        session_id="synthetic",
-        resources=[],
-    )
 
     def invoke() -> None:
         if role == "source":
@@ -193,19 +152,15 @@ def test_live_lifecycle_callers_use_the_pod_boundary(
                 ),
                 tmp_path,
             )
-        elif role == "architecture":
-            backend.run_deployer(repository=tmp_path, application="demo", correction_feedback=None)
         else:
             backend.run_health_judge(
                 repository=tmp_path,
                 application="demo",
                 health_objective="healthy",
-                deployer=assessment,
-                round_index=1,
-                previous=None,
+                architecture="Synthetic application for provider-boundary checks",
+                resources=[],
                 correction_feedback=None,
             )
 
     with pytest.raises(Observed):
         invoke()
->>>>>>> origin/vic-lsh/dev/sdo-improve

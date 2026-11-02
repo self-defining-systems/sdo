@@ -20,9 +20,7 @@ from libs.agent_cli.structured import (
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.context_output import ContextText, save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
-<<<<<<< HEAD
 from sdo.agents.metrics_context import metrics_context
-=======
 from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import DEFAULT_AGENT_EFFORT
@@ -37,7 +35,6 @@ from sdo.agents.responder.memory_check import (
     check_reflection_result,
 )
 from sdo.agents.responder.reflection_authoring import SdkGap
->>>>>>> origin/vic-lsh/dev/sdo-improve
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_evidence import reflection_memory_view
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
@@ -281,73 +278,6 @@ def _logical_learning_request(
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     snapshot = closure.request.memory_snapshot
-<<<<<<< HEAD
-    classification = outcome.classification
-    return (
-        f"{metrics_context(closure.request.metrics_source)}\n"
-        "The controller verified this incident and committed its outcome. "
-        "Read the supplied logical memory snapshot, source code, and installed sdo-memory, "
-        "sdo-detector-authoring, sdo-playbook-authoring and sdo-operationalize skills. Edit the final files directly "
-        "in the operational memory directory `.sdo/` of this isolated checkout. "
-        "Source edits are not part of reflection; outcomes, goal and architecture are protected. "
-        "Preserve accepted provenance. Use logical IDs in narrative and authored Go, never physical memory paths. "
-        "Run `sdo-operator memory ls` to inspect existing artifacts. "
-        "After editing, call the installed sdo_reflection check_memory tool once to run "
-        "`sdo-operator memory check` and wait for its final result (bounded to 300 seconds). "
-        "Do not launch validation through a background shell or poll a process. "
-        "Fix named diagnostics and call it again only after correcting the files, "
-        "until it exits zero, within your turn budget. SDO_ACTOR, SDO_PHASE and SDO_BASE_COMMIT "
-        "are already set; do not override them. The Go broker repeats the same check independently. "
-        "Return learning_decision=updated only with a nonempty diff and playbook_ids listing every changed "
-        "logical playbook ID. Return no_change or sdk_gap with a concrete no_change_reason and no authored "
-        "diff when no safe learning is possible. Return decisions and logical IDs only; files carry all content.\n\n"
-        "for each confirmed fault, compile or refine a program, reuse an accepted program and explain why, "
-        "or report a typed sdk_gap with the missing primitive, reason, and scratch script that proved the check. "
-        "Record each reused program ID in summary. A program directory contains diagnose.go, optional mitigate.go, "
-        "Go tests, and a README with responder owner, fault_class and originating_incident front matter. "
-        "Use `sdo-operator program scaffold --fault-class <class> --param name=Kind [--mitigate] "
-        "--out .sdo/playbooks/<class>` for direct file creation, then fill in the final files. "
-        "Use sdo.dev/operator/sdk/program and diagnostics-module library helpers imported through the "
-        "diagnostics module path. Declare Params and derive names, ports and images from bindings and the ReadView. "
-        "The allowed imports are SDK, Kubernetes read types, standard read-only packages and shared helpers. "
-        "Validation replays with every name, port and image renamed. Diagnose must Match at open and return "
-        "NoMatch at fixed and healthy; Mitigate plans actions only at open. Prefer structured container status "
-        "reasons. For desired values from source or rollout history, return ReconcileFromSource or Rollback. "
-        "Keep mitigate.go for image/readiness/ConfigMap restore-from-source effects even when mitigation "
-        "replay reports skipped_unreplayable_effect; never delete a mitigator just to pass validation. "
-        "Diagnosis corpus replay remains mandatory; SetField-only plans must still replay to NoMatch. "
-        "An unreplayed mitigator requires three independently verified live successes and zero failures "
-        "before trusted fast-path use; skipped replay earns no origin credit. "
-        "For targetPort faults, declared ports alone never establish a listener: use captured ProbeTCP "
-        "results for the selected ready Pods at the faulty numeric target and candidate declared port. "
-        "Keep the SetField mitigator when those observations and replay validate it. "
-        "An unrecorded or failed primitive read remains Unknown; never invent listener evidence. "
-        "Keep README prose to judgement and context, with no shell commands and no persisted scratch scripts. "
-        "Author a corpus directory under .sdo/corpus/<case-id> with open.json, fixed.json, healthy.json, "
-        "recordings.json and labels.json. Copy controller captures byte-for-byte from the read-only "
-        "/sdo/session/corpus directory: use open@detect.json for a verified drift fault; otherwise "
-        "select open@pre-apply.json, open@settle.json or open@detect.json before mitigation. Copy the corresponding "
-        "open@<phase>-recordings.json, and fixed.json; healthy.json must equal fixed.json. "
-        "The labels contain root_cause_program_ids, bindings, peer_bindings and provenance with incident_id, "
-        "open_at (detect, settle or pre-apply), open_sha256 and fixed_sha256. Bind a same-kind healthy peer in "
-        "the fixed snapshot. Never reconstruct the snapshots or recordings. Synthetic tightening NoMatch cases "
-        "need synthetic_no_match_reason and no_match_program_ids. Update the playbook index README. "
-        f"See {example_dir}/playbooks/service-targetport-mismatch/diagnose.go and "
-        f"{example_dir}/corpus/targetport-mismatch/ for a complete example. "
-        "Call check_memory, read every failure, fix the files and rerun check_memory until it passes.\n\n"
-        f"{_logical_guidance(guidance)}"
-        f"For this {classification} outcome, "
-        f"{_classification_directive(classification, guidance)}\n\n"
-        "Before returning an update, the complete final files must be in the checkout and memory check must pass. "
-        "The trusted detector SDK reference is references/sdk.md of the sdo-detector-authoring skill.\n"
-        f"Outcome commit: {outcome_commit}\n"
-        f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
-        "Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; "
-        "outcome_call_index and response_json_sha256 identify the full response in the committed outcome. "
-        "Root causes, findings, action receipts and program transitions are retained.\n"
-        f"Current outcome:\n{json.dumps(current_outcome_view(outcome), indent=2)}\n\n"
-        f"{_history_section(outcome, history)}"
-=======
     findings = [*outcome.findings, *closure.request.findings]
     linked = {finding.detector_id for finding in findings}
     linked.update(playbook for finding in findings for playbook in finding.playbook_ids)
@@ -395,7 +325,6 @@ def _logical_learning_request(
             named_prompt("reflection.outcome_details", json.dumps(optional_outcome, indent=2), required=False),
         ],
         part="reflection.outcome",
->>>>>>> origin/vic-lsh/dev/sdo-improve
     )
     work_section = ""
     if cause_work or unassigned_work:
@@ -449,6 +378,7 @@ def _logical_learning_request(
         current_outcome_view_json=outcome_prompt,
         history_section=named_prompt("reflection.history", _history_section(outcome, history)),
     )
+    prompt = named_prompt("reflection.metrics", metrics_context(closure.request.metrics_source) + "\n") + prompt
     if closure.request.HasField("namespace_onboarding"):
         prompt += render_prompt(
             "responder",

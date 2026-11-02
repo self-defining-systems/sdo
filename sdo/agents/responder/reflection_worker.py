@@ -128,15 +128,7 @@ def run_reflection_task(
     history = list(request.prior_outcomes)
     closure = IncidentClosure()
     closure.CopyFrom(request.closure)
-<<<<<<< HEAD
     closure.request.metrics_source.CopyFrom(request.metrics_source)
-    if closure.HasField("result") and not closure.result.program_runs:
-        # The request carries the responder's program runs once, in the outcome derived from them.
-        closure.result.program_runs.extend(outcome.program_runs)
-    if (
-        request.memory_snapshot.accepted_commit != request.outcome_commit
-        or task.workspace.base_commit != request.outcome_commit
-=======
     if closure.HasField("result"):
         # The request carries the responder's raw evidence once, in the outcome derived from it.
         if not closure.result.program_runs:
@@ -150,7 +142,6 @@ def run_reflection_task(
         outcome_commit=request.outcome_commit,
         base_commit=task.workspace.base_commit,
         snapshot_commit=request.memory_snapshot.accepted_commit,
->>>>>>> origin/vic-lsh/dev/sdo-improve
     ):
         raise ValueError("reflection memory snapshot is not bound to committed outcome")
     closure.request.memory_snapshot.CopyFrom(request.memory_snapshot)

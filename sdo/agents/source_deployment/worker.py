@@ -10,17 +10,6 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-<<<<<<< HEAD:sdo/agents/source_deployment/worker.py
-from libs.agent_cli.structured import run_structured_turn
-from sdo.agents.provider import resolve_agent
-from sdo.agents.responder import AGENT_SKILLS, KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
-=======
-from sdo.agents.lifecycle import (
-    ClaudeLifecycleBackend,
-    CodexLifecycleBackend,
-    DeployerAssessment,
-    TopologyResourceDTO,
-)
 from sdo.agents.prompt_templates import render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import ResolvedAgent, resolve_agent
@@ -32,7 +21,6 @@ from sdo.agents.responder import (
     record_worker_failure,
     records_worker_failure,
 )
->>>>>>> origin/vic-lsh/dev/sdo-improve:sdo/agents/deployer/worker.py
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -75,13 +63,8 @@ class SourceProposalDraft(BaseModel):
     expected_workload_ids: list[str]
 
 
-<<<<<<< HEAD:sdo/agents/source_deployment/worker.py
-def _provider(model_env: str) -> Literal["codex", "claude"]:
-    return "claude" if resolve_agent("source_deployment", model_env).provider == "claude" else "codex"
-=======
 def _provider(agent: ResolvedAgent) -> Literal["codex", "claude"]:
     return "claude" if agent.provider == "claude" else "codex"
->>>>>>> origin/vic-lsh/dev/sdo-improve:sdo/agents/deployer/worker.py
 
 
 def _source_path(value: str) -> str:
@@ -109,11 +92,11 @@ def _workload_id(value: str) -> str:
 def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDeploymentResult:
     """Let the built-in coding agent edit a proposal and return a constrained plan."""
 
-    agent = resolve_agent("deployer", "deployment")
+    agent = resolve_agent("source_deployment", "deployment")
     prompt = render_prompt(
-        "deployer",
         "source_deployment",
-        part="deployer.instructions",
+        "source_deployment",
+        part="source_deployment.instructions",
         application=repr(request.application),
         namespace=repr(request.namespace),
         health_objective=request.health_objective,
@@ -156,59 +139,6 @@ def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDe
     )
 
 
-<<<<<<< HEAD:sdo/agents/source_deployment/worker.py
-=======
-def describe_architecture(request: ArchitectureRequest, checkout: Path) -> ArchitectureResult:
-    """Generate a source-grounded handoff after the broker accepted source."""
-
-    agent = resolve_agent("deployer", "lifecycle")
-    backend = CodexLifecycleBackend if _provider(agent) == "codex" else ClaudeLifecycleBackend
-    architect = backend(model=agent.model, reasoning_effort=agent.effort)
-    if not request.source_topology_fingerprint or not request.source_resources:
-        raise ValueError("architecture requires trusted accepted-source inventory")
-    handoff = architect.run_deployer(
-        repository=checkout,
-        application=request.application,
-        correction_feedback=(
-            render_prompt("deployer", "describe_architecture_01", part="deployer.instructions")
-            + render_prompt(
-                "deployer",
-                "describe_architecture_02",
-                part="deployer.instructions",
-                accepted_source_commit=request.accepted_source_commit,
-                source_topology_fingerprint=request.source_topology_fingerprint,
-            )
-            + request.correction_feedback
-        ),
-    )
-    inventory = [
-        TopologyResourceDTO(
-            kind=row.kind,
-            name=row.name,
-            namespace=row.namespace,
-            source=row.source,
-            dependencies=list(row.dependencies),
-        )
-        for row in request.source_resources
-    ]
-    assessment = DeployerAssessment(**handoff.model_dump(), resources=inventory)
-    if assessment.source_commit != request.accepted_source_commit:
-        raise ValueError("architecture source commit does not match the broker accepted commit")
-    if assessment.topology_fingerprint != request.source_topology_fingerprint:
-        raise ValueError("architecture topology fingerprint does not match trusted source inventory")
-    summary = assessment.architecture_summary_markdown.lower()
-    missing = sorted({resource.name for resource in inventory if resource.name.lower() not in summary})
-    if missing:
-        raise ValueError("architecture summary omits source-backed resources: " + ", ".join(missing))
-    return ArchitectureResult(
-        summary_markdown=assessment.architecture_summary_markdown,
-        topology_fingerprint=assessment.topology_fingerprint,
-        source_commit=assessment.source_commit,
-        agent_session_id=assessment.session_id,
-    )
-
-
->>>>>>> origin/vic-lsh/dev/sdo-improve:sdo/agents/deployer/worker.py
 def run_deployment_task(
     task_path: Path,
     result_name: str,
@@ -237,38 +167,7 @@ def run_deployment_task(
     return result
 
 
-<<<<<<< HEAD:sdo/agents/source_deployment/worker.py
-=======
-def run_architecture_task(
-    task_path: Path,
-    result_name: str,
-    publisher: ResultPublisher,
-    *,
-    execute: Callable[[ArchitectureRequest, Path], ArchitectureResult] = describe_architecture,
-) -> AgentResult:
-    task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
-    validate(task)
-    if not task.workspace.proposal_id or not task.workspace.checkout_path:
-        raise ValueError("architecture requires a source proposal workspace")
-    request = ArchitectureRequest()
-    if not task.request.Unpack(request):
-        raise ValueError("architecture request has wrong type")
-    if not request.application or request.accepted_source_commit != task.workspace.base_commit or request.attempt < 1:
-        raise ValueError("architecture request does not match accepted source")
-    typed = execute(request, Path(task.workspace.checkout_path))
-    result = AgentResult(
-        schema_version=SCHEMA_VERSION,
-        task_id=task.task_id,
-        status="completed",
-        proposal_id=task.workspace.proposal_id,
-    )
-    result.response.Pack(typed)
-    publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(result))
-    return result
-
-
 @records_worker_failure
->>>>>>> origin/vic-lsh/dev/sdo-improve:sdo/agents/deployer/worker.py
 def main() -> int:
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
@@ -285,7 +184,7 @@ def main() -> int:
         if task.request.Is(SourceDeploymentRequest.DESCRIPTOR):
             run_deployment_task(task_path, result_name, publisher)
         else:
-            raise ValueError(f"unsupported deployer request type {task.request.TypeName()!r}")
+            raise ValueError(f"unsupported source deployment request type {task.request.TypeName()!r}")
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
         record_worker_failure(exc)

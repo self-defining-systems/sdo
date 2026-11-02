@@ -1,51 +1,32 @@
 {
-  "deployer/describe_architecture_01": {},
-  "deployer/describe_architecture_02": {
-    "accepted_source_commit": "template_data.deployer-describe_architecture_02-accepted_source_commit",
-    "source_topology_fingerprint": "template_data.deployer-describe_architecture_02-source_topology_fingerprint"
-  },
-  "deployer/source_deployment": {
-    "application": "template_data.deployer-source_deployment-application",
-    "namespace": "template_data.deployer-source_deployment-namespace",
-    "health_objective": "template_data.deployer-source_deployment-health_objective",
-    "correction_feedback": "template_data.deployer-source_deployment-correction_feedback",
-    "registry_host": "template_data.deployer-source_deployment-registry_host",
-    "registry_host_2": "template_data.deployer-source_deployment-registry_host_2"
+  "source_deployment/source_deployment": {
+    "application": "template_data.source_deployment-source_deployment-application",
+    "namespace": "template_data.source_deployment-source_deployment-namespace",
+    "health_objective": "template_data.source_deployment-source_deployment-health_objective",
+    "correction_feedback": "template_data.source_deployment-source_deployment-correction_feedback",
+    "registry_host": "template_data.source_deployment-source_deployment-registry_host",
+    "registry_host_2": "template_data.source_deployment-source_deployment-registry_host_2"
   },
   "health_judge/health_judge": {
     "application": "template_data.health_judge-health_judge-application",
-    "round_index": "template_data.health_judge-health_judge-round_index",
     "health_objective": "template_data.health_judge-health_judge-health_objective",
-    "objective_digest": "template_data.health_judge-health_judge-objective_digest",
-    "deployer": "template_data.health_judge-health_judge-deployer",
-    "active_payload": "template_data.health_judge-health_judge-active_payload",
-    "previous_payload": "template_data.health_judge-health_judge-previous_payload",
+    "architecture": "template_data.health_judge-health_judge-architecture",
+    "resources": "template_data.health_judge-health_judge-resources",
     "feedback": "template_data.health_judge-health_judge-feedback",
-    "watch_list": "template_data.health_judge-health_judge-watch_list",
     "skills_root": "template_data.health_judge-health_judge-skills_root",
-    "round_index_2": "template_data.health_judge-health_judge-round_index_2",
-    "covered_kinds": "template_data.health_judge-health_judge-covered_kinds",
     "traffic_authoring": "template_data.health_judge-health_judge-traffic_authoring",
     "metrics_authoring": "template_data.health_judge-health_judge-metrics_authoring"
   },
   "health_judge/health_judge_shell": {
     "skills_root": "template_data.health_judge-health_judge_shell-skills_root",
     "application": "template_data.health_judge-health_judge_shell-application",
-    "round_index": "template_data.health_judge-health_judge_shell-round_index",
-    "objective_digest": "template_data.health_judge-health_judge_shell-objective_digest",
-    "source_commit": "template_data.health_judge-health_judge_shell-source_commit",
     "health_objective": "template_data.health_judge-health_judge_shell-health_objective",
-    "deployer": "template_data.health_judge-health_judge_shell-deployer",
-    "previous_payload": "template_data.health_judge-health_judge_shell-previous_payload",
+    "architecture": "template_data.health_judge-health_judge_shell-architecture",
     "feedback": "template_data.health_judge-health_judge_shell-feedback"
   },
   "health_judge/metrics_authoring": {},
   "health_judge/run_health_judge_01": {},
   "health_judge/traffic_authoring": {},
-  "lifecycle/architecture": {
-    "application": "template_data.lifecycle-architecture-application",
-    "feedback": "template_data.lifecycle-architecture-feedback"
-  },
   "lifecycle/memory_conflict": {
     "conflict_json": "template_data.lifecycle-memory_conflict-conflict_json"
   },
@@ -63,7 +44,6 @@
   "lifecycle/render_validation_feedback_04": {
     "validation_attempt": "template_data.lifecycle-render_validation_feedback_04-validation_attempt"
   },
-  "lifecycle/run_deployer_01": {},
   "responder/branch_correction_01": {
     "branch": "template_data.responder-branch_correction_01-branch",
     "branch_2": "template_data.responder-branch_correction_01-branch_2",
