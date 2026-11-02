@@ -1196,14 +1196,6 @@ func genericIncidentRef(incident IncidentRequest, action program.Action, ref sdk
 	return false
 }
 
-func isRemoveServicePort(action program.Action) bool {
-	switch action.(type) {
-	case program.RemoveServicePort, *program.RemoveServicePort:
-		return true
-	}
-	return false
-}
-
 type liveRevisionView struct {
 	sets        []appsv1.ReplicaSet
 	deployments []appsv1.Deployment

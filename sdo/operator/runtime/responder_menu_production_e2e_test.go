@@ -49,19 +49,28 @@ func (productionMenuHealth) Detect(_ context.Context, view sdk.DetectionContext)
 	return []sdk.Finding{{DetectorID: "production-menu-health", RuleID: "routing", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: menuService, Summary: "synthetic route is unhealthy", Evidence: "independent route port check", Playbooks: []string{"base"}, ParameterBindings: map[string]sdk.ObjectRef{"service": menuService}}}, nil
 }
 
-const productionMenuScript = `import io,json,os,shlex,sys
+const productionMenuScript = `import json,os,shlex,subprocess,sys,uuid
 from pathlib import Path
-from benchmarks.sregym.assurance.scripted_codex.turn import MAX_STRUCTURED_OUTPUT_CHARS,Turn
-from benchmarks.sregym.assurance.scripted_codex.wire import EventStream,Rollout
 from sdo.agents.responder.session_recovery import open_recovery
 incident,directory=sys.argv[1],Path(sys.argv[2])
 recovery=open_recovery(incident,"codex")
 assert recovery is not None
-rollout=Rollout.create(Path(os.environ["CODEX_HOME"]),cwd=str(Path.cwd()))
+class Rollout:
+ session_id=str(uuid.uuid4())
+rollout=Rollout()
+transcripts=Path(os.environ["CODEX_HOME"])/"sessions"/"2026"/"01"/"01"
+transcripts.mkdir(parents=True)
+(transcripts/f"rollout-2026-01-01T00-00-00-{rollout.session_id}.jsonl").write_text(json.dumps(dict(type="session_meta",payload=dict(id=rollout.session_id)))+"\n")
 recovery.checkpoint(rollout.session_id)
-turn=Turn("responder",175,Path.cwd(),rollout,EventStream(io.StringIO()))
+class Turn:
+ def run(self,command,**_):
+  done=subprocess.run(["/bin/sh","-c",command],cwd=Path.cwd(),capture_output=True,text=True,check=False)
+  return done.returncode,done.stdout+done.stderr
+ def finish(self,text):
+  pass
+turn=Turn()
 def select(program):
- code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"]),max_output_chars=MAX_STRUCTURED_OUTPUT_CHARS)
+ code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","--json","menu"]),)
  assert code==0,text
  response=json.loads(text.splitlines()[0])
  if response.get("summarized"):

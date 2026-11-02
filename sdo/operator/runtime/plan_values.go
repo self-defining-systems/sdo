@@ -182,15 +182,6 @@ func planRequestedValueObserved(expected, actual any) bool {
 	return planValuesEqual(expected, actual)
 }
 
-func actionUsesSourceValue(action program.Action) bool {
-	for _, value := range planActionValues(action) {
-		if value.Origin() == program.SourceValue {
-			return true
-		}
-	}
-	return false
-}
-
 func planActionValues(action program.Action) []program.Value {
 	switch a := action.(type) {
 	case program.RunScript:

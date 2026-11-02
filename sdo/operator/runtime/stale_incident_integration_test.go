@@ -19,6 +19,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -65,78 +66,80 @@ func TestExpiredIncidentWorkStatusIsConservative(t *testing.T) {
 func TestExpiredIncidentSeededArchiveCrashCuts(t *testing.T) {
 	for seed := int64(1); seed <= 12; seed++ {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
-			ctx := context.Background()
-			start := time.Unix(1000, 0)
-			config := testControllerConfig()
-			config.FiringThreshold = 1
-			dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
-			client := fake.NewSimpleClientset()
-			create := func(at time.Time) *Controller {
-				controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, at)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "control", "sdo-controller-state")); err != nil {
-					t.Fatal(err)
-				}
-				return controller
-			}
-			first := create(start)
-			if err := first.Step(ctx, start, nil); err != nil {
-				t.Fatal(err)
-			}
-			old := exportState(t, first).IncidentRequest
-			if err := first.PersistState(ctx); err != nil {
-				t.Fatal(err)
-			}
-			cut := rand.New(rand.NewSource(seed)).Intn(3)
-			injected := false
-			client.PrependReactor("*", "configmaps", func(action ktesting.Action) (bool, kruntime.Object, error) {
-				if injected {
-					return false, nil, nil
-				}
-				if create, ok := action.(ktesting.CreateAction); ok && cut == 0 {
-					object := create.GetObject().(*corev1.ConfigMap)
-					if strings.HasPrefix(object.Name, "sdo-failed-closure-") {
-						injected = true
-						return true, nil, errors.New("archive write failed")
+			synctest.Test(t, func(t *testing.T) {
+				ctx := context.Background()
+				start := time.Unix(1000, 0)
+				config := testControllerConfig()
+				config.FiringThreshold = 1
+				dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+				client := fake.NewSimpleClientset()
+				create := func(at time.Time) *Controller {
+					controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, at)
+					if err != nil {
+						t.Fatal(err)
 					}
+					if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "control", "sdo-controller-state")); err != nil {
+						t.Fatal(err)
+					}
+					return controller
 				}
-				if update, ok := action.(ktesting.UpdateAction); ok && cut != 0 {
-					object := update.GetObject().(*corev1.ConfigMap)
-					if object.Name == "sdo-controller-state" {
-						injected = true
-						if cut == 2 {
-							if err := client.Tracker().Update(corev1.SchemeGroupVersion.WithResource("configmaps"), object, "control"); err != nil {
-								t.Fatal(err)
-							}
+				first := create(start)
+				if err := first.Step(ctx, start, nil); err != nil {
+					t.Fatal(err)
+				}
+				old := exportState(t, first).IncidentRequest
+				if err := first.PersistState(ctx); err != nil {
+					t.Fatal(err)
+				}
+				cut := rand.New(rand.NewSource(seed)).Intn(3)
+				injected := false
+				client.PrependReactor("*", "configmaps", func(action ktesting.Action) (bool, kruntime.Object, error) {
+					if injected {
+						return false, nil, nil
+					}
+					if create, ok := action.(ktesting.CreateAction); ok && cut == 0 {
+						object := create.GetObject().(*corev1.ConfigMap)
+						if strings.HasPrefix(object.Name, "sdo-failed-closure-") {
+							injected = true
+							return true, nil, errors.New("archive write failed")
 						}
-						return true, nil, errors.New("state write response lost")
 					}
+					if update, ok := action.(ktesting.UpdateAction); ok && cut != 0 {
+						object := update.GetObject().(*corev1.ConfigMap)
+						if object.Name == "sdo-controller-state" {
+							injected = true
+							if cut == 2 {
+								if err := client.Tracker().Update(corev1.SchemeGroupVersion.WithResource("configmaps"), object, "control"); err != nil {
+									t.Fatal(err)
+								}
+							}
+							return true, nil, errors.New("state write response lost")
+						}
+					}
+					return false, nil, nil
+				})
+				now := old.ResponseDeadline.AsTime().Add(time.Second)
+				if err := first.Step(ctx, now, nil); err == nil || !injected {
+					t.Fatal("fault cut did not interrupt retirement")
 				}
-				return false, nil, nil
+				assertNoRequest(t, dispatcher.requests)
+				// A new process sees whichever write reached the server before the cut.
+				restarted := create(now)
+				if err := restarted.Step(ctx, now, nil); err != nil {
+					t.Fatal(err)
+				}
+				if err := restarted.PersistState(ctx); err != nil {
+					t.Fatal(err)
+				}
+				executePendingEffect(t, restarted)
+				if request := awaitRequest(t, dispatcher.requests); request.IncidentID == old.IncidentId {
+					t.Fatal("crash resumed expired incident")
+				}
+				archives, err := client.CoreV1().ConfigMaps("control").List(ctx, metav1.ListOptions{LabelSelector: "sdo.dev/closure-archive=failed"})
+				if err != nil || len(archives.Items) != 1 {
+					t.Fatalf("lost or duplicated terminal archive: %v %v", archives, err)
+				}
 			})
-			now := old.ResponseDeadline.AsTime().Add(time.Second)
-			if err := first.Step(ctx, now, nil); err == nil || !injected {
-				t.Fatal("fault cut did not interrupt retirement")
-			}
-			assertNoRequest(t, dispatcher.requests)
-			// A new process sees whichever write reached the server before the cut.
-			restarted := create(now)
-			if err := restarted.Step(ctx, now, nil); err != nil {
-				t.Fatal(err)
-			}
-			if err := restarted.PersistState(ctx); err != nil {
-				t.Fatal(err)
-			}
-			executePendingEffect(t, restarted)
-			if request := awaitRequest(t, dispatcher.requests); request.IncidentID == old.IncidentId {
-				t.Fatal("crash resumed expired incident")
-			}
-			archives, err := client.CoreV1().ConfigMaps("control").List(ctx, metav1.ListOptions{LabelSelector: "sdo.dev/closure-archive=failed"})
-			if err != nil || len(archives.Items) != 1 {
-				t.Fatalf("lost or duplicated terminal archive: %v %v", archives, err)
-			}
 		})
 	}
 }

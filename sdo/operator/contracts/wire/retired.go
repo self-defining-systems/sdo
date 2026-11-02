@@ -31,14 +31,6 @@ var retiredValues = map[string]map[string]string{
 	"sdodev.contracts.v1alpha1.ReflectionDecision.decline_reason": {"evidence_gap": "no_recorded_repair"},
 }
 
-// RetiredValues reports the retired value -> successor table of one field,
-// keyed "<message full name>.<field>". Callers must not modify the result.
-func RetiredValues() map[string]map[string]string { return retiredValues }
-
-// RetiredFieldNames reports the retired field name -> replacement table keyed
-// "<message full name>.<old field>". Callers must not modify the result.
-func RetiredFieldNames() map[string]string { return retiredFieldNames }
-
 // UnmarshalLenientMigrating is UnmarshalLenient for stored documents: retired
 // field names and values are first mapped to their successors, so a document
 // written by an earlier build decodes and validates under the current schema.

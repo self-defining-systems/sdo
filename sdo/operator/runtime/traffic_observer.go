@@ -338,13 +338,6 @@ func (w reachabilityWindow) ServiceReachability() (servicehealth.ReachabilityWin
 	return *w.window, true
 }
 
-func scopedSource(view sdk.DetectionContext) sdk.ScopedObservationSource {
-	if source, ok := view.(sdk.ScopedObservationSource); ok {
-		return source
-	}
-	return sdk.ScopedSnapshot{}
-}
-
 func (v trafficContext) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
 	if source, ok := v.DetectionContext.(sdk.ObjectCaptureSource); ok {
 		return source.CaptureObjects(refs)

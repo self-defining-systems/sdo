@@ -8,56 +8,13 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
-	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
 )
-
-// KubernetesPlanClient applies plan patches through the Kubernetes dynamic client.
-type KubernetesPlanClient struct {
-	Client dynamic.Interface
-	Mapper meta.RESTMapper
-}
-
-func (c KubernetesPlanClient) resource(ref sdk.ObjectRef) (dynamic.ResourceInterface, error) {
-	if c.Client == nil || c.Mapper == nil {
-		return nil, errors.New("Kubernetes plan client and REST mapper are required")
-	}
-	gvk := schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind)
-	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return nil, fmt.Errorf("map %s/%s: %w", ref.Kind, ref.Name, err)
-	}
-	if mapping.Scope.Name() != meta.RESTScopeNameNamespace {
-		return nil, fmt.Errorf("plan object %s/%s is not namespaced", ref.Kind, ref.Name)
-	}
-	return c.Client.Resource(mapping.Resource).Namespace(ref.Namespace), nil
-}
-
-func (c KubernetesPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	resource, err := c.resource(ref)
-	if err != nil {
-		return nil, err
-	}
-	return resource.Get(ctx, ref.Name, metav1.GetOptions{})
-}
-
-func (c KubernetesPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
-	resource, err := c.resource(ref)
-	if err != nil {
-		return err
-	}
-	_, err = resource.Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
-	return err
-}
 
 // KubernetesPlanRollouts waits for touched Deployments to finish rolling out.
 type KubernetesPlanRollouts struct {
@@ -162,25 +119,4 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 		case <-ticker.C():
 		}
 	}
-}
-
-func (c KubernetesPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	if object == nil || !samePlanRef(object, ref) || ref.Namespace == "" {
-		return nil, fmt.Errorf("object create kind/scope is unsupported")
-	}
-	resource, err := c.resource(ref)
-	if err != nil {
-		return nil, err
-	}
-	return resource.Create(ctx, object, metav1.CreateOptions{})
-}
-func (c KubernetesPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid types.UID, version string) error {
-	if uid == "" || version == "" {
-		return fmt.Errorf("delete requires UID/version preconditions")
-	}
-	resource, err := c.resource(ref)
-	if err != nil {
-		return err
-	}
-	return resource.Delete(ctx, ref.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &version}})
 }
