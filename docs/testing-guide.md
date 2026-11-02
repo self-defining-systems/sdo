@@ -510,39 +510,24 @@ Native receipt decisions have a hermetic Go suite in
 `benchmarks/sregym/protocol/native_receipt_go`. Its fixtures are hand-authored
 generated messages. Run `go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$'
 -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .` there to attack malformed wire values,
-<<<<<<< HEAD
 round-trip acceptance, and rejection followed by a valid incident. PR CI includes this module and its fuzz seeds; Nightly CI runs the bounded fuzz campaign. Python
-=======
-round-trip acceptance, and rejection followed by a valid incident. PR CI replays
-its seeds; the nightly fuzz workflow runs the bounded campaign. Python
->>>>>>> origin/vic-lsh/dev/sdo-improve
 receipt tests exercise the real checker; transport-error tests mock subprocesses.
 Submission phase tests live in `protocol/submission_go` (benchmark module) and
 `tests/unit/benchmarks/sregym/adapter/test_submission.py`. The Go fuzz target
 `FuzzSubmissionPhaseBoundary` checks that a POST requires matching observed phase,
 that completion polls never post, and that malformed facts yield typed failures.
-<<<<<<< HEAD
 Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the same bounded target, with its seeds retained on PRs. Image scope tests verify
-=======
-Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; the nightly
-fuzz workflow runs the same bounded target. Image scope tests verify
->>>>>>> origin/vic-lsh/dev/sdo-improve
 separate Go compilation and binary-only copying into the benchmark worker.
 Read-only controller observations are tested in `outcome_derivation` and
 `operatorcli/controller_observation_test.go`. `FuzzControllerObservationBoundary`
 checks malformed snapshots, closed lifecycle enums, incident correlation and a
 rejected snapshot followed by a good one. Run it with `-fuzztime=30s
-<<<<<<< HEAD
 -fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the bounded target, with its seeds retained on PRs. Fake controller bookkeeping stays outside the generated snapshot shape.
-=======
--fuzzminimizetime=1s -parallel=2 -timeout=2m`; the nightly fuzz workflow runs the
-bounded target. Fake controller bookkeeping stays outside the generated snapshot shape.
 
 Uncontrolled text boundaries are fuzzed where the text is hand-written or model
-written. `memory.FuzzLegacyOutcomeStream` (retired `outcomes.jsonl`) and
-`sdk.FuzzObjectRefParseFormat` run their hand-written seeds in every `go test`;
-run `go test -run '^$' -fuzz '^FuzzLegacyOutcomeStream$' -fuzztime=180s` (cap 5
-minutes) in `sdo/operator/memory` to explore further. The Go and Python object-ref
+written. `sdk.FuzzObjectRefParseFormat` runs its hand-written seeds in every `go test`;
+run `go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=180s` (cap 5
+minutes) in `sdo/operator/sdk` to explore further. The Go and Python object-ref
 parsers share `tests/fixtures/sdo/contracts/object_ref_grammar.json`, and Hypothesis
 covers `sdo act` receipt recording in `test_recorded_actions.py`.
 
@@ -574,38 +559,6 @@ git -C third_party/sregym/SREGym-applications submodule update --init astronomy-
 
 The Python unit-test CI job initializes these application sources explicitly so
 the discovery gate runs instead of silently skipping its cross-repository checks.
-
-### Health policy refresh after source advances
-
-The native builder refreshes stale health requirements through the registered judge
-and broker before compiling detectors. Accepted judge commits bind policy to all
-tracked application inputs outside operational memory, the human objective and
-health detector revision. Memory-only outcomes and playbooks do
-not trigger judge work. The runtime refuses evaluation, dispatch, plan
-writes and closure while the compiled detector bundle lags the accepted health
-policy, and requests a builder relaunch for adoption. A refresh failure
-leaves health unverified. Investigations, pending closures and acknowledgments
-that began before the adoption are resumed by the restarted controller; the
-repository head, objective, policy or detector scope moving never retires,
-refuses or fails them. Closure is decided by the live recheck alone.
-
-The model-free tracing regression and seeded restart schedule run with:
-
-```bash
-(cd sdo/operator/runtime && go test . -run 'TestHealthRefresh|TestTracingSwapRefresh|TestSimHealthRefresh|TestSimRV6HealthRefreshCrashSchedules' -count=1 -timeout=5m)
-```
-
-The tracing capture replaces Jaeger with a collector while preserving old
-architecture, compiles accepted detectors, and requires collector coverage without
-Jaeger. The 20-seed RV6 schedule sends real SIGKILLs at proposal, request, Job, result,
-before/after acceptance, before/after adoption, and resumption of the interrupted
-closure. It retains fake Kubernetes resources and controller state
-across processes, optionally advances memory while interrupted, and requires
-fresh policy acceptance and the resumed closure not to be retired. Accepted work is reused and the old binary remains
-unauthorized. The smaller cancellation schedule checks handled worker errors.
-These checks use scripted judge results and no cluster or model calls; they do
-not evaluate actual judge model behavior.
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 ## Abort and quiescence
 
@@ -796,7 +749,6 @@ prefix fallback. Go's separate compiler/module caches remain content-addressed
 and can be shared across source revisions. To check an existing binary, run
 `uv run python scripts/operator_test_binary.py --check /absolute/path/to/sdo-operator`.
 
-<<<<<<< HEAD
 ## Hand-authored agent scripts (no model)
 
 `benchmarks.sregym.agent_script` replaces the Codex executable beneath the real
@@ -1358,8 +1310,6 @@ binary share a versioned tool cache. Formatting overlaps static checks, and
 suite rather than running them twice. Default local static checks still run
 the complete architecture file. Per-check timing lines and `--durations=30`
 remain in hosted logs. No additional Python tests move to nightly.
-=======
-`TestHermeticBringupMaintenanceGenerationDuringOnboarding` repeats that same native bring-up with a known pause/resume mid-window. It retains the original install identities, starts a new sampling budget, and finalizes at simulated61s (three new probe rounds); wall time remains below two minutes. `TestRunOnboardingMaintenanceGenerationPreservesSamples` exercises the actual runtime loop and real prober HTTP boundary: ACTIVE generation-only updates retain samples, while true pause/resume resets both traffic and reachability. Post-resume authority requires fresh samples and retains prior successful ports/configuration contradictions. Supported reset removes owned maintenance state so the next install starts ACTIVE with no inherited generation.
 
 ### Go-backed Python contracts
 
@@ -1384,101 +1334,6 @@ GOCACHE=$(mktemp -d) uv run --extra test pytest -q -p no:tach \
   tests/unit/benchmarks/sregym/fastloop/test_eval_guards.py::test_fresh_guard_accepts_actual_broker_health_bootstrap \
   --durations=5
 ```
-
-### Validator cache and local startup measurement
-
-Validator Pods read the compiler, module cache and warmed SDK cache from immutable
-image layers. `sdo-go-cache` implements the pinned Go toolchain's `GOCACHEPROG`
-protocol, reading native disk-cache v1 entries in place and atomically publishing
-new entries only to private `GOCACHE` scratch. Its real-Go test proves source
-invalidation, seed reuse and private-delta reuse without a cluster.
-
-```bash
-(cd sdo/operator && go test -race ./cmd/sdo-go-cache ./builder ./broker)
-SDO_IMAGES=validator bash scripts/build_sdo_images.sh
-uv run python scripts/measure_validator_startup.py \
-  --baseline-controller sdo-controller:baseline \
-  --baseline-validator sdo-detector-validator:baseline \
-  --candidate-validator sdo-detector-validator:candidate \
-  --output /tmp/validator-startup.json
-```
-
-The image smoke gate uses a nonroot, read-only, network-disabled container and
-fails if exporting the SDK invokes the compiler. The measurement compares the
-old init-container copy plus fixture validation against direct image-backed
-validation under the same two-CPU limit. It reports image bytes and wall time;
-it excludes image delivery and Kubernetes scheduling. Images must already exist;
-the measurement never pulls images or prunes shared caches.
-
-The PR image gate builds each affected image on a separate runner.
-All selected images still receive the same smoke, preflight and answer-key checks.
-Large intermediate-layer cache uploads run in `warm-ci-caches.yml` nightly or by
-manual dispatch; they are maintenance rather than a required merge gate. The
-small Go modules share two runners through `scripts/test_go_foundation.sh`;
-SDK/core continue to run under Go 1.24.5, while the contracts and benchmark wire
-modules use Go 1.26.8. Explicit fixture compiler parallelism must not override
-`GOFLAGS`, so nested builds inherit the same runner memory bound.
-
-`prepare-go` builds normal and race archives on two independent runners per
-pushed event commit, publishing a cache for each mode. Normal-only consumers
-restore the normal graph and the sole module archive. Go test shards restore
-the race graph to a separate directory, then `scripts/merge_go_ci_caches.sh`
-unions immutable compiler entries with hard links. Each archive destination is
-restored once; Go module files are never unpacked over another restored cache.
-Both preparation modes compile every operator/runtime test archive with
-`go test -c` without starting TestMain. Normal preparation also compiles the
-CGO-disabled runtime graph used by generated traffic probers, publishes the
-source-bound Python test CLI. Before publishing the normal cache, CI keeps only
-that verified executable and removes old source-hash executables, so restoring
-and republishing successive commits cannot accumulate obsolete binaries.
-Preparation never executes tests; the operator
-partition remains the sole owner of the complete assurance seed/overlay check. All hosted builds retain
-`-trimpath`, including tests that add their own module flags, so equal source in
-fresh isolated workspaces reuses those archives. Changed source still gets a
-new Go build ID; a real-Go relocation/invalidation contract checks both cases.
-The test jobs depend
-on preparation and require that exact cache; they do not start cold compilation
-inside short operation deadlines. Cache restoration uses Go's content-addressed
-compiler entries, while executable identity remains source-bound by
-`operator_test_binary.py`.
-
-The operator gate discovers builder, broker, validator, CLI and worker-registry
-names (including examples and fuzz seeds), assigning each exactly once through
-`scripts/test_operator_shard.py`. `scripts/operator_test_costs.json` records
-hosted run provenance, active top-level timings and explicit measured moves;
-new names retain their package default. Remaining packages are discovered too,
-with the same exhaustive ownership guard. Runtime allocations use the hosted
-costs in `scripts/runtime_test_costs.json` for longest-first balancing. Both
-profiles record their hosted run and source head; active parent time
-includes parallel subtests and excludes top-level pauses. Refresh completed
-measurements from a hosted transcript with
-`gh run view RUN --log > /tmp/go-ci.log`, then
-`uv run python scripts/update_go_test_costs.py --log /tmp/go-ci.log --run RUN --head SHA --write`.
-Use `--scope operator` or `--scope runtime` to refresh one profile.
-Without `--write`, the importer reports the measured entry counts. Unfinished
-tests retain their previous costs; no test or seed is removed. Explicit operator
-placements remain reviewable in the operator profile. The measured slow
-acceptance cases run in a third name partition on the existing compiler-replay
-allocation. Expanded advisory source-evidence cases share a fourth name partition
-on the existing broker allocation, preserving all cases and the two-worker parallel cap. The redundant-link
-regression shares the located-binding fixture's real acceptance compilation.
-
-The five existing operator jobs and four-minute Go timeouts stay unchanged.
-Every partition emits JSON per-test timings and lists its five slowest tests
-and unfinished names. The former 210-second process and 180-second top-level guards are report-only:
-they print slow and unfinished names without killing processes or failing a
-successful suite. The unchanged four-minute operator Go timeout, five-minute
-runtime Go timeout and five-minute hosted job limit own failure. Race checking,
-all seeds and exhaustive name ownership remain required. Run
-`bash scripts/test_operator_shard.sh compiler` locally; the runner's contract
-tests cover reporting, real test failures, malformed output and exhaustive
-ownership. Runtime name partitions remain exhaustive; `test_runtime_shard.py
---shard` accepts comma-separated partitions so short groups can share a runner.
-Explicit Python worker settings pass
-through unchanged; local unset defaults use at most four CPUs and hosted CI
-explicitly uses two workers. Image runners consume the preparation job's
-source-bound schema identity, avoiding a separate Go cache transfer and toolchain
-installation just to print it.
 
 ## Recorded Kubernetes client generation
 
@@ -1536,30 +1391,6 @@ references can override a database target for a read-only reproduction with
 The target's `auth` references authenticate the catalog read separately from any create-user password.
 
 
-### Hosted Python balance and coverage
-
-`scripts/test_python.sh` keeps its full-suite default. Hosted CI sets
-`SDO_PYTEST_SHARD=fastloop` for `tests/unit/benchmarks/sregym/fastloop` on the
-existing static-analysis runner, and `core` for every other test on the unit
-runner. New paths outside that subtree automatically belong to core. Both
-shards retain the `not go_integration` marker filter; external-process contracts
-still run through `scripts/test_go_integration.sh`.
-
-Each shard uploads its raw coverage database. The existing Required PR CI job
-requires both databases, combines them, and enforces the unchanged project
-coverage threshold on the complete suite. Shards suppress their partial reports
-rather than applying the global coverage threshold to a partial suite. Local
-full-suite runs continue to enforce coverage directly.
-
-The SDK/core compatibility suite remains on Go 1.24.5. PR CI never runs
-coverage-guided fuzzing: an instrumented compile (~90 s) plus the campaigns does
-not fit beside a test partition in a 5-minute job. Every PR replays each fuzz
-target's seed corpus through plain `go test`, and
-`.github/workflows/nightly-fuzz.yml` runs the bounded campaigns (30 s per target,
-one job per module). `tests/unit/sdo/operator/test_ci_speed.py` rejects a `-fuzz`
-flag in `ci.yml` and checks that every nightly target still exists, since Go passes
-a missing target silently.
-
 ## Context engineering gates
 
 All registered agents use `sdo.agents.prompt_templates` for construction and provider dispatch. Every template placeholder has an explicit entry in `sdo/agents/prompt_sections.json`, referring to a cap in `prompt_budgets.toml`. Required literals and substitutions raise `PromptBudgetError` when their aggregate exceeds its cap; they never become summaries. Producers explicitly mark optional data for ranked trimming with omission counts and private session-file references. Reflection keeps every per-cause question and complete repair receipt in required parts, with settled evaluations and findings under the original optional caps. Repeated parts share an aggregate cap; complete data is never discarded. The renderer rejects unknown sections and placeholders. Nested rendered values preserve their own section caps; plain placeholders use their explicit mapped caps. Repointing an existing placeholder to a larger cap is also a raise: first raise its original budget in an isolated manifest-only `Budget-Reason:` commit, then remap downward.
@@ -1609,4 +1440,3 @@ the existing measured-cost bins and job caps. This checks the whole package
 without adding PR jobs or another fixed regression list. `workflow_dispatch`
 can run this workflow on a development branch before it reaches the default
 branch; scheduled runs use the default branch.
->>>>>>> origin/vic-lsh/dev/sdo-improve
