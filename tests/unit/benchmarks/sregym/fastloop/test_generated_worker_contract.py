@@ -258,3 +258,26 @@ def test_tool_reads_json_and_follows_a_capped_reply_to_its_details_file(
     monkeypatch.setattr(responder_steps, "_command", command)
     assert responder_steps._tool("diagnose")["program_runs"] == [{"program_id": "p"}]
     assert calls == [["sdo", "diagnose", "--json"]]
+
+
+def test_verify_loop_stops_when_detectors_clear_while_the_responder_still_runs() -> None:
+    """`sdo verify` says awaiting_responder_completion until this worker exits; waiting for healthy burns 2 minutes."""
+    import time
+
+    from benchmarks.sregym.fastloop import responder_script
+
+    replies = iter([{"healthy": False}, {"healthy": False, "verification_status": "awaiting_responder_completion"}])
+    calls: list[str] = []
+    namespace = {
+        "first": {"healthy": False},
+        "unsure": set(),
+        "time": type("T", (), {"sleep": staticmethod(lambda _seconds: calls.append("sleep"))}),
+        "_tool": lambda *_args: next(replies),
+    }
+    source = responder_script.VERIFY
+    verify_loop = source[: source.index("causes = [")]
+    exec(verify_loop, namespace)  # the generated command fragment under test
+    assert namespace["work_completed"] is True
+    assert namespace["healthy"] is False
+    assert calls == ["sleep"]
+    assert time  # the fragment uses the real module in generated commands
