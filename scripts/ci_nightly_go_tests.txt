@@ -398,3 +398,4 @@ TestStandbyExactlyOneClaimantWins
 # and TestHermeticSharedMemoryControllers (simulated compile gate, about 10 CPU-s).
 TestT1ScriptedBrokerMatrix
 TestSimRV6HealthRefreshCrashSchedules
+TestSourceReadbackBudgetIsPerObject
