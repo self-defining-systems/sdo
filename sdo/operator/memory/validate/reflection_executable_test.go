@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -55,9 +56,9 @@ func TestRecordedHandRepairsRequireExecutablePrograms(t *testing.T) {
 					t.Fatal(err)
 				}
 				if mode == "one of two repairs" {
-					other := *receipt
+					other := proto.Clone(receipt).(*contracts.RepairActionReceipt)
 					other.ActionId = "manual-second"
-					o.RepairActions = append(o.RepairActions, &other)
+					o.RepairActions = append(o.RepairActions, other)
 				}
 				if mode == "diagnose only" {
 					remove(t, root, ".sdo/playbooks/service-targetport-mismatch/mitigate.go")

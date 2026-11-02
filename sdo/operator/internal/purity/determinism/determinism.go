@@ -35,6 +35,7 @@ var Edges = map[string]bool{
 	"sdo/operator/shellpath/internal/shellio":                true, // Shell detector processes, runner server, timers and environment
 	"sdo/operator/worker_registry/internal/workerio":         true, // Worker clocks, warm-standby processes, sockets and environment
 	"sdo/operator/cmd/sdo-go-cache/internal/cacheio":         true, // Go cache helper environment and clock
+	"sdo/operator/internal/testutil/gitio":                   true, // Integration-test fixture Git runner; waits for every command
 	"sdo/operator/cmd/sdo-replay/internal/replayio":          true, // Replay command child-process launcher
 	"sdo/operator/sdk/kubeclient/internal/clientio":          true, // In-memory observation HTTP client
 

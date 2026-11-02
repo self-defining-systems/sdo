@@ -1,11 +1,14 @@
+//go:build integration
+
 package testutil
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/internal/testutil/gitio"
 )
 
 // Git runs and waits for a fixture command. It never exposes an exec.Cmd that
@@ -14,8 +17,7 @@ func Git(t testing.TB, root string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	output, err := command.CombinedOutput()
+	output, err := gitio.Run(ctx, root, args...)
 	if err != nil {
 		t.Fatalf("git %v in %s: %v: %s", args, root, err, output)
 	}
