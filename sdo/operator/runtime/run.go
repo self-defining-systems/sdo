@@ -744,14 +744,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 
 	// Detectors and plan verification read through the same capped runtime view.
-	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	liveView := func(snapshot sdk.DetectionContext) program.ReadView {
 		return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
 			if controller != nil {
 				return controller.CurrentAcceptedCommit()
 			}
 			return resolvedSourceCommit
 		}, BaselineSource: stateTracker}
-	}}
+	}
+	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: liveView}
 	start := clock.Now().UTC()
 	corpusSessionRoot := ""
 	if options.NativeBroker != nil {
@@ -851,6 +852,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return err
 			}
+			// Detectors keep reading through the same capped runtime view after a swap.
+			next = ReadSnapshotProvider{Base: next, View: liveView}
 			if err = hostManager.Activate(activateCtx, candidate.host, candidate.commit, candidate.digest); err != nil {
 				return err
 			}
