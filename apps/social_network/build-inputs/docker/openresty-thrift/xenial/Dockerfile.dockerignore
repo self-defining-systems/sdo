@@ -1,0 +1,4 @@
+# Preserve the pinned openresty-thrift context exclusion.
+.git
+.sdo
+kubernetes

@@ -273,6 +273,17 @@ SDO_RUN_LIVE_AGENTS=1 SDO_LIVE_CODEX_MODEL=gpt-6-luna SDO_LIVE_CLAUDE_MODEL=haik
 
 Live Codex or Kubernetes tests may require explicit markers, credentials, images, a cluster, and longer timeouts; do not infer production readiness from skipped external tests.
 
+## SREGym pin ancestry
+
+`scripts/check_submodule_pin.py` (a `check_errors.sh` step) fails when the
+`third_party/sregym` gitlink is not equal to, or a descendant of, the base
+branch's pin. A merge that keeps the branch's older pin otherwise reverts the
+base silently. The base is `--base`, else `origin/$GITHUB_BASE_REF` (fetched
+with depth 1 in a shallow CI checkout), else a default branch already merged
+into HEAD. Ancestry comes from the initialized submodule when it has both
+commits, else from a blobless fetch of the two pins into a temporary
+repository. It skips with a message when the base or its pin is unavailable.
+
 ## Test the lifecycle contracts
 
 ### Lifecycle separation

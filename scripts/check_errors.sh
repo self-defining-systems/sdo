@@ -4,6 +4,7 @@
 #   tach  — architectural module boundary contracts (tach.toml)
 #   arch  — AST facade imports and ownership rules (tests/unit/test_architecture.py)
 #   types — pyright (scripts/type_check.sh)
+#   pin   — third_party/sregym never moves backwards (scripts/check_submodule_pin.py)
 #   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
 
 set -e
@@ -41,6 +42,9 @@ echo "==> architecture (AST import and ownership rules)"
 if [[ "${1:-}" != --python-suite ]]; then
     check uv run --extra test python -m pytest -q -p no:tach tests/unit/test_architecture.py
 fi
+
+echo "==> SREGym pin ancestry"
+check uv run python scripts/check_submodule_pin.py
 
 echo "==> types (scripts/type_check.sh)"
 check "$SCRIPT_DIR/type_check.sh"
