@@ -26,10 +26,10 @@ func TestValidateBindings(t *testing.T) {
 		bindings program.Bindings
 		want     string
 	}{
-		{"valid", program.Bindings{"service": serviceRef}, ""},
-		{"missing", nil, "service"},
-		{"wrong kind", program.Bindings{"service": {Kind: "Pod", Name: "front"}}, "kind"},
-		{"unknown", program.Bindings{"service": serviceRef, "extra": serviceRef}, "extra"},
+		{"valid", program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}, ""},
+		{"missing", program.Bindings{Objects: program.ObjectBindings{}}, "service"},
+		{"wrong kind", program.Bindings{Objects: program.ObjectBindings{"service": {Kind: "Pod", Name: "front"}}}, "kind"},
+		{"unknown", program.Bindings{Objects: program.ObjectBindings{"service": serviceRef, "extra": serviceRef}}, "extra"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := program.ValidateBindings(spec, tc.bindings)
@@ -54,7 +54,7 @@ func TestVerdictAndPlanValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"spec.ports[0].targetPort", "spec.template.spec.containers[0].image", "spec.replicas", "spec.template.spec.containers[0].env[0].value", "spec.template.spec.containers[0].resources.limits.cpu", "spec.selector.app", "spec.template.spec.containers[0].readinessProbe.httpGet.path"} {
-		if err := (program.Plan{Actions: []program.Action{program.SetField{Ref: serviceRef, Path: path, Value: 1}}}).Validate(); err != nil {
+		if err := (program.Plan{Actions: []program.Action{program.SetField{Ref: serviceRef, Path: path, Value: testPlanValue(1)}}}).Validate(); err != nil {
 			t.Errorf("rejected %s: %v", path, err)
 		}
 	}
@@ -87,17 +87,17 @@ func TestRunDiagnoseContainsFailures(t *testing.T) {
 		bindings program.Bindings
 		why      string
 	}{
-		{"bindings", nil, nil, "service"},
+		{"bindings", nil, program.Bindings{Objects: program.ObjectBindings{}}, "service"},
 		{"error", func(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
 			return program.Verdict{}, errors.New("probe failed")
-		}, program.Bindings{"service": serviceRef}, "probe failed"},
+		}, program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}, "probe failed"},
 		{"panic", func(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
 			panic("bad program")
-		}, program.Bindings{"service": serviceRef}, "bad program"},
+		}, program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}, "bad program"},
 		{"deadline", func(ctx context.Context, _ program.ReadView, _ program.Bindings) (program.Verdict, error) {
 			<-ctx.Done()
 			return program.Verdict{}, ctx.Err()
-		}, program.Bindings{"service": serviceRef}, "deadline"},
+		}, program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}, "deadline"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -115,7 +115,7 @@ func TestRunDiagnoseContainsFailures(t *testing.T) {
 }
 
 func TestRunDiagnoseContainsSpecPanic(t *testing.T) {
-	got := program.RunDiagnose(context.Background(), panickingSpec{}, &sdktest.ReplayReadView{}, nil, time.Second)
+	got := program.RunDiagnose(context.Background(), panickingSpec{}, &sdktest.ReplayReadView{}, program.Bindings{Objects: program.ObjectBindings{}}, time.Second)
 	if got.Result != program.Unknown || len(got.Evidence) == 0 || !strings.Contains(got.Evidence[0].Observed, "bad spec") {
 		t.Fatalf("got %+v", got)
 	}
@@ -132,33 +132,19 @@ func TestExampleProgramEndToEnd(t *testing.T) {
 	if got.Result != program.Match {
 		t.Fatalf("open verdict: %+v", got)
 	}
-	locate := func(v sdk.DetectionContext) []program.Bindings { return []program.Bindings{c.Bindings} }
-	d := program.DetectorFromProgram(p, locate, sdk.DetectorSpec{ID: p.Spec().ID, Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder})
-	findings, err := d.Detect(context.Background(), c.Open)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(findings) != 1 || findings[0].PrimaryResource != c.Bindings["service"] || findings[0].Playbooks[0] != p.Spec().ID || findings[0].ParameterBindings["service"] != c.Bindings["service"] || findings[0].Evidence == "" {
-		t.Fatalf("findings: %+v", findings)
-	}
-	findings, err = d.Detect(context.Background(), c.Fixed)
-	if err != nil || len(findings) != 0 {
-		t.Fatalf("fixed findings: %+v, %v", findings, err)
-	}
+
 }
 
-func TestDetectorCannotUseLiveReadView(t *testing.T) {
+func TestDiagnoseReportsUnavailableRuntimeRead(t *testing.T) {
 	p := diagnostic{fn: func(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 		_, err := v.ProbeTCP(serviceRef, 80)
 		return program.Verdict{}, err
 	}}
-	d := program.DetectorFromProgram(p, func(sdk.DetectionContext) []program.Bindings {
-		return []program.Bindings{{"service": serviceRef}}
-	}, sdk.DetectorSpec{ID: "test"})
-	findings, err := d.Detect(context.Background(), sdktest.Snapshot{})
-	if err != nil || len(findings) != 0 {
-		t.Fatalf("findings: %+v, %v", findings, err)
+	got := program.RunDiagnose(context.Background(), p, program.ReadFrom(sdktest.Snapshot{}), program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}, time.Second)
+	if got.Result != program.Unknown {
+		t.Fatalf("unavailable read cleared diagnosis: %+v", got)
 	}
+
 }
 
 // Synthetic cases retain the matching/near-miss contract formerly bundled with a learned program.
@@ -180,10 +166,24 @@ func TestExampleProgramSyntheticPortMatchesAndNearMisses(t *testing.T) {
 			if !tc.noPods {
 				snapshot.PodList = []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "front-1", Namespace: "demo", Labels: map[string]string{"app": "front"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Ports: []corev1.ContainerPort{{Name: "web", ContainerPort: 8080}}}}}}}
 			}
-			got := program.RunDiagnose(context.Background(), targetport.Program{}, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{"service": serviceRef}, time.Second)
+			got := program.RunDiagnose(context.Background(), targetport.Program{}, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{Objects: program.ObjectBindings{"service": serviceRef}}, time.Second)
 			if got.Result != tc.want {
 				t.Fatalf("got %s, want %s", got.Result, tc.want)
 			}
 		})
+	}
+}
+
+func TestScaleWorkloadAcceptsReplicaSetWithKubectlParity(t *testing.T) {
+	set := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: "demo", Name: "web-old"}
+	if err := (program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: set, Replicas: program.FromParam("replicas")}}}).Validate(); err != nil {
+		t.Fatalf("an old-template ReplicaSet must be scalable: %v", err)
+	}
+	if err := program.ValidateSetField(program.SetField{Ref: set, Path: "spec.replicas", Value: program.FromParam("replicas"), Reason: "retire old template"}); err != nil {
+		t.Fatalf("ReplicaSet replicas must be a typed field: %v", err)
+	}
+	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "demo", Name: "web"}
+	if err := (program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: pod, Replicas: program.FromParam("replicas")}}}).Validate(); err == nil {
+		t.Fatal("a Pod is not a scale target")
 	}
 }

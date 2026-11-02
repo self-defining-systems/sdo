@@ -6,3 +6,9 @@
 .ruff_cache
 third_party
 worktrees
+# Go tests, their fixtures and operator docs are not image inputs. Image provenance
+# (benchmarks/sregym/fastloop/image_provenance.py) reads these lines, so a change
+# to a file listed here can never invalidate a built image.
+**/*_test.go
+**/testdata
+sdo/operator/**/*.md

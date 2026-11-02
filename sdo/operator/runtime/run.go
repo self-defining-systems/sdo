@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	kclock "k8s.io/utils/clock"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,29 +28,40 @@ import (
 	"k8s.io/client-go/rest"
 
 	"google.golang.org/protobuf/proto"
+	"sdo.dev/operator/contracts/settings"
+
+	"k8s.io/apimachinery/pkg/types"
+
+	"sdo.dev/operator/apihistory"
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/memoryhost/hostio"
+	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/shellpath"
 	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
 )
 
 type RuntimeOptions struct {
 	// Clock controls driver timers and observer timestamps; nil uses production time.
-	Clock    kclock.WithTickerAndDelayedExecution
-	Programs program.ProgramRegistry
-	Args     []string
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Provider SnapshotProvider
+	Clock             kclock.WithTickerAndDelayedExecution
+	ShellReportReader shellpath.Reader
+
+	GenericCapture *core.GenericCapture
+	Programs       program.ProgramRegistry
+	Args           []string
+	Stdout         io.Writer
+	Stderr         io.Writer
+	Provider       SnapshotProvider
 	// Client, when set, replaces the kubeconfig clients of the long-running
 	// controller (observation, state, dispatch, and leader election), so the
 	// production wiring can run against a fake API server.
@@ -58,11 +71,18 @@ type RuntimeOptions struct {
 	// MetadataClient replaces the Secret metadata transport in embedded runs.
 	// When Client is supplied without it, Secrets remain unobserved.
 	MetadataClient rest.Interface
+	// PlanExecConfig reuses controller credentials for ordinary pod exec.
+	PlanExecConfig *rest.Config
 	// StateBaselineStartTimeout bounds the state tracker's RBAC probes and
 	// initial sync; zero means defaultStateBaselineStartTimeout.
 	StateBaselineStartTimeout time.Duration
 	// NativeBroker supplies the Go-owned closure path in tests and embedded runs.
 	NativeBroker *NativeIncidentBroker
+	// InformerSync bounds informer sync retries; the zero value selects the defaults.
+	InformerSync InformerSyncPolicy
+	// TerminationLogPath receives the typed record of a terminal informer sync
+	// failure; empty means DefaultTerminationLogPath.
+	TerminationLogPath string
 	// Dispatcher, when set, replaces the Kubernetes Job dispatcher so tests
 	// can observe what the controller dispatches without a worker cluster.
 	Dispatcher Dispatcher
@@ -83,11 +103,14 @@ func Run() {
 	broker.RunValidationChild()
 	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if errors.Is(err, memory.ErrHealthRefreshRequired) {
+			os.Exit(memory.HealthRefreshExitCode)
+		}
 		os.Exit(1)
 	}
 }
 
-func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) error {
+func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) (runErr error) {
 	clock := options.Clock
 	if clock == nil {
 		clock = lifecycleio.Clock()
@@ -107,6 +130,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if stderr == nil {
 		stderr = os.Stderr
 	}
+	defer func() { reportControllerError(runErr, stdout, options.TerminationLogPath) }()
 	var launchConfig *contractsv1alpha1.ControllerConfig
 	if len(args) > 0 && args[0] == LaunchConfigFlag {
 		// Launch from one typed ControllerConfig the launcher mounted, instead
@@ -137,13 +161,21 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
+	codePathName := flags.String("code-path", "go", "programming-model plugin set")
+	codePathOverrides := flags.String("code-path-overrides", "", "optional named code-path seam overrides as JSON")
+	var codePathFlagConfig CodePathConfig
+	flags.Func("response-stages", "ordered response stages; overrides the selected code path", func(value string) error {
+		codePathFlagConfig.Overrides.ResponseStages = strings.Split(value, ",")
+		return nil
+	})
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	controlNamespace := flags.String(
 		"control-namespace",
 		"",
 		"namespace holding the controller's Lease, state, maintenance ConfigMap, and responder Jobs; defaults to --namespace",
 	)
-	appRoot := flags.String("app-root", "", "application repository root")
+	appRoot := flags.String("app-root", "", "accepted application repository root")
 	application := flags.String("application", "", "application identity; defaults to repository directory name")
 	sourceCommit := flags.String("source-commit", "", "source repository commit; defaults to git HEAD")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
@@ -159,6 +191,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	repositoryPVCSubPath := flags.String("repository-pvc-subpath", "", "optional shared repository PVC subPath for job mode")
 	credentialsSecret := flags.String("responder-credentials-secret", "", "Codex credentials Secret for job mode")
 	var responderEnvironment repeatedFlag
+	responderStandby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	flags.Var(&responderEnvironment, "responder-env", "responder Job environment NAME=VALUE; may be repeated")
 	telemetryPath := flags.String(
 		"firing-telemetry-path",
@@ -176,59 +209,20 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "incident responder timeout")
 	verificationTimeout := flags.Duration(
 		"verification-timeout",
-		2*time.Minute,
-		"maximum wait for independent health detectors to clear after a response",
+		5*time.Minute,
+		"maximum wait for independent health detectors to clear after a response; the incident then closes as failed",
 	)
-	maxFollowUps := flags.Int(
-		"max-follow-ups",
-		0,
-		"maximum follow-up responders for health findings that stay active after a response; zero disables follow-ups",
-	)
-	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
+	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	memoryHostBinary := flags.String("memory-host-binary", "", "validated host binary")
 	memoryHostDigest := flags.String("memory-host-digest", "", "validated host digest")
-	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
-	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
-	driftSweepInterval := flags.Duration("drift-sweep-interval", DefaultDriftSweepInterval, "periodic full program sweep interval")
-	programMinDuration := flags.Duration("program-min-duration", DefaultProgramMinDuration, "minimum sustained duration for learned-program firing and clearing")
 	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
-	driftDispatchesPerHour := flags.Int("drift-dispatches-per-hour", 12, "maximum repeat drift responder dispatches per hour")
-	driftTokensPerHour := flags.Int64("drift-tokens-per-hour", 1000000, "maximum responder tokens per hour for repeat drift")
-	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "delay before retrying inconclusive initial diagnoses")
-	followUpCooldown := flags.Duration(
-		"follow-up-cooldown",
-		30*time.Second,
-		"wait after a response completes before its still-active health findings get a follow-up responder",
-	)
-	admissionLoadHigh := flags.Float64(
-		"admission-load-high", 0,
-		"load-aware admission: host-load pressure (PSI some avg10, 0-100) at or above which a ready incident is held; zero disables the load term",
-	)
-	admissionLoadLow := flags.Float64(
-		"admission-load-low", 0,
-		"load-aware admission: host-load pressure below which a held incident resumes (hysteresis); must not exceed --admission-load-high",
-	)
-	admissionBacklogHigh := flags.Int(
-		"admission-release-backlog-high", 0,
-		"load-aware admission: stranded-worktree release backlog at or above which a ready incident is held; zero disables the backlog term",
-	)
-	admissionBacklogLow := flags.Int(
-		"admission-release-backlog-low", 0,
-		"load-aware admission: release backlog below which a held incident resumes (hysteresis); must not exceed --admission-release-backlog-high",
-	)
-	admissionRecheckInterval := flags.Duration(
-		"admission-recheck-interval", 2*time.Second,
-		"load-aware admission: how often a held incident re-evaluates admission against a fresh load sample",
-	)
-	admissionPressurePath := flags.String(
-		"admission-pressure-path", "",
-		"load-aware admission: Linux PSI pressure file for the host-load gauge; defaults to /proc/pressure/cpu when the load term is enabled",
-	)
-	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy: commit or recorded-actions")
+	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy: commit or recorded-actions")
 	leaseName := flags.String("lease-name", "sdo-controller", "leader-election Lease name")
 	leaseDuration := flags.Duration("lease-duration", 60*time.Second, "leader-election Lease duration")
 	identity := flags.String("identity", defaultIdentity(), "unique leader-election identity")
+	closureStability := flags.Duration("closure-stability-window", 15*time.Second, "stable independent verification required to close a running incident")
+	reportGrace := flags.Duration("responder-report-grace", 30*time.Second, "deprecated compatibility setting; verified recovery does not wait for final narration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maintenanceConfigMap := flags.String(
@@ -246,6 +240,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"maximum wait for a first sample of every synthetic scenario before the first evaluation after start or resume",
 	)
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required in job mode)")
+	scriptImage := flags.String("script-image", "", "fixed script-tools image; defaults to the trusted toolchain image")
 	metricsPublishURL := flags.String("metrics-publish-url", "", "SDO Prometheus publishing base URL")
 	metricsURL := flags.String(
 		"metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle",
@@ -262,10 +257,27 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	timeScale, err := developmentTimeScale()
+
+	selectedPathConfig, err := codePathFromFlags(*codePathName, *codePathOverrides)
 	if err != nil {
 		return err
 	}
+	if codePathFlagConfig.Overrides.ResponseStages != nil {
+		selectedPathConfig.Overrides.ResponseStages = codePathFlagConfig.Overrides.ResponseStages
+	}
+	codePathRegistry := NewCodePathRegistry()
+	selectedCodePath, err := codePathRegistry.Resolve(selectedPathConfig)
+	if err != nil {
+		return err
+	}
+	if selectedCodePath.Selection.Coverage == "none" {
+		options.Programs = nil
+	}
+	menuEnabled := lifecycleio.Getenv("SDO_RESPONDER_MENU")
+	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
+		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
+	}
+
 	var hostManager *memoryhost.Manager
 	if launchConfig != nil {
 		hostManager = memoryhost.NewManager(30 * time.Second)
@@ -273,7 +285,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err := hostManager.Publish(ctx, sdktest.Snapshot{NamespaceName: *namespace}); err != nil {
 			return err
 		}
-		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		if err != nil {
 			return err
 		}
@@ -297,24 +309,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err != nil {
 			return err
 		}
-		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs = remote.Detectors, remote.Programs
 	}
-	detectors = scaleDetectors(detectors, timeScale)
-	*diagnosisSettleDelay = scaledDuration(*diagnosisSettleDelay, timeScale)
-	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
-	*followUpCooldown = scaledDuration(*followUpCooldown, timeScale)
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true
 	}
-	if *programMinDuration < 0 {
-		return errors.New("program minimum duration must be nonnegative")
-	}
-	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 || *driftBatchWindow <= 0 || *driftDispatchesPerHour < 0 || *driftTokensPerHour < 0 || *programTrustThreshold < 1 {
-		return errors.New("response loops, diagnosis deadline, drift sweep and batch windows, and program trust threshold must be positive; drift budgets must be nonnegative")
-	}
-	if *programFastPath && *repairPolicy != "recorded-actions" {
-		return errors.New("program fast path requires recorded-actions repair policy")
+	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftBatchWindow <= 0 {
+		return errors.New("response loops, diagnosis deadline and drift batch window must be positive")
 	}
 	if *controlNamespace == "" {
 		*controlNamespace = *namespace
@@ -392,17 +394,28 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	bootstrapProvider := &core.KubernetesSnapshotProvider{Namespace: *namespace, Client: options.Client}
-	leaseClient := options.Client
-	if options.Client == nil {
-		bootstrapProvider, err = core.NewKubernetesSnapshotProvider(*namespace)
-		if err != nil {
-			return fmt.Errorf("create Kubernetes snapshot provider: %w", err)
+	shellReader := options.ShellReportReader
+	if selectedCodePath.Selection.DetectorSource == "shell" {
+		if shellReader == nil {
+			shellReader = shellpath.HTTPReader{URL: shellpath.RunnerURL(*controlNamespace)}
 		}
-		leaseClient, err = core.NewKubernetesClient()
+		codePathRegistry.detectors["shell"] = ShellDetectorSource{Reader: shellReader}
+		selectedCodePath, err = codePathRegistry.Resolve(selectedPathConfig)
 		if err != nil {
-			return fmt.Errorf("create dedicated leader-election client: %w", err)
+			return err
 		}
+	}
+	detectors, err = selectedCodePath.Detectors.Detectors(ctx, DetectorSourceRequest{RepositoryRoot: resolvedRoot, Namespace: *namespace, CompiledDetectors: detectors})
+	if err != nil {
+		return err
+	}
+	bootstrapProvider, leaseClient, stateClient, err := controllerKubernetesClients(*namespace, options.Client)
+	if err != nil {
+		return err
+	}
+	planExecConfig, genericCapture, err := initializePlanTransports(options, clientInjected, *namespace)
+	if err != nil {
+		return err
 	}
 	stateStartTimeout := options.StateBaselineStartTimeout
 	if stateStartTimeout <= 0 {
@@ -444,12 +457,26 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *controlNamespace == *namespace {
 		stateConfigMapName = controllerStateConfigMap
 	}
+	ceiling, err := observation.CeilingFromEnvironment()
+	if err != nil {
+		return err
+	}
+	scope, scopeCommit, err := observation.Accepted(ctx, resolvedRoot)
+	if err != nil {
+		return err
+	}
+	if err = scope.Within(ceiling); err != nil {
+		return err
+	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
-		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, Clock: clock.Now, TimerClock: clock,
+		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
+			return observation.Accepted(ctx, resolvedRoot)
+		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, Clock: clock.Now, TimerClock: clock,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
 	}
+	defer kubernetesCache.Stop()
 	trafficWorkloads := TrafficWorkloadNames(detectors)
 	proberAPI := options.Traffic
 	if hostManager != nil {
@@ -481,8 +508,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 
 	var snapshotProvider SnapshotProvider = kubernetesCache
+	// Each cluster's reachability baseline is controller state below the
+	// lane-private repository mount, never shared accepted memory.
+	var reachabilityReference *ReachabilityReference
 	if trafficObserver != nil || reachabilityObserver != nil {
-		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver}
+		reachabilityReference, err = loadReachabilityBaseline(ctx, *repositoryMountPath, resolvedRoot, resolvedSourceCommit, func(err error) { fmt.Fprintln(stderr, err) })
+		if err != nil {
+			return err
+		}
+		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver, Reference: reachabilityReference}
 	}
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
@@ -497,6 +531,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
+	replayMode, err := settings.Replay(*replay)
+	if err != nil {
+		return err
+	}
 	jobEnvironment, err := parseResponderEnvironment(responderEnvironment)
 	if err != nil {
 		return err
@@ -504,8 +542,24 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig); err != nil {
 		return err
 	}
+	jobEnvironment[settings.ReplayEnvironment] = replayMode
+	if codePathCustomized(selectedPathConfig) {
+		jobEnvironment["SDO_CODE_PATH"] = selectedCodePath.Selection.Name
+		jobEnvironment["SDO_AGENT_GUIDANCE"] = selectedCodePath.Selection.AgentGuidance
+		jobEnvironment["SDO_MEMORY_VALIDATION"] = "go"
+		if selectedCodePath.Selection.MemoryValidation != "go" {
+			jobEnvironment["SDO_MEMORY_VALIDATION"] = "shell"
+		}
+	}
+	if options.NativeBroker != nil {
+		options.NativeBroker.CodePath = selectedPathConfig
+		options.NativeBroker.ShellReader = shellReader
+	}
 	jobEnvironment[ControllerStateEnvironment] = controllerStateLocation(*controlNamespace)
 	if launchConfig != nil {
+		if options.NativeBroker != nil {
+			options.NativeBroker.Programs = options.Programs
+		}
 		if err := attachNativeReflector(options.NativeBroker, launchConfig, bootstrapProvider.Client, registeredWorkers, *responseTimeout); err != nil {
 			return err
 		}
@@ -519,37 +573,127 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return fmt.Errorf("create Secret metadata client: %w", err)
 			}
 		}
-		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
+		stateTracker = NewStateTracker(StateTrackerConfig{Scope: scope, Ceiling: ceiling, Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: DefaultStateSettle})
+		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
-	planSource := GitPlanSource{Repository: resolvedRoot, Images: stateTracker, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
+	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths}
 	primitiveProber, _ := proberAPI.(PrimitiveProber)
 	var memoryCatalogMu sync.RWMutex
+	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)
+	if err != nil {
+		return err
+	}
+	protectedNamespace := ""
+	if *controlNamespace != *namespace {
+		protectedNamespace = *controlNamespace
+	}
+	scriptJobImage := *scriptImage
+	if scriptJobImage == "" {
+		scriptJobImage = *toolchainImage
+	}
+	if scriptJobImage == "" {
+		scriptJobImage = *responderImage
+	}
 	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {
+		if !clientInjected {
+			if err := toolchain.Seed(ctx, *repositoryMountPath, *toolchainImage); err != nil {
+				return fmt.Errorf("prepare responder toolchain before dispatch: %w", err)
+			}
+		}
 		var catalog memory.CatalogReader
 		if options.NativeBroker != nil {
 			catalog = memory.OpenCatalogReader(resolvedRoot)
+			if selectedCodePath.Selection.DetectorSource == "shell" {
+				catalog = memory.OpenShellCatalogReader(resolvedRoot)
+			}
+		}
+		apiProxyImage := *responderImage
+		if launchConfig != nil {
+			apiProxyImage = launchConfig.GetToolchainImage()
 		}
 		dispatcher = KubernetesJobDispatcher{
-			ToolchainImage: *toolchainImage,
-			Client:         bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
+			AcceptedRepository: resolvedRoot,
+			CoverageProvider:   selectedCodePath.Coverage,
+			APIProxyImage:      apiProxyImage,
+			ToolchainImage:     *toolchainImage,
+			Client:             bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
 			Environment: jobEnvironment,
 			Catalog:     catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
-			ProgramFastPath: *programFastPath, ResponseStages: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				memoryCatalogMu.RLock()
 				defer memoryCatalogMu.RUnlock()
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource,
-					Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
+					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage}, Objects: genericCapture}, Source: planSource,
+
+					Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: time.Second}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
 				if len(TrafficWorkloadNames(detectors)) > 0 {
 					loop.Traffic = proberAPI
+				}
+				loop.WorkingProgramRoot = request.RepositoryWorktree
+				if menuEnabled != "0" {
+					loop.MenuConfig = productionResponderMenu()
+					loop.MenuConfig.Unexplained = func(ctx context.Context) (UnexplainedRemovalAssessment, error) {
+						if controller == nil {
+							return UnexplainedRemovalAssessment{}, fmt.Errorf("controller is unavailable")
+						}
+						assessment, err := controller.unexplainedRemovalAssessment(request.IncidentID, *controlNamespace)
+						if err != nil {
+							return assessment, err
+						}
+						if removalClient == nil {
+							for _, removal := range assessment.Removals {
+								assessment.Blockers = append(assessment.Blockers, UnexplainedRemovalBlocker{FindingFingerprint: removal.FindingFingerprint, Ref: removal.Ref, Reason: RemovalUnavailable})
+							}
+							assessment.Removals = nil
+						}
+						return assessment, nil
+					}
+					loop.MenuConfig.RemoveUnexplained = func(ctx context.Context, selected UnexplainedRemoval, client PlanLifecycleClient, ref sdk.ObjectRef, uid types.UID, rv string) error {
+						if removalClient == nil {
+							return fmt.Errorf("removal-only client is unavailable")
+						}
+						return controller.removeUnexplained(ctx, request.IncidentID, *controlNamespace, selected, removalClient, ref, uid, rv)
+					}
+				}
+				loop.VerifyClosure = func(ctx context.Context) ToolResponse {
+					if controller == nil {
+						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
+					}
+					return controller.cachedResponderVerification(ctx, request.IncidentID, 0)
+				}
+				loop.WaitClosure = func(ctx context.Context, wait time.Duration) ToolResponse {
+					return controller.cachedResponderVerification(ctx, request.IncidentID, wait)
+				}
+				loop.IncidentStatus = func() *apihistory.IncidentVerified { return controller.incidentVerificationWarning(request.IncidentID) }
+				if options.NativeBroker != nil {
+					gate, err := memory.IncidentMutationGate(*repositoryMountPath, request.IncidentID)
+					if err != nil {
+						loop.gateError = err
+					} else {
+						loop.MutationGate = gate
+					}
+				}
+				loop.CachedFindings = func() ToolResponse { return controller.cachedFindingView(request.IncidentID) }
+				loop.ExternalReceipts = func() ([]RepairActionReceipt, bool, string, error) {
+					rows, pending, revision, err := memory.IncidentActionReceipts(*repositoryMountPath, request.IncidentID)
+					if err != nil {
+						return nil, pending, revision, err
+					}
+					result := incidentResultState(&contractsv1alpha1.IncidentResult{RepairActions: rows})
+					return result.RepairActions, pending, revision, nil
+				}
+				loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
+					if controller == nil {
+						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
+					}
+					return controller.responderResultVerification(ctx, request.IncidentID, &result)
 				}
 				loop.CurrentEvidence = func() *IncidentRequest {
 					if controller == nil {
@@ -560,62 +704,91 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					return cloneIncidentRequest(controller.currentIncidentRequest)
 				}
 				loop.DiagnosisDeadline = *diagnosisDeadline
-				loop.CorpusReplayPassed = options.NativeBroker != nil
-				loop.DiagnosisSettleDelay = *diagnosisSettleDelay
 				if options.NativeBroker != nil {
-					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
+					loop.RecoverySessionRoot = options.NativeBroker.SessionRoot
+					if *replay != "off" {
+						loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
+					}
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
 						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
+				controller.mu.Lock()
+				controller.responderLoop = loop
+				controller.mu.Unlock()
 				return loop
 			},
 		}
 	}
-	admission := AdmissionConfig{
-		Enabled:                     *admissionLoadHigh > 0 || *admissionBacklogHigh > 0,
-		HighWatermark:               *admissionLoadHigh,
-		LowWatermark:                *admissionLoadLow,
-		ReleaseBacklogHighWatermark: *admissionBacklogHigh,
-		ReleaseBacklogLowWatermark:  *admissionBacklogLow,
-		RecheckInterval:             *admissionRecheckInterval,
+	if !clientInjected && jobDispatch && *responderStandby && standbyEnabled(jobEnvironment) {
+		d := dispatcher.(KubernetesJobDispatcher)
+		standbyEnvironment := make(map[string]string, len(jobEnvironment)+5)
+		for name, value := range jobEnvironment {
+			standbyEnvironment[name] = value
+		}
+		standbyEnvironment["CODEX_HOME"] = "/sdo/session/codex"
+		standbyEnvironment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
+		standbyEnvironment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
+		standbyEnvironment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
+		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true}, d.AgentID, *application)
+		standbyCtx, stopStandby := context.WithCancel(renewalCtx)
+		if err := pool.Start(standbyCtx); err != nil {
+			stopStandby()
+			slog.Warn("responder_standby_unavailable", "error", err)
+		} else {
+			defer func() { stopStandby(); pool.Wait() }()
+			d.Standby = pool
+			dispatcher = d
+		}
 	}
+
+	// Detectors and plan verification read through the same capped runtime view.
+	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
+			if controller != nil {
+				return controller.CurrentAcceptedCommit()
+			}
+			return resolvedSourceCommit
+		}, BaselineSource: stateTracker}
+	}}
 	start := clock.Now().UTC()
 	corpusSessionRoot := ""
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
 	controller, err = NewController(ControllerConfig{MetricsSource: configuredMetricsSource(*metricsURL, *metricsPublishURL),
+		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
-		CorpusSessionRoot:   corpusSessionRoot,
-		VerificationTimeout: *verificationTimeout,
-		MaxFollowUps:        *maxFollowUps, FollowUpCooldown: *followUpCooldown,
-		RepairPolicy:    *repairPolicy,
-		FiringThreshold: 2, ClearThreshold: 2, BatchDebounce: scaledDuration(500*time.Millisecond, timeScale),
-		ConfirmationInterval: scaledDuration(time.Second, timeScale),
+		Replay: *replay, CorpusSessionRoot: corpusSessionRoot,
+		VerificationTimeout:    *verificationTimeout,
+		ClosureStabilityWindow: *closureStability,
+		ResponderReportGrace:   *reportGrace,
+		RepairPolicy:           *repairPolicy,
+		FiringThreshold:        2, ClearThreshold: 2, BatchDebounce: 500 * time.Millisecond,
+		ConfirmationInterval: time.Second,
 		// The submit gate confirms a clearing finding on 3 fresh evaluations
 		// over at least 2 s instead of waiting for the detector's interval;
 		// closure keeps the health judge's clear persistence.
-		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: scaledDuration(2*time.Second, timeScale), Interval: scaledDuration(time.Second, timeScale)},
-		Admission:        admission,
+		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: 2 * time.Second, Interval: time.Second},
 	}, detectors, snapshotProvider, dispatcher, start)
 	if err != nil {
 		return err
 	}
-	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, Programs: options.Programs, ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1, MinDuration: *programMinDuration}, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, BatchWindow: *driftBatchWindow, DispatchesPerHour: *driftDispatchesPerHour, TokensPerHour: *driftTokensPerHour,
+	// Registered before the run context's cancel, so it runs after it: the
+	// caller may remove the repository mount once this function returns.
+	defer controller.Wait()
+	controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
-			return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
-				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker}
+			if cycle, ok := snapshot.(*CycleReadView); ok {
+				return cycle
+			}
+			return NewCycleReadView(LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
+				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker})
 		},
 	})
-	// The load term reads host pressure from a Linux PSI file; the backlog term
-	// needs no gauge. A gauge is attached only when the load term is enabled.
-	if admission.Enabled && admission.HighWatermark > 0 {
-		controller.SetLoadGauge(ProcPressureGauge{Path: *admissionPressurePath})
-	}
 	if options.NativeBroker != nil {
 		if err := controller.SetIncidentBroker(*options.NativeBroker); err != nil {
 			return err
@@ -634,7 +807,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return memoryCandidate{commit: commit, err: err}
 			}
-			child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
+			child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
 			if err != nil {
 				_ = workspace.Close()
 				return memoryCandidate{commit: commit, err: err}
@@ -664,7 +837,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return err
 			}
-			remote.Detectors = scaleDetectors(remote.Detectors, timeScale)
 			if err := core.ValidateDetectors(remote.Detectors); err != nil {
 				return err
 			}
@@ -693,7 +865,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			detectors, options.Programs, snapshotProvider, metricsObserver = remote.Detectors, remote.Programs, next, nextMetrics
 			memoryCatalogMu.Unlock()
 			_ = json.NewEncoder(stdout).Encode(map[string]any{"memory_host_activation": candidate.commit, "binary_digest": candidate.digest, "activation_latency_ms": clock.Now().Sub(candidate.started).Milliseconds(), "controller_revision": launchConfig.GetControllerRevision()})
-			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
+			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
 			return nil
 		}
 		defer activation.close()
@@ -733,11 +905,28 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},
 		}
 	}
+	if launchConfig != nil && selectedCodePath.Selection.DetectorSource != "shell" {
+		controller.CheckHealth = acceptedHealthGuard(resolvedRoot, launchConfig.GetControllerRevision())
+	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
-	stateStore := lifecycleio.NewConfigMapStateStore(bootstrapProvider.Client, *controlNamespace, controllerStateConfigMap, filepath.Join(*repositoryMountPath, ".sdo-runtime", "controller-evidence"))
+	stateStore := lifecycleio.NewConfigMapStateStore(stateClient, *controlNamespace, controllerStateConfigMap, filepath.Join(*repositoryMountPath, ".sdo-runtime", "controller-evidence"))
 	if err := controller.AttachStateStore(ctx, stateStore); err != nil {
 		return fmt.Errorf("restore controller state: %w", err)
+	}
+	acknowledgement, err := onboarding.Load(ctx, bootstrapProvider.Client, *controlNamespace, *namespace)
+	if err != nil {
+		return err
+	}
+	if err := controller.SetNamespaceOnboarding(acknowledgement); err != nil {
+		return err
+	}
+	if err := controller.AttachPendingOnboarding(ctx, bootstrapProvider.Client, *controlNamespace); err != nil {
+		return fmt.Errorf("load namespace onboarding evidence: %w", err)
+	}
+	snapshotProvider = controller.provider
+	if launchConfig != nil {
+		controller.discardRestoredHealthObservations(start)
 	}
 	if err := attachFiringTelemetry(controller, *telemetryPath, jobDispatch, *repositoryMountPath); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -755,7 +944,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	iteration := 0
-	reviewGate := &detectorReviewGate{exit: *exitAfterClosure || *duration > 0, log: stderr}
 	encoder := json.NewEncoder(stdout)
 	controller.OnError = func(err error) { fmt.Fprintln(stderr, err) }
 	controller.OnClosureFailed = func(failure ClosureFailure) {
@@ -771,6 +959,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	controller.OnEvaluation = func(findings []sdk.Finding) {
 		if err := encoder.Encode(map[string]any{
 			"controller_iteration": iteration,
+			"evaluated_detectors":  controller.evaluationDetectorIDs(),
 			"returncode":           0,
 			"findings":             findings,
 		}); err != nil {
@@ -815,7 +1004,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// applied is the mode the controller currently operates under. It lags
 	// desired only while a resume is waiting for a fresh application cache.
 	applied := desired
-	cacheStarted := false
 	if err := encoder.Encode(desired.Record()); err != nil {
 		fmt.Fprintln(stderr, err)
 	}
@@ -888,9 +1076,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// parallel with the traffic warm-up, so the first quiet evaluation
 	// becomes its healthy baseline. The returned wait joins it and logs the
 	// outcome. It never fails operation: without it incidents simply carry
-	// no state changes.
+	// no state changes. A tracker that is already observing, for example
+	// through a baseline-preserving pause, is left alone.
 	startState := func() (wait func()) {
-		if stateTracker == nil {
+		if stateTracker == nil || stateTracker.Running() {
 			return func() {}
 		}
 		started := clock.Now()
@@ -915,10 +1104,53 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	stopState := func() {
 		if stateTracker != nil {
-			// A maintenance window may redeploy the application, so the old
-			// baseline no longer describes it.
+			// A redeploy replaces the application's configuration baseline.
 			stateTracker.Stop()
 			stateTracker.Reset()
+		}
+	}
+	syncPolicy := options.InformerSync
+	if err := syncPolicy.Validate(); err != nil {
+		return err
+	}
+	syncRetried := func(phase string) func(int, error) {
+		return func(attempt int, err error) {
+			record := map[string]any{"informer_sync_retry": phase, "attempt": attempt, "error": err.Error()}
+			if encodeErr := encoder.Encode(record); encodeErr != nil {
+				fmt.Fprintln(stderr, encodeErr)
+			}
+		}
+	}
+	// observeApplication is the one path that brings observation of the
+	// application up: informers, state baseline, synthetic traffic and
+	// reachability. Startup and every resume from a pause go through it, so a
+	// component the unpaused start establishes cannot be missed by a
+	// controller that began life paused or whose pause kept only part of it
+	// running. informersCurrent says the informer stores were kept current
+	// through the interval (a generation acknowledgement or a baseline
+	// preserving pause), and each component starts only if it is not running.
+	observeApplication := func(syncCtx context.Context, informersCurrent bool) error {
+		var err error
+		if informersCurrent {
+			err = kubernetesCache.ObserveRunning(runCtx, syncCtx)
+		} else {
+			err = kubernetesCache.Observe(runCtx, syncCtx)
+		}
+		if err != nil {
+			return err
+		}
+		waitState := startState()
+		startTraffic()
+		startReachability()
+		waitState()
+		return nil
+	}
+	// acceptBaseline runs the reachability baseline gate. It never fails the
+	// controller: a baseline it cannot measure is an unavailable state that
+	// later passes measure again.
+	acceptBaseline := func(gate func(context.Context, *Controller, string, string, bool, *ServiceReachabilityObserver, SnapshotProvider, *ReachabilityReference, []sdk.Detector)) {
+		if launchConfig != nil && options.NativeBroker != nil {
+			gate(runCtx, controller, resolvedRoot, *repositoryMountPath, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, reachabilityReference, detectors)
 		}
 	}
 	persistControllerState := func() {
@@ -926,16 +1158,20 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			fmt.Fprintf(stderr, "persist controller state: %v\n", err)
 		}
 	}
+	if err := controller.requireAdoptedHealth(runCtx); err != nil {
+		return err
+	}
 	if !desired.Paused {
-		kubernetesCache.Start(runCtx)
-		cacheStarted = true
-		if err := kubernetesCache.WaitForSync(runCtx); err != nil {
+		err := syncPolicy.Do(runCtx, 0, func(syncCtx context.Context) error {
+			return observeApplication(syncCtx, false)
+		}, syncRetried("startup"))
+		if err != nil {
+			if runCtx.Err() != nil {
+				return nil
+			}
 			return fmt.Errorf("sync Kubernetes informer cache: %w", err)
 		}
-		waitState := startState()
-		startTraffic()
-		startReachability()
-		waitState()
+		acceptBaseline(acceptStartupReachabilityBaseline)
 		if err := controller.Step(runCtx, clock.Now().UTC(), nil); err != nil {
 			if runCtx.Err() != nil {
 				return nil
@@ -943,11 +1179,19 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
-	persistControllerState()
-	if err := reviewGate.check(controller); err != nil {
+	if err := controller.retireExpiredIncident(runCtx, lifecycleio.Now().UTC()); err != nil {
 		return err
 	}
-	if err := executePendingEffects(runCtx, controller); err != nil {
+	persistControllerState()
+	// A controller launched during a maintenance pause must still complete its rollout handoff: the pause keeps
+	// the closure acknowledgment waiting on it, so deferring it until resume restarts the controller in a loop.
+	// The handoff verifies the build's provenance against the accepted tree, not an evaluation.
+	if options.NativeBroker != nil {
+		if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
+			return err
+		}
+	}
+	if err := executeStartupEffects(runCtx, controller, desired.Paused); err != nil {
 		if runCtx.Err() != nil {
 			return nil
 		}
@@ -958,43 +1202,51 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// fresh informer generation and evaluates every detector once. The mode
 	// record precedes that evaluation so observers can correlate it.
 	resume := func() error {
-		syncCtx, cancelSync := context.WithTimeout(runCtx, *resumeSyncTimeout)
-		defer cancelSync()
+		wasPaused := applied.Paused
+		preserved := wasPaused && applied.PreserveBaseline
+		// Informers keep running through a generation-only acknowledgement and
+		// through a baseline-preserving pause of a process that was already
+		// observing; a controller launched inside that pause has none running.
 		var syncErr error
-		if cacheStarted {
-			syncErr = kubernetesCache.Resync(syncCtx)
-		} else {
-			kubernetesCache.Start(runCtx)
-			cacheStarted = true
-			syncErr = kubernetesCache.WaitForSync(syncCtx)
-		}
+		syncErr = syncPolicy.Do(runCtx, *resumeSyncTimeout, func(syncCtx context.Context) error {
+			if wasPaused {
+				return observeApplication(syncCtx, preserved)
+			}
+			return kubernetesCache.ObserveRunning(runCtx, syncCtx)
+		}, syncRetried("resume"))
 		if syncErr != nil {
 			if runCtx.Err() != nil {
 				return nil
 			}
-			fmt.Fprintf(stderr, "resume observation of namespace %s: %v\n", *namespace, syncErr)
-			return nil
+			// An unsynced informer reads as an empty namespace. Staying paused
+			// (the old behavior) left the controller blind with no detections,
+			// so fail loudly and let the restart name the kind again.
+			return fmt.Errorf("resume observation of namespace %s: %w", *namespace, syncErr)
 		}
-		waitState := startState()
-		startTraffic()
-		startReachability()
-		waitState()
+		acceptBaseline(acceptStartupReachabilityBaseline)
 		kubernetesCache.TakeEvents()
-		kubernetesCache.TakeObjectChanges()
+		if wasPaused && !preserved {
+			kubernetesCache.TakeObjectChanges()
+		}
 		applied = desired
 		if err := encoder.Encode(applied.Record()); err != nil {
 			fmt.Fprintln(stderr, err)
 		}
-		if err := controller.EvaluateAll(runCtx, clock.Now().UTC()); err != nil {
+		evaluate := controller.EvaluateAll
+		if wasPaused {
+			evaluate = controller.ResumeObservation
+		}
+		if err := evaluate(runCtx, clock.Now().UTC()); err != nil {
 			if runCtx.Err() != nil {
 				return nil
 			}
 			return err
 		}
 		persistControllerState()
-
-		if err := reviewGate.check(controller); err != nil {
-			return err
+		if options.NativeBroker != nil {
+			if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
+				return err
+			}
 		}
 		if err := executePendingEffects(runCtx, controller); err != nil {
 			if runCtx.Err() != nil {
@@ -1008,6 +1260,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if *exitAfterClosure && controller.LastAcknowledgedIncidentID() != "" {
 			return nil
 		}
+		if applied == desired && !applied.Paused {
+			acceptBaseline(retryReachabilityBaseline)
+		}
 		var delay time.Duration
 		switch {
 		case applied != desired:
@@ -1020,6 +1275,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 		default:
 			delay = controller.NextWake().Sub(clock.Now())
+			if retry := reachabilityReference.retryAt(); !retry.IsZero() {
+				delay = min(delay, retry.Sub(clock.Now()))
+			}
 		}
 		if delay < 0 {
 			delay = 0
@@ -1044,10 +1302,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				// A redeploying application would fail synthetic requests;
 				// resume starts again from empty windows.
 				stopTraffic()
-				stopState()
-				kubernetesCache.Stop()
-				kubernetesCache.TakeEvents()
-				kubernetesCache.TakeObjectChanges()
+				if !desired.PreserveBaseline {
+					stopState()
+					kubernetesCache.Stop()
+					kubernetesCache.TakeEvents()
+					kubernetesCache.TakeObjectChanges()
+				}
 				applied = desired
 				if err := encoder.Encode(applied.Record()); err != nil {
 					fmt.Fprintln(stderr, err)
@@ -1063,19 +1323,22 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			if applied.Paused {
 				kubernetesCache.TakeEvents()
-				kubernetesCache.TakeObjectChanges()
+				if !applied.PreserveBaseline {
+					kubernetesCache.TakeObjectChanges()
+				}
 				continue
 			}
-			if err := controller.StepEvents(runCtx, clock.Now().UTC(), kubernetesCache.TakeEvents()); err != nil {
+			events := kubernetesCache.TakeEvents()
+			if reachabilityObserver != nil && slices.ContainsFunc(events, func(event sdk.WatchKind) bool { return event.APIVersion == "v1" && event.Kind == "Pod" }) {
+				reachabilityObserver.Wake()
+			}
+			if err := controller.StepEvents(runCtx, clock.Now().UTC(), events); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
 				return err
 			}
 			persistControllerState()
-			if err := reviewGate.check(controller); err != nil {
-				return err
-			}
 			if err := executePendingEffects(runCtx, controller); err != nil {
 				if runCtx.Err() != nil {
 					return nil
@@ -1088,10 +1351,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			controller.handleDispatchCompletion(completion, clock.Now().UTC())
 			persistControllerState()
-			if err := reviewGate.check(controller); err != nil {
-				return err
-			}
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1103,10 +1363,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			controller.handleWorkspaceCompletion(completion)
 			persistControllerState()
-			if err := reviewGate.check(controller); err != nil {
-				return err
-			}
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1121,7 +1378,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err := ClosureFailureError(controller); err != nil && *exitAfterClosure {
 				return err
 			}
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1132,14 +1389,31 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleAcknowledgmentCompletion(completion)
+			driveErr := controller.driveQueuedReflections(runCtx, controller.clock())
 			persistControllerState()
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if driveErr != nil {
+				return driveErr
+			}
+			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
 				return err
 			}
-			if *exitAfterClosure && completion.err == nil {
+			if *exitAfterClosure && completion.err == nil && !controller.reflectionWorkOpen() {
+				return nil
+			}
+		case completion := <-controller.reflectionResults:
+			if stopTimerForRuntimeEvent(runCtx, timer) {
+				return nil
+			}
+			controller.handleReflectionCompletion(completion)
+			driveErr := controller.driveQueuedReflections(runCtx, controller.clock())
+			persistControllerState()
+			if driveErr != nil {
+				return driveErr
+			}
+			if *exitAfterClosure && completion.err == nil && !controller.reflectionWorkOpen() {
 				return nil
 			}
 		case renewErr := <-renewalErrors:
@@ -1173,9 +1447,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return err
 			}
 			persistControllerState()
-			if err := reviewGate.check(controller); err != nil {
-				return err
-			}
 			if err := executePendingEffects(runCtx, controller); err != nil {
 				if runCtx.Err() != nil {
 					return nil
@@ -1229,33 +1500,6 @@ func attachLifecycleTelemetry(controller *Controller, path string, defaultEnable
 		}
 	}
 	controller.SetLifecycleSink(sink)
-	return nil
-}
-
-// detectorReviewGate ends a one-shot run when health did not clear after the
-// responder. A persistent controller keeps observing instead and reports the
-// review once: its Job restarts it on exit, so exiting crash-looped it past
-// the backoff limit and stopped detection for every later incident. The
-// incident still closes, marked late-verified, if health clears.
-type detectorReviewGate struct {
-	exit     bool
-	log      io.Writer
-	reported string
-}
-
-func (gate *detectorReviewGate) check(controller *Controller) error {
-	required, reason := controller.DetectorReviewStatus()
-	if !required {
-		gate.reported = ""
-		return nil
-	}
-	if gate.exit {
-		return fmt.Errorf("detector review required: %s", reason)
-	}
-	if gate.reported != reason {
-		gate.reported = reason
-		fmt.Fprintf(gate.log, "detector review required (controller keeps observing): %s\n", reason)
-	}
 	return nil
 }
 
@@ -1359,6 +1603,25 @@ func (evaluationDispatcher) Dispatch(context.Context, IncidentRequest) (Incident
 	return IncidentResult{}, fmt.Errorf("evaluate-once does not dispatch incidents")
 }
 
+// evaluationStatus is the bounded command verdict, not a persisted detector
+// observation. Unavailable means this invocation lacks a required capability;
+// pending means a detector can run but its observation window is incomplete.
+type evaluationStatus string
+
+const evaluationUnavailable evaluationStatus = "unavailable"
+
+type unavailableEvaluation struct {
+	DetectorID string `json:"detector_id"`
+	Reason     string `json:"reason"`
+}
+
+type evaluationResult struct {
+	Findings       []sdk.Finding           `json:"findings"`
+	Status         evaluationStatus        `json:"status"`
+	Unavailable    []unavailableEvaluation `json:"unavailable,omitempty"`
+	DetectorStates []DetectorEvaluation    `json:"detector_states,omitempty"`
+}
+
 func evaluateOnce(
 	ctx context.Context,
 	detectors []sdk.Detector,
@@ -1369,11 +1632,17 @@ func evaluateOnce(
 	trafficAPI ProberAPI,
 	clock kclock.WithTicker,
 ) error {
+	clock = timerClock(clock)
 	flags := flag.NewFlagSet("sdo-controller-evaluate-once", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	application := flags.String("application", "", "application identity")
-	flags.String("app-root", "", "application repository root")
+	var deployedManifestPaths repeatedFlag
+	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "accepted deployed manifest path; repeat for each selection")
+	appRoot := flags.String("app-root", "", "accepted application repository root")
+	sourceDriftAcknowledgement := flags.String("source-drift-acknowledgement", "", "installer onboarding acknowledgement ProtoJSON file for the read-only source inventory check")
+	sourceDriftReport := flags.String("source-drift-report", "", "read-only accepted-source inventory check; write full JSON to this path and print a summary")
+	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
 	hostBinary := flags.String("memory-host-binary", "", "validated memory host binary")
 	hostDigest := flags.String("memory-host-digest", "", "validated memory host digest")
 	memoryCommit := flags.String("memory-commit", "", "accepted memory revision")
@@ -1384,6 +1653,9 @@ func evaluateOnce(
 	}
 	if *namespace == "" {
 		return fmt.Errorf("namespace is required")
+	}
+	if *acceptSeed && *sourceDriftReport != "" {
+		return errors.New("seed acceptance cannot use source-drift-report: inventory is not detector health evidence")
 	}
 	if *application == "" {
 		*application = *namespace
@@ -1427,6 +1699,22 @@ func evaluateOnce(
 		if err != nil {
 			return fmt.Errorf("create Kubernetes snapshot provider: %w", err)
 		}
+		if *appRoot != "" {
+			scope, revision, err := observation.Accepted(ctx, *appRoot)
+			if err != nil {
+				return err
+			}
+			ceiling, err := observation.CeilingFromEnvironment()
+			if err != nil {
+				return err
+			}
+			if err = scope.Within(ceiling); err != nil {
+				return err
+			}
+			kubernetesProvider.Scope = scope
+			kubernetesProvider.Ceiling = ceiling
+			kubernetesProvider.Generation = revision
+		}
 		provider = kubernetesProvider
 		provider = withUsage(provider, detectors, kubernetesProvider.Client, clock.Now)
 	}
@@ -1438,6 +1726,58 @@ func evaluateOnce(
 	if err != nil {
 		return err
 	}
+	var readClient kubernetes.Interface
+	if kube, ok := provider.(*core.KubernetesSnapshotProvider); ok {
+		kube.PodAdmission = sdk.ConsumesPodAdmission(detectors)
+		readClient = kube.Client
+	}
+	var readSource PlanSource
+	readCommit := ""
+	if *appRoot != "" {
+		revision, _, err := resolveRepositoryCommits(*appRoot, "", "")
+		if err != nil {
+			return err
+		}
+		readCommit = revision
+		readSource = GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}
+	}
+	if *sourceDriftReport != "" {
+		if *appRoot == "" || readClient == nil {
+			return errors.New("source-drift-report requires app-root and a Kubernetes read client")
+		}
+		source := GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}
+		inventory, err := source.AcceptedInventory(ctx, readCommit, *namespace)
+		if err != nil {
+			return err
+		}
+		cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: *namespace, Client: readClient, TrackDrift: true}, nil)
+		if err != nil {
+			return err
+		}
+		cache.Start(ctx)
+		defer cache.Stop()
+		if err := cache.WaitForSync(ctx); err != nil {
+			return err
+		}
+		index := NewSourceInventory(*namespace, readCommit, inventory.Objects)
+		index.EvidenceGaps = append(index.EvidenceGaps, inventory.EvidenceGaps...)
+		if *sourceDriftAcknowledgement != "" {
+			data, err := os.ReadFile(*sourceDriftAcknowledgement)
+			if err != nil {
+				return err
+			}
+			record, err := onboarding.Decode(data, *namespace)
+			if err != nil {
+				return err
+			}
+			if err := index.SetNamespaceOnboarding(record); err != nil {
+				return err
+			}
+		}
+		return WriteSourceInventoryReport(stdout, *sourceDriftReport, index, cache.SourceDriftObjects())
+	}
+	// Deployment-time evaluation runs before any controller measured this
+	// cluster, so it judges reachability without a recorded baseline.
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if trafficAPI == nil {
@@ -1450,6 +1790,7 @@ func evaluateOnce(
 		}
 		trafficProvider.Observer = observer
 	}
+	var unavailable []unavailableEvaluation
 	if ConsumesServiceReachability(detectors) {
 		dialer, ok := trafficAPI.(ReachabilityDialer)
 		if !ok {
@@ -1475,6 +1816,13 @@ func evaluateOnce(
 	if err != nil {
 		return err
 	}
+	provider = ReadSnapshotProvider{Base: provider, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		probe, _ := trafficAPI.(PrimitiveProber)
+		if readClient == nil && readSource == nil && probe == nil {
+			return program.ReadFrom(snapshot)
+		}
+		return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: readClient, Prober: probe, Source: readSource, SourceCommit: readCommit}
+	}}
 	start := clock.Now().UTC()
 	controller, err := NewController(ControllerConfig{
 		Application: *application, Namespace: *namespace,
@@ -1496,14 +1844,32 @@ func evaluateOnce(
 	if len(detectorErrors) > 0 {
 		return fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
 	}
-	status := DetectorEvaluationClear
+	status := evaluationStatus(DetectorEvaluationClear)
+	var unconfirmed []DetectorEvaluation
+	for _, evaluation := range controller.history {
+		if evaluation.Status == DetectorEvaluationPending {
+			status = evaluationStatus(DetectorEvaluationPending)
+		}
+		if evaluation.Status == DetectorEvaluationPending || evaluation.Reason != "" {
+			unconfirmed = append(unconfirmed, evaluation)
+		}
+	}
+	if len(unavailable) > 0 {
+		status = evaluationUnavailable
+	}
 	for _, finding := range findings {
 		if finding.Status == sdk.FindingActive {
-			status = DetectorEvaluationFiring
+			status = evaluationStatus(DetectorEvaluationFiring)
 			break
 		}
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"status": status, "findings": findings})
+	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed}); err != nil {
+		return err
+	}
+	if *acceptSeed && status != evaluationStatus(DetectorEvaluationClear) {
+		return fmt.Errorf("seed acceptance rejected: status %s; %d detector finding(s); unavailable: %v", status, len(findings), unavailable)
+	}
+	return nil
 }
 
 func defaultIdentity() string {
@@ -1514,9 +1880,20 @@ func defaultIdentity() string {
 	return hostname + "-" + strconv.Itoa(os.Getpid())
 }
 
-// executePausedEffects runs only operational-memory effects: a paused
-// controller neither prepares nor dispatches a responder.
+// executeStartupEffects keeps restored responder work pending during a pause.
+func executeStartupEffects(ctx context.Context, controller *Controller, paused bool) error {
+	if paused {
+		return executePausedEffects(ctx, controller)
+	}
+	return executePendingEffects(ctx, controller)
+}
+
+// executePausedEffects finishes already-started closure work, including report
+// grace, without observing the application or starting responder work.
 func executePausedEffects(ctx context.Context, controller *Controller) (err error) {
+	if err := controller.stepPaused(ctx, controller.clock()); err != nil {
+		return err
+	}
 	defer func() {
 		if errors.Is(err, ErrEffectNotDurable) {
 			err = nil
@@ -1534,15 +1911,18 @@ func executePausedEffects(ctx context.Context, controller *Controller) (err erro
 		}
 		return nil
 	}
-	if release, ok := controller.PendingReleaseEffect(); ok {
-		if err := controller.ExecuteReleaseEffect(ctx, release); err != nil {
-			return fmt.Errorf("execute persisted release effect: %w", err)
-		}
-	}
 	return nil
 }
 
 func executePendingEffects(ctx context.Context, controller *Controller) (err error) {
+	if err := controller.requireAdoptedHealth(ctx); err != nil {
+		return err
+	}
+	// Completions pump effects without a detector Step. Recheck the deadline
+	// here too, before retrying a prepared workspace or responder request.
+	if err := controller.retireExpiredIncident(ctx, controller.clock()); err != nil {
+		return err
+	}
 	// A failed state write leaves effects pending for the next successful save.
 	defer func() {
 		if errors.Is(err, ErrEffectNotDurable) {
@@ -1574,11 +1954,6 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 		}
 		return nil
 	}
-	if release, ok := controller.PendingReleaseEffect(); ok {
-		if err := controller.ExecuteReleaseEffect(ctx, release); err != nil {
-			return fmt.Errorf("execute persisted release effect: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -1589,4 +1964,18 @@ func configuredMetricsSource(queryURL, publishURL string) *contractsv1alpha1.Met
 		source.OtlpMetricsUrl = strings.TrimRight(publishURL, "/") + "/api/v1/otlp/v1/metrics"
 	}
 	return source
+}
+
+// Existing responder-env configuration also provides a cold-only rollout switch.
+func standbyEnabled(environment map[string]string) bool {
+	return environment["SDO_RESPONDER_STANDBY"] != "0"
+}
+
+// hostProtectedNamespace is the control namespace when it differs from the
+// application's; an empty control namespace defaults to the application's.
+func hostProtectedNamespace(control, application string) string {
+	if control == "" || control == application {
+		return ""
+	}
+	return control
 }

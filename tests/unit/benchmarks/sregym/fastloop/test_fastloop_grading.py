@@ -41,7 +41,7 @@ def test_explicit_composite_uses_one_whole_set_diagnosis_oracle() -> None:
 
 
 def test_grader_sends_diagnosis_and_problem_ids_to_sregym_judge(monkeypatch, tmp_path: Path) -> None:
-    from benchmarks.sregym.fastloop import grading
+    from benchmarks.sregym.faults import sregym_subprocess
 
     seen: list[dict[str, object]] = []
 
@@ -55,10 +55,11 @@ def test_grader_sends_diagnosis_and_problem_ids_to_sregym_judge(monkeypatch, tmp
                 "stdout": json.dumps(
                     {"success": True, "accuracy": 100, "judge_tokens": {"input_tokens": 13}, "latency_seconds": 1.2}
                 ),
+                "stderr": "",
             },
         )()
 
-    monkeypatch.setattr(grading.subprocess, "run", run)
+    monkeypatch.setattr(sregym_subprocess.subprocess, "run", run)
     result = SregymDiagnosisGrader(tmp_path, "codex-gpt-6-luna").grade(("port", "image"), "both causes")
 
     assert json.loads(seen[0]["input"]) == {"problem_ids": ["port", "image"], "diagnosis": "both causes"}

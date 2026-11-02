@@ -10,6 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -50,7 +51,7 @@ func TestValidateCapturedCorpusTreeRejectsForgedSnapshot(t *testing.T) {
 	if err := ValidateCapturedCorpusTree(root, candidate, "incident", changed); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(caseDir, "open.json"), []byte(`{"namespace":"forged"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(caseDir, "open.json"), capturefixture.Raw(t, "forged capture", []byte(`{"namespace":"forged"}`)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateCapturedCorpusTree(root, candidate, "incident", changed); err == nil || !strings.Contains(err.Error(), "captured") {

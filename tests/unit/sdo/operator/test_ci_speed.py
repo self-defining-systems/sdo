@@ -113,7 +113,7 @@ def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expec
     ("result", "accepted"), [("success", True), ("skipped", False), ("failure", False), ("cancelled", False)]
 )
 def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accepted: bool) -> None:
-    step = workflow()["jobs"]["required-pr-ci"]["steps"][0]
+    step = next(step for step in workflow()["jobs"]["required-pr-ci"]["steps"] if "CHECKS" in step.get("env", {}))
     completed = subprocess.run(
         ["bash", "-e", "-c", step["run"]],
         env={**os.environ, "CHECKS": result, "TESTS": "success"},

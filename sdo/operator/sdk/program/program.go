@@ -1,51 +1,130 @@
 package program
 
 import (
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
+
 	"context"
+	"encoding/json"
 	"fmt"
-	"regexp"
 	"sync"
 	"time"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/metrics"
 )
 
 type Kind string
 
+// ProgramSpec names a playbook program (its directory ID) and declares the
+// roles and values a finding or the responder binds; Diagnose and Mitigate
+// must return identical specs.
 type ProgramSpec struct {
 	ID     string
 	Params []ParamSpec
 }
 
+// ParamSpec declares roles bound by triggering detector findings; Diagnose reads
+// additional objects through ReadView by name or relation, never role enumeration.
 type ParamSpec struct {
 	Name     string
 	Kind     Kind
 	Required bool
+	// ValueKind selects a scalar parameter instead of an object Kind.
+	ValueKind ValueKind
+	// Default is optional; nil means no default.
+	Default any
 }
 
-type Bindings map[string]sdk.ObjectRef
+// ObjectBindings binds declared object parameters to named Kubernetes resources.
+type ObjectBindings map[string]sdk.ObjectRef
+
+// Bindings contains object identities and separately typed scalar parameters.
+type Bindings struct {
+	Objects ObjectBindings `json:"objects,omitempty"`
+	Values  map[string]any `json:"values,omitempty"`
+}
 
 func ValidateBindings(spec ProgramSpec, b Bindings) error {
 	params := make(map[string]ParamSpec, len(spec.Params))
-	for _, param := range spec.Params {
-		params[param.Name] = param
-		if param.Required {
-			if _, ok := b[param.Name]; !ok {
-				return fmt.Errorf("required parameter %q is unbound", param.Name)
+	for _, p := range spec.Params {
+		if p.Name == "" {
+			return fmt.Errorf("parameter name is required")
+		}
+		if _, ok := params[p.Name]; ok {
+			return fmt.Errorf("duplicate parameter %q", p.Name)
+		}
+		if (p.Kind == "") == (p.ValueKind == "") {
+			return fmt.Errorf("parameter %q requires exactly one object or value kind", p.Name)
+		}
+		if p.ValueKind != "" {
+			switch p.ValueKind {
+			case StringValue, IntValue, QuantityValue, DurationValue, BoolValue:
+			default:
+				return fmt.Errorf("parameter %q has an unknown value kind", p.Name)
 			}
 		}
+		params[p.Name] = p
+		if p.Default != nil {
+			if p.ValueKind == "" {
+				return fmt.Errorf("object parameter %q cannot have a value default", p.Name)
+			}
+			if err := ValidateValueBinding(p, p.Default); err != nil {
+				return err
+			}
+		}
+		_, objectBound := b.Objects[p.Name]
+		_, valueBound := b.Values[p.Name]
+		if p.Required && !objectBound && !valueBound && p.Default == nil {
+			return fmt.Errorf("required parameter %q is unbound", p.Name)
+		}
 	}
-	for name, ref := range b {
-		param, ok := params[name]
+	for name, ref := range b.Objects {
+		p, ok := params[name]
 		if !ok {
 			return fmt.Errorf("unknown parameter %q", name)
 		}
-		if ref.Kind != string(param.Kind) {
-			return fmt.Errorf("parameter %q: kind %q, want %q", name, ref.Kind, param.Kind)
+		if p.ValueKind != "" || ref.Kind != string(p.Kind) {
+			return fmt.Errorf("parameter %q: kind %q, want %q", name, ref.Kind, p.Kind)
+		}
+	}
+	for name, value := range b.Values {
+		p, ok := params[name]
+		if !ok {
+			return fmt.Errorf("unknown parameter %q", name)
+		}
+		if err := ValidateValueBinding(p, value); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// Parameter resolves one declared value, including a validated default.
+func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error) {
+	if err := ValidateBindings(spec, b); err != nil {
+		return nil, err
+	}
+	for _, p := range spec.Params {
+		if p.Name != name || p.ValueKind == "" {
+			continue
+		}
+		v, ok := b.Values[name]
+		if !ok {
+			v = p.Default
+		}
+		if v == nil {
+			return nil, fmt.Errorf("value parameter %q is unbound", name)
+		}
+		return v, nil
+	}
+	return nil, fmt.Errorf("undeclared value parameter %q", name)
 }
 
 type Diagnoser interface {
@@ -58,14 +137,41 @@ type Mitigator interface {
 	Mitigate(context.Context, ReadView, Bindings) (Plan, error)
 }
 
+// ReadView is a program's frozen, recorded read access to the incident
+// namespace; every read is replayed from the corpus at check time.
 type ReadView interface {
 	inputs.Sources
+	// WebhookCAMatchesSecret reports whether one webhook's caBundle equals a Secret key without exposing either value.
+	WebhookCAMatchesSecret(WebhookCA) (bool, error)
+	// AdmissionWebhooksFor lists the webhook entries that admit Pod creation for a Namespace or workload; cluster webhook names need no observation grant.
+	AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)
+	sdk.ObjectReader
 	sdk.DetectionContext
+	sdk.ScopedObservationSource
+	sdk.ObservationClock
+	StatefulSets() []appsv1.StatefulSet
+	HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	metrics.Source
+	metrics.AlertSource
+	metrics.QuerySource
+	traffic.Source
+	servicehealth.ReachabilitySource
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
+	// LogsWithOptions reads bounded container logs; Previous selects the last terminated instance.
+	LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
+	metrics.UsageSource
+	// ProbeTCP connects to one port of a Pod or Service and records whether it accepted.
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
+	// ProbeHTTP sends one recorded HTTP request to a Pod or Service.
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
+	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
 	DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error)
+	// DatabaseUsers lists nonsecret user names and direct roles of one database catalog.
+	DatabaseUsers(DatabaseTarget) ([]DatabaseUser, error)
+	Observe(ExternalOperation) (int32, error)
+	KubernetesRead(KubernetesRequest) (json.RawMessage, error)
 }
 
 type ProbeResult struct {
@@ -73,19 +179,19 @@ type ProbeResult struct {
 	Detail  string `json:"detail,omitempty"`
 }
 
+// HTTPProbe is the request ProbeHTTP sends.
 type HTTPProbe struct {
 	Method  string            `json:"method"`
 	Path    string            `json:"path"`
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-type Diff struct {
-	// SourceAbsent is true only after a successful accepted-source lookup finds no object.
-	SourceAbsent bool   `json:"source_absent,omitempty"`
-	Changed      bool   `json:"changed"`
-	Text         string `json:"text,omitempty"`
-}
+// Diff is the shared accepted-source or baseline comparison result.
+// A delete-style Diagnose matches on diff.PresentButNotInSource(), not SourceAbsent, which stays true after the delete.
+type Diff = sdk.SourceDiff
 
+// Result is a diagnosis verdict: Match means the fault is present, NoMatch
+// absent, Unknown that evidence is unavailable.
 type Result string
 
 const (
@@ -95,6 +201,7 @@ const (
 	NeedsJudgement Result = "NeedsJudgement"
 )
 
+// Evidence is one observed fact supporting a verdict.
 type Evidence struct {
 	Resource sdk.ObjectRef `json:"resource"`
 	Fact     string        `json:"fact"`
@@ -102,6 +209,7 @@ type Evidence struct {
 	Expected string        `json:"expected"`
 }
 
+// Verdict is what Diagnose returns; NeedsJudgement requires a Question.
 type Verdict struct {
 	Result   Result     `json:"result"`
 	Evidence []Evidence `json:"evidence,omitempty"`
@@ -126,10 +234,30 @@ func (v Verdict) Validate() error {
 
 type Action interface{ action() }
 
+// CreateFromSource restores a missing named object from accepted source.
+type CreateFromSource struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+
+func (CreateFromSource) action() {}
+
+// DeleteObject irreversibly deletes a named object in the incident namespace.
+// Its receipt retains a nonsecret preimage; compensation never recreates it.
+type DeleteObject struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+
+func (DeleteObject) action() {}
+
+// ReconcileFromSource restores a whole source-owned object to accepted source,
+// removing additions SourceDiff reports; prefer SetField for one field.
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
 
 func (ReconcileFromSource) action() {}
 
+// Rollback restores a workload's fields from an explicit earlier revision.
 type Rollback struct {
 	Ref        sdk.ObjectRef
 	ToRevision string
@@ -137,15 +265,51 @@ type Rollback struct {
 
 func (Rollback) action() {}
 
+// SetField writes one schema-checked field (or one ConfigMap JSON/YAML entry)
+// from a Value: accepted source, an observation or a declared parameter.
 type SetField struct {
 	Ref    sdk.ObjectRef
 	Path   string
-	Value  any
+	Value  Value
 	Reason string
+	// DocumentFormat and DocumentPath select a JSON/YAML entry in one ConfigMap key.
+	// JSON edits preserve untouched number tokens; serialization may normalize formatting.
+	DocumentFormat string
+	DocumentPath   []string
 }
 
 func (SetField) action() {}
 
+// DeletePod removes one named pod with UID/version preconditions. A graceful
+// delete leaves the Pod terminating: that counts as deleted but the Pod may
+// still run until it stops.
+type DeletePod struct{ Ref sdk.ObjectRef }
+
+func (DeletePod) action() {}
+
+// ScaleWorkload restores replicas from accepted source, observations or a parameter.
+// A ReplicaSet target has kubectl-scale parity, e.g. retiring an old-template
+// ReplicaSet whose pods block a Deployment rollout.
+type ScaleWorkload struct {
+	Ref      sdk.ObjectRef
+	Replicas Value
+}
+
+func (ScaleWorkload) action() {}
+
+// Exec executes a provenance-derived command. Only its exit code is reported.
+// The install grants the controller pods/exec (get, create) in the application
+// namespace; the Kubernetes API enforces it.
+type Exec struct {
+	Pod       sdk.ObjectRef
+	Container string
+	Command   []Value
+}
+
+func (Exec) action() {}
+
+// RestartRollout restarts a Deployment's Pods like kubectl rollout restart;
+// Ref must be an apps/v1 Deployment.
 type RestartRollout struct {
 	Ref    sdk.ObjectRef
 	Reason string
@@ -153,29 +317,36 @@ type RestartRollout struct {
 
 func (RestartRollout) action() {}
 
+// Plan is what Mitigate returns: actions applied in order as one batch.
+// An empty plan means nothing to do.
 type Plan struct {
 	Actions   []Action
 	Rationale string
 }
 
-// Allowed SetField paths use dotted Kubernetes field names and numeric list
-// indexes. The patterns are:
-//   - spec.ports[N].{port,targetPort,protocol,name}
-//   - spec.selector[.KEY] and spec.replicas
-//   - spec.template.spec.{containers,initContainers}[N].image
-//   - spec.template.spec.{containers,initContainers}[N].ports[N].{containerPort,hostPort,protocol,name}
-//   - spec.template.spec.{containers,initContainers}[N].{livenessProbe,readinessProbe,startupProbe,env[N],resources}[.FIELD...]
-//
-// N is a numeric list index. A path must match a whole pattern.
-var allowedFieldPaths = []*regexp.Regexp{
-	regexp.MustCompile(`^spec\.ports\[[0-9]+\]\.(port|targetPort|protocol|name)$`),
-	regexp.MustCompile(`^spec\.selector(\.[A-Za-z0-9_./-]+)?$`),
-	regexp.MustCompile(`^spec\.replicas$`),
-	regexp.MustCompile(`^spec\.template\.spec\.(containers|initContainers)\[[0-9]+\]\.(image|ports\[[0-9]+\]\.(containerPort|hostPort|protocol|name)|((liveness|readiness|startup)Probe|env\[[0-9]+\]|resources)(\.[A-Za-z0-9_./-]+)*)$`),
-}
-
 func (p Plan) Validate() error {
+	if err := validateAtomicWrites(p); err != nil {
+		return err
+	}
 	for _, action := range p.Actions {
+		if err := validateScriptAction(action); err != nil {
+			return err
+		}
+		if err := validateGeneralAction(action); err != nil {
+			return err
+		}
+		if err := validateDatabaseAction(action); err != nil {
+			return err
+		}
+		if err := validateServicePortAction(action); err != nil {
+			return err
+		}
+		if err := validateRuntimeAction(action); err != nil {
+			return err
+		}
+		if err := validateObjectAction(action); err != nil {
+			return err
+		}
 		if action == nil {
 			return fmt.Errorf("nil action")
 		}
@@ -188,15 +359,8 @@ func (p Plan) Validate() error {
 		if !ok {
 			continue
 		}
-		allowed := false
-		for _, pattern := range allowedFieldPaths {
-			if pattern.MatchString(field.Path) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return fmt.Errorf("SetField path %q is not allowed", field.Path)
+		if err := ValidateSetField(field); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -294,3 +458,65 @@ func (v *checkedReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error) {
 
 // UnderlyingReadView preserves evidence sinks across the fail-closed wrapper.
 func (v *checkedReadView) UnderlyingReadView() ReadView { return v.ReadView }
+
+func (v *checkedReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ScopedDeployments(namespace)
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ScopedServices(namespace)
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ScopedEndpoints(namespace)
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfigurations()
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfigurations()
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ObservationStatuses() []sdk.ObservationStatus {
+	return sdk.ScopedSource(v.ReadView).ObservationStatuses()
+}
+func (v *checkedReadView) ObservationGeneration() string {
+	return sdk.ScopedSource(v.ReadView).ObservationGeneration()
+}
+
+func (v *checkedReadView) TrafficWindow(name string) (traffic.Window, bool) {
+	if source, ok := v.ReadView.(traffic.Source); ok {
+		r, ok := source.TrafficWindow(name)
+		if !ok {
+			v.check(fmt.Errorf("traffic %q unavailable", name))
+		} else if r.LoadError != "" {
+			v.check(fmt.Errorf("traffic %q: %s", name, r.LoadError))
+		}
+		return r, ok
+	}
+	return traffic.Window{}, false
+}
+
+func (v *checkedReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfiguration(name)
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
+	v.check(err)
+	return result, err
+}

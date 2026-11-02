@@ -82,3 +82,41 @@ def test_abort_smoke_delays_valid_generated_turns(tmp_path, monkeypatch):
     for script in scripts:
         AgentScript.model_validate_json(script.model_dump_json())
         assert all(isinstance(step, Wait) for step in script.turns[0].steps[:10])
+
+
+def test_generated_launch_waits_for_standby_claim_before_reading_the_task(tmp_path, monkeypatch):
+    """A preloaded worker has no task file until the controller claims it."""
+    import json
+    import os
+    import threading
+
+    checkout = tmp_path / "accepted"
+    checkout.mkdir()
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    task = AgentTask(workspace={"checkout_path": str(checkout)})
+    task.request.Pack(IncidentRequest(incident_id="synthetic", namespace="app", repository_worktree=str(checkout)))
+    ready_read, ready_write = os.pipe()
+    claim_read, claim_write = os.pipe()
+    monkeypatch.delenv("SDO_TASK_PATH", raising=False)
+    monkeypatch.setenv("SDO_TOOLS_DIR", str(tmp_path / "tools"))
+    monkeypatch.setenv("SDO_STANDBY_READY_FD", str(ready_write))
+    monkeypatch.setenv("SDO_STANDBY_CLAIM_FD", str(claim_read))
+    monkeypatch.setenv("SDO_STANDBY_INBOX", str(inbox))
+    monkeypatch.setattr(sys, "argv", ["generated_worker", "responder", "--", "python3", "-c", "pass"])
+    seen = []
+    monkeypatch.setattr(generated_worker, "launch", lambda argv: seen.append(os.environ["SDO_TASK_PATH"]) or 0)
+
+    def controller() -> None:
+        with os.fdopen(ready_read, "rb", buffering=0) as ready:
+            assert ready.read(1) == b"R"
+        (inbox / "environment.json").write_text(json.dumps({}))
+        (inbox / "agent-task.json").write_text(to_canonical_json(task))
+        with os.fdopen(claim_write, "wb", buffering=0) as claim:
+            claim.write(b"C")
+
+    thread = threading.Thread(target=controller, daemon=True)
+    thread.start()
+    assert generated_worker.main() == 0
+    thread.join(timeout=10)
+    assert seen == [str(inbox / "agent-task.json")]

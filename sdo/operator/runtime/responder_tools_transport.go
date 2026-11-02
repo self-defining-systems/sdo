@@ -10,6 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/sdk"
+	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +28,8 @@ type SessionToolServer struct {
 	Directory    string
 	Handle       func(context.Context, ToolRequest) ToolResponse
 	PollInterval time.Duration
+	// MaxRequestBytes defaults to 64 KiB. Reflection decisions use their own bounded envelope.
+	MaxRequestBytes int64
 
 	requests  *os.Root
 	responses *os.Root
@@ -176,17 +181,25 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 			continue
 		}
 		requestFile, err := s.requests.Open(name)
+		// Clients own cancellation cleanup and may disappear after ReadDir.
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
-		data, err := io.ReadAll(io.LimitReader(requestFile, 64*1024+1))
+		limit := s.MaxRequestBytes
+		if limit <= 0 {
+			limit = 64 * 1024
+		}
+		data, err := io.ReadAll(io.LimitReader(requestFile, limit+1))
 		_ = requestFile.Close()
 		if err != nil {
 			return err
 		}
 		response := ToolResponse{}
-		if len(data) > 64*1024 {
-			response.Error = "tool request exceeds 64 KiB"
+		if int64(len(data)) > limit {
+			response.Error = fmt.Sprintf("tool request exceeds %d KiB", limit/1024)
 		} else {
 			var request ToolRequest
 			if err := json.Unmarshal(data, &request); err != nil {
@@ -228,9 +241,72 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 			_ = s.responses.Remove(temporary)
 			return err
 		}
-		if err := s.requests.Remove(name); err != nil {
+		// The client also removes its request after reading the response or cancelling.
+		if err := s.requests.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 	return nil
+}
+
+// detect takes one fresh snapshot and runs only the selected deterministic
+// detectors. It never diagnoses programs, prepares plans or consumes a batch.
+func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *ToolResponse) {
+	selected := map[string]bool{}
+	valid := make([]string, 0, len(l.Detectors))
+	for _, detector := range l.Detectors {
+		valid = append(valid, detector.Spec().ID)
+	}
+	sort.Strings(valid)
+	for _, id := range ids {
+		if !slices.Contains(valid, id) {
+			response.Error = fmt.Sprintf("unknown detector %q; valid detector IDs: %s", id, strings.Join(valid, ", "))
+			return
+		}
+		selected[id] = true
+	}
+	if l.Provider == nil {
+		response.Error = "fresh detector snapshot provider is unavailable"
+		return
+	}
+	view, err := l.Provider.Snapshot(ctx)
+	if err != nil {
+		response.Error = err.Error()
+		return
+	}
+	for _, detector := range l.Detectors {
+		id := detector.Spec().ID
+		if len(selected) > 0 && !selected[id] {
+			continue
+		}
+		observed, err := sdk.DetectObserved(ctx, detector, view)
+		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
+		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
+			state.Status = DetectorEvaluationPending
+		}
+		if err != nil {
+			state.Status = DetectorEvaluationError
+			state.Error = err.Error()
+			response.Error += fmt.Sprintf("detector %s: %v; ", id, err)
+		} else {
+			for _, finding := range observed {
+				if finding.Status == sdk.FindingActive {
+					if finding.DetectorID == "" {
+						finding.DetectorID = id
+					}
+					finding.Fingerprint = FindingFingerprint(finding)
+					response.Findings = append(response.Findings, finding)
+					state.Status = DetectorEvaluationFiring
+					state.Fingerprints = append(state.Fingerprints, finding.Fingerprint)
+				}
+			}
+		}
+		response.DetectorStates = append(response.DetectorStates, state)
+	}
+	sortFindings(response.Findings)
+	response.Healthy = response.Error == "" && len(response.Findings) == 0 && len(response.DetectorStates) > 0
+	for _, state := range response.DetectorStates {
+		response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
+	}
+	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings)) + pendingEvaluationSummary(response.DetectorStates)
 }

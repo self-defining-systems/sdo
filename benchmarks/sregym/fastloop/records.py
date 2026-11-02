@@ -15,17 +15,30 @@ import os
 import statistics
 import tempfile
 from datetime import datetime  # noqa: TC003 - Pydantic resolves this annotation at runtime.
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
+
+from benchmarks.sregym.faults.description import CapabilityMode, FaultCapability  # noqa: TC001
+from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 - Pydantic resolves this at runtime.
+from benchmarks.sregym.protocol.provider_capacity import AccountEvent, ProviderWaitInterval, wait_seconds_between
+from benchmarks.sregym.protocol.recovery import RecoveryFailureReason  # noqa: TC001 - Pydantic runtime annotation
+from libs.agent_cli.provider_capacity import OpusPoolAllocation  # noqa: TC001 - Pydantic resolves this at runtime.
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 from benchmarks.sregym.fastloop.continuity import ActivationContinuity  # noqa: TC001 - Pydantic runtime annotation.
 
-SCHEMA_VERSION = "sdo.fastloop-incident/v1"
+SCHEMA_VERSION = "sdo.fastloop-incident/v2"
+#: Eval rows verify one full cleanup pass with the official recovery oracle.
+#: A second pass only re-proves that cleanup is repeatable, which credential-slot
+#: rehearsals check; on astronomy it costs another ~170 s alert-silence oracle.
+EVAL_CLEANUP_PASSES = 1
 AgentName = Literal["sdo", "codex"]
+#: What let harness fault recovery run once the row was over: SDO's natural closure, a closure SDO
+#: permanently failed or retired, the reflection deadline with SDO still working, or no SDO incident.
+RecoveryTrigger = Literal["natural_closure", "closure_failed", "reflection_deadline", "no_incident"]
 #: ``composition`` grades a composite fault: it passes only when every fault's own oracle passes.
 OracleKind = Literal["sregym-mitigation-oracle", "health-check", "composition"]
 
@@ -42,27 +55,55 @@ class _PersistedModel(BaseModel):
 
 
 class TokenCounts(_PersistedModel):
-    """Provider-reported token usage; ``input_tokens`` already includes cached input."""
+    """Provider-reported token usage; ``input_tokens`` already includes cache reads and writes.
+
+    Every class a price table weights is kept, so a row prices completely for Claude (cache writes) as for Codex.
+    ``cached_input_tokens`` is cache reads only.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     input_tokens: int = Field(default=0, ge=0)
     cached_input_tokens: int = Field(default=0, ge=0)
+    cache_write_input_tokens: int = Field(default=0, ge=0)
+    cache_write_1h_input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
+    reasoning_output_tokens: int = Field(default=0, ge=0)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cache_read_input_tokens(self) -> int:
+        """Cache reads under agentshim 0.7's name, so readers never take ``cached_input_tokens`` to include writes."""
+        return self.cached_input_tokens
+
+    def __add__(self, other: TokenCounts) -> TokenCounts:
+        return TokenCounts(**{name: getattr(self, name) + getattr(other, name) for name in TokenCounts.model_fields})
+
     @classmethod
     def from_usage(cls, usage: object) -> TokenCounts:
         if not isinstance(usage, dict):
             return cls()
+
+        def count(name: str, proto: str, *fallbacks: str) -> int:
+            for key in (name, proto, *fallbacks):
+                if usage.get(key):
+                    return int(usage[key])
+            return 0
+
         return cls(
-            input_tokens=int(usage.get("input_tokens") or usage.get("inputTokens") or 0),
-            cached_input_tokens=int(usage.get("cached_input_tokens") or usage.get("cachedInputTokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or usage.get("outputTokens") or 0),
+            input_tokens=count("input_tokens", "inputTokens"),
+            cached_input_tokens=count(
+                "cache_read_input_tokens", "cacheReadInputTokens", "cached_input_tokens", "cachedInputTokens"
+            ),
+            cache_write_input_tokens=count("cache_write_input_tokens", "cacheWriteInputTokens"),
+            cache_write_1h_input_tokens=count("cache_write_1h_input_tokens", "cacheWrite1hInputTokens"),
+            output_tokens=count("output_tokens", "outputTokens"),
+            reasoning_output_tokens=count("reasoning_output_tokens", "reasoningOutputTokens"),
         )
 
 
@@ -86,6 +127,7 @@ class DiagnosisGrade(BaseModel):
     judge_tokens: TokenCounts = Field(default_factory=TokenCounts)
     latency_seconds: float = Field(default=0.0, ge=0)
     error: str | None = None
+
     skipped: bool = False
     skip_reason: str | None = None
 
@@ -96,20 +138,104 @@ def _seconds(start: datetime | None, end: datetime | None) -> float | None:
     return (end - start).total_seconds()
 
 
+class Injected(BaseModel):
+    """The worker's recorded injection event, never an agent or recorder clock."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    state: Literal["injected"] = "injected"
+    started_at: AwareDatetime
+    finished_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def ordered_times(self) -> Injected:
+        if self.finished_at < self.started_at:
+            raise ValueError("injection cannot finish before it starts")
+        return self
+
+
+class NotInjected(BaseModel):
+    """No injection event exists; retain the stage that stopped the attempt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    state: Literal["not_injected"] = "not_injected"
+    stage: Literal["pre_injection", "injection"]
+
+
+InjectionState = Annotated[Injected | NotInjected, Field(discriminator="state")]
+
+
+class EvalNote(BaseModel):
+    """A values-free harness note: after full recovery the app namespace differs, by kind and name,
+    from its pre-injection inventory (a responder's repair, say). It labels the row, never blocks it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    label: Literal["eval"] = "eval"
+    kind: Literal["app_namespace_inventory_drift", "app_namespace_inventory_unavailable"]
+    not_in_baseline: list[str] = Field(default_factory=list)
+    missing_from_baseline: list[str] = Field(default_factory=list)
+    #: Exception type only, for ``app_namespace_inventory_unavailable``.
+    error: str = ""
+
+
+class RecoveryOracleSample(BaseModel):
+    """One recovery-oracle sample taken while the app settled after harness recovery."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    seconds: float = Field(ge=0)
+    success: bool
+
+
+class PostClosureWait(BaseModel):
+    """Recovery waited for SDO to close incidents that opened after the graded incident closed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    graded_incident_id: str
+    followup_incident_ids: list[str] = Field(min_length=1)
+    waited_seconds: float = Field(ge=0)
+    bound_seconds: float = Field(gt=0)
+    #: False when the bound expired first; recovery then stops the row.
+    closed: bool
+
+
 class IncidentRecord(_PersistedModel):
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_recorded_rows_with_the_old_count_name(cls, data: Any) -> Any:
+        # Dev-branch rows recorded before the rename carry the old name. Read it
+        # as the new field; a row never writes it (older values are not comparable).
+        if isinstance(data, dict) and "reflection_evidence_gap_count" in data:
+            data = dict(data)
+            old = data.pop("reflection_evidence_gap_count")
+            data.setdefault("reflection_no_repair_count", old)
+        return data
 
     memory_host_activations: list[ActivationContinuity] = Field(default_factory=list)
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
-    schema_version: Literal["sdo.fastloop-incident/v1"] = SCHEMA_VERSION
+    schema_version: Literal["sdo.fastloop-incident/v2"] = SCHEMA_VERSION
+    infra_error: str | None = None
+    provider_waits: list[ProviderWaitInterval] = Field(default_factory=list)
+    account_events: list[AccountEvent] = Field(default_factory=list)
+    #: Run-configured pool allocation; capacity is this host's share in per_host mode.
+    opus_pool: OpusPoolAllocation | None = None
+    recovery_error: str | None = None
+    recovery_failures: list[RecoveryFailureReason] = Field(default_factory=list)
+    injection_evidence: dict[str, Any] = Field(default_factory=dict)
+    fault_components: list[FaultComponent] = Field(default_factory=list)
+    capability_mode: CapabilityMode | None = None
+    fault_capabilities: list[FaultCapability] = Field(default_factory=list)
     run_id: str = Field(min_length=1)
     index: int = Field(ge=0)
     agent: AgentName
     problem_id: str = Field(min_length=1)
+    #: The provider, model and reasoning effort the row's agents were configured with; ``None`` on older rows.
+    provider: str | None = None
     model: str
-    injection_started_at: AwareDatetime
-    injection_finished_at: AwareDatetime
+    reasoning_effort: str | None = None
+    replay: Literal["on", "off"] | None = None
+    injection: InjectionState
     #: First detector firing (SDO only; the raw baseline has no detector).
     detected_at: AwareDatetime | None = None
     #: Last successful repair action (SDO) or agent exit (baseline).
@@ -119,12 +245,16 @@ class IncidentRecord(_PersistedModel):
     responder_started_at: AwareDatetime | None = None
     responder_finished_at: AwareDatetime | None = None
     oracle_finished_at: AwareDatetime | None = None
+    oracle_incident_id: str | None = None
+    oracle_resolved_at: AwareDatetime | None = None
     reflection_started_at: AwareDatetime | None = None
     reflection_finished_at: AwareDatetime | None = None
     rebuild_done_at: AwareDatetime | None = None
     recovery_finished_at: AwareDatetime | None = None
     oracle: OracleVerdict | None = None
     recovery_oracle: OracleVerdict | None = None
+    #: Every recovery-oracle sample until the app settled; only the last decides residue.
+    recovery_oracle_samples: list[RecoveryOracleSample] = Field(default_factory=list)
     diagnosis_grade: DiagnosisGrade | None = None
     diagnosis: str = ""
     mitigation: str = ""
@@ -136,10 +266,10 @@ class IncidentRecord(_PersistedModel):
     binding_sources: list[str] = Field(default_factory=list)
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
+    reflection_no_repair_count: int | None = None
+    playbook_coverage: dict[str, Any] | None = None
     resolution_path: str | None = None
-    fast_path_programs: list[str] = Field(default_factory=list)
-    fast_path_relation_covered_findings: list[dict[str, Any]] = Field(default_factory=list)
-    fast_path_skipped_reason: str | None = None
+
     closure_phase_seconds: dict[str, float] = Field(default_factory=dict)
     driver_phase_timings_seconds: dict[str, float] = Field(default_factory=dict)
     fault_gate_timings_seconds: dict[str, float] = Field(default_factory=dict)
@@ -159,9 +289,19 @@ class IncidentRecord(_PersistedModel):
     #: Waiting for the previous incident's reflection before this one could start (part of the wall time).
     previous_reflection_drain_seconds: float | None = None
     fault_recovery_seconds: float | None = None
+    #: One entry per recovery pass that had to wait for a follow-up incident to close.
+    post_closure_waits: list[PostClosureWait] = Field(default_factory=list)
+    recovery_trigger: RecoveryTrigger | None = None
     cleanup_deleted_counts: dict[str, int] = Field(default_factory=dict)
     cleanup_restored: list[str] = Field(default_factory=list)
+    #: v2 full recovery, application reconciliation and healthy rollouts all completed.
+    full_cleanup_verified: bool = False
+    cleanup_passes_verified: int = Field(default=0, ge=0, le=2)
     cleanup_skipped_reason: str | None = None
+    #: Drift this row's recovery left in the app namespace; the next row inherits it as ``confounds``.
+    eval_notes: list[EvalNote] = Field(default_factory=list)
+    #: Drift an earlier row left behind, so this row did not start from the pristine app.
+    confounds: list[EvalNote] = Field(default_factory=list)
     #: Wall time from the start of this incident to the loop being ready for the next one.
     incident_wall_seconds: float | None = None
     incident_id: str | None = None
@@ -173,6 +313,78 @@ class IncidentRecord(_PersistedModel):
     response_loops_used: int | None = None
     error: str | None = None
 
+    #: Benchmark-only shared-memory provenance; ancestors include peer publications.
+    lane_id: str | None = None
+    memory_before_commit: str | None = None
+    memory_after_commit: str | None = None
+    memory_ancestry: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def incident_follows_injection(self) -> IncidentRecord:
+        """A negative injection-to-detection time means the record describes some other incident."""
+        started = self.injection.started_at if isinstance(self.injection, Injected) else None
+        if self.detected_at is not None and started is not None and self.detected_at < started:
+            raise ValueError(
+                f"incident_predates_injection: detected {self.detected_at.isoformat()}, injected {started.isoformat()}"
+            )
+        return self
+
+    def _active_seconds(self, start: datetime | None, end: datetime | None) -> float | None:
+        raw = _seconds(start, end)
+        return max(0.0, raw - wait_seconds_between(self.provider_waits, start, end)) if raw is not None else None
+
+    def _wait_end(self) -> datetime | None:
+        return (
+            self.resolved_at
+            or self.responder_finished_at
+            or max((item.finished_at for item in self.provider_waits), default=None)
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def grade_status(self) -> Literal["GRADED", "NOT-GRADED"]:
+        return "NOT-GRADED" if self.infra_error or isinstance(self.injection, NotInjected) else "GRADED"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def not_graded_reason(self) -> str | None:
+        return self.infra_error or ("not_injected" if isinstance(self.injection, NotInjected) else None)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def raw_injection_to_mitigation_seconds(self) -> float | None:
+        return _seconds(self.injection_started_at, self.mitigation_applied_at)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def rate_limit_wait_seconds(self) -> float:
+        return wait_seconds_between(
+            self.provider_waits,
+            self.injection_started_at,
+            self._wait_end(),
+            kind="rate_limit",
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def concurrency_wait_seconds(self) -> float:
+        return wait_seconds_between(
+            self.provider_waits,
+            self.injection_started_at,
+            self._wait_end(),
+            kind="concurrency",
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def injection_started_at(self) -> datetime | None:
+        return self.injection.started_at if isinstance(self.injection, Injected) else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def injection_finished_at(self) -> datetime | None:
+        return self.injection.finished_at if isinstance(self.injection, Injected) else None
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_detection_seconds(self) -> float | None:
@@ -181,17 +393,46 @@ class IncidentRecord(_PersistedModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def detection_to_mitigation_seconds(self) -> float | None:
-        return _seconds(self.detected_at, self.mitigation_applied_at)
+        return self._active_seconds(self.detected_at, self.mitigation_applied_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_mitigation_seconds(self) -> float | None:
-        return _seconds(self.injection_started_at, self.mitigation_applied_at)
+        return self._active_seconds(self.injection_started_at, self.mitigation_applied_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_resolution_seconds(self) -> float | None:
-        return _seconds(self.injection_started_at, self.resolved_at)
+        return self._active_seconds(self.injection_started_at, self.resolved_at)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def graded_at(self) -> datetime | None:
+        return self.oracle_finished_at
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def closure_to_grade_seconds(self) -> float | None:
+        return _seconds(self.oracle_resolved_at or self.resolved_at, self.oracle_finished_at)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def responder_runtime_seconds(self) -> float | None:
+        return _seconds(self.responder_started_at, self.responder_finished_at)
+
+
+def persist_grade_checkpoint(path: Path, record: IncidentRecord) -> None:
+    """Publish grading evidence before reflection can fail or delay the final row."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+        temporary = stream.name
+        stream.write(record.model_dump_json() + "\n")
+    try:
+        # Link publishes a complete file atomically and never replaces a frozen grade.
+        os.link(temporary, path)
+    finally:
+        os.unlink(temporary)
 
 
 def _csv_row(record: IncidentRecord) -> dict[str, Any]:
@@ -254,6 +495,7 @@ class AgentSummary(BaseModel):
 
     agent: AgentName
     incidents: int
+    infrastructure_outcomes: int = 0
     oracle_passed: int
     errors: int
     warm_path_fired: int
@@ -277,11 +519,20 @@ def summarize(records: list[IncidentRecord]) -> list[AgentSummary]:
     present = {record.agent for record in records}
     agents: list[AgentName] = [agent for agent in get_args(AgentName) if agent in present]
     for agent in sorted(agents):
-        selected = [record for record in records if record.agent == agent]
+        selected = [
+            record
+            for record in records
+            if record.agent == agent and record.infra_error is None and isinstance(record.injection, Injected)
+        ]
         rows.append(
             AgentSummary(
                 agent=agent,
                 incidents=len(selected),
+                infrastructure_outcomes=sum(
+                    1
+                    for record in records
+                    if record.agent == agent and (record.infra_error or isinstance(record.injection, NotInjected))
+                ),
                 oracle_passed=sum(1 for record in selected if record.oracle is not None and record.oracle.success),
                 errors=sum(1 for record in selected if record.error),
                 warm_path_fired=sum(1 for record in selected if record.warm_path),

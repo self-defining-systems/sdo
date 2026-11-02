@@ -4,24 +4,34 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from google.protobuf import json_format
-
+from libs.agent_cli.errors import rate_limit_failure
+from libs.agent_cli.session_ownership import SessionHandoffError, SessionHandoffTimeout, SessionOwnership
+from libs.agent_cli.structured import StructuredTurnTimeout
 from sdo.agents.provider import resolve_agent
-from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
+from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
+from sdo.agents.responder.detection_learning import detector_learning_needed
 from sdo.agents.responder.job import KubernetesResultPublisher
+from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, MemoryCheckTimeout, check_reflection_result
 from sdo.agents.responder.reflection import (
+    REFLECTION_DEADLINE_ENV,
     REFLECTION_GUIDANCE_MODES,
     ClaudeSessionBackend,
     CodexSessionBackend,
+    ReflectionDeadlineExceeded,
     ReflectionGuidance,
     ReflectionSessionMode,
     ReflectionTurn,
+    ResponderSessionUnavailable,
     SessionReflector,
+    reflection_budget_seconds,
 )
+from sdo.agents.responder.termination import record_worker_failure, records_worker_failure
+from sdo.agents.responder.writer_termination import KubernetesWriterObserver, worker_identity
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -29,9 +39,9 @@ from sdo.contracts import (
     IncidentClosure,
     MemoryDiagnostic,
     OutcomeRecord,
+    ReflectionCauseWork,
     ReflectionRequest,
-    ReflectionResult,
-    SdkGap,
+    ReflectionWorkItem,
     parse_json,
     to_canonical_json,
     validate,
@@ -44,6 +54,7 @@ AGENT_ID = "sdo-reflector"
 TASK_TYPE = "outcome-reflection-direct-v1"
 DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
 _SESSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+RESULT_BUDGET_BYTES = 700 << 10
 
 
 class ResultPublisher(Protocol):
@@ -64,13 +75,35 @@ class Reflector(Protocol):
         closure: IncidentClosure | None = None,
         validation_attempt: int = 1,
         diagnostics: Sequence[MemoryDiagnostic] = (),
+        cause_work: Sequence[ReflectionCauseWork] = (),
+        unassigned_work: Sequence[ReflectionWorkItem] = (),
     ) -> ReflectionTurn: ...
 
 
 def _default_reflector(guidance: ReflectionGuidance) -> SessionReflector:
-    resolved = resolve_agent("reflection", "SDO_REFLECTION_MODEL")
-    backend = (ClaudeSessionBackend if resolved.provider == "claude" else CodexSessionBackend)(model=resolved.model)
+    resolved = resolve_agent("reflection", "reflection")
+    backend = (ClaudeSessionBackend if resolved.provider == "claude" else CodexSessionBackend)(
+        model=resolved.model, reasoning_effort=resolved.effort
+    )
     return SessionReflector(backend, guidance=guidance)
+
+
+def _binds_committed_outcome(checkout: Path, *, outcome_commit: str, base_commit: str, snapshot_commit: str) -> bool:
+    """The snapshot describes the workspace base, and the base contains the incident's outcome.
+
+    A memory-conflict retry rebuilds the workspace on the current accepted head, which peers sharing
+    the memory may have advanced past the outcome commit.
+    """
+    if snapshot_commit != base_commit:
+        return False
+    if base_commit == outcome_commit:
+        return True
+    ancestry = subprocess.run(
+        ["git", "-C", str(checkout), "merge-base", "--is-ancestor", outcome_commit, base_commit],
+        capture_output=True,
+        check=False,
+    )
+    return ancestry.returncode == 0
 
 
 def run_reflection_task(
@@ -96,12 +129,19 @@ def run_reflection_task(
     closure = IncidentClosure()
     closure.CopyFrom(request.closure)
     closure.request.metrics_source.CopyFrom(request.metrics_source)
-    if closure.HasField("result") and not closure.result.program_runs:
-        # The request carries the responder's program runs once, in the outcome derived from them.
-        closure.result.program_runs.extend(outcome.program_runs)
-    if (
-        request.memory_snapshot.accepted_commit != request.outcome_commit
-        or task.workspace.base_commit != request.outcome_commit
+    if closure.HasField("result"):
+        # The request carries the responder's raw evidence once, in the outcome derived from it.
+        if not closure.result.program_runs:
+            closure.result.program_runs.extend(outcome.program_runs)
+        if not closure.result.program_tool_calls:
+            closure.result.program_tool_calls.extend(outcome.program_tool_calls)
+        if not closure.result.plan_applications:
+            closure.result.plan_applications.extend(outcome.plan_applications)
+    if not _binds_committed_outcome(
+        Path(task.workspace.checkout_path),
+        outcome_commit=request.outcome_commit,
+        base_commit=task.workspace.base_commit,
+        snapshot_commit=request.memory_snapshot.accepted_commit,
     ):
         raise ValueError("reflection memory snapshot is not bound to committed outcome")
     closure.request.memory_snapshot.CopyFrom(request.memory_snapshot)
@@ -111,9 +151,7 @@ def run_reflection_task(
     if session_mode not in {"fresh", "resume"}:
         raise ValueError(f"invalid reflection session mode {session_mode!r}")
     prior_session = closure.result.responder_session_id if closure.HasField("result") else ""
-    if session_mode == "resume" and not _SESSION_TOKEN.fullmatch(prior_session or ""):
-        print("reflection: responder session ID is missing or invalid; starting fresh", file=sys.stderr)
-        session_mode = "fresh"
+    invalid_session = session_mode == "resume" and not _SESSION_TOKEN.fullmatch(prior_session or "")
     guidance = request.guidance or "baseline"
     if guidance not in REFLECTION_GUIDANCE_MODES:
         raise ValueError(f"invalid reflection guidance {guidance!r}")
@@ -125,61 +163,133 @@ def run_reflection_task(
         "SDO_INCIDENT_ID": outcome.incident_id,
         "SDO_CAPTURED_CORPUS_DIR": os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"),
     }
+    if task.HasField("deadline"):
+        environment[REFLECTION_DEADLINE_ENV] = repr(task.deadline.ToNanoseconds() / 1e9)
     previous = {key: os.environ.get(key) for key in environment}
-    selected = reflector or _default_reflector(cast("ReflectionGuidance", guidance))
     try:
         os.environ.update(environment)
-        turn = selected.resume(
-            session_id=prior_session or "",
-            incident_id=outcome.incident_id,
-            worktree=Path(task.workspace.checkout_path),
-            outcome=outcome,
-            history=history,
-            outcome_commit=request.outcome_commit,
-            session_mode=cast("ReflectionSessionMode", session_mode),
-            closure=closure,
-            validation_attempt=request.validation_attempt or 1,
-            diagnostics=list(request.previous_diagnostics),
-        )
+        if invalid_session:
+            raise ResponderSessionUnavailable("reflection responder session ID is missing or invalid")
+        if reflector is None and session_mode == "resume" and not os.environ.get("SDO_SESSION_DIR"):
+            raise SessionHandoffError("reflection resume requires the durable incident session directory")
+        turn: ReflectionTurn | None = None
+        if reflector is None and not detector_learning_needed(closure):
+            # A measured cause-detection gap remains useful learning even when
+            # validation would accept the existing repair memory unchanged.
+            # Ask the existing Go authority before spending a model turn on a
+            # decision it already accepts. Diagnostics can be corrected by the
+            # normal session; a timed-out check is a terminal infrastructure failure.
+            covered = ReflectionTurn(
+                summary="Accepted memory requires no change under the native check.",
+                learning_decision="no_change",
+                no_change_reason="native_memory_check_no_change",
+            )
+            check = check_reflection_result(
+                Path(task.workspace.checkout_path),
+                covered.to_result(),
+                min(VALIDATION_TIMEOUT_SECONDS, reflection_budget_seconds() / 3),
+            )
+            if check.timed_out:
+                raise MemoryCheckTimeout(check)
+            if check.exit_code == 0:
+                if session_mode == "resume":
+                    # Even without a provider process, reflection permanently
+                    # takes the same released writer ownership as a model turn.
+                    resolved = resolve_agent("reflection", "reflection")
+                    owner = SessionOwnership(
+                        Path(os.environ["SDO_SESSION_DIR"]) / "thread-ownership",
+                        resolved.provider,
+                        timeout_seconds=reflection_budget_seconds(),
+                        role="reflection",
+                        worker=worker_identity(),
+                        termination_observer=KubernetesWriterObserver(),
+                    )
+                    try:
+                        owner.claim(prior_session, resume=True)
+                    finally:
+                        owner.close(writer_closed=True)  # This path starts no provider writer.
+                turn = covered
+                print("reflection-native-no-change: accepted by memory check", flush=True)
+        if turn is None:
+            selected = reflector or _default_reflector(cast("ReflectionGuidance", guidance))
+            turn = selected.resume(
+                session_id=prior_session or "",
+                incident_id=outcome.incident_id,
+                worktree=Path(task.workspace.checkout_path),
+                outcome=outcome,
+                history=history,
+                outcome_commit=request.outcome_commit,
+                session_mode=cast("ReflectionSessionMode", session_mode),
+                closure=closure,
+                validation_attempt=request.validation_attempt or 1,
+                diagnostics=list(request.previous_diagnostics),
+                cause_work=list(request.cause_work),
+                unassigned_work=list(request.unassigned_work),
+            )
+        failure: tuple[str, str] | None = None
+    except (OSError, ValueError, RuntimeError) as exc:
+        # A failed turn is a typed outcome for the controller, not a failed Job.
+        turn, failure = None, (_failure_reason(exc), str(exc))
     finally:
         for key, value in previous.items():
             if value is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-    typed_result = ReflectionResult(
-        summary=turn.summary,
-        learning_decision=turn.learning_decision,
-        no_change_reason=turn.no_change_reason or "",
-        proposed_artifact_ids=turn.playbook_ids,
-        sdk_gaps=[json_format.ParseDict(gap.model_dump(), SdkGap()) for gap in turn.sdk_gaps],
-    )
     result = AgentResult(
         schema_version=SCHEMA_VERSION,
         task_id=task.task_id,
         status="completed",
         proposal_id=task.workspace.proposal_id,
     )
-    result.response.Pack(typed_result)
-    payload = to_canonical_json(result)
-    if len(payload.encode("utf-8")) > 700 << 10:
-        raise ValueError(
-            "reflection result exceeds the worker transport budget; "
-            "use corpus references and reduce proposal source size"
-        )
-    publisher.publish_payload(result_name, "agent-result.json", payload)
+    if turn is not None:
+        result.response.Pack(turn.to_result())
+        if len(to_canonical_json(result).encode("utf-8")) > RESULT_BUDGET_BYTES:
+            failure = (
+                "result_too_large",
+                "reflection result exceeds the worker transport budget; "
+                "use logical artifact IDs and reduce proposal source size",
+            )
+    if failure is not None:
+        result.ClearField("response")
+        result.status = "failed"
+        result.failure_reason, summary = failure
+        result.error_summary = summary[:4096] or result.failure_reason
+        print(f"reflection failed ({result.failure_reason}): {summary}", file=sys.stderr)
+    publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(result))
     return result
 
 
+def _failure_reason(exc: BaseException) -> str:
+    if limited := rate_limit_failure(exc):
+        return limited.failure_reason
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, MemoryCheckTimeout):
+            return "agent_timeout"
+        if isinstance(cause, SessionHandoffTimeout):
+            return "session_handoff_timeout"
+        if isinstance(cause, SessionHandoffError):
+            return "session_handoff_invalid"
+        if isinstance(cause, ResponderSessionUnavailable):
+            return "session_unavailable"
+        if isinstance(cause, (StructuredTurnTimeout, ReflectionDeadlineExceeded)):
+            return "agent_timeout"
+        cause = cause.__cause__ or cause.__context__
+    return "agent_failed"
+
+
+@records_worker_failure
 def main() -> int:
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
     if not namespace or not result_name:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
+        record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
-        prepare_codex_home(skills=AGENT_SKILLS["reflector"])
-        prepare_claude_home(skills=AGENT_SKILLS["reflector"])
+        prepare_codex_home(skills=skills_for_role("reflector"))
+        prepare_claude_home(skills=skills_for_role("reflector"))
         run_reflection_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,
@@ -187,6 +297,7 @@ def main() -> int:
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
+        record_worker_failure(exc)
         return 1
     return 0
 

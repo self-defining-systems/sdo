@@ -5,23 +5,25 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"strings"
-	"testing"
-	"time"
 )
 
 // Use the production accepted-manifest reader: absence must differ from a bad
@@ -32,7 +34,8 @@ func foreignSource(t *testing.T) (GitPlanSource, string) {
 	if err := os.WriteFile(filepath.Join(repo, "app.yaml"), []byte("apiVersion: v1\nkind: Service\nmetadata:\n  name: api\nspec:\n  selector:\n    app: api\n  ports:\n  - port: 80\n    targetPort: 8080\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}, {"add", "app.yaml"}, {"commit", "-m", "accepted source"}} {
+	testutil.InitGit(t, repo)
+	for _, args := range [][]string{{"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}, {"add", "app.yaml"}, {"commit", "-m", "accepted source"}} {
 		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
 			t.Fatal(string(out), err)
 		}
@@ -41,7 +44,8 @@ func foreignSource(t *testing.T) (GitPlanSource, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}, strings.TrimSpace(string(out))
+	source := GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}
+	return source, strings.TrimSpace(string(out))
 }
 
 func TestForeignNetworkPolicyAdmission(t *testing.T) {
@@ -88,7 +92,7 @@ func TestForeignNetworkPolicyAdmission(t *testing.T) {
 				change.New = driftObject(tc.next, watch)
 			}
 			change.Initial = tc.initial
-			event, _, err := (DriftClassifier{}).Classify(context.Background(), change, view, time.Unix(10, 0))
+			event, err := (DriftClassifier{}).Classify(context.Background(), change, view, time.Unix(10, 0))
 			if err != nil || (event != nil) != tc.want {
 				t.Fatalf("event=%+v error=%v; want admitted=%v", event, err, tc.want)
 			}
@@ -125,6 +129,10 @@ func TestForeignReadViewDiffAndSourceFailures(t *testing.T) {
 		t.Fatalf("foreign read tried Kubernetes writes/dry run: %+v", client.Actions())
 	}
 	view.DetectionContext = sdktest.Snapshot{NamespaceName: "app"}
+	if _, err := view.DiffAgainstSource(ref); err == nil {
+		t.Fatal("uncaptured foreign object interpreted as absence")
+	}
+	view.DetectionContext = confirmedAbsentSnapshot{Snapshot: sdktest.Snapshot{NamespaceName: "app"}, Ref: ref}
 	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed || !diff.SourceAbsent {
 		t.Fatalf("removed foreign object=%+v error=%v", diff, err)
 	}
@@ -146,7 +154,7 @@ func TestForeignReadViewDiffAndSourceFailures(t *testing.T) {
 
 func TestForeignDriftNormalChurn(t *testing.T) {
 	source, commit := foreignSource(t)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{ID: "events", Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Event"}}}}})
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{ID: "events", Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Event"}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +171,13 @@ func TestForeignDriftNormalChurn(t *testing.T) {
 		"Endpoints":     &corev1.Endpoints{ObjectMeta: meta},
 		"EndpointSlice": &discoveryv1.EndpointSlice{ObjectMeta: meta, AddressType: discoveryv1.AddressTypeIPv4},
 		"NetworkPolicy": foreignPolicy("operator-policy"),
+	}
+	for _, watch := range cache.declared {
+		if _, ok := objects[watch.Kind]; !ok {
+			child := inventoryObject(watch.APIVersion, watch.Kind, watch.Namespace, "derived")
+			child.SetOwnerReferences(owner)
+			objects[watch.Kind] = child
+		}
 	}
 	if len(cache.declared) != len(objects) {
 		t.Fatalf("watch inventory changed: %+v", cache.declared)
@@ -190,7 +205,7 @@ func TestForeignDriftNormalChurn(t *testing.T) {
 		EventList:         []corev1.Event{*objects["Event"].(*corev1.Event)},
 	}
 	for _, change := range cache.TakeObjectChanges() {
-		event, _, err := (DriftClassifier{}).Classify(context.Background(), change, LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}, time.Unix(10, 0))
+		event, err := (DriftClassifier{}).Classify(context.Background(), change, LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}, time.Unix(10, 0))
 		t.Logf("%s: event=%v", change.New.GetKind(), event != nil)
 		if err != nil || event != nil {
 			t.Fatalf("controller churn admitted: %+v %v", event, err)
@@ -212,7 +227,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	root := t.TempDir()
 	source, commit := foreignSource(t)
 	policy := foreignPolicy("first-deny")
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,11 +239,12 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	config := testControllerConfig()
 	config.Namespace, config.SourceCommit, config.CorpusSessionRoot, config.FiringThreshold, config.ClearThreshold = "app", commit, root, 1, 1
 	dispatcher := &fixedResultDispatcher{requests: make(chan IncidentRequest, 1), result: func(request IncidentRequest) IncidentResult { return completedResult(request.IncidentID) }}
-	controller, err := NewController(config, nil, provider, dispatcher, start)
+	controller, err := NewController(config, []sdk.Detector{quietHealthDetector()}, provider, dispatcher, start)
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	t.Cleanup(controller.Wait)
+	controller.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceCommit: commit}
 	}, BatchWindow: time.Second})
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
@@ -273,9 +289,12 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	awaitDispatchCompletionQueued(t, controller)
 	fixed := provider.snapshot.(sdktest.Snapshot)
 	fixed.NetworkPolicyList = []networkingv1.NetworkPolicy{*peer}
-	provider.snapshot = fixed
+	provider.snapshot = confirmedAbsentSnapshot{Snapshot: fixed, Ref: sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: policy.Name}}
 	cache.eventHandler(watch).OnDelete(policy)
 	if err := controller.StepEvents(context.Background(), start.Add(3*time.Second), cache.TakeEvents()); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Step(context.Background(), start.Add(3*time.Second+controller.config.ClosureStabilityWindow), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := controller.PendingIncidentClosure(); !ok {
@@ -296,8 +315,19 @@ func TestForeignNonPolicyWithStaleDeployerOwnershipIsIgnored(t *testing.T) {
 	next := old.DeepCopy()
 	next.Spec.Ports[0].TargetPort = driftService(9999).Spec.Ports[0].TargetPort
 	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*next}}), Source: source, SourceCommit: commit}
-	event, _, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "v1", "Service"), view, time.Unix(10, 0))
+	event, err := (DriftClassifier{}).Classify(context.Background(), objectChange(t, old, next, "v1", "Service"), view, time.Unix(10, 0))
 	if err != nil || event != nil {
 		t.Fatalf("unlisted foreign kind admitted using stale ownership: %+v %v", event, err)
 	}
+}
+
+// quietHealthDetector is a health detector that never fires, so closure waits
+// only on health and drift findings never gate it.
+func quietHealthDetector() *sequenceDetector {
+	detector := controllerDetector("health", time.Second, sdk.Finding{})
+	detector.spec.Class, detector.spec.Owner = sdk.DetectorClassHealth, sdk.DetectorOwnerHealthJudge
+	detector.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+	detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+	detector.spec.OriginatingCommit = "source"
+	return detector
 }

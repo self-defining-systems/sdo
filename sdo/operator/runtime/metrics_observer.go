@@ -103,9 +103,13 @@ type frozenMetrics struct {
 	ctx context.Context
 	at  time.Time
 
-	once    sync.Once
-	results map[string]metrics.Result
-	alerts  *metrics.AlertsResult
+	once           sync.Once
+	results        map[string]metrics.Result
+	dynamicMu      sync.Mutex
+	dynamic        map[metrics.Query]metrics.Result
+	alerts         *metrics.AlertsResult
+	alertOnce      sync.Once
+	onDemandAlerts metrics.AlertsResult
 }
 
 func (f *frozenMetrics) load() {
@@ -119,16 +123,26 @@ func (o *MetricsObserver) fetch(ctx context.Context, at time.Time) (map[string]m
 	var alerts *metrics.AlertsResult
 	var mu sync.Mutex
 	var wait sync.WaitGroup
+	groups := map[metrics.Query][]metrics.Query{}
 	for _, query := range o.queries {
+		key := metricReadKey(query)
+		groups[key] = append(groups[key], query)
+	}
+	for _, queries := range groups {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			result := o.fetchQuery(ctx, query, at)
+			result := o.fetchQuery(ctx, queries[0], at)
 			mu.Lock()
-			results[query.ID] = result
-			mu.Unlock()
+			defer mu.Unlock()
+			for _, query := range queries {
+				copy := result
+				copy.Query = query
+				results[query.ID] = copy
+			}
 		}()
 	}
+
 	if o.alerts {
 		wait.Add(1)
 		go func() {
@@ -237,18 +251,86 @@ func (p MetricsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 		return base, err
 	}
 	frozen := p.Observer.freeze(ctx)
-	return inputs.New(base).WithMetrics(frozen).WithAlerts(frozen), nil
+	return metricsContext{Carrier: inputs.New(base).WithMetrics(frozen).WithAlerts(frozen), frozen: frozen}, nil
+}
+
+// metricsContext wraps a snapshot with the cycle's frozen metrics. The carrier
+// keeps the wrapped snapshot's other optional inputs visible, so wrapping never
+// hides what capture and replay read.
+type metricsContext struct {
+	inputs.Carrier
+	frozen *frozenMetrics
 }
 
 func (f *frozenMetrics) MetricResult(id string) (metrics.Result, bool) {
 	f.load()
-	r, ok := f.results[id]
-	return r, ok
+	result, ok := f.results[id]
+	if ok {
+		return result, true
+	}
+	f.dynamicMu.Lock()
+	defer f.dynamicMu.Unlock()
+	for q, r := range f.dynamic {
+		if q.ID == id {
+			return r, true
+		}
+	}
+	return metrics.Result{}, false
 }
+
 func (f *frozenMetrics) AlertsResult() (metrics.AlertsResult, bool) {
 	f.load()
 	if f.alerts == nil {
-		return metrics.AlertsResult{}, false
+		f.alertOnce.Do(func() { f.onDemandAlerts = f.observer.fetchAlerts(f.ctx, f.at) })
+		return f.onDemandAlerts, true
 	}
 	return *f.alerts, true
 }
+
+// QueryMetrics reuses a declared query or freezes an on-demand query for
+// Diagnose and handwritten detectors at the same cycle timestamp.
+func (c metricsContext) QueryMetrics(q metrics.Query) metrics.Result {
+	if err := q.Validate(); err != nil {
+		return metrics.Result{Query: q, Error: err.Error()}
+	}
+	f := c.frozen
+	for _, declared := range f.observer.queries {
+		if declared.ID == q.ID && declared != q {
+			return metrics.Result{Query: q, Error: "metric query ID conflicts with declared query"}
+		}
+	}
+	f.dynamicMu.Lock()
+	defer f.dynamicMu.Unlock()
+	for known := range f.dynamic {
+		if known.ID == q.ID && known != q {
+			return metrics.Result{Query: q, Error: "metric query ID conflicts with frozen query"}
+		}
+	}
+	if result, ok := f.dynamic[q]; ok {
+		return result
+	}
+	if f.dynamic == nil {
+		f.dynamic = map[metrics.Query]metrics.Result{}
+	}
+	for _, declared := range f.observer.queries {
+		if metricReadKey(declared) == metricReadKey(q) {
+			f.load()
+			result := f.results[declared.ID]
+			result.Query = q
+			f.dynamic[q] = result
+			return result
+		}
+	}
+	for known, result := range f.dynamic {
+		if metricReadKey(known) == metricReadKey(q) {
+			result.Query = q
+			f.dynamic[q] = result
+			return result
+		}
+	}
+	result := f.observer.fetchQuery(f.ctx, q, f.at)
+	f.dynamic[q] = result
+	return result
+}
+
+func metricReadKey(q metrics.Query) metrics.Query { q.ID = ""; q.Step = q.EffectiveStep(); return q }

@@ -1,0 +1,20 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: pod-admission
+constructor: New
+class: health
+owner: health_judge
+watches:
+    - apiVersion: v1
+      kind: Pod
+interval: 15s
+persistence:
+    firing: 2
+    clearing: 2
+batching:
+    severity: critical
+    debounce: 500ms
+possiblePlaybooks:
+    - health-objective
+originatingCommit: lifecycle-bootstrap

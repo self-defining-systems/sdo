@@ -1,0 +1,684 @@
+package runtime
+
+import (
+	"context"
+	"log/slog"
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"slices"
+	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+)
+
+// SettleRecoveryApplications refreshes accepted stage evidence after the
+// controller's independent recovery proof. It observes only: no apply, retry,
+// compensation or publication authority is recreated here.
+func (l *ResponderLoop) SettleRecoveryApplications(ctx context.Context, result IncidentResult, stages []*contracts.StageReport, closedAt ...time.Time) (IncidentResult, []*contracts.StageReport) {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.settleRecoveryApplicationsLocked(ctx, result, stages, closedAt...)
+}
+
+func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, result IncidentResult, stages []*contracts.StageReport, closedAt ...time.Time) (IncidentResult, []*contracts.StageReport) {
+	stages = l.recoveryStageEvidence(stages)
+	unavailable := contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED
+	if l.Programs == nil || l.Executor.Client == nil || l.Executor.Rollouts == nil {
+		unavailable = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DEPENDENCY_UNAVAILABLE
+	}
+	initialRuns := len(l.runs)
+	var view program.ReadView
+	if unavailable == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+		var err error
+		view, err = l.snapshotView(ctx)
+		if err != nil {
+			unavailable = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SNAPSHOT_UNAVAILABLE
+		}
+	}
+	executor := l.Executor
+	executor.PollRollouts = true
+	// The proof is independent of an expired response budget; observation remains
+	// bounded by the controller context and the executor's single-sample bound.
+	request := l.Request
+	request.ResponseDeadline = time.Time{}
+	objects := map[sdk.ObjectRef]*unstructured.Unstructured{}
+	readErrors := map[sdk.ObjectRef]error{}
+	getFinal := func(ref sdk.ObjectRef) *unstructured.Unstructured {
+		if object, ok := objects[ref]; ok {
+			return object
+		}
+		object, err := executor.Client.Get(ctx, ref)
+		readErrors[ref] = err
+		if err != nil {
+			object = nil
+		}
+		objects[ref] = object
+		return object
+	}
+	applications := l.applicationEvidenceLocked()
+	through := lifecycleio.Now()
+	if len(closedAt) > 0 {
+		through = closedAt[0]
+	}
+	observedWrites, historyComplete := l.recoveryAPIWrites(ctx, result, applications, through)
+	knownApplications := map[string]bool{}
+	for i := range applications {
+		knownApplications[applications[i].ID] = true
+		applications[i].Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED
+	}
+	for _, stage := range stages {
+		for _, attempt := range stage.Mitigations {
+			id := attempt.GetApplyReceipt().GetApplicationId()
+			if id != "" && !knownApplications[id] {
+				attempt.ApplyReceipt.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE
+				if attempt.Result == "applied_cleared" {
+					attempt.Result = "applied_still_matching"
+				}
+			}
+			for index := range applications {
+				app := &applications[index]
+				if app.ID != id {
+					continue
+				}
+				// Execution and earlier scoped observations are immutable facts. A
+				// closure veto withholds attribution without erasing them.
+				reject := func(reason contracts.SettlementRejectionReason) {
+					if app.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+						app.Result.SettlementRejectionReason = reason
+					}
+					if attempt.Result == "applied_cleared" {
+						attempt.Result = "applied_still_matching"
+					}
+				}
+				if unavailable != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+					reject(unavailable)
+					continue
+				}
+				if !app.Result.Applied {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_NOT_APPLIED)
+					continue
+				}
+				if app.Result.DryRun {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DRY_RUN)
+					continue
+				}
+				if app.RolledBack || app.Result.RolledBack || app.RollbackError != "" || app.Result.RollbackError != "" {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLED_BACK)
+					continue
+				}
+				pendingWrite, wasPending := l.pendingWrites[id]
+				if pendingWrite.Superseded {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SUPERSEDED)
+					app.Result.FinalVerificationBasis = ""
+					continue
+				}
+				if !historyComplete {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_HISTORY_UNKNOWN)
+					continue
+				}
+				if l.recoverySuperseded(ctx, *app, result, applications, observedWrites, stage.Stage == "deterministic") {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SUPERSEDED)
+					app.Result.FinalVerificationBasis = ""
+					continue
+				}
+				if !PlanActionsComplete(app.Result) {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_INCOMPLETE_EXECUTION)
+					continue
+				}
+				if !recoveryObservationOnly(*app) {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_EXECUTION_FAILED)
+					continue
+				}
+				if attempt.ProgramRevision == "" || attempt.ProgramRevision != l.programRevision(attempt.PlaybookId) {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_REVISION_MISMATCH)
+					continue
+				}
+				diagnoser, ok := l.Programs.Diagnoser(attempt.PlaybookId)
+				if !ok {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DIAGNOSER_UNAVAILABLE)
+					continue
+				}
+				refs, err := l.menuPlanWriteRefs(app.Result.Plan)
+				if err != nil {
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_WRITE_SCOPE_UNKNOWN)
+					continue
+				}
+				if wasPending && len(pendingWrite.Refs) > 0 {
+					refs = pendingWrite.Refs
+				}
+				// A confirmed removal is observed through fresh absence, never
+				// through a rollout of the deliberately absent workload.
+				refs = l.recoveryRolloutRefs(app.Result, refs, func(ref sdk.ObjectRef) bool { getFinal(ref); return apierrors.IsNotFound(readErrors[ref]) })
+				pending, rolloutErr := executor.waitForRollouts(ctx, request, refs)
+				app.Result.VerificationCompleted = true
+				app.Result.RolloutPending = pending
+				sourceErr := executor.reportSourceResiduals(ctx, request, &app.Result)
+				verdict := program.RunDiagnose(ctx, diagnoser, view, programBindingsState(attempt.Bindings), l.deadline())
+				run := ProgramRun{ProgramID: attempt.PlaybookId, ProgramRevision: attempt.ProgramRevision, Bindings: programBindingsState(attempt.Bindings), Verdict: verdict}
+				l.runs = append(l.runs, run)
+				attempt.PostApplyDiagnose = programRunContract(run)
+				scripted := hasAppliedScript(app.Result.Plan.Actions)
+				exact := !scripted && l.recoveryPlanFieldsMatch(app.Result, getFinal, func(ref sdk.ObjectRef) bool { getFinal(ref); return apierrors.IsNotFound(readErrors[ref]) })
+				healthy := false
+				targets := append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...)
+				verifier := scopedMitigationVerifier(executor.Verifier, app.Result.Plan, l.mitigationIncident([]selectedPlan{{programID: attempt.PlaybookId, bindings: programBindingsState(attempt.Bindings), targetFingerprints: targets}}).Findings)
+				if verifier != nil {
+					healthy, _ = verifier.Verify(ctx)
+				} else if executor.Verifier != nil {
+					healthy, _ = executor.Verifier.Verify(ctx)
+				}
+				transition := false
+				if scripted && healthy && rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch {
+					proof := *app
+					proof.Result.VerificationCompleted, proof.Result.VerificationPassed, proof.Error = true, true, ""
+					transition = l.finalScriptApplication(ctx, proof, view, selectedPlan{programID: attempt.PlaybookId, revision: attempt.ProgramRevision, bindings: programBindingsState(attempt.Bindings)})
+				}
+				if !scripted {
+					app.Result.FinalEquivalenceVerified = &exact
+				}
+				switch {
+				case rolloutErr != nil:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLOUT_FAILED)
+					app.Error = rolloutErr.Error()
+					attempt.Result = "rollout_failed"
+					if pending != nil {
+						app.Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING
+						attempt.Result = "rollout_pending_at_handoff"
+					}
+				case sourceErr != nil:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL)
+					app.Error = sourceErr.Error()
+					attempt.Result = "rollout_failed"
+				case verdict.Result != program.NoMatch:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR)
+					attempt.Result = "applied_still_matching"
+				case !healthy:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR)
+					attempt.Result = "applied_still_matching"
+				case !exact && !transition:
+					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED)
+					attempt.Result = "rollout_failed"
+				}
+				attempt.Error = app.Error
+				if rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch && (exact || transition) && healthy {
+					app.Result.VerificationPassed = true
+					app.Result.FinalVerificationBasis = "recovery-settled"
+					if transition {
+						app.Result.FinalVerificationBasis = "observed-transition"
+					}
+					app.Result.RolloutPending = nil
+					app.Error = ""
+					app.Pending = false
+					attempt.Error = ""
+					attempt.Result = "applied_cleared"
+					attempt.ClearedFindingFingerprints = append(attempt.ClearedFindingFingerprints, attempt.RemainingFindingFingerprints...)
+					stage.ClearedFindingFingerprints = append(stage.ClearedFindingFingerprints, attempt.ClearedFindingFingerprints...)
+					slices.Sort(attempt.ClearedFindingFingerprints)
+					attempt.ClearedFindingFingerprints = slices.Compact(attempt.ClearedFindingFingerprints)
+					slices.Sort(stage.ClearedFindingFingerprints)
+					stage.ClearedFindingFingerprints = slices.Compact(stage.ClearedFindingFingerprints)
+					stage.RemainingFindingFingerprints = slices.DeleteFunc(stage.RemainingFindingFingerprints, func(fp string) bool { return slices.Contains(attempt.ClearedFindingFingerprints, fp) })
+					attempt.RemainingFindingFingerprints = nil
+					delete(l.pendingWrites, id)
+				}
+				if _, live := l.applications[id]; live {
+					l.applications[id] = app.Result
+				}
+				receipt, err := recordedPlanContract(*app)
+				if err == nil {
+					attempt.ApplyReceipt = receipt
+				}
+			}
+		}
+	}
+
+	// One batch receipt cannot be successful for only its last binding. A
+	// shared application earns positive credit only after every bound scope
+	// independently settles; incomplete/partial batches retain their facts.
+	for i := range applications {
+		app := &applications[i]
+		complete, found := true, false
+		for _, stage := range stages {
+			for _, attempt := range stage.Mitigations {
+				if attempt.GetApplyReceipt().GetApplicationId() == app.ID {
+					found = true
+					complete = complete && attempt.Result == "applied_cleared"
+				}
+			}
+		}
+		if ((!found && len(app.ProgramIDs) > 0) || (found && !complete)) && app.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
+			app.Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE
+		}
+		if _, live := l.applications[app.ID]; live {
+			l.applications[app.ID] = app.Result
+		}
+		receipt, err := recordedPlanContract(*app)
+		if err != nil {
+			continue
+		}
+		for _, stage := range stages {
+			for _, attempt := range stage.Mitigations {
+				if attempt.GetApplyReceipt().GetApplicationId() != app.ID {
+					continue
+				}
+				if !complete && attempt.Result == "applied_cleared" {
+					attempt.Result = "applied_still_matching"
+				}
+				attempt.ApplyReceipt = receipt
+			}
+		}
+	}
+
+	stageResult, _ := responsePipelineResult(&IncidentState{Request: l.Request, PriorStages: stages}, result.Timing.StartedAt, result.Timing.CompletedAt)
+	settled := &recoveryApplicationSettlement{causes: stageResult.ConfirmedRootCauses, stages: stages, applications: applications, runs: append([]ProgramRun(nil), l.runs[initialRuns:]...)}
+	// Update observation facts only. Restored receipts never become prepared
+	// plans or rollback handles. The final closure persists this projection.
+	l.archivedApplications = applications
+	for i := range l.applicationsLog {
+		for _, app := range applications {
+			if app.ID == l.applicationsLog[i].ID {
+				l.applicationsLog[i] = app
+			}
+		}
+	}
+	return projectRecoverySettlement(result, settled), stages
+}
+
+type recoveryApplicationSettlement struct {
+	causes       []ConfirmedRootCause
+	stages       []*contracts.StageReport
+	applications []RecordedPlanApplication
+	runs         []ProgramRun
+}
+
+// Replace evidence by application identity; preserve manual repairs, sessions
+// and resolution metadata. Historical stage snapshots no longer override it.
+func projectRecoverySettlement(result IncidentResult, settled *recoveryApplicationSettlement) IncidentResult {
+	generatedIDs := map[string]bool{}
+	for _, receipt := range ProgramRepairReceipts(result.PlanApplications, nil) {
+		generatedIDs[receipt.ActionID] = true
+	}
+	positions := map[string]int{}
+	known := map[string]bool{}
+	for _, app := range settled.applications {
+		known[app.ID] = true
+	}
+	for i, app := range result.PlanApplications {
+		positions[app.ID] = i
+		if !known[app.ID] && len(app.ProgramIDs) > 0 {
+			result.PlanApplications[i].Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_BINDING_INCOMPLETE
+		}
+	}
+	for _, app := range settled.applications {
+		if i, exists := positions[app.ID]; exists {
+			result.PlanApplications[i] = app
+		} else {
+			positions[app.ID] = len(result.PlanApplications)
+			result.PlanApplications = append(result.PlanApplications, app)
+		}
+	}
+	for _, receipt := range ProgramRepairReceipts(settled.applications, nil) {
+		generatedIDs[receipt.ActionID] = true
+	}
+
+	result.ProgramRuns = append(result.ProgramRuns, settled.runs...)
+	result.ConfirmedRootCauses = reconcileEarlyCauses(settled.causes, result.ConfirmedRootCauses)
+	existing := []RepairActionReceipt{}
+	for _, receipt := range result.RepairActions {
+		if !generatedIDs[receipt.ActionID] {
+			existing = append(existing, receipt)
+		}
+	}
+	result.RepairActions = ProgramRepairReceipts(result.PlanApplications, existing)
+	return result
+}
+
+// Typed action/readback evidence distinguishes an unsettled observation from
+// an execution failure. Error text is presentation and grants no credit.
+func recoveryObservationOnly(app RecordedPlanApplication) bool {
+	if len(app.Result.ActionReports) != len(app.Result.Plan.Actions) {
+		return false
+	}
+	for _, report := range app.Result.ActionReports {
+		sourcePartial := report.SourceReconcile != nil && !report.SourceReconcile.Converged
+		if report.RecordingError != "" || (report.FailureReason != "" && !(sourcePartial && report.FailureReason == "source_residual")) {
+			return false
+		}
+		if report.Status != "applied" && !(sourcePartial && report.Status == "partial") {
+			return false
+		}
+	}
+	return true
+}
+
+// recoveryOwnerRefs completes known controller lineage for causal attribution.
+func (l *ResponderLoop) recoveryOwnerRefs(ctx context.Context, refs []sdk.ObjectRef, history []RecordedPlanApplication) []sdk.ObjectRef {
+	// Receipt owner chains may stop at a ReplicaSet. Complete that known
+	// controller lineage from captured preimages or fresh namespace reads.
+	for index := 0; index < len(refs) && index < 32; index++ {
+		ref := refs[index]
+		if ref.Namespace != l.Request.Namespace || (ref.Kind != "Pod" && ref.Kind != "ReplicaSet" && ref.Kind != "Job") {
+			continue
+		}
+		var object *unstructured.Unstructured
+		for _, candidate := range history {
+			for _, image := range candidate.Result.PreImages {
+				if sameResource(image.Ref, ref) && image.Object != nil {
+					object = image.Object
+					break
+				}
+			}
+			for _, effect := range candidate.Result.ObjectEffects {
+				if sameResource(effect.Ref, ref) && effect.DeletedPreImage != nil {
+					object = effect.DeletedPreImage
+					break
+				}
+			}
+		}
+		if object == nil {
+			object, _ = l.Executor.Client.Get(ctx, ref)
+		}
+		if object == nil {
+			continue
+		}
+		for _, owner := range object.GetOwnerReferences() {
+			if owner.Controller == nil || !*owner.Controller || owner.Kind == "Secret" {
+				continue
+			}
+			parent := sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: ref.Namespace, Name: owner.Name}
+			if !slices.Contains(refs, parent) {
+				refs = append(refs, parent)
+			}
+		}
+	}
+	return refs
+}
+
+// Reject overlapping later corrective effects, not independent causes or
+// diagnostic helper writes. Unknown ordering is deliberately not positive proof.
+func (l *ResponderLoop) recoverySuperseded(ctx context.Context, app RecordedPlanApplication, result IncidentResult, applications []RecordedPlanApplication, observedWrites []RepairActionReceipt, automatic bool) bool {
+	if app.StartedAt.IsZero() || app.CompletedAt.IsZero() || len(result.RepairChanges) > 0 {
+		return true
+	}
+	// Worker-returned applications are immutable history too; their absence
+	// from this loop cannot prove that no competing corrective write occurred.
+	seen := map[string]bool{}
+	history := append([]RecordedPlanApplication(nil), applications...)
+	for _, candidate := range applications {
+		seen[candidate.ID] = true
+	}
+	for _, candidate := range result.PlanApplications {
+		if !seen[candidate.ID] {
+			history = append(history, candidate)
+			seen[candidate.ID] = true
+		}
+	}
+	generated := map[string]bool{}
+	for _, receipt := range ProgramRepairReceipts(history, nil) {
+		generated[receipt.ActionID] = true
+	}
+	own := ProgramRepairReceipts([]RecordedPlanApplication{app}, nil)
+	overlaps := func(other RepairActionReceipt) bool {
+		refs := append([]sdk.ObjectRef(nil), other.Resources...)
+		for _, ownership := range other.Owners {
+			refs = append(refs, ownership.OwnerChain...)
+		}
+		refs = l.recoveryOwnerRefs(ctx, refs, history)
+		for _, receipt := range own {
+			for _, target := range receipt.Resources {
+				for _, ref := range refs {
+					if ref.Kind == "*" || sameResource(target, ref) {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
+	for _, other := range history {
+		if writes := l.applicationWriteRefs(other.Result); writes != nil && len(*writes) == 0 {
+			continue
+		}
+		if other.ID == app.ID || (!other.Result.Applied && len(other.Result.ActionsApplied) == 0) {
+			continue
+		}
+		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{other}, nil) {
+			if overlaps(receipt) && (other.StartedAt.IsZero() || !other.StartedAt.Before(app.StartedAt)) {
+				return true
+			}
+		}
+	}
+	for _, receipt := range observedWrites {
+		if !overlaps(receipt) || (!receipt.CompletedAt.IsZero() && receipt.CompletedAt.Before(app.StartedAt)) {
+			continue
+		}
+		// Automatic application writes precede the responder. API pairs fully
+		// inside that interval duplicate its own execution, not a later actor.
+		if automatic && !receipt.StartedAt.Before(app.StartedAt) && !receipt.CompletedAt.After(app.CompletedAt) {
+			continue
+		}
+		return true
+	}
+	for _, receipt := range result.RepairActions {
+		if generated[receipt.ActionID] {
+			continue
+		}
+		if overlaps(receipt) && (receipt.StartedAt.IsZero() || !receipt.StartedAt.Before(app.StartedAt)) {
+			return true
+		}
+	}
+	return false
+}
+
+// Every downstream consumer checks the same durable exact settlement receipt.
+func recoveryApplicationSucceeded(outcome *contracts.OutcomeRecord, app *contracts.PlanApplication, id, revision string) bool {
+	return app.GetSettlementRejectionReason() == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED && (app.GetFinalVerificationBasis() == "recovery-settled" || app.GetFinalVerificationBasis() == "observed-transition") && app.GetApplied() && !app.GetDryRun() && !app.GetRolledBack() && app.GetRollbackError() == "" && app.GetError() == "" && app.GetRolloutPending() == nil && app.GetVerificationCompleted() && app.GetVerificationPassed() && finalApplicationVerified(app) && boundPostApplyNoMatch(outcome, app, id, revision)
+}
+
+// Deleted objects have no final fields. Their exact effect is a recorded
+// UID-bound delete followed by a fresh direct NotFound, never a failed GET.
+// Remaining document effects use the existing field-equivalence predicate.
+func (l *ResponderLoop) recoveryPlanFieldsMatch(result PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured, absent func(sdk.ObjectRef) bool) bool {
+	if writes := l.applicationWriteRefs(result); writes != nil {
+		original := result.PreImages
+		result.PreImages = nil
+		for _, image := range original {
+			if slices.Contains(*writes, image.Ref) {
+				result.PreImages = append(result.PreImages, image)
+			}
+		}
+	}
+	if len(result.PreImages) == 0 {
+		return false
+	}
+	remaining := result
+	remaining.PreImages = nil
+	for _, image := range result.PreImages {
+		deleted := false
+		for _, effect := range result.ObjectEffects {
+			if effect.Ref == image.Ref && effect.Operation == "delete" && effect.State == "applied" && effect.Confirmed && image.Object != nil && effect.UID != "" && effect.UID == string(image.Object.GetUID()) {
+				if !absent(image.Ref) {
+					return false
+				}
+				deleted = true
+			}
+		}
+		if !deleted {
+			remaining.PreImages = append(remaining.PreImages, image)
+		}
+	}
+	return len(remaining.PreImages) == 0 || finalPlanFieldsMatch(remaining, getFinal)
+}
+
+// recoveryRolloutRefs retains write/conflict scope while removing only exact
+// UID-bound, confirmed deletions whose current absence was independently read.
+func (l *ResponderLoop) recoveryRolloutRefs(result PlanApplicationResult, refs []sdk.ObjectRef, absent func(sdk.ObjectRef) bool) []sdk.ObjectRef {
+	return slices.DeleteFunc(slices.Clone(refs), func(ref sdk.ObjectRef) bool {
+		for _, image := range result.PreImages {
+			if !sameResource(image.Ref, ref) || image.Object == nil {
+				continue
+			}
+			for _, effect := range result.ObjectEffects {
+				if sameResource(effect.Ref, ref) && effect.Operation == "delete" && effect.State == "applied" && effect.Confirmed && effect.UID != "" && effect.UID == string(image.Object.GetUID()) && absent(ref) {
+					return true
+				}
+			}
+		}
+		return false
+	})
+}
+
+// Recovery bindings are immutable observation facts, never prepared plan IDs.
+// The controller records them before a write; restart restores no executor handle.
+type recoveryBinding struct {
+	ActionStart         int
+	ActionCount         int
+	ProgramID           string
+	ProgramRevision     string
+	Bindings            program.Bindings
+	FindingFingerprints []string
+}
+
+// Agent-owned applications use the same report/settlement contract as automatic
+// applications. A missing or ambiguous binding stays unknown, never inferred.
+func (l *ResponderLoop) recoveryStageEvidence(stages []*contracts.StageReport) []*contracts.StageReport {
+	stages = cloneStageReports(stages)
+	if l.Programs == nil {
+		return stages
+	}
+	seen := map[string]bool{}
+	for _, stage := range stages {
+		for _, attempt := range stage.Mitigations {
+			seen[attempt.GetApplyReceipt().GetApplicationId()] = true
+		}
+	}
+	var agent *contracts.StageReport
+	for _, stage := range stages {
+		if stage.Stage == "agent" {
+			agent = stage
+			break
+		}
+	}
+	for _, app := range l.applicationEvidenceLocked() {
+		bindings := l.applicationBindings[app.ID]
+		if seen[app.ID] || len(bindings) == 0 || len(app.ProgramIDs) != len(bindings) {
+			continue
+		}
+		valid := true
+		for i, binding := range bindings {
+			_, registered := l.Programs.Diagnoser(binding.ProgramID)
+			valid = valid && registered && binding.ProgramRevision != "" && binding.ProgramID == app.ProgramIDs[i] && binding.ActionStart >= 0 && binding.ActionCount >= 0 && binding.ActionStart+binding.ActionCount <= len(app.Result.Plan.Actions)
+		}
+		if !valid {
+			continue
+		}
+		receipt, err := recordedPlanContract(app)
+		if err != nil {
+			continue
+		}
+		if agent == nil {
+			agent = &contracts.StageReport{Stage: "agent"}
+			stages = append(stages, agent)
+		}
+		for _, binding := range bindings {
+			count := binding.ActionCount
+			if count == 0 && len(bindings) == 1 {
+				count = len(app.Result.Plan.Actions)
+			}
+			agent.Mitigations = append(agent.Mitigations, &contracts.StageMitigation{PlaybookId: binding.ProgramID, ProgramRevision: binding.ProgramRevision, Bindings: programBindingsContract(binding.Bindings), ApplyReceipt: receipt, PlanActionStart: int32(binding.ActionStart), PlanActionCount: int32(count), RemainingFindingFingerprints: append([]string(nil), binding.FindingFingerprints...), Result: "rollout_pending_at_handoff"})
+		}
+		seen[app.ID] = true
+	}
+	return stages
+}
+
+// Raw worker API writes are recorded outside tool receipts. Observe the existing
+// storage-edge projection before credit, rather than discovering interference
+// only later during outcome derivation. Incomplete history stays unknown.
+func (l *ResponderLoop) recoveryAPIWrites(ctx context.Context, result IncidentResult, applications []RecordedPlanApplication, through time.Time) ([]RepairActionReceipt, bool) {
+	if l.RecoverySessionRoot == "" || result.ResponderSessionID == "" {
+		return nil, true
+	}
+	var since time.Time
+	var resources []*contracts.ObjectRef
+	for _, app := range applications {
+		if since.IsZero() || (!app.StartedAt.IsZero() && app.StartedAt.Before(since)) {
+			since = app.StartedAt
+		}
+		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{app}, nil) {
+			for _, ref := range receipt.Resources {
+				resources = append(resources, objectRefContract(ref))
+			}
+		}
+	}
+	if len(resources) == 0 {
+		return nil, true
+	}
+	observed, err := memory.IncidentAPIRecoveryReceipts(l.RecoverySessionRoot, l.Request.IncidentID, resources, since, through)
+	if err != nil {
+		slog.WarnContext(ctx, "application_recovery_history_unavailable", "incident_id", l.Request.IncidentID, "error", err)
+		return nil, false
+	}
+	return incidentResultState(&contracts.IncidentResult{RepairActions: observed}).RepairActions, true
+}
+
+// settledApplicationCoverage projects the same durable settlement used for
+// repair credit. Live diagnoses can cease matching after a successful repair;
+// they cannot erase the opening Match that authorized that settled application.
+// No live menu or execution authority is reconstructed here.
+func settledApplicationCoverage(request *contracts.IncidentRequest, result *contracts.IncidentResult) *contracts.PlaybookCoverage {
+	coverage := cloneCoverage(request.GetPlaybookCoverage())
+	if result == nil {
+		return coverage
+	}
+	outcome := &contracts.OutcomeRecord{SourceCommit: request.GetSourceCommit(), ProgramRuns: result.GetProgramRuns(), PriorStages: request.GetPriorStages()}
+	runs := append(append([]*contracts.ProgramRun(nil), request.GetInitialProgramRuns()...), result.GetProgramRuns()...)
+	for _, stage := range request.GetPriorStages() {
+		for _, attempt := range stage.GetMitigations() {
+			if attempt.GetResult() != "applied_cleared" {
+				continue
+			}
+			id, revision := attempt.GetPlaybookId(), attempt.GetProgramRevision()
+			app := attempt.GetApplyReceipt()
+			// Use the final application, not an older copy in a stage snapshot.
+			for _, final := range result.GetPlanApplications() {
+				if final.GetApplicationId() != app.GetApplicationId() || !recoveryApplicationSucceeded(outcome, final, id, revision) {
+					continue
+				}
+				bindings := programBindingsState(attempt.GetBindings())
+				for _, run := range runs {
+					fp := run.GetFindingFingerprint()
+					if fp == "" || run.GetProgramId() != id || run.GetProgramRevision() != revision || run.GetError() != "" || run.GetVerdict().GetResult() != contracts.Verdict_RESULT_MATCH || !bindings.Equal(programBindingsState(run.GetBindings())) || !slices.Contains(attempt.GetClearedFindingFingerprints(), fp) {
+						continue
+					}
+					if coverage == nil {
+						coverage = &contracts.PlaybookCoverage{}
+					}
+					var match *contracts.PlaybookMatch
+					for _, existing := range coverage.Matches {
+						if existing.GetPlaybookId() == id && existing.GetProgramRevision() == revision && bindings.Equal(programBindingsState(existing.GetBindings())) {
+							match = existing
+							break
+						}
+					}
+					if match == nil {
+						match = &contracts.PlaybookMatch{PlaybookId: id, ProgramRevision: revision, Bindings: programBindingsContract(bindings)}
+						coverage.Matches = append(coverage.Matches, match)
+					}
+					if !slices.Contains(match.ExplainedFindingFingerprints, fp) {
+						match.ExplainedFindingFingerprints = append(match.ExplainedFindingFingerprints, fp)
+						slices.Sort(match.ExplainedFindingFingerprints)
+					}
+					coverage.UnexplainedFindingFingerprints = slices.DeleteFunc(coverage.UnexplainedFindingFingerprints, func(candidate string) bool { return candidate == fp })
+				}
+			}
+		}
+	}
+	return coverage
+}

@@ -97,7 +97,10 @@ func (m *Manager) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*p
 	if err == nil {
 		return response, nil
 	}
-	m.failed(h)
+	// Caller cancellation bounds this evaluation, not the lifetime of the serving host.
+	if ctx.Err() == nil {
+		m.failed(h)
+	}
 	return unavailable(request, err), nil
 }
 func (m *Manager) failed(h Host) {

@@ -2,13 +2,11 @@ package installio
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"time"
 )
 
-func Now() time.Time    { return time.Now() }
-func TimeScale() string { return os.Getenv("SDO_TIME_SCALE") }
+func Now() time.Time { return time.Now() }
 func Git(ctx context.Context, root string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...).CombinedOutput()
 }

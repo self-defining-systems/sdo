@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -13,11 +14,18 @@ from pathlib import Path
 from typing import Any
 
 from apps.toy.faults import IMAGE, command, fault_spec
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
+from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
+from benchmarks.sregym.repository_git import host_git_command
 
+logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/toy"
 NAMESPACE = "sdo-toy"
+CONTROLLER_REPOSITORY = "/workspace/application"  # the controller Job's --app
+#: The kind cluster name; a scratch run sets ``SDO_TOY_CLUSTER`` to avoid the shared default.
+CLUSTER = os.environ.get("SDO_TOY_CLUSTER", "sdo-toy")
 
 
 class ToyWorker:
@@ -33,9 +41,14 @@ class ToyWorker:
     def __exit__(self, *args: object) -> None:
         pass
 
-    def request(self, op: str, *, timeout: float = 120, **args: Any) -> dict[str, Any]:
+    def request(self, op: str, *, timeout: float = int(wait_for(WaitKind.SLOW_COMMAND)), **args: Any) -> dict[str, Any]:
         env = self.environment
         config = str(env.kubeconfig)
+        if op == "clean_start":
+            from benchmarks.sregym.fastloop.clean_start import remove_injected_objects
+
+            remove_injected_objects(env.kubeconfig)
+            return {"success": True}
         if op == "deploy":
             return {"deployed": False, "seconds": 0}
         if op == "health":
@@ -67,9 +80,29 @@ class ToyWorker:
             return {"kind": "health-check", "success": bool(checks) and all(checks.values()), "details": checks}
         if op == "recover":
             started = time.monotonic()
-            command(config, env.namespace, "apply", "-f", str(env.workspace / "kubernetes"))
-            return {"seconds": time.monotonic() - started}
+            apply_accepted_source(env.workspace, env.namespace, env.kubeconfig)
+            return {
+                "seconds": time.monotonic() - started,
+                "protocol_version": 2,
+                "success": True,
+                "recovery_contract": "seed-compatible/v1",
+            }
+        if op == "refresh":
+            # Commands create fresh kubectl clients; the toy retains no API or
+            # credential clients across recovery.
+            return {"protocol_version": 2, "success": True, "recovery_contract": "seed-compatible/v1"}
         raise ValueError(f"unsupported toy worker operation: {op}")
+
+
+def apply_accepted_source(workspace: Path, namespace: str, kubeconfig: Path) -> None:
+    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
+    from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
+
+    source = AcceptedSource(workspace, namespace, ("kubernetes",))
+    manifests = source.manifests
+    cluster = KubectlApplicationCluster(kubeconfig)
+    for manifest in manifests:
+        cluster.apply(namespace, manifest)
 
 
 def cluster_name(args: Any) -> str:
@@ -87,6 +120,7 @@ def up(args: Any) -> int:
 
     if args.dev_mount is None:
         raise ValueError("toy lanes require a development mount; omit --no-dev-mount")
+    host_limits = HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
     cluster = cluster_name(args)
     image = f"{IMAGE}-{cluster}"
     started = time.monotonic()
@@ -95,6 +129,7 @@ def up(args: Any) -> int:
     worktree = (args.dev_mount or ROOT).resolve()
     if (run_dir / "fastloop.json").exists():
         env = FastloopEnvironment.load(run_dir)
+        apply_node_limits(env.cluster, NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit))
         if env.dev_mount is None:
             raise ValueError("toy environment requires a development mount")
         if not ToyWorker(env).request("health")["healthy"]:
@@ -108,12 +143,15 @@ def up(args: Any) -> int:
                 env.cluster,
                 [desired.controller, desired.responder],
                 record_path=run_dir / "image_delivery.jsonl",
+                host_limits=host_limits,
             )
             env = FastloopEnvironment.load(run_dir)
             env.images = desired
             env.save()
         if env.dev_mount is None:
             raise ValueError("toy environment requires a development mount")
+        env.worker_env.update(host_limits.worker_env())
+        env.save()
         prepare_dev_mount(env.dev_mount, None, run_dir)
         config = install_controller(env)
         record_controller(env, config)
@@ -156,6 +194,7 @@ def up(args: Any) -> int:
         ],
         check=True,
     )
+    apply_node_limits(cluster, NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit))
     created = time.monotonic()
     images = Images(controller=args.controller_image, responder=args.responder_image)
     from benchmarks.sregym.fastloop.toy_images import load_images
@@ -164,6 +203,7 @@ def up(args: Any) -> int:
         cluster,
         [image, images.controller, images.responder, *CALICO_IMAGES],
         record_path=run_dir / "image_delivery.jsonl",
+        host_limits=host_limits,
     )
     images_loaded = time.monotonic()
     install_calico(kubeconfig, run_dir / "calico.yaml")
@@ -180,9 +220,9 @@ def up(args: Any) -> int:
         ["add", "."],
         ["-c", "user.name=toy", "-c", "user.email=toy@invalid", "commit", "-qm", "feat: seed toy application"],
     ):
-        subprocess.run(["git", "-C", str(workspace), *git_args], check=True)
+        subprocess.run(host_git_command(workspace, *git_args), check=True)
     seed = subprocess.run(
-        ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        host_git_command(workspace, "rev-parse", "HEAD"), check=True, capture_output=True, text=True
     ).stdout.strip()
     source_commit = seed
     shutil.copytree(APP / "seed/.sdo", workspace / ".sdo")
@@ -191,12 +231,10 @@ def up(args: Any) -> int:
         b"".join(path.read_bytes() for path in sorted((workspace / "kubernetes").glob("*.yaml")))
     ).hexdigest()
     arch.write_text(arch.read_text().replace("SOURCE_COMMIT", source_commit).replace("TOPOLOGY_FINGERPRINT", topology))
-    subprocess.run(["git", "-C", str(workspace), "add", ".sdo"], check=True)
+    subprocess.run(host_git_command(workspace, "add", ".sdo"), check=True)
     subprocess.run(
-        [
-            "git",
-            "-C",
-            str(workspace),
+        host_git_command(
+            workspace,
             "-c",
             "user.name=toy",
             "-c",
@@ -204,15 +242,16 @@ def up(args: Any) -> int:
             "commit",
             "-qm",
             "feat: seed toy operational memory",
-        ],
+        ),
         check=True,
     )
     seed = subprocess.run(
-        ["git", "-C", str(workspace), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        host_git_command(workspace, "rev-parse", "HEAD"), check=True, capture_output=True, text=True
     ).stdout.strip()
     command(str(kubeconfig), "default", "create", "namespace", NAMESPACE)
-    command(str(kubeconfig), NAMESPACE, "apply", "-f", str(workspace / "kubernetes"))
-    command(str(kubeconfig), NAMESPACE, "rollout", "status", "deployment", "--timeout=60s")
+    with host_limits.admit("redeploy"):
+        apply_accepted_source(workspace, NAMESPACE, kubeconfig)
+        command(str(kubeconfig), NAMESPACE, "rollout", "status", "deployment", "--timeout=60s")
     env = FastloopEnvironment(
         run_dir=run_dir,
         app="toy",
@@ -227,7 +266,10 @@ def up(args: Any) -> int:
         seed_commit=seed,
         dev_mount=worktree,
         images=images,
-        worker_env={"FASTLOOP_TOY_IMAGE": image},
+        worker_env={
+            "FASTLOOP_TOY_IMAGE": image,
+            **host_limits.worker_env(),
+        },
     )
     from benchmarks.sregym.fastloop.image_delivery import delivery_state
 
@@ -272,8 +314,7 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     if environment.dev_mount is None:
         raise ValueError("toy controller requires a development mount")
-    os.environ["SDO_DEV_MOUNT"] = "1"
-    os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
+    environment.apply_operator_env(os.environ)
     if config is None:
         config = RuntimeConfig(
             repository=environment.workspace,
@@ -285,7 +326,7 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
             repository_pvc="sdo-application-repository",
             credentials_secret="sdo-agent-credentials",
             model="gpt-6-luna",
-            timeout_seconds=3600,
+            timeout_seconds=int(wait_for(WaitKind.RESPONSE, 2)),
             repair_policy="recorded-actions",
             persistent=True,
             kind_cluster_name=environment.cluster,
@@ -359,7 +400,8 @@ def record_controller(environment: FastloopEnvironment, config: Any) -> None:
 
 def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) -> None:
     """Require real detector evaluations and accepted-source adoption before reporting ready."""
-    deadline = time.monotonic() + 120
+    wait = float(os.environ.get("SDO_TOY_BASELINE_WAIT", str(wait_for(WaitKind.OPERATION))))
+    deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
         completed = subprocess.run(
             [
@@ -402,14 +444,58 @@ def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) ->
                     for item in pod.get("status", {}).get("conditions", [])
                 )
             ]
-            if len(ready) == 1 and baseline_ready(state, accepted_commit, ready[0]["metadata"]["creationTimestamp"]):
+            head = len(ready) == 1 and accepted_head(environment, ready[0]["metadata"]["name"], accepted_commit)
+            if head and baseline_ready(state, head, ready[0]["metadata"]["creationTimestamp"]):
                 break
         time.sleep(0.2)
     else:
-        raise RuntimeError("toy controller did not establish an adopted, clear baseline in 120s")
+        raise RuntimeError(f"toy controller did not establish an adopted, clear baseline in {wait:.0f}s")
 
 
-def baseline_ready(state: dict[str, Any], accepted_commit: str, observed_after: str | None = None) -> bool:
+def retire_control_state(environment: FastloopEnvironment, control: str) -> None:
+    """Stop the controller and discard every control-state record of the previous install."""
+    from benchmarks.sregym.adapter import reset_control_state, stop_runtime
+
+    kubeconfig = str(environment.kubeconfig)
+    stop_runtime(control, kubeconfig=kubeconfig)
+    receipt = reset_control_state(control, kubeconfig=kubeconfig)
+    names = command(kubeconfig, control, "get", "configmap", "-o", "name").split()
+    stale = [name for name in names if name.startswith("configmap/sdo-health-refresh-")]
+    if stale:
+        command(kubeconfig, control, "delete", *stale, "--ignore-not-found=true")
+    logger.info("Toy control state reset: %s", json.dumps({**receipt, "health_refresh": stale}, sort_keys=True))
+
+
+def accepted_head(environment: FastloopEnvironment, pod_name: str, install_commit: str) -> str | None:
+    """The controller's accepted HEAD if it contains the installed commit, else None.
+
+    Install runs the judge refresh, which commits health detectors on top of the installed commit; the
+    controller then serves and adopts that head, so adoption is judged against it, not the install commit.
+    """
+    try:
+        return (
+            command(
+                str(environment.kubeconfig),
+                environment.namespace + "-sdo",
+                "exec",
+                pod_name,
+                "-c",
+                "controller",
+                "--",
+                "sh",
+                "-c",
+                'git -C "$1" merge-base --is-ancestor "$2" HEAD && git -C "$1" rev-parse HEAD',
+                "sh",
+                CONTROLLER_REPOSITORY,
+                install_commit,
+            ).strip()
+            or None
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+
+
+def baseline_ready(state: dict[str, Any], accepted_head: str, observed_after: str | None = None) -> bool:
     """Closed historical firings do not invalidate a currently clear controller."""
     latest = {item["detector_id"]: item for item in state.get("history", [])}
     return bool(
@@ -426,5 +512,5 @@ def baseline_ready(state: dict[str, Any], accepted_commit: str, observed_after: 
             )
         )
         and all(item.get("status") == "clear" for item in latest.values())
-        and state.get("ownership_adoption", {}).get("source_commit") == accepted_commit
+        and state.get("ownership_adoption", {}).get("source_commit") == accepted_head
     )

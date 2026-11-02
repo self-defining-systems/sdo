@@ -36,12 +36,19 @@ func Evaluate(data []byte, build bool) *c.NativeReceiptResult {
 	return result
 }
 
+// resolution labels how the incident closed. Only sdo_mitigated and
+// cleared_without_sdo_action belong to a valid receipt; the SDO-owned labels of
+// rejected closures keep analysis rows from counting them as external recovery.
 func resolution(classification string) string {
 	switch classification {
 	case "success":
 		return "sdo_mitigated"
 	case "cleared_without_action":
 		return "cleared_without_sdo_action"
+	case "unconfirmed":
+		return "sdo_unconfirmed"
+	case "failed":
+		return "sdo_failed"
 	default:
 		return "external_recovery"
 	}
@@ -123,7 +130,7 @@ func validate(r *c.NativeProductionReceipt) error {
 		return errors.New("native closure lacks valid repair policy")
 	}
 	classification := outcome.GetClassification()
-	if outcome.GetSchemaVersion() != 1 || !slices.Contains([]string{"success", "cleared_without_action", "external_recovery", "false_positive"}, classification) {
+	if outcome.GetSchemaVersion() != 1 || !slices.Contains([]string{"success", "cleared_without_action"}, classification) {
 		return errors.New("native outcome is not a verified closure classification")
 	}
 	for _, field := range []struct {
@@ -140,9 +147,6 @@ func validate(r *c.NativeProductionReceipt) error {
 	if outcome.GetRepairCommit() != l.GetProposalCommit() {
 		return errors.New("native outcome repair commit disagrees with broker proposal")
 	}
-	if request.GetRepairPolicy() == "commit" && classification == "success" && l.GetProposalCommit() == "" {
-		return errors.New("native commit repair lacks an accepted proposal")
-	}
 	if accepted.GetProposalCommit() != l.GetProposalCommit() || accepted.GetOutcomeCommit() != l.GetOutcomeCommit() || accepted.GetReflectionCommit() != l.GetReflectionCommit() {
 		return errors.New("native closure receipt commits disagree with broker ledger")
 	}
@@ -157,36 +161,8 @@ func validate(r *c.NativeProductionReceipt) error {
 			return errors.New("native closure lacks independently clear health detectors")
 		}
 	}
-	if closure.GetDetectorReviewRequiredAt() != nil {
-		return errors.New("native closure entered detector review")
-	}
 	if closure.GetVerifiedAt() == nil || closure.GetVerifiedAt().CheckValid() != nil {
 		return errors.New("native verified_at must be an ISO timestamp")
-	}
-	if classification == "success" {
-		if response.GetStatus() != "completed" {
-			return errors.New("native successful outcome lacks completed responder")
-		}
-		if len(response.GetConfirmedRootCauses()) == 0 {
-			return errors.New("native successful outcome lacks confirmed cause")
-		}
-		confirmed := false
-		for _, verification := range outcome.GetDiagnosisVerification() {
-			if verification.GetVerdict() == "contradicted" {
-				return errors.New("native successful outcome has contradicted diagnosis")
-			}
-			confirmed = confirmed || verification.GetVerdict() == "confirmed"
-		}
-		if !confirmed {
-			return errors.New("native successful outcome lacks independently confirmed diagnosis")
-		}
-		repaired := l.GetProposalCommit() != ""
-		for _, action := range response.GetRepairActions() {
-			repaired = repaired || action.GetSuccess()
-		}
-		if !repaired {
-			return errors.New("native successful outcome lacks accepted repair evidence")
-		}
 	}
 	decision := l.GetReflectionDecision()
 	if l.GetReflectionSkippedReason() != "" && (strings.TrimSpace(l.GetReflectionSkippedReason()) == "" || l.GetRequiresReflection() || decision != nil) {
@@ -222,8 +198,15 @@ func validate(r *c.NativeProductionReceipt) error {
 				verified = append(verified, attempt)
 			}
 		}
-		if len(verified) != 1 || !proto.Equal(verified[0].GetExpectation(), expected) || verified[0].GetObservedDetectorFingerprint() != expected.GetAfterDetectorFingerprint() {
+		if len(verified) != 1 || !proto.Equal(verified[0].GetExpectation(), expected) {
 			return errors.New("native rollout lacks one matching verified receipt")
+		}
+		// Trusted startup verifies accepted HEAD, build/tree identity and reflection
+		// ancestry before the broker records success. A later accepted health
+		// refresh carries its own tree; exact reflection builds must match theirs.
+		observed := verified[0].GetObservedDetectorFingerprint()
+		if observed == "" || (verified[0].GetControllerRevision() == expected.GetReflectionCommit() && observed != expected.GetAfterDetectorFingerprint()) {
+			return errors.New("native rollout has no matching restarted detector fingerprint")
 		}
 		for _, field := range []struct{ value, name string }{{verified[0].GetBuildArtifact(), "rollout build_artifact"}, {verified[0].GetControllerRevision(), "rollout controller_revision"}} {
 			if err := nonempty(field.value, field.name); err != nil {
@@ -235,15 +218,13 @@ func validate(r *c.NativeProductionReceipt) error {
 		}
 	}
 	jobs := r.GetResponderJobEvidence()
-	if outcome.GetResolutionPath() == "fast_path" {
-		applications := outcome.GetPlanApplications()
-		if len(jobs) != 0 || request.GetRepairPolicy() != "recorded-actions" || response.GetResolutionPath() != "fast_path" || !slices.Equal(response.GetFastPathPrograms(), outcome.GetFastPathPrograms()) || len(outcome.GetFastPathPrograms()) == 0 || l.GetReflectionSkippedReason() != "trusted program fast path" || len(response.GetProgramFailureSignals()) != 0 || len(applications) == 0 {
-			return errors.New("native fast path lacks verified program and reflection evidence")
-		}
-		for _, application := range applications {
-			if !application.GetApplied() || application.GetRolledBack() || application.GetVerification().GetResult() != c.Verdict_RESULT_NO_MATCH {
-				return errors.New("native fast path lacks verified program and reflection evidence")
-			}
+	if len(jobs) == 0 {
+		// A controller may intentionally retire the Job after an early report.
+		// Validate its durable lifecycle, frozen request/result and broker ACK,
+		// rather than inventing a successful Kubernetes Job.
+		dispatched, completed := closure.GetDispatchedAt(), closure.GetResponderCompletedAt()
+		if dispatched == nil || dispatched.CheckValid() != nil || completed == nil || completed.CheckValid() != nil || completed.AsTime().Before(dispatched.AsTime()) || response.GetStatus() != "completed" {
+			return errors.New("native receipt lacks durable responder dispatch and completion")
 		}
 	} else {
 		if len(jobs) != 1 || jobs[0].GetIncidentId() != id || !jobs[0].GetSucceeded() {

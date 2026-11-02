@@ -1,0 +1,35 @@
+[
+  {
+    "apiVersion": "apps/v1",
+    "kind": "Deployment",
+    "metadata": {
+      "namespace": "demo",
+      "name": "geo",
+      "uid": "geo-deployment",
+      "resourceVersion": "1"
+    },
+    "spec": {
+      "replicas": 1,
+      "selector": {
+        "matchLabels": {
+          "app": "geo"
+        }
+      },
+      "template": {
+        "metadata": {
+          "labels": {
+            "app": "geo"
+          }
+        },
+        "spec": {
+          "containers": [
+            {
+              "name": "geo",
+              "image": "geo:synthetic"
+            }
+          ]
+        }
+      }
+    }
+  }
+]

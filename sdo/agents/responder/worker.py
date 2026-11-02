@@ -13,9 +13,13 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 from google.protobuf import json_format
 
+from libs.agent_cli.errors import rate_limit_failure
+from libs.agent_cli.startup import mark_startup
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
-from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
+from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
+from sdo.agents.responder.standby import await_standby_claim
+from sdo.agents.responder.termination import record_worker_failure, records_worker_failure
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -105,7 +109,26 @@ def run_worker_task(
     kubeconfig = write_application_kubeconfig(request.namespace)
     if kubeconfig is not None:
         os.environ["KUBECONFIG"] = str(kubeconfig)
-    result = executor(request)
+    if alias := os.environ.pop("SDO_WORKSPACE_ALIAS", None):
+        request.repository_worktree = alias
+    mark_startup("worker_ready")
+    os.environ["SDO_RESPONDER_TASK_ID"] = task.task_id
+    try:
+        result = executor(request)
+    except RuntimeError as exc:
+        limited = rate_limit_failure(exc)
+        if limited is None:
+            raise
+        envelope = AgentResult(
+            schema_version=SCHEMA_VERSION,
+            task_id=task.task_id,
+            status="failed",
+            proposal_id=task.workspace.proposal_id,
+            failure_reason=limited.failure_reason,
+            error_summary=str(limited),
+        )
+        publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(envelope))
+        return envelope
     if result.incident_id != request.incident_id:
         raise ResponderExecutionError("responder result incident_id does not match request")
     for playbook in result.applied_playbooks:
@@ -127,15 +150,18 @@ def run_worker_task(
     return envelope
 
 
+@records_worker_failure
 def main() -> int:
+    await_standby_claim()
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
     if not namespace or not result_name:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
+        record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
-        prepare_codex_home(skills=AGENT_SKILLS["responder"])
-        prepare_claude_home(skills=AGENT_SKILLS["responder"])
+        prepare_codex_home(skills=skills_for_role("responder"))
+        prepare_claude_home(skills=skills_for_role("responder"))
         run_worker_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,
@@ -143,6 +169,7 @@ def main() -> int:
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
+        record_worker_failure(exc)
         return 1
     return 0
 

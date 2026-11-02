@@ -12,6 +12,8 @@ import (
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/operatorcli/internal/processio"
 )
 
 // OperateConfig is the typed, in-cluster bootstrap launch contract. The
@@ -33,6 +35,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 		return OperateConfig{}, errors.New("expected operate subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator operate", flag.ContinueOnError)
+	codePathName := flags.String("code-path", processio.Environment("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
+	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	flags.SetOutput(io.Discard)
 	app := flags.String("app", "", "accepted application checkout")
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "installed operator modules")
@@ -44,6 +48,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
+	scriptImage := flags.String("script-image", "", "fixed slim RunScript tool image")
 	buildkitImage := flags.String("buildkit-image", "", "isolated source image builder")
 	registryPushSecret := flags.String("registry-push-secret", "", "image registry credentials Secret")
 	registryHost := flags.String("registry-host", "", "trusted source image registry host[:port]")
@@ -52,6 +57,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	model := flags.String("model", "", "agent model")
 	provider := flags.String("agent-provider", "codex", "agent provider")
+	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
+	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
 	worktreeRoot := flags.String("worktree-root", "", "broker proposal and ledger root")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "read-only agent registration ConfigMap")
@@ -60,19 +67,17 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
-	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
+	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
-	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
-	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
-	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-	driftTokensPerHour := registerDriftTokenBudget(flags)
-	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
+	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "independent verification timeout")
+	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
+	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
+	var responderNamespaces repeatable
+	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	disableObservability := flags.Bool("no-observability-stack", false, "Do not install the SDO Prometheus stack")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
@@ -80,6 +85,11 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	if err := flags.Parse(args[1:]); err != nil {
 		return OperateConfig{}, err
+	}
+
+	menuEnabled, menuErr := responderMenuEnabled()
+	if menuErr != nil {
+		return OperateConfig{}, menuErr
 	}
 	if flags.NArg() != 0 {
 		return OperateConfig{}, fmt.Errorf("unexpected operate arguments: %v", flags.Args())
@@ -115,12 +125,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if *reflectionGuidance != "baseline" && *reflectionGuidance != "generalize" && *reflectionGuidance != "generalize-spec" {
 		return OperateConfig{}, fmt.Errorf("unsupported reflection guidance %q", *reflectionGuidance)
 	}
-	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown < time.Second || *followUpCooldown%time.Second != 0 {
-		return OperateConfig{}, errors.New("follow-up limit must be at most 1000 and cooldown positive whole seconds")
-	}
-	if err := validateDriftTokenBudget(*driftTokensPerHour); err != nil {
-		return OperateConfig{}, err
-	}
 	if !strings.Contains(*buildkitImage, "@sha256:") || *registryPushSecret == *credentialsSecret {
 		return OperateConfig{}, errors.New("operate requires a digest-pinned BuildKit image and separate registry push Secret")
 	}
@@ -152,6 +156,14 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if control == "" {
 		control = *namespace
 	}
+	ceiling, err := observation.CeilingFromEnvironment()
+	if err != nil {
+		return OperateConfig{}, err
+	}
+	selectedCodePath, err := parseCodePathSelection(*codePathName, *codePathOverrides)
+	if err != nil {
+		return OperateConfig{}, err
+	}
 	config := OperateConfig{
 		Lifecycle: lifecycle.Config{
 			OperationID: *operationID, Application: *application, Namespace: *namespace,
@@ -160,17 +172,18 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			MaxAttempts:  *maxAttempts,
 		},
 		Install: install.Config{
-			Namespace: *namespace, ControlNamespace: control, Application: *application,
+			CodePath:           selectedCodePath,
+			ResponderMenu:      menuEnabled,
+			ObservationCeiling: ceiling,
+			Namespace:          *namespace, ControlNamespace: control, Application: *application,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
-			RepositoryPVC:     *repositoryPVC,
-			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider,
-			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, DisableObservability: *disableObservability, MetricsURL: *metricsURL,
+			ScriptImage: *scriptImage, DisableObservability: *disableObservability, RepositoryPVC: *repositoryPVC,
+			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
+			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
-			MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
-			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
-			DriftTokensPerHour: *driftTokensPerHour,
-			TimeoutSeconds:     int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
+			MaxResponseLoops: *maxResponseLoops,
+			TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
 			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 			ReuseExisting:         true,
 			RegistrationConfigMap: *registrationConfigMap, RegistrationDirectory: *registrations,

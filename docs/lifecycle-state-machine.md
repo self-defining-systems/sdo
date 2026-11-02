@@ -8,9 +8,8 @@ breaking format change; old phase strings require an operational cutover.
 
 ## States, events and effects
 
-Responder dispatch phases: unspecified/idle, admission deferred, workspace
-pending/running, pending/running, completed. Admission holds the incident's
-identity and findings. Workspace preparation and responder dispatch are separate
+Responder dispatch phases: unspecified/idle, workspace
+pending/running, pending/running, completed. Workspace preparation and responder dispatch are separate
 effects. Completion retains results for independent verification; timeout is a
 typed worker outcome, while API/transport failure rejoins the same worker.
 Successful verification freezes the closure.
@@ -22,7 +21,7 @@ reflection. Validation rejection may dispatch a bounded correction;
 infrastructure failure retries the same work. A committed closure waits for any
 required controller rollout before acknowledgment and worktree release.
 
-Events: incident opened, admission reassessed, workspace prepared/rejected,
+Events: incident opened, workspace prepared/rejected,
 responder completed/timed out, detector observation, verification elapsed,
 closure frozen, reflection result, format result, validator accepted/rejected,
 broker accepted/rejected, acknowledgment result, API fault, leadership loss,
@@ -114,7 +113,7 @@ enforcement remains follow-up work.
 | Late findings | Report selection, digest/correlation rules and pull-budget transitions | HTTP transport, snapshot observation and report persistence |
 | Runtime controller | Scheduling, batching, incident/closure transitions and deadline calculation | Kubernetes caches/Jobs/ConfigMaps, timers, telemetry, leader election; lifecycle persistence is already `runtime/internal/lifecycleio` |
 | Response stages (deterministic, agent) | Stage order, attempt skip reasons, write-once per binding and restart re-observation | Host plan RPCs, action application, live snapshots and tool-state storage |
-| Program learning / fast path | Trust credit, revision binding, match eligibility, one-attempt and verification transitions | Live snapshots, action application/rollback, capture replay and attempt-marker storage |
+| Program learning / coverage | Informational success/failure counts, revision binding and deterministic finding coverage | Live diagnosis snapshots, responder-selected actions, explicit rollback and capture replay |
 
 Each core accepts plain events and returns decisions/effects. Other subsystems
 send events through its driver. Internal visibility prevents outsiders importing

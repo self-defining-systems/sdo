@@ -73,7 +73,7 @@ import math
 import re
 import sys
 from dataclasses import asdict, dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +81,9 @@ from agentshim import ModelPricing, PricingTable, TokenWeights, cost_usd, defaul
 from agentshim import TokenUsage as NormalizedUsage
 from agentshim.providers.claude import ClaudeStreamParser
 
+from benchmarks.sregym.analysis.claude_cost import reconcile_claude_row
 from benchmarks.sregym.detector_manifests import workspace_detector_manifests
+from benchmarks.sregym.protocol.provider_capacity import ProviderWaitEvidence, read_provider_waits, wait_seconds_between
 
 
 def incident_worktree_dirname(incident_id: str) -> str:
@@ -107,6 +109,29 @@ _STAGE_DIR = re.compile(r"^stage_(\d+)_(.+)$")
 
 class IncidentCostError(ValueError):
     """Raised when a result directory lacks the evidence this analysis needs."""
+
+
+class UnreadableUsageError(IncidentCostError):
+    """Raised when a usage record names a token count that is not a whole number."""
+
+
+def _read_count(name: str, value: object) -> int | None:
+    """One reported count: a number or a numeric string (ProtoJSON int64); ``None`` when absent.
+
+    A present value that is not a whole number raises rather than reading as 0,
+    because a zero count prices the usage at $0.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise UnreadableUsageError(f"{name} must be a whole number, got {value!r}")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"\s*-?[0-9]+(\.0+)?\s*", value):
+        return int(float(value)) if "." in value else int(value)
+    raise UnreadableUsageError(f"{name} must be a whole number, got {value!r}")
 
 
 @dataclass(frozen=True)
@@ -151,17 +176,18 @@ class TokenUsage:
         if not isinstance(usage, dict):
             return cls()
         # Native receipts use ProtoJSON, which encodes int64 counts as decimal
-        # strings. agentshim's mapping reader only accepts numeric values.
+        # strings; agentshim's mapping reader silently reads those as 0. This
+        # is the one place a reported count becomes a number.
         usage = dict(usage)
-        for name in (*_COUNT_FIELDS, "cache_read_input_tokens", "model_requests"):
-            value = usage.get(name)
-            if isinstance(value, str) and re.fullmatch(r"-?[0-9]+", value):
-                usage[name] = int(value)
-        requests = usage.get("model_requests")
-        return cls.from_normalized(
-            NormalizedUsage.from_dict(usage),
-            requests=requests if isinstance(requests, int) and not isinstance(requests, bool) else None,
-        )
+        for name in (*_COUNT_FIELDS, "cache_read_input_tokens"):
+            count = _read_count(name, usage.get(name))
+            if count is not None:
+                usage[name] = count
+        try:
+            requests = _read_count("model_requests", usage.get("model_requests"))
+        except UnreadableUsageError:
+            requests = None
+        return cls.from_normalized(NormalizedUsage.from_dict(usage), requests=requests)
 
     @classmethod
     def from_normalized(cls, tokens: NormalizedUsage, *, requests: int | None = None) -> TokenUsage:
@@ -339,6 +365,25 @@ class UsageSummary:
         )
 
 
+def reported_usd(usage: object, pricing: ArmPricing) -> float | None:
+    """The USD of one recorded usage, ``None`` (unknown, never 0) when it cannot be priced.
+
+    Unknown means: no usage mapping, no input or output count in it, a count
+    that is not a whole number, or a model the price table does not list.
+    """
+    if not isinstance(usage, dict) or not any(key in usage for key in ("input_tokens", "output_tokens")):
+        return None
+    try:
+        return UsageSummary.of(TokenUsage.from_mapping(usage), pricing).usd
+    except UnreadableUsageError:
+        return None
+
+
+def format_usd(value: float | None) -> str:
+    """A USD amount for a report line: four decimals, ``unknown`` for ``None``."""
+    return "unknown" if value is None else f"{value:.4f}"
+
+
 @dataclass(frozen=True)
 class Verdict:
     """Harness grading of one problem run and its agent-neutral timing."""
@@ -355,6 +400,16 @@ class Verdict:
     diagnosis_seconds: float | None = None
     #: Injection until the agent's last state-changing command before its mitigation POST completed.
     last_mitigation_seconds: float | None = None
+
+    faults_total: int | None = None
+    faults_fixed: int | None = None
+    faults_diagnosed: int | None = None
+    composite_valid: bool | None = None
+    per_fault_details: dict[str, str | None] = field(default_factory=dict)
+    rate_limit_wait_seconds: float = 0.0
+    concurrency_wait_seconds: float = 0.0
+    provider_wait_seconds: float = 0.0
+    provider_wait_before_last_mitigation_seconds: float = 0.0
 
     @property
     def passed(self) -> bool:
@@ -380,9 +435,10 @@ class Verdict:
         excluded = self.judge_excluded_seconds
         if excluded is None:
             return None
+        excluded = max(0.0, excluded - self.provider_wait_seconds)
         if self.last_mitigation_seconds is None:
             return excluded
-        return max(excluded, self.last_mitigation_seconds)
+        return max(excluded, self.last_mitigation_seconds - self.provider_wait_before_last_mitigation_seconds)
 
 
 @dataclass(frozen=True)
@@ -416,6 +472,10 @@ class SdoStage:
     reflection_summary: UsageSummary | None = None
     #: The problem run's results directory (what the validity checker classifies).
     source: str = ""
+    reflection_no_repair_count: int | None = None
+    no_repair_declined: bool | None = None
+    cost_complete: bool | None = None
+    claude_accounting: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -529,6 +589,13 @@ def read_result_row(results_dir: Path) -> dict[str, str | None] | None:
     return None
 
 
+def _integer(value: str | None) -> int | None:
+    try:
+        return int(value) if value is not None and value.strip() else None
+    except ValueError:
+        return None
+
+
 def read_verdict(results_dir: Path) -> Verdict | None:
     """Read the last row of the problem run's ``*_ALL_results.csv`` (or any results CSV)."""
 
@@ -551,12 +618,20 @@ def read_verdict(results_dir: Path) -> Verdict | None:
         # defer_diagnosis_grading opens the mitigation stage at the diagnosis POST and grades
         # it in the background, so the mitigation POST never waits on the judge.
         grading_wait = 0.0
-    return Verdict(
-        diagnosis=_truthy(row.get("Diagnosis.success")),
-        mitigation=_truthy(row.get("Mitigation.success")),
-        raw_incl_judge_seconds=raw,
-        grading_wait_seconds=grading_wait,
-        diagnosis_seconds=diagnosed - injected if injected is not None and diagnosed is not None else None,
+    return with_provider_waits(
+        Verdict(
+            diagnosis=_truthy(row.get("Diagnosis.success")),
+            mitigation=_truthy(row.get("Mitigation.success")),
+            raw_incl_judge_seconds=raw,
+            grading_wait_seconds=grading_wait,
+            diagnosis_seconds=diagnosed - injected if injected is not None and diagnosed is not None else None,
+            faults_total=_integer(row.get("Mitigation.faults_total") or row.get("Diagnosis.faults_total")),
+            faults_fixed=_integer(row.get("Mitigation.faults_fixed")),
+            faults_diagnosed=_integer(row.get("Diagnosis.faults_diagnosed")),
+            composite_valid=_truthy(row.get("Injection.composite_valid") or row.get("Mitigation.composite_valid")),
+            per_fault_details={key: value for key, value in row.items() if ".fault_" in key},
+        ),
+        results_dir,
     )
 
 
@@ -748,13 +823,57 @@ def with_mitigation_applied(verdict: Verdict, results_dir: Path, rollouts: list[
     injected = _float(row.get("fault_injected_at"))
     submitted = _float(row.get("mitigation_submitted_at"))
     if injected is None or not rollouts:
-        return verdict
+        return with_provider_waits(verdict, results_dir)
     applied = first_mutation_at(rollouts, after=injected)
     last = last_mutation_done_at(rollouts, after=injected, before=submitted) if submitted is not None else None
+    return with_provider_waits(
+        replace(
+            verdict,
+            mitigation_applied_seconds=applied - injected if applied is not None else None,
+            last_mitigation_seconds=last - injected if last is not None else None,
+        ),
+        results_dir,
+    )
+
+
+def with_provider_waits(
+    verdict: Verdict,
+    results_dir: Path,
+    *,
+    evidence: ProviderWaitEvidence | None = None,
+) -> Verdict:
+    """Exclude the union of provider and judge waits, retaining the raw clock."""
+    row = read_result_row(results_dir) or {}
+    injected = _float(row.get("fault_injected_at"))
+    submitted = _float(row.get("mitigation_submitted_at"))
+    if injected is None or submitted is None:
+        return verdict
+    start, end = datetime.fromtimestamp(injected, timezone.utc), datetime.fromtimestamp(submitted, timezone.utc)
+    incident_id: str | None = None
+    resolutions = sorted(results_dir.rglob(RESOLUTION_NAME))
+    if resolutions:
+        record = json.loads(resolutions[-1].read_text(encoding="utf-8"))
+        incident_id = record.get("incident_id")
+    waits = (evidence or read_provider_waits(results_dir, incident_id=incident_id)).intervals
+    excluded = wait_seconds_between(waits, start, end)
+    diagnosed, ttl = _float(row.get("diagnosis_submitted_at")), _float(row.get("TTL"))
+    if diagnosed is not None and ttl is not None and verdict.grading_wait_seconds:
+        excluded -= wait_seconds_between(
+            waits,
+            max(start, datetime.fromtimestamp(diagnosed, timezone.utc)),
+            min(end, datetime.fromtimestamp(injected + ttl, timezone.utc)),
+        )
+    floor_end = (
+        datetime.fromtimestamp(injected + verdict.last_mitigation_seconds, timezone.utc)
+        if verdict.last_mitigation_seconds is not None
+        else None
+    )
     return replace(
         verdict,
-        mitigation_applied_seconds=applied - injected if applied is not None else None,
-        last_mitigation_seconds=last - injected if last is not None else None,
+        provider_wait_seconds=max(0.0, excluded),
+        rate_limit_wait_seconds=wait_seconds_between(waits, start, end, kind="rate_limit"),
+        concurrency_wait_seconds=wait_seconds_between(waits, start, end, kind="concurrency"),
+        provider_wait_before_last_mitigation_seconds=wait_seconds_between(waits, start, floor_end),
     )
 
 
@@ -784,6 +903,8 @@ def _sum_usage_jsonl(paths: list[Path], *, incident_id: str | None = None) -> tu
             if not line.strip():
                 continue
             record = json.loads(line)
+            if record.get("schema_version") == "sdo.provider-wait/v1":
+                continue
             if worktree is not None and Path(str(record.get("cwd") or "")).name != worktree:
                 continue
             usage = usage + TokenUsage.from_mapping(record.get("usage"))
@@ -818,8 +939,56 @@ def rollout_turn_usages(rollouts: list[Path]) -> list[TokenUsage]:
     return turns
 
 
+@dataclass(frozen=True)
+class LoggedReflectionCost:
+    """Every reflection turn of one incident: summed usage, turn count and provider session IDs."""
+
+    usage: TokenUsage
+    turns: int
+    session_ids: tuple[str, ...]
+    cost_usd: float | None
+
+
+def incident_session_dirname(incident_id: str) -> str:
+    return hashlib.sha256(incident_id.encode()).hexdigest()[:32]
+
+
+def logged_reflection_cost(run_dir: Path, incident_id: str) -> LoggedReflectionCost | None:
+    """Sum the incident's own reflection usage log under *run_dir*; ``None`` when it was not exported."""
+
+    name = f"sdo_runtime/sessions/{incident_session_dirname(incident_id)}/reflection-usage.jsonl"
+    # Several exports of one run (stage-end snapshots) hold prefixes of the same append-only log.
+    logs = sorted(run_dir.rglob(name), key=lambda path: path.stat().st_size)
+    if not logs:
+        return None
+    log = logs[-1]
+    usage = TokenUsage()
+    turns = 0
+    sessions: list[str] = []
+    cost: float | None = 0.0
+    for line in log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        turns += 1
+        usage = usage + TokenUsage.from_mapping(record.get("usage"))
+        session = record.get("session_id")
+        if isinstance(session, str) and session and session not in sessions:
+            sessions.append(session)
+        turn_cost = record.get("cost_usd")
+        cost = cost + float(turn_cost) if cost is not None and isinstance(turn_cost, (int, float)) else None
+    return LoggedReflectionCost(usage, turns, tuple(sessions), None if cost is None else round(cost, 9))
+
+
+def _raw_total(usage: TokenUsage) -> int:
+    return usage.input_tokens + usage.output_tokens
+
+
 def _reflection_usage(
-    receipt: dict[str, Any], responder_rollouts: list[Path], own_rollouts: list[Path] | None = None
+    receipt: dict[str, Any],
+    responder_rollouts: list[Path],
+    own_rollouts: list[Path] | None = None,
+    logged: LoggedReflectionCost | None = None,
 ) -> TokenUsage:
     """The reflection's own tokens, from rollouts where they were exported.
 
@@ -830,6 +999,11 @@ def _reflection_usage(
     read from those sessions' rollouts (*own_rollouts*), which also carry the
     reasoning and request counts older receipts lack. Without rollouts, the
     receipt's ``reflection_usage`` is used.
+
+    The incident's own usage log (*logged*) records every reflection turn,
+    failed and retried ones included, so no source may total less than it:
+    receipts written before the outcome record summed kept only the last turn,
+    and a turn that failed leaves no complete rollout turn.
     """
 
     ledger = receipt.get("native_ledger")
@@ -837,14 +1011,18 @@ def _reflection_usage(
     native_usage = decision.get("usage") if isinstance(decision, dict) else None
     recorded = TokenUsage.from_mapping(receipt.get("reflection_usage") or native_usage)
     own = [turn for turn in rollout_turn_usages(own_rollouts or []) if turn.input_tokens]
+    measured: TokenUsage | None = None
     if receipt.get("reflection_session_mode") == "resume":
         shared = rollout_turn_usages(responder_rollouts)
-        if len(shared) < 2:
-            return recorded
-        return sum([*shared[1:], *own], TokenUsage())
-    if own:
-        return sum(own, TokenUsage())
-    return recorded
+        if len(shared) >= 2:
+            measured = sum([*shared[1:], *own], TokenUsage())
+    elif own:
+        measured = sum(own, TokenUsage())
+    # A resumed receipt's recorded usage is session-cumulative, so it competes only when nothing was measured.
+    candidate = measured if measured is not None else recorded
+    if logged is not None and _raw_total(logged.usage) > _raw_total(candidate):
+        return logged.usage
+    return candidate
 
 
 def _usage_session_ids(paths: list[Path], *, incident_id: str | None = None) -> list[str]:
@@ -1016,6 +1194,17 @@ def _stage_end_record(results: Path) -> dict[str, Any]:
     return {key: record[key] for key in keys if key in record} if isinstance(record, dict) else {}
 
 
+def _no_repair_metrics(receipt: dict[str, Any]) -> tuple[int | None, bool | None]:
+    ledger = receipt.get("native_ledger")
+    if not isinstance(ledger, dict):
+        return None, None
+    count = ledger.get("reflection_no_repair_count")
+    if type(count) is not int or count < 0:
+        return None, None
+    decision = ledger.get("reflection_decision")
+    return count, isinstance(decision, dict) and decision.get("decline_reason") == "no_recorded_repair"
+
+
 def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
     stages: list[SdoStage] = []
     for index, name, stage_dir in pipeline_stage_dirs(pipeline_dir):
@@ -1045,6 +1234,15 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
             verdict = with_mitigation_applied(
                 read_verdict(results) or Verdict(None, None, None), results, own_responder_rollouts
             )
+            accounting: dict[str, Any] | None = None
+            if provider == "claude" and scoped_incident:
+                accounting = {
+                    "provider": provider,
+                    "model": model,
+                    "incident_id": scoped_incident,
+                    "results": str(results),
+                }
+                reconcile_claude_row(accounting)
             stages.append(
                 SdoStage(
                     index=index,
@@ -1052,10 +1250,25 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
                     problem_id=problem_id,
                     verdict=verdict,
                     incident_resolution_seconds=_float(receipt.get("incident_resolution_seconds")),
-                    responder=_responder_usage(receipt, own_responder_rollouts),
-                    reflection=_reflection_usage(receipt, own_responder_rollouts, reflection_rollouts),
+                    responder=(
+                        TokenUsage.from_mapping(accounting["responder_usage"]["tokens"])
+                        if accounting is not None
+                        else _responder_usage(receipt, own_responder_rollouts)
+                    ),
+                    reflection=(
+                        TokenUsage.from_mapping(accounting["reflection_usage"]["tokens"])
+                        if accounting is not None
+                        else _reflection_usage(
+                            receipt,
+                            own_responder_rollouts,
+                            reflection_rollouts,
+                            logged_reflection_cost(results, scoped_incident) if scoped_incident else None,
+                        )
+                    ),
                     reflection_attempts=receipt.get("reflection_attempts"),
                     reflection_skipped_reason=receipt.get("reflection_skipped_reason"),
+                    reflection_no_repair_count=_no_repair_metrics(receipt)[0],
+                    no_repair_declined=_no_repair_metrics(receipt)[1],
                     learning_seconds=_float(phases.get("post_recovery_learning_and_receipt")),
                     reflection_turn_seconds=reflection_seconds,
                     warm_path=reuse.get("warm_path") if reuse else None,
@@ -1066,6 +1279,8 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
                     provider=provider,
                     model=model,
                     source=str(results),
+                    cost_complete=accounting["cost_complete"] if accounting is not None else None,
+                    claude_accounting=accounting,
                 )
             )
     return stages
@@ -1248,6 +1463,18 @@ def _running(total: float | None, value: float | None) -> float | None:
     return total + value if total is not None and value is not None else None
 
 
+def _stage_summary(stage: SdoStage, role: str, pricing: ArmPricing) -> UsageSummary:
+    summary = UsageSummary.of(stage.responder if role == "responder" else stage.reflection, pricing)
+    if stage.claude_accounting is None:
+        return summary
+    captured = stage.claude_accounting[role + "_usage"]
+    dollars = captured.get("usd") if captured.get("usd_complete") else None
+    weighted = summary.weighted_tokens
+    if captured.get("cache_write_ttl_complete") is False:
+        weighted = dollars * 1e6 / pricing.entry.input_usd if dollars is not None and pricing.entry else None
+    return replace(summary, usd=dollars, weighted_tokens=weighted)
+
+
 def build_report(
     stages: list[SdoStage],
     codex_runs: list[CodexRun],
@@ -1271,8 +1498,8 @@ def build_report(
         priced.append(
             replace(
                 stage,
-                responder_summary=UsageSummary.of(stage.responder, arm),
-                reflection_summary=UsageSummary.of(stage.reflection, arm),
+                responder_summary=_stage_summary(stage, "responder", arm),
+                reflection_summary=_stage_summary(stage, "reflection", arm),
             )
         )
     stages = priced
@@ -1520,6 +1747,8 @@ def render(report: Report) -> str:
                 _fmt_num(stage.responder.total(uncached=uncached)),
                 _fmt_num(stage.reflection.total(uncached=uncached)),
                 "skipped" if stage.reflection_skipped_reason else _fmt_num(stage.reflection_attempts),
+                _fmt_num(stage.reflection_no_repair_count),
+                _fmt_bool(stage.no_repair_declined),
                 _fmt_num(stage.learning_seconds, 1),
                 _fmt_num(stage.reflection_turn_seconds, 1),
                 _fmt_bool(stage.warm_path),
@@ -1547,6 +1776,8 @@ def render(report: Report) -> str:
                 "responder_tok",
                 "reflection_tok",
                 "refl",
+                "no_repair",
+                "no_repair_declined",
                 "learning_s",
                 "refl_turn_s",
                 "warm_path",

@@ -48,6 +48,19 @@ func healthObjectiveOnly(kind layout.Kind, id string) bool {
 // long-standing behavior and docs/architecture.md's ownership matrix. The
 // judge and reflection both edit final files and use this shared ownership policy.
 var grants = []grant{
+	{actor: Human, phase: ImportPhase, kinds: []layout.Kind{
+		layout.KindIncidentDetectorManifest, layout.KindIncidentDetectorSource,
+		layout.KindPlaybookIndex, layout.KindPlaybook, layout.KindPlaybookScript,
+		layout.KindPlaybookProgram, layout.KindLibrary, layout.KindCorpus,
+	}, only: func(kind layout.Kind, id string) bool {
+		switch kind {
+		case layout.KindPlaybook, layout.KindPlaybookProgram:
+			return id != layout.HealthObjectivePlaybook
+		case layout.KindPlaybookScript:
+			return !strings.HasPrefix(id, layout.HealthObjectivePlaybook+"/")
+		}
+		return true
+	}},
 	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{kindSource}},
 	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{kindSource}},
 
@@ -75,7 +88,7 @@ func knownActor(a Actor) bool {
 
 func knownPhase(p Phase) bool {
 	switch p {
-	case ProposalPhase, ReflectionPhase, InitialPhase, OutcomePhase:
+	case ProposalPhase, ReflectionPhase, InitialPhase, OutcomePhase, ImportPhase:
 		return true
 	}
 	return false
@@ -133,7 +146,7 @@ func (s *run) ownership(ctx context.Context) error {
 		kind, id := kindSource, ""
 		if layout.IsMemoryPath(p) {
 			var ok bool
-			if kind, id, ok = layout.Classify(p); !ok {
+			if kind, id, ok = s.req.classify(p); !ok {
 				s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s cannot change an unclassified path", actor), Hint: "only paths in the operational-memory layout can be changed"})
 				continue
 			}
@@ -148,10 +161,10 @@ func (s *run) ownership(ctx context.Context) error {
 func (s *run) ownershipPolicy(ctx context.Context) error {
 	actor, phase := s.req.Actor, s.req.Phase
 	manifests := changesManifests(s.changed)
-	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) {
+	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
 		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests"})
 	}
-	needsBase := (actor == Responder || actor == HealthJudge) && manifests
+	needsBase := (actor == Responder || actor == HealthJudge || actor == Human && phase == ImportPhase) && manifests
 	if !needsBase {
 		return nil
 	}
@@ -237,10 +250,10 @@ func (s *run) detectorOwnership(base string) error {
 		case !existed && det.class == protected:
 			deny(RuleProtectedDetector, det.manifestAt, fmt.Sprintf("actor %s added protected %s detector %s", actor, protected, det.id))
 		}
-		if existed && actor == Responder && prior.DetectorClass() == layout.ClassIncident && (prior.OriginatingIncident != current.OriginatingIncident || prior.OriginatingCommit != current.OriginatingCommit) {
+		if existed && (actor == Responder || actor == Human) && prior.DetectorClass() == layout.ClassIncident && (prior.OriginatingIncident != current.OriginatingIncident || prior.OriginatingCommit != current.OriginatingCommit) {
 			deny(RuleProvenanceRewrite, det.manifestAt, fmt.Sprintf("responder rewrote detector %s provenance", det.id))
 		}
-		if actor == Responder && det.class == layout.ClassIncident && (!existed || !reflect.DeepEqual(prior, current)) && current.Persistence.Firing != 1 {
+		if (actor == Responder || actor == Human) && det.class == layout.ClassIncident && (!existed || !reflect.DeepEqual(prior, current)) && current.Persistence.Firing != 1 {
 			deny(RuleResponderFiring, det.manifestAt, fmt.Sprintf("new or changed incident detector %s must fire on first match (persistence.firing: 1)", det.id))
 		}
 	}

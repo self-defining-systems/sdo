@@ -4,10 +4,11 @@ package runtime
 
 import (
 	"context"
-	"k8s.io/client-go/kubernetes/fake"
 	"path/filepath"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"testing"
+
+	"k8s.io/client-go/kubernetes/fake"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
@@ -27,5 +28,8 @@ func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
 	}
 	if native.Repository == nil || native.Deriver == nil || native.ResponderBackend != "codex" {
 		t.Fatalf("incomplete native broker: %+v", native)
+	}
+	if deriver, ok := native.Deriver.(ProtoOutcomeDeriver); !ok || deriver.SessionRoot != config.GetRepositoryMountPath() {
+		t.Fatal("production outcome derivation must retain the protected incident API history")
 	}
 }

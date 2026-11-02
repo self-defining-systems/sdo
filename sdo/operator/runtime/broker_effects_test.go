@@ -84,13 +84,6 @@ func (b *recordingIncidentBroker) AcknowledgeClosure(_ context.Context, receipt 
 	return nil
 }
 
-func (b *recordingIncidentBroker) ReleaseIncident(_ context.Context, incidentID string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.operations = append(b.operations, "release:"+incidentID)
-	return nil
-}
-
 func (b *recordingIncidentBroker) calls() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -172,7 +165,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 	start := time.Unix(0, 0)
 	controller, err := NewController(
 		testControllerConfig(),
-		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))},
+		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault")), controllerDetector("health", time.Second, sdk.Finding{})},
 		staticProvider{snapshot: sdktest.Snapshot{}},
 		&recordingDispatcher{requests: make(chan IncidentRequest, 1)},
 		start,
@@ -216,7 +209,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 
 	restored, err := NewController(
 		testControllerConfig(),
-		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))},
+		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault")), controllerDetector("health", time.Second, sdk.Finding{})},
 		staticProvider{snapshot: sdktest.Snapshot{}},
 		&recordingDispatcher{requests: make(chan IncidentRequest, 1)},
 		start,
@@ -247,12 +240,13 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 		t.Fatalf("acknowledgment left stale findings eligible for duplicate dispatch: %#v", pending)
 	}
 	acknowledged := exportState(t, restored)
+	checkGoContractFixture(t, "acknowledged_idle_state.json", acknowledged)
 	if acknowledged.LastAcknowledgedIncidentId != request.IncidentID {
 		t.Fatalf("acknowledged incident was not durable: %#v", acknowledged)
 	}
 	recovered, err := NewController(
 		testControllerConfig(),
-		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))},
+		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault")), controllerDetector("health", time.Second, sdk.Finding{})},
 		staticProvider{snapshot: sdktest.Snapshot{}},
 		&recordingDispatcher{requests: make(chan IncidentRequest, 1)},
 		start,

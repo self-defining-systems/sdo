@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
+import pytest
 from google.protobuf import json_format
 from google.protobuf.timestamp_pb2 import Timestamp
 
@@ -13,6 +14,7 @@ from sdo.agents.responder.reflection_outcomes import (
     current_outcome_view,
     history_view,
     prior_outcome_view,
+    split_quiet_program_runs,
 )
 from sdo.contracts.proto import (
     Binding,
@@ -26,11 +28,11 @@ from sdo.contracts.proto import (
     RepairActionReceipt,
     Verdict,
 )
+from tests.context_helpers import expand_context
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
 
 _T0 = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 _EVIDENCE = "FailedMount: configmap mongo-geo-script not found " * 40
@@ -137,11 +139,24 @@ def test_current_outcome_keeps_findings_evidence_and_repairs_verbatim() -> None:
     full = json_format.MessageToDict(
         outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
     )
+    # An empty source_check_notes is omitted from the view rather than printed as [].
+    assert full["source_check_notes"] == []
     assert {key: value for key, value in view.items() if key != "detector_history"} == {
-        key: value for key, value in full.items() if key != "detector_history"
+        key: value
+        for key, value in full.items()
+        if key not in {"detector_history", "source_check_notes", "disabled_setup_detectors"}
     }
     assert len(view["detector_history"]) == 2
     assert len(json.dumps(view)) < len(json.dumps(full))
+
+
+def test_current_outcome_shows_source_check_notes_only_when_recorded() -> None:
+    outcome = _outcome("inc-1")
+    assert "source_check_notes" not in current_outcome_view(outcome)
+
+    outcome.source_check_notes.append("accepted source could not render at closure")
+
+    assert current_outcome_view(outcome)["source_check_notes"] == ["accepted source could not render at closure"]
 
 
 def test_prior_outcome_keeps_learning_signal_and_drops_bulk() -> None:
@@ -164,6 +179,14 @@ def test_prior_outcome_keeps_learning_signal_and_drops_bulk() -> None:
 
 def test_history_view_excludes_the_current_incident_and_keeps_order() -> None:
     records = [_outcome("inc-0"), _outcome("inc-1"), _outcome("inc-2")]
+
+    view = history_view(records, current_incident_id="inc-2")
+
+    assert [entry["incident_id"] for entry in view] == ["inc-0", "inc-1"]
+
+
+def test_history_view_shows_every_prior_incident_the_request_carries() -> None:
+    records = [_outcome(f"inc-{index}") for index in range(3)]
 
     view = history_view(records, current_incident_id="inc-2")
 
@@ -206,15 +229,15 @@ def _prompt(history: list[OutcomeRecord], current: OutcomeRecord, tmp_path: Path
 def test_reflection_prompt_growth_per_prior_outcome_is_bounded(tmp_path: Path) -> None:
     current = _outcome("inc-current")
     small = _prompt([current], current, tmp_path)
-    priors = [_outcome(f"inc-{index}") for index in range(6)]
+    priors = [_outcome(f"inc-{index}") for index in range(2)]
     large = _prompt([*priors, current], current, tmp_path)
 
-    per_prior = (len(large) - len(small)) / len(priors)
-    assert per_prior < 2_500
+    # Go keeps the latest few priors; each costs a bounded summary.
+    assert (len(large) - len(small)) / len(priors) < 2_500
     # The current incident is never repeated inside the history.
     assert large.count("inc-current: required ConfigMap was removed") == 1
     for prior in priors:
-        assert f"{prior.incident_id}: required ConfigMap was removed" in large
+        assert f"{prior.incident_id}: required ConfigMap was removed" in expand_context(large)
 
 
 def test_reflection_prompt_without_prior_outcomes_says_so(tmp_path: Path) -> None:
@@ -259,18 +282,20 @@ def _program_outcome(*, sweeps: int = 52) -> OutcomeRecord:
     return outcome
 
 
-def test_current_outcome_collapses_program_sweeps_without_mutating_durable_evidence() -> None:
+def test_current_outcome_summarizes_no_match_sweeps_without_mutating_durable_evidence() -> None:
     outcome = _program_outcome()
     before = outcome.SerializeToString()
     view = current_outcome_view(outcome)
-    assert len(view["program_runs"]) == 3
-    assert [run["evaluations"] for run in view["program_runs"]] == [52] * 3
+    assert view["program_runs"] == []
+    assert view["program_run_summary"] == [
+        {"program_id": "image-pull", "program_revision": "revision-a", "no_match": 156, "unknown": 0}
+    ]
     assert view["reflection_compaction"]["program_runs_omitted_duplicates"] == 153
     assert view["program_failure_signals"] == list(outcome.program_failure_signals)
     assert outcome.SerializeToString() == before
 
 
-def test_current_outcome_keeps_program_transitions_and_new_failed_signatures() -> None:
+def test_current_outcome_keeps_match_runs_and_summarizes_the_rest_per_program_revision() -> None:
     outcome = _program_outcome(sweeps=1)
     run = outcome.program_runs[1]
     for verdict, revision, error in [
@@ -278,6 +303,7 @@ def test_current_outcome_keeps_program_transitions_and_new_failed_signatures() -
         (Verdict.RESULT_NO_MATCH, "revision-a", ""),
         (Verdict.RESULT_UNKNOWN, "revision-a", "read unavailable"),
         (Verdict.RESULT_UNKNOWN, "revision-b", "read unavailable"),
+        (Verdict.RESULT_UNKNOWN, "revision-b", "forbidden"),
     ]:
         updated = ProgramRun()
         updated.CopyFrom(run)
@@ -286,9 +312,25 @@ def test_current_outcome_keeps_program_transitions_and_new_failed_signatures() -
         updated.error = error
         outcome.program_runs.append(updated)
     view = current_outcome_view(outcome)
-    assert len(view["program_runs"]) == 7
-    assert any(run["error"] == "read unavailable" for run in view["program_runs"])
-    assert any(run["program_revision"] == "revision-b" for run in view["program_runs"])
+    assert [kept["verdict"]["result"] for kept in view["program_runs"]] == ["RESULT_MATCH"]
+    assert view["program_run_summary"] == [
+        {
+            "program_id": "image-pull",
+            "program_revision": "revision-a",
+            "no_match": 4,
+            "unknown": 1,
+            "unknown_reasons": ["read unavailable"],
+            "unknown_bindings": ["Deployment/search"],
+        },
+        {
+            "program_id": "image-pull",
+            "program_revision": "revision-b",
+            "no_match": 0,
+            "unknown": 2,
+            "unknown_reasons": ["read unavailable", "forbidden"],
+            "unknown_bindings": ["Deployment/search"],
+        },
+    ]
     assert view["repair_actions"]
     assert view["confirmed_root_causes"]
     assert view["findings"][0]["evidence"] == _EVIDENCE
@@ -301,9 +343,9 @@ def test_current_outcome_bounds_tool_responses_and_keeps_corpus_refs() -> None:
     assert len(calls) == 1
     assert calls[0]["evaluations"] == 5
     assert view["reflection_compaction"]["program_tool_calls_omitted_duplicates"] == 4
-    assert len(json.dumps(calls)) < 6000
+    assert calls[0]["response_json"] == outcome.program_tool_calls[0].response_json
     assert calls[0]["corpus_refs"] == ["captured/open@detect.json"]
-    assert calls[0]["response_json_omitted_chars"] > 0
+    assert "response_json_omitted_chars" not in calls[0]
 
 
 def test_reflection_prompt_repeated_sweep_payload_is_bounded(tmp_path: Path) -> None:
@@ -312,25 +354,169 @@ def test_reflection_prompt_repeated_sweep_payload_is_bounded(tmp_path: Path) -> 
     small_prompt = _prompt([], small, tmp_path)
     large_prompt = _prompt([], large, tmp_path)
     assert len(large_prompt) - len(small_prompt) < 100
-    assert large_prompt.count("FailedMount") == 40
+    from sdo.agents.context_output import budget_for
+    from sdo.agents.prompt_templates import RenderedPrompt
+
+    assert isinstance(large_prompt, RenderedPrompt)
+    assert sum(
+        len(part.text) for part in large_prompt.parts if part.name == "reflection.outcome_details"
+    ) <= budget_for("reflection.outcome_details")
+    assert large_prompt.count("FailedMount") == small_prompt.count("FailedMount")
+    assert large.repair_actions[0].details in large_prompt
+    assert expand_context(large_prompt).count("FailedMount") >= 40
 
 
 def test_reflection_prompt_size_reduction_on_synthetic_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import sdo.agents.responder.reflection as reflection
-
     outcome = _program_outcome()
     full = json_format.MessageToDict(
         outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
     )
-    # The old model view only collapsed detector_history. Keep the same prompt
-    # instructions on both sides to isolate the outcome-projection savings.
-    full["detector_history"] = collapse_detector_history(outcome.detector_history)
-    with monkeypatch.context() as baseline:
-        baseline.setattr(reflection, "current_outcome_view", lambda _: full)
-        before = _prompt([], outcome, tmp_path)
+    # Compare the old unbounded outcome payload with the complete capped prompt.
+    before = json.dumps(full)
     after = _prompt([], outcome, tmp_path)
     reduction = 100 * (len(before) - len(after)) / len(before)
     print(
         json.dumps({"before_chars": len(before), "after_chars": len(after), "reduction_percent": round(reduction, 2)})
     )
     assert reduction > 85
+
+
+def test_program_run_summary_caps_reasons_and_programs() -> None:
+    def unknown(program: str, error: str) -> dict[str, object]:
+        return {"program_id": program, "program_revision": "r", "verdict": {"result": "RESULT_UNKNOWN"}, "error": error}
+
+    runs = [unknown("p0", f"reason {index} " + "x" * 400) for index in range(5)]
+    runs += [unknown(f"p{index}", "") for index in range(1, 33)]
+
+    kept, summary = split_quiet_program_runs(runs)
+
+    assert kept == []
+    assert len(summary[0]["unknown_reasons"]) == 3
+    assert summary[0]["unknown_reasons"] == [run["error"] for run in runs[:3]]
+    assert summary[0]["unknown_reasons_omitted"] == 2
+    assert summary[0]["unknown"] == 5
+    assert summary[-1] == {"programs_omitted": 3}
+    assert len(summary) == 31
+
+
+def test_program_run_summary_names_unknown_bindings_when_runs_give_no_reason() -> None:
+    def unknown(program: str, name: str) -> dict[str, object]:
+        binding = {"name": "deployment", "object": {"api_version": "apps/v1", "kind": "Deployment", "name": name}}
+        return {
+            "program_id": program,
+            "program_revision": "r",
+            "verdict": {"result": "RESULT_UNKNOWN"},
+            "bindings": [binding],
+        }
+
+    runs = [unknown("p0", f"svc{index}") for index in range(8)] + [unknown("p0", "svc1")]
+    runs.append({**unknown("p1", "x"), "verdict": {"result": "RESULT_NO_MATCH"}})
+
+    _, summary = split_quiet_program_runs(runs)
+
+    assert "unknown_reasons" not in summary[0]
+    assert summary[0]["unknown_bindings"] == [f"Deployment/svc{index}" for index in range(5)]
+    assert "unknown_bindings" not in summary[1]
+
+
+def test_prior_history_stays_bounded_when_one_incident_has_many_transitions(tmp_path: Path) -> None:
+    prior = _outcome("inc-prior")
+    # Prior timelines and long narratives must not dominate every reflection turn.
+    for index in range(100):
+        prior.detector_history.extend(_evaluations(f"detector-{index}", ["clear", "firing"] * 10))
+        prior.confirmed_root_causes.add(summary=f"cause {index}: " + "observed " * 1000)
+        prior.repair_actions.add(kind="exec", summary=f"repair {index}: " + "observed " * 1000)
+    before = prior.SerializeToString()
+    current = _outcome("inc-current")
+    small = _prompt([], current, tmp_path)
+    large = _prompt([prior], current, tmp_path)
+
+    assert len(large) - len(small) < 6_000
+    assert "Summary" in large
+    assert prior.SerializeToString() == before
+
+
+@pytest.mark.parametrize("session_mode", ["resume", "fresh"])
+def test_reflection_prior_evidence_reference_is_readable_during_the_turn(tmp_path: Path, session_mode: str) -> None:
+    import re
+
+    from sdo.agents.responder.reflection import ReflectionTurn
+    from tests.unit.sdo.agents.responder.test_reflection import _fresh_closure
+
+    prior = _outcome("inc-prior")
+    current = _outcome("inc-current")
+    references = []
+
+    class ReadingBackend:
+        def resume(self, **kwargs: object) -> ReflectionTurn:
+            prompt = expand_context(str(kwargs["prompt"]))
+            paths = sorted(set(re.findall(r'"full_outcome_path": "([^"]+)"', prompt)))
+            assert len(paths) == 1
+            from pathlib import Path
+
+            path = Path(paths[0])
+            references.append(path)
+            loaded = json_format.Parse(path.read_text(), OutcomeRecord())
+            assert loaded == prior
+            assert path.stat().st_mode & 0o077 == 0
+            assert "FailedMount" not in str(kwargs["prompt"]).split("Outcome history", 1)[1]
+            return ReflectionTurn(summary="covered", learning_decision="no_change", no_change_reason="already covered")
+
+        fresh = resume
+
+    closure = _fresh_closure(tmp_path)
+    closure.request.incident_id = current.incident_id
+    result = SessionReflector(ReadingBackend()).resume(
+        session_id="session",
+        incident_id=current.incident_id,
+        worktree=tmp_path,
+        outcome=current,
+        history=[prior, current],
+        outcome_commit="accepted",
+        closure=closure,
+        session_mode=session_mode,  # type: ignore[arg-type]
+    )
+    assert result.learning_decision == "no_change"
+    assert references
+    assert all(path.exists() for path in references)
+
+
+def test_pending_history_survives_contract_and_reflection_projection() -> None:
+    from sdo.contracts import IncidentRequest, ReflectionRequest
+    from sdo.contracts.proto import parse_json, to_canonical_json
+
+    evaluations = _evaluations("service-reachability", ["pending", "pending", "clear", "firing", "pending"])
+    incident = parse_json(to_canonical_json(IncidentRequest(detector_history=evaluations)), IncidentRequest())
+    reflection = ReflectionRequest(outcome=OutcomeRecord(detector_history=incident.detector_history))
+    restored = parse_json(to_canonical_json(reflection), ReflectionRequest())
+    runs = collapse_detector_history(restored.outcome.detector_history)
+    assert [run["status"] for run in runs] == ["pending", "clear", "firing", "pending"]
+    assert [run["evaluations"] for run in runs] == [2, 1, 1, 1]
+    assert all(not run["fingerprints"] for run in runs if run["status"] == "pending")
+
+
+def test_collapse_pending_history_preserves_qualification_reasons() -> None:
+    history = _evaluations("traffic-health", ["pending", "pending", "pending"])
+    history[0].reason = history[1].reason = "no synthetic scenario has succeeded since observation began: search, login"
+    history[2].reason = "synthetic scenarios have not succeeded since observation began: login"
+    runs = collapse_detector_history(history)
+    assert [(run["reason"], run["evaluations"]) for run in runs] == [
+        (history[0].reason, 2),
+        (history[2].reason, 1),
+    ]
+
+
+def test_current_outcome_retains_setup_detector_exclusion() -> None:
+    outcome = _outcome("next-incident")
+    outcome.disabled_setup_detectors.add(
+        detector_id="learned-port",
+        accepted_revision="accepted-memory",
+        fingerprints=["healthy-port"],
+        disabled_at=_stamp(_T0),
+        reason="fired on the confirmed-healthy app at setup",
+    )
+    view = current_outcome_view(outcome)
+    assert (
+        view["disabled_setup_detectors"]
+        == json_format.MessageToDict(outcome, preserving_proto_field_name=True)["disabled_setup_detectors"]
+    )

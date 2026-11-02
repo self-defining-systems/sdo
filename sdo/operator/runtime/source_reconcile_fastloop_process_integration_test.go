@@ -7,25 +7,29 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"go/format"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
 	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"os"
-	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/program/testdata/sourceimage"
 	"sdo.dev/operator/sdk/sdktest"
-	"testing"
-	"time"
 )
 
-func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing.T) {
+func TestHermeticSourceReconcileLearningExposesVerifiedCounters(t *testing.T) {
 	ctx := context.Background()
 	root := nativeRepository(t)
 	copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(root, ".sdo"))
@@ -64,6 +68,10 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	source.SetKind(ref.Kind)
 	source.Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "good:v1"
 	sourceReader := sourceImageManifests{objects: []*unstructured.Unstructured{&source}}
+	deployment.Annotations = withAcceptance(t, deployment, &source)
+	if _, err := client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	provider := fastloopObjects{client: client}
 	before, err := provider.Snapshot(ctx)
 	if err != nil {
@@ -77,6 +85,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	peer.Name = "peer"
 	peer.Spec.Template.Spec.Containers[0].Image = "good:v1"
 	open.DeploymentList = append(open.DeploymentList, *peer)
+	open.Objects = sdk.TypedObjects(open)
 	peerSource := source.DeepCopy()
 	peerSource.SetName("peer")
 	sourceReader.objects = append(sourceReader.objects, peerSource)
@@ -84,8 +93,9 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	var fixed sdktest.Snapshot
 	_ = json.Unmarshal(raw, &fixed)
 	fixed.DeploymentList[0].Spec.Template.Spec.Containers[0].Image = "good:v1"
+	fixed.Objects = sdk.TypedObjects(fixed)
 	p := sourceimage.Program{}
-	corpus := sdktest.CorpusCase{Open: open, Fixed: fixed, Healthy: fixed, Bindings: program.Bindings{"deployment": ref}}
+	corpus := sdktest.CorpusCase{Open: open, Fixed: fixed, Healthy: fixed, Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}}
 	for _, phase := range []string{"open", "fixed"} {
 		snapshot := open
 		if phase == "fixed" {
@@ -125,10 +135,11 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 		t.Fatal(err)
 	}
 	recordingsRaw, _ := json.Marshal(corpus.Recordings)
-	openRaw, _ := json.Marshal(open)
-	fixedRaw, _ := json.Marshal(fixed)
-	labels, _ := json.Marshal(map[string]any{"bindings": corpus.Bindings, "peer_bindings": program.Bindings{"deployment": {APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, Name: "peer"}}, "root_cause_program_ids": []string{p.Spec().ID}, "provenance": sdktest.CorpusProvenance{IncidentID: "image-origin", OpenSHA256: fmt.Sprintf("%x", sha256.Sum256(openRaw)), FixedSHA256: fmt.Sprintf("%x", sha256.Sum256(fixedRaw))}})
-	for name, data := range map[string][]byte{"open.json": openRaw, "fixed.json": fixedRaw, "healthy.json": fixedRaw, "recordings.json": recordingsRaw, "labels.json": labels} {
+	openRaw := capturefixture.Boundary(t, open, open.NamespaceName)
+	fixedRaw := capturefixture.Boundary(t, fixed, fixed.NamespaceName)
+	labels, _ := json.Marshal(map[string]any{"bindings": corpus.Bindings, "peer_bindings": program.Bindings{Objects: program.ObjectBindings{"deployment": {APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, Name: "peer"}}}, "root_cause_program_ids": []string{p.Spec().ID}, "provenance": sdktest.CorpusProvenance{IncidentID: "image-origin", OpenSHA256: fmt.Sprintf("%x", sha256.Sum256(openRaw)), FixedSHA256: fmt.Sprintf("%x", sha256.Sum256(fixedRaw))}})
+	acceptedRaw, _ := json.Marshal(sourceReader.objects)
+	for name, data := range map[string][]byte{"accepted.json": acceptedRaw, "open.json": openRaw, "fixed.json": fixedRaw, "healthy.json": fixedRaw, "recordings.json": recordingsRaw, "labels.json": labels} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -140,6 +151,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	if err := os.WriteFile(filepath.Join(root, ".sdo/playbooks/README.md"), []byte("# Playbooks\n\n- [base](base/README.md)\n- [image-pull-failure](image-pull-failure/README.md)\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	writeSourceImageDetector(t, root)
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
@@ -149,8 +161,8 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	if err != nil || len(diagnostics) != 0 {
 		t.Fatalf("source program compile and generated replay gate: %v %+v", err, diagnostics)
 	}
-	if len(notes) != 1 || notes[0].Status != sdktest.MitigationReplaySkippedUnreplayableEffect {
-		t.Fatalf("missing typed skip note: %+v", notes)
+	if len(notes) != 1 || notes[0].Status != sdktest.MitigationReplayPassed {
+		t.Fatalf("missing executed replay note: %+v", notes)
 	}
 	nativeGit(t, root, "add", ".")
 	nativeGit(t, root, "commit", "-qm", "learn source image\n\nSDO-Incident: image-origin\nSDO-Actor: responder\nSDO-Phase: reflection\nSDO-Validation: passed")
@@ -164,8 +176,6 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 		loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
 			return LiveReadView{Carrier: inputs.New(s), Source: sourceReader, SourceCommit: request.SourceCommit}
 		}
-		loop.DiagnosisSettleDelay = time.Millisecond
-		loop.CorpusReplayPassed = true
 		return loop
 	}
 	origin := &contracts.OutcomeRecord{IncidentId: "image-origin", Classification: "success", SourceCommit: "before-learning", Timestamps: &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Unix(1, 0))}}
@@ -176,7 +186,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	request.RepositoryWorktree = root
 	request.SourceCommit = commit
 	request.RepositoryBaseCommit = commit
-	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, ProgramFastPath: true, LoopFactory: makeLoop}
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, LoopFactory: makeLoop}
 	for index := 0; index < 3; index++ {
 		dispatcher.Outcomes = priorOutcomeReader{outcomes: outcomes}
 		trust, err := dispatcher.programTrust(ctx, request)
@@ -184,7 +194,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 			t.Fatal(err)
 		}
 		state := trust[p.Spec().ID]
-		if state.VerifiedSuccesses != index || state.Trusted {
+		if state.VerifiedSuccesses != index {
 			t.Fatalf("before repeat %d trust %+v", index, state)
 		}
 		snapshot, err := provider.Snapshot(ctx)
@@ -212,7 +222,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 		}
 		record := equivalentRepairOutcome(t, loop)
 		fillProgramRevisions(ctx, loop.runs, request.RepositoryWorktree, request.SourceCommit)
-		record.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Unix(1700000000, 0).Add(time.Duration(index) * time.Second))}
+		record.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Now().Add(time.Duration(index) * time.Second))}
 		outcomes = append(outcomes, memory.Outcome{IncidentID: record.IncidentId, Record: record})
 		deployment.Spec.Template.Spec.Containers[0].Image = "missing:v1"
 		if _, err := client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
@@ -224,67 +234,59 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := trust[p.Spec().ID]; state.VerifiedSuccesses != 3 || state.Failures != 0 || !state.Trusted {
+	if state := trust[p.Spec().ID]; state.VerifiedSuccesses != 3 || state.Failures != 0 {
 		t.Fatalf("three credited successes: %+v", state)
 	}
-	request.IncidentID = "image-fast-fourth"
-	snapshot, _ := provider.Snapshot(ctx)
+	request.IncidentID = "image-agent-fourth"
+	snapshot, err := provider.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request.Findings, err = (fastloopDetector{}).Detect(ctx, snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err = dispatcher.PrepareDispatch(ctx, request)
+	prepared, err := dispatcher.PrepareDispatch(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := dispatcher.Dispatch(ctx, request)
-	if err != nil || result.ResolutionPath != "fast_path" || result.Status != IncidentCompleted || result.Usage.GetInputTokens() != 0 || result.Usage.GetOutputTokens() != 0 {
-		t.Fatalf("source fast path: %+v %v", result, err)
+	coverage := prepared.PlaybookCoverage
+	if len(coverage.GetMatches()) != 1 || coverage.Matches[0].VerifiedSuccesses != 3 {
+		t.Fatalf("source repair coverage lost verified counters: %v", coverage)
 	}
-	if len(result.PlanApplications) != 1 || len(result.PlanApplications[0].Result.ActionsApplied) != 1 {
-		t.Fatalf("missing source application: %+v", result.PlanApplications)
+	live, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
+	if err != nil || live.Spec.Template.Spec.Containers[0].Image != "missing:v1" {
+		t.Fatalf("controller applied before agent: %v %v", live, err)
 	}
-	if _, ok := result.PlanApplications[0].Result.ActionsApplied[0].(program.ReconcileFromSource); !ok {
-		t.Fatalf("wrong action %T", result.PlanApplications[0].Result.ActionsApplied[0])
-	}
-	jobs, err := client.BatchV1().Jobs("app").List(ctx, metav1.ListOptions{})
-	if err != nil || len(jobs.Items) != 0 {
-		t.Fatalf("responder dispatched: %+v %v", jobs, err)
-	}
-	repaired, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
-	if err != nil || repaired.Spec.Template.Spec.Containers[0].Image != "good:v1" {
-		t.Fatalf("image not reconciled: %+v %v", repaired, err)
-	}
+}
 
-	request.IncidentID = "live-failure"
-	deployment.Spec.Template.Spec.Containers[0].Image = "missing:v1"
-	if _, err := client.AppsV1().Deployments("app").Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	failedLoop := makeLoop(request)
-	failedLoop.Trust = trust
-	failedLoop.Executor.Verifier = planFakeVerifier{passed: false}
-	failedAttempt := failedLoop.TryTrustedFastPath(ctx, 3)
-	if !failedAttempt.Attempted || failedAttempt.Resolved || !failedAttempt.RolledBack {
-		t.Fatalf("live failure did not roll back: %+v", failedAttempt)
-	}
-	failure := equivalentRepairOutcome(t, failedLoop)
-	failure.Classification = "failure"
-	failure.ProgramFailureSignals = failedLoop.FailureSignals()
-	failure.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: timestamppb.New(time.Unix(1700000000, 0).Add(time.Hour))}
-	dispatcher.Outcomes = priorOutcomeReader{outcomes: append(outcomes, memory.Outcome{IncidentID: failure.IncidentId, Record: failure})}
-	blocked, err := dispatcher.programTrust(ctx, request)
+// The recorded fault is covered by an independently scheduled incident
+// detector. It observes source and pod state itself and never calls Diagnose.
+func writeSourceImageDetector(t *testing.T, root string) {
+	t.Helper()
+	source := `package sourceimagefault
+import("context";"time"; metav1 "k8s.io/apimachinery/pkg/apis/meta/v1";"k8s.io/apimachinery/pkg/labels";"sdo.dev/operator/sdk" )
+type Detector struct{}
+func New()sdk.Detector{return Detector{}}
+func (Detector) Spec()sdk.DetectorSpec{return sdk.DetectorSpec{ID:"source-image",Class:sdk.DetectorClassIncident,Owner:sdk.DetectorOwnerResponder,Watches:[]sdk.WatchKind{{APIVersion:"apps/v1",Kind:"Deployment"},{APIVersion:"v1",Kind:"Pod"}},Interval:time.Second,Persistence:sdk.PersistencePolicy{Firing:1,Clearing:1},Batching:sdk.BatchingPolicy{Severity:sdk.SeverityWarning,Debounce:100*time.Millisecond},Playbooks:[]string{"image-pull-failure"},OriginatingIncident:"image-origin",OriginatingCommit:"fixture"}}
+func (Detector) Detect(_ context.Context,s sdk.DetectionContext)([]sdk.Finding,error){
+ var findings []sdk.Finding
+ for _,d:=range s.Deployments(){
+  ref:=sdk.ObjectRefFrom("Deployment","apps/v1",&d)
+  diff,err:=s.DiffAgainstSource(ref);if err!=nil{return nil,err};if !diff.Changed || d.Spec.Selector==nil{continue}
+  selector,err:=metav1.LabelSelectorAsSelector(d.Spec.Selector);if err!=nil{return nil,err}
+  failing:=false
+  for _,pod:=range s.Pods(){if pod.Namespace!=d.Namespace || !selector.Matches(labels.Set(pod.Labels)){continue};for _,status:=range pod.Status.ContainerStatuses{w:=status.State.Waiting;if w!=nil && (w.Reason=="ErrImagePull" || w.Reason=="ImagePullBackOff"){failing=true}}}
+  if failing{findings=append(findings,sdk.Finding{DetectorID:"source-image",RuleID:"source-image",Status:sdk.FindingActive,Severity:sdk.SeverityWarning,Summary:"Source image differs while selected Pod image pull fails",Evidence:"accepted-source difference and selected Pod waiting reason",PrimaryResource:ref,ParameterBindings:map[string]sdk.ObjectRef{"deployment":ref},Playbooks:[]string{"image-pull-failure"}})}
+ }
+ return findings,nil
+}`
+	formatted, err := format.Source([]byte(source))
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := blocked[p.Spec().ID]
-	if state.Trusted || state.Failures != 1 || state.VerifiedSuccesses != 0 {
-		t.Fatalf("live failure did not block trust: %+v", state)
+	manifest := layout.DetectorManifest{APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion, ID: "source-image", Constructor: "New", Class: "incident", Owner: "responder", Watches: []layout.Watch{{APIVersion: "apps/v1", Kind: "Deployment"}, {APIVersion: "v1", Kind: "Pod"}}, Interval: "1s", Persistence: layout.Persistence{Firing: 1, Clearing: 1}, Batching: layout.Batching{Severity: "warn", Debounce: "100ms"}, PossiblePlaybooks: []string{"image-pull-failure"}, OriginatingIncident: "image-origin", OriginatingCommit: "fixture"}
+	if err := layout.WriteDetector(root, layout.Detector{Class: layout.ClassIncident, Manifest: manifest, Files: []layout.File{{Name: "detector.go", Content: formatted}}}); err != nil {
+		t.Fatal(err)
 	}
-	blockedLoop := makeLoop(request)
-	blockedLoop.Trust = blocked
-	if attempt := blockedLoop.TryTrustedFastPath(ctx, 3); attempt.Attempted || attempt.SkippedReason != FastPathSkipUntrustedProgram {
-		t.Fatalf("failed revision used fast path: %+v", attempt)
-	}
-	t.Log("unreplayable plan accepted without origin credit; three live verified equivalent responder repairs => 3 successes, 0 failures; fourth image fault: ReconcileFromSource applied, independent health clear, zero responder Jobs/tokens")
 }

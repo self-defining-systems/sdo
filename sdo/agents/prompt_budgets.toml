@@ -1,0 +1,897 @@
+# Unicode code points in production-rendered prompts; measured limits include explicit headroom.
+
+[source_deployment.incident_data]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 92 Unicode code points; byte-identical template extraction."
+
+[source_deployment.instructions]
+max_chars = 1100
+reason = "Baseline synthetic fixture maximum: 1072 Unicode code points; byte-identical template extraction."
+
+[health_judge.health_objective]
+max_chars = 2000
+reason = "SEEDBUDGET1: real fresh hotel/social/astronomy objectives measure 866/101/972 characters. Preserve the full required goal with at least 100% headroom over the observed maximum; synthetic 17-character fixtures missed seed preparation."
+
+[health_judge.architecture]
+max_chars = 12000
+reason = "Go-generated manifest inventory summary the health judge reads; optional so a very large application spills to a file."
+
+[health_judge.resources]
+max_chars = 12000
+reason = "Go source inventory rows the health judge reads; optional so a very large application spills to a file."
+
+[health_judge.incident_data]
+max_chars = 300
+reason = "Baseline synthetic fixture maximum: 273 Unicode code points; byte-identical template extraction."
+
+[health_judge.instructions]
+max_chars = 7900
+reason = "Synthetic fixture maximum: 7713 Unicode code points after the critical-path latency and saturation principle (HEALTH2)."
+
+[health_judge.metrics_authoring]
+max_chars = 1000
+reason = "Synthetic fixture maximum: 911 Unicode code points after the saturation clause (HEALTH2)."
+
+[health_judge.traffic_authoring]
+max_chars = 7000
+reason = "Synthetic fixture maximum: 6219 Unicode code points after latency bounds, every-record coverage (HEALTH2) and link protocol selection."
+
+[lifecycle.incident_data]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 5 Unicode code points; byte-identical template extraction."
+
+[lifecycle.instructions]
+max_chars = 1900
+reason = "Baseline synthetic fixture maximum: 1849 Unicode code points; byte-identical template extraction."
+
+[recovery.instructions]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 184 Unicode code points; byte-identical template extraction."
+
+[recovery.reports]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 168 Unicode code points; byte-identical template extraction."
+
+[reflection.cause_work]
+max_chars = 40000
+reason = "CTXFAIL1: recorded run19 includes 91 per-cause questions across 20 causes, requiring 36482 compact characters before framing. Every question and its scope must remain inline; settled evaluation detail stays optional."
+
+[reflection.history]
+max_chars = 400
+reason = "Baseline synthetic fixture maximum: 366 Unicode code points; byte-identical template extraction."
+
+[reflection.incident_data]
+max_chars = 100
+reason = "Portable fixture configuration maximum: 86 Unicode code points, rounded upward to 100."
+
+[reflection.metrics]
+max_chars = 800
+reason = "Typed metrics-source capabilities (query URL, annotation scraping, OTLP endpoint) in at most a few hundred characters; required so reflection knows what it may publish."
+
+[reflection.instructions]
+max_chars = 2300
+reason = "CTXFAIL1: fresh-session retries plus preserved history framing and backend API-history guidance require up to 2263 characters, after the merge with main. Preserve every instruction through final provider transport, including this combined variant."
+
+[reflection.memory]
+max_chars = 800
+reason = "Baseline synthetic fixture maximum: 766 Unicode code points; byte-identical template extraction."
+
+[reflection.outcome]
+max_chars = 30000
+reason = "CTXFAIL1: recorded run19 has 24 repair receipts (15624 compact characters), and the existing real-scale sweep has 60. Reserve room for every complete repair action plus incident identity and classification; findings and plan detail remain optional."
+
+[reflection.validation_feedback]
+max_chars = 1500
+reason = "CTXFAIL1: recorded validation retries combine multiple required broker diagnostics and their framing; preserve their complete actionable messages instead of dropping later errors."
+
+[reflection_brief.commands]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 94 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.findings]
+max_chars = 2600
+reason = "Baseline synthetic fixture maximum: 2511 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.incident_data]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 3 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.instructions]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 103 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.memory]
+max_chars = 1300
+reason = "Baseline synthetic fixture maximum: 1209 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.result]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 140 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.separators]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 6 Unicode code points; byte-identical template extraction."
+
+[responder.additional_context]
+max_chars = 744
+reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 percent headroom."
+
+[responder.incident_data]
+max_chars = 5400
+reason = "Reduced to the existing incident tool-output cap; complete facts and generated summaries share the production renderer."
+
+[responder.instructions]
+max_chars = 545
+reason = "Measured workflow-routing and late-finding instructions with both skill file paths: 495 Unicode code points, with 10 percent headroom; Codex no longer injects a skill list."
+
+[session.incident_data]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 40 Unicode code points; byte-identical template extraction."
+
+[session.instructions]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 129 Unicode code points; byte-identical template extraction."
+
+[skills.sdo-detector-authoring]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 187 Unicode code points; byte-identical template extraction."
+
+[skills.sdo-memory]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 175 Unicode code points; byte-identical template extraction."
+
+[skills.sdo-playbook-authoring]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-identical template extraction."
+
+[skills.sdo-operationalize]
+max_chars = 200
+reason = "Operationalization skill description; shares the existing 200-character skill-index allowance."
+
+[skills.sdo-incident-response]
+max_chars = 200
+reason = "New responder workflow skill description; shares the existing 200-character skill-index allowance."
+
+[continuation.instructions]
+max_chars = 270
+reason = "Compact high-level continuation principles; required progress is counted separately under continuation.incident_data and their sum owns the total continuation allowance."
+
+[continuation.incident_data]
+max_chars = 1600
+reason = "CTXFAIL1: required ten-receipt progress with a verification error and rollback needs 1444 characters before preserving complete finding fingerprints. Keep every progress row and exact action/finding identity; the total continuation allowance is derived from these manifest caps."
+
+[tool_stdout.act]
+max_chars = 2048
+reason = "User decisions 130/134 require action/incident progress, the full-report path and generated schema within a 2 KiB emitted UTF-8 cap, including JSON framing; separately tested at the CLI boundary."
+
+[tool_stdout.apply]
+max_chars = 2048
+reason = "User decisions 130/134 require action/incident progress, the full-report path and generated schema within a 2 KiB emitted UTF-8 cap, including JSON framing; separately tested at the CLI boundary."
+
+[tool_stdout.check]
+max_chars = 1400
+reason = "Measured production rendering 1123 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.detect]
+max_chars = 1400
+reason = "Measured production rendering 1125 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.diagnose]
+max_chars = 600
+reason = "Measured default stdout 388 Unicode characters, including bounded controller/client errors; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.incident]
+max_chars = 5400
+reason = "Measured production rendering 4776 Unicode characters across three-/five-fault, 100-finding and overflow incident fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.menu]
+max_chars = 550
+reason = "Measured production rendering 380 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.mitigate]
+max_chars = 2048
+reason = "User decisions 130/134 require action/incident progress, the full-report path and generated schema within a 2 KiB emitted UTF-8 cap, including JSON framing; separately tested at the CLI boundary."
+
+[tool_stdout.plan]
+max_chars = 550
+reason = "Measured default stdout 380 Unicode characters, including bounded controller/client errors; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.report]
+max_chars = 600
+reason = "Measured default stdout 384 Unicode characters, including bounded controller/client errors; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.rollback]
+max_chars = 1500
+reason = "Measured production rendering 1213 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.source]
+max_chars = 600
+reason = "Measured default stdout 384 Unicode characters, including bounded controller/client errors; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.status]
+max_chars = 1550
+reason = "Measured production rendering 1264 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.verify]
+max_chars = 1400
+reason = "Measured production rendering 1125 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[skills.sdo-shell-authoring]
+max_chars = 1750
+reason = "Measured shell authoring guidance 1465 characters; bounded general principles and ownership guidance."
+
+[tool_reply.authoring_reference]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.authoring_reference]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.create_corpus]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.create_corpus]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.evidence_inventory]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.evidence_inventory]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.capture_fields]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.capture_fields]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.recordings_index]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.recordings_index]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[tool_reply.check_memory]
+max_chars = 8192
+reason = "Initial registry-wide runtime byte cap; complete replies remain in session files."
+
+[tool_description.check_memory]
+max_chars = 256
+reason = "Short registered listing description; full help is a session file."
+
+[session_context.responder_first]
+max_chars = 12000
+reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
+
+[session_context.reflection_first]
+max_chars = 80000
+reason = "CTXFAIL1: required cause questions (40000) and complete repair actions (30000) plus instructions, fresh-session brief and bounded optional indexes must fit one provider message without losing required content."
+
+[session_context.tool_total]
+max_chars = 131072
+reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
+
+[session_context.tool_description]
+max_chars = 256
+reason = "Initial production session-file gate for CTX1; future raises require an isolated reasoned commit."
+
+[template_data.source_deployment-source_deployment-application]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.source_deployment-source_deployment-correction_feedback]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.source_deployment-source_deployment-health_objective]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.source_deployment-source_deployment-namespace]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.source_deployment-source_deployment-registry_host]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.source_deployment-source_deployment-registry_host_2]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge-application]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge-architecture]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge-health_objective]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge-metrics_authoring]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge-resources]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge-skills_root]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge-traffic_authoring]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge-feedback]
+max_chars = 2000
+reason = "SEEDBUDGET1: fresh worker retries render 973/968 characters including diagnostic framing. The health worker joins this required feedback as plain text; reserve 2000 characters so the outer template preserves it with 100% headroom."
+
+[template_data.health_judge-health_judge_shell-application]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge_shell-architecture]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge_shell-health_objective]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge_shell-skills_root]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.health_judge-health_judge_shell-feedback]
+max_chars = 2000
+reason = "SEEDBUDGET1: fresh worker retries render 973/968 characters including diagnostic framing. The health worker joins this required feedback as plain text; reserve 2000 characters so the outer template preserves it with 100% headroom."
+
+[template_data.lifecycle-memory_conflict-conflict_json]
+max_chars = 768
+reason = "CTXFAIL1: a recorded broker retry carries 487 characters of required conflict identity and peer-intent metadata; preserve the full correction rather than summarizing it."
+
+[template_data.lifecycle-render_validation_feedback_01-validation_attempt]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.lifecycle-render_validation_feedback_04-validation_attempt]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.lifecycle-render_validation_feedback_02-message]
+max_chars = 1600
+reason = "SEEDBUDGET1: real fresh hotel/social worker rejection messages measure 793/788 characters. Preserve complete required correction diagnostics with at least 100% headroom over the observed maximum; the prior 314-character rejection profile missed fresh preparation."
+
+[template_data.lifecycle-render_validation_feedback_02-rule]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.lifecycle-render_validation_feedback_02-value]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.lifecycle-render_validation_feedback_03-hint]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-branch_correction_01-branch]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-branch_correction_01-branch_2]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-branch_correction_01-other_branch]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-branch_instruction_01-branch]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-branch_instruction_01-other_branch]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-commands_section_02-header]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-commands_section_03-header]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-commands_section_04-clip]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-commands_section_04-index]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-commands_section_05-header]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-commands_section_05-len]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-commands_section_06-header]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-commands_section_06-len]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-commands_section_07-omitted]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-continuation-feedback]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-fenced_01-fence]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-fenced_01-fence_2]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-finding_01-detector_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-finding_01-rule_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-finding_01-severity]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-finding_01-status]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-finding_01-summary]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-finding_02-ref]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-finding_03-bindings]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-finding_04-fingerprint]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_02-application]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_02-deployed_commit]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_02-namespace]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_02-source_commit]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_03-iso]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_03-iso_2]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_03-iso_3]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_03-iso_4]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_06-detector_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_06-ref]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_06-rule_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_06-severity]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_06-summary]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_09-incident_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_09-list]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_09-list_2]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_09-list_3]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-findings_section_09-match_reason]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-history_01-detector_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-history_01-iso]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-history_01-iso_2]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-history_01-len]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-history_01-statuses]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_01-extra_instructions]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_brief-body]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_brief-len]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_response_instructions-branch_instruction]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_response_instructions-incident_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_response_instructions-repair_policy]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_response_instructions-skills_root]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_shell-branch_instruction]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_shell-incident_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_shell-skills_root]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-late_findings_guidance_01-incident_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-late_findings_guidance_01-late_findings_command]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-late_findings_guidance_02-command]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-logical_memory_section_04-firing]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-logical_memory_section_04-id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-logical_memory_section_04-list]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-logical_memory_section_04-marker]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-logical_memory_section_04-originating_incident]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-logical_memory_section_04-watches]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-logical_memory_section_09-playbook_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-namespace_onboarding-onboarding_json]
+max_chars = 600
+reason = "Onboarding identity summary keeps its scalars and the first object of each list inline (256 left both lists empty for 52 live objects)."
+
+[template_data.responder-ref_01-api_version]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-ref_02-kind]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-ref_02-location]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-ref_02-version]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection-branch_instruction]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection-history_section]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection-outcome_commit]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection-skills_root]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection-work_section]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_check_correction-diagnostics]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_fresh-brief]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_fresh-request]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_resume-request]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_retry-render_validation_feedback]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_retry-original_request]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_retry-request]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_retry_request-request]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_shell-branch_instruction]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_shell-history_section]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_shell-outcome_commit]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_shell-skills_root]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-reflection_shell_fresh-request]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_02-dispatch_error]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_03-status]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_04-error]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_06-join]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_06-program_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_07-len]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_10-application_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_10-programs]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_10-state]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_10-verification]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_11-clip]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_12-len]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_14-join]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_14-summary]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_16-clip]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_16-kind]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_16-summary]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_16-target]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_16-value]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_19-clip]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_19-name]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_19-value]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_21-join]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_22-playbook_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_section_22-scripts]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-session_recovery-reports]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-states_01-label]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-states_02-fingerprints]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-states_03-error]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-states_04-label]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-turn_01-idempotency_key]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-turn_01-prompt]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-result_correction-result_type]
+max_chars = 256
+reason = "Explicit cap for the newly merged registered result-correction template; full diagnostics stay in session files."
+
+[template_data.responder-result_correction-diagnostic]
+max_chars = 256
+reason = "Explicit cap for the newly merged registered result-correction template; full diagnostics stay in session files."
+
+[reflection.cause_details]
+max_chars = 1500
+reason = "CTXFAIL1: retain the original cause-work allowance for optional settled evaluation and binding details; complete questions have their own required cap."
+
+[reflection.outcome_details]
+max_chars = 3600
+reason = "CTXFAIL1: retain the original outcome allowance for optional findings and plan detail; complete repair receipts have their own required cap."

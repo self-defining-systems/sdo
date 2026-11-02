@@ -14,6 +14,7 @@ from benchmarks.sregym.fastloop.cli import build_parser, format_incidents, forma
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.records import IncidentRecord, OracleVerdict, append_record
 from benchmarks.sregym.fastloop.stream import load_stream, load_stream_config
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
 T0 = datetime(2026, 9, 27, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -25,8 +26,7 @@ def _record(index: int, agent: str) -> IncidentRecord:
         agent=agent,
         problem_id="missing_configmap_hotel_reservation",
         model="gpt-6-luna",
-        injection_started_at=T0,
-        injection_finished_at=T0 + timedelta(seconds=6),
+        injection={"state": "injected", "started_at": T0, "finished_at": T0 + timedelta(seconds=6)},
         detected_at=T0 + timedelta(seconds=9) if agent == "sdo" else None,
         mitigation_applied_at=T0 + timedelta(seconds=45),
         oracle=OracleVerdict(kind="sregym-mitigation-oracle", success=True),
@@ -82,17 +82,24 @@ def test_environment_round_trips_all_paths_through_saved_file(tmp_path: Path) ->
     assert FastloopEnvironment.load(tmp_path) == environment
 
 
+@pytest.mark.parametrize("attach_only", [False, True])
 def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attach_only: bool
 ) -> None:
     from benchmarks.sregym.fastloop import cli
 
     monkeypatch.setattr(cli, "up_preflight", lambda _args: None)
     (tmp_path / "application_workspace").mkdir()
+    fenced_config = tmp_path / "existing.kubeconfig"
+    fenced_config.write_text("existing lane")
+    monkeypatch.setenv("KUBECONFIG", str(fenced_config))
 
     class Worker:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+        def __init__(self, *_args: object, **kwargs: Any) -> None:
+            # Kubernetes caches KUBECONFIG at import time, before the cluster op.
+            assert kwargs["env"]["KUBECONFIG"] == str(
+                fenced_config if attach_only else tmp_path / "kubeconfigs/worker_0.kubeconfig"
+            )
 
         def __enter__(self) -> Worker:
             return self
@@ -101,8 +108,9 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
             pass
 
         def request(self, op: str, **_kwargs: object) -> dict[str, object]:
-            if op == "cluster":
-                return {"kubeconfig": str(tmp_path / "worker.kubeconfig")}
+            if op in {"cluster", "attach_existing"}:
+                assert op == ("attach_existing" if attach_only else "cluster")
+                return {"kubeconfig": str(fenced_config if attach_only else tmp_path / "worker.kubeconfig")}
             if op == "deploy":
                 (tmp_path / "cluster_baseline_state.json").write_text('{"namespaces": ["observe"]}', encoding="utf-8")
                 return {"deployed": True}
@@ -120,7 +128,8 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
             return [{"kind": "Deployment", "metadata": {"name": "mongo", "namespace": namespace}, "spec": {}}]
 
     monkeypatch.setattr(cli, "KubectlApplicationCluster", Cluster)
-    assert main(["up", "--no-dev-mount", "--run-dir", str(tmp_path), "--builder", "", "--no-sandbox"]) == 0
+    extra = ["--reuse-cluster-only"] if attach_only else []
+    assert main(["up", "--no-dev-mount", "--run-dir", str(tmp_path), "--builder", "", "--no-sandbox", *extra]) == 0
     assert FastloopEnvironment.load(tmp_path).application == "hotel-reservation"
     baseline = load_application_baseline(tmp_path / "cluster_baseline_state.json", "hotel-reservation")
     assert baseline is not None
@@ -137,48 +146,13 @@ def test_parser_defaults_match_the_benchmark_configuration() -> None:
     args = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
 
     assert (args.model, args.provider, args.reflection_session, args.incidents) == ("gpt-6-luna", "codex", "resume", 1)
+    assert args.replay == "on"
+    assert build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--replay", "off"]).replay == "off"
     up = build_parser().parse_args(["up", "--run-dir", "x"])
     assert up.cpu_limit == "3"
     assert up.cluster_prefix == "fastloop-w"
     assert up.no_sandbox is False
     assert up.kind_worker_nodes == 1
-
-
-def test_run_time_scale_is_explicit_and_defaults_to_normal_timing() -> None:
-    normal = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
-    fast = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--time-scale", "0.1"])
-
-    assert normal.time_scale == 1.0
-    assert fast.time_scale == 0.1
-    from benchmarks.sregym.fastloop.cli import _composite_settings
-
-    settings = _composite_settings(fast)
-    assert settings.deadline_seconds == pytest.approx(fast.composite_deadline * 0.1)
-    assert settings.idle_seconds == pytest.approx(fast.composite_idle * 0.1)
-    assert settings.stable_seconds == pytest.approx(2.0)
-    assert settings.poll_seconds == pytest.approx(0.2)
-
-
-def test_program_fast_path_is_explicit_and_defaults_off() -> None:
-    ordinary = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
-    enabled = build_parser().parse_args(
-        ["run", "--run-dir", "x", "--agent", "sdo", "--program-fast-path", "--program-trust-threshold", "4"]
-    )
-    assert ordinary.program_fast_path is False
-    assert ordinary.program_trust_threshold == 3
-    assert enabled.program_fast_path is True
-    assert enabled.program_trust_threshold == 4
-
-
-def test_time_scale_shortens_persistent_controller_polls(monkeypatch: pytest.MonkeyPatch) -> None:
-    from benchmarks.sregym.fastloop import cli
-
-    sleeps: list[float] = []
-    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
-
-    cli._scaled_clock(0.1).sleep(1.0)
-
-    assert sleeps == [0.1]
 
 
 def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -202,13 +176,18 @@ def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypa
             returncode=1, stderr='Error from server (NotFound): secrets "sdo-agent-credentials" not found'
         )
 
+    from benchmarks.sregym.fastloop import fault_tracker
+
+    # Injector admission precedes credential preflight; this test isolates the
+    # credential contract from external harness discovery.
+    monkeypatch.setattr(fault_tracker, "describe_sregym_problems", lambda *_a, **_kw: {})
     monkeypatch.setattr(cli, "kubectl", missing_secret)
     monkeypatch.setattr(cli, "_worker", lambda _environment: pytest.fail("worker started before credential preflight"))
 
     with pytest.raises(SystemExit, match="credentials Secret.*sdo-agent-credentials.*missing"):
         main(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
 
-    assert checked == [["get", "secret", "sdo-agent-credentials"]]
+    assert checked == [["get", "secret", "sdo-agent-credentials", "-o", "name"]]
 
 
 def test_detection_timeout_reaches_single_and_composite_sdo_stages(
@@ -242,7 +221,7 @@ def test_detection_timeout_reaches_single_and_composite_sdo_stages(
         assert agent.stage_inputs("stage", tmp_path, "fp").detection_timeout_seconds == 12
 
 
-def test_drift_token_budget_reaches_fastloop_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_response_budget_reaches_fastloop_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.fastloop import cli
 
     environment = FastloopEnvironment(
@@ -263,12 +242,10 @@ def test_drift_token_budget_reaches_fastloop_runtime(tmp_path: Path, monkeypatch
             str(tmp_path),
             "--agent",
             "sdo",
-            "--drift-tokens-per-hour",
-            "250000",
         ]
     )
     agent = cli._sdo_agent(args, environment, tmp_path)
-    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.drift_tokens_per_hour == 250000
+    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.max_response_loops == 10
 
 
 def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:
@@ -409,6 +386,26 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
     )
     monkeypatch.setattr(FastloopEnvironment, "load", lambda _path: environment)
 
+    # A legacy capture must carry its recovered reference closure into every
+    # subsequent driver's cleanup, rather than deleting the restored account.
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, save_application_baseline
+
+    workload = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "reservation", "namespace": environment.namespace},
+        "spec": {"template": {"spec": {"serviceAccountName": "reservation-reader"}}},
+    }
+    account = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {"name": "reservation-reader", "namespace": environment.namespace},
+    }
+    environment.baseline_path.write_text("{}")
+    save_application_baseline(environment.baseline_path, (ApplicationBaseline(environment.namespace, [workload]),))
+    commit_accepted_source(environment.workspace, [account], namespace=environment.namespace)
+    rehearsed: list[str] = []
+
     class Worker:
         def __enter__(self) -> Worker:
             return self
@@ -416,7 +413,10 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
         def __exit__(self, *_args: object) -> None:
             pass
 
-        def request(self, op: str, **_kwargs: object) -> dict[str, object]:
+        def request(self, op: str, **kwargs: object) -> dict[str, object]:
+            if op == "rehearse_oracles":
+                rehearsed.append(str(kwargs["problem_id"]))
+                return {"success": True, "details": {"oracle_invalid": 1}}
             assert op == "deploy"
             return {}
 
@@ -428,15 +428,29 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(cli, "_worker", lambda _env: Worker())
     monkeypatch.setattr(cli, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
-    monkeypatch.setattr(cli, "SregymFaultDriver", lambda *_args, **_kwargs: object())
+
+    def driver(*_args, **kwargs):
+        captured["driver_baseline"] = kwargs["baseline"]
+        return object()
+
+    monkeypatch.setattr(cli, "SregymFaultDriver", driver)
     monkeypatch.setattr(cli, "_sdo_agent", agent)
     monkeypatch.setattr(cli, "run_incidents", lambda *_args, **_kwargs: [])
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
+    from benchmarks.sregym.faults.description import ProblemDescription
 
     monkeypatch.setattr(
-        "benchmarks.sregym.fastloop.fault_tracker.describe_sregym_faults",
+        "benchmarks.sregym.fastloop.fault_tracker.describe_sregym_problems",
         lambda ids, **_kwargs: {
-            problem_id: (FaultSpec("target_port", "reservation"), FaultSpec("incorrect_image", "rate"))
+            problem_id: ProblemDescription(
+                problem_id=problem_id,
+                composite=True,
+                faults=(
+                    FaultSpec("target_port", "reservation"),
+                    FaultSpec("incorrect_image", "rate", declared_index=1),
+                ),
+                injection_order=(0, 1),
+            )
             for problem_id in ids
         },
     )
@@ -447,12 +461,19 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
         )
         == 1
     )
+    assert rehearsed == list(dict.fromkeys(problem for ids in load_stream(stream) for problem in ids))
     assert captured["composite"] is True
     faults = captured["stream_faults"]
     assert {key: len(value) for key, value in faults.items()} == {
         "mf__hotel_reservation__n2__s1773744812__v_": 2,
         "mf__hotel_reservation__n2__s1085951852__v_": 2,
     }
+
+    assert any(
+        value["kind"] == "ServiceAccount" and value["metadata"]["name"] == "reservation-reader"
+        for baseline in captured["driver_baseline"]
+        for value in baseline.objects
+    )
 
 
 @pytest.mark.parametrize("content", ["[]", "[[]]", '["a", ["a", "a"]]', "[4]"])
@@ -606,7 +627,7 @@ def test_codex_prompt_and_oracle_cover_every_playbook_stream_incident(
         prompt = (tmp_path / "results" / f"{index:03d}_{'+'.join(ids)}" / "prompt.txt").read_text(encoding="utf-8")
         assert "Application: Hotel Reservation" in prompt
         assert all(problem not in prompt for problem in ids)
-        expected_faults = list(range(len(ids))) if len(ids) > 1 else [None]
+        expected_faults = [None]  # official aggregate oracle, including nested composites
         assert [
             fault for injected, fault, recovered in worker.oracles if injected == ids and not recovered
         ] == expected_faults
@@ -615,88 +636,31 @@ def test_codex_prompt_and_oracle_cover_every_playbook_stream_incident(
         ] == expected_faults
 
 
-@pytest.mark.parametrize(
-    ("agent", "app", "provider", "registrations"),
-    [
-        ("sdo", "sregym", "codex", None),
-        ("sdo", "sregym", "claude", None),
-        ("codex", "sregym", "codex", None),
-        ("codex", "toy", "codex", None),
-        ("sdo", "toy", "codex", "sdo/agents/registrations"),
-    ],
-)
-def test_live_agents_reject_reduced_time_scale_before_runtime_work(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent: str, app: str, provider: str, registrations: str | None
-) -> None:
+def test_sdo_agent_selects_the_applications_deployed_manifests(tmp_path: Path) -> None:
     from benchmarks.sregym.fastloop import cli
 
-    FastloopEnvironment(
+    workspace = tmp_path / "workspace"
+    environment = FastloopEnvironment(
         run_dir=tmp_path,
-        cluster="img1-time-scale-test",
-        kubeconfig=tmp_path / "config",
-        namespace="app",
-        application="app",
-        workspace=tmp_path / "workspace",
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="astronomy-shop",
+        application="opentelemetry-demo-astronomy-shop",
+        workspace=workspace,
         sregym_dir=tmp_path / "sregym",
-        private_tmp=None,
-        app=app,
-    ).save()
-    monkeypatch.setenv("SDO_TIME_SCALE", "1")
-    monkeypatch.setattr(cli, "kubectl", lambda *a, **kw: pytest.fail("live run reached Kubernetes"))
-    monkeypatch.setattr(cli, "_worker", lambda *a, **kw: pytest.fail("live run started a worker"))
-    flags = ["--agent-registrations", str(cli.REPO_ROOT / registrations)] if registrations else []
-    with pytest.raises(SystemExit, match="--time-scale.*scripted.*live.*1"):
-        main(
-            ["run", "--run-dir", str(tmp_path), "--agent", agent, "--provider", provider, "--time-scale", "0.1", *flags]
-        )
-    assert cli.os.environ["SDO_TIME_SCALE"] == "1"
-
-
-@pytest.mark.parametrize(
-    ("agent", "app", "scale", "scripted"),
-    [
-        ("sdo", "sregym", "1", False),
-        ("codex", "sregym", "1", False),
-        ("sdo", "toy", "0.1", False),
-        ("sdo", "sregym", "0.1", True),
-    ],
-)
-def test_normal_live_and_reduced_scripted_scales_pass_preflight(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent: str, app: str, scale: str, scripted: bool
-) -> None:
-    from benchmarks.sregym.fastloop import cli
-
-    FastloopEnvironment(
-        run_dir=tmp_path,
-        cluster="img1-time-scale-test",
-        kubeconfig=tmp_path / "config",
-        namespace="app",
-        application="app",
-        workspace=tmp_path / "workspace",
-        sregym_dir=tmp_path / "sregym",
-        private_tmp=None,
-        app=app,
-    ).save()
-    monkeypatch.setenv("SDO_TIME_SCALE", "original")
-    monkeypatch.setenv("KUBECONFIG", "original")
-    monkeypatch.setattr(cli, "kubectl", lambda *a, **kw: SimpleNamespace(returncode=0))
-
-    def stop_before_worker(*args: object) -> None:
-        raise RuntimeError("passed time-scale preflight")
-
-    monkeypatch.setattr(cli, "_worker", stop_before_worker)
-    flags = (
-        ["--agent-registrations", str(cli.REPO_ROOT / "benchmarks/sregym/fastloop/agent_registrations")]
-        if scripted
-        else []
+        private_tmp=tmp_path / "private",
     )
-    with pytest.raises(RuntimeError, match="passed time-scale preflight"):
-        main(["run", "--run-dir", str(tmp_path), "--agent", agent, "--time-scale", scale, *flags])
-    assert float(cli.os.environ["SDO_TIME_SCALE"]) == float(scale)
+    args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
+    agent = cli._sdo_agent(args, environment, tmp_path / "results")
+    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.deployed_manifest_paths == (
+        "kubernetes/astronomy-shop.yaml",
+    )
 
 
-def test_scripted_scale_preserves_wall_time_stage_budgets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from benchmarks.sregym.fastloop import cli
+def test_toy_agent_keeps_detection_running_and_checks_activation_continuity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop import cli, sdo_agent
 
     environment = FastloopEnvironment(
         run_dir=tmp_path,
@@ -709,14 +673,83 @@ def test_scripted_scale_preserves_wall_time_stage_budgets(tmp_path: Path, monkey
         app="toy",
         private_tmp=None,
     )
-    args = cli.build_parser().parse_args(
-        ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--time-scale", "0.1", "--timeout", "300"]
-    )
-    from benchmarks.sregym.fastloop import sdo_agent
-
+    args = cli.build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--timeout", "300"])
     monkeypatch.setattr(sdo_agent, "SdoPersistentAgent", lambda settings, **kwargs: (settings, kwargs))
     settings, kwargs = cli._sdo_agent(args, environment, tmp_path / "results")
     assert settings.verification_timeout_seconds == 600
-    assert settings.reflection_wait_seconds == 3600
     assert kwargs["keep_running"]
     assert kwargs["check_continuity"]
+
+
+def test_native_install_runs_without_a_selective_reset_because_the_row_start_wipe_owns_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.adapter import native_operator
+    from benchmarks.sregym.fastloop import cli
+    from tests.unit.benchmarks.sregym.fastloop.test_fastloop_sdo_agent import FakeOps, _clock, _inject
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel-reservation",
+        application="hotel-reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    ops = FakeOps()
+    calls: list[str] = []
+    monkeypatch.setattr(cli, "_cluster_ops", lambda *_args: ops)
+
+    real_execute = native_operator.execute_operator
+
+    def execute(command: str, args: list[str], **_kwargs: Any) -> str:
+        if command not in {"stop", "reset-control-state"}:
+            return real_execute(command, args, **_kwargs)
+        assert args[args.index("--control-namespace") + 1] == "hotel-reservation-sdo"
+        assert args[args.index("--kubeconfig") + 1] == str(environment.kubeconfig)
+        calls.append(command)
+        return json.dumps(
+            {"removed": [], "leftovers": []}
+            if command == "stop"
+            else {"control_namespace": "hotel-reservation-sdo", "deleted": ["sdo-namespace-onboarding"]}
+        )
+
+    def install(config: Any, *_args: Any) -> None:
+        calls.append("install")
+        ops.install(config)
+
+    monkeypatch.setattr(native_operator, "execute_operator", execute)
+    monkeypatch.setattr(adapter, "launch_native_lifecycle", install)
+    from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
+
+    monkeypatch.setattr(
+        adapter,
+        "deployed_lifecycle",
+        lambda _namespace: DeployedLifecycle(
+            context=DeployedLifecycleContext(health_objective="objective", active_resources=[]),
+            fingerprint="test-topology",
+        ),
+    )
+    args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--no-checkpoints"])
+    for fresh in range(2):
+        if fresh:
+            environment.state_path.unlink()
+        agent = cli._sdo_agent(args, environment, tmp_path / "results")
+        agent._clock = _clock()
+        agent.learn(agent.resolve(0, "p", _inject))
+        assert calls == ["install"] * (fresh + 1)
+        # A new CLI invocation and the warm reset/reinstall path retain memory.
+        state = adapter.PersistentState.load(environment.state_path)
+        record = state.controllers[environment.namespace]
+        record.controller_pod_uid = ""
+        record.controller_pod_name = ""
+        state.save(environment.state_path)
+        ops.delete_controller("hotel-reservation-sdo")
+        ops.namespace_exists = lambda _namespace: True
+        warm = cli._sdo_agent(args, environment, tmp_path / "results")
+        warm._clock = _clock()
+        warm.learn(warm.resolve(1, "p", _inject))
+        assert calls == ["install"] * (fresh + 1)

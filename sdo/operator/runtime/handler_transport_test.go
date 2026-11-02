@@ -25,7 +25,7 @@ func (tr handlerTransport) RoundTrip(request *http.Request) (*http.Response, err
 
 func TestKubernetesCacheObservationUsesInjectedClock(t *testing.T) {
 	at := time.Unix(123, 456).UTC()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), Clock: func() time.Time { return at }}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), Clock: func() time.Time { return at }}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func (tr handlerTransport) Do(request *http.Request) (*http.Response, error) {
 }
 
 func TestKubernetesCacheRejectsNegativeResyncPeriod(t *testing.T) {
-	_, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), ResyncPeriod: -time.Second}, nil)
+	_, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), ResyncPeriod: -time.Second}, nil)
 	if err == nil {
 		t.Fatal("negative resync period accepted")
 	}

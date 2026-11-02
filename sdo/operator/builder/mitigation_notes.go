@@ -8,7 +8,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// MitigationReplayResults reads the generated corpus gate's informational
+// MitigationReplayResults reads the generated corpus replay's informational
 // receipts. They are not proof of an external effect or inputs to live trust.
 func (workspace *Workspace) MitigationReplayResults() ([]sdktest.MitigationReplayResult, error) {
 	path := filepath.Join(workspace.Directory, "generated", "mitigation-replay.json")
@@ -31,9 +31,59 @@ func (workspace *Workspace) MitigationReplayResults() ([]sdktest.MitigationRepla
 		return nil, fmt.Errorf("decode mitigation replay notes: %w", err)
 	}
 	for _, note := range results {
-		if note.ProgramID == "" || note.CaseID == "" || note.Status != sdktest.MitigationReplayPassed && note.Status != sdktest.MitigationReplaySkippedUnreplayableEffect {
+		if note.ProgramID == "" || note.CaseID == "" || note.Status != sdktest.MitigationReplayPassed && note.Status != sdktest.MitigationReplaySkippedUnreplayableEffect && note.Status != sdktest.MitigationReplayObservedTransition {
 			return nil, fmt.Errorf("invalid mitigation replay note: %+v", note)
 		}
 	}
 	return results, nil
+}
+
+// trafficCoverageNotes is the generated traffic test's file of undriven
+// dependency edges, beside the program replay's coverage-gaps.json.
+const trafficCoverageNotes = "traffic-coverage-gaps.json"
+
+// trafficLatencyNotes is the generated traffic test's file of health-probe
+// scenarios that keep the default latency bound.
+const trafficLatencyNotes = "traffic-latency-gaps.json"
+
+// CoverageGaps reads the generated replay's non-blocking notes, such as a
+// recorded incident the learned detectors do not reach.
+func (workspace *Workspace) CoverageGaps() ([]string, error) {
+	gaps := append([]string(nil), workspace.advisorySetupErrors...)
+	recorded, err := workspace.generatedNotes("coverage-gaps.json")
+	if err != nil {
+		return gaps, err
+	}
+	gaps = append(gaps, recorded...)
+	return append(gaps, workspace.advisoryTestErrors...), nil
+}
+
+// TrafficCoverageGaps reads the generated traffic test's non-blocking notes:
+// the declared dependency edges no health-probe scenario drives.
+func (workspace *Workspace) TrafficCoverageGaps() ([]string, error) {
+	return workspace.generatedNotes(trafficCoverageNotes)
+}
+
+// TrafficLatencyGaps reads the generated traffic test's non-blocking notes:
+// the health-probe scenarios that keep the default latency bound.
+func (workspace *Workspace) TrafficLatencyGaps() ([]string, error) {
+	return workspace.generatedNotes(trafficLatencyNotes)
+}
+
+func (workspace *Workspace) generatedNotes(name string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(workspace.Directory, "generated", name))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 1<<20 {
+		return nil, fmt.Errorf("%s notes exceed 1 MiB", name)
+	}
+	var recorded []string
+	if err := json.Unmarshal(data, &recorded); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", name, err)
+	}
+	return recorded, nil
 }

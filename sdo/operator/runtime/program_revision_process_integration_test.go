@@ -6,11 +6,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"testing"
 )
 
-func TestSharedLibraryChangeResetsProgramRevisionAndTrust(t *testing.T) {
+func TestSharedLibraryChangeUpdatesProgramRevision(t *testing.T) {
 	root := nativeRepository(t)
 	write := func(path, body string) {
 		t.Helper()
@@ -39,7 +38,7 @@ func TestSharedLibraryChangeResetsProgramRevisionAndTrust(t *testing.T) {
 	}
 	fillProgramRevisions(context.Background(), runs, root, commit("update markdown prose"))
 	if before != runs[0].ProgramRevision {
-		t.Fatal("markdown prose reset program trust")
+		t.Fatal("markdown prose changed program revision")
 	}
 	write(".sdo/playbooks/targetport/ports.json", `{"port":8080}`)
 	fillProgramRevisions(context.Background(), runs, root, commit("add behavior data"))
@@ -50,7 +49,7 @@ func TestSharedLibraryChangeResetsProgramRevisionAndTrust(t *testing.T) {
 	write(".sdo/lib/unrelated/other.go", "package unrelated\nconst Port=2\n")
 	fillProgramRevisions(context.Background(), runs, root, commit("unrelated helper"))
 	if before != runs[0].ProgramRevision {
-		t.Fatal("unrelated helper reset trust")
+		t.Fatal("unrelated helper changed revision")
 	}
 	write(".sdo/lib/transitive/port.go", "package transitive\nconst Port=9999\n")
 	fillProgramRevisions(context.Background(), runs, root, commit("changed transitive helper"))
@@ -58,15 +57,30 @@ func TestSharedLibraryChangeResetsProgramRevisionAndTrust(t *testing.T) {
 	if before == after {
 		t.Fatal("transitive library edit retained obsolete program revision")
 	}
-	outcomes := []*contracts.OutcomeRecord{}
-	for i := 0; i < 3; i++ {
-		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", before))
+}
+
+func TestProgramRevisionIgnoresTestOnlyChanges(t *testing.T) {
+	root := nativeRepository(t)
+	directory := filepath.Join(root, ".sdo/playbooks/targetport")
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
 	}
-	if !ProgramTrustStats(outcomes)["targetport"].Trusted {
-		t.Fatal("fixture did not earn trust")
+	if err := os.WriteFile(filepath.Join(directory, "diagnose.go"), []byte("package targetport\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	outcomes = append(outcomes, &contracts.OutcomeRecord{ProgramRuns: []*contracts.ProgramRun{{ProgramId: "targetport", ProgramRevision: after}}})
-	if got := ProgramTrustStats(outcomes)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
-		t.Fatalf("helper edit kept trust: %+v", got)
+	nativeGit(t, root, "add", ".")
+	nativeGit(t, root, "commit", "-qm", "program")
+	before, err := programDependencyRevision(context.Background(), root, nativeGit(t, root, "rev-parse", "HEAD"), "targetport")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "diagnose_test.go"), []byte("package targetport\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, root, "add", ".")
+	nativeGit(t, root, "commit", "-qm", "more tests")
+	after, err := programDependencyRevision(context.Background(), root, nativeGit(t, root, "rev-parse", "HEAD"), "targetport")
+	if err != nil || before != after {
+		t.Fatalf("tests reset executable trust: %s -> %s (%v)", before, after, err)
 	}
 }

@@ -65,7 +65,9 @@ def tool_transport(tmp_path, monkeypatch):
             argv = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             try:
                 if argv[0] == "sdo":
-                    value = json.dumps(scripts._tool(*argv[1:])) + "\nTool summary\n"
+                    value = (
+                        json.dumps(scripts._tool(*(arg for arg in argv[1:] if arg != "--json"))) + "\nTool summary\n"
+                    )
                 elif argv[0] == "probe":
                     with scripts.socket.create_connection(tuple(argv[1:]), timeout=2):
                         pass

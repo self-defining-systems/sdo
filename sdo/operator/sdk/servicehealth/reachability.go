@@ -117,11 +117,17 @@ type ProberIdentity struct {
 
 // ReachabilityWindow is what the controller has observed at ObservedAt.
 type ReachabilityWindow struct {
-	ObservedAt time.Time            `json:"observedAt"`
-	Interval   time.Duration        `json:"intervalNs"`
-	Timeout    time.Duration        `json:"timeoutNs"`
-	Failures   int                  `json:"failures"`
-	Targets    []TargetObservations `json:"targets"`
+	Baseline        *ReachabilityBaseline `json:"baseline,omitempty"`
+	SourceInputs    string                `json:"sourceInputs,omitempty"`
+	ObjectiveDigest string                `json:"objectiveDigest,omitempty"`
+	// BaselinePending says the controller could not measure a current baseline
+	// yet. A never-served target is then unknown rather than failing.
+	BaselinePending bool                 `json:"baselinePending,omitempty"`
+	ObservedAt      time.Time            `json:"observedAt"`
+	Interval        time.Duration        `json:"intervalNs"`
+	Timeout         time.Duration        `json:"timeoutNs"`
+	Failures        int                  `json:"failures"`
+	Targets         []TargetObservations `json:"targets"`
 	// Omitted counts derived targets beyond MaxReachabilityTargets.
 	Omitted int            `json:"omitted,omitempty"`
 	Prober  ProberIdentity `json:"prober"`
@@ -203,7 +209,8 @@ type reachabilityDetector struct {
 // all made after the Service gained that ready backend, failed. A prior
 // successful dial is not required: a port that never accepted a connection
 // while its pods report Ready is exactly the fault this detects. Without dial
-// observations in the context it reports nothing.
+// observations in the context it reports nothing. A controller-authorized
+// healthy reference retains never-served declarations as observations instead.
 func NewReachabilityDetector(spec sdk.DetectorSpec) sdk.Detector {
 	return reachabilityDetector{spec: spec}
 }
@@ -211,6 +218,149 @@ func NewReachabilityDetector(spec sdk.DetectorSpec) sdk.Detector {
 func (d reachabilityDetector) Spec() sdk.DetectorSpec { return d.spec }
 
 func (d reachabilityDetector) ConsumesServiceReachability() bool { return true }
+
+// EvaluationWindow is one more dial and its timeout: a single successful dial
+// ends a run of consecutive failures.
+func (d reachabilityDetector) EvaluationWindow(ctx sdk.DetectionContext) time.Duration {
+	w, ok := ReachabilityFrom(ctx)
+	if !ok {
+		return 0
+	}
+	interval := w.Interval
+	if interval <= 0 {
+		interval = DefaultReachabilityInterval
+	}
+	timeout := w.Timeout
+	if timeout <= 0 {
+		timeout = DefaultReachabilityTimeout
+	}
+	return interval + timeout
+}
+
+// Confirmed distinguishes an empty verdict from a window still collecting
+// samples. An unavailable observer remains an error through Detect.
+func (d reachabilityDetector) Confirmed(ctx sdk.DetectionContext) bool {
+	w, ok := ReachabilityFrom(ctx)
+	if !ok {
+		return false
+	}
+	if w.LoadError != "" {
+		return true
+	}
+	count := w.Failures
+	if count < 2 {
+		count = DefaultReachabilityFailures
+	}
+	interval := w.Interval
+	if interval <= 0 {
+		interval = DefaultReachabilityInterval
+	}
+	targets, omitted := ReachabilityTargets(ctx)
+	if omitted > 0 || w.Omitted > 0 {
+		return false
+	}
+	for _, target := range targets {
+		found := false
+		for _, o := range w.Targets {
+			if o.Target != target || len(o.Samples) < count {
+				continue
+			}
+			recent := o.Samples[len(o.Samples)-count:]
+			if w.ObservedAt.Sub(recent[len(recent)-1].At) > 3*interval+w.Timeout {
+				continue
+			}
+			valid := true
+			since := time.Time{}
+			for _, service := range ctx.Services() {
+				if service.Name == target.Service {
+					since = readySince(readySelectedPods(ctx, service))
+					break
+				}
+			}
+			for i, s := range recent {
+				if s.At.IsZero() || s.At.Before(since) || s.At.After(w.ObservedAt) || (i > 0 && !s.At.After(recent[i-1].At)) {
+					valid = false
+				}
+			}
+			// A recent success proves reachability immediately. A trailing
+			// failure still needs the full consecutive-failure confirmation run.
+			if !recent[len(recent)-1].OK {
+				for _, sample := range recent {
+					if sample.OK {
+						valid = false
+					}
+				}
+			}
+			found = valid
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// ConfirmationReason explains an incomplete window, and otherwise names the
+// targets whose verdict is unknown until a healthy baseline is measured. Unknown
+// targets never hold the detector unconfirmed: the measurement waits for every
+// incident to close, so holding closure on it could never finish.
+func (d reachabilityDetector) ConfirmationReason(ctx sdk.DetectionContext) string {
+	if !d.Confirmed(ctx) {
+		return "observation window is incomplete"
+	}
+	unknown := ReachabilityUnknown(ctx)
+	if len(unknown) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(unknown))
+	for _, target := range unknown {
+		ids = append(ids, target.ID())
+	}
+	sort.Strings(ids)
+	return "reachability unknown until a healthy baseline is measured: " + strings.Join(ids, ", ")
+}
+
+// ReachabilityCatchingUp returns the targets whose Service gained its ready
+// backend so recently that fewer than Failures dials follow the transition,
+// none of them failed. Confirmed counts only dials made after the Service's
+// readySince, so a repair that replaces the only ready pod leaves the window
+// incomplete until that many dials follow; dialing these targets early fills
+// it with the same proof. A failed dial ends the catch-up: failure runs keep
+// the normal interval.
+func ReachabilityCatchingUp(ctx sdk.DetectionContext, w ReachabilityWindow) []ReachabilityTarget {
+	count := w.Failures
+	if count < 2 {
+		count = DefaultReachabilityFailures
+	}
+	observed := make(map[ReachabilityTarget][]DialSample, len(w.Targets))
+	for _, o := range w.Targets {
+		observed[o.Target] = o.Samples
+	}
+	services := map[string]corev1.Service{}
+	for _, service := range ctx.Services() {
+		services[service.Name] = service
+	}
+	targets, _ := ReachabilityTargets(ctx)
+	pending := make([]ReachabilityTarget, 0)
+	for _, target := range targets {
+		since := readySince(readySelectedPods(ctx, services[target.Service]))
+		if since.IsZero() {
+			continue
+		}
+		after, failed := 0, false
+		for _, sample := range observed[target] {
+			if sample.At.Before(since) {
+				continue
+			}
+			after++
+			failed = failed || !sample.OK
+		}
+		if !failed && after < count {
+			pending = append(pending, target)
+		}
+	}
+	return pending
+}
 
 type failingPort struct {
 	port     corev1.ServicePort
@@ -261,6 +411,9 @@ func (d reachabilityDetector) Detect(_ context.Context, ctx sdk.DetectionContext
 	admitting := map[string][]string{}
 	order := make([]string, 0)
 	for _, observed := range observations {
+		if excludedReachabilityTarget(ctx, window, observed.Target) || unknownReachabilityTarget(window, observed) {
+			continue
+		}
 		service, exists := services[observed.Target.Service]
 		if !exists || !ReachabilityEligible(service) {
 			continue
@@ -337,6 +490,9 @@ func (d reachabilityDetector) finding(
 		}
 		if failed.observed.LastSuccess != nil {
 			entry["last_success"] = failed.observed.LastSuccess.UTC().Format(time.RFC3339)
+		}
+		if window.Baseline != nil {
+			entry["baseline_status"] = reachabilityBaselineStatus(ctx, window, failed.observed.Target)
 		}
 		metadata = append(metadata, entry)
 	}

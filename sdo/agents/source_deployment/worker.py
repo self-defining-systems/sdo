@@ -10,9 +10,17 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from libs.agent_cli.structured import run_structured_turn
-from sdo.agents.provider import resolve_agent
-from sdo.agents.responder import AGENT_SKILLS, KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
+from sdo.agents.prompt_templates import render_prompt
+from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
+from sdo.agents.provider import ResolvedAgent, resolve_agent
+from sdo.agents.responder import (
+    AGENT_SKILLS,
+    KubernetesResultPublisher,
+    prepare_claude_home,
+    prepare_codex_home,
+    record_worker_failure,
+    records_worker_failure,
+)
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -55,8 +63,8 @@ class SourceProposalDraft(BaseModel):
     expected_workload_ids: list[str]
 
 
-def _provider(model_env: str) -> Literal["codex", "claude"]:
-    return "claude" if resolve_agent("source_deployment", model_env).provider == "claude" else "codex"
+def _provider(agent: ResolvedAgent) -> Literal["codex", "claude"]:
+    return "claude" if agent.provider == "claude" else "codex"
 
 
 def _source_path(value: str) -> str:
@@ -84,30 +92,26 @@ def _workload_id(value: str) -> str:
 def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDeploymentResult:
     """Let the built-in coding agent edit a proposal and return a constrained plan."""
 
-    provider = _provider("SDO_DEPLOYMENT_MODEL")
-    prompt = f"""You are the SDO source deployer for application {request.application!r}.
-Inspect this proposal checkout and prepare source/manifests to run in Kubernetes namespace {request.namespace!r}.
-The human health objective is: {request.health_objective}
-Feedback from the prior independently verified attempt: {request.correction_feedback or "none"}.
-The operator's trusted image registry is {request.registry_host!r}; every image build target must start with
-{request.registry_host + "/"!r}. Use an image path under that host in manifests as well.
-
-Edit only application source and conventional deployment files. Do not edit .sdo/. Do not run kubectl apply,
-build/push images, or claim the deployment is healthy. A trusted Go adapter will build the exact candidate source,
-apply manifests, and independently verify live resources after your task ends. Return a plan containing image builds
-(image name, repository-relative context and Dockerfile paths), repository-relative manifest paths, and expected
-workload IDs as Kind/namespace/name. Every plan path must be inside this checkout. Set proposed=true only when the
-files and plan are ready for that independent adapter. Do not create a separate health-check script or inspect
-benchmark data.
-"""
+    agent = resolve_agent("source_deployment", "deployment")
+    prompt = render_prompt(
+        "source_deployment",
+        "source_deployment",
+        part="source_deployment.instructions",
+        application=repr(request.application),
+        namespace=repr(request.namespace),
+        health_objective=request.health_objective,
+        correction_feedback=request.correction_feedback or "none",
+        registry_host=repr(request.registry_host),
+        registry_host_2=repr(request.registry_host + "/"),
+    )
     turn = run_structured_turn(
-        provider,
+        _provider(agent),
         prompt,
         output_schema=SourceProposalDraft.model_json_schema(),
         cwd=checkout,
-        access="workspace-write",
-        model=os.environ.get("SDO_DEPLOYMENT_MODEL") or None,
-        reasoning_effort="high",
+        access="danger-full-access",
+        model=agent.model,
+        reasoning_effort=agent.effort,
         timeout_seconds=1800,
     )
     draft = SourceProposalDraft.model_validate_json(turn.output_json)
@@ -163,11 +167,13 @@ def run_deployment_task(
     return result
 
 
+@records_worker_failure
 def main() -> int:
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
     if not namespace or not result_name:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
+        record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
         prepare_codex_home(skills=AGENT_SKILLS["source_deployment"])
@@ -178,9 +184,10 @@ def main() -> int:
         if task.request.Is(SourceDeploymentRequest.DESCRIPTOR):
             run_deployment_task(task_path, result_name, publisher)
         else:
-            raise ValueError(f"unsupported deployer request type {task.request.TypeName()!r}")
+            raise ValueError(f"unsupported source deployment request type {task.request.TypeName()!r}")
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
+        record_worker_failure(exc)
         return 1
     return 0
 

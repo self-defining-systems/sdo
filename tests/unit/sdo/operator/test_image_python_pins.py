@@ -8,6 +8,7 @@ example agentshim 0.6.8 lacks the 0.7 usage API that ``libs/agent_cli`` uses).
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -126,7 +127,7 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
     assert "COPY --from=go-deps /go/pkg/mod /go/pkg/mod" in dockerfile
     assert "COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator" in dockerfile
     assert "GOPROXY=off" in dockerfile
-    assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile
+    assert 'GOFLAGS="-mod=mod -p=2 -trimpath"' in dockerfile
     assert "SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs" in dockerfile
     assert "! command -v go" in (REPO_ROOT / "scripts/build_sdo_images.sh").read_text()
     for relative in (
@@ -152,6 +153,9 @@ def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
     assert "go list ./program" in script
     assert "tests/fixtures/sdo/playbook_program_app:/fixture:ro" in script
     assert "sdo-operator validation-child /fixture /opt/sdo/sdo/operator" in script
+    # Arity of RunValidationChild: candidate root, operator root, healthy baseline, replay mode.
+    (line,) = [line for line in script.splitlines() if "sdo-operator validation-child" in line]
+    assert len(shlex.split(line.split("sdo-operator validation-child", 1)[1])) == 4
 
 
 def test_image_npm_installs_are_pinned_to_exact_versions() -> None:
@@ -174,7 +178,16 @@ def test_ci_pins_actions_to_commits_and_installs_from_the_lockfile() -> None:
     actions = re.findall(r"uses:\s*(\S+)", workflow)
 
     assert actions
-    assert [action for action in actions if not re.search(r"@[0-9a-f]{40}$", action)] == []
+    # Local composites are bound to the immutable checkout; inspect their
+    # remote dependencies too so introducing a composite cannot bypass pinning.
+    for action in list(actions):
+        if action.startswith("./"):
+            composite = REPO_ROOT / action / "action.yml"
+            assert composite.is_file()
+            actions.extend(re.findall(r"uses:\s*(\S+)", composite.read_text(encoding="utf-8")))
+    assert [
+        action for action in actions if not action.startswith("./") and not re.search(r"@[0-9a-f]{40}$", action)
+    ] == []
     syncs = re.findall(r"uv sync[^\n]*", workflow)
     assert syncs
     assert all("--locked" in sync for sync in syncs)

@@ -15,9 +15,10 @@ var ProtocolSchemaVersion = wire.StringConst(&contracts.IncidentRequest{}, "sche
 type DetectorEvaluationStatus string
 
 const (
-	DetectorEvaluationFiring DetectorEvaluationStatus = "firing"
-	DetectorEvaluationClear  DetectorEvaluationStatus = "clear"
-	DetectorEvaluationError  DetectorEvaluationStatus = "error"
+	DetectorEvaluationFiring  DetectorEvaluationStatus = "firing"
+	DetectorEvaluationClear   DetectorEvaluationStatus = "clear"
+	DetectorEvaluationError   DetectorEvaluationStatus = "error"
+	DetectorEvaluationPending DetectorEvaluationStatus = "pending"
 )
 
 type IncidentStatus string
@@ -34,6 +35,7 @@ type DetectorEvaluation struct {
 	Status       DetectorEvaluationStatus
 	Fingerprints []string
 	Error        string
+	Reason       string `json:"Reason,omitempty"`
 }
 
 type SurfacedPlaybook struct {
@@ -52,51 +54,37 @@ type PriorOutcomeEvidence struct {
 }
 
 type IncidentRequest struct {
-	MetricsSource        *contracts.MetricsSource
-	SchemaVersion        string
-	Application          string
-	Namespace            string
-	IncidentID           string
-	Findings             []sdk.Finding
-	DriftEvents          []sdk.DriftEvent
-	DetectorHistory      []DetectorEvaluation
-	SurfacedPlaybooks    []SurfacedPlaybook
-	RelevantOutcomes     []PriorOutcomeEvidence
-	SourceCommit         string
-	DeployedCommit       string
-	RepositoryWorktree   string
-	RepositoryBaseCommit string
-	ResponseDeadline     time.Time
-	CancellationToken    string
-	RepairPolicy         string
+	MetricsSource          *contracts.MetricsSource
+	DisabledSetupDetectors []*contracts.DisabledSetupDetector
+	NamespaceOnboarding    *contracts.NamespaceOnboarding
+	// ObservationGeneration binds the incident to accepted scope and installer policy.
+	ObservationGeneration string
+	SchemaVersion         string
+	Application           string
+	Namespace             string
+	IncidentID            string
+	Findings              []sdk.Finding
+	DriftEvents           []sdk.DriftEvent
+	DetectorHistory       []DetectorEvaluation
+	SurfacedPlaybooks     []SurfacedPlaybook
+	RelevantOutcomes      []PriorOutcomeEvidence
+	SourceCommit          string
+	DeployedCommit        string
+	RepositoryWorktree    string
+	RepositoryBaseCommit  string
+	ResponseDeadline      time.Time
+	CancellationToken     string
+	RepairPolicy          string
 	// StateChanges is the application's configuration diff against its last
 	// healthy baseline when the incident opened; nil without a baseline.
-	StateChanges *StateChanges
-	// FollowUp is set only on a follow-up incident dispatched for findings that
-	// stayed active after an earlier responder completed.
-	FollowUp           *FollowUpContext
-	InitialProgramRuns []ProgramRun
-	FastPathSummary    string
-	// PriorStages is what earlier automatic stages did, in order.
-	PriorStages      []*contracts.StageReport
-	MaxResponseLoops int
+	StateChanges          *StateChanges
+	InitialProgramRuns    []ProgramRun
+	PlaybookCoverage      *contracts.PlaybookCoverage
+	PriorResponseProgress []*contracts.ResponseProgress
+	PriorStages           []*contracts.StageReport
+	MaxResponseLoops      int
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string
-}
-
-// FollowUpContext links a follow-up responder request to the incident it
-// continues. The request's Findings are the residual findings; PriorSummary
-// is a bounded, factual digest of what the earlier responders reported.
-type FollowUpContext struct {
-	OriginalIncidentID string
-	ParentIncidentID   string
-	// Attempt is the 1-based follow-up ordinal; MaxFollowUps is the bound.
-	Attempt      int
-	MaxFollowUps int
-	PriorSummary string
-	// DriftLabelsOnly marks a follow-up whose only job is to return the
-	// structured labels for the unexplained drift in the request.
-	DriftLabelsOnly bool
 }
 
 // RootCauseEvidence is one live observation supporting a root cause: a
@@ -141,9 +129,11 @@ type TimingMetrics struct {
 }
 
 type RepairActionReceipt struct {
-	ActionID string
-	Kind     string
-	Target   string
+	ScriptDigest  string
+	FailureReason string
+	ActionID      string
+	Kind          string
+	Target        string
 	// Resources are the objects the action mutated; diagnosis verification
 	// credits a root cause only to a repair that touched its resources.
 	Resources   []sdk.ObjectRef
@@ -153,36 +143,46 @@ type RepairActionReceipt struct {
 	CompletedAt time.Time
 	Success     bool
 	Reversible  bool
+	// Owners are written resources' controller owner chains read at write
+	// time; cause attribution follows them instead of generated names.
+	Owners []ResourceOwners
+}
+
+// ResourceOwners is one written resource's owner chain, nearest owner first.
+type ResourceOwners struct {
+	Resource   sdk.ObjectRef
+	OwnerChain []sdk.ObjectRef
 }
 
 type IncidentResult struct {
-	DriftEvents                     []sdk.DriftEvent
-	SchemaVersion                   string
-	IncidentID                      string
-	Status                          IncidentStatus
-	ConfirmedRootCauses             []ConfirmedRootCause
-	AppliedPlaybooks                []AppliedPlaybook
-	RepairChanges                   []string
-	RepairActions                   []RepairActionReceipt
-	FinalDetectorStates             []DetectorEvaluation
-	ProposedArtifactIDs             []string
-	VerificationEvidence            []VerificationEvidence
-	Usage                           UsageMetrics
-	Timing                          TimingMetrics
-	ResponderSessionID              string
-	LateFindingsPull                *LateFindingsPull
-	Error                           string
-	ProgramToolCalls                []ToolCall
-	ProgramRuns                     []ProgramRun
-	PlanApplications                []RecordedPlanApplication
-	ProgramFailureSignals           []string
-	ResponseLoopsUsed               int
-	ResponseLoopExhausted           bool
-	ResolutionPath                  string
-	FastPathPrograms                []string
-	FastPathSkippedReason           FastPathSkipReason
-	FastPathRelationCoveredFindings []RelationCoveredFinding
-	PriorStages                     []*contracts.StageReport
+	// automaticStages carries an in-process pre-claim observation back to the
+	// pipeline. Durable evidence remains in request stage reports and receipts.
+	automaticStages       []*contracts.StageReport
+	DriftReprompt         *contracts.DriftReprompt
+	UnresolvedFindings    []sdk.Finding
+	DriftEvents           []sdk.DriftEvent
+	SchemaVersion         string
+	IncidentID            string
+	Status                IncidentStatus
+	ConfirmedRootCauses   []ConfirmedRootCause
+	AppliedPlaybooks      []AppliedPlaybook
+	RepairChanges         []string
+	RepairActions         []RepairActionReceipt
+	FinalDetectorStates   []DetectorEvaluation
+	ProposedArtifactIDs   []string
+	VerificationEvidence  []VerificationEvidence
+	Usage                 UsageMetrics
+	Timing                TimingMetrics
+	ResponderSessionID    string
+	LateFindingsPull      *LateFindingsPull
+	Error                 string
+	ProgramToolCalls      []ToolCall
+	ProgramRuns           []ProgramRun
+	PlanApplications      []RecordedPlanApplication
+	ProgramFailureSignals []string
+	ResponseLoopsUsed     int
+	ResponseLoopExhausted bool
+	ResolutionPath        string
 }
 
 // LateFindingsPull is a worker's claim that it consumed a controller-authored
@@ -196,23 +196,22 @@ type LateFindingsPull struct {
 	ReportDigest string
 }
 
-// ObservedStateChange is one object the controller saw changed from the
-// healthy baseline while an incident was open, and when it first saw it.
-type ObservedStateChange struct {
-	Kind            string
-	Name            string
-	FirstObservedAt time.Time
-}
-
 type IncidentClosure struct {
-	Request             IncidentRequest
-	Result              *IncidentResult
-	DispatchError       string
-	FinalDetectorStates []DetectorEvaluation
+	VerifiedWhileResponderRunning bool
+	ClosureStabilityWindow        time.Duration
+	// ObservationGeneration identifies the scope used for independent verification.
+	ObservationGeneration string
+	Request               IncidentRequest
+	Result                *IncidentResult
+	DispatchError         string
+	FinalDetectorStates   []DetectorEvaluation
 	// IncidentDetectorStates is the latest post-response evaluation of each
 	// non-health detector that raised a finding in this incident. It is
 	// learning evidence for the broker, not a closure gate.
 	IncidentDetectorStates []DetectorEvaluation
+	// PartialDetectorStates preserves confirmed per-finding observations on failed
+	// closures without granting global health or source-publication authority.
+	PartialDetectorStates []DetectorEvaluation
 	// DetectorTimeline summarizes, per finding, when each detector fired in this
 	// incident window and how that relates to dispatch. The booleans derive
 	// from it for analysis: a learned incident detector that fired before the
@@ -234,23 +233,22 @@ type IncidentClosure struct {
 	ResponderCompletedAt time.Time
 	VerifiedAt           time.Time
 	// HealthClearedAt is when the closure gate's detectors began their final
-	// streak of clear evaluations. Only a repair action that started by then
-	// can back a root cause. nil when no streak is on record.
+	// streak of clear evaluations. nil when no streak is on record.
 	HealthClearedAt *time.Time
-	// ObservedStateChanges is every object the controller saw differ from
-	// the healthy baseline while the incident was open, with its first
-	// observation: the dispatch diff, later evaluations' diffs, and the
-	// closing view. A state-change citation is evidence of the cause only if
-	// it was observed before the responder's own repair of that object
-	// started; otherwise it is that repair's edit. Omitted without a
-	// baseline, when state changes cannot be checked at all.
-	ObservedStateChanges []ObservedStateChange
-	// DetectorReviewRequiredAt is set when health did not clear within the
-	// verification window after the responder completed. Health that
-	// clears later was not verifiably restored by the responder.
-	DetectorReviewRequiredAt *time.Time
-	DetectorReviewReason     string
 	// CleanedHelpers are the responder helper objects the controller
 	// deleted after the responder completed, as Kind/namespace/name.
-	CleanedHelpers []string
+	CleanedHelpers []string // UnconfirmedReason is set when the closure-time recheck never saw a
+	// complete observation window within its bound: the closure commits as
+	// unverified (final states moved to partial) instead of being superseded.
+	UnconfirmedReason       contracts.ClosureUnconfirmedReason
+	UnconfirmedDetail       string
+	StatePersistenceFailure *contracts.StatePersistenceFailure
+	// SourceCheckNotes lists what the accepted-source checks found when the
+	// closure committed: checks that were unavailable, and objects that still
+	// differ from the accepted source. They are information on the outcome, not
+	// a verdict.
+	SourceCheckNotes []string
+	// Frozen marks the closure's terminal identity: persisted, with the
+	// recheck's notes folded in, before the first broker attempt.
+	Frozen bool
 }

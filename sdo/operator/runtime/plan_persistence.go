@@ -1,9 +1,13 @@
 package runtime
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
 
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -22,6 +26,7 @@ type persistedPlan struct {
 type planApplicationFields PlanApplicationResult
 
 func (result PlanApplicationResult) MarshalJSON() ([]byte, error) {
+
 	plan, err := encodePersistedActions(result.Plan.Actions)
 	if err != nil {
 		return nil, fmt.Errorf("encode plan: %w", err)
@@ -30,11 +35,17 @@ func (result PlanApplicationResult) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode applied actions: %w", err)
 	}
-	return json.Marshal(struct {
+	raw, err := json.Marshal(struct {
 		planApplicationFields
 		Plan           persistedPlan     `json:"Plan"`
 		ActionsApplied []persistedAction `json:"ActionsApplied"`
 	}{planApplicationFields(result), persistedPlan{Actions: plan, Rationale: result.Plan.Rationale}, applied})
+	if err != nil {
+		return nil, err
+	}
+	// Raw execution images remain process-local for compensation. All JSON
+	// receipts/checkpoints cross the same observation projection as captures.
+	return sdk.ProjectWebhookCAJSON(raw)
 }
 
 func (result *PlanApplicationResult) UnmarshalJSON(data []byte) error {
@@ -68,10 +79,47 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 	for _, action := range actions {
 		var kind string
 		switch action.(type) {
+		case program.SyncWebhookCA, *program.SyncWebhookCA:
+			kind = "sync_webhook_ca"
+		case program.PatchObject, *program.PatchObject:
+			kind = "patch_object"
+		case program.ApplyObject, *program.ApplyObject:
+			kind = "apply_object"
+		case program.KubernetesRequest, *program.KubernetesRequest:
+			kind = "kubernetes_request"
+		case program.WaitFor, *program.WaitFor:
+			kind = "wait_for"
+		case program.EnsureExec, *program.EnsureExec:
+			kind = "ensure_exec"
+		case program.EnsureHTTP, *program.EnsureHTTP:
+			kind = "ensure_http"
+		case program.RunScript, *program.RunScript:
+			kind = "run_script"
+		case program.RunJob, *program.RunJob:
+			kind = "run_job"
+
+		case program.CreateFromSource, *program.CreateFromSource:
+			kind = "create_from_source"
+		case program.DeleteObject, *program.DeleteObject:
+			kind = "delete_object"
 		case program.ReconcileFromSource, *program.ReconcileFromSource:
 			kind = "reconcile_from_source"
 		case program.Rollback, *program.Rollback:
 			kind = "rollback"
+		case program.DeletePod, *program.DeletePod:
+			kind = "delete_pod"
+		case program.ScaleWorkload, *program.ScaleWorkload:
+			kind = "scale_workload"
+		case program.RetryAdmission, *program.RetryAdmission:
+			kind = "retry_admission"
+		case program.RetireOldRevision, *program.RetireOldRevision:
+			kind = "retire_old_revision"
+		case program.RemoveServicePort, *program.RemoveServicePort:
+			kind = "remove_service_port"
+		case program.EnsureDatabaseUser, *program.EnsureDatabaseUser:
+			kind = "ensure_database_user"
+		case program.Exec, *program.Exec:
+			kind = "exec"
 		case program.SetField, *program.SetField:
 			kind = "set_field"
 		case program.RestartRollout, *program.RestartRollout:
@@ -99,10 +147,47 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 	for _, entry := range encoded {
 		var action program.Action
 		switch entry.Kind {
+		case "patch_object":
+			action = &program.PatchObject{}
+		case "apply_object":
+			action = &program.ApplyObject{}
+		case "kubernetes_request":
+			action = &program.KubernetesRequest{}
+		case "sync_webhook_ca":
+			action = &program.SyncWebhookCA{}
+		case "wait_for":
+			action = &program.WaitFor{}
+		case "ensure_exec":
+			action = &program.EnsureExec{}
+		case "ensure_http":
+			action = &program.EnsureHTTP{}
+		case "run_script":
+			action = &program.RunScript{}
+		case "run_job":
+			action = &program.RunJob{}
+
+		case "create_from_source":
+			action = &program.CreateFromSource{}
+		case "delete_object":
+			action = &program.DeleteObject{}
 		case "reconcile_from_source":
 			action = &program.ReconcileFromSource{}
 		case "rollback":
 			action = &program.Rollback{}
+		case "delete_pod":
+			action = &program.DeletePod{}
+		case "scale_workload":
+			action = &program.ScaleWorkload{}
+		case "retry_admission":
+			action = &program.RetryAdmission{}
+		case "retire_old_revision":
+			action = &program.RetireOldRevision{}
+		case "remove_service_port":
+			action = &program.RemoveServicePort{}
+		case "ensure_database_user":
+			action = &program.EnsureDatabaseUser{}
+		case "exec":
+			action = &program.Exec{}
 		case "set_field":
 			action = &program.SetField{}
 		case "restart_rollout":
@@ -113,13 +198,50 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		if len(entry.Action) == 0 || string(entry.Action) == "null" {
 			return nil, fmt.Errorf("missing %s action", entry.Kind)
 		}
-		if err := json.Unmarshal(entry.Action, action); err != nil {
+		if err := utiljson.Unmarshal(entry.Action, action); err != nil {
 			return nil, fmt.Errorf("decode %s action: %w", entry.Kind, err)
 		}
 		switch value := action.(type) {
+		case *program.SyncWebhookCA:
+			decoded = append(decoded, *value)
+		case *program.PatchObject:
+			decoded = append(decoded, *value)
+		case *program.ApplyObject:
+			decoded = append(decoded, *value)
+		case *program.KubernetesRequest:
+			decoded = append(decoded, *value)
+		case *program.WaitFor:
+			decoded = append(decoded, *value)
+		case *program.EnsureExec:
+			decoded = append(decoded, *value)
+		case *program.EnsureHTTP:
+			decoded = append(decoded, *value)
+		case *program.RunScript:
+			decoded = append(decoded, *value)
+		case *program.RunJob:
+			decoded = append(decoded, *value)
+
+		case *program.CreateFromSource:
+			decoded = append(decoded, *value)
+		case *program.DeleteObject:
+			decoded = append(decoded, *value)
 		case *program.ReconcileFromSource:
 			decoded = append(decoded, *value)
 		case *program.Rollback:
+			decoded = append(decoded, *value)
+		case *program.DeletePod:
+			decoded = append(decoded, *value)
+		case *program.ScaleWorkload:
+			decoded = append(decoded, *value)
+		case *program.RetryAdmission:
+			decoded = append(decoded, *value)
+		case *program.RetireOldRevision:
+			decoded = append(decoded, *value)
+		case *program.RemoveServicePort:
+			decoded = append(decoded, *value)
+		case *program.EnsureDatabaseUser:
+			decoded = append(decoded, *value)
+		case *program.Exec:
 			decoded = append(decoded, *value)
 		case *program.SetField:
 			decoded = append(decoded, *value)
@@ -128,4 +250,47 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		}
 	}
 	return decoded, nil
+}
+
+// MarshalJSON is the publication boundary for patches, including dry-run tool
+// responses which publish the patch list without the enclosing application.
+// In-memory images stay raw for compensation; projected images cannot authorize
+// restoration from a durable checkpoint.
+func (patch PlanPatch) MarshalJSON() ([]byte, error) {
+	for _, object := range []*unstructured.Unstructured{patch.Before, patch.After} {
+		if object == nil {
+			continue
+		}
+		raw, err := json.Marshal(object.Object)
+		if err != nil {
+			return nil, err
+		}
+		projected, err := sdk.ProjectWebhookCAJSON(raw)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Equal(raw, projected) {
+			patch.Irreversible = true
+		}
+	}
+	type fields PlanPatch
+	return projectPlanEvidence(fields(patch))
+}
+
+func (image PlanPreImage) MarshalJSON() ([]byte, error) {
+	type fields PlanPreImage
+	return projectPlanEvidence(fields(image))
+}
+
+func (effect PlanObjectEffect) MarshalJSON() ([]byte, error) {
+	type fields PlanObjectEffect
+	return projectPlanEvidence(fields(effect))
+}
+
+func projectPlanEvidence(value any) ([]byte, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return sdk.ProjectWebhookCAJSON(raw)
 }

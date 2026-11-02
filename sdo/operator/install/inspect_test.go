@@ -35,9 +35,9 @@ func TestInspectExistingRequiresCurrentReadyNativeControllerAndAcceptedHead(t *t
 	}
 }
 
-// The benchmark recreates the application namespace between stages, which deletes the controller's grants
-// there; inspecting the persistent controller must restore them or it can no longer observe the application.
-func TestInspectExistingRestoresApplicationGrantsAfterNamespaceRecreation(t *testing.T) {
+// Inspecting the persistent controller re-applies the wildcard grant, so a reinstalled or edited cluster
+// still gives the controller its authority.
+func TestInspectExistingRestoresClusterGrant(t *testing.T) {
 	ctx := context.Background()
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: ControllerJobName, Namespace: "demo-sdo", UID: "current-job", Annotations: map[string]string{InstallFingerprintAnnotation: "fingerprint", WorkerMountPolicyAnnotation: "proposal-only"}}, Status: batchv1.JobStatus{Active: 1}}
 	job.Spec.Template.Spec.Containers = []corev1.Container{{Name: "controller", Image: "controller:go", Command: []string{"/usr/local/bin/sdo-operator"}, Args: []string{"controller", "--namespace", "demo", "--application", "demo", "--broker-mode=native", "--worker-mount-mode=proposal-only"}}}
@@ -50,12 +50,10 @@ func TestInspectExistingRestoresApplicationGrantsAfterNamespaceRecreation(t *tes
 	if _, err := installer.InspectExisting(ctx, InspectConfig{ControlNamespace: "demo-sdo", Namespace: "demo", Application: "demo", RepositoryPVC: "repository", ControllerImage: "controller:go"}); err != nil {
 		t.Fatal(err)
 	}
-	roles, err := client.RbacV1().Roles("demo").List(ctx, metav1.ListOptions{})
-	if err != nil || len(roles.Items) == 0 {
-		t.Fatalf("application grants were not restored: %v, %d roles", err, len(roles.Items))
+	if _, err := client.RbacV1().ClusterRoles().Get(ctx, adminGrantName("demo-sdo"), metav1.GetOptions{}); err != nil {
+		t.Fatalf("cluster grant was not restored: %v", err)
 	}
-	bindings, err := client.RbacV1().RoleBindings("demo").List(ctx, metav1.ListOptions{})
-	if err != nil || len(bindings.Items) == 0 {
-		t.Fatalf("application bindings were not restored: %v, %d bindings", err, len(bindings.Items))
+	if _, err := client.RbacV1().ClusterRoleBindings().Get(ctx, adminGrantName("demo-sdo"), metav1.GetOptions{}); err != nil {
+		t.Fatalf("cluster binding was not restored: %v", err)
 	}
 }

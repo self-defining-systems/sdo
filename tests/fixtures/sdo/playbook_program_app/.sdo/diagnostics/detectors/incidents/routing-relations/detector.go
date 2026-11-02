@@ -1,0 +1,49 @@
+package routingrelations
+
+import (
+	"context"
+	"fixture-diagnostics/lib/ports"
+	"sdo.dev/operator/sdk"
+	"time"
+)
+
+// Detection has its own entry point and never invokes a playbook.
+type Detector struct{}
+
+func New() sdk.Detector { return Detector{} }
+func (Detector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "routing-relations", Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder,
+		Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Pod"}}, Interval: time.Second,
+		Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityWarning, Debounce: 500 * time.Millisecond},
+		Playbooks: []string{"service-targetport-mismatch"}, OriginatingIncident: "incident", OriginatingCommit: "reflection"}
+}
+func (Detector) Detect(_ context.Context, s sdk.DetectionContext) ([]sdk.Finding, error) {
+	var result []sdk.Finding
+	for _, service := range s.Services() {
+		pods := s.PodsForService(service.Namespace, service.Name)
+		if len(pods) == 0 {
+			continue
+		}
+		faulty := false
+		for _, port := range service.Spec.Ports {
+			for _, pod := range pods {
+				found := false
+				for _, container := range pod.Spec.Containers {
+					for _, exposed := range container.Ports {
+						if ports.Matches(port.TargetPort, exposed) {
+							found = true
+						}
+					}
+				}
+				if !found {
+					faulty = true
+				}
+			}
+		}
+		if faulty {
+			ref := sdk.ObjectRefFrom("Service", "v1", &service)
+			result = append(result, sdk.Finding{DetectorID: "routing-relations", RuleID: "targetport", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, PrimaryResource: ref, Playbooks: []string{"service-targetport-mismatch"}, ParameterBindings: map[string]sdk.ObjectRef{"service": ref}, Summary: "Service targetPort has no matching container port", Evidence: "targetPort does not match a container port on a selected Pod"})
+		}
+	}
+	return result, nil
+}

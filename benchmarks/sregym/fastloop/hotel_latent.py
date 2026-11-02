@@ -12,9 +12,10 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, load_application_baseline
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -72,7 +73,7 @@ def sweep_preparer(
         )
         # Adoption runs at startup and after accepted commits. Prepare only at
         # the injection boundary, and let the informer see the healthy object.
-        sleep(1)
+        sleep(wait_for(WaitKind.POLL_FAST))
         logging.getLogger(__name__).info("prepared imported Service/%s for periodic sweep", service)
 
     return prepare
@@ -86,13 +87,13 @@ def main() -> None:
     baselines = load_application_baseline(environment.baseline_path, environment.namespace) or ()
     baseline = next(item for item in baselines if item.namespace == environment.namespace)
     if align_tracing_alias(environment.workspace, baseline):
-        subprocess.run(["git", "-C", str(environment.workspace), "add", TRACING_SERVICE], check=True)
+        subprocess.run(host_git_command(environment.workspace, "add", TRACING_SERVICE), check=True)
         subprocess.run(
-            ["git", "-C", str(environment.workspace), "commit", "-qm", "fix: align tracing source with hotel baseline"],
+            host_git_command(environment.workspace, "commit", "-qm", "fix: align tracing source with hotel baseline"),
             check=True,
         )
     environment.seed_commit = subprocess.check_output(
-        ["git", "-C", str(environment.workspace), "rev-parse", "HEAD"], text=True
+        host_git_command(environment.workspace, "rev-parse", "HEAD"), text=True
     ).strip()
     environment.save()
     print(f"prepared hotel seed {environment.seed_commit}: structural health unchanged")

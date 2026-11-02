@@ -20,6 +20,30 @@ type Detector interface {
 	Detect(context.Context, DetectionContext) ([]Finding, error)
 }
 
+// WindowedDetector is implemented by detectors that judge a rolling window of
+// past observations, so a condition that has just resolved can keep reporting
+// until the window rolls over. EvaluationWindow bounds that lag for the
+// current view; zero means the detector has no such window.
+type WindowedDetector interface {
+	EvaluationWindow(DetectionContext) time.Duration
+}
+
+// ClearingHorizon is how long after a condition resolves a fresh evaluation of
+// the detector may still report it: its rolling window plus the evaluations its
+// clearing policy needs at its own cadence.
+func ClearingHorizon(detector Detector, view DetectionContext) time.Duration {
+	spec := detector.Spec()
+	clearing := spec.Persistence.Clearing
+	if clearing < 1 {
+		clearing = 1
+	}
+	horizon := time.Duration(clearing) * spec.Interval
+	if windowed, ok := detector.(WindowedDetector); ok {
+		horizon += windowed.EvaluationWindow(view)
+	}
+	return horizon
+}
+
 type DetectorSpec struct {
 	ID          string
 	Class       DetectorClass
@@ -169,6 +193,31 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
 	return result
 }
 
+// SourceDiff is the read-only comparison with the accepted source for one resource.
+// Missing source or observation evidence is an error, never a clean comparison.
+type SourceDiff struct {
+	// SourceAbsent is true only after a successful accepted-source lookup finds no object.
+	SourceAbsent bool `json:"source_absent,omitempty"`
+	// Changed reports declared fields that differ and fields that source does
+	// not declare and that were absent when SDO accepted (adopted) the object.
+	// Server defaults, fields present at acceptance and kubernetes.io/k8s.io
+	// bookkeeping are not changes; nor is a new value of an undeclared field
+	// that existed at acceptance. When declared fields agree but the object
+	// has no acceptance record for this source, the diff is an error, not
+	// unchanged. ReconcileFromSource removes the additions it reports.
+	Changed bool `json:"changed"`
+	// Text is human-readable evidence for a verdict or finding. Never match
+	// on it: a substring of a whole document cannot tell which field or
+	// container changed. Compare fields with Field and ContainerChanges.
+	Text string `json:"text,omitempty"`
+}
+
+// PresentButNotInSource is true while the object exists live but not in accepted source.
+// Unlike SourceAbsent it turns false after the delete, so delete-style Diagnose matches on it.
+func (d SourceDiff) PresentButNotInSource() bool { return d.Changed && d.SourceAbsent }
+
+// DetectionContext is the frozen snapshot read by detectors and, through
+// ReadView, by programs.
 type DetectionContext interface {
 	StatefulSets() []appsv1.StatefulSet
 	DaemonSets() []appsv1.DaemonSet
@@ -182,6 +231,12 @@ type DetectionContext interface {
 	Nodes() []corev1.Node
 	Secrets() []SecretMetadata
 
+	// DiffAgainstSource compares a captured resource with accepted source, including
+	// source absence. Runtime reads are frozen per snapshot and recorded for replay.
+	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
+	DiffAgainstSource(ref ObjectRef) (SourceDiff, error)
+	// PodAdmission returns the frozen dry-run result, false when unobserved.
+	PodAdmission() (PodAdmissionResult, bool)
 	Namespace() string
 	ConfigMaps() []corev1.ConfigMap
 	Services() []corev1.Service

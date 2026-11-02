@@ -93,9 +93,6 @@ func (c *Controller) refreshIncidentView(now time.Time, evaluated bool) {
 	}
 	c.mu.Lock()
 	c.incidentView = view
-	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID {
-		c.observeStateChangesLocked(changes, now)
-	}
 	c.mu.Unlock()
 }
 

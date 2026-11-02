@@ -139,7 +139,7 @@ func TestBoundedNativeInstallCarriesDurationWithoutSupervisor(t *testing.T) {
 		t.Fatal(err)
 	}
 	controllerArgs := plan.Job.Spec.Template.Spec.Containers[0].Args
-	if !contains(controllerArgs, "--duration") || !contains(controllerArgs, "120s") || contains(controllerArgs, "--supervise") {
+	if !contains(controllerArgs, "--duration") || !contains(controllerArgs, "120s") {
 		t.Fatalf("bounded controller args=%v", controllerArgs)
 	}
 	operate, err := install.OperateJob(cfg, "healthy", "operation-1", 1)
@@ -218,5 +218,48 @@ func TestMetricsURLIsForwardedAcrossOperateAndControllerJobs(t *testing.T) {
 	controllerLaunch, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil || controllerLaunch.Controller.GetMetricsUrl() != cfg.MetricsURL {
 		t.Fatalf("controller child lost the metrics URL: %+v, %v", controllerLaunch.Controller, err)
+	}
+}
+
+func TestMemoryUpstreamReachesTheControllerLaunchWithReadOnlyKey(t *testing.T) {
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}}
+	plan, err := install.Resources(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(plan.Job.Spec.Template.Spec.Containers[0].Args, "--memory-upstream-url") {
+		t.Fatal("the default install must keep accepted memory local")
+	}
+	cfg.MemoryUpstreamURL, cfg.MemoryUpstreamBranch, cfg.MemoryUpstreamSSHSecret = "git@github.com:example/demo-sdo.git", "live/20261028-synthetic", "memory-ssh"
+	plan, err = install.Resources(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := plan.Job.Spec.Template.Spec
+	launch, err := operatorcli.ParseControllerLaunch(pod.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := launch.Controller.GetMemoryUpstream()
+	if upstream.GetUrl() != cfg.MemoryUpstreamURL || upstream.GetBranch() != cfg.MemoryUpstreamBranch || upstream.GetSshDir() != install.MemoryUpstreamSSHDir {
+		t.Fatalf("controller lost the memory upstream: %+v", upstream)
+	}
+	mounted := false
+	for _, mount := range pod.Containers[0].VolumeMounts {
+		if mount.MountPath == install.MemoryUpstreamSSHDir {
+			mounted = mount.ReadOnly
+			for _, volume := range pod.Volumes {
+				if volume.Name == mount.Name && (volume.Secret == nil || volume.Secret.SecretName != "memory-ssh") {
+					mounted = false
+				}
+			}
+		}
+	}
+	if !mounted {
+		t.Fatal("ssh key Secret is not mounted read-only at the controller's ssh directory")
+	}
+	cfg.MemoryUpstreamBranch = ""
+	if _, err := install.Resources(cfg); err == nil {
+		t.Fatal("memory upstream without a branch was accepted")
 	}
 }

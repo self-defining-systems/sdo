@@ -27,13 +27,16 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import (
     ClosureFailedError,
+    ControllerStalledError,
+    Deadline,
     DetectionMissError,
-    DetectorReviewRequiredError,
     PersistentControllerError,
     PersistentState,
+    WaitKind,
     collect_followup_incident,
     drain_pending_incident,
     pause_controller,
+    wait_for,
 )
 from benchmarks.sregym.fastloop.fault_tracker import (
     BackgroundPoller,
@@ -51,24 +54,31 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from benchmarks.sregym.fastloop.loop import InjectionWindow
-    from benchmarks.sregym.fastloop.records import AgentName
+    from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait
 
 logger = logging.getLogger(__name__)
 
-STATE_SAMPLE_SECONDS = 10.0
+STATE_SAMPLE_SECONDS = wait_for(WaitKind.PROBE)
+
+
+@dataclass(frozen=True)
+class _Wedge:
+    """What the controller state held when no closure arrived."""
+
+    incident_id: str
+    reason: str
+    state: dict[str, Any]
 
 
 @dataclass(frozen=True)
 class CompositeSettings:
     #: Longest the composite may run after injection before the agent is cut off.
-    deadline_seconds: float = 2400.0
+    deadline_seconds: float = wait_for(WaitKind.COMPOSITE_DEADLINE)
     #: Longest to wait for another incident while faults remain and none is in flight.
-    idle_seconds: float = 600.0
+    idle_seconds: float = wait_for(WaitKind.IDLE)
     #: How long a fault must stay green to count as resolved.
-    stable_seconds: float = 20.0
-    poll_seconds: float = 5.0
-    #: Stop as soon as the controller stops itself for detector review (False: wait out the deadline).
-    stop_on_detector_review: bool = True
+    stable_seconds: float = wait_for(WaitKind.STABLE)
+    poll_seconds: float = wait_for(WaitKind.POLL)
 
     def __post_init__(self) -> None:
         for name in ("deadline_seconds", "idle_seconds", "stable_seconds", "poll_seconds"):
@@ -84,9 +94,31 @@ def make_tracker(
     faults: tuple[FaultSpec, ...] = (),
 ):
     faults = faults or composite_faults(problem_id)
-    if not faults:
+    if (
+        not faults
+        or not all(fault.tracking_supported for fault in faults)
+        or len({f.name for f in faults}) != len(faults)
+    ):
         return None
-    return FaultTracker(probes_for(faults, reader), stable_seconds=settings.stable_seconds)
+    from benchmarks.sregym.fastloop.runtime_observation import baseline_observation
+
+    return FaultTracker(
+        baseline_observation(lambda: probes_for(faults, reader)), stable_seconds=settings.stable_seconds
+    )
+
+
+def _unsupported_report(agent: str, problem_id: str, faults: tuple[FaultSpec, ...]) -> dict[str, Any]:
+    return {
+        "agent": agent,
+        "problem_id": problem_id,
+        "tracking_supported": False,
+        "tracking_reason": "attributable probes unavailable; aggregate official oracle only",
+        "faults_total": len(faults),
+        "faults_resolved": None,
+        "resolved_s": {},
+        "timeline": [],
+        "origin": "injection_end",
+    }
 
 
 def write_composite_report(path: Path, report: dict[str, Any]) -> None:
@@ -144,9 +176,31 @@ class TrackedAgent:
     def model(self) -> str:
         return self._inner.model
 
+    @property
+    def provider(self) -> str | None:
+        return getattr(self._inner, "provider", None)
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        return getattr(self._inner, "reasoning_effort", None)
+
+    @property
+    def replay(self) -> str | None:
+        return getattr(self._inner, "replay", None)
+
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
-        tracker = make_tracker(problem_id, self._reader, self._settings, faults=self._stream_faults.get(problem_id, ()))
+        tracker = (
+            make_tracker(problem_id, self._reader, self._settings, faults=self._stream_faults.get(problem_id, ()))
+            if not self._stream_faults or problem_id in self._stream_faults
+            else None
+        )
         if tracker is None:
+            faults = self._stream_faults.get(problem_id, ())
+            if faults:
+                write_composite_report(
+                    self._report_dir / f"composite_{index:03d}_{problem_id}.json",
+                    _unsupported_report(self.name, problem_id, faults),
+                )
             return self._inner.resolve(index, problem_id, inject)
         poller = BackgroundPoller(tracker, interval_seconds=self._settings.poll_seconds)
         started = time.monotonic()
@@ -178,6 +232,13 @@ class TrackedAgent:
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
         return self._inner.learn(outcome)
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
+        return self._inner.prepare_recovery(outcome)
+
+    @property
+    def last_recovery_trigger(self) -> str | None:
+        return getattr(self._inner, "last_recovery_trigger", None)
+
     def close(self) -> None:
         self._inner.close()
 
@@ -197,9 +258,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
         **kwargs: Any,
     ) -> None:
         self._composite = composite or CompositeSettings()
-        super().__init__(
-            *args, keep_running=True, stop_on_detector_review=self._composite.stop_on_detector_review, **kwargs
-        )
+        super().__init__(*args, keep_running=True, **kwargs)
         self._reader = reader
         self._stream_faults = stream_faults or {}
         self._report_dir = report_dir
@@ -211,10 +270,20 @@ class CompositeSdoAgent(SdoPersistentAgent):
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
         composite = self._composite
-        tracker = make_tracker(problem_id, self._reader, composite, faults=self._stream_faults.get(problem_id, ()))
+        tracker = (
+            make_tracker(problem_id, self._reader, composite, faults=self._stream_faults.get(problem_id, ()))
+            if not self._stream_faults or problem_id in self._stream_faults
+            else None
+        )
         if tracker is None:
-            if problem_id.startswith(("mf__", "composite")):
+            if problem_id.startswith(("mf__", "composite")) and problem_id not in self._stream_faults:
                 raise ValueError(f"{problem_id!r} is not a registered composite")
+            faults = self._stream_faults.get(problem_id, ())
+            if faults:
+                write_composite_report(
+                    self._report_dir / f"composite_{index:03d}_{problem_id}.json",
+                    _unsupported_report(self.name, problem_id, faults),
+                )
             self._reflection_drain_seconds = 0.0
             self._reflection_started_at = None
             self._keep_running = False
@@ -296,18 +365,18 @@ class CompositeSdoAgent(SdoPersistentAgent):
             except PersistentControllerError as stage_error:
                 if not injected:
                     raise
-                if isinstance(stage_error, DetectorReviewRequiredError):
-                    wedge = stage_error
-                    stop_reason = "detector_review_required"
-                else:
-                    state = self._ops.runtime_state(control)
-                    request = state.get("incident_request")
-                    wedge = DetectorReviewRequiredError(
-                        str(request.get("incident_id")) if isinstance(request, dict) else "none",
-                        f"no verified closure: {stage_error}",
-                        state,
-                    )
-                    stop_reason = "no_closure_within_deadline"
+                state = self._ops.runtime_state(control)
+                request = state.get("incident_request")
+                wedge = _Wedge(
+                    str(request.get("incident_id")) if isinstance(request, dict) else "none",
+                    f"no verified closure: {stage_error}",
+                    state,
+                )
+                stop_reason = (
+                    "controller_stalled"
+                    if isinstance(stage_error, ControllerStalledError)
+                    else "no_closure_within_deadline"
+                )
                 wedged = True
                 first = self._wedged_outcome(index, problem_id, injected[0], wedge)
             self._base_dir = Path(str(first.artifacts_dir))
@@ -320,7 +389,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
                     "fallback_usage": self._wedge_usage if wedged else None,
                 }
             )
-            deadline = started + composite.deadline_seconds
+            budget = Deadline(started + composite.deadline_seconds, time.monotonic, "composite incident")
             known = {str(first.incident_id)}
             lifecycle = self._lifecycle_inputs()
             while not wedged:
@@ -344,7 +413,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 if tracker.all_resolved_at() is not None or self._wait_resolved(tracker, composite):
                     stop_reason = "all_faults_resolved"
                     break
-                remaining = deadline - time.monotonic()
+                remaining = budget.left()
                 if remaining <= 0:
                     stop_reason = "deadline"
                     break
@@ -372,14 +441,14 @@ class CompositeSdoAgent(SdoPersistentAgent):
             raise
         finally:
             sampler_stop.set()
-            sampler.join(timeout=30)
+            sampler.join(timeout=wait_for(WaitKind.COMMAND))
             marks["last_resolve_s"] = time.monotonic() - started
             if "poll_start" in marks:
                 poller.__exit__(None, None, None)
             try:
                 if injected and stop_reason in {
-                    "detector_review_required",
                     "no_closure_within_deadline",
+                    "controller_stalled",
                     "closure_failed",
                 }:
                     # The controller stopped itself; nothing will acknowledge a pause.
@@ -442,9 +511,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             terminal_error=True,
         )
 
-    def _wedged_outcome(
-        self, index: int, problem_id: str, window: InjectionWindow, wedge: DetectorReviewRequiredError
-    ) -> AgentOutcome:
+    def _wedged_outcome(self, index: int, problem_id: str, window: InjectionWindow, wedge: _Wedge) -> AgentOutcome:
         """The controller stopped on an uncleared incident: keep what its state and PVC hold as evidence."""
 
         from benchmarks.sregym.fastloop.sdo_agent import _last_successful_repair, _summaries, _timestamp
@@ -462,7 +529,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
         )
         write_composite_report(
-            receipt_dir / "detector_review_state.json",
+            receipt_dir / "wedged_state.json",
             {"reason": wedge.reason, "runtime_state": state, "runtime_artifacts": evidence},
         )
         self._wedge_usage = result.get("usage") if isinstance(result.get("usage"), dict) else None
@@ -475,7 +542,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             mitigation=_summaries(result.get("repair_actions"), successful_only=True),
             incident_id=wedge.incident_id,
             artifacts_dir=str(receipt_dir),
-            error=f"controller stopped for detector review: {wedge.reason}",
+            error=f"controller stopped without a verified closure: {wedge.reason}",
         )
 
     @staticmethod
@@ -597,21 +664,18 @@ class CompositeSdoAgent(SdoPersistentAgent):
         warm = False
         reasons: list[str] = []
         binding_sources: list[str] = []
-        fast_path_skip_reasons: list[str] = []
         receipts_seen = 0
         rebuild_verified = None
         closure_phases: dict[str, float] = {}
         skipped_reasons: list[str] = []
         paths: list[str] = []
-        fast_programs: list[str] = []
-        relation_covered: list[dict[str, Any]] = []
         timed_outcomes: list[AgentOutcome] = []
         for item in self._incidents:
             receipt = self._receipt(Path(item["receipt_dir"]))
             timed_outcomes.append(_with_receipt_times(item["outcome"], receipt))
             if not receipt and item.get("fallback_usage"):
                 # No strict receipt exists for an incident that never closed; its responder usage is in state.
-                usage = _add(usage, TokenCounts.from_usage(item["fallback_usage"]))
+                usage = usage + TokenCounts.from_usage(item["fallback_usage"])
                 receipts_seen += 1
                 continue
             if not receipt:
@@ -634,12 +698,10 @@ class CompositeSdoAgent(SdoPersistentAgent):
             metrics = _program_metrics(outcome_document)
             if metrics["resolution_path"] is not None:
                 paths.append(metrics["resolution_path"])
-            fast_programs.extend(metrics["fast_path_programs"])
-            relation_covered.extend(metrics["fast_path_relation_covered_findings"])
+
             reasons.extend(metrics["match_reasons"])
             binding_sources.extend(metrics["binding_sources"])
-            if metrics["fast_path_skipped_reason"]:
-                fast_path_skip_reasons.append(metrics["fast_path_skipped_reason"])
+
             diagnoses += metrics["program_diagnoses"] or 0
             calls += metrics["program_tool_calls"] or 0
             loops += metrics["response_loops_used"] or 0
@@ -647,8 +709,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 verdicts[name] = verdicts.get(name, 0) + count
             for name, count in metrics["tool_commands"].items():
                 commands[name] = commands.get(name, 0) + count
-            usage = _add(usage, TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage")))
-            reflection = _add(reflection, TokenCounts.from_usage(receipt.get("reflection_usage")))
+            usage = usage + TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage"))
+            reflection = reflection + TokenCounts.from_usage(receipt.get("reflection_usage"))
             raw_memory = receipt.get("memory_reuse")
             memory: dict[str, Any] = raw_memory if isinstance(raw_memory, dict) else {}
             warm = warm or bool(memory.get("warm_path"))
@@ -658,6 +720,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 f"{len(self._incidents) - receipts_seen} incident receipt(s) missing after reflection drain"
             )
         timed = self._merge(timed_outcomes)
+        gap_counts = [item.reflection_no_repair_count for item in timed_outcomes]
         return outcome.with_learning(
             detected_at=outcome.detected_at or timed.detected_at,
             mitigation_applied_at=outcome.mitigation_applied_at or timed.mitigation_applied_at,
@@ -669,8 +732,10 @@ class CompositeSdoAgent(SdoPersistentAgent):
             warm_path=warm,
             match_reasons=tuple(dict.fromkeys(reasons)),
             binding_sources=tuple(dict.fromkeys(binding_sources)),
-            fast_path_skipped_reason="; ".join(dict.fromkeys(fast_path_skip_reasons)) or None,
             reflection_attempts=attempts,
+            reflection_no_repair_count=sum(count for count in gap_counts if count is not None)
+            if gap_counts and all(count is not None for count in gap_counts)
+            else None,
             reflection_skipped_reason="; ".join(dict.fromkeys(skipped_reasons)) or None,
             closure_phase_seconds=closure_phases,
             reflection_seconds=self._reflection_drain_seconds + self._clock.monotonic() - started,
@@ -682,13 +747,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             program_tool_calls=calls,
             tool_commands=commands,
             response_loops_used=loops,
-            resolution_path="fast_path"
-            if paths and all(path == "fast_path" for path in paths)
-            else "responder"
-            if paths
-            else None,
-            fast_path_programs=tuple(dict.fromkeys(fast_programs)),
-            fast_path_relation_covered_findings=tuple(relation_covered),
+            resolution_path="responder" if paths else None,
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 
@@ -709,14 +768,6 @@ def _controller_job_summary(control: str) -> dict[str, Any]:
         }
     except Exception as exc:  # evidence only
         return {"error": f"{type(exc).__name__}: {exc}"}
-
-
-def _add(left: TokenCounts, right: TokenCounts) -> TokenCounts:
-    return TokenCounts(
-        input_tokens=left.input_tokens + right.input_tokens,
-        cached_input_tokens=left.cached_input_tokens + right.cached_input_tokens,
-        output_tokens=left.output_tokens + right.output_tokens,
-    )
 
 
 def _iso(value: Any) -> str | None:

@@ -29,14 +29,26 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, fields, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field
 
+from benchmarks.sregym.adapter.budgets import Deadline, WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
+from benchmarks.sregym.adapter.eval_guards import (
+    INCIDENT_EXECUTION_LABEL,
+    STANDBY_LABEL,
+    BusyDeadline,
+    ProgressWatch,
+    busy_until,
+    idle_standby_jobs,
+    incident_work_open,
+    queued_reflection_ids,
+    terminal_incident_ids,
+)
 from benchmarks.sregym.adapter.fault_gate import (
     BASELINE_TIMEOUT_SECONDS,
     RESUMED_BASELINE_TIMEOUT_SECONDS,
@@ -63,8 +75,9 @@ from benchmarks.sregym.adapter.runtime import (
     export_controller_logs,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
-from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
+from benchmarks.sregym.protocol.injection import IncidentOpenBeforeInjectionError, InvalidInjectionError
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
+from libs.agent_cli.errors import AccountExhausted, ProviderRateLimited
 from sdo.contracts import (
     ControllerObservation,
     ControllerObservationFailure,
@@ -87,19 +100,23 @@ STRICT_RECEIPT_FILENAME = "sdo_production_receipt_strict.json"
 # A drained receipt that failed production validation, kept with its error for analysis.
 REJECTED_RECEIPT_FILENAME = "sdo_rejected_production_receipt.json"
 CONTROLLER_LOGS_SUBDIR = Path(RUNTIME_ARTIFACTS_DIRNAME) / "controller_logs"
-POLL_SECONDS = 1.0
+POLL_SECONDS = wait_for(WaitKind.POLL_FAST)
 CONTROLLER_JOB_NAME = "sdo-controller-run"
-MAINTENANCE_ACK_TIMEOUT_SECONDS = 600.0
-DRAIN_TIMEOUT_SECONDS = 3600.0
+# The runtime storage edge's checkpoint identity (lifecycleio.StateRevisionAnnotation
+# and StateDataKey): its CAS annotation plus typed data key, never its name.
+STATE_REVISION_ANNOTATION = "sdo.dev/state-revision"
+STATE_DATA_KEY = "runtime-state.json"
+MAINTENANCE_ACK_TIMEOUT_SECONDS = wait_for(WaitKind.OPERATION)
+DRAIN_TIMEOUT_SECONDS = wait_for(WaitKind.REFLECTION_DRAIN)
 # After the reflection drain returns, the controller's asynchronous close-out may
 # still be settling the two volatile signals the strict receipt samples: the
 # durable responder result reaching a terminal ``completed`` status, and the
 # shared worktree directory draining. The relaunch-after-closure predicate can
-# fire on an intermediate relaunch on composite incidents (follow-ups and closure
+# fire on an intermediate relaunch on composite incidents (closure
 # retries), so the gate must wait for these to settle before it samples, or a
 # solved incident is rejected. Bounded so a genuinely unsettled receipt still
 # rejects promptly.
-CLOSEOUT_SETTLE_TIMEOUT_SECONDS = 120.0
+CLOSEOUT_SETTLE_TIMEOUT_SECONDS = wait_for(WaitKind.CLOSEOUT_SETTLE)
 STAGE_END_EVIDENCE_SCOPE = "stage-end snapshot; the drained strict receipt supersedes it"
 _ZERO_TIME = "0001-01-01T00:00:00Z"
 
@@ -108,24 +125,42 @@ class PersistentControllerError(RuntimeError):
     """Raised when a persistent controller cannot be installed, reused, or drained."""
 
 
-class DetectorReviewRequiredError(PersistentControllerError):
-    """Raised when the controller stopped an incident that its health detectors never cleared.
-
-    The controller gives up verification ``detector review required`` after the responder
-    completed but findings are still active (for example, a fault that surfaced after dispatch
-    and was not part of the responder's task). It never closes the incident, so waiting longer
-    cannot succeed.
-    """
-
-    def __init__(self, incident_id: str, reason: str, state: dict[str, Any]) -> None:
-        super().__init__(f"incident {incident_id!r} needs detector review: {reason}")
-        self.incident_id = incident_id
-        self.reason = reason
-        self.state = state
-
-
 class ClosureFailedError(PersistentControllerError):
     """Raised when the controller gave up committing an incident closure the broker kept rejecting."""
+
+
+class ControllerJobFailedError(ClosureFailedError):
+    """The controller Job reached a terminal condition before acknowledging the closure, so no owner can ACK it."""
+
+
+class ControllerStalledError(PersistentControllerError):
+    """The controller's step loop stopped while an incident was open, so no closure can follow.
+
+    An SDO hang, not a slow responder: the wait ends at the stall bound with the incident's last state
+    instead of running out the verification budget.
+    """
+
+
+class ReflectionDeadlineError(PersistentControllerError):
+    """The controller was read and still owned the closure when the acknowledgment deadline passed.
+
+    For a successful closure this covers its reflection and detector rollout;
+    a non-success closure's queued reflection runs after the acknowledgment.
+    """
+
+
+class ControllerStateUnavailableError(PersistentControllerError):
+    """The controller state could not be read before a deadline, so whether closure is over is unknown.
+
+    Raised by the recovery drain and by admission's prior-closure wait; either
+    way the row is not measured. ``evidence`` carries the last observation.
+    """
+
+    reason = "controller_state_unavailable"
+
+    def __init__(self, message: str, evidence: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.evidence = evidence or {}
 
 
 class DetectionMissError(PersistentControllerError):
@@ -156,6 +191,9 @@ class PendingIncident(BaseModel):
     repository: Path
     verified_at: datetime | None
     stage_receipt: dict[str, Any]
+    #: The one reflection deadline every drain of this incident shares, set when the closure is recorded.
+    #: Absent only on records written before it existed; their first drain sets it.
+    reflection_deadline_at: datetime | None = None
 
 
 class ControllerRecord(BaseModel):
@@ -254,6 +292,9 @@ class ControllerPod:
 class VerifiedIncident:
     incident_id: str
     closure: dict[str, Any] | None
+    #: The controller's ``busy_until`` in the state that showed it verified: its own bound on this closure and
+    #: every reflection queued ahead of it.
+    busy_until: datetime | None = None
 
 
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
@@ -261,9 +302,20 @@ def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
     return {key: str(value) if isinstance(value, Path) else value for key, value in payload.items()}
 
 
+#: Host-side paths and per-call install modes that do not change what the running controller does.
+_NON_CONTROLLER_SETTINGS = frozenset({"repository", "artifacts_dir", "wait_for_completion", "reuse_existing"})
+
+
+def controller_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    """The recorded settings a running controller was installed with, normalized as saved state."""
+
+    return {key: value for key, value in json.loads(json.dumps(payload)).items() if key not in _NON_CONTROLLER_SETTINGS}
+
+
 def runtime_config_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     values = dict(payload)
-    values["deployed_manifest_paths"] = tuple(values.get("deployed_manifest_paths", ()))
+    for name in ("deployed_manifest_paths", "responder_namespaces"):
+        values[name] = tuple(values.get(name, ()))
     hints = get_type_hints(RuntimeConfig)
     for field in fields(RuntimeConfig):
         value = values.get(field.name)
@@ -278,13 +330,19 @@ class ClusterOps(Protocol):
 
     def controller_pod(self, control_namespace: str) -> ControllerPod | None: ...
 
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        """The controller Job's terminal condition (``reason: message``), or None while it can still run pods."""
+        ...
+
     def namespace_exists(self, namespace: str) -> bool: ...
 
     def delete_controller(self, control_namespace: str) -> None: ...
 
     def install(self, config: RuntimeConfig) -> bool: ...
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None: ...
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None: ...
 
     def runtime_state(self, control_namespace: str) -> dict[str, Any]: ...
 
@@ -301,8 +359,23 @@ class ClusterOps(Protocol):
     def export_controller_logs(self, control_namespace: str, artifacts_dir: Path) -> None: ...
 
 
+class IncidentEvidenceExport(Protocol):
+    """Takes durable ownership of a drained incident's runtime evidence at its closure boundary.
+
+    ``export`` returns the receipt's ``runtime_artifacts`` record. It must capture only
+    what exists at the boundary; delivery of that capture may complete later.
+    """
+
+    def export(self, config: RuntimeConfig, incident_id: str, receipt_dir: Path) -> dict[str, Any]: ...
+
+
 class KubectlClusterOps:
     """Production implementation over kubectl and the SDO controller installer."""
+
+    def __init__(self, *, preserve_applications: bool = True) -> None:
+        if not isinstance(preserve_applications, bool):
+            raise TypeError("preserve_applications must be bool")
+        self.preserve_applications = preserve_applications
 
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         completed = kubectl(
@@ -333,6 +406,18 @@ class KubectlClusterOps:
         metadata = running[0].get("metadata", {})
         return ControllerPod(name=str(metadata.get("name", "")), uid=str(metadata.get("uid", "")))
 
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        completed = kubectl(
+            ["get", "job", CONTROLLER_JOB_NAME, "--ignore-not-found", "--request-timeout=5s", "-o", "json"],
+            namespace=control_namespace,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise PersistentControllerError(
+                f"cannot inspect the controller Job in {control_namespace!r}: {completed.stderr.strip()}"
+            )
+        return controller_job_failure(json.loads(completed.stdout)) if completed.stdout.strip() else None
+
     def namespace_exists(self, namespace: str) -> bool:
         return kubectl(["get", f"namespace/{namespace}"], namespace=None, check=False).returncode == 0
 
@@ -345,6 +430,205 @@ class KubectlClusterOps:
         result = stop_runtime(target.control_namespace, kubeconfig=target.kubeconfig)
         for name in result["removed"]:
             logger.info("stopped %s", name)
+
+    def protect_incident_work(self, target: CleanupTarget, directory: Path) -> None:
+        """Capture worker evidence and refuse automatic cleanup of unfinished work."""
+        config = Path(target.kubeconfig) if target.kubeconfig else None
+        listing = json.loads(
+            kubectl(["get", "jobs,pods", "-o", "json"], namespace=target.control_namespace, kubeconfig=config).stdout
+        )["items"]
+
+        def worker(metadata: dict[str, Any]) -> bool:
+            labels = metadata.get("labels", {})
+            return (
+                labels.get("app.kubernetes.io/name") == "sdo-worker"
+                or bool(labels.get("sdo.dev/validator-isolation"))
+                or bool(labels.get("sdo.dev/validator-canary"))
+            )
+
+        def labels(row: dict[str, Any]) -> dict[str, str]:
+            return {
+                **row.get("spec", {}).get("template", {}).get("metadata", {}).get("labels", {}),
+                **row["metadata"].get("labels", {}),
+            }
+
+        def remove(resources: list[str]) -> None:
+            kubectl(
+                [
+                    "delete",
+                    *resources,
+                    "--ignore-not-found=true",
+                    "--cascade=foreground",
+                    "--wait=true",
+                    "--timeout=60s",
+                ],
+                namespace=target.control_namespace,
+                kubeconfig=config,
+            )
+
+        def inspect_workers(listing: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], set[str]]:
+            jobs = [
+                row
+                for row in listing
+                if row["kind"] == "Job"
+                and (worker(row["metadata"]) or worker(row.get("spec", {}).get("template", {}).get("metadata", {})))
+            ]
+            job_uids = {row["metadata"]["uid"] for row in jobs}
+            pods = [
+                row
+                for row in listing
+                if row["kind"] == "Pod"
+                and (
+                    worker(row["metadata"])
+                    or any(owner.get("uid") in job_uids for owner in row["metadata"].get("ownerReferences", []))
+                )
+            ]
+            directory.mkdir(parents=True, exist_ok=True)
+            # Keep conditions and container states, without persisting environment values.
+            inventory = {
+                key: [{"metadata": row["metadata"], "status": row.get("status", {})} for row in rows]
+                for key, rows in (("jobs", jobs), ("pods", pods))
+            }
+            (directory / "workloads.json").write_text(json.dumps(inventory, indent=2) + "\n")
+            for pod in pods:
+                name = pod["metadata"]["name"]
+                logs = kubectl(
+                    [
+                        "logs",
+                        f"pod/{name}",
+                        "--all-containers=true",
+                        "--prefix=true",
+                        "--tail=2000",
+                        "--limit-bytes=1048576",
+                    ],
+                    namespace=target.control_namespace,
+                    kubeconfig=config,
+                    check=False,
+                )
+                (directory / f"{name}.log").write_text(logs.stdout)
+                if logs.returncode:
+                    (directory / f"{name}.log-error").write_text(logs.stderr)
+
+            idle_uids: set[str] = set()
+            if any(labels(row).get(STANDBY_LABEL) == "true" for row in jobs):
+                records = json.loads(
+                    kubectl(
+                        ["get", "configmaps", "-l", INCIDENT_EXECUTION_LABEL, "-o", "json"],
+                        namespace=target.control_namespace,
+                        kubeconfig=config,
+                    ).stdout
+                )["items"]
+                try:
+                    idle = idle_standby_jobs(jobs, records)
+                except ValueError as exc:
+                    raise PersistentControllerError(f"{exc}; cleanup blocked") from exc
+                idle_uids = {row["metadata"]["uid"] for row in jobs if row["metadata"]["name"] in idle}
+
+            active = [
+                f"job/{row['metadata']['name']}"
+                for row in jobs
+                if row["metadata"]["uid"] not in idle_uids
+                and not any(
+                    condition.get("type") in {"Complete", "Failed"} and condition.get("status") == "True"
+                    for condition in row.get("status", {}).get("conditions", [])
+                )
+            ]
+            active.extend(
+                f"pod/{row['metadata']['name']}"
+                for row in pods
+                if row.get("status", {}).get("phase") not in {"Succeeded", "Failed"}
+                and not any(owner.get("uid") in idle_uids for owner in row["metadata"].get("ownerReferences", []))
+            )
+            if active:
+                raise PersistentControllerError(
+                    f"eval: cleanup preserves active incident work: {active}; evidence: {directory}"
+                )
+            return jobs, idle_uids
+
+        # Protect existing work before shutdown, which can cancel validator tasks.
+        jobs, idle_uids = inspect_workers(listing)
+        dispatchers = [
+            row for row in listing if labels(row).get("app.kubernetes.io/name") in {"sdo-controller", "sdo-operate"}
+        ]
+        dispatcher_uids = {row["metadata"]["uid"] for row in dispatchers if row["kind"] == "Job"}
+        dispatchers.extend(
+            row
+            for row in listing
+            if row["kind"] == "Pod"
+            and row not in dispatchers
+            and any(owner.get("uid") in dispatcher_uids for owner in row["metadata"].get("ownerReferences", []))
+        )
+        if dispatchers:
+            for kind in ("Job", "Pod"):
+                resources = [f"{kind.lower()}/{row['metadata']['name']}" for row in dispatchers if row["kind"] == kind]
+                if resources:
+                    remove(resources)
+            listing = json.loads(
+                kubectl(
+                    ["get", "jobs,pods", "-o", "json"], namespace=target.control_namespace, kubeconfig=config
+                ).stdout
+            )["items"]
+            if any(
+                labels(row).get("app.kubernetes.io/name") in {"sdo-controller", "sdo-operate"}
+                or row["metadata"].get("uid") in {item["metadata"].get("uid") for item in dispatchers}
+                for row in listing
+            ):
+                raise PersistentControllerError("eval: cleanup could not quiesce standby dispatchers")
+
+            # Claims or workers published during shutdown remain protected.
+            jobs, idle_uids = inspect_workers(listing)
+
+        idle = [f"job/{row['metadata']['name']}" for row in jobs if row["metadata"]["uid"] in idle_uids]
+        if idle:
+            # Go stop uses zero grace. Retire idle slots normally, including
+            # their sidecars, and prove them gone before entering that path.
+            remove(idle)
+            remaining = json.loads(
+                kubectl(
+                    ["get", "jobs,pods", "-o", "json"],
+                    namespace=target.control_namespace,
+                    kubeconfig=config,
+                ).stdout
+            )["items"]
+            if any(
+                row["metadata"].get("uid") in idle_uids
+                or any(owner.get("uid") in idle_uids for owner in row["metadata"].get("ownerReferences", []))
+                for row in remaining
+            ):
+                raise PersistentControllerError("eval: idle standby deletion incomplete; cleanup blocked")
+
+    def retire_controller_state(self, target: CleanupTarget, archive_dir: Path) -> list[str]:
+        """Archive, then delete, the stopped controller's checkpoint of open incident and closure work.
+
+        Onboarding authority, maintenance and the accepted repository survive; a
+        later install starts from accepted memory, not an incident it did not open.
+        """
+        config = Path(target.kubeconfig) if target.kubeconfig else None
+
+        def checkpoints() -> list[dict[str, Any]]:
+            listing = kubectl(
+                ["get", "configmaps", "-o", "json"], namespace=target.control_namespace, kubeconfig=config
+            )
+            return [
+                item
+                for item in json.loads(listing.stdout or "{}").get("items", [])
+                if STATE_REVISION_ANNOTATION in (item.get("metadata", {}).get("annotations") or {})
+                and STATE_DATA_KEY in (item.get("data") or {})
+            ]
+
+        retired = []
+        for item in checkpoints():
+            name = item["metadata"]["name"]
+            _write_json(item, archive_dir / f"{name}.json")
+            kubectl(
+                ["delete", "configmap", name, "--ignore-not-found=true", "--wait=true"],
+                namespace=target.control_namespace,
+                kubeconfig=config,
+            )
+            retired.append(name)
+        if survivors := [item["metadata"]["name"] for item in checkpoints()]:
+            raise PersistentControllerError(f"controller state survived teardown: {survivors}")
+        return retired
 
     def stop_transport(self, target: CleanupTarget) -> None:
         config = Path(target.kubeconfig) if target.kubeconfig else None
@@ -367,6 +651,8 @@ class KubectlClusterOps:
 
     def abort_workload(self, target: CleanupTarget) -> None:
         self.stop_transport(target)
+        if self.preserve_applications:
+            return
         config = Path(target.kubeconfig) if target.kubeconfig else None
         if target.namespace == target.control_namespace:
             raise PersistentControllerError("refusing to delete an application namespace containing accepted memory")
@@ -393,6 +679,8 @@ class KubectlClusterOps:
             ),
             (None, [f"namespace/{target.namespace}"]),
         ):
+            if namespace is None and self.preserve_applications:
+                continue
             response = kubectl(
                 ["get", *names, "--ignore-not-found=true", "-o", "name"], namespace=namespace, kubeconfig=config
             )
@@ -420,12 +708,17 @@ class KubectlClusterOps:
         sync_existing(native)
         return install_existing(native).reused
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
+        if paused and incident_work_open(self.runtime_state(control_namespace)):
+            raise PersistentControllerError("eval: cannot pause SDO while incident closure work is pending")
         kubeconfig = os.getenv("KUBECONFIG", "").strip()
         go_set_maintenance(
             control_namespace,
             paused=paused,
             generation=generation,
+            preserve_baseline=preserve_baseline,
             kubeconfig=Path(kubeconfig).resolve() if kubeconfig else None,
         )
 
@@ -450,15 +743,15 @@ class KubectlClusterOps:
     def inject_after_resume(
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]:
-        scale = float(os.getenv("SDO_TIME_SCALE", "1"))
+        self.set_maintenance(control_namespace, paused=False, generation=generation)
         return inject_fault_after_resumed_baseline(
             control_namespace,
             generation,
-            inject=inject,
+            inject=lambda: inject_while_paused(self, control_namespace, generation, inject),
             kubectl_runner=kubectl,
-            timeout_seconds=RESUMED_BASELINE_TIMEOUT_SECONDS * scale,
-            startup_timeout_seconds=BASELINE_TIMEOUT_SECONDS * scale,
-            poll_seconds=min(1.0, scale),
+            timeout_seconds=RESUMED_BASELINE_TIMEOUT_SECONDS,
+            startup_timeout_seconds=BASELINE_TIMEOUT_SECONDS,
+            poll_seconds=POLL_SECONDS,
         )
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
@@ -488,17 +781,19 @@ class StageInputs:
     receipt_dir: Path
     state_path: Path
     kubeconfig: str | None = None
-    verification_timeout_seconds: float = 3900.0
+    verification_timeout_seconds: float = wait_for(WaitKind.INCIDENT_VERIFICATION)
     #: End the stage as a detection miss if no incident has opened this long
     #: after injection. None waits the whole verification budget.
     detection_timeout_seconds: float | None = None
-    #: Raise as soon as the controller stops the incident for detector review (it never closes it).
-    stop_on_detector_review: bool = True
     lifecycle_installs_controller: bool = False
+    #: Budget from a verified closure to its reflection's acknowledgment, shared by every drain of the incident.
+    reflection_wait_seconds: float = DRAIN_TIMEOUT_SECONDS
 
     def __post_init__(self) -> None:
         if self.detection_timeout_seconds is not None and self.detection_timeout_seconds <= 0:
             raise ValueError(f"detection_timeout_seconds must be positive, got {self.detection_timeout_seconds}")
+        if self.reflection_wait_seconds <= 0:
+            raise ValueError(f"reflection_wait_seconds must be positive, got {self.reflection_wait_seconds}")
 
 
 @dataclass(frozen=True)
@@ -516,6 +811,7 @@ def run_persistent_stage(
     inject: Callable[[], None],
     clock: Clock | None = None,
     pause_after_verified: bool = True,
+    on_verified: Callable[[str, datetime | None, datetime | None], None] | None = None,
 ) -> dict[str, Any]:
     """Run one benchmark problem against the application's persistent controller.
 
@@ -562,11 +858,11 @@ def run_persistent_stage(
             except ClosureFailedError as exc:
                 # The controller continues with later incidents after a permanent closure failure,
                 # so this stage's fault must not wait on it. The failure stays on the previous stage's record.
-                drained = _record_failed_closure(record.pending, str(exc), clock.monotonic() - drain_started)
+                drained = record_failed_closure(record.pending, str(exc), clock.monotonic() - drain_started)
         else:
             # The recorded controller is unavailable. Reject its undrained evidence explicitly
             # before replacing it, so the loss cannot block all subsequent problems.
-            drained = _record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
+            drained = record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
         drain_seconds = drained.waited_seconds
         if drained.HasField("failure"):
             logger.warning("previous incident %s: %s", drained.incident_id, drained.failure.message)
@@ -575,18 +871,18 @@ def run_persistent_stage(
         # Publish the drained receipt now, so a pipeline stopped during this
         # stage keeps the previous stage's strict receipt and token evidence.
         _publish_drained_receipts(inputs.state_path)
-    reusable = (
+    # A controller serves this stage only if it was installed for the same topology
+    # and the same controller settings (workers, credentials, model, responder scope).
+    same_controller = (
         record is not None
-        and pod is not None
-        and pod.uid == record.controller_pod_uid
         and record.lifecycle_fingerprint == inputs.lifecycle_fingerprint
+        and controller_settings(record.runtime_config) == controller_settings(runtime_config_payload(config))
     )
+    reusable = same_controller and pod is not None and record is not None and pod.uid == record.controller_pod_uid
     restart_after_reset = (
-        record is not None
-        and record.controller_pod_uid == ""
-        and record.lifecycle_fingerprint == inputs.lifecycle_fingerprint
-        and ops.namespace_exists(control)
+        same_controller and record is not None and record.controller_pod_uid == "" and ops.namespace_exists(control)
     )
+    shared_adoption = bool(config.shared_accepted_id and not reusable and not restart_after_reset)
     lifecycle_started = clock.monotonic()
     if reusable or restart_after_reset:
         lifecycle_reused, lifecycle_revalidation_skipped = True, True
@@ -596,14 +892,23 @@ def run_persistent_stage(
                 f"cannot replace the controller of {inputs.namespace!r}: incident {record.pending.incident_id!r} "
                 "has not been drained into operational memory"
             )
-        if ops.namespace_exists(control):
-            # Never adopt a controller this pipeline did not install and validate.
-            ops.delete_controller(control)
-        state.controllers.pop(inputs.namespace, None)
-        state.save(inputs.state_path)
-        lifecycle_reused, lifecycle_revalidation_skipped = run_lifecycle(), False
+        if config.shared_accepted_id:
+            # Shared attachment has already prepared this exact accepted mount.
+            # A lost host registry must never trigger a seed or destroy a peer's
+            # live repository. Rebuild it only after native identity inspection.
+            pod = ops.controller_pod(control)
+            if pod is None or not ops.install(replace(config, reuse_existing=True)):
+                raise PersistentControllerError("shared memory requires its prepared running controller")
+            lifecycle_reused, lifecycle_revalidation_skipped = True, True
+        else:
+            if ops.namespace_exists(control):
+                # Never adopt a controller this pipeline did not install and validate.
+                ops.delete_controller(control)
+            state.controllers.pop(inputs.namespace, None)
+            state.save(inputs.state_path)
+            lifecycle_reused, lifecycle_revalidation_skipped = run_lifecycle(), False
     lifecycle_ready = clock.monotonic()
-    install_inspected = False
+    install_inspected = shared_adoption
     if not reusable:
         if restart_after_reset:
             # Reset deletes the Job while retaining the accepted repository.
@@ -651,11 +956,48 @@ def run_persistent_stage(
         raise PersistentControllerError("the persistent controller pod was replaced mid-pipeline")
     state.controllers[inputs.namespace] = record
     state.save(inputs.state_path)
-    known = _known_incident_ids(ops.runtime_state(control))
     install_ready = clock.monotonic()
     generation = f"{inputs.stage_label}-{uuid.uuid4().hex[:8]}"
-    ops.set_maintenance(control, paused=False, generation=generation)
-    gate_timings = ops.inject_after_resume(control, generation, inject)
+    known: set[str] = set()
+
+    def inject_binding_incidents() -> None:
+        # The one point the fault is applied: admission's proof ran its 700-1000 s before this, and any
+        # incident it opened is no more this row's than one from a previous row.
+        state = ops.runtime_state(control)
+        if incident_work_open(state):
+            raise IncidentOpenBeforeInjectionError(
+                f"incident work was open when the fault was about to be injected in {control!r}",
+                {"busy_until": state.get("busy_until"), "incident_request": state.get("incident_request")},
+            )
+        known.update(_known_incident_ids(state))
+        inject()
+
+    try:
+        gate_timings = ops.inject_after_resume(control, generation, inject_binding_incidents)
+    except InvalidInjectionError as exc:
+        # No incident exists: settle maintenance without waiting for response, reflection,
+        # acknowledgment, or a strict receipt, and retain a benchmark terminal record.
+        try:
+            paused = f"{generation}-injection-invalid"
+            ops.set_maintenance(control, paused=True, generation=paused)
+            wait_for_maintenance_ack(ops, control, paused, clock)
+        except Exception as cleanup_exc:
+            exc.cleanup_error = f"controller cleanup failed: {cleanup_exc}"
+        inputs.receipt_dir.mkdir(parents=True, exist_ok=True)
+        (inputs.receipt_dir / "sdo_infrastructure_outcome.json").write_text(
+            json.dumps(
+                {
+                    "infra_error": exc.infra_error,
+                    "injection_evidence": exc.details,
+                    "cleanup_error": exc.cleanup_error,
+                    "incident_credit": False,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        raise
     injected = clock.monotonic()
     try:
         verified = _wait_for_verified_incident(
@@ -665,19 +1007,25 @@ def run_persistent_stage(
             inputs.verification_timeout_seconds,
             clock,
             inputs.detection_timeout_seconds,
-            stop_on_review=inputs.stop_on_detector_review,
         )
-    except DetectorReviewRequiredError as review:
-        _publish_detector_review(review, inputs=inputs, config=config, ops=ops, control=control, state=state)
+    except PersistentControllerError:
+        export_closure_failure_evidence(ops, control, inputs.receipt_dir)
         raise
+    assert verified is not None  # Only follow-up collection may finish at an acknowledged idle boundary.
     verified_ready = clock.monotonic()
+    if on_verified is not None:
+        on_verified(
+            verified.incident_id,
+            _timestamp((verified.closure or {}).get("detected_at")),
+            _timestamp((verified.closure or {}).get("verified_at")),
+        )
     if pause_after_verified:
-        paused_generation = f"{generation}-paused"
-        ops.set_maintenance(control, paused=True, generation=paused_generation)
-        wait_for_maintenance_ack(ops, control, paused_generation, clock)
+        pause_controller(ops, control, label=generation, clock=clock)
     paused_ready = clock.monotonic()
     stage_evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, clock)
     closure = verified.closure or {}
+    raw_request = closure.get("request")
+    incident_request = raw_request if isinstance(raw_request, dict) else {}
     raw_result = closure.get("result")
     result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
     resolution: dict[str, Any] = {
@@ -687,10 +1035,8 @@ def run_persistent_stage(
         "confirmed_root_causes": result.get("confirmed_root_causes", []),
         "repair_actions": result.get("repair_actions", []),
         "usage": result.get("usage"),
+        "playbook_coverage": incident_request.get("playbook_coverage"),
         "resolution_path": result.get("resolution_path"),
-        "fast_path_programs": result.get("fast_path_programs", []),
-        "fast_path_relation_covered_findings": result.get("fast_path_relation_covered_findings", []),
-        "fast_path_skipped_reason": result.get("fast_path_skipped_reason"),
         # Names the responder's rollout in the stage-end evidence.
         "responder_session_id": result.get("responder_session_id"),
         "lifecycle_reused": lifecycle_reused,
@@ -700,7 +1046,7 @@ def run_persistent_stage(
             "control_namespace": control,
             "controller_pod_uid": pod.uid,
             "controller_pod_name": pod.name,
-            "installed_this_stage": not reusable,
+            "installed_this_stage": not (reusable or shared_adoption),
             "installed_by_stage": record.installed_by_stage,
             "lifecycle_revalidation_skipped": lifecycle_revalidation_skipped,
             "maintenance_generation": generation,
@@ -734,6 +1080,7 @@ def run_persistent_stage(
         receipt_dir=inputs.receipt_dir,
         repository=config.repository,
         verified_at=_timestamp(closure.get("verified_at")),
+        reflection_deadline_at=reflection_deadline(inputs, verified, clock),
         stage_receipt={
             key: value
             for key, value in resolution.items()
@@ -760,6 +1107,23 @@ def run_persistent_stage(
     state.save(inputs.state_path)
     persist_resolution(resolution, inputs.receipt_dir)
     return resolution
+
+
+def export_closure_failure_evidence(ops: ClusterOps, control: str, receipt_dir: Path) -> None:
+    """Preserve controller evidence before a later row can wipe the lane.
+
+    Each read is independent and best effort: failure to read state must not
+    suppress logs or replace the original closure/receipt error.
+    """
+
+    for name, export in (
+        ("state", lambda: _write_json(ops.runtime_state(control), receipt_dir / "sdo-controller-state.json")),
+        ("logs", lambda: ops.export_controller_logs(control, receipt_dir)),
+    ):
+        try:
+            export()
+        except Exception:
+            logger.exception("failed to export closure %s evidence for %s", name, control)
 
 
 def _export_stage_end_evidence(
@@ -789,65 +1153,184 @@ def _export_stage_end_evidence(
     return evidence
 
 
-def _publish_detector_review(
-    review: DetectorReviewRequiredError,
-    *,
-    inputs: StageInputs,
-    config: RuntimeConfig,
-    ops: ClusterOps,
-    control: str,
-    state: PersistentState,
-) -> None:
-    """Keep a detector-review stop's evidence: controller log, runtime artifacts, usage and the reason.
-
-    There is no strict receipt to drain (the incident never verified, so reflection never ran),
-    so a typed record stands in for it. Failing to write it must not hide the review stop itself.
-    """
-
-    try:
-        raw_result = review.state.get("incident_result")
-        result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
-        raw_view = review.state.get("incident_view")
-        view: dict[str, Any] = raw_view if isinstance(raw_view, dict) else {}
-        usage = result.get("usage")
-        record = DetectorReviewRecord(
-            incident_id=review.incident_id,
-            reason=review.reason,
-            blocking_detectors=[str(detector) for detector in view.get("blocking_detectors") or []],
-            usage=usage if isinstance(usage, dict) else None,
-        )
-        stage_evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, Clock())
-        _write_json(record.model_dump(mode="json"), inputs.receipt_dir / DETECTOR_REVIEW_FILENAME)
-        persist_resolution(
-            {
-                "schema_version": "sdo.sregym-incident-resolution/v1",
-                "incident_id": record.incident_id,
-                "namespace": inputs.namespace,
-                "confirmed_root_causes": result.get("confirmed_root_causes", []),
-                "repair_actions": result.get("repair_actions", []),
-                "usage": record.usage,
-                "detector_review": record.model_dump(mode="json", exclude={"usage"}),
-                "stage_end_runtime_artifacts": stage_evidence,
-            },
-            inputs.receipt_dir,
-        )
-        state.deferred_receipts.append(
-            DeferredReceipt(
-                incident_id=record.incident_id, stage_label=inputs.stage_label, staging_dir=inputs.receipt_dir
-            )
-        )
-        state.save(inputs.state_path)
-    except Exception:
-        logger.exception("could not publish the evidence of the detector review stop for %s", review.incident_id)
-
-
 def pause_controller(ops: ClusterOps, control: str, *, label: str, clock: Clock | None = None) -> None:
     """Pause the controller and wait for its acknowledgement (used when a composition ends)."""
 
     clock = clock or Clock()
+    if incident_work_open(ops.runtime_state(control)):
+        logger.info("Leaving %s active: incident closure work is pending", control)
+        return
     generation = f"{label}-{uuid.uuid4().hex[:8]}-paused"
     ops.set_maintenance(control, paused=True, generation=generation)
     wait_for_maintenance_ack(ops, control, generation, clock)
+
+
+@dataclass(frozen=True)
+class FollowupClosureWait:
+    """Recovery's wait for SDO to close incidents that opened after the graded incident closed."""
+
+    graded_incident_id: str
+    followup_incident_ids: tuple[str, ...]
+    waited_seconds: float
+    bound_seconds: float
+    closed: bool
+
+
+class FollowupClosureTimeout(PersistentControllerError):
+    def __init__(self, wait: FollowupClosureWait, controller_state: str = "") -> None:
+        super().__init__(
+            f"eval: follow-up incident(s) {', '.join(wait.followup_incident_ids)} opened after "
+            f"{wait.graded_incident_id!r} closed and stayed open past {wait.bound_seconds:.0f}s"
+            + (f"; controller {controller_state}" if controller_state else "")
+        )
+        self.wait = wait
+
+
+def controller_closure_state(state: dict[str, Any]) -> str:
+    """The controller's own account of where its incident work stands, for an error message."""
+    keys = ("dispatch_state", "closure_state", "responder_done", "incident_open", "step_count")
+    return ", ".join(f"{key}={state.get(key)}" for key in keys if key in state) + (
+        f", queued_reflections={queued_reflection_ids(state)}" if queued_reflection_ids(state) else ""
+    )
+
+
+def _open_incident_id(snapshot: dict[str, Any]) -> str:
+    request = snapshot.get("incident_request") or (snapshot.get("pending_closure") or {}).get("request")
+    incident_id = request.get("incident_id") if isinstance(request, dict) else None
+    return incident_id if isinstance(incident_id, str) and incident_id else "unidentified"
+
+
+def pause_for_recovery(
+    ops: ClusterOps,
+    control: str,
+    *,
+    incident_id: str | None = None,
+    clock: Clock | None = None,
+    closure_open: bool = False,
+) -> FollowupClosureWait | None:
+    """Fence harness mutations behind a terminal incident and acknowledged intake pause.
+
+    An incident that opened after the graded incident closed is SDO's work in progress, not a
+    harness error: recovery waits for SDO to close it and reports that wait. The bound is the controller's
+    own ``busy_until`` (its response timeout, retries and reflection queue) plus one closeout margin.
+    ``closure_open`` is for a row past its reflection deadline: intake is still paused, but the
+    still-running closure is left to SDO, so the injected fault does not outlive the row.
+    """
+
+    clock = clock or Clock()
+    closed: set[str] = set()
+
+    def require_closed(*, allow_followup: bool = False) -> None:
+        if closure_open:
+            return
+        snapshot = ops.runtime_state(control)
+        closed.update(terminal_incident_ids(snapshot))
+        if not snapshot or (incident_work_open(snapshot) and (not allow_followup or incident_id not in closed)):
+            raise PersistentControllerError("eval: recovery requires a closed incident and available controller state")
+        if incident_id is not None and incident_id not in closed:
+            raise PersistentControllerError(f"eval: recovery incident {incident_id!r} is not durably closed")
+
+    wait = _wait_for_followup_closure(ops, control, incident_id, closed, clock)
+    require_closed(allow_followup=incident_id is not None)
+    generation = f"benchmark-recovery-{uuid.uuid4().hex}-paused"
+    ops.set_maintenance(control, paused=True, generation=generation)
+    wait_for_maintenance_ack(ops, control, generation, clock)
+    if not any(
+        row.get("maintenance_generation") == generation and row.get("controller_maintenance") == "paused"
+        for row in _log_records(ops.controller_logs(control))
+    ):
+        raise PersistentControllerError("eval: recovery requires an acknowledged paused intake")
+    # Admission may have raced the pause request. Acknowledged maintenance blocks
+    # further intake, but existing incident work must finish within its own budget.
+    raced_wait = _wait_for_followup_closure(ops, control, incident_id, closed, clock)
+    require_closed()
+    if raced_wait is not None:
+        if wait is None:
+            return raced_wait
+        return FollowupClosureWait(
+            wait.graded_incident_id,
+            tuple(dict.fromkeys((*wait.followup_incident_ids, *raced_wait.followup_incident_ids))),
+            wait.waited_seconds + raced_wait.waited_seconds,
+            wait.waited_seconds + raced_wait.bound_seconds,
+            True,
+        )
+    return wait
+
+
+def _wait_for_followup_closure(
+    ops: ClusterOps,
+    control: str,
+    incident_id: str | None,
+    closed: set[str],
+    clock: Clock,
+) -> FollowupClosureWait | None:
+    """Wait while the graded incident is closed and a later incident or a queued reflection is still open.
+
+    An open incident uses the controller's full ``busy_until`` plus one closeout margin,
+    frozen on first observation. Reflection-only work retains the per-attempt queue cap.
+    """
+
+    if incident_id is None:
+        return None
+    started = clock.monotonic()
+    followups: list[str] = []
+    busy = BusyDeadline(wait_for(WaitKind.CLOSEOUT_SETTLE))
+    progress = ProgressWatch(wait_for(WaitKind.SLOW_COMMAND))
+    incident_bound: float | None = None
+    while True:
+        snapshot = ops.runtime_state(control)
+        if not snapshot or not busy.observe(snapshot, clock.monotonic(), clock.now()):
+            break
+        if progress.stalled(snapshot, clock.monotonic()):
+            raise ControllerStalledError(
+                "eval: controller step loop stalled while follow-up work was pending: "
+                + controller_closure_state(snapshot)
+            )
+        closed.update(terminal_incident_ids(snapshot))
+        queued = queued_reflection_ids(snapshot)
+        # A reflection queued behind a closure is SDO work even when it belongs to the graded incident.
+        open_id = _open_incident_id(snapshot)
+        has_open_incident = open_id != "unidentified" and open_id not in closed
+        if not queued and open_id == "unidentified":
+            break
+        names = list(queued)
+        if has_open_incident or not names:
+            names.append(open_id)
+        if has_open_incident and incident_bound is None:
+            # Freeze the controller's full incident/closure budget at the fence. An open
+            # response is not merely a queued reflection. Subsequent polls cannot renew it.
+            incident_bound = clock.monotonic() - started + busy.seconds_left(clock.monotonic())
+        if incident_id not in closed or (not queued and names == [incident_id]):
+            break
+        followups.extend(name for name in names if name not in followups)
+        waited = clock.monotonic() - started
+        # A queued reflection gets its attempt budget. An incident already open at the
+        # fence gets the controller's own full closure budget, frozen on first observation.
+        cap = (
+            incident_bound
+            if incident_bound is not None
+            else (wait_for(WaitKind.REFLECTION_ATTEMPT, len(followups)) + wait_for(WaitKind.CLOSEOUT_SETTLE))
+        )
+        if busy.expired(clock.monotonic()) or waited >= cap:
+            bound = min(waited + busy.seconds_left(clock.monotonic()), cap)
+            raise FollowupClosureTimeout(
+                FollowupClosureWait(incident_id, tuple(followups), waited, bound, False),
+                controller_closure_state(snapshot),
+            )
+        clock.sleep(POLL_SECONDS)
+    if not followups:
+        return None
+    waited = clock.monotonic() - started
+    logger.info("recovery waited %.1fs for follow-up incident(s) %s to close", waited, ", ".join(followups))
+    return FollowupClosureWait(
+        incident_id,
+        tuple(followups),
+        waited,
+        min(waited + busy.seconds_left(clock.monotonic()), incident_bound)
+        if incident_bound is not None
+        else waited + busy.seconds_left(clock.monotonic()),
+        True,
+    )
 
 
 def collect_followup_incident(
@@ -862,7 +1345,9 @@ def collect_followup_incident(
 
     For compositions: the first incident's stage leaves the controller active, the caller drains
     it, and this collects the next incident for the faults the first did not cover. Returns
-    ``None`` when no new incident is verified within ``timeout_seconds``.
+    ``None`` at a known durable ACK with no native work remaining, or when
+    no new incident is verified within ``timeout_seconds``. Benchmark probes
+    report fault progress but do not extend the native lifecycle.
     """
 
     clock = clock or Clock()
@@ -877,17 +1362,21 @@ def collect_followup_incident(
     control = record.control_namespace
     try:
         verified = _wait_for_verified_incident(
-            ops, control, known, timeout_seconds, clock, stop_on_review=inputs.stop_on_detector_review
+            ops, control, known, timeout_seconds, clock, stop_when_acknowledged_idle=True
         )
-    except DetectorReviewRequiredError:
-        raise
     except ClosureFailedError:
+        export_closure_failure_evidence(ops, control, inputs.receipt_dir)
         raise
     except PersistentControllerError:
+        export_closure_failure_evidence(ops, control, inputs.receipt_dir)
+        return None
+    if verified is None:
         return None
     config = replace(inputs.runtime_config, persistent=True, wait_for_completion=False)
     evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, clock)
     closure = verified.closure or {}
+    raw_request = closure.get("request")
+    incident_request = raw_request if isinstance(raw_request, dict) else {}
     raw_result = closure.get("result")
     result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
     base = dict(record.served_stage_receipt) if record.served_stage_receipt else {}
@@ -898,10 +1387,8 @@ def collect_followup_incident(
         "confirmed_root_causes": result.get("confirmed_root_causes", []),
         "repair_actions": result.get("repair_actions", []),
         "usage": result.get("usage"),
+        "playbook_coverage": incident_request.get("playbook_coverage"),
         "resolution_path": result.get("resolution_path"),
-        "fast_path_programs": result.get("fast_path_programs", []),
-        "fast_path_relation_covered_findings": result.get("fast_path_relation_covered_findings", []),
-        "fast_path_skipped_reason": result.get("fast_path_skipped_reason"),
         "responder_session_id": result.get("responder_session_id"),
         "followup_incident": True,
         "stage_end_runtime_artifacts": evidence,
@@ -913,6 +1400,7 @@ def collect_followup_incident(
         receipt_dir=inputs.receipt_dir,
         repository=config.repository,
         verified_at=_timestamp(closure.get("verified_at")),
+        reflection_deadline_at=reflection_deadline(inputs, verified, clock),
         stage_receipt={
             **base,
             # Setup and gate costs were paid once, by the first incident.
@@ -945,20 +1433,52 @@ def collect_followup_incident(
     return resolution
 
 
-def _closeout_settled(receipt: dict[str, Any]) -> bool:
-    """Whether the two volatile close-out signals the strict receipt samples have settled.
+def _closeout_settled(document: dict[str, Any], *, incident_id: str = "") -> bool:
+    """ACK plus incident-bound reflection and rollout completion, from either read edge.
 
-    ``completed`` is the durable responder result's terminal status and
-    ``remaining_worktrees`` is the shared worktree directory the controller drains
-    asynchronously at acknowledge. The reflection-drain predicate can return while
-    either is still settling on composite incidents, so the gate must not sample
-    until both are quiescent.
+    Controller state projects unfinished broker reflection/rollout work into its
+    queue. A receipt carries the underlying ledger instead. Neither edge may
+    treat an early non-success ACK as terminal reflection evidence. This is a
+    sampling gate; strict receipt validation still owns evidence acceptance.
     """
 
-    if receipt.get("schema_version") == "sdo.production-receipt/v2":
-        ledger = receipt.get("native_ledger")
-        return isinstance(ledger, dict) and ledger.get("acknowledged") is True
-    return receipt.get("completed") is True and receipt.get("remaining_worktrees") == []
+    if incident_id:
+        return (
+            document.get("last_acknowledged_incident_id") == incident_id
+            and not document.get("queued_reflections_unknown")
+            and incident_id not in queued_reflection_ids(document)
+        )
+    if document.get("schema_version") == "sdo.production-receipt/v2":
+        ledger = document.get("native_ledger")
+        if not isinstance(ledger, dict) or ledger.get("acknowledged") is not True:
+            return False
+        if not document.get("incident_id") or ledger.get("incident_id") != document.get("incident_id"):
+            return False
+        if ledger.get("requires_reflection"):
+            decision = ledger.get("reflection_decision")
+            if ledger.get("reflection_processed") is not True or not isinstance(decision, dict):
+                return False
+            if not decision.get("learning_decision"):
+                return False
+            if decision.get("learning_decision") == "updated" and not ledger.get("reflection_commit"):
+                return False
+        expected = ledger.get("rollout_expectation")
+        if expected:
+            if (
+                not isinstance(expected, dict)
+                or expected.get("incident_id") != ledger.get("incident_id")
+                or expected.get("reflection_commit") != ledger.get("reflection_commit")
+            ):
+                return False
+            return any(
+                isinstance(attempt, dict)
+                and attempt.get("success") is True
+                and attempt.get("expectation") == expected
+                and attempt.get("observed_detector_fingerprint") == expected.get("after_detector_fingerprint")
+                for attempt in ledger.get("rollout_receipts", [])
+            )
+        return True
+    return document.get("completed") is True and document.get("remaining_worktrees") == []
 
 
 def _collect_settled_receipt(
@@ -978,17 +1498,27 @@ def _collect_settled_receipt(
     a real failure is reported promptly rather than hidden.
     """
 
-    receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+    try:
+        receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+    except Exception:
+        export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
+        raise
     if timeout is None:
-        timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS * float(os.getenv("SDO_TIME_SCALE", "1"))
+        timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS
     deadline = clock.monotonic() + timeout
     while not _closeout_settled(receipt) and clock.monotonic() < deadline:
         clock.sleep(POLL_SECONDS)
-        receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+        try:
+            receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+        except Exception:
+            export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
+            raise
+    if not receipt:
+        export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
     return receipt
 
 
-def _record_failed_closure(pending: PendingIncident, message: str, waited_seconds: float) -> ReceiptDrainResult:
+def record_failed_closure(pending: PendingIncident, message: str, waited_seconds: float) -> ReceiptDrainResult:
     """Record an incident whose closure the controller gave up on as that incident's rejected receipt."""
 
     failure = ReceiptFailure(
@@ -1012,6 +1542,20 @@ def _lost_controller_message(record: ControllerRecord, pod: ControllerPod | None
     )
 
 
+def reflection_deadline(inputs: StageInputs, verified: VerifiedIncident, clock: Clock) -> datetime:
+    """The incident's one reflection deadline: the later of its budget and the controller's own ``busy_until``.
+
+    A closure waits behind the queue's FIFO (one reflection at a time under the broker lock), so a fixed
+    budget from verification would expire while SDO is still legitimately working through earlier failed
+    attempts. The controller states that bound itself, so the deadline adds one closeout margin to it.
+    """
+
+    deadline = clock.now() + timedelta(seconds=inputs.reflection_wait_seconds)
+    if verified.busy_until is not None:
+        deadline = max(deadline, verified.busy_until + timedelta(seconds=wait_for(WaitKind.CLOSEOUT_SETTLE)))
+    return deadline
+
+
 def drain_pending_incident(
     record: ControllerRecord,
     *,
@@ -1019,28 +1563,34 @@ def drain_pending_incident(
     repository: Path,
     drained_by: str,
     clock: Clock | None = None,
-    timeout_seconds: float = DRAIN_TIMEOUT_SECONDS,
+    evidence: IncidentEvidenceExport | None = None,
 ) -> ReceiptDrainResult:
     """Wait for a verified incident's reflection and rollout, then write its strict receipt.
 
+    Without ``evidence`` the runtime artifacts are exported synchronously; with it, the
+    incident's evidence is sealed at this boundary and its delivery is owned by ``evidence``.
+
     ``repository`` receives the controller's operational repository, which is
-    the source of truth across problems. Returns the elapsed wait and any typed receipt failure for this incident.
+    the source of truth across problems. Every drain of an incident waits only until the
+    pending record's one reflection deadline, so a drain after a timed-out drain fails at once.
+    Returns the elapsed wait and any typed receipt failure for this incident.
     """
 
     clock = clock or Clock()
     pending = record.pending
     if pending is None:
         return ReceiptDrainResult()
+    if pending.reflection_deadline_at is None:
+        pending.reflection_deadline_at = clock.now() + timedelta(seconds=DRAIN_TIMEOUT_SECONDS)
     started = clock.monotonic()
     phases: dict[str, float] = {}
     phase_timestamps = {"drain_started": clock.now().isoformat()}
     try:
         drained_state = _wait_for_reflection_drain(
-            ops, record.control_namespace, pending.incident_id, timeout_seconds, clock
+            ops, record.control_namespace, pending.incident_id, pending.reflection_deadline_at, clock
         )
     except ClosureFailedError:
-        # The controller log holds every broker rejection of the closure.
-        ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
+        export_closure_failure_evidence(ops, record.control_namespace, pending.receipt_dir)
         raise
     phases["wait_for_ack"] = clock.monotonic() - started
     phase_timestamps["ack_observed"] = clock.now().isoformat()
@@ -1056,10 +1606,20 @@ def drain_pending_incident(
     # The native Go broker releases abandoned proposals and acknowledged
     # incident worktrees; the benchmark must not mutate its workspace.
     del drained_state
+    # The stage-end export ran before reflection; re-export so the reflection rollout,
+    # usage and checkpoints are complete. The Go export overwrites files in place.
+    runtime_artifacts = (
+        evidence.export(config, pending.incident_id, pending.receipt_dir)
+        if evidence is not None
+        else ops.export_runtime_artifacts(config, pending.receipt_dir)
+    )
+    phases["runtime_artifacts"] = clock.monotonic() - started - phases["wait_for_ack"]
     receipt: dict[str, Any] = {}
     try:
         receipt = _collect_settled_receipt(ops, config, pending.incident_id, pending.receipt_dir, clock)
-        phases["collect_settled_receipt"] = clock.monotonic() - started - phases["wait_for_ack"]
+        phases["collect_settled_receipt"] = (
+            clock.monotonic() - started - phases["wait_for_ack"] - phases["runtime_artifacts"]
+        )
         phase_timestamps["receipt_collected"] = clock.now().isoformat()
         # The reflection-drain cost includes the wait for close-out to settle; neither
         # is resolution time (both are excluded below).
@@ -1082,12 +1642,13 @@ def drain_pending_incident(
             "waited_seconds": waited,
             "phase_seconds": phases,
             "phase_timestamps": phase_timestamps,
+            "runtime_artifacts": runtime_artifacts,
         }
         validate_production_receipt(receipt, allow_test_lifecycle=config.allow_test_lifecycle)
     except ProductionReceiptValidationError as exc:
         if isinstance(exc, NativeReceiptValidationError):
             receipt = exc.receipt
-        ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
+        export_closure_failure_evidence(ops, record.control_namespace, pending.receipt_dir)
         failure = (
             exc.failure
             if isinstance(exc, NativeReceiptValidationError)
@@ -1133,7 +1694,7 @@ def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -
         try:
             if record.pending is not None:
                 if pod is None or pod.uid != record.controller_pod_uid:
-                    drained = _record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
+                    drained = record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
                 else:
                     drained = drain_pending_incident(
                         record,
@@ -1158,6 +1719,9 @@ def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -
                     )
                     ops.stop_runtime(target)
                     ops.stop_transport(target)
+                    ops.retire_controller_state(
+                        target, state_path.parent / f"{state_path.name}.teardown-state" / record.control_namespace
+                    )
                 else:
                     ops.delete_controller(record.control_namespace)
             except (PersistentControllerError, NativeOperatorError, OSError, ValueError, RuntimeError) as exc:
@@ -1169,7 +1733,7 @@ def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -
 
 
 def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
-    """Force quiescence using recorded identities; never drain or read runtime incident state."""
+    """Clean recorded resources only after capturing and protecting incident workers."""
     from benchmarks.sregym.adapter.processes import terminate_run
 
     try:
@@ -1178,12 +1742,28 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
         errors = [f"host helper cleanup failed: {exc}"]
     state_path = state_path.resolve()
     state = PersistentState.load(state_path)
+    try:
+        with state_path.with_name(state_path.name + ".abort-evidence.json").open("x", encoding="utf-8") as evidence:
+            evidence.write(state.model_dump_json(indent=2) + "\n")
+    except FileExistsError:
+        pass  # A retry must retain the original pending-incident evidence.
     targets = dict(state.cleanup_targets)
     for namespace, record in state.controllers.items():
         targets[namespace] = CleanupTarget(
             namespace=record.namespace, control_namespace=record.control_namespace, kubeconfig=record.kubeconfig
         )
-        if record.pending is not None:
+    state.cleanup_targets = targets
+    state.save(state_path)
+    for namespace, target in targets.items():
+        try:
+            ops.protect_incident_work(
+                target, state_path.parent / (state_path.name + ".abort-workers") / target.control_namespace
+            )
+        except (RuntimeError, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+            errors.append(f"{namespace}: worker cleanup blocked: {exc}")
+            continue
+        record = state.controllers.get(namespace)
+        if record is not None and record.pending is not None:
             state.aborted_incidents.append(
                 AbortedIncident(
                     incident_id=record.pending.incident_id,
@@ -1193,9 +1773,7 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
                 )
             )
             record.pending = None
-    state.cleanup_targets = targets
-    state.save(state_path)
-    for namespace, target in targets.items():
+        state.save(state_path)
         for action in (ops.stop_runtime, ops.abort_workload):
             try:
                 action(target)
@@ -1205,6 +1783,10 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
             leftovers = ops.abort_leftovers(target)
             errors.extend(f"{namespace}: leftover {name}" for name in leftovers)
             if not leftovers:
+                # Only a quiet lane can drop its checkpoint; live work keeps its evidence.
+                ops.retire_controller_state(
+                    target, state_path.parent / f"{state_path.name}.abort-state" / target.control_namespace
+                )
                 state.controllers.pop(namespace, None)
         except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
             errors.append(f"{namespace}: could not verify quiet lane: {exc}")
@@ -1213,9 +1795,11 @@ def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
 
 
 class AbortClusterOps(Protocol):
+    def protect_incident_work(self, target: CleanupTarget, directory: Path) -> None: ...
     def stop_runtime(self, target: CleanupTarget) -> None: ...
     def abort_workload(self, target: CleanupTarget) -> None: ...
     def abort_leftovers(self, target: CleanupTarget) -> list[str]: ...
+    def retire_controller_state(self, target: CleanupTarget, archive_dir: Path) -> list[str]: ...
 
 
 def _publish_drained_receipts(state_path: Path) -> None:
@@ -1253,7 +1837,7 @@ def publish_deferred_receipts(state_path: Path, results_root: Path) -> list[Path
         sources = [
             entry.staging_dir / STRICT_RECEIPT_FILENAME,
             entry.staging_dir / REJECTED_RECEIPT_FILENAME,
-            entry.staging_dir / DETECTOR_REVIEW_FILENAME,
+            entry.staging_dir / "sdo-controller-state.json",
         ]
         logs_dir = entry.staging_dir / CONTROLLER_LOGS_SUBDIR
         if logs_dir.is_dir():
@@ -1272,7 +1856,7 @@ def publish_deferred_receipts(state_path: Path, results_root: Path) -> list[Path
             target = run_dir / source.relative_to(entry.staging_dir)
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_suffix(target.suffix + ".tmp")
-            if source in sources:
+            if source in sources and source.name != "sdo-controller-state.json":
                 text = source.read_text(encoding="utf-8").replace(entry.staging_dir.name, run_dir.parent.name)
                 temporary.write_text(text, encoding="utf-8")
             else:
@@ -1321,7 +1905,8 @@ def _resolution_timings(closure: dict[str, Any]) -> dict[str, Any]:
     dispatched = _timestamp(closure.get("dispatched_at"))
     responder_completed = _timestamp(closure.get("responder_completed_at"))
     verified = _timestamp(closure.get("verified_at"))
-    if detected is None or verified is None:
+    # A closure cut by the verification timeout carries no final detector states: health never cleared.
+    if detected is None or verified is None or not closure.get("final_detector_states"):
         return {}
     timings: dict[str, float] = {"operational_recovery": (verified - detected).total_seconds()}
     if dispatched is not None:
@@ -1346,13 +1931,10 @@ def _observe_state(
     *,
     known: set[str] | None = None,
     incident_id: str = "",
-    stop_on_review: bool = False,
-    timeout: float = 30.0,
+    timeout: float = wait_for(WaitKind.COMMAND),
 ) -> ControllerObservation:
     try:
-        observed = observe_controller_state(
-            state, known=known, incident_id=incident_id, stop_on_review=stop_on_review, timeout=timeout
-        )
+        observed = observe_controller_state(state, known=known, incident_id=incident_id, timeout=timeout)
     except NativeOperatorError as exc:
         raise PersistentControllerError(str(exc)) from exc
     if observed.failure.code == ControllerObservationFailure.CODE_INVALID_SNAPSHOT:
@@ -1362,16 +1944,20 @@ def _observe_state(
 
 def _raise_observation_failure(observed: ControllerObservation, state: dict[str, Any]) -> None:
     if observed.failure.code == ControllerObservationFailure.CODE_CLOSURE_FAILED:
+        if "account_exhausted:" in observed.failure.message:
+            raise AccountExhausted("worker reported account exhaustion", retryable=False)
+        if "rate_limited:" in observed.failure.message:
+            raise ProviderRateLimited("worker reported provider throttling", retryable=False)
         raise ClosureFailedError(observed.failure.message)
-    if observed.failure.code == ControllerObservationFailure.CODE_DETECTOR_REVIEW_REQUIRED:
-        raise DetectorReviewRequiredError(observed.failure.incident_id, observed.failure.message, state)
 
 
 def _known_incident_ids(state: dict[str, Any]) -> set[str]:
     return set(_observe_state(state).known_incident_ids)
 
 
-def _wait_for_controller_pod(ops: ClusterOps, control: str, clock: Clock, timeout: float = 300.0) -> ControllerPod:
+def _wait_for_controller_pod(
+    ops: ClusterOps, control: str, clock: Clock, timeout: float = wait_for(WaitKind.ROLLOUT)
+) -> ControllerPod:
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
         pod = ops.controller_pod(control)
@@ -1389,8 +1975,8 @@ def _wait_for_verified_incident(
     clock: Clock,
     detection_timeout: float | None = None,
     *,
-    stop_on_review: bool = True,
-) -> VerifiedIncident:
+    stop_when_acknowledged_idle: bool = False,
+) -> VerifiedIncident | None:
     """Return the first new incident the controller verified healthy, before reflection finishes.
 
     With *detection_timeout*, a stage in which no new incident has opened by
@@ -1399,19 +1985,20 @@ def _wait_for_verified_incident(
     """
 
     started = clock.monotonic()
-    deadline = started + timeout
+    budget = Deadline(started + timeout, clock.monotonic, "controller verification")
+    progress = ProgressWatch(wait_for(WaitKind.SLOW_COMMAND))
     detected = False
     state: dict[str, Any] = {}
     summary = ""
-    while clock.monotonic() < deadline:
+    while budget.left() > 0:
         state = ops.runtime_state(control)
-        if clock.monotonic() >= deadline:
+        # A slow state read may have spent the stage budget; stop polling rather than start an observer with none.
+        if budget.left() <= 0:
             break
         observed = _observe_state(
             state,
             known=known,
-            stop_on_review=stop_on_review,
-            timeout=min(30.0, max(0.001, deadline - clock.monotonic())),
+            timeout=budget.step_timeout("observe-controller", floor=WaitKind.POLL, cap=WaitKind.COMMAND),
         )
         summary = observed.open_incident_summary
         if observed.failure.code == ControllerObservationFailure.CODE_CLOSURE_FAILED:
@@ -1427,8 +2014,29 @@ def _wait_for_verified_incident(
                 if observed.HasField("verified_closure")
                 else None
             )
-            return VerifiedIncident(incident_id=observed.verified_incident_id, closure=closure)
+            return VerifiedIncident(
+                incident_id=observed.verified_incident_id,
+                closure=closure,
+                busy_until=busy_until(state),
+            )
         _raise_observation_failure(observed, state)
+        # Follow-up collection starts only after a durable receipt drain. Native
+        # ACK plus idle is terminal even if a benchmark fault probe stays red.
+        # Unknown reads, queued reflection/rollout and any new incident cannot
+        # establish that boundary. First-incident detection never uses it.
+        if (
+            stop_when_acknowledged_idle
+            and state.get("last_acknowledged_incident_id") in known
+            and not observed.new_incident_opened
+            and not incident_work_open(state)
+            and _closeout_settled(state, incident_id=state["last_acknowledged_incident_id"])
+        ):
+            return None
+        if progress.stalled(state, clock.monotonic()):
+            raise ControllerStalledError(
+                f"controller stalled in {control!r}: its step loop made no pass for {progress.stall_seconds:.0f}s "
+                f"(step {progress.iteration}){summary}"
+            )
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(
         f"controller in {control!r} verified no new incident within {timeout:.0f}s{summary}"
@@ -1447,11 +2055,23 @@ def _log_records(logs: str) -> list[dict[str, Any]]:
     return records
 
 
+def inject_while_paused(
+    ops: ClusterOps, control: str, generation: str, inject: Callable[[], None], *, clock: Clock | None = None
+) -> None:
+    """Keep partial injector writes behind maintenance until v2 validity is known."""
+    clock = clock or Clock()
+    paused = f"{generation}-validating-injection"
+    ops.set_maintenance(control, paused=True, generation=paused, preserve_baseline=True)
+    wait_for_maintenance_ack(ops, control, paused, clock)
+    inject()  # failure intentionally leaves maintenance paused
+    ops.set_maintenance(control, paused=False, generation=f"{generation}-injected")
+
+
 def wait_for_maintenance_ack(
     ops: ClusterOps, control: str, generation: str, clock: Clock, timeout: float | None = None
 ) -> None:
     if timeout is None:
-        timeout = MAINTENANCE_ACK_TIMEOUT_SECONDS * float(os.getenv("SDO_TIME_SCALE", "1"))
+        timeout = MAINTENANCE_ACK_TIMEOUT_SECONDS
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
         records = _log_records(ops.controller_logs(control))
@@ -1461,24 +2081,81 @@ def wait_for_maintenance_ack(
     raise PersistentControllerError(f"controller in {control!r} did not acknowledge maintenance {generation!r}")
 
 
-def _wait_for_reflection_drain(
-    ops: ClusterOps, control: str, incident_id: str, timeout: float, clock: Clock
-) -> dict[str, Any]:
-    """Wait for broker acknowledgment, which follows accepted memory-host activation."""
+def controller_job_failure(job: dict[str, Any]) -> str | None:
+    """A Job's terminal condition as ``reason: message``; a Failed or Complete Job never runs another pod."""
 
-    deadline = clock.monotonic() + timeout
-    while clock.monotonic() < deadline:
-        state = ops.runtime_state(control)
-        if clock.monotonic() >= deadline:
+    for condition in (job.get("status") or {}).get("conditions") or []:
+        terminal = isinstance(condition, dict) and condition.get("type") in {"Failed", "Complete"}
+        if terminal and condition.get("status") == "True":
+            reason = condition.get("reason") or condition["type"]
+            return f"{reason}: {condition.get('message') or 'no message'}"
+    return None
+
+
+def _wait_for_reflection_drain(
+    ops: ClusterOps, control: str, incident_id: str, deadline_at: datetime, clock: Clock
+) -> dict[str, Any]:
+    """Wait for ACK, incident-bound reflection and rollout within the existing deadline.
+
+    Non-success outcomes acknowledge before queued reflection and rollout. The
+    controller's queue projection keeps that incident unsettled through both.
+    A terminal controller Job stops the wait with a typed failure.
+    """
+
+    timeout = max(0.0, (deadline_at - clock.now()).total_seconds())
+    budget = Deadline(clock.monotonic() + timeout, clock.monotonic, "reflection drain")
+    while True:
+        # Only a read that shows SDO still owning the closure makes a passed deadline a reflection deadline.
+        # A failed or empty read, or a failed observation, says nothing; retry within the same budget.
+        error: str | None = None
+        try:
+            state = ops.runtime_state(control)
+        except (RuntimeError, ValueError, KeyError, OSError) as exc:
+            state, error = {}, str(exc) or type(exc).__name__
+        if not state:
+            error = error or "empty controller state"
+        else:
+            try:
+                observed = _observe_state(
+                    state,
+                    incident_id=incident_id,
+                    timeout=budget.step_timeout("observe-controller", floor=WaitKind.POLL, cap=WaitKind.COMMAND),
+                )
+                _raise_observation_failure(observed, state)
+            except ClosureFailedError:
+                raise
+            except PersistentControllerError as exc:
+                error = f"observation failed: {exc}"
+            else:
+                if _closeout_settled(state, incident_id=incident_id):
+                    return state
+            _raise_terminal_controller_job(ops, control, incident_id)
+        if budget.left() <= 0:
             break
-        observed = _observe_state(
-            state, incident_id=incident_id, timeout=min(30.0, max(0.001, deadline - clock.monotonic()))
-        )
-        _raise_observation_failure(observed, state)
-        if observed.acknowledged:
-            return state
         clock.sleep(POLL_SECONDS)
-    raise PersistentControllerError(f"incident {incident_id!r} was not reflected and activated within {timeout:.0f}s")
+    if not state or not incident_work_open(state):
+        raise ControllerStateUnavailableError(
+            f"incident {incident_id!r}: closure state unknown at its reflection deadline "
+            f"{deadline_at.isoformat()}: {error}"
+        )
+    raise ReflectionDeadlineError(
+        f"incident {incident_id!r} was not reflected and rolled out by its reflection deadline "
+        f"{deadline_at.isoformat()}"
+    )
+
+
+def _raise_terminal_controller_job(ops: ClusterOps, control: str, incident_id: str) -> None:
+    # An unreadable Job says nothing about the closure; the state reads keep deciding.
+    try:
+        failure = ops.controller_job_failure(control)
+    except (PersistentControllerError, RuntimeError, ValueError, OSError) as exc:
+        logger.warning("controller Job in %s unreadable while draining %s: %s", control, incident_id, exc)
+        return
+    if failure is not None:
+        raise ControllerJobFailedError(
+            f"controller Job {CONTROLLER_JOB_NAME!r} in {control!r} is terminal ({failure}) before incident "
+            f"{incident_id!r} was acknowledged; no controller can acknowledge its closure"
+        )
 
 
 def _main(argv: list[str] | None = None) -> int:

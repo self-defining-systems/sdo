@@ -6,17 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"strings"
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 // PlanObjectClient is the Kubernetes object boundary used by plan application.
@@ -40,41 +45,86 @@ type PlanVerifier interface {
 }
 
 type PlanPatch struct {
-	Ref    sdk.ObjectRef
-	Patch  json.RawMessage
-	Before *unstructured.Unstructured
-	After  *unstructured.Unstructured
+	Authorization string
+	// ActionCount binds one physical write to consecutive logical actions.
+	ActionCount int
+	// DirectReadConfirmed is process-local proof, never restored from a receipt.
+	DirectReadConfirmed bool `json:"-"`
+	// ObservedUID is identity-only readback evidence, retained by the tool journal.
+	ObservedUID  string `json:"observed_uid,omitempty"`
+	Operation    string
+	Irreversible bool
+	Structured   bool
+	SourceCommit string
+	Ref          sdk.ObjectRef
+	Patch        json.RawMessage
+	Before       *unstructured.Unstructured
+	After        *unstructured.Unstructured
 }
 
+// PlanPreImage is an object's state before a plan. Absent marks an object
+// confirmed missing (a create), and then Object is nil. A nil Object without
+// Absent is unknown state. Build pre-images with newPlanPreImage.
 type PlanPreImage struct {
 	Ref    sdk.ObjectRef              `json:"ref"`
-	Object *unstructured.Unstructured `json:"object"`
+	Object *unstructured.Unstructured `json:"object,omitempty"`
+	Absent bool                       `json:"absent,omitempty"`
+}
+
+// newPlanPreImage copies a read object, or records a confirmed absence when
+// the plan creates the object.
+func newPlanPreImage(ref sdk.ObjectRef, object *unstructured.Unstructured) PlanPreImage {
+	if object == nil {
+		return PlanPreImage{Ref: ref, Absent: true}
+	}
+	return PlanPreImage{Ref: ref, Object: object.DeepCopy()}
 }
 
 // PlanApplicationResult contains the PlanApplication fields, generated patches,
 // and the pre-images needed to reverse an applied plan.
 type PlanApplicationResult struct {
-	Plan                  program.Plan
-	Applied               bool
-	DryRun                bool
-	PendingAction         *int
-	RollingBack           bool
-	RollbackCompleted     int
-	RolledBack            bool
-	RollbackError         string
-	VerificationPassed    bool
-	VerificationCompleted bool
-	ActionsApplied        []program.Action
-	Patches               []PlanPatch
-	Duration              time.Duration
-	PreImages             []PlanPreImage
+	// MitigationHealth is process-local tool feedback, not closure evidence.
+	MitigationHealth          *MitigationHealth `json:"-"`
+	Plan                      program.Plan
+	Applied                   bool
+	DryRun                    bool
+	PendingAction             *int
+	RollingBack               bool
+	RollbackCompleted         int
+	RolledBack                bool
+	RollbackError             string
+	VerificationPassed        bool
+	VerificationCompleted     bool
+	RolloutPending            *contracts.RolloutPending
+	FinalEquivalenceVerified  *bool
+	FinalVerificationBasis    string
+	SettlementRejectionReason contracts.SettlementRejectionReason
+	RecoveryWait              *contracts.RecoveryWait
+	ActionsApplied            []program.Action
+	Patches                   []PlanPatch
+	Duration                  time.Duration
+	PreImages                 []PlanPreImage
+	ObjectEffects             []PlanObjectEffect
+	ActionReports             []PlanActionReport
 }
 
 type PlanExecutor struct {
-	Client   PlanObjectClient
-	Source   PlanSource
-	Rollouts PlanRollouts
-	Verifier PlanVerifier
+	// ApplicationID is durable across restart and selects one script Job.
+	ApplicationID     string
+	scriptActionIndex int
+	// Nested action executors leave observation, dependency recovery and
+	// terminal verification to their outer batch.
+	deferConvergence bool
+	// PollRollouts returns pending after one observation instead of waiting.
+	PollRollouts bool
+	DeleteObject func(context.Context, sdk.ObjectRef, types.UID, string) error
+	// RolloutTimeout can shorten the default ninety-second rollout budget.
+	RecordPrimitive func(sdktest.PrimitiveCall) error
+	RolloutTimeout  time.Duration
+	Client          PlanObjectClient
+	Source          PlanSource
+	Rollouts        PlanRollouts
+	Verifier        PlanVerifier
 	// Observer, when set, is the cache the verifier reads; Apply waits for it to
 	// show the application's writes before verifying.
 	Observer WriteObserver
@@ -82,16 +132,140 @@ type PlanExecutor struct {
 	// Jitter draws a value in [0, bound); nil uses the production RNG.
 	Jitter func(bound int64) int64
 	// Sleep waits between conflict retries and diagnosis settling; nil uses the production timer.
-	Sleep func(context.Context, time.Duration) error
+	Sleep  func(context.Context, time.Duration) error
+	Values program.ValueInputs
+	report *PlanActionReport
 }
 
-func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
-	now := e.Now
-	if now == nil {
-		now = lifecycleio.Now
+// clock returns the injected time source, or the production clock at the edge.
+func (e PlanExecutor) clock() func() time.Time {
+	if e.Now != nil {
+		return e.Now
 	}
+	return lifecycleio.Now
+}
+
+// Apply writes the plan and reports. A version conflict before anything was
+// written (a status or controller bump since the pre-image read) is not a
+// refusal: the plan is applied again against the fresh object, up to
+// maxRestoreAttempts times. A write that fails part-way through a multi-action
+// plan is compensated; once every write has landed, a failed rollout wait or
+// health verification is reported and left to the caller.
+func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	now := e.clock()
 	started := now()
-	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
+	defer func() { result.Duration = now().Sub(started) }()
+	var admissionRetries []program.Action
+	var admissionRecoveryErr error
+	if !e.deferConvergence {
+		expanded, expandErr := e.withAdmissionRetries(ctx, incident, plan)
+		admissionRecoveryErr = expandErr
+		if expandErr == nil {
+			admissionRetries = expanded.Actions[len(plan.Actions):]
+		}
+		if dryRun {
+			plan = expanded
+			admissionRetries = nil
+		}
+	}
+	plan = groupDocumentActions(plan)
+	defer func() {
+		if err != nil {
+			reason := "execution_failed"
+			if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+				reason = "authorization_denied"
+			}
+			for i := range result.ActionReports {
+				if result.ActionReports[i].Status != "applied" {
+					if result.ActionReports[i].Status == "unknown" && reason != "authorization_denied" {
+						reason = "outcome_unknown"
+					}
+					if result.ActionReports[i].FailureReason == "" {
+						result.ActionReports[i].FailureReason = reason
+					}
+					break
+				}
+			}
+		}
+	}()
+	defer func() {
+		var partial *SourceReconcilePartialError
+		if e.deferConvergence || result.RolloutPending != nil || errors.As(err, &partial) {
+			return
+		}
+		residualErr := e.reportSourceResiduals(ctx, incident, &result)
+		if residualErr != nil {
+			err = errors.Join(err, residualErr)
+		}
+	}()
+	// A mitigation never spends the incident's global health budget. Keep
+	// write/rollout confirmation, then independently sample its own scope once.
+	if verifier := scopedMitigationVerifier(e.Verifier, plan, incident.Findings); verifier != nil && !dryRun {
+		e.Verifier = verifier
+		defer func() { result.MitigationHealth = verifier.observation }()
+	}
+
+	for attempt := 0; attempt < maxRestoreAttempts; attempt++ {
+		result, err = e.applyOnce(ctx, incident, plan, dryRun)
+		if err == nil || result.Applied || !apierrors.IsConflict(err) {
+			break
+		}
+	}
+	if err == nil && !dryRun && !e.deferConvergence {
+		// Recovery follows the completed repair, outside its compensation
+		// scope. A retry failure must never put the admission blocker back.
+		if admissionRecoveryErr != nil {
+			return result, admissionRecoveryErr
+		}
+		if err = e.applyAdmissionRetries(ctx, incident, admissionRetries, &result); err != nil {
+			return result, err
+		}
+		var objectWrites []PlanPatch
+		var refs []sdk.ObjectRef
+		for _, patch := range result.Patches {
+			if patch.After != nil || patch.Operation == "delete" {
+				objectWrites = append(objectWrites, patch)
+			}
+			if patch.After != nil && patch.Operation != "delete" {
+				refs = append(refs, patch.Ref)
+			}
+		}
+		owners, ownerErr := e.admissionRetryRolloutRefs(ctx, result)
+		if ownerErr != nil {
+			return result, ownerErr
+		}
+		refs = append(refs, owners...)
+		if err = e.awaitObserved(ctx, objectWrites); err != nil {
+			return result, err
+		}
+		result.RolloutPending, err = e.waitAfterSourceWrites(ctx, incident, &result, refs)
+		if err != nil {
+			return result, err
+		}
+		if err = e.reportSourceResiduals(ctx, incident, &result); err != nil {
+			return result, err
+		}
+		result.VerificationPassed, err = e.Verifier.Verify(ctx)
+		result.VerificationCompleted = err == nil
+	}
+	return result, err
+}
+
+func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	if hasGeneralActions(plan) && !atomicDocumentPlan(plan) {
+		return e.applyGeneralPlan(ctx, incident, plan, dryRun)
+	}
+	if hasRuntimeEffects(plan) {
+		return e.applyRuntimePlan(ctx, incident, plan, dryRun)
+	}
+	if hasObjectActions(plan) {
+		return e.applyObjectPlan(ctx, incident, plan, dryRun)
+	}
+	now := e.clock()
+	started := now()
+	result = PlanApplicationResult{Plan: plan, DryRun: dryRun, ActionReports: newPlanReports(plan)}
+	defer func() { settlePlanReports(&result, err) }()
+	writesLanded := false
 	defer func() {
 		result.Duration = now().Sub(started)
 		if err != nil && result.PendingAction != nil {
@@ -104,12 +278,12 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 				return
 			}
 		}
-		if err != nil && result.Applied {
+		if err != nil && result.Applied && !writesLanded {
 			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
 			if rollbackErr := e.rollback(recoveryCtx, &result); rollbackErr != nil {
 				result.RollbackError = rollbackErr.Error()
-				result.RollingBack = true
+				result.RollingBack = result.RollbackCompleted < len(result.ActionsApplied)
 				err = errors.Join(err, fmt.Errorf("compensate partial application: %w", rollbackErr))
 			} else {
 				result.RolledBack = true
@@ -130,8 +304,6 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	}
 	result.PreImages = make([]PlanPreImage, 0, len(plan.Actions))
 	current := make(map[sdk.ObjectRef]*unstructured.Unstructured)
-	originals := make(map[sdk.ObjectRef]*unstructured.Unstructured)
-	refs := make([]sdk.ObjectRef, 0, len(plan.Actions))
 	// Capture every pre-image before any write, including later actions' targets.
 	for _, action := range plan.Actions {
 		ref, refErr := planActionRef(action)
@@ -141,12 +313,13 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if err := validatePlanRef(ref); err != nil {
 			return result, err
 		}
-		if incident.Namespace != "" && ref.Namespace != incident.Namespace {
+		if incident.Namespace != "" && ref.Namespace != incident.Namespace && !genericIncidentRef(incident, action, ref) && !e.acceptedClusterReconcile(ctx, incident, action, ref) {
 			return result, fmt.Errorf("plan object %s/%s is outside incident namespace %q", ref.Namespace, ref.Name, incident.Namespace)
 		}
 		if _, exists := current[ref]; exists {
 			continue
 		}
+
 		object, getErr := e.Client.Get(ctx, ref)
 		if getErr != nil {
 			return result, fmt.Errorf("read pre-image of %s/%s: %w", ref.Kind, ref.Name, getErr)
@@ -154,19 +327,18 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if object == nil || !samePlanRef(object, ref) {
 			return result, fmt.Errorf("pre-image does not match %s/%s", ref.Kind, ref.Name)
 		}
-		result.PreImages = append(result.PreImages, PlanPreImage{Ref: ref, Object: object.DeepCopy()})
+
+		result.PreImages = append(result.PreImages, newPlanPreImage(ref, object))
 		current[ref] = object.DeepCopy()
-		originals[ref] = object.DeepCopy()
-		refs = append(refs, ref)
 	}
-	prepared := make([]*unstructured.Unstructured, 0, len(plan.Actions))
-	cumulative := make([][]byte, 0, len(plan.Actions))
-	for _, action := range plan.Actions {
+	for actionIndex, action := range plan.Actions {
+		e.report = &result.ActionReports[actionIndex]
 		ref, _ := planActionRef(action)
 		next, actionErr := e.prepareAction(ctx, incident, action, current[ref])
 		if actionErr != nil {
-			return result, actionErr
+			return result, fmt.Errorf("prepare learned repair: %w; investigate accepted source and intended application behavior", actionErr)
 		}
+
 		before, marshalErr := json.Marshal(current[ref].Object)
 		if marshalErr != nil {
 			return result, fmt.Errorf("encode pre-image of %s/%s: %w", ref.Kind, ref.Name, marshalErr)
@@ -183,76 +355,51 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if patchErr != nil {
 			return result, patchErr
 		}
-		// The server dry-run starts from the live object, which has none of the
-		// earlier actions, so it needs the change from the pre-image to this action.
-		original, marshalErr := json.Marshal(originals[ref].Object)
-		if marshalErr != nil {
-			return result, fmt.Errorf("encode pre-image of %s/%s: %w", ref.Kind, ref.Name, marshalErr)
-		}
-		total, patchErr := jsonpatch.CreateMergePatch(original, after)
-		if patchErr != nil {
-			return result, fmt.Errorf("patch %s/%s: %w", ref.Kind, ref.Name, patchErr)
-		}
-		prepared = append(prepared, next.DeepCopy())
-		cumulative = append(cumulative, total)
-		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy()})
+		result.Patches = append(result.Patches, PlanPatch{Authorization: planAuthorizationMode(action), Irreversible: isAdmissionRetry(action), Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy(), Structured: structuredPlanRef(plan, ref), SourceCommit: incident.SourceCommit})
 		current[ref] = next
 	}
-	if err := e.normalizeAfterImages(ctx, result.Patches, cumulative); err != nil {
+	// Rollback and write reconciliation compare after-images with live values, so
+	// the plan's values take the form the API server stores.
+	for i := range result.Patches {
+		canonicalizePlanObject(result.Patches[i].After)
+	}
+	if err := coalesceDocumentPatches(&result); err != nil {
 		return result, err
 	}
 	if dryRun {
 		return result, nil
 	}
-	// versions holds each object as last observed after one of our writes; objects
-	// not yet written are still at their pre-image.
-	versions := originals
-	for index, patch := range result.Patches {
-		if previous := versions[patch.Ref]; previous != nil {
-			var patchErr error
-			patch.Patch, patchErr = conditionalPlanPatch(patch.Patch, previous)
-			if patchErr != nil {
-				return result, patchErr
-			}
-			result.Patches[index].Patch = patch.Patch
-		}
+	for index := 0; index < len(result.Patches); {
+		patch := &result.Patches[index]
+		count := patch.ActionCount
 		pending := index
 		result.PendingAction = &pending
-		if err := e.patchWithRetry(ctx, index, &result.Patches[index], versions[patch.Ref]); err != nil {
-			return result, err
+		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
+			return result, fmt.Errorf("apply object write %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
 		}
 		result.Applied = true
-		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index])
+		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index:index+count]...)
 		result.PendingAction = nil
-		observed, getErr := e.Client.Get(ctx, patch.Ref)
-		if getErr != nil {
-			return result, fmt.Errorf("read applied version: %w", getErr)
-		}
-		if observed.GetUID() != patch.Before.GetUID() {
-			return result, errors.New("applied object was recreated")
-		}
-		for _, field := range []string{"spec", "data", "binaryData"} {
-			written := projectPlanOwned(patch.After.Object[field], prepared[index].Object[field])
-			if mismatch, found := findPlanOwnedFieldMismatch(field, observed.Object[field], written); found {
-				return result, fmt.Errorf("concurrent change after action %d: %s", index, mismatch)
+		if observed, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil && observed != nil {
+			patch.After.SetResourceVersion(observed.GetResourceVersion())
+			if observed.GetUID() == patch.Before.GetUID() {
+				patch.ObservedUID = string(observed.GetUID())
 			}
 		}
-		result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
-		versions[patch.Ref] = observed
+		if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{*patch}}); err != nil {
+			return result, err
+		}
+		for member := index; member < index+count; member++ {
+			if err := e.verifyValueWrite(ctx, plan.Actions[member], *patch); err != nil {
+				return result, err
+			}
+			result.Patches[member].DirectReadConfirmed = patch.Structured
+		}
+		index += count
 	}
+	writesLanded = true
 	result.Applied = true
-	if err := e.awaitObserved(ctx, result.Patches); err != nil {
-		return result, err
-	}
-	if err := e.Rollouts.Wait(ctx, refs); err != nil {
-		return result, fmt.Errorf("wait for plan rollouts: %w", err)
-	}
-	passed, err := e.Verifier.Verify(ctx)
-	if err != nil {
-		return result, fmt.Errorf("verify plan health: %w", err)
-	}
-	result.VerificationPassed = passed
-	result.VerificationCompleted = true
+
 	return result, nil
 }
 
@@ -263,6 +410,7 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 
 // rollback advances the caller's result even when compensation stops partway.
 func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplicationResult) error {
+
 	if application.RolledBack {
 		return nil
 	}
@@ -270,20 +418,57 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 		return errors.New("plan object client is required")
 	}
 	application.RollingBack = true
-	for index := len(application.ActionsApplied) - 1 - application.RollbackCompleted; index >= 0; index-- {
-		if index >= len(application.Patches) {
-			return errors.New("rollback requires in-process field writes")
+	var irreversible error
+	// Keep irreversible effects disclosed even when resuming a completed walk.
+	for i := 0; i < len(application.ActionsApplied) && i < len(application.Patches); i++ {
+		patch := application.Patches[i]
+		if patch.Operation == "delete" || patch.Irreversible {
+			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible %s effect on %s/%s was not restored; never auto-recreate or replay", patch.Operation, patch.Ref.Kind, patch.Ref.Name))
 		}
-		patch := application.Patches[index]
-		if patch.Before == nil || patch.After == nil {
-			return errors.New("rollback requires before and after images")
-		}
-		if err := e.restoreAction(ctx, patch); err != nil {
-			return err
-		}
-		application.RollbackCompleted++
 	}
-	application.RollingBack = false
+
+	// Supplemental dependency recovery is part of the application receipt,
+	// even though it is not an authored action or a reversible field patch.
+	for _, effect := range application.ObjectEffects {
+		if effect.Irreversible && effect.State != "not_applied" {
+			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible %s effect on %s/%s was not restored; never auto-recreate or replay", effect.Operation, effect.Ref.Kind, effect.Ref.Name))
+		}
+	}
+
+	// RollbackCompleted checkpoints only the contiguous processed suffix. If a
+	// step fails, still attempt every earlier write; idempotent restores safely
+	// revisit those successes on retry without skipping the failed step.
+	contiguous := true
+	for index := len(application.ActionsApplied) - 1 - application.RollbackCompleted; index >= 0; index-- {
+		restoreErr := func() error {
+			if index >= len(application.Patches) {
+				return errors.New("rollback requires in-process field writes")
+			}
+			patch := application.Patches[index]
+			if patch.Operation == "delete" || patch.Irreversible {
+				return nil
+			}
+			if patch.Operation == "create" {
+				return e.restoreCreatedObject(ctx, patch)
+			}
+			if patch.Before == nil || patch.After == nil {
+				return errors.New("rollback requires before and after images")
+			}
+			return e.restoreAction(ctx, patch)
+		}()
+		if restoreErr != nil {
+			irreversible = errors.Join(irreversible, restoreErr)
+			contiguous = false
+		} else if contiguous {
+			application.RollbackCompleted++
+		}
+	}
+	application.RollingBack = application.RollbackCompleted < len(application.ActionsApplied)
+	if irreversible != nil {
+		application.RollbackError = irreversible.Error()
+		return irreversible
+	}
+
 	application.RolledBack = true
 	application.RollbackError = ""
 	return nil
@@ -307,17 +492,19 @@ func (e PlanExecutor) restoreAction(ctx context.Context, patch PlanPatch) error 
 }
 
 func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) error {
+
 	current, err := e.Client.Get(ctx, patch.Ref)
 	if err != nil {
 		return err
 	}
+
 	if current.GetUID() != patch.Before.GetUID() {
 		return fmt.Errorf("rollback conflict: %s/%s was recreated", patch.Ref.Kind, patch.Ref.Name)
 	}
 	restored := current.DeepCopy()
-	for _, field := range []string{"spec", "data", "binaryData"} {
-		before, bok := patch.Before.Object[field]
-		after, aok := patch.After.Object[field]
+	for _, field := range planPatchFields(patch) {
+		before, bok := planConfigurationField(patch.Before, field)
+		after, aok := planConfigurationField(patch.After, field)
 		live, lok := current.Object[field]
 		value, exists, err := restorePlanFields(before, bok, after, aok, live, lok)
 		if err != nil {
@@ -329,9 +516,7 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 			delete(restored.Object, field)
 		}
 	}
-	if err := validateCredentialChannelDelta(patch.Before, restored); err != nil {
-		return err
-	}
+
 	from, _ := json.Marshal(current.Object)
 	to, _ := json.Marshal(restored.Object)
 	delta, err := jsonpatch.CreateMergePatch(from, to)
@@ -345,8 +530,26 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 	if err != nil {
 		return err
 	}
+
 	if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, delta); err != nil {
 		return fmt.Errorf("restore %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
+	}
+	if patch.Structured {
+		observed, err := e.Client.Get(ctx, patch.Ref)
+		if err != nil {
+			return fmt.Errorf("compensation observation unknown")
+		}
+
+		if observed.GetUID() != current.GetUID() {
+			return fmt.Errorf("compensation observation unknown: UID changed")
+		}
+		for _, field := range planPatchFields(patch) {
+			observedValue, _ := planConfigurationField(observed, field)
+			restoredValue, _ := planConfigurationField(restored, field)
+			if !planValuesEqual(observedValue, restoredValue) {
+				return fmt.Errorf("compensation observation unknown: restored fields differ")
+			}
+		}
 	}
 	return nil
 }
@@ -359,7 +562,26 @@ func conditionalPlanPatch(patch []byte, observed *unstructured.Unstructured) ([]
 	if err := json.Unmarshal(patch, &fields); err != nil {
 		return nil, err
 	}
-	fields["metadata"] = map[string]any{"uid": string(observed.GetUID()), "resourceVersion": observed.GetResourceVersion()}
+	metadata, _ := fields["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["uid"] = string(observed.GetUID())
+	metadata["resourceVersion"] = observed.GetResourceVersion()
+	fields["metadata"] = metadata
+	return json.Marshal(fields)
+}
+
+func uidOnlyPlanPatch(patch []byte, observed *unstructured.Unstructured) ([]byte, error) {
+	var fields map[string]any
+	if err := json.Unmarshal(patch, &fields); err != nil {
+		return nil, err
+	}
+	if observed.GetUID() == "" {
+		delete(fields, "metadata")
+	} else {
+		fields["metadata"] = map[string]any{"uid": string(observed.GetUID())}
+	}
 	return json.Marshal(fields)
 }
 
@@ -403,6 +625,48 @@ func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok 
 	ba, barray := before.([]any)
 	aa, aarray := after.([]any)
 	la, larray := live.([]any)
+	// Empty configuration lists are omitted by canonicalization/API storage.
+	if (barray || aarray || larray) && (barray || !bok) && (aarray || !aok) && (larray || !lok) {
+		if bm, am, lm, ok := namedPlanLists(ba, aa, la); ok {
+			restored := runtime.DeepCopyJSONValue(lm).(map[string]any)
+			keys := map[string]bool{}
+			for k := range bm {
+				keys[k] = true
+			}
+			for k := range am {
+				keys[k] = true
+			}
+			for k := range keys {
+				b, bo := bm[k]
+				a, ao := am[k]
+				l, lo := lm[k]
+				v, exists, err := restorePlanFields(b, bo, a, ao, l, lo)
+				if err != nil {
+					return nil, false, fmt.Errorf("named item %s: %w", k, err)
+				}
+				if exists {
+					restored[k] = v
+				} else {
+					delete(restored, k)
+				}
+			}
+			// Restore original item order, retaining concurrent additions.
+			result := make([]any, 0, len(restored))
+			for _, list := range [][]any{ba, la} {
+				for _, item := range list {
+					name := item.(map[string]any)["name"].(string)
+					if value, exists := restored[name]; exists {
+						result = append(result, value)
+						delete(restored, name)
+					}
+				}
+			}
+			if len(result) == 0 && !bok {
+				return nil, false, nil
+			}
+			return result, true, nil
+		}
+	}
 	if barray && aarray && larray && len(ba) == len(aa) && len(aa) == len(la) {
 		result := make([]any, len(la))
 		for i := range la {
@@ -422,29 +686,78 @@ func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok 
 		}
 		return result, true, nil
 	}
-	if aok != lok || !planValuesEqual(after, live) {
+	if aok != lok || !planValueContains(live, after) {
 		return nil, false, errors.New("field no longer holds application value")
 	}
 	return before, bok, nil
 }
 
-func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured) (prepared *unstructured.Unstructured, prepareErr error) {
-	defer func() {
-		if prepareErr == nil {
-			prepareErr = validateCredentialChannelDelta(current, prepared)
+// planValueContains reports whether live equals applied, ignoring keys the API server added to
+// applied objects (defaults such as a probe's scheme or a port's protocol).
+func planValueContains(live, applied any) bool {
+	switch a := applied.(type) {
+	case map[string]any:
+		l, ok := live.(map[string]any)
+		if !ok {
+			return false
 		}
-	}()
+		for key, value := range a {
+			if lv, exists := l[key]; !exists || !planValueContains(lv, value) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		l, ok := live.([]any)
+		if !ok || len(l) != len(a) {
+			return false
+		}
+		for i := range a {
+			if !planValueContains(l[i], a[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return planValuesEqual(applied, live)
+}
+
+func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	next := current.DeepCopy()
 	switch a := action.(type) {
 	case program.ReconcileFromSource:
 		if e.Source == nil || incident.SourceCommit == "" {
 			return nil, errors.New("accepted source is required for reconcile")
 		}
-		source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, a.Ref)
+		source, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, a.Ref)
 		if err != nil {
 			return nil, err
 		}
-		return sourceFields(next, source, a.Ref)
+		next, err = sourceFields(next, source, a.Ref)
+		if err != nil {
+			return nil, err
+		}
+		removeAddedFields(next, current, source)
+		preserveSourceControllerFields(next, current)
+		// A source repair owns the revision it applies. Carry the original
+		// UID-bound acceptance baseline across that repair; never accept an
+		// unknown incarnation or absorb another writer's added/changed fields.
+		if previous, ok := readAcceptanceRecord(current); ok && previous.UID != "" && previous.UID == string(current.GetUID()) {
+			record, fits, err := buildAcceptanceRecord(source, next, current, nil, false)
+			if err != nil {
+				return nil, err
+			}
+			if !fits {
+				return nil, fmt.Errorf("repaired acceptance record exceeds %d bytes", maxAcceptanceRecordBytes)
+			}
+			annotations := next.GetAnnotations()
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+			annotations[acceptedPathsAnnotation] = record
+			next.SetAnnotations(annotations)
+		}
+		return next, nil
 	case program.Rollback:
 		if e.Source == nil || a.ToRevision == "" {
 			return nil, errors.New("revision source and target revision are required")
@@ -453,19 +766,126 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if err != nil {
 			return nil, err
 		}
+
 		return sourceFields(next, previous, a.Ref)
-	case program.SetField:
-		encoded, err := json.Marshal(a.Value)
+	case program.PatchObject:
+		fields, err := program.ProjectPatch(current.Object, a)
 		if err != nil {
 			return nil, err
 		}
-		var value any
-		if err := json.Unmarshal(encoded, &value); err != nil {
+		return &unstructured.Unstructured{Object: fields}, nil
+	case *program.PatchObject:
+		if a == nil {
+			return nil, errors.New("nil PatchObject")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
+	case program.ApplyObject:
+		if err := a.Validate(); err != nil {
 			return nil, err
 		}
-		if err := program.ApplySetField(next.Object, a.Path, value); err != nil {
+		raw, err := json.Marshal(a.Object)
+		if err != nil {
 			return nil, err
 		}
+		fields, err := program.MergeObject(current.Object, a.Ref, raw)
+		if err != nil {
+			return nil, err
+		}
+		return &unstructured.Unstructured{Object: fields}, nil
+	case *program.ApplyObject:
+		if a == nil {
+			return nil, errors.New("nil ApplyObject")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
+	case program.RemoveServicePort:
+		if err := program.ApplyRemoveServicePort(next.Object, a); err != nil {
+			return nil, err
+		}
+	case *program.RemoveServicePort:
+		if a == nil {
+			return nil, errors.New("nil RemoveServicePort")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
+	case program.SetField:
+		value, provenance, err := program.ResolveSetFieldValue(a, e.valueInputs(ctx, incident))
+		if err != nil {
+			return nil, err
+		}
+		if e.report != nil {
+			e.report.Values = append(e.report.Values, provenance)
+		}
+		if err := program.ApplySetFieldAction(next.Object, a, value); err != nil {
+			return nil, err
+		}
+
+	case program.ScaleWorkload:
+		value, provenance, err := program.ResolveValue(a.Replicas, e.valueInputs(ctx, incident))
+		if err != nil {
+			return nil, err
+		}
+		field := program.SetField{Ref: a.Ref, Path: "spec.replicas", Value: a.Replicas}
+		if err := program.ValidateResolvedSetField(field, value); err != nil {
+			return nil, err
+		}
+		raw, _ := json.Marshal(value)
+		var replicas int32
+		if err := json.Unmarshal(raw, &replicas); err != nil || replicas < 0 {
+			return nil, fmt.Errorf("replicas must be a nonnegative int32")
+		}
+		if e.report != nil {
+			e.report.Values = append(e.report.Values, provenance)
+		}
+		if err := unstructured.SetNestedField(next.Object, int64(replicas), "spec", "replicas"); err != nil {
+			return nil, err
+		}
+	case *program.ScaleWorkload:
+		if a == nil {
+			return nil, errors.New("nil ScaleWorkload")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
+	case program.RetryAdmission:
+		if current.GetUID() == "" || current.GetResourceVersion() == "" {
+			return nil, errors.New("RetryAdmission requires live UID and resourceVersion")
+		}
+		if incident.Namespace == "" || a.Ref.Namespace != incident.Namespace {
+			return nil, errors.New("RetryAdmission requires the incident namespace")
+		}
+		var set appsv1.ReplicaSet
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(current.Object, &set); err != nil {
+			return nil, err
+		}
+		if set.Spec.Replicas != nil && *set.Spec.Replicas <= set.Status.Replicas {
+			return next, nil
+		}
+		if len(program.AdmissionFailedCreate(set)) == 0 {
+			return nil, errors.New("RetryAdmission requires live admission FailedCreate and missing Pods")
+		}
+		now := e.clock()
+		// The version makes every retry an update even with a fixed clock.
+		token := now().UTC().Format(time.RFC3339Nano) + "/" + current.GetResourceVersion()
+		if err := unstructured.SetNestedField(next.Object, token, "metadata", "annotations", admissionRetryAnnotation); err != nil {
+			return nil, err
+		}
+	case *program.RetryAdmission:
+		if a == nil {
+			return nil, errors.New("nil RetryAdmission")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
+	case program.RetireOldRevision:
+		// The bound is checked against the live ReplicaSet and its live owner
+		// at write time, so every caller (stage, program, menu) inherits it.
+		if err := e.checkOldRevision(ctx, current); err != nil {
+			return nil, err
+		}
+		if err := unstructured.SetNestedField(next.Object, int64(0), "spec", "replicas"); err != nil {
+			return nil, err
+		}
+	case *program.RetireOldRevision:
+		if a == nil {
+			return nil, errors.New("nil RetireOldRevision")
+		}
+		return e.prepareAction(ctx, incident, *a, current)
+
 	case program.RestartRollout:
 		if a.Ref.Kind != "Deployment" || a.Ref.APIVersion != "apps/v1" {
 			return nil, errors.New("RestartRollout requires an apps/v1 Deployment")
@@ -507,16 +927,118 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 	if source == nil || !samePlanRef(source, ref) {
 		return nil, fmt.Errorf("source object does not match %s/%s", ref.Kind, ref.Name)
 	}
-	for _, field := range []string{"spec", "data", "binaryData"} {
-		if value, ok := source.Object[field]; ok {
-			current.Object[field] = runtime.DeepCopyJSONValue(value)
+	// Source configuration is open-ended (RBAC, admission, custom resources).
+	// Identity/status stay API-owned; source metadata keys merge so an
+	// independent controller's completion annotations survive reconciliation.
+	for field, value := range source.Object {
+		switch field {
+		case "apiVersion", "kind", "status":
+			continue
+		case "metadata":
+			metadata, _ := value.(map[string]any)
+			for key, declared := range metadata {
+				if serverOwnedPlanMetadata(key) {
+					continue
+				}
+				currentMetadata, _ := current.Object["metadata"].(map[string]any)
+				if currentMetadata == nil {
+					currentMetadata = map[string]any{}
+					current.Object["metadata"] = currentMetadata
+				}
+				currentMetadata[key] = restoreDeclaredValue(currentMetadata[key], declared)
+			}
+		default:
+			current.Object[field] = restoreDeclaredValue(current.Object[field], value)
 		}
 	}
 	return current, nil
 }
 
+// Maps restore their declared keys; lists/scalars restore their entire declared
+// value. Unspecified server defaults and other controllers' map entries survive.
+func restoreDeclaredValue(current, declared any) any {
+	if source, ok := declared.(map[string]any); ok {
+		result, _ := current.(map[string]any)
+		if result == nil {
+			result = map[string]any{}
+		}
+		for key, value := range source {
+			result[key] = restoreDeclaredValue(result[key], value)
+		}
+		return result
+	}
+	return runtime.DeepCopyJSONValue(declared)
+}
+
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
-	switch a := action.(type) {
+	if ref, ok := externalRef(action); ok {
+		return ref, nil
+	}
+	switch a := generalAction(action).(type) {
+	case program.SyncWebhookCA:
+		return a.Target.Ref, nil
+	case program.PatchObject:
+		return a.Ref, nil
+	case program.ApplyObject:
+		return a.Ref, nil
+	case program.KubernetesRequest:
+		return a.Ref, nil
+	case program.WaitFor:
+		return a.Ref, nil
+	case program.EnsureDatabaseUser:
+		return a.Target.Pod, nil
+	case *program.EnsureDatabaseUser:
+		if a != nil {
+			return a.Target.Pod, nil
+		}
+	case program.RemoveServicePort:
+		return a.Ref, nil
+	case *program.RemoveServicePort:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case program.DeletePod:
+		return a.Ref, nil
+	case program.ScaleWorkload:
+		return a.Ref, nil
+	case program.Exec:
+		return a.Pod, nil
+	case *program.DeletePod:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case *program.ScaleWorkload:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case program.RetryAdmission:
+		return a.Ref, nil
+	case *program.RetryAdmission:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case program.RetireOldRevision:
+		return a.Ref, nil
+	case *program.RetireOldRevision:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case *program.Exec:
+		if a != nil {
+			return a.Pod, nil
+		}
+	case program.CreateFromSource:
+		return a.Ref, nil
+	case program.DeleteObject:
+		return a.Ref, nil
+	case *program.CreateFromSource:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case *program.DeleteObject:
+		if a != nil {
+			return a.Ref, nil
+		}
 	case program.ReconcileFromSource:
 		return a.Ref, nil
 	case program.Rollback:
@@ -548,8 +1070,8 @@ func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 }
 
 func validatePlanRef(ref sdk.ObjectRef) error {
-	if ref.APIVersion == "" || ref.Kind == "" || ref.Namespace == "" || ref.Name == "" {
-		return fmt.Errorf("plan action requires a namespaced object reference: %+v", ref)
+	if ref.APIVersion == "" || ref.Kind == "" || ref.Name == "" {
+		return fmt.Errorf("plan action requires a versioned object reference: %+v", ref)
 	}
 	return nil
 }
@@ -560,12 +1082,13 @@ func samePlanRef(object *unstructured.Unstructured, ref sdk.ObjectRef) bool {
 
 // PlanHealthVerifier runs the accepted health detectors on a fresh snapshot.
 type PlanHealthVerifier struct {
-	Detectors []sdk.Detector
-	Provider  core.SnapshotProvider
+	Detectors    []sdk.Detector
+	Provider     core.SnapshotProvider
+	Timeout      time.Duration
+	PollInterval time.Duration
 }
 
 func (v PlanHealthVerifier) Verify(ctx context.Context) (bool, error) {
-	sink := &planFindingSink{}
 	var health []sdk.Detector
 	for _, detector := range v.Detectors {
 		if detector.Spec().Class == sdk.DetectorClassHealth {
@@ -575,10 +1098,59 @@ func (v PlanHealthVerifier) Verify(ctx context.Context) (bool, error) {
 	if len(health) == 0 {
 		return false, errors.New("health detectors are required")
 	}
-	if err := (core.Runner{Detectors: health, Provider: v.Provider, Sink: sink}).RunOnce(ctx); err != nil {
+	budget := v.Timeout
+	if budget <= 0 {
+		sink := &planFindingSink{}
+		confirmed, err := v.sample(ctx, health, sink)
+		if err != nil {
+			return false, err
+		}
+		return confirmed && !sink.firing, nil
+	}
+	interval := v.PollInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	verification, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	for {
+		sink := &planFindingSink{}
+		confirmed, err := v.sample(verification, health, sink)
+		if err != nil {
+			if ctx.Err() == nil && errors.Is(verification.Err(), context.DeadlineExceeded) {
+				return false, nil
+			}
+			return false, err
+		}
+		if confirmed && !sink.firing {
+			return true, nil
+		}
+		timer := lifecycleio.NewTimer(interval)
+		select {
+		case <-verification.Done():
+			timer.Stop()
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			return false, nil
+		case <-timer.C:
+		}
+	}
+}
+
+// Confirmation and findings must come from the same fresh snapshot.
+func (v PlanHealthVerifier) sample(ctx context.Context, detectors []sdk.Detector, sink *planFindingSink) (bool, error) {
+	if v.Provider == nil {
+		return false, errors.New("snapshot provider is required")
+	}
+	snapshot, err := v.Provider.Snapshot(ctx)
+	if err != nil {
+		return false, fmt.Errorf("create detection snapshot: %w", err)
+	}
+	if err := (core.Runner{Detectors: detectors, Provider: core.StaticSnapshotProvider{SnapshotValue: snapshot}, Sink: sink}).RunOnce(ctx); err != nil {
 		return false, err
 	}
-	return !sink.firing, nil
+	return detectorsConfirmed(detectors, snapshot), nil
 }
 
 type planFindingSink struct{ firing bool }
@@ -599,4 +1171,60 @@ func planValuesEqual(left, right any) bool {
 	}
 	b, err := json.Marshal(right)
 	return err == nil && string(a) == string(b)
+}
+
+// Generic field plans may cross the app boundary only for an exact object
+// already cited by the incident, never from an arbitrary program-supplied name.
+func genericIncidentRef(incident IncidentRequest, action program.Action, ref sdk.ObjectRef) bool {
+	var path string
+	switch a := action.(type) {
+	case program.SetField:
+		path = a.Path
+	case *program.SetField:
+		if a != nil {
+			path = a.Path
+		}
+	}
+	if !strings.HasPrefix(path, "/") {
+		return false
+	}
+	for _, known := range findingCaptureRefs(incident.Findings) {
+		if known == ref {
+			return true
+		}
+	}
+	return false
+}
+
+type liveRevisionView struct {
+	sets        []appsv1.ReplicaSet
+	deployments []appsv1.Deployment
+}
+
+func (v liveRevisionView) ReplicaSets() []appsv1.ReplicaSet { return v.sets }
+func (v liveRevisionView) Deployments() []appsv1.Deployment { return v.deployments }
+
+// checkOldRevision applies the program ReplicaSet-scale rule to the live
+// ReplicaSet and the live Deployment that controls it.
+func (e PlanExecutor) checkOldRevision(ctx context.Context, current *unstructured.Unstructured) error {
+	var set appsv1.ReplicaSet
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(current.Object, &set); err != nil {
+		return err
+	}
+	view := liveRevisionView{sets: []appsv1.ReplicaSet{set}}
+	if owner := metav1.GetControllerOf(&set); owner != nil && owner.Kind == "Deployment" {
+		live, err := e.Client.Get(ctx, sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: set.Namespace, Name: owner.Name})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		if err == nil {
+			var deployment appsv1.Deployment
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(live.Object, &deployment); err != nil {
+				return err
+			}
+			view.deployments = []appsv1.Deployment{deployment}
+		}
+	}
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "ReplicaSet", Namespace: set.Namespace, Name: set.Name}
+	return program.CheckReplicaSetScales(program.Plan{Actions: []program.Action{program.RetireOldRevision{Ref: ref}}}, view)
 }

@@ -7,9 +7,11 @@ import (
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"net"
 	"net/http"
 	"net/url"
+	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -18,16 +20,40 @@ import (
 	"time"
 )
 
+// ReadBackends are the host's Kubernetes read transports. Credentials belong to
+// the host; none of these can write through the reads the view serves.
+type ReadBackends struct {
+	Client kubernetes.Interface
+	// Config reaches the API for raw reads and pod exec. Nil makes those reads
+	// fail with a named error instead of returning an empty answer.
+	Config *rest.Config
+	// Exec runs the fixed read commands Observe and DatabaseUsers build. Nil
+	// uses the pod exec subresource through Client and Config.
+	Exec kubereads.PodExec
+	// APITransport resolves one raw read. Nil uses Client and Config.
+	APITransport func(program.KubernetesRequest) (kubereads.APIDoer, *url.URL, error)
+	// ProtectedNamespace is the SDO control namespace every read refuses.
+	ProtectedNamespace string
+}
+
+func (b ReadBackends) exec() kubereads.PodExec {
+	if b.Exec != nil {
+		return b.Exec
+	}
+	return kubereads.SPDYExec{Client: b.Client, Config: b.Config}
+}
+
 // LiveReadView exposes reads only. Kubernetes credentials belong to the host;
 // it never invokes a controller callback or submits a mutation (even dry-run).
 type LiveReadView struct {
 	*sdktest.ReplayReadView
-	ctx    context.Context
-	client kubernetes.Interface
+	ctx      context.Context
+	client   kubernetes.Interface
+	backends ReadBackends
 }
 
-func NewLiveReadView(ctx context.Context, snapshot sdktest.Snapshot, client kubernetes.Interface) *LiveReadView {
-	return &LiveReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot}, ctx: ctx, client: client}
+func NewLiveReadView(ctx context.Context, snapshot sdktest.Snapshot, backends ReadBackends) *LiveReadView {
+	return &LiveReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot}, ctx: ctx, client: backends.Client, backends: backends}
 }
 func (v *LiveReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
 	if ref.Kind != "Pod" || ref.Namespace != v.Namespace() || ref.Name == "" || since < 0 || v.client == nil {

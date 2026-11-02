@@ -22,7 +22,7 @@ func TestCheckRejectsPublicationContentGaps(t *testing.T) {
 			for _, id := range []string{"large-a", "large-b", "large-c"} {
 				write(t, r, ".sdo/playbooks/"+id+"/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: incident\n---\nRepair <RESOURCE_NAME>.\n"+strings.Repeat("Verified guidance paragraph.\n", 7000))
 			}
-			write(t, r, ".sdo/playbooks/README.md", readGap(t, r, ".sdo/playbooks/README.md")+"\n- [large-a](large-a/README.md)\n- [large-b](large-b/README.md)\n- [large-c](large-c/README.md)\n")
+			generateIndex(t, r)
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -74,5 +74,21 @@ func TestCheckReportsLifecycleGates(t *testing.T) {
 		if !found {
 			t.Errorf("missing %s: %v", test.rule, ds)
 		}
+	}
+}
+
+// App manifests carry data the agent did not author; whitespace inside them
+// (an embedded script in an accepted ConfigMap) is bytes to keep as-is.
+func TestWhitespaceRuleCoversOnlyAuthoredMemory(t *testing.T) {
+	script := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: mongo-geo-script\ndata:\n  init.sh: |\n    mongo --eval 'db.x.insert({})'   \n    \n"
+	root := goodTree(t)
+	commit(t, root, "base")
+	write(t, root, "kubernetes/geo/mongo-geo-script-configmap.yaml", script)
+	ds, err := Check(context.Background(), Request{Root: root, Base: "HEAD", Actor: Responder, Phase: ProposalPhase}, func(context.Context, Request) ([]Diagnostic, error) { return nil, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ds) != 0 {
+		t.Fatalf("accepted app bytes were judged: %+v", ds)
 	}
 }

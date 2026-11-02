@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -50,9 +52,21 @@ class FakeKubernetesAPIServer:
         self._revision = 0
         self._events: list[tuple[int, str, dict[str, Any]]] = []
         self._kubelet: dict[str, tuple[dict[str, Any], str]] = {}
+        # Objects-only captures (object_snapshot_version 2) store each object once.
+        objects_only = snapshot.get("object_snapshot_version", 0) >= 2
         for api_version, group in _RESOURCES.items():
             for plural, (kind, collection) in group.items():
-                for item in snapshot.get(collection) or []:
+                items = (
+                    [
+                        item
+                        for item in snapshot.get("objects") or []
+                        if (item.get("apiVersion"), item.get("kind")) == (api_version, kind)
+                        and item.get("metadata", {}).get("namespace") == self.namespace
+                    ]
+                    if objects_only
+                    else snapshot.get(collection) or []
+                )
+                for item in items:
                     self.set_object(plural, dict(item, apiVersion=api_version, kind=kind))
         server = self
 
@@ -82,7 +96,8 @@ class FakeKubernetesAPIServer:
                         events = server._watch_events(plural, revision)
                         if not events:
                             server._condition.wait_for(
-                                lambda: bool(server._watch_events(plural, revision)), timeout=1.0
+                                lambda: bool(server._watch_events(plural, revision)),
+                                timeout=wait_for(WaitKind.POLL_FAST),
                             )
                             events = server._watch_events(plural, revision)
                     for event in events:
@@ -110,7 +125,7 @@ class FakeKubernetesAPIServer:
     def __exit__(self, *_args: object) -> None:
         self._http.shutdown()
         self._http.server_close()
-        self._thread.join(timeout=2)
+        self._thread.join(timeout=wait_for(WaitKind.PROBE))
 
     def write_kubeconfig(self, path: Path) -> Path:
         host, port = self._http.server_address[:2]

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
 	"strings"
@@ -28,8 +29,25 @@ func (s *run) programRules(ctx context.Context) error {
 			break
 		}
 	}
-	if _, err := programvalidation.InspectMemory(filepath.Join(s.req.Root, layout.Dir), module); err != nil {
+	inspect := programvalidation.InspectMemory
+	adopted, err := memory.AdoptedBuild(ctx, s.req.Root, "HEAD")
+	if err != nil {
+		return err
+	}
+	if adopted || s.req.Replay == "off" {
+		inspect = programvalidation.InspectMemoryForAdoption
+	}
+	if _, err := inspect(filepath.Join(s.req.Root, layout.Dir), module); err != nil {
 		s.add(Semantic, Diagnostic{Rule: "program.invalid", Path: layout.PlaybooksDir, Message: err.Error()})
+	}
+	uses, err := programvalidation.DiffTextUses(filepath.Join(s.req.Root, layout.Dir))
+	if err != nil {
+		return err
+	}
+	for _, use := range uses {
+		s.req.noteGaps(Diagnostic{Rule: RuleProgramDiffText, Path: layout.Dir + "/" + use.Path, Line: use.Line,
+			Message: "program decides on a diff's Text; a substring of the whole document cannot tell which field or container changed",
+			Hint:    "compare typed fields with diff.Field or diff.ContainerChanges and keep Text for Evidence only"})
 	}
 
 	// Preserve branch gofmt enforcement for newly edited sources without rejecting legacy files.
@@ -42,6 +60,9 @@ func (s *run) programRules(ctx context.Context) error {
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if entry.IsDir() && s.req.Replay == "off" && abs == filepath.Join(s.req.Root, layout.CorpusDir) {
+			return filepath.SkipDir
 		}
 		if entry.IsDir() || !strings.HasSuffix(abs, ".go") {
 			return nil
@@ -69,7 +90,7 @@ func (s *run) programRules(ctx context.Context) error {
 			return nil
 		}
 		if err == nil && !bytes.Equal(data, formatted) {
-			s.add(Semantic, Diagnostic{Rule: "go.format", Path: rel, Message: fmt.Sprintf("Go source %s is not gofmt formatted", rel)})
+			s.add(Semantic, Diagnostic{Rule: "go.format", Path: rel, Message: fmt.Sprintf("Go source %s is not gofmt formatted", rel), Hint: "run gofmt -w " + rel})
 		}
 		return nil
 	})

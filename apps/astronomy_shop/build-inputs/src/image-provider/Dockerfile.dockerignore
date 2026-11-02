@@ -1,0 +1,13 @@
+# Build context for the pinned image-provider Dockerfile. See apps/BUILD_INPUTS.md in SDO.
+**
+!src/
+src/*
+!src/image-provider/
+!src/image-provider/**
+src/*/README.md
+src/*/Dockerfile
+src/*/*/Dockerfile
+src/currency/client.js
+src/currency/node_modules/
+src/frontend/node_modules/
+src/shipping/target/

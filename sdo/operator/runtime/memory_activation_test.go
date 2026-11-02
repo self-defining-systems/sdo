@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -159,11 +160,11 @@ func TestSimMemoryTwoAcceptedCommits(t *testing.T) {
 				t.Fatal("activation lost controller state")
 			}
 			oldProgram, _ := previous.Programs.Mitigator("revision")
-			if _, err := oldProgram.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: snapshot}, nil); err == nil {
+			if _, err := oldProgram.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{}); err == nil {
 				t.Fatal("retired revision reused trust against new code")
 			}
 			mitigator, _ := remote.Programs.Mitigator("revision")
-			plan, err := mitigator.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: snapshot}, nil)
+			plan, err := mitigator.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{})
 			if err != nil || plan.Rationale != commit {
 				t.Fatal("stale program", plan, err)
 			}
@@ -312,4 +313,77 @@ func TestCandidatePreparationIsBounded(t *testing.T) {
 			t.Fatal("timed-out candidate replaced active memory")
 		}
 	})
+}
+
+// queuedRolloutBroker queues one reflection whose accepted memory changed
+// detectors, so the rollout stays pending until the host serves that memory.
+type queuedRolloutBroker struct {
+	recordingIncidentBroker
+	mu        sync.Mutex
+	processed bool
+	activated bool
+}
+
+func (b *queuedRolloutBroker) QueuedReflections() ([]string, error) { return []string{"queued"}, nil }
+func (b *queuedRolloutBroker) ProcessQueuedReflection(context.Context, string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.processed = true
+	return nil
+}
+func (b *queuedRolloutBroker) AbandonQueuedReflection(context.Context, string, string) error {
+	return nil
+}
+func (b *queuedRolloutBroker) QueuedReflectionRolloutPending(string) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.processed && !b.activated, nil
+}
+
+// A queued reflection that changes detectors activates the accepted memory in
+// the host and then closes; the controller is never asked to exit.
+func TestQueuedReflectionRolloutActivatesHostMemory(t *testing.T) {
+	c, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := &queuedRolloutBroker{}
+	if err = c.SetIncidentBroker(broker); err != nil {
+		t.Fatal(err)
+	}
+	refreshes := 0
+	c.memoryRefresh = func(context.Context) (bool, error) {
+		refreshes++
+		if refreshes < 2 {
+			return false, nil // the candidate host is still building
+		}
+		broker.mu.Lock()
+		broker.activated = true
+		broker.mu.Unlock()
+		return true, nil
+	}
+	c.reflections.rescan = true
+	now := time.Unix(0, 0)
+	if err = c.driveQueuedReflections(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	awaitBrokerResult(t, c.reflectionResults)
+	c.processBrokerCompletions()
+	if c.reflections.rollout != "queued" || refreshes != 0 {
+		t.Fatalf("accepted detector change did not wait for host activation: rollout=%q refreshes=%d", c.reflections.rollout, refreshes)
+	}
+	if ids := c.QueuedReflectionIncidentIDs(); len(ids) != 1 {
+		t.Fatalf("reflection closed before the host served its memory: %v", ids)
+	}
+	for range 2 {
+		if err = c.driveQueuedReflections(context.Background(), now); err != nil {
+			t.Fatalf("host activation asked the controller to exit: %v", err)
+		}
+	}
+	if refreshes != 2 {
+		t.Fatalf("host memory refreshed %d times, want 2", refreshes)
+	}
+	if ids := c.QueuedReflectionIncidentIDs(); len(ids) != 0 || c.reflections.rollout != "" {
+		t.Fatalf("activated reflection stayed open: queued=%v rollout=%q", ids, c.reflections.rollout)
+	}
 }

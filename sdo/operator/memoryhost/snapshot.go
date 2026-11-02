@@ -44,8 +44,11 @@ func mirrorObjects(view sdk.DetectionContext) (map[string]*pb.MemoryObject, erro
 	sort.Strings(kinds)
 	for _, kind := range kinds {
 		var items []map[string]any
-		if err = json.Unmarshal(fields[snapshotFields[kind]], &items); err != nil {
-			return nil, err
+		// The snapshot omits empty kinds.
+		if raw := fields[snapshotFields[kind]]; len(raw) > 0 {
+			if err = json.Unmarshal(raw, &items); err != nil {
+				return nil, err
+			}
 		}
 		for _, item := range items {
 			metadata, _ := item["metadata"].(map[string]any)

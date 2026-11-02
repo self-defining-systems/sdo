@@ -1,0 +1,248 @@
+// Package onboarding owns the immutable identity acknowledgement made by the
+// installer and the in-cluster controller at the first complete evaluation.
+package onboarding
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+)
+
+const ConfigMapName = "sdo-namespace-onboarding"
+const DataKey = "onboarding.json"
+
+func Decode(data []byte, namespace string) (*contracts.NamespaceOnboarding, error) {
+	record := &contracts.NamespaceOnboarding{}
+	if err := protojson.Unmarshal(data, record); err != nil {
+		return nil, fmt.Errorf("decode onboarding: %w", err)
+	}
+	if err := Validate(record, namespace); err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+func Validate(record *contracts.NamespaceOnboarding, namespace string) error {
+	if record == nil || record.Namespace != namespace || namespace == "" {
+		return fmt.Errorf("onboarding namespace does not match %q", namespace)
+	}
+	commit, err := hex.DecodeString(record.AcceptedCommit)
+	if err != nil || (len(commit) != 20 && len(commit) != 32) || record.EstablishedAt == nil || record.EstablishedAt.CheckValid() != nil || record.EstablishedAt.AsTime().IsZero() {
+		return fmt.Errorf("onboarding requires an accepted commit and establishment time")
+	}
+	for _, ref := range record.Objects {
+		if ref == nil || ref.Name == "" || ref.ApiVersion == "" || ref.Kind == "" || ref.Kind == "Secret" || (ref.Namespace != namespace && !(ref.Namespace == "" && (ref.Kind == "ClusterRole" || ref.Kind == "ClusterRoleBinding"))) {
+			return fmt.Errorf("invalid onboarding identity %v", ref)
+		}
+	}
+	identities := map[string]bool{}
+	for _, ref := range record.Objects {
+		identities[identity(ref.ApiVersion, ref.Kind, ref.Namespace, ref.Name)] = true
+	}
+	observed := map[string]bool{}
+	for _, observation := range record.EnvironmentObjects {
+		ref := observation.GetRef()
+		key := identity(ref.GetApiVersion(), ref.GetKind(), ref.GetNamespace(), ref.GetName())
+		digest := observation.GetDigest()
+		if ref == nil || !identities[key] || observed[key] || len(digest) != 71 || digest[:7] != "sha256:" {
+			return fmt.Errorf("invalid install environment observation for %v", ref)
+		}
+		if _, err := hex.DecodeString(digest[7:]); err != nil {
+			return fmt.Errorf("invalid install environment digest for %v", ref)
+		}
+		observed[key] = true
+	}
+	return nil
+}
+
+// EnvironmentDigest binds an observation to its incarnation, configuration and
+// ownership. API bookkeeping and status updates do not change that observation.
+func EnvironmentDigest(object *unstructured.Unstructured) string {
+	copy := object.DeepCopy()
+	// Normalize typed API zero values identically at capture and informer
+	// boundaries; omitted fields must not differ from their API encodings.
+	if typed, err := scheme.Scheme.New(object.GroupVersionKind()); err == nil {
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
+			if normalized, err := runtime.DefaultUnstructuredConverter.ToUnstructured(typed); err == nil {
+				copy.Object = normalized
+			}
+		}
+	}
+	delete(copy.Object, "status")
+	metadata, _, _ := unstructured.NestedMap(copy.Object, "metadata")
+	for _, key := range []string{"resourceVersion", "generation", "creationTimestamp", "managedFields", "selfLink"} {
+		delete(metadata, key)
+	}
+	_ = unstructured.SetNestedMap(copy.Object, metadata, "metadata")
+	encoded, _ := json.Marshal(copy.Object)
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("sha256:%x", sum)
+}
+func Load(ctx context.Context, client kubernetes.Interface, control, namespace string) (*contracts.NamespaceOnboarding, error) {
+	return load(ctx, client, control, ConfigMapName, namespace)
+}
+func load(ctx context.Context, client kubernetes.Interface, control, name, namespace string) (*contracts.NamespaceOnboarding, error) {
+	cm, err := client.CoreV1().ConfigMaps(control).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read onboarding acknowledgement: %w", err)
+	}
+	return Decode([]byte(cm.Data[DataKey]), namespace)
+}
+
+func capture(ctx context.Context, client kubernetes.Interface, namespace, commit string, source []*unstructured.Unstructured, now time.Time) (*contracts.NamespaceOnboarding, error) {
+	objects, err := inventory(ctx, client, namespace)
+	if err != nil {
+		return nil, err
+	}
+	declared := map[string]bool{}
+	for _, o := range source {
+		if o == nil {
+			continue
+		}
+		ns := o.GetNamespace()
+		if o.GetKind() == "ClusterRole" || o.GetKind() == "ClusterRoleBinding" {
+			ns = ""
+		} else if ns == "" {
+			ns = namespace
+		}
+		declared[identity(o.GetAPIVersion(), o.GetKind(), ns, o.GetName())] = true
+	}
+	relevant := map[string]bool{}
+	for _, o := range objects {
+		if o.GetKind() != "ClusterRoleBinding" && o.GetKind() != "RoleBinding" {
+			continue
+		}
+		subjects, _, _ := unstructured.NestedSlice(o.Object, "subjects")
+		for _, raw := range subjects {
+			subject, _ := raw.(map[string]any)
+			subjectNamespace, _ := subject["namespace"].(string)
+			if subjectNamespace == "" && o.GetKind() == "RoleBinding" {
+				subjectNamespace = o.GetNamespace()
+			}
+			if subject["kind"] == "ServiceAccount" && subjectNamespace == namespace {
+				relevant[identity(o.GetAPIVersion(), o.GetKind(), "", o.GetName())] = true
+				role, _, _ := unstructured.NestedMap(o.Object, "roleRef")
+				name, _ := role["name"].(string)
+				if role["kind"] == "ClusterRole" {
+					relevant[identity("rbac.authorization.k8s.io/v1", "ClusterRole", "", name)] = true
+				}
+			}
+		}
+	}
+	record := &contracts.NamespaceOnboarding{Namespace: namespace, AcceptedCommit: commit, EstablishedAt: timestamppb.New(now.UTC())}
+	for _, o := range objects {
+		key := identity(o.GetAPIVersion(), o.GetKind(), o.GetNamespace(), o.GetName())
+		if declared[key] || (o.GetNamespace() != namespace && !relevant[key]) || o.GetLabels()["app.kubernetes.io/managed-by"] == "sdo" {
+			continue
+		}
+		ref := &contracts.ObjectRef{ApiVersion: o.GetAPIVersion(), Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()}
+		record.Objects = append(record.Objects, ref)
+		record.EnvironmentObjects = append(record.EnvironmentObjects, &contracts.InstallEnvironmentObject{Ref: ref, Digest: EnvironmentDigest(o)})
+	}
+	sort.Slice(record.Objects, func(i, j int) bool {
+		a, b := record.Objects[i], record.Objects[j]
+		return identity(a.ApiVersion, a.Kind, a.Namespace, a.Name) < identity(b.ApiVersion, b.Kind, b.Namespace, b.Name)
+	})
+	sort.Slice(record.EnvironmentObjects, func(i, j int) bool {
+		a, b := record.EnvironmentObjects[i].Ref, record.EnvironmentObjects[j].Ref
+		return identity(a.ApiVersion, a.Kind, a.Namespace, a.Name) < identity(b.ApiVersion, b.Kind, b.Namespace, b.Name)
+	})
+	if err := Validate(record, namespace); err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+func persist(ctx context.Context, client kubernetes.Interface, control, name string, record *contracts.NamespaceOnboarding) (*contracts.NamespaceOnboarding, error) {
+	return persistData(ctx, client, control, name, record, map[string]string{})
+}
+
+func persistData(ctx context.Context, client kubernetes.Interface, control, name string, record *contracts.NamespaceOnboarding, extra map[string]string) (*contracts.NamespaceOnboarding, error) {
+	data, err := protojson.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+	extra[DataKey] = string(data)
+	immutable := true
+	_, err = client.CoreV1().ConfigMaps(control).Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Immutable: &immutable, Data: extra}, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		return load(ctx, client, control, name, record.Namespace)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("persist onboarding acknowledgement: %w", err)
+	}
+	return record, nil
+}
+func identity(api, kind, namespace, name string) string {
+	return api + "/" + kind + "/" + namespace + "/" + name
+}
+
+func inventory(ctx context.Context, client kubernetes.Interface, namespace string) ([]*unstructured.Unstructured, error) {
+	options := metav1.ListOptions{}
+	type listing struct {
+		api, kind string
+		read      func() (runtime.Object, error)
+	}
+	lists := []listing{
+		{"v1", "ConfigMap", func() (runtime.Object, error) { return client.CoreV1().ConfigMaps(namespace).List(ctx, options) }},
+		{"v1", "Service", func() (runtime.Object, error) { return client.CoreV1().Services(namespace).List(ctx, options) }},
+		{"v1", "ServiceAccount", func() (runtime.Object, error) { return client.CoreV1().ServiceAccounts(namespace).List(ctx, options) }},
+		{"v1", "Pod", func() (runtime.Object, error) { return client.CoreV1().Pods(namespace).List(ctx, options) }},
+		{"v1", "PersistentVolumeClaim", func() (runtime.Object, error) {
+			return client.CoreV1().PersistentVolumeClaims(namespace).List(ctx, options)
+		}},
+		{"apps/v1", "Deployment", func() (runtime.Object, error) { return client.AppsV1().Deployments(namespace).List(ctx, options) }},
+		{"apps/v1", "StatefulSet", func() (runtime.Object, error) { return client.AppsV1().StatefulSets(namespace).List(ctx, options) }},
+		{"apps/v1", "DaemonSet", func() (runtime.Object, error) { return client.AppsV1().DaemonSets(namespace).List(ctx, options) }},
+		{"apps/v1", "ReplicaSet", func() (runtime.Object, error) { return client.AppsV1().ReplicaSets(namespace).List(ctx, options) }},
+		{"batch/v1", "Job", func() (runtime.Object, error) { return client.BatchV1().Jobs(namespace).List(ctx, options) }},
+		{"batch/v1", "CronJob", func() (runtime.Object, error) { return client.BatchV1().CronJobs(namespace).List(ctx, options) }},
+		{"networking.k8s.io/v1", "NetworkPolicy", func() (runtime.Object, error) {
+			return client.NetworkingV1().NetworkPolicies(namespace).List(ctx, options)
+		}},
+		{"rbac.authorization.k8s.io/v1", "Role", func() (runtime.Object, error) { return client.RbacV1().Roles(namespace).List(ctx, options) }},
+		{"rbac.authorization.k8s.io/v1", "RoleBinding", func() (runtime.Object, error) { return client.RbacV1().RoleBindings(namespace).List(ctx, options) }},
+		{"rbac.authorization.k8s.io/v1", "ClusterRole", func() (runtime.Object, error) { return client.RbacV1().ClusterRoles().List(ctx, options) }},
+		{"rbac.authorization.k8s.io/v1", "ClusterRoleBinding", func() (runtime.Object, error) { return client.RbacV1().ClusterRoleBindings().List(ctx, options) }},
+	}
+	result := []*unstructured.Unstructured{}
+	for _, list := range lists {
+		raw, err := list.read()
+		if err != nil {
+			return nil, fmt.Errorf("onboarding list %s: %w", list.kind, err)
+		}
+		items, err := meta.ExtractList(raw)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			data, err := runtime.DefaultUnstructuredConverter.ToUnstructured(item)
+			if err != nil {
+				return nil, err
+			}
+			o := &unstructured.Unstructured{Object: data}
+			o.SetAPIVersion(list.api)
+			o.SetKind(list.kind)
+			result = append(result, o)
+		}
+	}
+	return result, nil
+}

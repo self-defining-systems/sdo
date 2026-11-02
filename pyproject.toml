@@ -22,7 +22,6 @@ dependencies = [
 test = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "ruff>=0.1.0",
     "hypothesis>=6.0.0",
     "pytest-xdist>=3.5.0",
     "pytest-cov>=4.1.0",
@@ -93,6 +92,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 norecursedirs = ["apps", ".venv", "venv", "build", "dist", ".hypothesis"]
 markers = [
+    "go_integration: real Go compilation and external-process contracts; run in the warm hermetic shard",
     "live_agents: opt-in test that invokes live Codex and Claude Code CLI sessions",
 ]
 python_files = ["test_*.py"]
@@ -105,4 +105,5 @@ dev = [
     "hypothesis>=6.151.4",
     "pre-commit>=4.2.0",
     "pyright>=1.1.408",
+    "ruff>=0.1.0",
 ]

@@ -73,7 +73,7 @@ func (s *JSONStore) putDocument(ctx context.Context, document []byte) (Outcome, 
 		if readErr != nil {
 			return Outcome{}, readErr
 		}
-		if !bytes.Equal(previous.document, outcome.document) {
+		if !bytes.Equal(previous.document, outcome.document) && !originalOutcomeRetry(previous.Record, outcome.Record) {
 			return Outcome{}, fmt.Errorf("%w: %s", ErrConflict, outcome.IncidentID)
 		}
 		return previous, nil
@@ -115,47 +115,92 @@ func (s *JSONStore) Get(ctx context.Context, incidentID string) (Outcome, error)
 	return outcome, nil
 }
 
+// List returns every readable outcome. An outcome that cannot be read, decoded
+// or validated is skipped and reported by ListWithNotes: one bad document must
+// never stop the controller from using the rest of accepted memory.
 func (s *JSONStore) List(ctx context.Context) ([]Outcome, error) {
+	outcomes, _, err := s.ListWithNotes(ctx)
+	return outcomes, err
+}
+
+// ListWithNotes is List plus a note per skipped outcome document, in file-name
+// order, from the same scan.
+func (s *JSONStore) ListWithNotes(ctx context.Context) ([]Outcome, []UnreadableOutcome, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	directory := filepath.Join(s.root, layout.OutcomesDir)
 	entries, err := os.ReadDir(directory)
 	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("list outcomes: %w", err)
+		return nil, nil, fmt.Errorf("list outcomes: %w", err)
 	}
 	outcomes := make([]Outcome, 0, len(entries))
+	var notes []UnreadableOutcome
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".json" {
-			return nil, fmt.Errorf("invalid outcome entry %q", entry.Name())
+		if filepath.Ext(entry.Name()) != ".json" {
+			// Not an outcome document (for example a leftover write temp file).
+			continue
 		}
-		data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		outcome, err := readOutcomeEntry(directory, entry)
 		if err != nil {
-			return nil, fmt.Errorf("read outcome %q: %w", entry.Name(), err)
-		}
-		outcome, err := parse(data)
-		if err != nil {
-			return nil, fmt.Errorf("invalid outcome %q: %w", entry.Name(), err)
-		}
-		if layout.OutcomeFileName(outcome.IncidentID) != entry.Name() {
-			return nil, fmt.Errorf("outcome filename and incident ID disagree: %q", entry.Name())
+			notes = append(notes, UnreadableOutcome{Name: entry.Name(), Reason: err.Error()})
+			continue
 		}
 		outcomes = append(outcomes, outcome)
 	}
 	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].IncidentID < outcomes[j].IncidentID })
-	return outcomes, nil
+	return outcomes, notes, nil
 }
 
+func readOutcomeEntry(directory string, entry os.DirEntry) (Outcome, error) {
+	if !entry.Type().IsRegular() {
+		return Outcome{}, fmt.Errorf("invalid outcome entry")
+	}
+	data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+	if err != nil {
+		return Outcome{}, fmt.Errorf("read outcome: %w", err)
+	}
+	outcome, err := parse(data)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("invalid outcome: %w", err)
+	}
+	if layout.OutcomeFileName(outcome.IncidentID) != entry.Name() {
+		return Outcome{}, fmt.Errorf("outcome filename and incident ID disagree")
+	}
+	return outcome, nil
+}
+
+// LogicalOutcome returns record as every stored outcome reads: each text field
+// with its physical memory paths rewritten to logical references.
+func LogicalOutcome(record *contracts.OutcomeRecord) (*contracts.OutcomeRecord, error) {
+	document, err := wire.MarshalFull(record)
+	if err != nil {
+		return nil, err
+	}
+	outcome, err := parse(document)
+	if err != nil {
+		return nil, err
+	}
+	return outcome.Record, nil
+}
+
+// parse is the one path by which outcome documents are written and read, so
+// stored outcomes, including memory accepted before agent prose was rewritten,
+// never show a worker a physical memory path.
 func parse(document []byte) (Outcome, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(document, &fields); err != nil || fields == nil {
 		return Outcome{}, fmt.Errorf("outcome must be a JSON object")
 	}
+	document, err := logicalDocument(document)
+	if err != nil {
+		return Outcome{}, err
+	}
 	record := new(contracts.OutcomeRecord)
-	if err := wire.UnmarshalLenient(document, record); err != nil {
+	if err := wire.UnmarshalLenientMigrating(document, record); err != nil {
 		return Outcome{}, err
 	}
 	var buf bytes.Buffer
@@ -183,4 +228,44 @@ func safeDirectory(directory string) error {
 		}
 	}
 	return nil
+}
+
+// logicalDocument rewrites every string in a JSON document, known or
+// historical field, through layout.LogicalizeText. A document without a
+// physical memory path is returned unchanged.
+func logicalDocument(document []byte) ([]byte, error) {
+	if !layout.ContainsPhysicalPath(string(document)) {
+		return document, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	var tree any
+	if err := decoder.Decode(&tree); err != nil {
+		return nil, err
+	}
+	var logical func(any) any
+	logical = func(value any) any {
+		switch value := value.(type) {
+		case string:
+			return layout.LogicalizeText(value)
+		case []any:
+			for i := range value {
+				value[i] = logical(value[i])
+			}
+		case map[string]any:
+			rewritten := make(map[string]any, len(value))
+			for key, item := range value {
+				rewritten[layout.LogicalizeText(key)] = logical(item)
+			}
+			return rewritten
+		}
+		return value
+	}
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(logical(tree)); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

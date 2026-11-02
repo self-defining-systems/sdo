@@ -1,6 +1,9 @@
 package program
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 // ProgramRegistry is the compiled program catalog available to the controller.
 type ProgramRegistry interface {
@@ -15,6 +18,9 @@ type registry struct {
 	mitigators map[string]Mitigator
 }
 
+// NewRegistry requires identical Diagnose/Mitigate declarations. Required
+// scalar parameters need defaults because findings supply object roles only;
+// incident-specific values should be read through ReadView instead.
 func NewRegistry(diagnosers []Diagnoser, mitigators []Mitigator) (ProgramRegistry, error) {
 	r := &registry{diagnosers: map[string]Diagnoser{}, mitigators: map[string]Mitigator{}}
 	for _, diagnoser := range diagnosers {
@@ -22,6 +28,11 @@ func NewRegistry(diagnosers []Diagnoser, mitigators []Mitigator) (ProgramRegistr
 			return nil, fmt.Errorf("program diagnoser needs an ID")
 		}
 		spec := diagnoser.Spec()
+		for _, param := range spec.Params {
+			if param.Required && param.ValueKind != "" && param.Default == nil {
+				return nil, fmt.Errorf("program %q: required scalar parameter %q needs a default for live finding binding; derive incident-specific values through ReadView", spec.ID, param.Name)
+			}
+		}
 		if _, exists := r.diagnosers[spec.ID]; exists {
 			return nil, fmt.Errorf("duplicate program %q", spec.ID)
 		}
@@ -35,6 +46,9 @@ func NewRegistry(diagnosers []Diagnoser, mitigators []Mitigator) (ProgramRegistr
 		id := mitigator.Spec().ID
 		if _, exists := r.diagnosers[id]; !exists {
 			return nil, fmt.Errorf("mitigator %q has no diagnoser", id)
+		}
+		if !reflect.DeepEqual(r.diagnosers[id].Spec(), mitigator.Spec()) {
+			return nil, fmt.Errorf("program %q: Diagnose and Mitigate must declare identical parameters", id)
 		}
 		if _, exists := r.mitigators[id]; exists {
 			return nil, fmt.Errorf("duplicate mitigator %q", id)

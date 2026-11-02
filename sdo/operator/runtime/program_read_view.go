@@ -1,22 +1,31 @@
 package runtime
 
 import (
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
+
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	policyv1 "k8s.io/api/policy/v1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -31,16 +40,20 @@ type PrimitiveProber interface {
 // dependencies expose reads only; no program receives a Kubernetes writer.
 type LiveReadView struct {
 	inputs.Carrier
-	Context        context.Context
-	Client         kubernetes.Interface
-	Prober         PrimitiveProber
-	Source         PlanSource
-	SourceCommit   string
+	Context            context.Context
+	Client             kubernetes.Interface
+	DatabaseExecConfig *rest.Config
+	ProtectedNamespace string
+	Prober             PrimitiveProber
+	Source             PlanSource
+	SourceCommit       string
+	// SourceRevision resolves lazily, after snapshot acquisition has released controller locks.
+	SourceRevision func() string
 	Baseline       *StateChanges
 	BaselineSource StateBaseline
 }
 
-var errSnapshotObjectAbsent = errors.New("object is absent from snapshot")
+var errSnapshotObjectAbsent = sdk.ErrScopedObjectAbsent
 
 func (v LiveReadView) context() context.Context {
 	if v.Context != nil {
@@ -50,22 +63,46 @@ func (v LiveReadView) context() context.Context {
 }
 
 func (v LiveReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
-	if ref.Kind != "Pod" || ref.Namespace != v.Namespace() || ref.Name == "" || v.Client == nil {
-		return "", errors.New("pod logs require a pod in the snapshot namespace and a Kubernetes reader")
-	}
-	seconds := int64(since.Seconds())
-	if seconds < 0 {
+	if since < 0 {
 		return "", errors.New("pod log duration must not be negative")
 	}
-	options := &corev1.PodLogOptions{Container: container, LimitBytes: int64ptr(64 * 1024)}
-	if seconds > 0 {
+	options := corev1.PodLogOptions{Container: container}
+	if since > 0 {
+		seconds := int64(since / time.Second)
+		if since%time.Second != 0 {
+			seconds++
+		}
 		options.SinceSeconds = &seconds
+	}
+	return v.logs(ref, options)
+}
+
+func (v LiveReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error) {
+	if options.Container == "" {
+		return "", errors.New("logs require an explicit container")
+	}
+	return v.logs(ref, options)
+}
+func (v LiveReadView) logs(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error) {
+	if ref.Kind != "Pod" || (ref.APIVersion != "" && ref.APIVersion != "v1") || ref.Namespace != v.Namespace() || ref.Name == "" || v.Client == nil {
+		return "", errors.New("pod logs require a Pod in the snapshot namespace and a Kubernetes reader")
+	}
+	bounded, err := program.BoundedLogOptions(options)
+	if err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
-	data, err := v.Client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, options).DoRaw(ctx)
+	client, err := program.Kubernetes(v)
+	if err != nil {
+		return "", err
+	}
+	data, err := bodyOf(ctx, client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &bounded))
 	if err != nil {
 		return "", fmt.Errorf("read logs of pod %s/%s: %w", ref.Namespace, ref.Name, err)
+	}
+	if int64(len(data)) > *bounded.LimitBytes {
+		return "", errors.New("logs exceed byte limit")
 	}
 	return string(data), nil
 }
@@ -123,6 +160,9 @@ func (v LiveReadView) probe(ref sdk.ObjectRef, port int32, request *program.HTTP
 }
 
 func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
+	if v.SourceRevision != nil {
+		v.SourceCommit = v.SourceRevision()
+	}
 	if v.Source == nil || v.SourceCommit == "" {
 		return program.Diff{}, errors.New("accepted source is unavailable")
 	}
@@ -132,16 +172,36 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	}
 	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
 	defer cancel()
-	source, err := v.Source.AcceptedManifest(ctx, v.SourceCommit, ref)
+	var source *unstructured.Unstructured
+	acceptedCluster := false
+	if ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
+		if _, ok := v.Source.(interface {
+			AcceptedApplicationManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
+		}); ok {
+			source, err = acceptedIncidentManifest(ctx, v.Source, v.SourceCommit, v.Namespace(), ref)
+			acceptedCluster = true
+		}
+	}
+	if !acceptedCluster && ref.Namespace != v.Namespace() {
+		reader, ok := v.Source.(interface {
+			AcceptedScopedManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
+		})
+		if !ok {
+			return program.Diff{}, errors.New("qualified accepted source unavailable")
+		}
+		source, err = reader.AcceptedScopedManifest(ctx, v.SourceCommit, v.Namespace(), ref)
+	} else if !acceptedCluster {
+		source, err = v.Source.AcceptedManifest(ctx, v.SourceCommit, ref)
+	}
 	if errors.Is(err, ErrAcceptedManifestAbsent) {
 		if observed == nil {
 			return program.Diff{SourceAbsent: true}, nil
 		}
-		encoded, encodeErr := json.Marshal(comparableFields(observed.Object))
+		encoded, encodeErr := json.Marshal(v.sourceComparableFields(observed.Object, ref))
 		if encodeErr != nil {
 			return program.Diff{}, encodeErr
 		}
-		return program.Diff{Changed: true, SourceAbsent: true, Text: fmt.Sprintf("accepted: null\nobserved: %s", encoded)}, nil
+		return program.Diff{Changed: true, SourceAbsent: true, Text: sdk.SourceComparisonText([]byte("null"), encoded)}, nil
 	}
 	if err != nil {
 		return program.Diff{}, fmt.Errorf("accepted manifest for %s/%s: %w", ref.Kind, ref.Name, err)
@@ -149,36 +209,90 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	if source == nil || !samePlanRef(source, ref) {
 		return program.Diff{}, fmt.Errorf("accepted manifest does not match %s/%s", ref.Kind, ref.Name)
 	}
+	if !acceptedCluster && ref.Namespace != v.Namespace() {
+		projected, projectErr := sdk.ProjectObservationObject(source)
+		if projectErr != nil {
+			return program.Diff{}, projectErr
+		}
+		source = projected
+		before, _ := json.Marshal(v.sourceComparableFields(source.Object, ref))
+		var actual any
+		if observed != nil {
+			actual = v.sourceComparableFields(observed.Object, ref)
+			if !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
+				actual = projectSourceFields(actual, v.sourceComparableFields(source.Object, ref))
+			}
+		}
+		after, _ := json.Marshal(actual)
+		// Objects outside the application namespace are never accepted by
+		// adoption, so they carry no record and only declared fields compare.
+		return program.Diff{Changed: string(before) != string(after), Text: sdk.SourceComparisonText(before, after)}, nil
+	}
 	if observed == nil {
 		if v.Client != nil {
 			if _, err := dryRunAcceptedSource(ctx, v.Client, ref, source); err != nil {
 				return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, err)
 			}
 		}
-		return program.Diff{Changed: true, Text: "accepted object is absent from snapshot"}, nil
+		before, err := json.Marshal(v.sourceComparableFields(source.Object, ref))
+		if err != nil {
+			return program.Diff{}, err
+		}
+		return program.Diff{Changed: true, Text: sdk.SourceComparisonText(before, []byte("null"))}, nil
 	}
-	left := comparableFields(source.Object)
-	right := projectSourceFields(comparableFields(observed.Object), left)
+	accepted := v.sourceComparableFields(source.Object, ref)
+	actual := v.sourceComparableFields(observed.Object, ref)
+	left := accepted
+	right := projectSourceFields(actual, left)
 	if v.Client != nil {
 		normalized, normalizeErr := dryRunAcceptedSource(ctx, v.Client, ref, source)
 		if normalizeErr != nil {
 			return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, normalizeErr)
 		}
-		left = comparableFields(normalized.Object)
-		right = comparableFields(observed.Object)
+		left = v.sourceComparableFields(normalized.Object, ref)
+		right = actual
 	}
-	before, err := json.Marshal(left)
+	// Apply normalization answers whether reconciliation changes declared
+	// fields. It retains externally owned fields, so fields written after
+	// acceptance that source does not declare are checked separately.
+	// Keep the two complete, source-grounded sides even when Changed is false,
+	// so callers can compare individual fields (including source absence).
+	normalizedBefore, err := json.Marshal(left)
 	if err != nil {
 		return program.Diff{}, err
 	}
-	after, err := json.Marshal(right)
+	normalizedAfter, err := json.Marshal(right)
 	if err != nil {
 		return program.Diff{}, err
 	}
-	if string(before) == string(after) {
-		return program.Diff{}, nil
+	before, err := json.Marshal(accepted)
+	if err != nil {
+		return program.Diff{}, err
 	}
-	return program.Diff{Changed: true, Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
+	after, err := json.Marshal(actual)
+	if err != nil {
+		return program.Diff{}, err
+	}
+	text := sdk.SourceComparisonText(before, after)
+	if string(normalizedBefore) != string(normalizedAfter) {
+		return program.Diff{Changed: true, Text: text}, nil
+	}
+	// Declared fields agree; fields added since acceptance decide. Without a
+	// current acceptance record that is unknown, never unchanged.
+	added, err := v.sourceAdditions(ref, observed, source)
+	if errors.Is(err, ErrAcceptanceRecordUnavailable) {
+		return program.Diff{}, &AcceptanceUnknownError{Ref: ref, Declared: program.Diff{Text: text}}
+	}
+	if err != nil {
+		return program.Diff{}, err
+	}
+	// Name a changed recorded scalar; other additions keep their existing report.
+	if record, ok := currentAcceptanceRecord(observed, source); ok {
+		if changed := v.sourceDriftPaths(changedAcceptedValues(observed, record), ref); len(changed) > 0 {
+			text += "\nchanged since acceptance: " + strings.Join(changed, ", ")
+		}
+	}
+	return program.Diff{Changed: len(added) > 0, Text: text}, nil
 }
 
 func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
@@ -186,48 +300,16 @@ func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref 
 }
 
 func applyAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool) (*unstructured.Unstructured, error) {
-	patch, err := json.Marshal(source.Object)
+	resource, err := resolveAcceptedResource(client, ref)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("source diff does not support %s/%s: %w", ref.APIVersion, ref.Kind, err)
 	}
-	force := true
-	options := metav1.PatchOptions{FieldManager: "sdo-deployer", Force: &force}
-	if dryRun {
-		options.DryRun = []string{metav1.DryRunAll}
-	}
-	var object any
-	switch ref.APIVersion + "/" + ref.Kind {
-	case "v1/Service":
-		object, err = client.CoreV1().Services(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "v1/ConfigMap":
-		object, err = client.CoreV1().ConfigMaps(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "v1/Pod":
-		object, err = client.CoreV1().Pods(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "apps/v1/Deployment":
-		object, err = client.AppsV1().Deployments(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "apps/v1/ReplicaSet":
-		object, err = client.AppsV1().ReplicaSets(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "v1/Endpoints":
-		object, err = client.CoreV1().Endpoints(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "discovery.k8s.io/v1/EndpointSlice":
-		object, err = client.DiscoveryV1().EndpointSlices(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	case "networking.k8s.io/v1/NetworkPolicy":
-		object, err = client.NetworkingV1().NetworkPolicies(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
-	default:
-		return nil, fmt.Errorf("source diff does not support %s/%s", ref.APIVersion, ref.Kind)
-	}
-	if err != nil {
-		return nil, err
-	}
-	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
-	if err != nil {
-		return nil, err
-	}
-	return &unstructured.Unstructured{Object: content}, nil
+	return resource.apply(ctx, ref, source, dryRun)
 }
 
 func comparableFields(object map[string]any) map[string]any {
 	object = kruntime.DeepCopyJSON(object)
+	normalizeSourceQuantities(object)
 	if metadata, ok := object["metadata"].(map[string]any); ok {
 		removeRevisionStamp(metadata)
 	}
@@ -242,14 +324,14 @@ func comparableFields(object map[string]any) map[string]any {
 		}
 	}
 	result := map[string]any{}
-	for _, key := range []string{"spec", "data", "binaryData"} {
-		if value, ok := object[key]; ok {
+	for key, value := range object {
+		if key != "apiVersion" && key != "kind" && key != "metadata" && key != "status" {
 			result[key] = value
 		}
 	}
 	if metadata, ok := object["metadata"].(map[string]any); ok {
 		selected := map[string]any{}
-		for _, key := range []string{"labels", "annotations"} {
+		for _, key := range []string{"labels", "annotations", "deletionTimestamp", "finalizers"} {
 			if value, ok := metadata[key]; ok {
 				selected[key] = value
 			}
@@ -266,7 +348,11 @@ func removeRevisionStamp(metadata map[string]any) {
 	if !ok {
 		return
 	}
-	delete(annotations, "sdo.dev/source-tree")
+	for key := range annotations {
+		if sourceBookkeepingAnnotation(key) {
+			delete(annotations, key)
+		}
+	}
 	if len(annotations) == 0 {
 		delete(metadata, "annotations")
 	}
@@ -306,10 +392,12 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 		return program.Diff{}, errors.New("healthy baseline is unavailable")
 	}
 	if ref.Namespace != v.Namespace() {
-		return program.Diff{}, errors.New("object is outside snapshot namespace")
+		if _, err := v.scopedObject(ref); err != nil && !errors.Is(err, errSnapshotObjectAbsent) {
+			return program.Diff{}, err
+		}
 	}
 	for _, change := range baseline.Changes {
-		if change.Kind == ref.Kind && change.Name == ref.Name {
+		if change.Kind == ref.Kind && change.Name == ref.Name && ((change.Namespace == "" && ref.Namespace == v.Namespace()) || change.Namespace == ref.Namespace) && (change.APIVersion == "" || change.APIVersion == ref.APIVersion) {
 			encoded, err := json.Marshal(change)
 			if err != nil {
 				return program.Diff{}, err
@@ -320,152 +408,222 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 	return program.Diff{}, nil
 }
 
+func (v LiveReadView) Object(ref sdk.ObjectRef) (object *unstructured.Unstructured, err error) {
+	defer func() {
+		if err == nil && object != nil && (ref.Kind == "ValidatingWebhookConfiguration" || ref.Kind == "MutatingWebhookConfiguration") {
+			object = object.DeepCopy()
+			sdk.ProjectWebhookCABundles(object.Object)
+		}
+	}()
+
+	if err := (TypedPlanClient{ProtectedNamespace: v.ProtectedNamespace}).checkPlanNamespace(ref.Namespace); err != nil {
+		return nil, err
+	}
+	// Declared scoped observations carry availability and canonical projection.
+	// A generic reader must not turn that evidence into a missing object.
+	if ref.Namespace != v.Namespace() {
+		target := sdk.ObservationTarget{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}
+		if target.Cluster() {
+			target.Name = ref.Name
+		}
+		for _, status := range sdk.ScopedSource(v.DetectionContext).ObservationStatuses() {
+			if status.Target == target {
+				return v.scopedObject(ref)
+			}
+		}
+	}
+	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {
+		return source.Object(ref)
+	}
+	if ref.Namespace != v.Namespace() {
+		return v.scopedObject(ref)
+	}
+	return sdk.FindObject(sdk.TypedObjects(v.DetectionContext), ref)
+}
 func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	if ref.Namespace != v.Namespace() && !(ref.Kind == "Node" && ref.APIVersion == "v1" && ref.Namespace == "") {
-		return nil, errors.New("object is outside snapshot namespace")
+	object, err := v.Object(ref)
+	if apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("%w: %v", errSnapshotObjectAbsent, err)
 	}
-	var object any
-	switch ref.Kind {
-	case "Service":
-		for _, item := range v.Services() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Deployment":
-		for _, item := range v.Deployments() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "ConfigMap":
-		for _, item := range v.ConfigMaps() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Pod":
-		for _, item := range v.Pods() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "ReplicaSet":
-		for _, item := range v.ReplicaSets() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Endpoints":
-		for _, item := range v.Endpoints() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "EndpointSlice":
-		for _, item := range v.EndpointSlices() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "StatefulSet":
-		for _, item := range v.StatefulSets() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "DaemonSet":
-		for _, item := range v.DaemonSets() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Job":
-		for _, item := range v.Jobs() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "CronJob":
-		for _, item := range v.CronJobs() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "PersistentVolumeClaim":
-		for _, item := range v.PersistentVolumeClaims() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "ServiceAccount":
-		for _, item := range v.ServiceAccounts() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "HorizontalPodAutoscaler":
-		for _, item := range v.HorizontalPodAutoscalers() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "PodDisruptionBudget":
-		for _, item := range v.PodDisruptionBudgets() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Ingress":
-		for _, item := range v.Ingresses() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Node":
-		for _, item := range v.Nodes() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "NetworkPolicy":
-		for _, item := range v.NetworkPolicies() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	default:
-		return nil, fmt.Errorf("source diff does not support %s", ref.Kind)
+	return object, err
+}
+
+func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	source, ok := v.DetectionContext.(sdk.ScopedObservationSource)
+	if !ok {
+		return nil, errors.New("scoped observations unavailable")
 	}
-	if object == nil {
-		return nil, fmt.Errorf("%w: %s/%s", errSnapshotObjectAbsent, ref.Kind, ref.Name)
+	return sdk.ScopedObject(source, ref)
+}
+
+// ScopedRefAllowed binds drift admission to the snapshot's exact observed targets.
+func (v LiveReadView) ScopedRefAllowed(ref sdk.ObjectRef) bool {
+	if ref.Namespace == "" && v.Source != nil {
+		_, err := acceptedIncidentManifest(v.context(), v.Source, v.SourceCommit, v.Namespace(), ref)
+		if err == nil {
+			return true
+		}
 	}
-	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+	_, err := v.scopedObject(ref)
+	return err == nil || errors.Is(err, errSnapshotObjectAbsent)
+}
+
+func (v LiveReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ScopedDeployments(namespace)
+	return result, err
+}
+
+func (v LiveReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ScopedServices(namespace)
+	return result, err
+}
+
+func (v LiveReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ScopedEndpoints(namespace)
+	return result, err
+}
+
+func (v LiveReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).MutatingWebhookConfigurations()
+	return result, err
+}
+
+func (v LiveReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ValidatingWebhookConfigurations()
+	return result, err
+}
+
+func (v LiveReadView) ObservationStatuses() []sdk.ObservationStatus {
+	return sdk.ScopedSource(v.DetectionContext).ObservationStatuses()
+}
+func (v LiveReadView) ObservationGeneration() string {
+	return sdk.ScopedSource(v.DetectionContext).ObservationGeneration()
+}
+
+func (v LiveReadView) ObservedAt() time.Time {
+	if clock, ok := v.DetectionContext.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
+func (v LiveReadView) TrafficWindow(name string) (traffic.Window, bool) {
+	if source, ok := v.DetectionContext.(traffic.Source); ok {
+		return source.TrafficWindow(name)
+	}
+	return traffic.Window{}, false
+}
+
+func (v LiveReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := v.DetectionContext.(servicehealth.ReachabilitySource); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
+}
+
+func (v LiveReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).MutatingWebhookConfiguration(name)
+	return result, err
+}
+
+func (v LiveReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ValidatingWebhookConfiguration(name)
+	return result, err
+}
+
+func (v LiveReadView) MetricResult(id string) (metrics.Result, bool) {
+	return metrics.ResultFrom(v.DetectionContext, id)
+}
+func (v LiveReadView) AlertsResult() (metrics.AlertsResult, bool) {
+	return metrics.AlertsFrom(v.DetectionContext)
+}
+func (v LiveReadView) QueryMetrics(q metrics.Query) metrics.Result {
+	if source, ok := v.DetectionContext.(metrics.QuerySource); ok {
+		return source.QueryMetrics(q)
+	}
+	return program.ReadFrom(v.DetectionContext).QueryMetrics(q)
+}
+
+func (v LiveReadView) StatefulSets() []appsv1.StatefulSet {
+	if source, ok := v.DetectionContext.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
+		return source.StatefulSets()
+	}
+	return nil
+}
+
+func (v LiveReadView) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler {
+	if source, ok := v.DetectionContext.(interface {
+		HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	}); ok {
+		return source.HorizontalPodAutoscalers()
+	}
+	return nil
+}
+
+func (v LiveReadView) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
+	if source, ok := v.DetectionContext.(interface {
+		PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	}); ok {
+		return source.PodDisruptionBudgets()
+	}
+	return nil
+}
+
+func (v LiveReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectCaptureSource); ok {
+		return source.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(v.DetectionContext), nil
+}
+
+// sourceAdditions is shared by source comparison and watch admission. It keeps
+// API default rendering at the storage/transport edge; callers without a live
+// client use the same acceptance evidence when replaying snapshots.
+func (v LiveReadView) sourceAdditions(ref sdk.ObjectRef, observed, source *unstructured.Unstructured) ([]string, error) {
+	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
+	defer cancel()
+	added, err := addedSourceFields(observed, source)
 	if err != nil {
 		return nil, err
 	}
-	result := &unstructured.Unstructured{Object: content}
-	result.SetAPIVersion(ref.APIVersion)
-	result.SetKind(ref.Kind)
-	result.SetNamespace(ref.Namespace)
-	result.SetName(ref.Name)
-	return result, nil
+	if len(added) > 0 && v.Client != nil {
+		resource, err := resolveAcceptedResource(v.Client, ref)
+		if err != nil {
+			return nil, err
+		}
+		defaults, err := resource.renderDefaults(ctx, ref, source)
+		if err != nil {
+			return nil, fmt.Errorf("normalize source additions for %s/%s: %w", ref.Kind, ref.Name, err)
+		}
+		added = defaultNormalizedAdditions(added, observed, source, defaults)
+	}
+	return v.sourceDriftPaths(added, ref), nil
+}
+
+// driftSourceAdditions uses the complete accepted manifest, not the comparison
+// projection. HPA-owned replicas, bookkeeping and API identity may be absent
+// from Diff.Sides; that projection cannot identify the acceptance record or be
+// sent to the API for independent default rendering.
+func (v LiveReadView) driftSourceAdditions(ref sdk.ObjectRef, observed *unstructured.Unstructured) ([]string, error) {
+	// Scoped read-only objects have no application acceptance record.
+	if ref.Namespace != v.Namespace() {
+		return nil, nil
+	}
+	revision := v.SourceCommit
+	if v.SourceRevision != nil {
+		revision = v.SourceRevision()
+	}
+	if v.Source == nil || revision == "" {
+		return nil, errors.New("accepted source is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
+	defer cancel()
+	source, err := v.Source.AcceptedManifest(ctx, revision, ref)
+	if err != nil {
+		return nil, err
+	}
+	if source == nil || !samePlanRef(source, ref) {
+		return nil, fmt.Errorf("accepted manifest does not match %s/%s", ref.Kind, ref.Name)
+	}
+	return v.sourceAdditions(ref, observed, source)
 }

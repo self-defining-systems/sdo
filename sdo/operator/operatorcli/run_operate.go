@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -13,6 +14,7 @@ import (
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -63,7 +65,12 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if config.Install.HealthyBaseline {
 		validation.HealthyBaseline = filepath.Join(config.RepositoryMount, ".sdo-baseline/healthy")
 	}
-	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, validation.Validator())
+	ceiling, policyErr := observation.CeilingFromEnvironment()
+	if policyErr != nil {
+		return lifecycle.Result{}, policyErr
+	}
+
+	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, selectMemoryValidator(config.Install.CodePath, validation.Validator()), broker.ObservationPolicy{Replay: config.Install.Replay, CodePath: memoryCodePath(config.Install.CodePath), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
@@ -85,16 +92,24 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		return lifecycle.Result{}, err
 	}
 	readiness.AcceptedRoot = config.ApplicationRoot
+	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort)
+	if err != nil {
+		return lifecycle.Result{}, err
+	}
+	replay, err := settings.Replay(config.Install.Replay)
+	if err != nil {
+		return lifecycle.Result{}, err
+	}
+	agentEnvironment[settings.ReplayEnvironment] = replay
+	agentEnvironment["CODEX_HOME"], agentEnvironment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
 	workers := worker_registry.KubernetesExecutor{
 		ToolchainImage: config.Install.ControllerImage,
 		Client:         client, Namespace: control, Registry: registry, ServiceAccount: "sdo-responder",
 		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
 		CredentialsSecret: config.Install.CredentialsSecret,
-		Environment: map[string]string{
-			"SDO_AGENT_PROVIDER": config.Install.AgentProvider, "SDO_LIFECYCLE_MODEL": config.Install.Model,
-			"SDO_DEPLOYMENT_MODEL": config.Install.Model, "CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude",
-		},
+		Environment:       agentEnvironment,
 	}
+	workers.Environment = codePathWorkerEnvironment(config.Install.CodePath, workers.Environment)
 	if config.Install.MetricsURL != "" {
 		workers.Environment[memoryMetricsEnv] = "1"
 	}
@@ -102,12 +117,15 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},
 		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true,
 	}
+	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay, MetricsURL: config.Install.MetricsURL}
+	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
+		healthProbe = deployment.ShellDetectorProbe{Config: runner}
+	}
 	coordinator := lifecycle.Coordinator{
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry,
 		Workers: workers, Readiness: readiness,
 		Verifier: deployment.IndependentHealthVerifier{
-			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: readiness,
-			Probe: deployment.AcceptedDetectorProbe{MetricsURL: config.Install.MetricsURL},
+			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: readiness, Probe: healthProbe,
 		}, Installer: installer,
 	}
 	return coordinator.Run(ctx, config.Lifecycle)

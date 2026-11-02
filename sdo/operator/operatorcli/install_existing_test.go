@@ -1,24 +1,64 @@
 package operatorcli
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/install"
 )
+
+func TestInstallExistingMenuEnvironmentReachesControllerPod(t *testing.T) {
+	for _, value := range []string{"", "0", "1", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("SDO_RESPONDER_MENU", value)
+			args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model"}
+			launch, err := ParseInstallExistingLaunch(args)
+			if value == "invalid" {
+				if err == nil || !strings.Contains(err.Error(), "SDO_RESPONDER_MENU") {
+					t.Fatalf("invalid menu input accepted: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			launch.Install.AcceptedCommit = strings.Repeat("a", 40)
+			plan, err := install.Resources(launch.Install)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, actual := "0", ""
+			if value != "0" {
+				want = "1"
+			}
+			for _, environment := range plan.Job.Spec.Template.Spec.Containers[0].Env {
+				if environment.Name == "SDO_RESPONDER_MENU" {
+					actual = environment.Value
+				}
+			}
+			if actual != want {
+				t.Fatalf("controller menu environment=%q want %q", actual, want)
+			}
+			t.Logf("controller_launch_environment SDO_RESPONDER_MENU=%s", actual)
+		})
+	}
+}
 
 func TestParseInstallExistingUsesNativeAcceptedController(t *testing.T) {
 	args := []string{
 		"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo",
 		"--controller-image", "controller:test", "--responder-image", "responder:test",
 		"--repository-pvc", "repository", "--credentials-secret", "agent-credentials", "--model", "model",
-		"--repair-policy", "recorded-actions", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--max-follow-ups", "2", "--follow-up-cooldown", "25s", "--responder-env", "SDO_SUBMISSION_MODE=relay", "--deployed-manifest-path", "kubernetes", "--late-findings", "pull", "--program-fast-path", "--program-trust-threshold", "4", "--drift-tokens-per-hour", "250000",
+		"--repair-policy", "recorded-actions", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--responder-env", "SDO_SUBMISSION_MODE=relay", "--deployed-manifest-path", "kubernetes", "--late-findings", "pull",
 	}
 	launch, err := ParseInstallExistingLaunch(args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !launch.Install.ReuseExisting || launch.Install.RepairPolicy != "recorded-actions" || launch.Install.ReflectionSession != "resume" || launch.Install.ReflectionGuidance != "generalize-spec" || launch.Install.MaxFollowUps != 2 || launch.Install.FollowUpCooldownSeconds != 25 || launch.Install.LateFindings != "pull" ||
+	if !launch.Install.ReuseExisting || launch.Install.RepairPolicy != "recorded-actions" || launch.Install.ReflectionSession != "resume" || launch.Install.ReflectionGuidance != "generalize-spec" || launch.Install.LateFindings != "pull" ||
 		launch.Install.NativeCommand[0] != "/usr/local/bin/sdo-operator" || len(launch.Install.ExtraControllerArgs) != 2 ||
-		launch.Install.ExtraControllerArgs[0] != "--responder-env=SDO_SUBMISSION_MODE=relay" || launch.Install.ExtraControllerArgs[1] != "--deployed-manifest-path=kubernetes" || !launch.Install.ProgramFastPath || launch.Install.ProgramTrustThreshold != 4 || launch.Install.DriftTokensPerHour != 250000 {
+		launch.Install.ExtraControllerArgs[0] != "--responder-env=SDO_SUBMISSION_MODE=relay" || launch.Install.ExtraControllerArgs[1] != "--deployed-manifest-path=kubernetes" {
 		t.Fatalf("existing installation lost native contract: %+v", launch.Install)
 	}
 	if launch.Install.WaitForCompletion {
@@ -49,5 +89,71 @@ func TestInstallExistingDefaultsToResumedReflection(t *testing.T) {
 	}
 	if launch.Install.ReflectionSession != "resume" {
 		t.Fatalf("default reflection mode: %q", launch.Install.ReflectionSession)
+	}
+}
+
+func TestParseInstallExistingPermissiveResponder(t *testing.T) {
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--control-namespace", "demo-sdo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--repository-pvc", "repository", "--credentials-secret", "agent-credentials", "--model", "model"}
+	strict, err := ParseInstallExistingLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strict.Install.PermissiveResponder {
+		t.Fatal("permissions defaulted on")
+	}
+	launch, err := ParseInstallExistingLaunch(append(args, "--permissive-responder", "--responder-namespace", "policy-system"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !launch.Install.PermissiveResponder || len(launch.Install.ResponderNamespaces) != 1 || launch.Install.ResponderNamespaces[0] != "policy-system" {
+		t.Fatalf("permissions lost: %+v", launch.Install)
+	}
+}
+
+func TestGS1AutomaticRepairDefaultsAndOptOuts(t *testing.T) {
+	t.Setenv("SDO_RESPONDER_MENU", "")
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model"}
+	launch, err := ParseInstallExistingLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := launch.Install
+	if !c.ResponderMenu || c.RepairPolicy != "recorded-actions" || c.MaxResponseLoops != 10 || c.VerificationTimeoutSeconds != 300 {
+		t.Fatalf("defaults: %+v", c)
+	}
+	disabled, err := ParseInstallExistingLaunch(append(args, "--repair-policy=commit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled.Install.AcceptedCommit = strings.Repeat("a", 40)
+	plan, err := install.Resources(disabled.Install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, err := ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	if err != nil || controller.Controller.GetRepairPolicy() != "commit" {
+		t.Fatalf("opt-out lost: %+v %v", controller, err)
+	}
+}
+
+func TestInstallExistingColdStandbySwitchReachesTypedController(t *testing.T) {
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model", "--responder-standby=false"}
+	launch, err := ParseInstallExistingLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch.Install.AcceptedCommit = strings.Repeat("a", 40)
+	plan, err := install.Resources(launch.Install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, err := ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := controller.Controller.ProtoReflect()
+	field := message.Descriptor().Fields().ByName("responder_standby")
+	if field == nil || !message.Has(field) || message.Get(field).Bool() {
+		t.Fatal("cold switch lost at typed boundary")
 	}
 }

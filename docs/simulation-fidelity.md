@@ -235,3 +235,31 @@ error channels across independent synctest bubbles. The fixture now calls
 `http2.ConfigureServer` to obtain a per-server channel pool before `ServeConn`;
 the full protocol matrix passes twenty race-enabled repetitions. This closes a
 fixture ownership gap without changing the production protocol client.
+
+### Merged-tree toy run on kind (2026-11-02)
+
+The scripted Tier 2a run for the dev merge into main (`/mnt/data/shli/sdo-exp/port/merge-toy/`) found the
+gaps below. Most were not reachable by the unit tiers because each test replaced the thing that changed
+with a fixture that still described the old behavior.
+
+| Date | Source run | Class | Gap | Status | Test that now covers it |
+| --- | --- | --- | --- | --- | --- |
+| 2026-11-02 | merge-toy | Missing fault coverage | Caller cancellation of `Manager.Evaluate` or a captured-host call retired the healthy accepted host; every detector reported `memory host unavailable` until recovery (about 15 s) | Fixed at the manager boundary | `TestEvaluateCallerCancelPreservesAcceptedHost`, `TestCapturedEvaluateCallerCancelPreservesAcceptedHost` |
+| 2026-11-02 | merge-toy | Contract drift | Memory-host registration dropped `ConsumesPodAdmission`; the controller never observed admission, the host's `pod-admission` detector errored every evaluation and the lane never reached a clear baseline | Fixed | `TestRegistrationRetainsOptionalInputs` (now includes pod admission) |
+| 2026-11-02 | merge-toy | Mock encodes removed behavior | Image smoke tests mocked `schema-identity` and `validation-child` arities that the binary no longer has, so every image build and `up` preflight failed on a real binary | Fixed | `test_image_build_smokes_offline_go_tools_as_nonroot` checks the child's arity; `test_fast_image_delivery.py` mocks `memory --help` |
+| 2026-11-02 | merge-toy | Missing behavior | The stand-in `codex` never wrote a session rollout, which the production responder's session recovery needs at session start | Fixed | `test_scripted_session_persists_a_rollout_before_the_worker_checkpoints_it` |
+| 2026-11-02 | merge-toy | Sandbox fidelity | The agent-script sandbox mounted the whole host read-only, but the real workspace-write sandbox lets `sdo` write `/tmp/sdo` and the session scratch | Fixed | `test_sandboxed_commands_can_persist_tool_replies_for_later_commands` |
+| 2026-11-02 | merge-toy | Transport limit | A scripted file write put the whole file in one shell argument; a captured corpus exceeds the 128 KiB single-argument limit | Fixed (stdin) | `test_write_steps_larger_than_one_command_argument_succeed` |
+| 2026-11-02 | merge-toy | Protocol drift | `sdo` prints a human summary unless `--json`; capped replies must be followed to `details_file` | Fixed | `test_tool_reads_json_and_follows_a_capped_reply_to_its_details_file` |
+| 2026-11-02 | merge-toy | Protocol drift | `sdo verify` reports `awaiting_responder_completion` while the worker runs; polling for `healthy` for two minutes ended the scripted responder as failed and the outcome as failed | Fixed | `test_verify_loop_stops_when_detectors_clear_while_the_responder_still_runs` |
+| 2026-11-02 | merge-toy | Lifecycle | A from-scratch toy install kept the previous controller checkpoint and health-refresh records; the checkpoint named a detector the reset memory did not have | Fixed | `test_retire_control_state_clears_checkpoints_and_stale_health_refresh_records` |
+| 2026-11-02 | merge-toy | Lifecycle | A preloaded standby responder read its task before awaiting the claim and crashed; the controller recreated a standby Job every 9 s | Fixed | `test_generated_launch_waits_for_standby_claim_before_reading_the_task` |
+| 2026-11-02 | merge-toy | Lifecycle | A health refresh ends the first controller attempt by design (exit 76), leaving a failed pod beside the running one; continuity required exactly one pod | Fixed | `test_live_controller_pod_ignores_pods_of_finished_job_attempts` |
+
+| 2026-11-02 | merge-toy | Missing behavior | After a verified program write, a co-reported finding whose detector had not re-observed it (service-reachability on the same Service) made the attempt `applied_still_matching`; the stage gave up within a second and the responder finished a mitigated incident (3 of 4 repeats) | Fixed: findings that depend on the written object keep the recovery wait going and the attempt is recorded cleared | `TestWriteVerifiedForSettling`, `TestPromoteSettledAttemptsRecordsTheClearedFindings`; existing stage tests unchanged |
+| 2026-11-02 | merge-toy | Timing | Closure replays open-phase reads inside the observation lock; the program's open probe of the old targetPort waited out the 5 s probe budget (`program_reads_ms=5283`), stopping detection for 9.8 s | Bounded to 1 s (gap 9.8 s to 5.1-5.4 s); remaining closure work under the lock still exceeds the 5 s allowance by 0.15-0.4 s on the repeat | `TestClosureReplayProbeIsBounded` |
+
+Not modeled and still open: the Go simulation has no scripted-agent sandbox, standby handshake or Job
+restart on exit 76, so the standby, sandbox, restart and verify-protocol rows are covered by Python contract tests only. The
+closure stall is not simulated either: `maybeCloseIncident` holds the observation lock, and the simulation's
+closure work takes zero virtual time.

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -47,9 +49,18 @@ type WorkerExecutor interface {
 	Execute(context.Context, *contracts.AgentTask) (*contracts.AgentResult, error)
 }
 
+// VanishedDiscarder lets the owner of a worker's durable evidence forget a
+// dispatch whose Job disappeared without a result.
+const vanishedWorkerRule = "worker.job_vanished"
+
+type VanishedDiscarder interface {
+	DiscardVanished(context.Context, *contracts.AgentTask) error
+}
+
 // DeploymentReceipt binds an independently observed rollout to the exact
 // candidate source tree. Empty or incomplete evidence cannot be accepted.
 type DeploymentReceipt struct {
+	ContainerImages    []rendered.DeployedImage
 	ProposalTreeDigest string
 	ObservedRevision   string
 	StrategyID         string
@@ -327,15 +338,15 @@ func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
 	slices.Sort(rightResources)
 	slices.Sort(leftPaths)
 	slices.Sort(rightPaths)
-	return slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources) && slices.Equal(leftPaths, rightPaths)
+	return reflect.DeepEqual(left.ContainerImages, right.ContainerImages) && slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources) && slices.Equal(leftPaths, rightPaths)
 }
 
 func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
-	return broker.SourceEvidence{ProposalTreeDigest: receipt.ProposalTreeDigest, ObservedRevision: receipt.ObservedRevision, StrategyID: receipt.StrategyID, Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), ManifestPaths: append([]string(nil), receipt.ManifestPaths...), Ready: receipt.Ready}
+	return broker.SourceEvidence{ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), ProposalTreeDigest: receipt.ProposalTreeDigest, ObservedRevision: receipt.ObservedRevision, StrategyID: receipt.StrategyID, Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), ManifestPaths: append([]string(nil), receipt.ManifestPaths...), Ready: receipt.Ready}
 }
 
 func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
-	return DeploymentReceipt{ProposalTreeDigest: evidence.ProposalTreeDigest, ObservedRevision: evidence.ObservedRevision, StrategyID: evidence.StrategyID, Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), ManifestPaths: append([]string(nil), evidence.ManifestPaths...), Ready: evidence.Ready}
+	return DeploymentReceipt{ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), ProposalTreeDigest: evidence.ProposalTreeDigest, ObservedRevision: evidence.ObservedRevision, StrategyID: evidence.StrategyID, Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), ManifestPaths: append([]string(nil), evidence.ManifestPaths...), Ready: evidence.Ready}
 }
 
 func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, sourceCommit string) (broker.Receipt, bool, string, error) {
@@ -457,16 +468,26 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 	}
 	response := &contracts.HealthJudgeResult{}
 	if err := c.execute(ctx, task, response); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		// Cancellation does not mean the remote Job stopped. Keep its checkout
+		// and immutable task identity for a later bounded reattachment.
 		if ctx.Err() != nil {
 			return broker.Receipt{}, false, "", nil, ctx.Err()
 		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return broker.Receipt{}, false, "", nil, err
+		}
 		var failedJob *worker_registry.JobFailedError
 		if errors.As(err, &failedJob) {
-			// Persist transport failure before redispatch: the retry gets a new
-			// immutable task/Job identity and the bound survives controller restarts.
+			// Preserve the failed attempt and proposal for the bounded retry.
 			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: "worker.job_failed", Message: err.Error()}}, nil
 		}
+		var vanished *worker_registry.JobVanishedError
+		if errors.As(err, &vanished) {
+			// Redispatch already failed too: record a typed failed attempt and
+			// let the bounded retry start a fresh task rather than end the process.
+			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: vanishedWorkerRule, Message: err.Error()}}, nil
+		}
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return fail(err.Error())
 	}
 
@@ -507,6 +528,17 @@ func (c Coordinator) execute(ctx context.Context, task *contracts.AgentTask, res
 		return err
 	}
 	result, err := c.Workers.Execute(ctx, task)
+	var vanished *worker_registry.JobVanishedError
+	if discarder, ok := c.Workers.(VanishedDiscarder); ok && errors.As(err, &vanished) {
+		// Lifecycle workers only author proposals in isolated checkouts; the
+		// controller applies and verifies them. Running one twice repeats no
+		// effect, so a Job lost to an earlier killed attempt is dispatched
+		// again instead of failing every restart on the same stale evidence.
+		if err := discarder.DiscardVanished(ctx, task); err != nil {
+			return err
+		}
+		result, err = c.Workers.Execute(ctx, task)
+	}
 	if err != nil {
 		return err
 	}

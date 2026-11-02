@@ -87,7 +87,7 @@ func TestLiveReadViewConcurrentPodTCPProbes(t *testing.T) {
 }
 
 func routingCaptureSnapshot() sdktest.Snapshot {
-	return sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(9999)}}}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}}}}, Status: corev1.PodStatus{PodIP: "10.0.0.5", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}}}
+	return sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(9999)}}}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", ResourceVersion: "fixture", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}}}}, Status: corev1.PodStatus{PodIP: "10.0.0.5", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}}}
 }
 
 func TestLiveReadViewPodTCPUsesCapturedAddress(t *testing.T) {
@@ -122,7 +122,17 @@ func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
 		loop.ReadView = func(s sdk.DetectionContext) program.ReadView {
 			return LiveReadView{Carrier: inputs.New(s), Prober: probe}
 		}
+		// The controller owns the sweep: the responder's own diagnosis never probes.
 		loop.InitialDiagnose(ctx)
+		if len(probe.calls) != 0 {
+			t.Fatalf("responder diagnosis probed: %+v", probe.calls)
+		}
+		capture := func() {
+			if err := captureRoutingEvidence(ctx, loop.CorpusSessionRoot, "routing", "open@detect", loop.Request.Findings, loop.ReadView(snapshot)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		capture()
 		dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, "routing")
 		if err != nil {
 			t.Fatal(err)
@@ -156,6 +166,7 @@ func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
 		}
 		prior := len(probe.calls)
 		loop.InitialDiagnose(ctx)
+		capture()
 		if len(probe.calls) != prior {
 			t.Fatal("repeated detect capture probed again")
 		}
@@ -377,7 +388,11 @@ func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 			defer slog.SetDefault(previous)
 			loop.InitialDiagnose(context.Background())
-			loop.InitialDiagnose(context.Background())
+			for i := 0; i < 2; i++ {
+				if err := captureRoutingEvidence(context.Background(), root, "no-prober", "open@detect", findings, test.view(snapshot)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			// A later capture phase must preserve and not log the same gap again.
 			if err := memory.CaptureIncidentSnapshot(root, "no-prober", "fixed", snapshot, "app"); err != nil {
 				t.Fatal(err)

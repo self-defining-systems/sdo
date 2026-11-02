@@ -3,11 +3,13 @@
 from sdo.agents.responder import status_cli, tools_cli
 
 
-def test_status_cli_forwards_to_controller(monkeypatch):
+def test_status_cli_forwards_the_selection_to_the_controller(monkeypatch):
     calls = []
-    monkeypatch.setattr(status_cli, "tools_main", lambda args: calls.append(args) or 0)
-    assert status_cli.main(["--workload", "verify"]) == 0
-    assert calls == [["verify", "--workload", "verify"]]
+    monkeypatch.setattr(
+        tools_cli, "_exchange", lambda request, _directory: calls.append(request) or {"healthy": True, "summary": "ok"}
+    )
+    assert status_cli.main(["--workload", "verify", "--scenario", "read"]) == 0
+    assert calls == [{"command": "verify", "workload": "verify", "scenarios": ["read"]}]
 
 
 def test_verify_selection_is_an_incident_tool_request():

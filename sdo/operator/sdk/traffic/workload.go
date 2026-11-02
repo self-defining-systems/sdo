@@ -25,7 +25,8 @@ const (
 	DefaultMaxAge            = 30 * time.Second
 	DefaultMaxErrorRate      = 0.5
 	DefaultMaxTimeoutRate    = 0.5
-	DefaultLatencyPercentile = 90
+	DefaultMinTimeouts       = 2
+	DefaultLatencyPercentile = 50
 	DefaultMaxLatency        = 1500 * time.Millisecond
 )
 
@@ -75,13 +76,20 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 }
 
 // SLO bounds a scenario's recent behaviour. Zero fields inherit the
-// workload's SLO, and then the package defaults.
+// workload's SLO, and then the package defaults. The default latency bound
+// applies to the median; one timeout remains evidence but does not contribute
+// to rate violations until MinTimeouts is reached.
 type SLO struct {
-	Window            int      `json:"window,omitempty"`
-	MinSamples        int      `json:"minSamples,omitempty"`
-	MaxAge            Duration `json:"maxAge,omitempty"`
-	MaxErrorRate      float64  `json:"maxErrorRate,omitempty"`
-	MaxTimeoutRate    float64  `json:"maxTimeoutRate,omitempty"`
+	Window         int      `json:"window,omitempty"`
+	MinSamples     int      `json:"minSamples,omitempty"`
+	MaxAge         Duration `json:"maxAge,omitempty"`
+	MaxErrorRate   float64  `json:"maxErrorRate,omitempty"`
+	MaxTimeoutRate float64  `json:"maxTimeoutRate,omitempty"`
+	// MinTimeouts is the minimum timeout count before timeouts contribute to
+	// either rate violation. Defaults to two so one scheduling pause is noise.
+	// The effective floor is capped at Window so a total timeout outage fires.
+	// Set one explicitly for strict timeout objectives.
+	MinTimeouts       int      `json:"minTimeouts,omitempty"`
 	LatencyPercentile int      `json:"latencyPercentile,omitempty"`
 	MaxLatency        Duration `json:"maxLatency,omitempty"`
 }
@@ -309,7 +317,7 @@ func (w Workload) ScenarioSLO(id string) SLO {
 func defaultSLO() SLO {
 	return SLO{
 		Window: DefaultWindow, MinSamples: DefaultMinSamples, MaxAge: Duration(DefaultMaxAge),
-		MaxErrorRate: DefaultMaxErrorRate, MaxTimeoutRate: DefaultMaxTimeoutRate,
+		MaxErrorRate: DefaultMaxErrorRate, MaxTimeoutRate: DefaultMaxTimeoutRate, MinTimeouts: DefaultMinTimeouts,
 		LatencyPercentile: DefaultLatencyPercentile, MaxLatency: Duration(DefaultMaxLatency),
 	}
 }
@@ -329,6 +337,9 @@ func mergeSLO(base SLO, override SLO) SLO {
 	}
 	if override.MaxTimeoutRate != 0 {
 		base.MaxTimeoutRate = override.MaxTimeoutRate
+	}
+	if override.MinTimeouts != 0 {
+		base.MinTimeouts = override.MinTimeouts
 	}
 	if override.LatencyPercentile != 0 {
 		base.LatencyPercentile = override.LatencyPercentile
@@ -351,6 +362,8 @@ func validateSLO(slo SLO) error {
 		return fmt.Errorf("slo maxErrorRate must be in (0, 1]")
 	case slo.MaxTimeoutRate <= 0 || slo.MaxTimeoutRate > 1:
 		return fmt.Errorf("slo maxTimeoutRate must be in (0, 1]")
+	case slo.MinTimeouts < 1 || slo.MinTimeouts > 100:
+		return fmt.Errorf("slo minTimeouts must be in [1, 100]")
 	case slo.LatencyPercentile < 1 || slo.LatencyPercentile > 100:
 		return fmt.Errorf("slo latencyPercentile must be in [1, 100]")
 	case slo.MaxLatency.Duration() <= 0:

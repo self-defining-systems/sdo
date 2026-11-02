@@ -1,6 +1,7 @@
 package operatorcli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -58,14 +58,22 @@ func ParseIncidentEvidenceLaunch(args []string) (IncidentEvidenceConfig, error) 
 }
 
 func RunIncidentEvidence(ctx context.Context, cfg IncidentEvidenceConfig) (IncidentEvidenceResult, error) {
-	client, err := hostKubernetesClient(cfg.Kubeconfig)
+	config, err := hostKubernetesConfig(cfg.Kubeconfig)
 	if err != nil {
 		return IncidentEvidenceResult{}, err
 	}
-	return runIncidentEvidence(ctx, client, cfg)
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	execute, err := newPodExecutor(config, client)
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	return runIncidentEvidence(ctx, client, cfg, execute)
 }
 
-func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg IncidentEvidenceConfig) (IncidentEvidenceResult, error) {
+func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg IncidentEvidenceConfig, execute podExecutor) (IncidentEvidenceResult, error) {
 	path, err := broker.NativeLedgerPath(broker.DefaultNativeWorktreeRoot, cfg.IncidentID)
 	if err != nil {
 		return IncidentEvidenceResult{}, err
@@ -106,11 +114,11 @@ func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg I
 				return fmt.Errorf("synchronize accepted repository: %w", err)
 			}
 		}
-		output, readErr := processio.ReadPodFile(ctx, cfg.Sync.ControlNamespace, cfg.Kubeconfig, podName, path)
-		if readErr != nil {
-			return readErr
+		var output, stderr bytes.Buffer
+		if err := execute(ctx, cfg.Sync.ControlNamespace, podName, []string{"cat", path}, &output, &stderr); err != nil {
+			return fmt.Errorf("read native incident ledger: %w: %s", err, strings.TrimSpace(stderr.String()))
 		}
-		data = output
+		data = output.Bytes()
 		return nil
 	}
 	if podName == install.RepositorySyncPodName {
@@ -125,5 +133,9 @@ func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg I
 	if err != nil {
 		return IncidentEvidenceResult{}, err
 	}
-	return IncidentEvidenceResult{IncidentID: cfg.IncidentID, ResponderJobName: worker_registry.JobName(cfg.IncidentID), Ledger: ledger}, nil
+	jobName, err := worker_registry.IncidentResponderJobName(ctx, client, cfg.Sync.ControlNamespace, cfg.IncidentID)
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	return IncidentEvidenceResult{IncidentID: cfg.IncidentID, ResponderJobName: jobName, Ledger: ledger}, nil
 }

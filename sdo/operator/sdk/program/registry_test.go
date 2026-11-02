@@ -41,3 +41,26 @@ func TestRegistryRejectsDuplicatePrograms(t *testing.T) {
 		t.Fatal("duplicate accepted")
 	}
 }
+
+type declaredProgram struct {
+	registeredProgram
+	spec ProgramSpec
+}
+
+func (p declaredProgram) Spec() ProgramSpec { return p.spec }
+
+func TestRegistryRejectsParametersWithoutLiveBindingPath(t *testing.T) {
+	for _, kind := range []ValueKind{StringValue, IntValue, QuantityValue, DurationValue, BoolValue} {
+		p := declaredProgram{spec: ProgramSpec{ID: "repair", Params: []ParamSpec{{Name: "recorded-only", ValueKind: kind, Required: true}}}}
+		if _, err := NewRegistry([]Diagnoser{p}, []Mitigator{p}); err == nil {
+			t.Fatalf("accepted required %s parameter with no live finding/default binding", kind)
+		}
+	}
+}
+func TestRegistryRequiresSameDiagnosisAndMitigationDeclaration(t *testing.T) {
+	diagnosis := declaredProgram{spec: ProgramSpec{ID: "repair", Params: []ParamSpec{{Name: "resource", Kind: "Service", Required: true}}}}
+	mitigation := declaredProgram{spec: ProgramSpec{ID: "repair", Params: []ParamSpec{{Name: "recorded-only", Kind: "Deployment", Required: true}}}}
+	if _, err := NewRegistry([]Diagnoser{diagnosis}, []Mitigator{mitigation}); err == nil {
+		t.Fatal("accepted a mitigation with parameters not supplied to Diagnose")
+	}
+}

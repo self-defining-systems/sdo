@@ -107,7 +107,7 @@ func (c *Controller) probeGate(
 ) {
 	for _, detector := range probes {
 		spec := detector.Spec()
-		findings, err := detector.Detect(ctx, snapshot)
+		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
 		if err == nil {
 			for index := range findings {
 				if findings[index].DetectorID == "" {
@@ -123,6 +123,10 @@ func (c *Controller) probeGate(
 			if c.OnError != nil {
 				c.OnError(fmt.Errorf("gate re-evaluation of detector %q: %w", spec.ID, err))
 			}
+			continue
+		}
+		if len(findings) == 0 && !detectorConfirmed(detector, snapshot) {
+			c.resetGate(spec.ID)
 			continue
 		}
 		c.observeGate(spec.ID, now, findings)

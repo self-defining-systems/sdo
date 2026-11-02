@@ -4,18 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
-	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"sync"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/anypb"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/worker_registry"
@@ -29,6 +29,13 @@ const (
 // KubernetesJobDispatcher adapts the incident protocol to the shared,
 // implementation-neutral worker Job transport.
 type KubernetesJobDispatcher struct {
+	CoverageProvider CoverageProvider
+
+	Standby *worker_registry.StandbyPool
+	// AcceptedRepository is the durable broker-owned checkout used for trust.
+	// Proposal checkouts belong to individual incidents and may be retired.
+	AcceptedRepository    string
+	APIProxyImage         string
 	ToolchainImage        string
 	Client                kubernetes.Interface
 	Namespace             string
@@ -46,11 +53,7 @@ type KubernetesJobDispatcher struct {
 	Outcomes              memory.Reader
 	RequireMemorySnapshot bool
 	LoopFactory           func(IncidentRequest) *ResponderLoop
-	ProgramFastPath       bool
-	// ResponseStages runs the deterministic response stage (no trust gate)
-	// before the agent instead of the trusted-program fast path.
-	ResponseStages        bool
-	ProgramTrustThreshold int
+	beforeClaim           func()
 }
 
 // PrepareDispatch freezes the worker task before the controller records its
@@ -78,7 +81,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 		if err == nil {
 			payload := existing.Data[jobRequestDataKey]
 			task := new(contracts.AgentTask)
-			if payload == "" || protojson.Unmarshal([]byte(payload), task) != nil ||
+			if payload == "" || wire.UnmarshalDurable([]byte(payload), task) != nil ||
 				task.GetTaskId() != request.IncidentID || task.GetAgentId() != d.AgentID ||
 				task.GetWorkspace().GetCheckoutPath() != request.RepositoryWorktree ||
 				task.GetWorkspace().GetBaseCommit() != request.RepositoryBaseCommit {
@@ -95,6 +98,9 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 			for _, run := range typed.GetInitialProgramRuns() {
 				request.InitialProgramRuns = append(request.InitialProgramRuns, programRunState(run))
 			}
+			request.PlaybookCoverage = cloneCoverage(typed.GetPlaybookCoverage())
+			request.PriorStages = cloneStageReports(typed.GetPriorStages())
+			request.Findings = findingsState(typed.GetFindings())
 			request.MaxResponseLoops = int(typed.GetMaxResponseLoops())
 			request.PreparedAgentTask = payload
 			return request, nil
@@ -103,24 +109,37 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 			return IncidentRequest{}, fmt.Errorf("get existing agent request ConfigMap: %w", err)
 		}
 	}
+	coverage := d.CoverageProvider
+	if coverage == nil {
+		coverage = goCodePathCoverage{}
+	}
 	if d.LoopFactory != nil {
 		if loop := d.LoopFactory(request); loop != nil {
+			// Preparation also registers this loop with the controller. Preserve
+			// accepted automatic-stage evidence for closure before any worker is
+			// published; task preparation must not replace it with an empty loop.
+			if err := d.restoreToolState(ctx, request, loop); err != nil {
+				return IncidentRequest{}, err
+			}
+			if err := d.reopenWithdrawnRecovery(ctx, request, loop); err != nil {
+				return IncidentRequest{}, err
+			}
 			trust, err := d.programTrust(ctx, request)
 			if err != nil {
 				return IncidentRequest{}, err
 			}
-			loop.Trust = trust
-			request.InitialProgramRuns = loop.InitialDiagnose(ctx)
-			fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
-			request.MaxResponseLoops = loop.MaxBatches
+			request = loop.prepareDispatch(ctx, request, trust, coverage)
 		}
+	}
+	if request.PlaybookCoverage == nil {
+		request.PlaybookCoverage = coverage.Coverage(request.Findings, nil, nil, nil)
 	}
 	var snapshots []*contracts.OperationalMemorySnapshot
 	if d.RequireMemorySnapshot && d.Catalog == nil {
 		return IncidentRequest{}, errors.New("native responder requires logical operational memory")
 	}
 	if d.Catalog != nil {
-		snapshot, err := d.Catalog.Snapshot(ctx)
+		snapshot, err := memory.SnapshotAt(ctx, d.Catalog, request.RepositoryBaseCommit)
 		if err != nil {
 			return IncidentRequest{}, fmt.Errorf("read logical operational memory: %w", err)
 		}
@@ -134,7 +153,43 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 	return request, nil
 }
 
+// prepareDispatch snapshots diagnosis and its coverage together; the factory
+// may already have exposed this loop to the controller's observation goroutine.
+func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentRequest, trust map[string]ProgramTrust, coverage CoverageProvider) IncidentRequest {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Trust = trust
+	l.capturePhase = "open@detect"
+	defer func() { l.capturePhase = "" }()
+	request.InitialProgramRuns = l.diagnose(ctx, l.findings)
+	fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
+	request.PlaybookCoverage = coverage.Coverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, trust)
+	request.MaxResponseLoops = l.MaxBatches
+	return request
+}
+
+// DispatchWithClaim records invocation only after recovery admission, immediately
+// before a first worker claim or an existing execution is rejoined.
+func (d KubernetesJobDispatcher) DispatchWithClaim(ctx context.Context, request IncidentRequest, claimed func()) (IncidentResult, error) {
+	d.beforeClaim = claimed
+	return d.Dispatch(ctx, request)
+}
+
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
+	result, err := d.dispatch(ctx, request)
+	usage, usageErr := d.ResponderUsage(request.IncidentID)
+	if usageErr != nil {
+		return result, fmt.Errorf("recover responder usage: %w", usageErr)
+	}
+	if usage != nil {
+		result.Usage = *usage
+	}
+	return result, err
+}
+
+func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
 	if d.Registry == nil || d.AgentID == "" {
 		return IncidentResult{}, errors.New("incident dispatch requires an agent registry and responder agent ID")
 	}
@@ -160,7 +215,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	}
 	task := new(contracts.AgentTask)
 	var err error
-	if err := protojson.Unmarshal([]byte(request.PreparedAgentTask), task); err != nil {
+	if err := wire.UnmarshalDurable([]byte(request.PreparedAgentTask), task); err != nil {
 		return IncidentResult{}, fmt.Errorf("decode prepared agent task: %w", err)
 	}
 	if task.GetTaskId() != request.IncidentID || task.GetWorkspace().GetCheckoutPath() != request.RepositoryWorktree ||
@@ -171,15 +226,14 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if d.LoopFactory != nil {
 		loop = d.LoopFactory(request)
 		if loop != nil {
+			defer loop.CloseWorkingPrograms()
+		}
+		if loop != nil {
 			trust, err := d.programTrust(ctx, request)
 			if err != nil {
 				return IncidentResult{}, err
 			}
-			loop.Trust = trust
-			if request.MaxResponseLoops > 0 {
-				loop.MaxBatches = request.MaxResponseLoops
-			}
-			loop.runs = append([]ProgramRun(nil), request.InitialProgramRuns...)
+			loop.initializeDispatch(trust, request.MaxResponseLoops, request.InitialProgramRuns)
 			if err := d.restoreToolState(ctx, request, loop); err != nil {
 				return IncidentResult{}, fmt.Errorf("restore responder tool state: %w", err)
 			}
@@ -188,56 +242,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if err := d.Registry.ValidateTask(task); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate agent task: %w", err)
 	}
-	if d.ProgramFastPath && d.ResponseStages && loop != nil {
-		stageResult, staged, resolved, err := d.runDeterministicStage(ctx, request, loop)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		if resolved {
-			return stageResult, nil
-		}
-		if len(staged.PriorStages) > 0 {
-			request = staged
-			if task, request, err = d.handoffTask(request, task); err != nil {
-				return IncidentResult{}, err
-			}
-			if err := d.Registry.ValidateTask(task); err != nil {
-				return IncidentResult{}, fmt.Errorf("validate stage handoff task: %w", err)
-			}
-		}
-	} else if d.ProgramFastPath && loop != nil {
-		fastResult, summary, resolved, err := d.tryFastPath(ctx, request, loop)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		if resolved {
-			return fastResult, nil
-		}
-		if summary != "" {
-			request.FastPathSummary = summary
-			prepared := new(contracts.IncidentRequest)
-			if err := task.GetRequest().UnmarshalTo(prepared); err != nil {
-				return IncidentResult{}, fmt.Errorf("decode prepared incident for fast-path handoff: %w", err)
-			}
-			prepared.FastPathSummary = summary
-			task.Request, err = anypb.New(prepared)
-			if err != nil {
-				return IncidentResult{}, err
-			}
-			payload, err := wire.Canonical(task)
-			if err != nil {
-				return IncidentResult{}, err
-			}
-			request.PreparedAgentTask = string(payload)
-			task = new(contracts.AgentTask)
-			if err := protojson.Unmarshal(payload, task); err != nil {
-				return IncidentResult{}, fmt.Errorf("decode fast-path handoff task: %w", err)
-			}
-			if err := d.Registry.ValidateTask(task); err != nil {
-				return IncidentResult{}, fmt.Errorf("validate fast-path handoff task: %w", err)
-			}
-		}
-	}
+
 	environment := make(map[string]string, len(d.Environment))
 	for name, value := range d.Environment {
 		environment[name] = value
@@ -250,19 +255,63 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	lateConfigMap := ""
 	sessionSubPath := ""
 	if d.RequireMemorySnapshot {
-		sessionSubPath, err = memory.PrepareIncidentSession(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
+		rejoin := false
+		rejoin, err = (worker_registry.KubernetesExecutor{RepositoryMountPath: d.RepositoryMountPath}).HasBoundStandby(task)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		if rejoin {
+			sessionSubPath, err = memory.PrepareIncidentSession(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
+		} else {
+			sessionSubPath, err = memory.PrepareIncidentAPIAttempt(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
+		}
 		if err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare isolated responder session: %w", err)
 		}
 		environment["CODEX_HOME"] = "/sdo/session/codex"
 		environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
 		environment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
+		environment["SDO_RESPONDER_USAGE_DIR"] = "/sdo/session/usage"
 		environment[latefindings.ReceiptsPathEnv] = latefindings.DefaultReceiptsPath
 		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}
 		if err := store.Ensure(ctx, request.IncidentID); err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare logical late findings transport: %w", err)
 		}
 		lateConfigMap = latefindings.ConfigMapName(request.IncidentID)
+	}
+	executor := worker_registry.KubernetesExecutor{
+		APIProxyImage:  d.APIProxyImage,
+		ToolchainImage: d.ToolchainImage,
+		Client:         d.Client, Namespace: d.Namespace, Registry: d.Registry,
+		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
+		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
+		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,
+		CapturedCorpusReadOnly: d.RequireMemorySnapshot,
+		LateFindingsConfigMap:  lateConfigMap,
+		TaskPayload:            request.PreparedAgentTask,
+	}
+	// Last observation before any standby binding or cold worker publication.
+	// This covers prepared-task rejoin and controller verification follow-ups
+	// through the same recovery decision as the ordinary response stage.
+	recovery, recoveryErr := d.beforeFirstResponderClaim(ctx, request, task, loop)
+	if recoveryErr != nil {
+		return IncidentResult{}, recoveryErr
+	}
+	if recovery != nil {
+		request.PriorStages = recovery.PriorStages
+		request.Findings = recovery.Findings
+		if deterministicStageReport(recovery.PriorStages).GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
+			return automaticClaimResult(recovery)
+		}
+	}
+	if d.beforeClaim != nil {
+		d.beforeClaim()
+	}
+	if d.Standby != nil {
+		executor, err = d.Standby.TryBind(ctx, executor, task)
+		if err != nil {
+			return IncidentResult{}, fmt.Errorf("bind standby responder: %w", err)
+		}
 	}
 	if loop != nil && sessionSubPath != "" {
 		base := d.RepositoryPVCSubPath
@@ -279,58 +328,59 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		// Dispatch owns these goroutines: they write corpus captures and tool
 		// responses under the repository mount, so none may outlive it.
 		defer func() { stopTools(); tools.Wait() }()
-		server := SessionToolServer{Directory: directory, Handle: loop.Handle}
+		server := SessionToolServer{Directory: directory, Handle: func(toolCtx context.Context, toolRequest ToolRequest) ToolResponse {
+			received := lifecycleio.Now().UTC()
+			response := loop.Handle(toolCtx, toolRequest)
+			if toolRequest.Command == "session-open" && response.Error == "" {
+				if err := worker_registry.RecordSessionStartup(d.RepositoryMountPath, d.RepositoryPVCSubPath, sessionSubPath, received, lifecycleio.Now().UTC()); err != nil {
+					slog.Warn("responder_startup_session_record", "incident_id", request.IncidentID, "error", err)
+				}
+			}
+			return response
+		}}
 		if err := server.Prepare(); err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare responder tools: %w", err)
 		}
-		tools.Add(2)
+		tools.Add(1)
 		go func() { defer tools.Done(); _ = server.Serve(toolCtx) }()
-		go func() { defer tools.Done(); loop.RetryInitialDiagnose(toolCtx) }()
 		environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
+		environment["SDO_RESPONDER_SESSION"] = "1"
+		if loop.MenuConfig.valid() {
+			environment["SDO_MITIGATION_SESSION"] = "1"
+		}
 	}
-	executor := worker_registry.KubernetesExecutor{
-		ToolchainImage: d.ToolchainImage,
-		Client:         d.Client, Namespace: d.Namespace, Registry: d.Registry,
-		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
-		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
-		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,
-		CapturedCorpusReadOnly: d.RequireMemorySnapshot,
-		LateFindingsConfigMap:  lateConfigMap,
-		TaskPayload:            request.PreparedAgentTask,
-	}
-	agentResult, err := executor.Execute(ctx, task)
+
+	result, err := d.executeResponder(ctx, executor, task, loop, request)
 	if err != nil {
 		var failed *worker_registry.JobFailedError
 		if errors.As(err, &failed) {
-			return IncidentResult{}, &ResponderJobFailedError{JobName: failed.JobName}
+			result := IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: request.IncidentID, Status: IncidentFailed, Error: failed.Error()}
+			if loop != nil {
+				loop.locked(func() { result.ResponderSessionID = loop.menuSession.GetProviderSessionId() })
+			}
+			return result, &ResponderJobFailedError{JobName: failed.JobName, Cause: failed}
 		}
-		return IncidentResult{}, err
-	}
-	result, err := incidentResultFromAgent(agentResult, task, d.Registry)
-	if err != nil {
 		return IncidentResult{}, err
 	}
 	if loop != nil {
 		result.ProgramToolCalls = loop.ToolCalls()
 		result.ProgramRuns = loop.ProgramRuns()
 		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
-		result.PlanApplications = loop.PlanApplications()
-		result.RepairActions = ProgramRepairReceipts(result.PlanApplications, result.RepairActions)
+		result.PlanApplications = loop.ApplicationEvidence()
+		result.RepairActions = loop.ApplicationRepairReceipts(result.RepairActions)
 		if result.Status == IncidentCompleted {
 			loop.CreditEquivalentRepairs(ctx, result.RepairActions)
-			result.PlanApplications = loop.PlanApplications()
+			result.PlanApplications = loop.ApplicationEvidence()
 			result.ProgramToolCalls = loop.ToolCalls()
 			result.ProgramRuns = loop.ProgramRuns()
 			fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 		}
+		result.RepairActions = append(result.RepairActions, loop.MenuRepairActions()...)
 		result.ProgramFailureSignals = loop.FailureSignals()
-		result.ResponseLoopsUsed = loop.LoopsUsed()
+		attempts := loop.continuationAttempts()
+		result.ResponseLoopsUsed = attempts
 		result.ResolutionPath = "responder"
-		result.PriorStages = cloneStageReports(request.PriorStages)
-		result.FastPathPrograms = append([]string(nil), loop.fastPathPrograms...)
-		result.FastPathSkippedReason = loop.fastPathSkippedReason
-		result.FastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), loop.fastPathRelationCoveredFindings...)
-		result.ResponseLoopExhausted = loop.Exhausted()
+		result.ResponseLoopExhausted = result.ResponseLoopExhausted || (loop.Exhausted() && result.Status != IncidentCompleted)
 		if result.ResponseLoopExhausted {
 			result.Status = IncidentFailed
 			result.Error = "response loop budget exhausted with unresolved findings"
@@ -346,6 +396,9 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if err := validateIncidentResultFor(result, request); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate incident result: %w", err)
 	}
+	if recovery != nil {
+		result.automaticStages = cloneStageReports(recovery.PriorStages)
+	}
 	return result, nil
 }
 
@@ -353,9 +406,16 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 	if d.Outcomes == nil {
 		return nil, nil
 	}
-	stored, err := d.Outcomes.List(ctx)
+	stored, _, err := memory.ListOutcomes(ctx, d.Outcomes, "program trust")
 	if err != nil {
 		return nil, fmt.Errorf("read program trust outcomes: %w", err)
+	}
+	if d.AcceptedRepository != "" {
+		request.RepositoryWorktree = d.AcceptedRepository
+	}
+	stored, err = memory.AfterAdoption(ctx, request.RepositoryWorktree, stored)
+	if err != nil {
+		return nil, fmt.Errorf("read adoption learning boundary: %w", err)
 	}
 	records := make([]*contracts.OutcomeRecord, 0, len(stored))
 	for _, outcome := range stored {
@@ -363,47 +423,64 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 			records = append(records, outcome.Record)
 		}
 	}
-	evidence, err := memory.ReadProgramLearningEvidence(ctx, request.RepositoryWorktree, request.SourceCommit)
-	if err != nil {
-		return nil, err
-	}
-	for _, learned := range evidence {
-		originRevision, err := programDependencyRevision(ctx, request.RepositoryWorktree, learned.AcceptedCommit, learned.ProgramID)
-		if err != nil {
-			continue
-		}
-		currentRevision, err := programDependencyRevision(ctx, request.RepositoryWorktree, request.SourceCommit, learned.ProgramID)
-		if err != nil || currentRevision != originRevision {
-			continue
-		}
-		for index, record := range records {
-			if record.GetIncidentId() != learned.IncidentID || record.GetClassification() != "success" {
-				continue
-			}
-			alreadyRecorded := false
-			for _, run := range record.GetProgramRuns() {
-				alreadyRecorded = alreadyRecorded || run.GetProgramId() == learned.ProgramID
-			}
-			if alreadyRecorded {
-				continue
-			}
-			credited, err := d.learningReplayCredit(ctx, request, learned, originRevision, record)
-			if err != nil {
-				return nil, fmt.Errorf("read validated learning replay: %w", err)
-			}
-			if credited != nil {
-				records[index] = credited
-			}
+	stats := ProgramTrustStats(records)
+	if request.RepositoryWorktree != "" && gitRevision.MatchString(request.SourceCommit) {
+		if err := creditLearnedPrograms(ctx, request, records, stats); err != nil {
+			// Origin credit is optional. Keep ordinary settled trust when the
+			// extra Git evidence is unavailable; never invent origin credit.
+			slog.WarnContext(ctx, "optional program learning credit unavailable", "incident_id", request.IncidentID, "error", err)
 		}
 	}
-	return ProgramTrustStats(records, d.ProgramTrustThreshold), nil
+	return stats, nil
 }
 
 // ResponderJobFailedError preserves the controller's terminal dispatch signal.
-type ResponderJobFailedError struct{ JobName string }
+type ResponderJobFailedError struct {
+	JobName string
+	Cause   error
+}
 
 func (err *ResponderJobFailedError) Error() string {
+	if err.Cause != nil {
+		return fmt.Sprintf("responder Job %q failed: %v", err.JobName, err.Cause)
+	}
 	return fmt.Sprintf("responder Job %q failed", err.JobName)
 }
 
+func (err *ResponderJobFailedError) Unwrap() error { return err.Cause }
+
 func IncidentJobName(incidentID string) string { return worker_registry.JobName(incidentID) }
+
+func (d KubernetesJobDispatcher) reopenWithdrawnRecovery(ctx context.Context, request IncidentRequest, loop *ResponderLoop) error {
+	if loop.MutationGate == nil {
+		return nil
+	}
+	verified, err := loop.MutationGate.Verified()
+	if err != nil {
+		return fmt.Errorf("read recovery fence: %w", err)
+	}
+	if verified == nil {
+		return nil
+	}
+	if loop.IncidentStatus == nil || loop.CurrentEvidence == nil {
+		return errors.New("reopening recovery requires the controller's current incident evidence")
+	}
+	current := loop.CurrentEvidence()
+	if loop.IncidentStatus() != nil || current == nil || current.IncidentID != request.IncidentID {
+		return errors.New("recovery remains fenced by the controller")
+	}
+	if d.Client == nil {
+		return errors.New("reopening recovery requires independently observed responder quiescence")
+	}
+	work, err := d.IncidentWork(ctx, request.IncidentID)
+	if err != nil {
+		return fmt.Errorf("observe responder before reopening recovery: %w", err)
+	}
+	if work.Active {
+		return errors.New("responder work must be quiescent before reopening recovery")
+	}
+	if err := loop.MutationGate.Reopen(); err != nil {
+		return fmt.Errorf("reopen withdrawn recovery fence: %w", err)
+	}
+	return nil
+}

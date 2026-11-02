@@ -4,7 +4,6 @@ import (
 	"context"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/outcome_derivation"
@@ -28,14 +27,17 @@ func TestResponderFailedHealthSurvivesRestart(t *testing.T) {
 			loop.Executor.Now = func() time.Time { return time.Unix(1700000000, 0) }
 			dispatcher := KubernetesJobDispatcher{Client: kube, Namespace: "app"}
 			attachRecoveryStore(t, dispatcher, loop)
-			bindings := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}
+			bindings := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
 			first := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: bindings})
 			if first.Error != "" {
 				t.Fatal(first.Error)
 			}
 			applied := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{first.PlanID}})
-			if applied.Error == "" || !loop.PlanApplications()[0].RolledBack {
-				t.Fatalf("fixture did not fail verification and roll back: %+v", applied)
+			if applied.Error != "" || loop.PlanApplications()[0].Result.VerificationPassed {
+				t.Fatalf("fixture did not record a failed verification: %+v", applied)
+			}
+			if rolled := loop.Handle(ctx, ToolRequest{Command: "rollback", ApplicationID: applied.ApplicationID}); rolled.Error != "" || !loop.PlanApplications()[0].RolledBack {
+				t.Fatalf("responder rollback: %+v", rolled)
 			}
 			service, err := kube.CoreV1().Services("app").Get(ctx, "api", metav1.GetOptions{})
 			if err != nil || service.Spec.Ports[0].TargetPort != intstr.FromInt32(9999) {
@@ -61,27 +63,11 @@ func TestResponderFailedHealthSurvivesRestart(t *testing.T) {
 			}
 			got := ProgramTrustStats(outcomes)["service-targetport-mismatch"]
 			t.Logf("restart=%v applications=%d signals=%v loops=%d trust=%+v", restart, len(loop.PlanApplications()), loop.FailureSignals(), loop.LoopsUsed(), got)
-			if got.Trusted || got.VerifiedSuccesses != 0 || got.Failures != 1 {
+			if (got.VerifiedSuccesses > 0 && got.Failures == 0) || got.VerifiedSuccesses != 0 || got.Failures != 1 {
 				t.Fatalf("failed verification must survive a successful retry: %+v", got)
 			}
 		})
 	}
-}
-
-type verificationRollbackClient struct {
-	PlanObjectClient
-	patches        int
-	beforeRollback func() error
-}
-
-func (c *verificationRollbackClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
-	c.patches++
-	if c.patches == 2 {
-		if err := c.beforeRollback(); err != nil {
-			return err
-		}
-	}
-	return c.PlanObjectClient.Patch(ctx, ref, kind, patch)
 }
 
 func TestResponderVerificationFailureTrustIsRevisionBound(t *testing.T) {
@@ -91,17 +77,17 @@ func TestResponderVerificationFailureTrustIsRevisionBound(t *testing.T) {
 		{SourceCommit: "unrelated-source-commit", ProgramFailureSignals: []string{"application_verification_failure:targetport@revision-a"}},
 		verifiedTrustOutcome(t, "targetport", "revision-a"),
 	}
-	if got := ProgramTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures != 1 || got.LastChange != "revision-a" {
+	if got := ProgramTrustStats(outcomes)["targetport"]; (got.VerifiedSuccesses > 0 && got.Failures == 0) || got.Failures != 1 || got.LastChange != "revision-a" {
 		t.Fatalf("successful retry erased revision failure: %+v", got)
 	}
 	for range 3 {
 		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-b"))
 	}
-	if got := ProgramTrustStats(outcomes)["targetport"]; !got.Trusted || got.Failures != 0 || got.LastChange != "revision-b" {
+	if got := ProgramTrustStats(outcomes)["targetport"]; !(got.VerifiedSuccesses > 0 && got.Failures == 0) || got.Failures != 0 || got.LastChange != "revision-b" {
 		t.Fatalf("failure affected a different revision: %+v", got)
 	}
 	outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-a"))
-	if got := ProgramTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures != 1 || got.LastChange != "revision-a" {
+	if got := ProgramTrustStats(outcomes)["targetport"]; (got.VerifiedSuccesses > 0 && got.Failures == 0) || got.Failures != 1 || got.LastChange != "revision-a" {
 		t.Fatalf("reverting to the failed revision erased failure: %+v", got)
 	}
 }
@@ -114,8 +100,8 @@ func responderRetryOutcome(t *testing.T, loop *ResponderLoop) *contracts.Outcome
 	message, err := incidentResultContract(IncidentResult{
 		IncidentID: loop.Request.IncidentID, Status: IncidentCompleted,
 		ProgramRuns: runs, ProgramToolCalls: loop.ToolCalls(),
-		PlanApplications: loop.PlanApplications(), ProgramFailureSignals: loop.FailureSignals(),
-		RepairActions: ProgramRepairReceipts(loop.PlanApplications(), nil),
+		PlanApplications: loop.ApplicationEvidence(), ProgramFailureSignals: loop.FailureSignals(),
+		RepairActions: ProgramRepairReceipts(loop.ApplicationEvidence(), nil),
 		ConfirmedRootCauses: []ConfirmedRootCause{{
 			Summary: "wrong service target port", Resources: []sdk.ObjectRef{finding.PrimaryResource},
 			Evidence:           []RootCauseEvidence{{Kind: "detector-finding", Source: finding.DetectorID, Observation: finding.Evidence}},

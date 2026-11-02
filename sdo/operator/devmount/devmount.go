@@ -20,6 +20,7 @@ var benchmarkFiles = []string{
 	"benchmarks/sregym/fastloop/responder_script.py",
 	"benchmarks/sregym/fastloop/responder_steps.py",
 	"benchmarks/sregym/fastloop/reflection_script.py",
+	"benchmarks/sregym/fastloop/judge_script.py",
 	"benchmarks/sregym/agent_script/template.py",
 	"benchmarks/sregym/agent_script/model.py",
 	"benchmarks/sregym/agent_script/invocation.py",
@@ -55,6 +56,14 @@ func Apply(pod *corev1.PodSpec) {
 		Name:         "dev-operator",
 		VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath + "/.fastloop/sdo-operator", Type: &file}},
 	})
+	if os.Getenv("SDO_DEV_MODULE_DOWNLOADS") == "1" {
+		pod.Volumes = append(pod.Volumes, corev1.Volume{
+			Name: "dev-module-downloads",
+			VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{
+				Path: NodePath + "/.fastloop/go-mod-download", Type: &directory,
+			}},
+		})
+	}
 	for index := range pod.InitContainers {
 		mount(&pod.InitContainers[index])
 	}
@@ -64,7 +73,11 @@ func Apply(pod *corev1.PodSpec) {
 }
 
 func mount(container *corev1.Container) {
-
+	if os.Getenv("SDO_DEV_MODULE_DOWNLOADS") == "1" {
+		container.VolumeMounts = append(container.VolumeMounts,
+			corev1.VolumeMount{Name: "dev-module-downloads", MountPath: "/go/pkg/mod/cache/download", ReadOnly: true})
+		container.Env = append(container.Env, corev1.EnvVar{Name: "SDO_DEV_MODULE_DOWNLOADS", Value: "1"})
+	}
 	for _, name := range []string{"sdo", "libs", "examples"} {
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 			Name: "dev-" + name, MountPath: "/opt/sdo/" + name, ReadOnly: true,

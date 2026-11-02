@@ -7,14 +7,18 @@ import hashlib
 import json
 import shutil
 import subprocess
+import threading
 import time
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
+import pytest
 import yaml
 from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any as ProtoAny
@@ -29,13 +33,16 @@ from benchmarks.sregym.fastloop.composite import CompositeSettings
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
 from benchmarks.sregym.fastloop.records import load_records
+from benchmarks.sregym.faults.description import ProblemDescription
 from sdo.contracts import AgentResult, AgentTask, IncidentRequest, IncidentResult, to_canonical_json
 from tests.proto_messages import from_dict
 from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
 from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
+pytestmark = pytest.mark.go_integration
+
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Iterator
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURE_SEED = ROOT / "tests/fixtures/sdo/scripted_seed"
@@ -67,9 +74,9 @@ func main() {
 		panic(err)
 	}
 	view := &sdktest.ReplayReadView{Snapshot: snapshot}
-	bindings := program.Bindings{
-		"service": sdk.ObjectRef{Kind: "Service", Namespace: "hotel-reservation", Name: "geo"},
-	}
+	bindings := program.Bindings{Objects: program.ObjectBindings{
+		"service": sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "hotel-reservation", Name: "geo"},
+	}}
 	candidate := targetport.Program{}
 	verdict, err := candidate.Diagnose(context.Background(), view, bindings)
 	if err != nil {
@@ -86,13 +93,129 @@ func main() {
 	if !ok {
 		panic("expected SetField")
 	}
+	value, _, err := program.ResolveValue(action.Value, program.ValueInputs{
+        Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
+        for _, pod := range snapshot.Pods() {
+            if ref.Kind == "Pod" && pod.Namespace == ref.Namespace && pod.Name == ref.Name {
+                raw, err := json.Marshal(pod)
+                if err != nil { return nil, err }
+                var object map[string]any
+                err = json.Unmarshal(raw, &object)
+                return object, err
+            }
+        }
+        return nil, os.ErrNotExist
+        },
+    })
+    if err != nil { panic(err) }
 	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{
-		"result": verdict.Result, "path": action.Path, "value": action.Value,
+		"result": verdict.Result, "path": action.Path, "value": value,
 	}); err != nil {
 		panic(err)
 	}
 }
 """
+
+
+@pytest.fixture
+def control_api(tmp_path: Path) -> Iterator[SimpleNamespace]:
+    """A control namespace API holding prior-install leftovers that a non-toy row must not delete selectively."""
+    names = [
+        "sdo-namespace-onboarding",
+        "sdo-namespace-onboarding-pending",
+        "sdo-namespace-onboarding-attempt",
+        "sdo-namespace-onboarding-window",
+        "sdo-namespace-onboarding-rejected",
+        "sdo-controller-state",
+        "sdo-controller-maintenance",
+    ]
+    objects = {
+        name: {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": name,
+                "namespace": NAMESPACE + "-sdo",
+                "uid": "uid-" + name,
+                "resourceVersion": "1",
+                "labels": {"app.kubernetes.io/managed-by": "sdo"},
+            },
+            "data": {},
+        }
+        for name in names
+    }
+    deleted: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args: Any) -> None:
+            pass
+
+        def reply(self, status: int, value: dict[str, Any]) -> None:
+            raw = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self) -> None:
+            parts = urlsplit(self.path).path.split("/")
+            assert NAMESPACE + "-sdo" in parts, self.path
+            plural = parts[parts.index(NAMESPACE + "-sdo") + 1]
+            if plural == "configmaps":
+                name = parts[-1]
+                if name in objects:
+                    self.reply(200, objects[name])
+                else:
+                    self.reply(404, {"apiVersion": "v1", "kind": "Status", "reason": "NotFound", "code": 404})
+            else:
+                kinds = {
+                    "jobs": "JobList",
+                    "pods": "PodList",
+                    "services": "ServiceList",
+                    "networkpolicies": "NetworkPolicyList",
+                }
+                assert plural in kinds, self.path
+                self.reply(
+                    200,
+                    {
+                        "apiVersion": "/".join(parts[2:4]) if parts[1] == "apis" else "v1",
+                        "kind": kinds[plural],
+                        "items": [],
+                    },
+                )
+
+        def do_DELETE(self) -> None:
+            name = urlsplit(self.path).path.split("/")[-1]
+            assert name in objects, self.path
+            options = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            assert options["preconditions"] == {"uid": "uid-" + name, "resourceVersion": "1"}
+            objects.pop(name)
+            deleted.append(name)
+            self.reply(200, {"apiVersion": "v1", "kind": "Status", "status": "Success"})
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    kubeconfig = tmp_path / "control-kubeconfig"
+    kubeconfig.write_text(
+        json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "clusters": [{"name": "test", "cluster": {"server": f"http://127.0.0.1:{server.server_port}"}}],
+                "users": [{"name": "test", "user": {}}],
+                "contexts": [{"name": "test", "context": {"cluster": "test", "user": "test"}}],
+                "current-context": "test",
+            }
+        )
+    )
+    try:
+        yield SimpleNamespace(kubeconfig=kubeconfig, objects=objects, deleted=deleted, names=names)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def now() -> str:
@@ -118,11 +241,7 @@ class Application:
                     if item and item.get("kind") == kind and item.get("metadata", {}).get("name") == name
                 )
                 item.setdefault("metadata", {})["namespace"] = NAMESPACE
-                if kind == "Deployment" and name in {"rate", "search"}:
-                    item["spec"]["template"]["spec"]["containers"][0]["image"] = (
-                        "yinfangchen/hotelreservation@sha256:" + "a" * 64
-                    )
-                self.objects[kind, name] = item
+                self.apply(NAMESPACE, item)
         self.baseline = deepcopy(self.objects)
 
     def list_objects(self, _namespace: str) -> list[dict[str, Any]]:
@@ -132,7 +251,10 @@ class Application:
         ]
 
     def apply(self, _namespace: str, item: dict[str, Any]) -> None:
-        self.objects[item["kind"], item["metadata"]["name"]] = deepcopy(item)
+        stored = deepcopy(item)
+        stored.pop("status", None)
+        stored["metadata"].pop("generation", None)
+        self.objects[stored["kind"], stored["metadata"]["name"]] = stored
 
     def delete(self, _namespace: str, kind: str, name: str) -> None:
         self.objects.pop((kind, name), None)
@@ -165,6 +287,7 @@ class Application:
             {
                 "metadata": {
                     "name": f"{name}-pod",
+                    "resourceVersion": "hermetic-1",
                     "namespace": NAMESPACE,
                     "labels": service["spec"]["selector"],
                 },
@@ -175,10 +298,25 @@ class Application:
         return {"namespace": NAMESPACE, "services": services, "pods": pods}
 
 
+def test_fake_application_recovers_after_interrupted_responder() -> None:
+    """Restoring a captured live object must not retain server-owned status."""
+    from benchmarks.sregym.fastloop.baseline_recovery import reconcile_application
+
+    app = Application(FIXTURE_SEED)
+    baseline = ApplicationBaseline(NAMESPACE, app.list_objects(NAMESPACE))
+    app.objects["Deployment", "search"]["spec"]["template"]["spec"]["containers"][0]["image"] = "missing:tag"
+    app.objects["Service", "geo"]["spec"]["ports"][0]["targetPort"] = 9999
+    assert not app.healthy()
+    cleanup = reconcile_application(app, baseline, NAMESPACE)
+    assert set(cleanup.restored) == {"Deployment/search", "Service/geo"}
+    assert app.healthy()
+
+
 class Worker:
     def __init__(self, app: Application) -> None:
         self.app = app
         self.faults: list[tuple[str, str]] = []
+        self.rehearsed: list[str] = []
 
     def __enter__(self) -> Worker:
         return self
@@ -189,8 +327,14 @@ class Worker:
     def request(self, op: str, **kwargs: Any) -> dict[str, Any]:
         if op == "deploy":
             return {"deployed": True}
+        if op == "rehearse_oracles":
+            assert not self.faults
+            assert self.app.healthy()
+            self.rehearsed.append(str(kwargs["problem_id"]))
+            return {"success": True}
         if op == "inject":
             problem = str(kwargs["problem_id"])
+            assert problem in self.rehearsed
             name = component_for(problem)
             kind = "Service" if "target_port" in problem else "Deployment"
             if not kwargs.get("compose"):
@@ -216,7 +360,14 @@ class Worker:
                 "details": {"scope": "seed-baseline", "traffic_ok": self.app.healthy()},
             }
         if op == "recover":
-            return {"seconds": 0.001}
+            return {
+                "seconds": 0.001,
+                "protocol_version": 2,
+                "recovery_contract": "seed-compatible/v1",
+                "success": True,
+            }
+        if op == "refresh":
+            return {"protocol_version": 2, "recovery_contract": "seed-compatible/v1", "success": True}
         if op == "health":
             return {"healthy": self.app.healthy()}
         raise AssertionError(op)
@@ -234,6 +385,7 @@ class Controller(FakeOps):
         self.registrations: list[Path | None] = []
         self.sweep: Path | None = None
         self.sweep_result: dict[str, Any] | None = None
+        self.reflection_lock = threading.Lock()
 
     def install(self, config: Any) -> bool:
         self.registrations.append(config.agent_registrations)
@@ -252,7 +404,8 @@ class Controller(FakeOps):
         incident = f"incident-{self.incidents}"
         self.capture.mkdir(exist_ok=True)
         (self.capture / "open.json").write_text(json.dumps(self.app.snapshot()))
-        (self.capture / "open@pre-apply.json").write_text(json.dumps(self.app.snapshot()))
+        for phase in ("detect", "pre-apply"):
+            (self.capture / f"open@{phase}.json").write_text(json.dumps(self.app.snapshot()))
         self.commands.clear()
         self.program_runs_by_incident[incident] = []
         raw = json.loads((ROOT / "tests/fixtures/sdo/contracts/incident_request.json").read_text())
@@ -297,7 +450,8 @@ class Controller(FakeOps):
             assert source_image.endswith("a" * 64)
             assert image == source_image
         (self.capture / "fixed.json").write_text(json.dumps(self.app.snapshot()))
-        (self.capture / "open@pre-apply-recordings.json").write_text("[]\n")
+        for phase in ("detect", "pre-apply"):
+            (self.capture / f"open@{phase}-recordings.json").write_text("[]\n")
         data = json_format.MessageToDict(result, preserving_proto_field_name=True)
         self.results[incident] = data
         self.commands_by_incident[incident] = list(self.commands)
@@ -318,43 +472,70 @@ class Controller(FakeOps):
         return super().export_runtime_artifacts(config, directory)
 
     def _finish_reflection(self, control: str, incident: str) -> None:
-        if incident == "incident-1":
-            turn = scripts.Reflector().resume(
-                worktree=self.app.workspace,
-                incident_id=incident,
-                closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
-            )
-            assert turn.playbook_ids == [scripts.PROGRAM_ID]
-            directory = self.app.workspace / ".sdo/playbooks" / scripts.PROGRAM_ID
-            corpus = next((self.app.workspace / ".sdo/corpus").iterdir())
-            labels = json.loads((corpus / "labels.json").read_text())
-            assert labels["provenance"]["open_at"] == "pre-apply"
-            assert (
-                labels["provenance"]["open_sha256"] == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
-            )
-            assert (
-                labels["provenance"]["fixed_sha256"] == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
-            )
-            assert (corpus / "recordings.json").read_bytes() == (
-                self.capture / "open@pre-apply-recordings.json"
-            ).read_bytes()
-            subprocess.run(["git", "add", ".sdo/playbooks", ".sdo/corpus"], cwd=self.app.workspace, check=True)
-            subprocess.run(
-                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "reflection"],
-                cwd=self.app.workspace,
-                check=True,
-            )
-            self.sweep = self.capture.parent / "sweep"
-            source = self.sweep / "programsrc"
-            source.mkdir(parents=True)
-            for name in ("diagnose.go", "mitigate.go"):
-                shutil.copyfile(directory / name, source / name)
-            (self.sweep / "go.mod").write_text(
-                "module hermetic\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
-                f"replace sdo.dev/operator/sdk => {ROOT / 'sdo/operator/sdk'}\n"
-            )
-            (self.sweep / "main.go").write_text(SWEEP_MAIN)
-        super()._finish_reflection(control, incident)
+        # Telemetry and receipt polling share this fake. Only one observer may
+        # materialize/compile the learned program and acknowledge the closure.
+        with self.reflection_lock:
+            closure = self.states[control].get("pending_closure")
+            if not closure or closure["request"]["incident_id"] != incident:
+                return
+            if incident == "incident-1":
+                turn = scripts.Reflector().resume(
+                    worktree=self.app.workspace,
+                    incident_id=incident,
+                    closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
+                )
+                assert turn.playbook_ids == [scripts.PROGRAM_ID]
+                directory = self.app.workspace / ".sdo/playbooks" / scripts.PROGRAM_ID
+                corpus = next((self.app.workspace / ".sdo/corpus").iterdir())
+                labels = json.loads((corpus / "labels.json").read_text())
+                assert labels["provenance"]["open_at"] == "pre-apply"
+                assert (
+                    labels["provenance"]["open_sha256"]
+                    == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
+                )
+                assert (
+                    labels["provenance"]["fixed_sha256"]
+                    == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
+                )
+                assert (corpus / "recordings.json").read_bytes() == (
+                    self.capture / "open@pre-apply-recordings.json"
+                ).read_bytes()
+                subprocess.run(["git", "add", ".sdo/playbooks", ".sdo/corpus"], cwd=self.app.workspace, check=True)
+                subprocess.run(
+                    [
+                        "git",
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.invalid",
+                        "commit",
+                        "-qm",
+                        "reflection",
+                    ],
+                    cwd=self.app.workspace,
+                    check=True,
+                )
+                self.sweep = self.capture.parent / "sweep"
+                source = self.sweep / "programsrc"
+                source.mkdir(parents=True)
+                for name in ("diagnose.go", "mitigate.go"):
+                    shutil.copyfile(directory / name, source / name)
+                (self.sweep / "go.mod").write_text(
+                    "module hermetic\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
+                    f"replace sdo.dev/operator/sdk => {ROOT / 'sdo/operator/sdk'}\n"
+                )
+                (self.sweep / "main.go").write_text(SWEEP_MAIN)
+                # Compilation belongs to preparation, like the real builder. Keep
+                # host compiler scheduling outside the recurrence response window.
+                subprocess.run(
+                    ["go", "build", "-mod=mod", "-o", "diagnose", "."],
+                    cwd=self.sweep,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            super()._finish_reflection(control, incident)
 
     def tool(self, *args: str) -> dict[str, Any]:
         self.commands.append(args[0])
@@ -366,14 +547,14 @@ class Controller(FakeOps):
             if self.incidents == 2:
                 assert (self.app.workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go").is_file()
                 assert self.sweep is not None
-                snapshot = self.capture / "open@pre-apply.json"
+                snapshot = self.capture / "open@detect.json"
                 completed = subprocess.run(
-                    ["go", "run", "-mod=mod", ".", str(snapshot)],
+                    [str(self.sweep / "diagnose"), str(snapshot)],
                     cwd=self.sweep,
                     check=False,
                     capture_output=True,
                     text=True,
-                    timeout=90,
+                    timeout=10,
                 )
                 assert completed.returncode == 0, completed.stderr
                 self.sweep_result = json.loads(completed.stdout)
@@ -473,14 +654,39 @@ class Controller(FakeOps):
         ]
 
 
+def test_fake_controller_finishes_each_reflection_once() -> None:
+    """The telemetry sampler and receipt poller may observe the same closure."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    controller = Controller(Application(FIXTURE_SEED), FIXTURE_SEED)
+    control, incident = "hotel-reservation-sdo", "incident-2"
+    controller.states[control] = {"pending_closure": {"request": {"incident_id": incident}}}
+    controller.logs[control] = []
+    with ThreadPoolExecutor(max_workers=2) as readers:
+        list(readers.map(lambda _: controller._finish_reflection(control, incident), range(2)))
+    assert controller.events == [("reflected", incident)]
+    assert controller.states[control] == {"last_acknowledged_incident_id": incident}
+
+
 def test_scripted_fastloop_reuses_reflected_target_port_program(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, control_api: SimpleNamespace
 ) -> None:
     workspace = tmp_path / "application_workspace"
     shutil.copytree(FIXTURE_SEED, workspace)
+    for path in (workspace / "kubernetes").rglob("*.yaml"):
+        documents = list(yaml.safe_load_all(path.read_text()))
+        for item in documents:
+            if item and item.get("kind") == "Deployment" and item.get("metadata", {}).get("name") in {"rate", "search"}:
+                item["spec"]["template"]["spec"]["containers"][0]["image"] = (
+                    "yinfangchen/hotelreservation@sha256:" + "a" * 64
+                )
+        path.write_text(yaml.safe_dump_all(documents, sort_keys=False))
     diagnostics = workspace / ".sdo/diagnostics"
     diagnostics.mkdir(parents=True)
     (diagnostics / "manifest.yaml").write_text("detectors: []\n")
+    (diagnostics / "go.mod").write_text(
+        "module hermetic-diagnostics\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
+    )
     (workspace / ".sdo/lifecycle-provenance.yaml").write_text("{}\n")
     subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
     subprocess.run(["git", "add", "."], cwd=workspace, check=True)
@@ -489,6 +695,16 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         cwd=workspace,
         check=True,
     )
+    # Reproduce a loaded-host compiler stall deterministically. Diagnosis must
+    # execute the learned binary, never compile on the incident's hot path.
+    run = subprocess.run
+
+    def loaded_host_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if argv[0] == "go" and controller.incidents == 2 and kwargs.get("cwd") == controller.sweep:
+            raise subprocess.TimeoutExpired(argv, 90, stderr="injected compiler stall")
+        return run(argv, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", loaded_host_run)
     app = Application(workspace)
     worker = Worker(app)
     controller = Controller(app, tmp_path / "capture")
@@ -500,33 +716,168 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     FastloopEnvironment(
         run_dir=tmp_path,
         cluster="fake",
-        kubeconfig=tmp_path / "unused-kubeconfig",
+        kubeconfig=control_api.kubeconfig,
         namespace=NAMESPACE,
         application=NAMESPACE,
         workspace=workspace,
         sregym_dir=ROOT / "third_party/sregym",
         private_tmp=None,
     ).save()
+    # Model the newly required admission I/O from this simulated application's
+    # actual readiness and routing state. The pure production predicates still
+    # run; only the Kubernetes/prober subprocess boundaries are replaced.
+    from benchmarks.sregym.fastloop import admission, baseline_recovery, clean_start, rbac
+
+    traffic = workspace / ".sdo/diagnostics/traffic/workloads"
+    traffic.mkdir(parents=True)
+    (traffic / "health.yaml").write_text("purpose: health-probe\nscenarios:\n- id: frontend\n")
+    plan = rbac.installer_rbac(NAMESPACE)
+    grants = []
+    for key in ("ClusterRoles", "ClusterBindings"):
+        for original in plan[key]:
+            row = deepcopy(original)
+            row["kind"] = "ClusterRoleBinding" if key.endswith("Bindings") else "ClusterRole"
+            grants.append(row)
+
+    def admission_api(args, **_kwargs):
+        result = {"items": []}
+        if args[:2] == ["get", "clusterroles,clusterrolebindings"]:
+            result = {"items": grants}
+        elif args[:2] == ["get", "pod/sdo-prober"]:
+            result = {"status": {"podIP": "127.0.0.1"}}
+        elif args[:2] == ["get", "configmap/sdo-namespace-onboarding"]:
+            # The fake controller's install is already onboarded when admission starts.
+            record = {"acceptedCommit": "a" * 40, "objects": [{"kind": "Deployment"}]}
+            result = {"data": {"onboarding.json": json.dumps(record)}}
+        elif args[:2] in (
+            ["get", "configmap/sdo-namespace-onboarding-pending"],
+            ["get", "configmap/sdo-namespace-onboarding-rejected"],
+        ):
+            return SimpleNamespace(stdout="")
+        elif args[0] == "exec":
+            result = {
+                "windows": {
+                    "health": {
+                        "scenarios": [
+                            {
+                                "scenario": {"id": "frontend"},
+                                "qualified": app.healthy(),
+                                "samples": [{"success": app.healthy()}],
+                            }
+                        ]
+                    }
+                }
+            }
+        elif args[:2] == ["get", "deployments,statefulsets,daemonsets,pods"]:
+            objects = [row for row in app.list_objects(NAMESPACE) if row["kind"] == "Deployment"]
+            for pod in app.snapshot()["pods"]:
+                pod.update(
+                    kind="Pod",
+                    status={"conditions": [{"type": "Ready", "status": "True" if app.healthy() else "False"}]},
+                )
+                pod["metadata"]["uid"] = pod["metadata"]["name"]
+                objects.append(pod)
+            result = {"items": objects}
+        if args[:2] == ["get", "secrets"]:
+            return SimpleNamespace(stdout="")
+        if args[0] == "get" and "-o" in args and args[args.index("-o") + 1] == "name":
+            return SimpleNamespace(stdout="")
+        if args[0] == "api-resources":
+            return SimpleNamespace(stdout="")
+        return SimpleNamespace(stdout=json.dumps(result))
+
+    original_state = controller.runtime_state
+
+    def admission_state(control):
+        state = original_state(control)
+        state["history"] = [
+            {
+                "detector_id": key,
+                "status": "clear" if app.healthy() else "firing",
+                "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            for key in ("workload-health", "service-endpoints", "service-reachability", "traffic-health")
+        ]
+        return state
+
+    monkeypatch.setattr(controller, "runtime_state", admission_state)
+    from benchmarks.sregym.adapter import lane_resources
+
+    def resource_snapshot(kubeconfig, *, app_namespaces):
+        assert kubeconfig == control_api.kubeconfig
+        now = datetime.now(timezone.utc)
+        pods = deepcopy(app.snapshot()["pods"])
+        measurements = []
+        for pod in pods:
+            pod["metadata"]["uid"] = pod["metadata"]["name"]
+            pod["status"] = {
+                "containerStatuses": [
+                    {"name": row["name"], "state": {"running": {}}} for row in pod["spec"]["containers"]
+                ]
+            }
+            measurements.append(
+                {
+                    "podRef": {key: pod["metadata"][key] for key in ("namespace", "name", "uid")},
+                    "containers": [
+                        {"name": row["name"], "memory": {"time": now.isoformat(), "workingSetBytes": 1024**2}}
+                        for row in pod["spec"]["containers"]
+                    ],
+                }
+            )
+        return lane_resources.evaluate_lane_resources(
+            namespaces={"items": [{"metadata": {"name": NAMESPACE}}]},
+            pods={"items": pods},
+            summaries=[{"pods": measurements}],
+            app_namespaces=app_namespaces,
+            host_available_bytes=32 * 1024**3,
+            now=now,
+        )
+
+    monkeypatch.setattr(admission, "assert_lane_resources", resource_snapshot)
+    monkeypatch.setattr(
+        admission,
+        "assert_host_disk_headroom",
+        lambda: lane_resources.evaluate_host_disk(
+            mount="/simulated-kind-storage",
+            total_bytes=1000 * 1024**3,
+            free_bytes=200 * 1024**3,
+        ),
+    )
+    monkeypatch.setattr(admission, "kubectl", admission_api)
+    monkeypatch.setattr(clean_start, "kubectl", admission_api)
+    monkeypatch.setattr(rbac, "kubectl", admission_api)
     monkeypatch.setattr(cli, "_worker", lambda _environment: worker)
     monkeypatch.setattr(cli, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
     monkeypatch.setattr(cli, "_cluster_ops", lambda _args, _namespace: controller)
     monkeypatch.setattr(cli, "KubectlApplicationCluster", lambda _kubeconfig: app)
+    monkeypatch.setattr(baseline_recovery, "KubectlApplicationCluster", lambda _kubeconfig: app)
     monkeypatch.setattr(cli, "_composite_settings", lambda _args: CompositeSettings(20, 1, 0.001, 0.001))
     monkeypatch.setattr(
         adapter,
         "deployed_lifecycle",
         lambda _namespace: DeployedLifecycle(DeployedLifecycleContext("healthy", []), "seed"),
     )
-    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "unused-kubeconfig"))
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(control_api.kubeconfig))
     monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(driver, "_publish_agent_registrations", lambda *_args: None)
     monkeypatch.setattr(driver, "inspect_existing", lambda *_args: object())
 
     def install(config: object) -> object:
+        assert config.kubeconfig == control_api.kubeconfig
         assert config.deployed_manifest_paths == ("kubernetes",)
         return SimpleNamespace(reused=False, accepted_commit="a" * 40)
 
     monkeypatch.setattr(driver, "install_existing", install)
+    from benchmarks.sregym.adapter import native_operator
+
+    def synchronize(config):
+        # This fixture's broker writes the actual accepted Git repository in
+        # place. The transport edge needs no PVC copy, but must bind that repo.
+        assert config.repository.resolve() == workspace.resolve()
+        assert (config.repository / ".git").exists()
+
+    monkeypatch.setattr(native_operator, "sync_existing", synchronize)
+    monkeypatch.setattr(adapter, "sync_existing", synchronize)
     monkeypatch.setattr(
         adapter,
         "launch_native_lifecycle",
@@ -540,13 +891,14 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     monkeypatch.setattr(composite, "reader_for", lambda *_args: app.read)
     monkeypatch.setattr(
         fault_tracker,
-        "describe_sregym_faults",
+        "describe_sregym_problems",
         lambda ids, **_kwargs: {
-            problem: (
-                FaultSpec(
-                    "target_port" if "target_port" in problem else "incorrect_image",
-                    component_for(problem),
+            problem: ProblemDescription(
+                problem_id=problem,
+                faults=(
+                    FaultSpec("target_port" if "target_port" in problem else "incorrect_image", component_for(problem)),
                 ),
+                injection_order=(0,),
             )
             for problem in ids
         },
@@ -573,8 +925,6 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
                 str(STREAM),
                 "--diagnosis-grading",
                 "off",
-                "--time-scale",
-                "0.01",
                 "--health-timeout",
                 "2",
             ]
@@ -582,6 +932,10 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         == 0
     )
 
+    helper_proof = json.loads((tmp_path / "results/hermetic/admission/hotel-script-profile.json").read_text())
+    assert helper_proof == {"profile": "hotel-script-free/v1", "passed": True, "objects_checked": len(app.objects)}
+    planned = json.loads(STREAM.read_text())["incidents"]
+    assert worker.rehearsed == list(dict.fromkeys(problem for row in planned for problem in row))
     records = load_records(tmp_path / "results/hermetic/incidents.jsonl")
     with (tmp_path / "results/hermetic/incidents.csv").open(newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -591,7 +945,14 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     )
     assert all(row.error is None and row.injection_to_mitigation_seconds is not None for row in records)
     assert all("responder_tokens" in row and "reflection_tokens" in row for row in rows)
+    # Every scripted row is bound to the incident its own injection caused (INV1): no negative timings.
+    assert all(row.detected_at is None or row.detected_at >= row.injection_started_at for row in records)
+    assert all((row.injection_to_detection_seconds or 0) >= 0 for row in records)
+    assert all(row.driver_phase_timings_seconds["injection_to_verified_recovery"] > 0 for row in records)
     assert all(Path(str(row.artifacts_dir), "sdo_production_receipt_strict.json").is_file() for row in records)
+    # The row-start wipe (test_wipe.py) owns control-state removal; no selective reset runs on a non-toy lane.
+    assert control_api.deleted == []
+    assert set(control_api.objects) == set(control_api.names)
     assert controller.installs == 1
     assert controller.registrations == [REGISTRATIONS, REGISTRATIONS]
     assert records[0].run_prelude_phase_seconds["total_before_first_incident"] >= 0

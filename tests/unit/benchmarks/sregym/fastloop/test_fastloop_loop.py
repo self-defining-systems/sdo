@@ -2,15 +2,30 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from benchmarks.sregym.fastloop.baseline_recovery import RecoveryCleanup
-from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, LoopConfig, run_incidents
-from benchmarks.sregym.fastloop.records import DiagnosisGrade, OracleVerdict, TokenCounts, load_records
+from benchmarks.sregym.fastloop.loop import (
+    AgentOutcome,
+    InjectionWindow,
+    LoopConfig,
+    RecoveryWaitTimeout,
+    run_incidents,
+)
+from benchmarks.sregym.fastloop.records import (
+    DiagnosisGrade,
+    EvalNote,
+    OracleVerdict,
+    PostClosureWait,
+    TokenCounts,
+    load_records,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -94,12 +109,167 @@ class FakeAgent:
             sdo_resolution=self.resolution,
         )
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+        """This scripted agent has no background incident intake."""
+
     def close(self) -> None:
         self.events.append("close")
 
 
 def _config(tmp_path: Path, count: int, problems: tuple[str, ...] = ("p1",)) -> LoopConfig:
     return LoopConfig(run_id="run-1", problems=problems, incidents=count, results_path=tmp_path / "incidents.jsonl")
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_each_row_records_the_run_host_allocation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool) -> None:
+    monkeypatch.setenv("SDO_OPUS_POOL_MODE", "per_host")
+    monkeypatch.setenv("SDO_OPUS_POOL_HOST_ID", "chelan4")
+    monkeypatch.setenv("SDO_OPUS_MAX_SESSIONS", "4")
+    config = _config(tmp_path, 1)
+    clock = FakeClock()
+    records = run_incidents(
+        FakeAgent(clock, fail_on={0} if fail else set()), FakeDriver(clock), config, monotonic=clock.monotonic
+    )
+    row = json.loads(config.results_path.read_text())
+    assert row["opus_pool"] == {"mode": "per_host", "capacity": 4, "host_id": "chelan4"}
+    assert load_records(config.results_path)[0].opus_pool == records[0].opus_pool
+
+
+def test_rate_limited_agent_is_not_graded_and_cleanup_still_runs(tmp_path: Path) -> None:
+    from libs.agent_cli.errors import ProviderRateLimited
+
+    clock = FakeClock()
+    driver = FakeDriver(clock, oracle_success=False)
+
+    class LimitedAgent(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            inject()
+            raise ProviderRateLimited("provider retry budget exhausted", retryable=False)
+
+    records = run_incidents(LimitedAgent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    (record,) = records
+    assert record.infra_error == "rate_limited"
+    assert record.grade_status == "NOT-GRADED"
+    assert record.oracle is None
+    assert record.error is None
+    assert driver.events == ["inject:p1", "recover", "oracle"]
+    frozen = json.loads((tmp_path / "incidents.grades/000000.json").read_text())
+    assert frozen["not_graded_reason"] == "rate_limited"
+
+
+@pytest.mark.parametrize("phase", ["responder", "reflection"])
+def test_account_exhaustion_at_either_agent_phase_is_not_an_sdo_failure(tmp_path: Path, phase: str) -> None:
+    from libs.agent_cli.errors import AccountExhausted
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class ExhaustedAgent(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            if phase == "responder":
+                inject()
+                raise AccountExhausted("no healthy account", retryable=False)
+            return super().resolve(index, problem_id, inject)
+
+        def learn(self, outcome):
+            raise AccountExhausted("no healthy account", retryable=False)
+
+    (record,) = run_incidents(ExhaustedAgent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    assert record.grade_status == "NOT-GRADED"
+    assert record.not_graded_reason == "account_exhausted"
+    assert record.error is None
+    assert "recover" in driver.events
+
+
+@pytest.mark.parametrize(("oracle_success", "recover_fails"), [(False, False), (False, True), (True, False)])
+def test_grade_precedes_learning_and_cleanup_without_feedback(
+    tmp_path: Path, oracle_success: bool, recover_fails: bool
+) -> None:
+    from dataclasses import asdict
+
+    canary = "ORACLE_GRADER_PRIVATE_CANARY"
+    clock = FakeClock()
+    events: list[str] = []
+
+    class Driver(FakeDriver):
+        def oracle(self) -> OracleVerdict:
+            events.append("oracle")
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=oracle_success, details={"private": canary})
+
+        def recover(self) -> float:
+            events.append("cleanup")
+            return super().recover()
+
+    class Agent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            assert events == ["grade", "oracle"], "grading must finish before learning; cleanup must wait"
+            assert canary not in json.dumps(asdict(outcome), default=str)
+            events.append("learn")
+            return super().learn(outcome)
+
+    class Grader:
+        def grade(self, _problems: tuple[str, ...], _diagnosis: str) -> DiagnosisGrade:
+            events.append("grade")
+            return DiagnosisGrade(error=canary)
+
+    agent = Agent(clock)
+    run_incidents(
+        agent,
+        Driver(clock, oracle_success=oracle_success, recover_fails=recover_fails),
+        _config(tmp_path, 1),
+        monotonic=clock.monotonic,
+        sleep=clock.advance,
+        grader=Grader(),
+        diagnosis_grading="inline",
+    )
+    assert events[:3] == ["grade", "oracle", "learn"]
+    assert "learn:incident-0" in agent.events
+
+
+def test_repeated_cleanup_verifies_each_pass_before_next_incident(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+    driver.last_full_cleanup_verified = True
+    config = replace(_config(tmp_path, 2), cleanup_passes=2)
+
+    records = run_incidents(FakeAgent(clock), driver, config, monotonic=clock.monotonic)
+
+    assert driver.events == ["inject:p1", "oracle", "recover", "oracle", "recover", "oracle"] * 2
+    assert all(record.cleanup_passes_verified == 2 for record in records)
+    assert all(record.full_cleanup_verified for record in records)
+    assert all(record.fault_recovery_seconds == 20 for record in records)
+
+
+def test_second_cleanup_failure_stops_reuse_even_with_continue_on_error(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    class FailsOnRepeat(FakeDriver):
+        last_full_cleanup_verified = True
+
+        def recover(self) -> float:
+            if self.recovered:
+                self.last_full_cleanup_verified = False
+                raise RuntimeError("second client refresh failed")
+            return super().recover()
+
+    clock = FakeClock()
+    config = replace(_config(tmp_path, 2), cleanup_passes=2, continue_on_error=True)
+    records = run_incidents(FakeAgent(clock), FailsOnRepeat(clock), config, monotonic=clock.monotonic)
+
+    assert len(records) == 1
+    assert records[0].cleanup_passes_verified == 1
+    assert not records[0].full_cleanup_verified
+    assert records[0].recovery_error
+
+
+@pytest.mark.parametrize("passes", [0, 3, True, 1.0])
+def test_cleanup_passes_rejects_invalid_configuration(tmp_path: Path, passes: int) -> None:
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="cleanup_passes"):
+        replace(_config(tmp_path, 1), cleanup_passes=passes)
 
 
 def test_each_incident_is_graded_before_recovery_and_learning_follows_recovery(tmp_path: Path) -> None:
@@ -155,6 +325,64 @@ def test_incident_row_records_recovery_cleanup(tmp_path: Path) -> None:
 
     assert record.cleanup_deleted_counts == saved.cleanup_deleted_counts == {"Job": 1}
     assert record.cleanup_restored == saved.cleanup_restored == ["Deployment/mongodb-geo"]
+
+
+def test_incident_row_records_namespace_drift_and_inherited_confounds(tmp_path: Path) -> None:
+    clock = FakeClock()
+    drift = EvalNote(kind="app_namespace_inventory_drift", not_in_baseline=["NetworkPolicy/hotel-reservation/deny-all"])
+
+    class Driver(FakeDriver):
+        last_eval_notes = [drift]
+        last_confounds = [drift]
+
+    record = run_incidents(FakeAgent(clock), Driver(clock), _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    saved = load_records(tmp_path / "incidents.jsonl")[0]
+
+    assert record.error is None
+    assert record.recovery_error is None
+    assert record.eval_notes == saved.eval_notes == [drift]
+    assert record.confounds == saved.confounds == [drift]
+
+
+def _followup_wait(*, closed: bool) -> PostClosureWait:
+    return PostClosureWait(
+        graded_incident_id="incident-0",
+        followup_incident_ids=["incident-late"],
+        waited_seconds=42.0 if closed else 600.0,
+        bound_seconds=600.0,
+        closed=closed,
+    )
+
+
+def test_incident_row_records_the_wait_for_a_followup_incident(tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    class Agent(FakeAgent):
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
+            return _followup_wait(closed=True)
+
+    records = run_incidents(Agent(clock), FakeDriver(clock), _config(tmp_path, 2), monotonic=clock.monotonic)
+
+    assert len(records) == 2
+    assert records[0].recovery_error is None
+    assert records[0].post_closure_waits == [_followup_wait(closed=True)]
+    assert load_records(tmp_path / "incidents.jsonl")[0].post_closure_waits == records[0].post_closure_waits
+
+
+def test_a_followup_incident_that_outlives_the_wait_stops_the_row(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class Agent(FakeAgent):
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
+            raise RecoveryWaitTimeout(_followup_wait(closed=False), "incident-late stayed open")
+
+    records = run_incidents(Agent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic)
+
+    assert len(records) == 1
+    assert records[0].recovery_error == "fault recovery failed: RecoveryWaitTimeout: incident-late stayed open"
+    assert records[0].post_closure_waits == [_followup_wait(closed=False)]
+    assert "recover" not in driver.events
 
 
 def test_the_run_record_says_when_sdo_did_not_mitigate_the_incident(tmp_path: Path) -> None:
@@ -462,7 +690,7 @@ def test_terminal_closure_error_records_evidence_and_stops_stream(tmp_path: Path
     assert record.tool_commands == {"verify": 1}
     assert record.response_loops_used == 1
     assert "closure failed permanently" in (record.error or "")
-    assert agent.events == ["close"]
+    assert agent.events == ["learn:None", "close"]
 
 
 def test_recovery_residue_fails_the_record_and_stops_before_next_injection(tmp_path: Path) -> None:
@@ -474,10 +702,58 @@ def test_recovery_residue_fails_the_record_and_stops_before_next_injection(tmp_p
             return OracleVerdict(kind="sregym-mitigation-oracle", success=not self.recovered)
 
     driver = ResidualDriver(clock)
-    records = run_incidents(FakeAgent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic)
+    records = run_incidents(
+        FakeAgent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic, sleep=clock.advance
+    )
 
     assert len(records) == 1
     assert "recovery residue" in str(records[0].error)
+
+
+@dataclass
+class _SettlingDriver(FakeDriver):
+    """Recovery succeeded, but traffic only passes after ``settle_samples`` failing recovery samples."""
+
+    settle_samples: int = 0
+    recovery_samples: int = 0
+
+    def recovery_oracle(self) -> OracleVerdict:
+        self.recovery_samples += 1
+        self.clock.advance(5)
+        settled = self.recovered and self.recovery_samples > self.settle_samples
+        return OracleVerdict(kind="health-check", success=settled)
+
+
+def test_transient_traffic_loss_after_recovery_settles_and_is_not_residue(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = _SettlingDriver(clock, settle_samples=3)
+
+    [record] = run_incidents(
+        FakeAgent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic, sleep=clock.advance
+    )
+
+    assert record.recovery_error is None
+    assert record.recovery_oracle is not None
+    assert record.recovery_oracle.success
+    assert [sample.success for sample in record.recovery_oracle_samples] == [False, False, False, True]
+    assert record.recovery_oracle_samples[-1].seconds == pytest.approx(4 * 5 + 3 * 2)
+
+
+def test_residue_that_outlasts_the_settle_budget_still_fails_recovery(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = _SettlingDriver(clock, settle_samples=10_000)
+
+    [record] = run_incidents(
+        FakeAgent(clock),
+        driver,
+        replace(_config(tmp_path, 2), recovery_settle_seconds=60),
+        monotonic=clock.monotonic,
+        sleep=clock.advance,
+    )
+
+    assert "recovery residue" in (record.recovery_error or "")
+    assert not any(sample.success for sample in record.recovery_oracle_samples)
+    assert record.recovery_oracle_samples[-1].seconds >= 60
 
 
 def test_failed_injection_stops_before_another_fault_can_be_applied(tmp_path: Path) -> None:
@@ -493,7 +769,7 @@ def test_failed_injection_stops_before_another_fault_can_be_applied(tmp_path: Pa
     assert "injector did not return a window" in str(records[0].error)
 
 
-def test_composed_stream_injects_together_and_grades_each_fault(tmp_path: Path) -> None:
+def test_composed_stream_injects_together_and_uses_official_aggregate_oracle(tmp_path: Path) -> None:
     clock = FakeClock()
 
     class CompositeDriver(FakeDriver):
@@ -503,7 +779,7 @@ def test_composed_stream_injects_together_and_grades_each_fault(tmp_path: Path) 
 
         def oracle(self, *, fault: int | None = None) -> OracleVerdict:
             self.events.append(f"oracle:{fault}")
-            return OracleVerdict(kind="sregym-mitigation-oracle", success=fault == 0)
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=self.recovered)
 
     driver = CompositeDriver(clock)
     config = LoopConfig(
@@ -516,11 +792,49 @@ def test_composed_stream_injects_together_and_grades_each_fault(tmp_path: Path) 
 
     records = run_incidents(FakeAgent(clock), driver, config, monotonic=clock.monotonic)
 
-    assert driver.events[:3] == ["compose:a+b", "oracle:0", "oracle:1"]
+    assert driver.events[:3] == ["compose:a+b", "oracle:None", "recover"]
     assert records[0].problem_id == "a+b"
     assert records[0].oracle is not None
     assert records[0].oracle.success is False
     assert "oracle reported failure" in str(records[0].error)
+
+
+def test_failed_recovery_never_advances_even_with_continue_and_reset(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock, recover_fails=True)
+    resets = []
+    config = LoopConfig("cleanup", ("a", "b"), 2, tmp_path / "incidents.jsonl", continue_on_error=True)
+    records = run_incidents(FakeAgent(clock), driver, config, on_failed_incident=lambda: resets.append("reset"))
+    assert len(records) == 1
+    assert records[0].recovery_error
+    assert resets == []
+    assert driver.events.count("inject:a") == 1
+    assert "inject:b" not in driver.events
+
+
+def test_global_slot_offset_reaches_agent_records_and_first_slot_prelude(tmp_path: Path) -> None:
+    clock = FakeClock()
+    agent = FakeAgent(clock)
+    records = run_incidents(
+        agent,
+        FakeDriver(clock),
+        LoopConfig(
+            run_id="mixed",
+            problems=("a", "b"),
+            incidents=2,
+            results_path=tmp_path / "incidents.jsonl",
+            slot_offset=7,
+            run_prelude_phase_seconds={"worker_start": 1.0},
+        ),
+        monotonic=clock.monotonic,
+        now=lambda: T0,
+    )
+    assert [row.index for row in records] == [7, 8]
+    assert [row.problem_id for row in records] == ["a", "b"]
+    assert "resolve:7" in agent.events
+    assert "resolve:8" in agent.events
+    assert records[0].run_prelude_phase_seconds == {"worker_start": 1.0}
+    assert records[1].run_prelude_phase_seconds == {}
 
 
 def test_delivery_fallback_survives_failed_and_successful_incident_rows(tmp_path):
@@ -584,8 +898,6 @@ def test_continuity_learning_precedes_recovery_and_survives_row_export(tmp_path:
     events = []
 
     class ContinuousAgent(FakeAgent):
-        learn_before_recovery = True
-
         def learn(self, outcome: AgentOutcome) -> AgentOutcome:
             events.append("learn")
             checks, error = check_activations(trace(skip=failed), {"uid": "one"}, {"uid": "one"}, max_gap=1)
@@ -598,3 +910,326 @@ def test_continuity_learning_precedes_recovery_and_survives_row_export(tmp_path:
     assert loaded.memory_host_activations == records[0].memory_host_activations
     assert loaded.memory_host_activations[0].passed is not failed
     assert bool(loaded.error) is failed
+
+
+def test_grade_is_persisted_before_failed_reflection_and_never_changed(tmp_path: Path) -> None:
+    clock = FakeClock()
+    config = _config(tmp_path, 1)
+    saved = {}
+
+    class Agent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            grade_path = config.results_path.with_suffix(".grades") / "000000.json"
+            saved.update(json.loads(grade_path.read_text()))
+            assert saved["oracle"]["success"] is True
+            assert saved["graded_at"] == (T0 + timedelta(seconds=70)).isoformat().replace("+00:00", "Z")
+            assert saved["closure_to_grade_seconds"] == 5
+            assert saved["reflection_seconds"] is None
+            raise RuntimeError("reflection failed after grade")
+
+    records = run_incidents(
+        Agent(clock),
+        FakeDriver(clock),
+        config,
+        monotonic=clock.monotonic,
+        now=lambda: T0 + timedelta(seconds=70),
+    )
+    assert saved, "grading evidence must be durable before reflection"
+    assert records[0].oracle.success is True
+    assert "reflection failed" in records[0].error
+    assert json.loads((tmp_path / "incidents.grades/000000.json").read_text()) == saved
+
+
+def test_recovery_cannot_open_incidents_while_sdo_intake_is_live(tmp_path: Path) -> None:
+    clock = FakeClock()
+    state = {"closed": False, "intake_live": True}
+    unsolicited = []
+
+    class Agent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            learned = super().learn(outcome)
+            state["closed"] = True
+            return learned
+
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+            assert state["closed"], "recovery must wait for terminal closure"
+            state["intake_live"] = False
+
+    class Driver(FakeDriver):
+        def recover(self) -> float:
+            if state["intake_live"]:
+                unsolicited.append("cleanup opened an unsolicited incident")
+            assert state["closed"]
+            return super().recover()
+
+    records = run_incidents(
+        Agent(clock),
+        Driver(clock),
+        _config(tmp_path, 1),
+        monotonic=clock.monotonic,
+    )
+    assert not unsolicited
+    assert records[0].recovery_error is None
+
+
+def test_sdo_without_recovery_pause_cannot_mutate_the_cluster(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class Agent(FakeAgent):
+        prepare_recovery = None
+
+    records = run_incidents(Agent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    assert "recover" not in driver.events
+    assert records[0].recovery_error is not None
+
+
+def test_pre_injection_rbac_failure_never_synthesizes_an_injection(tmp_path: Path) -> None:
+    class SetupFailure(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            raise AssertionError("Responder effective RBAC differs from reviewed post-install reference")
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+    records = run_incidents(SetupFailure(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    row = json.loads((tmp_path / "incidents.jsonl").read_text())
+    assert driver.events == []
+    assert row["injection"] == {"state": "not_injected", "stage": "pre_injection"}
+    assert row["injection_started_at"] is None
+    assert row["injection_finished_at"] is None
+    assert records[0].injection_to_resolution_seconds is None
+    assert "RBAC" in row["error"]
+
+
+def test_agent_outcome_cannot_replace_the_worker_injection_event(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    class WrongClock(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            outcome = super().resolve(index, problem_id, inject)
+            return replace(
+                outcome,
+                injection=InjectionWindow(started_at=T0 + timedelta(days=1), finished_at=T0 + timedelta(days=1)),
+            )
+
+    clock = FakeClock()
+    record = run_incidents(WrongClock(clock), FakeDriver(clock), _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    assert record.injection_started_at == T0
+    assert record.injection_finished_at == T0 + timedelta(seconds=5)
+
+
+@pytest.mark.parametrize("with_event", [False, True])
+def test_injection_failure_keeps_only_recorded_worker_event(tmp_path: Path, with_event: bool) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class FailsInjection(FakeDriver):
+        last_injection_window = None
+
+        def inject(self, problem_id):
+            if with_event:
+                self.last_injection_window = super().inject(problem_id)
+            raise InvalidInjectionError({"reason": "synthetic injection failure"})
+
+    clock = FakeClock()
+    record = run_incidents(FakeAgent(clock), FailsInjection(clock), _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    assert record.infra_error == "injection_invalid"
+    if with_event:
+        assert record.injection.state == "injected"
+        assert record.injection_started_at == T0
+        assert record.injection_finished_at == T0 + timedelta(seconds=5)
+    else:
+        assert record.injection.model_dump() == {"state": "not_injected", "stage": "injection"}
+        assert record.injection_started_at is None
+
+
+def test_pre_injection_error_never_reuses_the_previous_incidents_event(tmp_path: Path) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class SetupFailure(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            raise InvalidInjectionError({"reason": "setup failed before injection"})
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+    driver.last_injection_window = InjectionWindow(started_at=T0, finished_at=T0)
+    record = run_incidents(SetupFailure(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    assert record.injection.model_dump() == {"state": "not_injected", "stage": "pre_injection"}
+    assert record.injection_started_at is None
+
+
+def test_an_incident_detected_before_the_injection_is_retried_not_graded(tmp_path: Path) -> None:
+    """INV1: a baseline incident from the admission proof must never be graded as this row's incident."""
+
+    class GradesBaselineIncident(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            outcome = super().resolve(index, problem_id, inject)
+            return replace(outcome, detected_at=T0 - timedelta(minutes=12))
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+    record = run_incidents(GradesBaselineIncident(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    assert record.infra_error == "incident_predates_injection"
+    assert record.oracle is None, "the row was graded"
+    assert record.detected_at is None
+    assert record.injection_to_detection_seconds is None
+    assert record.injection_evidence["incident_id"] == "incident-0"
+    assert "oracle" not in driver.events
+
+
+def test_a_record_cannot_carry_a_negative_injection_to_detection_time() -> None:
+    from pydantic import ValidationError
+
+    from benchmarks.sregym.fastloop.records import IncidentRecord, Injected
+
+    injected = Injected(started_at=T0, finished_at=T0 + timedelta(seconds=5))
+    base = {"run_id": "r", "index": 0, "agent": "sdo", "problem_id": "p", "model": "m", "injection": injected}
+    IncidentRecord(**base, detected_at=T0)
+    with pytest.raises(ValidationError, match="incident_predates_injection"):
+        IncidentRecord(**base, detected_at=T0 - timedelta(seconds=1))
+
+
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    started=st.integers(min_value=0, max_value=10_000),
+    detected=st.integers(min_value=-1_000, max_value=11_000),
+    mitigated=st.integers(min_value=-1_000, max_value=11_000),
+    resolved=st.integers(min_value=-1_000, max_value=11_000),
+)
+def test_every_derived_duration_is_nonnegative_or_the_row_is_rejected(started, detected, mitigated, resolved) -> None:
+    """Over generated timelines, a record either rejects the incident or has no negative injection-based time."""
+    from pydantic import ValidationError
+
+    from benchmarks.sregym.fastloop.records import IncidentRecord, Injected
+
+    def at(seconds: int) -> datetime:
+        return T0 + timedelta(seconds=seconds)
+
+    try:
+        record = IncidentRecord(
+            run_id="r",
+            index=0,
+            agent="sdo",
+            problem_id="p",
+            model="m",
+            injection=Injected(started_at=at(started), finished_at=at(started + 5)),
+            detected_at=at(detected),
+            mitigation_applied_at=at(max(mitigated, detected)),
+            resolved_at=at(max(resolved, mitigated, detected)),
+        )
+    except ValidationError:
+        assert detected < started
+        return
+    assert detected >= started
+    assert record.injection_to_detection_seconds >= 0
+    assert record.injection_to_resolution_seconds >= 0
+
+
+@pytest.mark.parametrize("recover_fails", [False, True])
+def test_closure_grade_precedes_resolution_export_and_skips_recovery(tmp_path: Path, recover_fails: bool) -> None:
+    from benchmarks.sregym.fastloop.wipe import AttemptMarker, unrecovered_rows
+
+    clock = FakeClock()
+    events: list[str] = []
+
+    class Agent(FakeAgent):
+        def resolve_at_closure(self, index, problem_id, inject, on_verified):
+            outcome = super().resolve(index, problem_id, inject)
+            on_verified()
+            events.append("export")
+            return outcome
+
+        def learn(self, outcome):
+            events.append("reflection")
+            return super().learn(outcome)
+
+    class Driver(FakeDriver):
+        def oracle(self):
+            events.append("grade")
+            return super().oracle()
+
+        def recover(self):
+            pytest.fail("graded rows must never wait on per-fault recovery")
+
+    records = run_incidents(
+        Agent(clock),
+        Driver(clock, recover_fails=recover_fails),
+        replace(_config(tmp_path, 1), row_start_tier2=True),
+        monotonic=clock.monotonic,
+    )
+    assert events == ["grade", "export", "reflection"]
+    row = records[0]
+    assert row.oracle is not None
+    assert row.oracle.success
+    assert row.error is None
+    assert row.cleanup_skipped_reason == "row_start_tier2"
+    marker = AttemptMarker(tmp_path)
+    marker.begin()
+    marker.end(unrecovered_rows(records))
+    from tests.unit.benchmarks.sregym.fastloop.test_wipe import faulted_lane, tier2
+
+    lane = faulted_lane()
+    receipt, deployed = tier2(lane, marker.pending())
+    assert receipt.tier2_ran
+    assert receipt.tier2_trigger == "previous_row_unrecovered"
+    assert receipt.tier2_namespaces == ("hotel-reservation",)
+    assert len(deployed) == 1
+    assert "hotel-reservation" not in deployed[0]
+    assert lane.contents["hotel-reservation"] == {"pvc/mongodb-geo", "pod/geo"}
+
+
+@pytest.mark.parametrize("failure", ["invalid", "interrupt"])
+def test_recreation_owns_cleanup_even_when_injection_or_agent_fails(tmp_path: Path, failure: str) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class FailedAgent(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            inject()
+            if failure == "invalid":
+                raise InvalidInjectionError({"reason": "partial injection"})
+            raise KeyboardInterrupt
+
+    config = replace(_config(tmp_path, 1), row_start_tier2=True)
+    if failure == "interrupt":
+        with pytest.raises(KeyboardInterrupt):
+            run_incidents(FailedAgent(clock), driver, config, monotonic=clock.monotonic)
+    else:
+        row = run_incidents(FailedAgent(clock), driver, config, monotonic=clock.monotonic)[0]
+        assert row.infra_error == "injection_invalid"
+        assert row.recovery_error is None
+        assert row.cleanup_skipped_reason == "row_start_tier2"
+    assert driver.events == ["inject:p1"]
+
+
+def test_typed_recovery_failure_survives_row_persistence_without_reinjection(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
+    from tests.unit.benchmarks.sregym.fastloop.test_fastloop_fault_driver import FakeWorker
+
+    class Worker(FakeWorker):
+        def request(self, op, **kwargs):
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"incident": 0, "component_index": 3, "status": "timeout", "error": "PRIVATE_CANARY"}],
+            }
+
+    class Driver(FakeDriver):
+        def recover(self) -> float:
+            return SregymFaultDriver(Worker(), namespace="hotel").recover()
+
+    clock = FakeClock()
+    config = replace(_config(tmp_path, 2), continue_on_error=True)
+    records = run_incidents(FakeAgent(clock), Driver(clock), config, monotonic=clock.monotonic)
+    assert len(records) == 1
+    (record,) = load_records(config.results_path)
+    assert [reason.model_dump() for reason in record.recovery_failures] == [
+        {
+            "incident_index": 0,
+            "component_index": 3,
+            "step": "recover",
+            "code": "timeout",
+        }
+    ]
+    assert "CANARY" not in config.results_path.read_text()

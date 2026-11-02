@@ -1,94 +1,99 @@
-# Direct program authoring
+# Program notes
 
-1. Create the final program directory with `sdo-operator program scaffold --fault-class <id> --param name=Kind [--mitigate] --out .sdo/playbooks/<id>`. Keep responder ownership and incident provenance in README front matter and register the logical ID in the playbook index.
-2. Implement `diagnose.go`, optional `mitigate.go`, and Go tests against `sdo.dev/operator/sdk/program`. Use bound resources and the ReadView for names, ports and images. Shared helpers live in the diagnostics module's `lib/` packages. Diagnose only reads; mitigation returns a typed plan. Consult the installed playbook-program example for the current SDK.
-3. Copy the selected controller open capture, fixed capture and phase-specific primitive recordings byte-for-byte from the read-only incident capture mount into a corpus directory as `open.json`, `fixed.json` and `recordings.json`. Use the fixed bytes for `healthy.json`. For investigated drift choose detect-time evidence; otherwise use the appropriate pre-mitigation phase.
-4. Author `labels.json` with `root_cause_program_ids`, `bindings`, `peer_bindings`, and `provenance` (`incident_id`, `open_at`, `open_sha256`, `fixed_sha256`). Bind a healthy same-kind peer from the fixed snapshot. Synthetic tightening cases use `no_match_program_ids` and `synthetic_no_match_reason`; they cannot replace captured positive evidence for a new program.
-5. Keep README prose to judgement and role placeholders. Do not persist shell commands or physical memory paths in authored content. Format changed Go files with gofmt.
-6. Run `sdo-operator memory check` and fix diagnostics in the same checkout until green. It checks source/import/library/README/corpus policy, provenance, compilation, vet, ordinary tests and generated open/fixed/healthy, rename and mitigation replay tests. Return a decision and changed logical playbook IDs; the broker independently checks the same final bytes.
+Facts behind the authoring steps. Signatures are on the [SDK card](sdk-card.md).
 
-There is no `program propose` command or scratch projection. A failed local check never authorizes publication.
+## Per-cause work
 
-## Keep source-restoration mitigators
+Go settles covered repairs before reflection; answer only the open questions in the per-cause work. A verified cause with no recorded repair on its own resources is recorded, and the other
+causes are still learned.
+<!-- replay:on -->
+A program that still matches the verified fixed capture needs refinement: Go keeps
+that capture as a NoMatch regression case (`CapturedFixedNoMatchPhase`), never a positive case.
+<!-- /replay:on -->
 
-Keep `mitigate.go` for image, readiness and ConfigMap restoration from accepted
-source. Never delete a mitigator merely because its effect cannot be simulated.
-The shared validator first validates its plan. A plan containing any effect other
-than `SetField` is accepted with an informational `skipped_unreplayable_effect`
-note; no post-plan effect is replayed for that plan. `SetField`-only plans still
-must repair the open fixture and return NoMatch on the projected state.
+A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
+fault class and originating incident. Preserve accepted provenance; SDO lists it in the generated playbook index.
+The authoring reference tool supplies the routing example.
 
-Diagnosis replay stays mandatory: open Match, fixed/healthy-peer NoMatch,
-generalization and rename invariance all still run. Missing diagnosis primitives
-remain Unknown; a mitigation skip cannot supply missing diagnosis evidence.
+## Bindings and values
 
-This minimal source-restoration pattern uses a source contradiction already
-established by the diagnosis. Narrow Match to the observed mechanism, such as a
-source image difference plus a selected Pod's ImagePullBackOff, or an incorrect
-readiness probe. Source/baseline differences used in diagnosis need recorded
-primitive answers in every required corpus phase.
+- `bindings.Objects[role]` holds resource identities; `bindings.Parameter(spec, name)` returns a scalar
+  parameter or its default. Required scalar parameters need a `Default` so findings can bind them. Diagnose
+  and Mitigate declare identical parameters. Two roles of one Kind never bind and are refused at save.
+- An emergency literal is a declared parameter the responder supplies and justifies.
+- Action fields use the compiled SDK contract. The shared memory check also rejects unknown parameter
+  names in documented built-in selections against the executor descriptor; object namespaces belong in
+  their typed references, not invented top-level parameters. Prefer typed executable steps over recipes.
 
-```go
-func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
-    verdict, err := p.Diagnose(ctx, v, b)
-    if err != nil || verdict.Result != program.Match { return program.Plan{}, err }
-    return program.Plan{Actions: []program.Action{
-        program.ReconcileFromSource{Ref: b["workload"]},
-    }}, nil
-}
-```
+## Source restoration
 
-Skipped replay proves no repair and earns no origin learning credit. When an
-incident opens, the controller applies a saved program itself if its diagnosis
-matches live, it has one entry point and every parameter binds from the
-findings; the agent then sees `prior_stages` and the findings that remain. Use a matching program's plan/apply tools
-when available. An ad-hoc repair can also earn a live credit when the controller
-has a pre-repair matching plan, successful receipts covering every planned
-resource, exact observed plan equivalence, a bound post-repair NoMatch and an
-independently successful outcome. Merely flipping Match to NoMatch is insufficient.
-The live executor's object/rollout checks still apply; a skipped replay does not
-authorize an unsupported mutation such as recreating a missing target.
+Choose playbooks by failure mechanism. Admission mutation, resource exhaustion and old-revision
+blockage need separate diagnoses and steps even on one Deployment; link them from findings and explain
+ordering in READMEs. Keep actions together only when one repair needs them. Unrelated unavailable reads
+must not turn a decidable source comparison into Unknown. Preserve earlier cases when refining variants.
+Judge a pending stage by its final receipt: a later verified settlement preserves the working step;
+a handoff snapshot alone does not justify rewriting it.
 
-## Routing: observe listeners before SetField repair
+- `SetField` restores one schema-checked field; named list selectors (`env[name=X]`) and ConfigMap
+  JSON/YAML entries (`DocumentFormat`, `DocumentPath`) preserve unrelated values. A missing final
+  `env[name=X]` entry is inserted.
+- `ReconcileFromSource` restores a whole source-owned object and removes reported additions;
+  `CreateFromSource` restores a named missing object. `DeleteObject` is irreversible; a delete-style Diagnose
+  matches on `diff.PresentButNotInSource()`, which turns false after the delete.
+- Diagnose on typed fields: `diff.ContainerChanges()` names each changed container by kind (init or
+  app) and name, and `diff.Field(path).Differs()` sees only fields source declares, never server
+  defaults. `diff.Text` is the whole document, so a substring matches any container; use it only as
+  Evidence. Memory check notes Text matching as `program.diff-text-match`; rewrite such programs.
+- A `dnsPolicy` repair does not remove an injected `dnsConfig`; remove that with a JSON patch.
 
-Declared container ports select probe candidates; they never prove a listener.
-For a numeric targetPort mismatch, require selected ready Pods with a successful
-recorded `ProbeTCP(pod, candidatePort)` and a refused
-`ProbeTCP(pod, faultyTargetPort)`. An unrecorded call or read error remains Unknown.
-A target that also accepts connections, an unready Pod, multiple candidate ports,
-or other ambiguity should remain Unknown or NeedsJudgement.
+## Stalled rollouts
 
-The controller records real TCP results even before a program exists, for finding
-Services and up to two healthy peers. It uses the phase snapshot's Pod IP through
-the read-only memory host. Sampling is limited to 24 probes, two Pods per Service, four
-backend ports per Pod, 200 ms per probe and two seconds per phase. Capped or
-unavailable observations are not negative evidence. Copy the phase recordings
-byte-for-byte, including fixed observations; choose a peer with recorded evidence.
+Mitigate may run again: while a rollout stays pending the runtime re-plans on fresh observations, at most
+three follow-ups, until a plan repeats. `StalledRolloutRelease` retires (`RetireOldRevision`) each old
+revision holding the place of a replacement that cannot be placed or created, selected by ownerReference
+and revision; it returns nothing otherwise. Scaling a current revision is refused (`replicaset_scale_refused`).
 
-The installed `service-targetport-mismatch` example now includes this diagnosis,
-its SetField mitigator, ready-Pod snapshots and phase-specific TCP recordings.
-Its narrow worked plan derives the replacement from the unique common declared
-port **after** confirming it accepts connections on all selected ready Pods:
+## Pods and commands
 
-```go
-func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
-    verdict, err := p.Diagnose(ctx, v, b) // positive listener + refused target TCP observations
-    if err != nil || verdict.Result != program.Match { return program.Plan{}, err }
-    _, _, port, ok := replacement(v, b) // same unique candidate verified by Diagnose
-    if !ok { return program.Plan{}, nil }
-    return program.Plan{Actions: []program.Action{program.SetField{
-        Ref: b["service"], Path: "spec.ports[0].targetPort", Value: port,
-        Reason: "use observed selected-Pod listener",
-    }}}, nil
-}
-```
+`DeletePod` checks UID/version; a terminating Pod counts as deleted and is never recreated on undo.
+`ScaleWorkload` verifies `spec.replicas`. `Exec` runs as the controller, reports only the exit code and
+earns no repair credit when refused. `RunScript` defaults to 60 s, at most 5 min; script and each output
+stream keep at most 64 KiB. Its bytes are checked against this program's linked receipts at plan time;
+unlinked bytes are refused as `script_unprovenanced`.
 
-SetField replay still requires post-plan NoMatch. For Service-targetPort-only edits,
-replay can retain already observed direct-Pod TCP inputs when the complete Pod
-snapshot is unchanged. It never reuses a Service probe as proof that routing was
-repaired, copies a fixed answer, or invents a successful connection. Other edits
-retain the ordinary no-external-observations post-plan policy.
+## Database catalogs
 
-Every SetField, ReconcileFromSource and Rollback compares credential channels in its pre-image and post-image, independently of path spelling. Repairs must not add or change a channel; existing channels permit unrelated repairs.
+`DatabaseUsers(DatabaseTarget)` reads nonsecret user names and direct roles of one MongoDB catalog on a
+bound Pod (`Shell` mongo or mongosh). `CredentialRef` is exactly one of `Env` or `ConfigMap{Name, Key,
+Assignment}` in the Pod's namespace; only the executor resolves it, through exec stdin.
+`EnsureDatabaseUser` creates a missing user or restores its exact direct roles, keeps existing passwords and
+other users, and is irreversible. Supply the complete desired role set: omitted direct roles are removed,
+so translating an additive grant must preserve the other accepted roles.
+<!-- replay:on -->
+Build replay from recorded open `DatabaseUsers` replies.
+<!-- /replay:on -->
+Add
+`RestartRollout` for a dependent Deployment when recovery needs a reconnect.
 
-Dropping explicit token automount denial adds the default credential channel. Compensation may restore channels from its exact captured pre-image, while refusing channels absent from that baseline.
+## Routing and Service ports
+
+Declared container ports choose probe candidates; they never prove a listener. A numeric `targetPort`
+repair needs successful TCP probes at the candidate port and refused probes at the faulty port on the
+selected ready Pods; anything ambiguous stays Unknown. `RemoveServicePort` removes exactly one port by
+name or by port and protocol; missing or ambiguous entries refuse, and the last port needs `AllowEmpty`.
+
+## Webhook trust
+
+Derive serving Secret references from `AdmissionWebhooksFor` on the failing Namespace or workload.
+Plan binding can complete missing `SyncWebhookCA` reference fields from one exact observed webhook and
+serving-key relation. Explicit fields stay fixed; missing or ambiguous relations require declared inputs.
+A whole-Secret mount does not identify its certificate key. Declare any needed scalar in `Spec` with a
+usable default or derive it from observations; never depend on undeclared values appearing in bindings.
+
+## Acceptance
+
+The broker repeats the memory check. Compilation, imports, changed-source formatting, ownership and
+receipt provenance are required.
+<!-- replay:on -->
+Replay outcomes, missing captures and detector coverage are information.
+<!-- /replay:on -->

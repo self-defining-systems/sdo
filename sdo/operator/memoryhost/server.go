@@ -38,6 +38,8 @@ type Server struct {
 	detectors   map[string]sdk.Detector
 	objects     map[string]*pb.MemoryObject
 	namespace   string
+	generic     ObjectSource
+	protected   string
 }
 
 func NewServer(commit, digest string, detectors []sdk.Detector) (*Server, error) {
@@ -198,7 +200,7 @@ func (s *Server) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*pb
 		if d == nil {
 			result.Error = "detector is not registered"
 		} else {
-			result.Findings, result.Error = detect(ctx, d, snapshot)
+			result.Findings, result.Error = detect(ctx, d, s.detectionView(snapshot))
 		}
 		response.Results = append(response.Results, result)
 	}
@@ -274,6 +276,20 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 		return err
 	}
 	snapshot.Alerts, err = decode[metrics.AlertsResult](o.Alerts)
+	if err != nil {
+		return err
+	}
+	scoped, err := decode[sdk.ScopedSnapshot](o.Scoped)
+	if err != nil {
+		return err
+	}
+	if scoped != nil {
+		snapshot.ScopedSnapshot = *scoped
+		if err = snapshot.ScopedSnapshot.ValidateObservation(); err != nil {
+			return err
+		}
+	}
+	snapshot.Admission, err = decode[sdk.PodAdmissionResult](o.PodAdmission)
 	if err != nil {
 		return err
 	}

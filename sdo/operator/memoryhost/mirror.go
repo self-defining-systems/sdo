@@ -216,13 +216,24 @@ type capturedHost struct {
 }
 
 func (h *capturedHost) Evaluate(ctx context.Context, r *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, h.manager.timeout)
 	defer cancel()
 	response, err := h.Host.Evaluate(ctx, r)
-	h.failure = err
+	h.record(caller, err)
 	return response, err
 }
+
+// record keeps a transport failure for eviction on release. A cancelled or expired
+// caller bounds its own call, not the lifetime of the host that was serving it.
+func (h *capturedHost) record(caller context.Context, err error) {
+	if err != nil && caller.Err() != nil {
+		return
+	}
+	h.failure = err
+}
 func (h *capturedHost) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, h.manager.timeout)
 	defer cancel()
 	host, ok := h.Host.(interface {
@@ -232,10 +243,11 @@ func (h *capturedHost) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb
 		return nil, errors.New("host lacks diagnosis")
 	}
 	response, err := host.Diagnose(ctx, r)
-	h.failure = err
+	h.record(caller, err)
 	return response, err
 }
 func (h *capturedHost) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.MitigateResponse, error) {
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, h.manager.timeout)
 	defer cancel()
 	host, ok := h.Host.(interface {
@@ -245,7 +257,7 @@ func (h *capturedHost) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb
 		return nil, errors.New("host lacks mitigation")
 	}
 	response, err := host.Mitigate(ctx, r)
-	h.failure = err
+	h.record(caller, err)
 	return response, err
 }
 

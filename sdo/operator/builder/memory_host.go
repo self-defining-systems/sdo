@@ -46,6 +46,7 @@ func main(){
  socket:=flag.String("socket","","Unix socket")
  commit:=flag.String("commit","","accepted memory commit")
  namespace:=flag.String("namespace","","application namespace")
+ protected:=flag.String("protected-namespace","","SDO control namespace refused by generic reads")
  synthetic:=flag.Bool("synthetic-traffic",true,"run accepted traffic")
  capBytes:=flag.Uint64("memory-bytes",512<<20,"memory cap")
  flag.Parse()
@@ -61,8 +62,10 @@ func main(){
  engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads});if err!=nil{log.Fatal(err)}
  trafficHost:=prober.NewHost(engine);defer trafficHost.Close()
  server.WithTraffic(trafficHost)
- reader,err:=core.NewKubernetesClient();if err!=nil{log.Fatal(err)}
- server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,reader),nil})
+ reader,restConfig,err:=core.NewKubernetesClientAndConfig();if err!=nil{log.Fatal(err)}
+ objects,err:=core.NewGenericCapture(*namespace);if err!=nil{log.Fatal(err)}
+ server.WithObjects(objects,*protected)
+ server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,hostio.ReadBackends{Client:reader,Config:restConfig,ProtectedNamespace:*protected}),nil})
  ctx,cancel:=signal.NotifyContext(context.Background(),syscall.SIGTERM,syscall.SIGINT);defer cancel()
  if err=hostio.Serve(ctx,*socket,*capBytes,server);err!=nil{log.Fatal(err)}
 }
@@ -79,7 +82,12 @@ func (workspace *Workspace) BuildMemoryHost(ctx context.Context) (MemoryHostArti
 		return MemoryHostArtifact{}, err
 	}
 	path := filepath.Join(workspace.Directory, "sdo-memory-host")
-	for _, args := range [][]string{{"mod", "tidy"}, {"test", "./..."}, {"build", "-trimpath", "-buildvcs=false", "-o", path, "./cmd/memory-host"}} {
+	stages := [][]string{{"mod", "tidy"}, {"test", "./..."}, {"build", "-trimpath", "-buildvcs=false", "-o", path, "./cmd/memory-host"}}
+	if workspace.compileOnly {
+		// An adopted build is unvalidated by design: compile, never execute tests.
+		stages = [][]string{{"mod", "tidy"}, lean("build", "-trimpath", "-buildvcs=false", "-o", path, "./cmd/memory-host")}
+	}
+	for _, args := range stages {
 		if err := workspace.runGo(ctx, args...); err != nil {
 			return MemoryHostArtifact{}, err
 		}

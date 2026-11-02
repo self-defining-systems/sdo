@@ -12,6 +12,7 @@ from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict
 from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,6 +47,40 @@ class FakeCluster:
         self.jobs.clear()
 
 
+# Install-owned and archived control-namespace records that survive a reset.
+DURABLE_CONTROL_CONFIGMAPS = (
+    "kube-root-ca.crt",
+    "sdo-agent-registrations",
+    "sdo-controller-maintenance",
+    "sdo-namespace-onboarding",
+    "sdo-late-0123456789abcdef0123",
+    "sdo-failed-closure-0123456789abcdef",
+)
+
+
+def worker_records(job: str) -> dict[str, dict[str, Any]]:
+    """Synthetic copies of the record shapes the Go worker executor writes."""
+    digest = {"annotations": {"sdo.dev/request-sha256": "0" * 64}}
+    return {
+        f"{job}-request": {"data": {"agent-task.json": "task"}},
+        f"{job}-result": {**digest, "data": {"agent-result.json": "result"}},
+        f"{job}-execution": digest,
+        "sdo-exec-" + "1" * 52: {
+            "labels": {"sdo.dev/incident-execution": "1", "app.kubernetes.io/managed-by": "sdo-operator"},
+            "data": {"execution.json": "{}"},
+        },
+    }
+
+
+def _split(configmaps: dict[str, dict[str, Any]]) -> list[tuple[str, tuple[dict[str, Any], dict[str, Any]]]]:
+    rows = []
+    for name, record in configmaps.items():
+        meta = {key: record[key] for key in ("labels", "annotations") if key in record}
+        data = {"data": record["data"]} if "data" in record else {}
+        rows.append((name, (meta, data)))
+    return rows
+
+
 class FakeWorker:
     calls: list[str]
 
@@ -70,9 +105,19 @@ def test_reset_restores_application_and_clears_controller_on_existing_environmen
         seed_commit="a" * 40,
     )
     environment.save()
+    commit_accepted_source(environment.workspace, namespace="hotel")
     baseline = ApplicationBaseline(
-        "hotel", [{"kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}, "spec": {"replicas": 1}}]
+        "hotel",
+        [
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": "app", "namespace": "hotel"},
+                "spec": {"replicas": 1},
+            }
+        ],
     )
+    commit_accepted_source(environment.workspace, baseline.objects)
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     cluster = FakeCluster()
 
@@ -83,7 +128,7 @@ def test_reset_restores_application_and_clears_controller_on_existing_environmen
     assert cluster.accepted_commit == environment.seed_commit
     assert cluster.sessions == cluster.jobs == []
     assert cluster.state == {}
-    assert worker.calls == ["health", "baseline_oracle"]
+    assert worker.calls == ["clean_start", "health", "baseline_oracle"]
 
 
 def test_reset_requires_a_captured_baseline_and_seed_commit(tmp_path: Path) -> None:
@@ -181,11 +226,51 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
     )
     baseline = ApplicationBaseline(
         "hotel",
-        [{"kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}, "spec": {"replicas": 1}}],
+        [
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": "app", "namespace": "hotel"},
+                "spec": {"replicas": 1},
+            }
+        ],
     )
+    commit_accepted_source(environment.workspace, baseline.objects)
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     cluster = FakeCluster()
     monkeypatch.setattr(reset, "KubectlResetCluster", lambda *_args: cluster)
+    # This callback exercises the full CLI restore shell around the fake app.
+    # Expose its actual ready workload through the Kubernetes read boundary.
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import admission, baseline_recovery, clean_start
+
+    document = json.loads(environment.baseline_path.read_text())
+    document.update(mutating_webhook_configs=[], validating_webhook_configs=[])
+    environment.baseline_path.write_text(json.dumps(document))
+
+    def api(args, **_kwargs):
+        objects = []
+        if args[:2] in (["get", "deployments,replicasets"], ["get", "deployments,statefulsets,daemonsets,pods"]):
+            for original in cluster.objects:
+                value = json.loads(json.dumps(original))
+                value["metadata"].update(uid="app-uid", generation=1)
+                value["spec"]["selector"] = {"matchLabels": {"app": "app"}}
+                value["status"] = {"observedGeneration": 1, "replicas": 1, "updatedReplicas": 1, "readyReplicas": 1}
+                objects.append(value)
+            objects.append(
+                {
+                    "kind": "Pod",
+                    "metadata": {"name": "app-pod", "uid": "app-pod-uid", "labels": {"app": "app"}},
+                    "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+                }
+            )
+        return SimpleNamespace(stdout=json.dumps({"items": objects}), returncode=0, stderr="")
+
+    monkeypatch.setattr(reset, "kubectl", api)
+    monkeypatch.setattr(admission, "kubectl", api)
+    monkeypatch.setattr(baseline_recovery, "kubectl", api)
+    monkeypatch.setattr(clean_start, "kubectl", api)
     now = datetime(2026, 10, 21, tzinfo=timezone.utc)
     accepted_commit = ""
 
@@ -218,6 +303,9 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
             if outcome.incident_id == "incident-1":
                 raise RuntimeError("learning failed")
             return outcome
+
+        def prepare_recovery(self, outcome: AgentOutcome | None) -> None:
+            """This scripted agent has no background controller."""
 
         def close(self) -> None:
             pass
@@ -337,9 +425,10 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
     unrelated = workspace / "credentials/opaque"
     unrelated.parent.mkdir(parents=True)
     unrelated.write_bytes(b"synthetic-do-not-touch")
-    historical = {"sdo-prior-request": "evidence", "sdo-prior-result": "evidence"}
+    durable = {name: {} for name in DURABLE_CONTROL_CONFIGMAPS}
     transient = {"sdo-controller-state", "sdo-controller-state-drift-verdicts"}
-    configmaps = {**historical, **dict.fromkeys(transient, "pending")}
+    configmaps = {**durable, **dict.fromkeys(transient, {}), **worker_records("sdo-health-refresh-prior")}
+    before_reset = set(configmaps)
     state: dict[str, Any] = {"incident_open": True, "incident_request": {"incident_id": "prior"}}
     stopped = False
     fail_stop = stop_fails_once
@@ -381,6 +470,9 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
         if args[:3] == ["delete", "pod", "orphan-controller"]:
             assert "--wait=true" in args
             orphan_stopped.append(True)
+        if args[:3] == ["get", "configmaps", "-o"]:
+            items = [{"metadata": {"name": name, **meta}} | data for name, (meta, data) in _split(configmaps)]
+            return subprocess.CompletedProcess(args, 0, json.dumps({"items": items}), "")
         if args[:3] == ["delete", "configmap", "sdo-controller-state"]:
             assert stopped, "reset retired state while a controller could recreate it"
             assert not orphan_phase or orphan_stopped, "orphan controller still running"
@@ -401,7 +493,7 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
         with pytest.raises(RuntimeError, match="synthetic writer stop failed"):
             cluster.reset_controller(seed, preserve_repository=preserve)
         assert state["incident_open"] is True
-        assert set(configmaps) == set(historical) | transient
+        assert set(configmaps) == before_reset
         assert ledger.read_bytes() == ledger_bytes
         assert proposal.exists()
         assert session.exists()
@@ -417,8 +509,208 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
         assert not ledger.exists()
         assert not session.exists()
     assert state == {}, "next controller would resume an expired prior incident"
-    assert configmaps == historical, "reset must retire transient drift cache and retain historical evidence"
+    assert set(configmaps) == set(durable), (
+        "reset must retire controller state and every worker execution, request and result record "
+        "while keeping install-owned and archived records"
+    )
     assert unrelated.read_bytes() == b"synthetic-do-not-touch"
     if has_job or orphan_phase:
         assert not proposal.exists(), "proposal checkout must not survive a completed reset"
         assert not session.exists(), "session scratch must not survive a completed reset"
+
+
+def test_restore_finishes_recovery_mutations_before_ready_snapshot(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop.baseline_recovery import save_application_baseline
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fake",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    commit_accepted_source(environment.workspace, namespace="hotel")
+    environment.baseline_path.write_text("{}")
+    save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", FakeCluster().objects),))
+    events = []
+    oracle_calls = 0
+
+    def request(op, **kwargs):
+        nonlocal oracle_calls
+        events.append(op)
+        if op == "health":
+            return {"healthy": True}
+        if op == "baseline_oracle":
+            oracle_calls += 1
+            return {"success": oracle_calls > 1}
+        return {"success": True}
+
+    checks = SimpleNamespace(
+        settle=lambda: None, ready=lambda: events.append("ready"), complete=lambda: events.append("complete")
+    )
+    reset.restore_application(environment, FakeCluster(), SimpleNamespace(request=request), checks=checks)
+    assert events[-2:] == ["ready", "complete"]
+    assert events.count("baseline_oracle") == 2
+
+
+def test_restore_rejects_ambiguous_accepted_source_before_any_application_mutation(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import save_application_baseline
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fake",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    environment.baseline_path.write_text("{}")
+    save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", FakeCluster().objects),))
+    app = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}}
+    commit_accepted_source(environment.workspace, [app, app])
+    worker = FakeWorker()
+    with pytest.raises(ValueError, match="duplicate accepted manifest"):
+        reset.restore_application(environment, FakeCluster(), worker)
+    assert worker.calls == []
+
+
+@pytest.mark.parametrize("operation", ["reset", "restore"])
+def test_recovery_never_mutates_while_native_reflection_is_pending(tmp_path: Path, operation: str) -> None:
+    from datetime import datetime, timezone
+
+    from benchmarks.sregym.adapter.persistent import ControllerRecord, PendingIncident, PersistentState
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+        seed_commit="a" * 40,
+    )
+    environment.save()
+    commit_accepted_source(environment.workspace, namespace="hotel")
+    baseline = ApplicationBaseline(
+        "hotel",
+        [
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": "app", "namespace": "hotel"},
+                "spec": {"replicas": 1},
+            }
+        ],
+    )
+    commit_accepted_source(environment.workspace, baseline.objects)
+    environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
+    record = ControllerRecord(
+        application="hotel",
+        namespace="hotel",
+        control_namespace="hotel-sdo",
+        lifecycle_fingerprint="f",
+        controller_pod_uid="uid",
+        controller_pod_name="controller",
+        installed_by_stage="test",
+        installed_at=datetime.now(timezone.utc),
+        runtime_config={},
+        pending=PendingIncident(
+            incident_id="i1",
+            stage_label="test",
+            receipt_dir=tmp_path,
+            repository=environment.workspace,
+            verified_at=datetime.now(timezone.utc),
+            stage_receipt={},
+        ),
+    )
+    state = PersistentState(controllers={"hotel": record})
+    state.save(environment.state_path)
+    cluster, worker = FakeCluster(), FakeWorker()
+    invoke = reset_environment if operation == "reset" else reset.restore_application
+    with pytest.raises(RuntimeError, match="durable terminal reflection"):
+        invoke(environment, cluster, worker)
+    assert cluster.accepted_commit == "changed"
+    assert cluster.sessions == ["old-session"]
+    assert worker.calls == []
+
+    # The native learning edge clears pending only after its durable finalization.
+    record.pending = None
+    state.save(environment.state_path)
+    invoke(environment, cluster, worker)
+    assert worker.calls == ["clean_start", "health", "baseline_oracle"]
+
+
+def test_restore_receipt_names_only_accepted_objects_and_never_recreates_capture_extras(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import RESTORE_RECEIPTS, save_application_baseline
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fake",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    alias = {
+        "kind": "Service",
+        "metadata": {"name": "jaeger-agent", "namespace": "hotel"},
+        "spec": {"type": "ExternalName", "externalName": "otel-collector.observe.svc.cluster.local"},
+    }
+    extra = {"kind": "ConfigMap", "metadata": {"name": "extra", "namespace": "hotel"}, "data": {"a": "b"}}
+    app = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "app", "namespace": "hotel"},
+        "spec": {"replicas": 1},
+    }
+    environment.baseline_path.write_text("{}")
+    save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", [app, alias, extra]),))
+    commit_accepted_source(environment.workspace, [app])
+    cluster = FakeCluster()  # only Deployment/app (replicas 0): the alias and ConfigMap are absent
+
+    reset.restore_application(environment, cluster, FakeWorker())
+
+    receipts = [json.loads(line) for line in (tmp_path / RESTORE_RECEIPTS).read_text().splitlines()]
+    assert receipts[0]["reapplied"] == [
+        {"kind": "Deployment", "namespace": "hotel", "name": "app", "recreated": False, "harness_owned": False},
+    ]
+    assert receipts[0]["warnings"] == []
+    assert "restore_recreated_undeclared_object" not in caplog.text
+
+
+def test_reset_worker_record_predicate_tracks_every_go_worker_record_kind() -> None:
+    """Ratchet: a new or renamed worker record kind must also be retired by reset."""
+    import re
+    from pathlib import Path
+
+    registry = Path(__file__).resolve().parents[5] / "sdo/operator/worker_registry"
+    sources = {path.name: path.read_text() for path in registry.glob("*.go") if not path.name.endswith("_test.go")}
+    joined = "\n".join(sources.values())
+    for constant in ("TaskDataKey", "ResultDataKey"):
+        value = re.search(rf'\b{constant}\s*=\s*"([^"]+)"', joined)
+        assert value, constant
+        assert value.group(1) in reset.WORKER_RECORD_DATA_KEYS, constant
+    assert f'requestDigestAnnotation = "{reset.WORKER_RECORD_ANNOTATION}"' in joined
+    assert f'incidentExecutionLabel = "{reset.WORKER_RECORD_LABEL}"' in joined
+    constructors = sorted(name for name, text in sources.items() for _ in re.finditer(r"&corev1\.ConfigMap\{", text))
+    assert constructors == ["incident_identity.go", "kubernetes.go", "kubernetes_vanished.go"], (
+        "a new worker ConfigMap kind needs a marker that reset.is_worker_record retires"
+    )
+    for record in worker_records("sdo-task-x").values():
+        metadata = {key: record[key] for key in ("labels", "annotations") if key in record}
+        assert reset.is_worker_record({"metadata": metadata, **({"data": record["data"]} if "data" in record else {})})
+    for name in DURABLE_CONTROL_CONFIGMAPS:
+        assert not reset.is_worker_record({"metadata": {"name": name}, "data": {"state": "{}"}})

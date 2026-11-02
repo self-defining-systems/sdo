@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kclock "k8s.io/utils/clock"
 	"sort"
 	"sync"
@@ -291,6 +292,8 @@ type TrafficSnapshotProvider struct {
 	Base         SnapshotProvider
 	Observer     *TrafficObserver
 	Reachability *ServiceReachabilityObserver
+	// Reference is this cluster's reachability baseline; nil means no record.
+	Reference *ReachabilityReference
 }
 
 func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -305,6 +308,7 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	var reachability *servicehealth.ReachabilityWindow
 	if p.Reachability != nil {
 		window, _ := p.Reachability.Window()
+		p.Reference.bind(&window)
 		reachability = &window
 	}
 	carrier := inputs.New(base)
@@ -314,7 +318,12 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	if reachability != nil {
 		carrier = carrier.WithReachability(reachabilityWindow{reachability})
 	}
-	return carrier, nil
+	return trafficContext{Carrier: carrier}, nil
+}
+
+// trafficContext is the carrier with synthetic-traffic and reachability windows.
+type trafficContext struct {
+	inputs.Carrier
 }
 
 type trafficWindows map[string]traffic.Window
@@ -327,4 +336,18 @@ type reachabilityWindow struct {
 
 func (w reachabilityWindow) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
 	return *w.window, true
+}
+
+func (v trafficContext) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectCaptureSource); ok {
+		return source.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(v.DetectionContext), nil
+}
+
+func (v trafficContext) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {
+		return source.Object(ref)
+	}
+	return sdk.FindObject(sdk.TypedObjects(v.DetectionContext), ref)
 }

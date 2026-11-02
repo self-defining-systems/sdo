@@ -6,7 +6,7 @@ import (
 )
 
 func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
-	args := []string{"controller", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--application", "demo", "--responder-image", "responder:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--response-timeout", "60s", "--verification-timeout", "120s", "--repair-policy", "recorded-actions", "--model", "model", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--force-reflection", "--healthy-baseline", "--max-follow-ups", "2", "--max-response-loops", "3", "--follow-up-cooldown", "25s", "--deployed-manifest-path", "kubernetes", "--program-fast-path", "--program-trust-threshold", "4", "--drift-tokens-per-hour", "250000", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
+	args := []string{"controller", "--toolchain-image", "controller:compiler", "--app", "/workspace/application", "--namespace", "demo", "--application", "demo", "--responder-image", "responder:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--response-timeout", "60s", "--verification-timeout", "120s", "--repair-policy", "recorded-actions", "--model", "model", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--force-reflection", "--healthy-baseline", "--max-response-loops", "3", "--deployed-manifest-path", "kubernetes", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
 	config, err := ParseControllerLaunch(args)
 	if err != nil {
 		t.Fatal(err)
@@ -15,11 +15,12 @@ func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
 	if _, err := ParseControllerLaunch(append(append([]string(nil), args...), "--memory-host")); err == nil {
 		t.Fatal("removed memory-host flag accepted")
 	}
-	configured, configErr := ParseControllerLaunch(append(append([]string(nil), args...), "--program-min-duration", "3s"))
-	if configErr != nil || configured.Controller.GetProgramMinDuration().AsDuration().Seconds() != 3 {
-		t.Fatalf("program persistence did not reach the typed launch: %v", configErr)
+	for _, flag := range []string{"--program-min-duration", "--drift-sweep-interval"} {
+		if _, err := ParseControllerLaunch(append(append([]string(nil), args...), flag, "3s")); err == nil {
+			t.Fatalf("retired proactive flag accepted: %s", flag)
+		}
 	}
-	if launch.GetBrokerMode() != "native" || launch.GetWorkerMountMode() != "proposal-only" || launch.GetResponderModel() != "model" || launch.GetAppRoot() != "/workspace/application" || launch.GetReflectionSession() != "resume" || launch.GetReflectionGuidance() != "generalize-spec" || !launch.GetForceReflection() || !launch.GetHealthyBaseline() || launch.GetMaxFollowUps() != 2 || launch.GetMaxResponseLoops() != 3 || !launch.GetProgramFastPath() || launch.GetProgramTrustThreshold() != 4 || launch.GetDriftTokensPerHour() != 250000 || launch.GetFollowUpCooldown().AsDuration().Seconds() != 25 || len(launch.GetDeployedManifestPaths()) != 1 || launch.GetDeployedManifestPaths()[0] != "kubernetes" {
+	if launch.GetBrokerMode() != "native" || launch.GetWorkerMountMode() != "proposal-only" || launch.GetResponderModel() != "model" || launch.GetAppRoot() != "/workspace/application" || launch.GetReflectionSession() != "resume" || launch.GetReflectionGuidance() != "generalize-spec" || !launch.GetForceReflection() || !launch.GetHealthyBaseline() || launch.GetMaxResponseLoops() != 3 || len(launch.GetDeployedManifestPaths()) != 1 || launch.GetDeployedManifestPaths()[0] != "kubernetes" {
 		t.Fatalf("native mode lost at typed child boundary: %+v", launch)
 	}
 	for index, arg := range args {
@@ -42,11 +43,6 @@ func TestBoundedNativeControllerLaunch(t *testing.T) {
 	if err != nil || config.Controller.GetDuration().AsDuration().Seconds() != 30 || !config.Controller.GetExitAfterClosure() || config.Controller.GetRepairPolicy() != "recorded-actions" {
 		t.Fatalf("bounded native launch rejected: %+v %v", config.Controller, err)
 	}
-	args = append(args, "--supervise")
-	if _, err := ParseControllerLaunch(args); err == nil {
-		t.Fatal("bounded supervision accepted")
-	}
-	args = args[:len(args)-1]
 	args[len(args)-1] = "unknown"
 	if _, err := ParseControllerLaunch(args); err == nil {
 		t.Fatal("invalid repair policy accepted")
@@ -67,4 +63,32 @@ func TestControllerLaunchRequiresDedicatedToolchainImage(t *testing.T) {
 	if field == nil || message.Get(field).String() != "controller:compiler" {
 		t.Fatal("dedicated compiler image did not reach typed controller launch")
 	}
+}
+
+func TestControllerBrokerRejectsMissingCompilerBeforeCredentials(t *testing.T) {
+	config, err := ParseControllerLaunch([]string{"controller", "--toolchain-image", "controller:test", "--app", "/workspace/app", "--namespace", "app", "--responder-image", "responder:slim", "--repository-pvc", "repo", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Controller.ToolchainImage = ""
+	if _, err := openControllerBroker(config.Controller); err == nil || !strings.Contains(err.Error(), "--toolchain-image") {
+		t.Fatalf("missing compiler reached the broker: %v", err)
+	}
+}
+
+func TestScriptImageSurvivesTypedControllerLaunch(t *testing.T) {
+	args := append(schemaControllerArgs(""), "--script-image", "script-tools:slim")
+	config, err := ParseControllerLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := config.Controller.ProtoReflect()
+	field := message.Descriptor().Fields().ByName("script_image")
+	if field == nil || message.Get(field).String() != "script-tools:slim" {
+		t.Fatal("script image lost at typed controller boundary")
+	}
+}
+
+func schemaControllerArgs(root string) []string {
+	return []string{"controller", "--toolchain-image", "controller:test", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only"}
 }

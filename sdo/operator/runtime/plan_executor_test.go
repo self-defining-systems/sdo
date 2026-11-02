@@ -133,7 +133,7 @@ func TestPlanExecutorActionsAndRollback(t *testing.T) {
 	}{
 		{"reconcile", service, planObject(service, map[string]any{"ports": []any{map[string]any{"port": float64(80), "targetPort": float64(9999)}}}), program.ReconcileFromSource{Ref: service}, planFakeSource{source: planObject(service, map[string]any{"ports": []any{map[string]any{"port": float64(80), "targetPort": float64(8080)}}})}, "spec.ports.0.targetPort", float64(8080)},
 		{"revision", deployment, planObject(deployment, map[string]any{"replicas": float64(2)}), program.Rollback{Ref: deployment, ToRevision: "previous"}, planFakeSource{revision: planObject(deployment, map[string]any{"replicas": float64(1)})}, "spec.replicas", float64(1)},
-		{"set field", service, planObject(service, map[string]any{"ports": []any{map[string]any{"port": float64(80), "targetPort": float64(9999)}}}), program.SetField{Ref: service, Path: "spec.ports[0].targetPort", Value: 8080}, planFakeSource{}, "spec.ports.0.targetPort", float64(8080)},
+		{"set field", service, planObject(service, map[string]any{"ports": []any{map[string]any{"port": float64(80), "targetPort": float64(9999)}}}), program.SetField{Ref: service, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}, planFakeSource{}, "spec.ports.0.targetPort", float64(8080)},
 		{"restart", deployment, planObject(deployment, map[string]any{"template": map[string]any{"metadata": map[string]any{"annotations": map[string]any{}}}}), program.RestartRollout{Ref: deployment}, planFakeSource{}, "spec.template.metadata.annotations.kubectl.kubernetes.io/restartedAt", "2026-10-20T00:00:00Z"},
 	}
 	for _, test := range tests {
@@ -167,7 +167,7 @@ func TestPlanExecutorDryRunReturnsPatchesWithoutMutation(t *testing.T) {
 	for _, policy := range []string{"recorded-actions", "commit"} {
 		client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
 		executor := PlanExecutor{Client: client}
-		result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: policy}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: 2}}}, true)
+		result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: policy}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(2)}}}, true)
 		if err != nil || result.Applied || !result.DryRun || len(result.Patches) != 1 || len(client.patches) != 0 {
 			t.Fatalf("%s dry run: %+v, %v", policy, result, err)
 		}
@@ -179,7 +179,7 @@ func TestPlanExecutorRejectsPolicyAndInvalidPathBeforeMutation(t *testing.T) {
 	for _, test := range []struct{ policy, path string }{{"commit", "spec.replicas"}, {"recorded-actions", "metadata.labels.owner"}} {
 		client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"replicas": float64(1)})}}
 		executor := PlanExecutor{Client: client}
-		_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: test.policy}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: test.path, Value: 2}}}, false)
+		_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: test.policy}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: test.path, Value: testPlanValue(2)}}}, false)
 		if err == nil || len(client.patches) != 0 {
 			t.Fatalf("policy %q path %q: err = %v, patches = %d", test.policy, test.path, err, len(client.patches))
 		}
@@ -192,8 +192,8 @@ func TestPlanExecutorReadsAllPreImagesBeforeMutation(t *testing.T) {
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{first: planObject(first, map[string]any{"replicas": float64(1)})}}
 	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
 	_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{
-		program.SetField{Ref: first, Path: "spec.replicas", Value: 2},
-		program.SetField{Ref: missing, Path: "spec.replicas", Value: 2},
+		program.SetField{Ref: first, Path: "spec.replicas", Value: testPlanValue(2)},
+		program.SetField{Ref: missing, Path: "spec.replicas", Value: testPlanValue(2)},
 	}}, false)
 	if err == nil || len(client.patches) != 0 {
 		t.Fatalf("pre-image failure: err = %v, patches = %d", err, len(client.patches))
@@ -205,7 +205,7 @@ func TestPlanExecutorReportsFailedVerification(t *testing.T) {
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"replicas": float64(1)})}}
 	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: false}}
 	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{
-		program.SetField{Ref: ref, Path: "spec.replicas", Value: 2},
+		program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(2)},
 	}}, false)
 	if err != nil || !result.Applied || !result.VerificationCompleted || result.VerificationPassed {
 		t.Fatalf("failed verification: %+v, %v", result, err)
@@ -217,7 +217,7 @@ func TestPlanExecutorRejectsActionOutsideIncidentNamespace(t *testing.T) {
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"replicas": float64(1)})}}
 	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
 	_, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{
-		program.SetField{Ref: ref, Path: "spec.replicas", Value: 2},
+		program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(2)},
 	}}, false)
 	if err == nil || len(client.patches) != 0 {
 		t.Fatalf("cross-namespace action: err = %v, patches = %d", err, len(client.patches))
@@ -237,10 +237,10 @@ func TestPlanHealthVerifierRerunsHealthDetectors(t *testing.T) {
 
 func TestPlanApplicationResultMapsToProto(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
-	action := program.SetField{Ref: ref, Path: "spec.replicas", Value: 2, Reason: "restore capacity"}
+	action := program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(2), Reason: "restore capacity"}
 	result := PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{action}}, Applied: true, ActionsApplied: []program.Action{action}, VerificationPassed: true, VerificationCompleted: true}
 	encoded, err := result.Proto()
-	if err != nil || !encoded.GetApplied() || encoded.GetDryRun() || encoded.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(encoded.GetPlan().GetActions()) != 1 || encoded.GetPlan().GetActions()[0].GetSetField().GetValue().GetNumberValue() != 2 {
+	if err != nil || !encoded.GetApplied() || encoded.GetDryRun() || encoded.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(encoded.GetPlan().GetActions()) != 1 || encoded.GetPlan().GetActions()[0].GetSetField().GetValue().GetParameter() != "fixture" {
 		t.Fatalf("proto application = %+v, err = %v", encoded, err)
 	}
 }
@@ -250,7 +250,7 @@ func TestPlanApplicationJSONRoundTripsAllActionsAndSetFieldValues(t *testing.T) 
 	actions := []program.Action{
 		program.ReconcileFromSource{Ref: ref},
 		program.Rollback{Ref: ref, ToRevision: "previous"},
-		program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].resources", Value: map[string]any{"limits": map[string]any{"cpu": "500m"}, "requests": []any{1, true, nil}}, Reason: "restore limits"},
+		program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].resources", Value: testPlanValue(map[string]any{"limits": map[string]any{"cpu": "500m"}, "requests": []any{1, true, nil}}), Reason: "restore limits"},
 		program.RestartRollout{Ref: ref, Reason: "refresh"},
 	}
 	application := PlanApplicationResult{Plan: program.Plan{Actions: actions, Rationale: "repair"}, ActionsApplied: actions}

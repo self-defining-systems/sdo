@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
 	"strconv"
 	"strings"
@@ -21,7 +22,14 @@ type ValidationInfrastructureError struct{ Message string }
 func (e *ValidationInfrastructureError) Error() string { return e.Message }
 func (*ValidationInfrastructureError) ExitCode() int   { return 2 }
 
-func RunValidationProcess(ctx context.Context, binary string, args []string, scratch string, timeout time.Duration, memory int64) error {
+// ValidationOutput carries the child's non-blocking evidence: coverage gaps
+// and advisory mitigation replay notes. Neither affects acceptance.
+type ValidationOutput struct {
+	Gaps        []validate.Diagnostic
+	ReplayNotes []*contracts.MitigationReplayNote
+}
+
+func RunValidationProcess(ctx context.Context, binary string, args []string, scratch string, timeout time.Duration, memory int64) (ValidationOutput, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.Command(binary, args...)
@@ -32,7 +40,7 @@ func RunValidationProcess(ctx context.Context, binary string, args []string, scr
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return &ValidationInfrastructureError{fmt.Sprintf("start validation subprocess: %v", err)}
+		return ValidationOutput{}, &ValidationInfrastructureError{fmt.Sprintf("start validation subprocess: %v", err)}
 	}
 	// Always reap the entire group, including go/test descendants surviving an
 	// early exit. Aggregate resident memory is measured across the whole group.
@@ -46,26 +54,26 @@ func RunValidationProcess(ctx context.Context, binary string, args []string, scr
 		case <-ctx.Done():
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			<-done
-			return &ValidationInfrastructureError{fmt.Sprintf("validation subprocess timeout/cancellation: %v", ctx.Err())}
+			return ValidationOutput{}, &ValidationInfrastructureError{fmt.Sprintf("validation subprocess timeout/cancellation: %v", ctx.Err())}
 		case <-ticker.C:
 			used, err := processGroupMemory(cmd.Process.Pid)
 			if err != nil || used > memory {
 				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 				<-done
-				return &ValidationInfrastructureError{fmt.Sprintf("validation subprocess memory limit (%d bytes), observed %d: %v", memory, used, err)}
+				return ValidationOutput{}, &ValidationInfrastructureError{fmt.Sprintf("validation subprocess memory limit (%d bytes), observed %d: %v", memory, used, err)}
 			}
 		case err := <-done:
 			ds, parseErr := validate.ParseReport(stdout.String())
 			if err != nil {
 				if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 && parseErr == nil && len(ds) > 0 {
-					return validate.Err(ds)
+					return ValidationOutput{}, validate.Err(ds)
 				}
-				return &ValidationInfrastructureError{fmt.Sprintf("validation subprocess: %v: %s", err, stderr.String())}
+				return ValidationOutput{}, &ValidationInfrastructureError{fmt.Sprintf("validation subprocess: %v: %s", err, stderr.String())}
 			}
 			if parseErr != nil {
-				return &ValidationInfrastructureError{fmt.Sprintf("validation subprocess report: %v", parseErr)}
+				return ValidationOutput{}, &ValidationInfrastructureError{fmt.Sprintf("validation subprocess report: %v", parseErr)}
 			}
-			return validate.Err(ds)
+			return ValidationOutput{Gaps: validate.ParseReportGaps(stdout.String()), ReplayNotes: validate.ParseReportReplayNotes(stdout.String())}, validate.Err(ds)
 		}
 	}
 }

@@ -86,3 +86,16 @@ def check_activations(
     if missing:
         errors.append(f"missing activation evidence: {sorted(missing)}")
     return rows, "; ".join(errors) or None
+
+
+def live_controller_pod(pods: list[dict[str, Any]]) -> dict[str, Any]:
+    """The one controller pod still serving; pods of earlier Job attempts (for example the
+    designed exit after a health refresh) are history, and a crash replacement changes the UID."""
+    live = [
+        pod
+        for pod in pods
+        if pod["status"].get("phase") not in {"Succeeded", "Failed"} and not pod["metadata"].get("deletionTimestamp")
+    ]
+    if len(live) != 1:
+        raise RuntimeError("continuity requires exactly one live controller pod")
+    return live[0]

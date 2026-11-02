@@ -34,8 +34,11 @@ def _command(argv: list[str], *, timeout: int = 180) -> str:
 
 
 def _tool(*args: str) -> dict[str, Any]:
-    output = _command(["sdo", *args])
+    output = _command(["sdo", *args, "--json"])
     response = json.loads(output.splitlines()[0])
+    if isinstance(response, dict) and response.get("summarized") and response.get("details_file"):
+        # Capped replies keep the complete response in the file they name.
+        response = json.loads(Path(response["details_file"]).read_text(encoding="utf-8"))
     if not isinstance(response, dict) or response.get("error"):
         raise RuntimeError(f"sdo {' '.join(args)}: {response.get('error') if isinstance(response, dict) else output}")
     return response
@@ -110,7 +113,10 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
 
 def _binding_args(bindings: dict[str, Any]) -> list[str]:
     args: list[str] = []
-    for name, ref in sorted(bindings.items()):
+    if bindings.get("values"):
+        raise ValueError("scripted plan CLI does not support scalar value bindings")
+    objects = bindings.get("objects", {}) if "objects" in bindings or "values" in bindings else bindings
+    for name, ref in sorted(objects.items()):
         args.extend(["--bind", f"{name}={ref['kind']}/{ref['namespace']}/{ref['name']}"])
     return args
 

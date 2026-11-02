@@ -8,15 +8,137 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from scripts.operator_test_binary import build_operator
+from scripts.operator_test_binary import build_operator, source_identity, verify_operator
+from tests.reflection_memory import (
+    memory_binary as memory_binary,
+)
+from tests.reflection_memory import (
+    prepare_reflection_memory as prepare_reflection_memory,
+)
+
+pytest_plugins = ("tests.sregym_prerequisites",)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    # This shared fixture invokes the real memory validator, which compiles
+    # authored programs. Route its transitive consumers before -m selection.
+    for item in items:
+        if "memory_binary" in getattr(item, "fixturenames", ()):
+            item.add_marker(pytest.mark.go_integration)
+
+
+_GO_TOOL_CONSUMERS = ("tests/unit/benchmarks/sregym/", "tests/unit/sdo/operator/", "tests/unit/test_")
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Prepare the real adapter executables once, outside the per-test compiler guard.
+
+    Unmarked tests may run these executables but never compile them. CI and ``scripts/test_python.sh``
+    export prepared tools; a focused local run builds the same three content-addressed executables here,
+    and only when a collected test uses one.
+    """
+    names = {
+        "SDO_OPERATOR_BIN": None,
+        "SDO_NATIVE_RECEIPT_BIN": ("native_receipt_go", "sdo-native-receipt"),
+        "SDO_SUBMISSION_GUARD_BIN": ("submission_go", "sdo-submission-guard"),
+    }
+    missing = [name for name in names if not os.environ.get(name)]
+    if not missing or not any(item.nodeid.startswith(_GO_TOOL_CONSUMERS) for item in session.items):
+        return
+    repository = Path(__file__).resolve().parents[1]
+    directory = repository / ".fastloop/test-bin"
+    for name in missing:
+        spec = names[name]
+        if spec is None:
+            os.environ[name] = str(build_operator(repository / "sdo/operator", directory))
+            continue
+        module, binary = spec
+        target = directory / "protocol" / binary
+        target.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["go", "build", "-o", str(target), f"./cmd/{binary}"],
+            cwd=repository / "benchmarks/sregym/protocol" / module,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        os.environ[name] = str(target)
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_protocol(item: pytest.Item) -> Iterator[None]:
+    # Surround fixture setup too: a module/session fixture can compile before
+    # function-scoped autouse fixtures have started.
+    with pytest.MonkeyPatch.context() as patch:
+        if item.get_closest_marker("go_integration") is None:
+            guard = Path(__file__).resolve().parents[1] / "scripts/unit-tools"
+            go = shutil.which("go")
+            if go == str(guard / "go"):
+                go = os.environ.get("SDO_UNIT_REAL_GO")
+            if go:
+                patch.setenv("SDO_UNIT_REAL_GO", go)
+                patch.setenv("PATH", f"{guard}{os.pathsep}{os.environ['PATH']}")
+        yield
+
+
+@pytest.fixture
+def image_build_source(tmp_path: Path) -> Path:
+    """Real committed inputs independent of edits in the developer checkout."""
+    repository = Path(__file__).resolve().parents[1]
+    source = tmp_path / "image-source"
+    (source / "scripts").mkdir(parents=True)
+    (source / "sdo/operator").mkdir(parents=True)
+    (source / "sdo/operator/go.mod").write_text("module fixture\n")
+    for path in (
+        "scripts/build_sdo_images.sh",
+        "scripts/sdo-images.hcl",
+        "sdo/operator/Dockerfile.runtime",
+        ".dockerignore",
+        "benchmarks/sregym/fastloop/image_provenance.py",
+        "benchmarks/sregym/repository_git.py",
+    ):
+        (source / path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repository / path, source / path)
+    for args in (
+        ["init", "-q"],
+        ["add", "."],
+        [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "image inputs",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True, text=True)
+    return source
+
+
+@pytest.fixture(autouse=True)
+def _isolated_opus_pool(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Fake-agent tests share a real temporary lock pool, never the live account pool."""
+    # tmp_path itself is often the proposal repository. Coordination metadata
+    # belongs in a sibling directory, outside every agent-authored checkout.
+    monkeypatch.setenv("SDO_OPUS_POOL_DIR", str(tmp_path_factory.mktemp("provider-capacity")))
+    monkeypatch.setenv("SDO_OPUS_MAX_SESSIONS", "8")
+
+
 @pytest.fixture(scope="session")
 def operator_binary() -> Path:
     repository = Path(__file__).resolve().parents[1]
+    prepared = os.environ.get("SDO_OPERATOR_BIN")
+    if prepared:
+        binary = Path(prepared)
+        verify_operator(binary, source_identity(repository / "sdo/operator"))
+        return binary
     return build_operator(repository / "sdo/operator", repository / ".fastloop/test-bin")
 
 
@@ -92,8 +214,6 @@ def committed_sregym_registry() -> str:
     """The registry at this repository's committed gitlink, independent of worktree HEAD."""
     repository = Path(__file__).resolve().parents[1]
     harness = repository / "third_party/sregym"
-    if not (harness / "agents.yaml").is_file():
-        pytest.skip("requires the optional external SREGym registry fixture")
     link = subprocess.check_output(["git", "ls-tree", "HEAD", "third_party/sregym"], cwd=repository, text=True).split()[
         2
     ]

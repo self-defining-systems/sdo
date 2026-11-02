@@ -15,6 +15,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
@@ -27,9 +28,14 @@ import (
 
 type KubernetesSnapshotProvider struct {
 	// Clock supplies the snapshot observation time; nil uses time.Now.
-	Clock     func() time.Time
-	Namespace string
-	Client    kubernetes.Interface
+	Clock        func() time.Time
+	Capture      *GenericCapture
+	PodAdmission bool
+	Scope        sdk.ObservationScope
+	Ceiling      sdk.ObservationScope
+	Generation   string
+	Namespace    string
+	Client       kubernetes.Interface
 }
 
 func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvider, error) {
@@ -40,7 +46,11 @@ func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvide
 	if err != nil {
 		return nil, err
 	}
-	return &KubernetesSnapshotProvider{Namespace: namespace, Client: client}, nil
+	capture, err := NewGenericCapture(namespace)
+	if err != nil {
+		return nil, err
+	}
+	return &KubernetesSnapshotProvider{Namespace: namespace, Client: client, Capture: capture}, nil
 }
 
 // NewKubernetesClient returns a client with its own transport and rate limiter.
@@ -50,18 +60,25 @@ func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvide
 // DefaultKubernetesClientQPS/Burst and honors SDO_KUBE_API_QPS and
 // SDO_KUBE_API_BURST.
 func NewKubernetesClient() (kubernetes.Interface, error) {
+	client, _, err := NewKubernetesClientAndConfig()
+	return client, err
+}
+
+// NewKubernetesClientAndConfig also returns the REST configuration, for read
+// transports that need raw API access or pod exec next to the typed client.
+func NewKubernetesClientAndConfig() (kubernetes.Interface, *rest.Config, error) {
 	config, err := kubeio.Config()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := applyClientRateLimits(config, kubeio.LookupEnv); err != nil {
-		return nil, fmt.Errorf("configure kubernetes client rate limit: %w", err)
+		return nil, nil, fmt.Errorf("configure kubernetes client rate limit: %w", err)
 	}
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("create kubernetes client: %w", err)
+		return nil, nil, fmt.Errorf("create kubernetes client: %w", err)
 	}
-	return client, nil
+	return client, config, nil
 }
 
 // NewKubernetesMetadataClient creates a metadata-only decoder using the same
@@ -181,7 +198,19 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 	for _, s := range secrets.Items {
 		secretMetadata = append(secretMetadata, sdk.SecretMetadataFrom(s))
 	}
+	scoped, err := ObserveScoped(ctx, p.Client, p.Scope, p.Ceiling, p.Generation)
+	if err != nil {
+		return nil, err
+	}
+	var admission *sdk.PodAdmissionResult
+	if p.PodAdmission {
+		result := ObservePodAdmission(ctx, p.Client, namespace, pods.Items)
+		admission = &result
+	}
 	return DetectionSnapshot{
+		Admission:          admission,
+		GenericCapture:     p.Capture,
+		ScopedSnapshot:     scoped,
 		NamespaceName:      namespace,
 		SecretList:         secretMetadata,
 		NodeList:           nodes.Items,
@@ -209,6 +238,9 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 }
 
 type DetectionSnapshot struct {
+	Admission          *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
+	GenericCapture     *GenericCapture         `json:"-"`
+	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
 	SecretList         []sdk.SecretMetadata
 	NodeList           []corev1.Node
 	IngressList        []networkingv1.Ingress
@@ -525,4 +557,29 @@ func (s DetectionSnapshot) Secrets() []sdk.SecretMetadata {
 		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
 	})
 	return items
+}
+
+func (s DetectionSnapshot) PodAdmission() (sdk.PodAdmissionResult, bool) {
+	if s.Admission == nil {
+		return sdk.PodAdmissionResult{}, false
+	}
+	return *s.Admission, true
+}
+
+func (s DetectionSnapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if s.GenericCapture != nil {
+		return s.GenericCapture.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(s), nil
+}
+func (s DetectionSnapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if s.GenericCapture != nil {
+		return s.GenericCapture.Object(ref)
+	}
+	return sdk.FindObject(sdk.TypedObjects(s), ref)
+}
+
+// DiffAgainstSource requires the runtime's accepted-source read view.
+func (s DetectionSnapshot) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error) {
+	return sdk.SourceDiff{}, fmt.Errorf("accepted source diff unavailable for %s/%s", ref.Kind, ref.Name)
 }

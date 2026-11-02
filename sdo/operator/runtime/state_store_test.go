@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"testing"
+	"time"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
-	"testing"
 	"testing/synctest"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,18 +60,18 @@ func TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackSta
 		before := planObject(ref, map[string]any{"replicas": float64(1)})
 		client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
 		executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-		action := program.SetField{Ref: ref, Path: "spec.replicas", Value: 2, Reason: "restore capacity"}
+		action := program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(2), Reason: "restore capacity"}
 		application, err := executor.Apply(ctx, IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{action}}, false)
 		if err != nil {
 			t.Fatal(err)
 		}
-		trust := map[string]ProgramTrust{"capacity": {VerifiedSuccesses: 3, LastChange: "abc", Trusted: true}}
-		response, err := json.Marshal(ToolResponse{Command: "status", Trust: trust, ProgramRuns: []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{"deployment": ref}, Verdict: program.Verdict{Result: program.NoMatch}}}})
+		trust := map[string]ProgramTrust{"capacity": {VerifiedSuccesses: 3, LastChange: "abc"}}
+		response, err := json.Marshal(ToolResponse{Command: "status", Trust: trust, ProgramRuns: []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}, Verdict: program.Verdict{Result: program.NoMatch}}}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		state := &contracts.ControllerState{Version: RuntimeStateVersion, IncidentResult: mustProject(t, incidentResultContract, IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: "program-state", Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)},
-			ProgramRuns:      []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{"deployment": ref}, Verdict: program.Verdict{Result: program.NoMatch}}},
+			ProgramRuns:      []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}, Verdict: program.Verdict{Result: program.NoMatch}}},
 			ProgramToolCalls: []ToolCall{{Command: "status", RequestJSON: `{"command":"status"}`, ResponseJSON: string(response), Summary: "healthy"}},
 			PlanApplications: []RecordedPlanApplication{{ID: "application-1", ProgramIDs: []string{"capacity"}, Result: application}},
 		})}
@@ -489,8 +490,10 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 		case <-time.After(time.Second):
 			t.Fatal("timed out waiting for primary responder completion")
 		}
-		if err := controller.Step(ctx, start.Add(time.Second), nil); err != nil {
-			t.Fatalf("dispatch buffered secondary fault after primary completion: %v", err)
+		for _, at := range []time.Duration{time.Second, time.Second + controller.config.ClosureStabilityWindow} {
+			if err := controller.Step(ctx, start.Add(at), nil); err != nil {
+				t.Fatalf("dispatch buffered secondary fault after primary completion: %v", err)
+			}
 		}
 		deferredEffect, ok := controller.PendingDispatchEffect()
 		if !ok || len(deferredEffect.Request.Findings) != 1 || deferredEffect.Request.Findings[0].Fingerprint != "secondary-fault" {
@@ -531,10 +534,10 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 func TestControllerStateDropsRetiredRollbackFieldsFromPriorBuild(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-		action := program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080, Reason: "restore port"}
+		action := program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080), Reason: "restore port"}
 		result := completedResult("legacy-state")
 		result.PlanApplications = []RecordedPlanApplication{{ID: "old-application", ProgramIDs: []string{"targetport"}, Result: PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{action}}, Applied: true, ActionsApplied: []program.Action{action}}}}
-		result.ProgramFailureSignals = []string{"fast_path_failure:targetport@original-revision"}
+		result.ProgramFailureSignals = []string{"application_verification_failure:targetport@original-revision"}
 		payload, err := encodeControllerState(&contracts.ControllerState{Version: RuntimeStateVersion, IncidentResult: mustProject(t, incidentResultContract, result)})
 		if err != nil {
 			t.Fatal(err)

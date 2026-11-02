@@ -106,7 +106,7 @@ func TestSessionToolServerIgnoresAtomicRequestTemporaryFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	temporary := filepath.Join(directory, "requests", ".call.json")
-	if err := os.WriteFile(temporary, []byte(`{"command":"status"}`), 0600); err != nil {
+	if err := os.WriteFile(temporary, []byte(`{"command":`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.process(context.Background()); err != nil {
@@ -117,6 +117,18 @@ func TestSessionToolServerIgnoresAtomicRequestTemporaryFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, "responses", ".call.json")); !os.IsNotExist(err) {
 		t.Fatalf("temporary request produced a response: %v", err)
+	}
+	if err := os.WriteFile(temporary, []byte(`{"command":"status"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(temporary, filepath.Join(directory, "requests", "call.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.process(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("complete request was not executed after atomic publication")
 	}
 }
 

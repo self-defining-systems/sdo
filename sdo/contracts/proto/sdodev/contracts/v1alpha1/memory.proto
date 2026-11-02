@@ -6,19 +6,10 @@ syntax = "proto3";
 package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
+import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
-
-// One validation finding. `rule` is a stable rule ID; `path` is repository
-// relative; `line` is zero when the finding is not tied to a line.
-message MemoryDiagnostic {
-  string rule = 1 [(buf.validate.field).string.min_len = 1];
-  string path = 2;
-  int32 line = 3 [(buf.validate.field).int32.gte = 0];
-  string message = 4 [(buf.validate.field).string.min_len = 1];
-  string hint = 5;
-}
 
 // Informational mitigation policy result, never a trust credit.
 message MitigationReplayNote {
@@ -26,6 +17,7 @@ message MitigationReplayNote {
     STATUS_UNSPECIFIED = 0;
     STATUS_REPLAYED = 1;
     STATUS_SKIPPED_UNREPLAYABLE_EFFECT = 2;
+    STATUS_OBSERVED_TRANSITION = 3;
   }
   string program_id = 1;
   string case_id = 2;
@@ -41,6 +33,9 @@ message MemoryCheckReport {
   string phase = 4;
   string base = 5;
   repeated MitigationReplayNote mitigation_replay_notes = 6;
+  // Non-blocking notes about learning the check left out, such as a verified
+  // cause with no program or a skipped healthy replay. They never reject.
+  repeated MemoryDiagnostic coverage_gaps = 7;
 }
 
 // One artifact of operational memory, identified by its logical ID.

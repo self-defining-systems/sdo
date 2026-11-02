@@ -1,0 +1,12 @@
+# Synthetic accepted source for the existing playbook_program_app fixture.
+apiVersion: v1
+kind: Service
+metadata:
+  name: front
+  namespace: demo
+spec:
+  selector:
+    app: front
+  ports:
+    - port: 80
+      targetPort: 8080

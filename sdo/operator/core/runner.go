@@ -39,7 +39,7 @@ func (r Runner) RunOnce(ctx context.Context) error {
 
 	for _, detector := range r.Detectors {
 		spec := detector.Spec()
-		findings, err := detector.Detect(ctx, snapshot)
+		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
 		if err != nil {
 			return fmt.Errorf("run detector %q: %w", spec.ID, err)
 		}

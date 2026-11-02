@@ -18,6 +18,24 @@ from benchmarks.sregym.agent_script.wire import EventStream
 from .model import Command, Delete, Exit, ScriptTurn, Step, Tool, Wait, Write
 from .template import TemplateContext, expand
 
+#: Where the production `sdo` tool persists complete replies (sdo.agents.responder.tool_output.OUTPUT_ROOT).
+OUTPUT_ROOT = Path("/tmp/sdo")
+
+
+def _shared_directories() -> list[Path]:
+    """Writable directories that outlive one command: tool output and the worker's session scratch."""
+    directories = []
+    scratch = os.environ.get("SDO_SESSION_SCRATCH")
+    for directory in (OUTPUT_ROOT, Path(scratch) if scratch else None):
+        if directory is None:
+            continue
+        try:
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError:
+            continue
+        directories.append(directory.resolve())
+    return directories
+
 
 class ScriptExit(Exception):
     """A planned CLI failure; the selected turn has already been consumed."""
@@ -59,6 +77,7 @@ def execute(
             time.sleep(step.seconds)
             context.values[f"steps.{index}.completed_at"] = context.clock()
             continue
+        stdin: str | None = None
         if isinstance(step, (Write, Delete)):
             target = root / step.path
             if any(path.is_symlink() for path in (target, *target.parents) if path != root and root in path.parents):
@@ -67,10 +86,11 @@ def execute(
             if isinstance(step, Delete):
                 command = f"rm -f -- {quoted}"
             else:
-                encoded = base64.b64encode(step.text.encode()).decode()
+                # The contents travel on stdin: one argument is capped near 128 KiB, and a captured corpus is larger.
+                stdin = base64.b64encode(step.text.encode()).decode()
                 command = (
                     f"mkdir -p -- {shlex.quote(str(Path(step.path).parent))} && "
-                    f"printf %s {shlex.quote(encoded)} | base64 -d > {quoted} && "
+                    f"base64 -d > {quoted} && "
                     f"chmod {'755' if step.executable else '644'} -- {quoted}"
                 )
             action = Command(kind="command", command=command)
@@ -111,6 +131,10 @@ def execute(
                 if go_binary:
                     position = argv.index("--")
                     argv[position:position] = ["--ro-bind", "/bin/false", str(Path(go_binary).resolve())]
+            # Like a real workspace-write turn, `sdo` persists each complete tool reply and its context under
+            # /tmp/sdo and the session scratch directory, and later commands read them back.
+            for shared in _shared_directories():
+                argv[argv.index("--") : argv.index("--")] = ["--bind", str(shared), str(shared)]
             tools = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
             if tools.is_dir():
                 argv[argv.index("--") : argv.index("--")] = ["--bind", str(tools.resolve()), str(tools.resolve())]
@@ -126,7 +150,11 @@ def execute(
                     text=True,
                     timeout=action.timeout,
                     check=False,
-                    input=json.dumps(action.input_json) if action.input_json is not None else None,
+                    input=stdin
+                    if stdin is not None
+                    else json.dumps(action.input_json)
+                    if action.input_json is not None
+                    else None,
                 )
                 code, output = result.returncode, result.stdout + result.stderr
                 stdout = result.stdout

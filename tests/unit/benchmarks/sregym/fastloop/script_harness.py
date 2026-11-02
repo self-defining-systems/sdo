@@ -11,7 +11,6 @@ import socket as socket
 import time as time
 import types
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from google.protobuf import json_format
@@ -38,7 +37,7 @@ from benchmarks.sregym.fastloop.responder_script import responder_script
 from benchmarks.sregym.fastloop.responder_steps import (
     _command,
 )
-from sdo.agents.responder import run_reflection_task, run_worker_task
+from sdo.agents.responder import ReflectionTurn, run_reflection_task, run_worker_task
 from sdo.agents.responder.worker import KubernetesResultPublisher
 from sdo.contracts import IncidentResult
 
@@ -124,7 +123,9 @@ class Reflector:
                 else:
                     # Decision commands use the same writable exchange as the generator.
                     execute(ScriptTurn(role="reflector", steps=[step], result={}), worktree, EventStream(io.StringIO()))
-        return SimpleNamespace(**script.turns[0].result)
+        result = dict(script.turns[0].result)
+        result["playbook_ids"] = result.pop("proposed_artifact_ids", [])
+        return ReflectionTurn(**result)
 
 
 def main(argv):

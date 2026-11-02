@@ -10,6 +10,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 
 class ProcessRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -78,7 +80,7 @@ def register(state: Path, ref: ProcessRef, *, new_run: bool = False) -> None:
         temporary.replace(path)
 
 
-def terminate_run(state: Path, *, timeout: float = 5.0) -> list[str]:
+def terminate_run(state: Path, *, timeout: float = wait_for(WaitKind.PROBE)) -> list[str]:
     """Stop only recorded, same-UID identities, then list surviving registered helpers.
 
     A launcher calls this from its own abort trap, so its own PID is excluded.
