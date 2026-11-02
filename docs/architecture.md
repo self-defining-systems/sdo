@@ -130,6 +130,15 @@ equivalence for a script.
 | `sdo/operator/builder/internal/buildio/` | Compiler commands, image cache seeding and controller process launch; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/operatorcli/internal/processio/` | CLI Git inspection, environment reads and kubectl evidence streaming; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/broker/internal/processio/` | Git commands and bounded validator process supervision; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/apihistory/internal/apiio/` | API-history clock, timers and identifier randomness; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/kubeproxy/internal/proxyio/` | API proxy clock and request-ID randomness; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/rendered/internal/renderio/` | Rendered-source Git reads; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/shellpath/internal/shellio/` | Shell detector processes, runner server, timers and environment; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/worker_registry/internal/workerio/` | Worker clocks, warm-standby processes, sockets and environment; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/cmd/sdo-go-cache/internal/cacheio/` | Go cache helper environment and clock; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/cmd/sdo-replay/internal/replayio/` | Replay command child-process launcher; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/sdk/kubeclient/internal/clientio/` | In-memory observation HTTP client; opens no connections; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/internal/testutil/gitio/` | Test-only Git helper process adapter; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/worker_registry/` | Strict registration, capability lookup, and implementation-neutral Kubernetes execution |
 | `sdo/operator/onboarding/` | Immutable, accepted-commit-bound namespace identity acknowledgement staged at native install/adoption and verified by the first confirmed complete in-cluster evaluation, with immutable never-served reachability evidence and durable sampling/rejection markers; no Secret reads or incident-time recapture |
 | `sdo/operator/lifecycle/`, `deployment/`, `artifacts/` | Go lifecycle decisions, trusted deployment/readiness strategies, and physical bootstrap-artifact writes |
@@ -748,6 +757,15 @@ Source inventory drift compares top-level non-secret informer objects against a 
 | `sdo/operator/builder/internal/buildio/` | Production-only private adapter for compiler commands, image cache seeding and controller process launch; benchmark code cannot import this internal package. |
 | `sdo/operator/operatorcli/internal/processio/` | Production-only private adapter for cli git inspection, environment reads and kubectl evidence streaming; benchmark code cannot import this internal package. |
 | `sdo/operator/broker/internal/processio/` | Production-only private adapter for git commands and bounded validator process supervision; benchmark code cannot import this internal package. |
+| `sdo/operator/apihistory/internal/apiio/` | Production-only private adapter: aPI-history clock, timers and identifier randomness; benchmark code cannot import it |
+| `sdo/operator/kubeproxy/internal/proxyio/` | Production-only private adapter: aPI proxy clock and request-ID randomness; benchmark code cannot import it |
+| `sdo/operator/rendered/internal/renderio/` | Production-only private adapter: rendered-source Git reads; benchmark code cannot import it |
+| `sdo/operator/shellpath/internal/shellio/` | Production-only private adapter: shell detector processes, runner server, timers and environment; benchmark code cannot import it |
+| `sdo/operator/worker_registry/internal/workerio/` | Production-only private adapter: worker clocks, warm-standby processes, sockets and environment; benchmark code cannot import it |
+| `sdo/operator/cmd/sdo-go-cache/internal/cacheio/` | Production-only private adapter: go cache helper environment and clock; benchmark code cannot import it |
+| `sdo/operator/cmd/sdo-replay/internal/replayio/` | Production-only private adapter: replay command child-process launcher; benchmark code cannot import it |
+| `sdo/operator/sdk/kubeclient/internal/clientio/` | Production-only private adapter: in-memory observation HTTP client; benchmark code cannot import it |
+| `sdo/operator/internal/testutil/gitio/` | Production-only private adapter: test-only Git helper process adapter; benchmark code cannot import it |
 | `sdo/operator/runtime/{plan_script.go,script_job.go,script_provenance.go}`, `operatorcli/script_{runner,capture}.go` | Production app-local script Job execution and private capture, reusing the existing Kubernetes proxy; no benchmark dependencies. |
 | `sdo/operator/shellpath/`, `runtime/code_path*.go`, `runtime/cmd/sdo-shell-controller/` | Production shell execution and programming-model composition; no benchmark imports. The fixed image-bound controller starts without compiling accepted scripts. |
 | `sdo/operator/runtime/replay/`, `builder/replay.go`, `cmd/sdo-replay/` | Transport-neutral offline tooling; real production plan semantics against isolated client-go fakes, without cluster credentials or benchmark imports. |

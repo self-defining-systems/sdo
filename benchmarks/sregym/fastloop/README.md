@@ -26,7 +26,7 @@ uv run python -m benchmarks.sregym.fastloop retire-app \
   --run-dir OLD_ENVIRONMENT --next-run-dir NEW_ENVIRONMENT \
   --next-namespace social-network --next-problem SOCIAL_PROBLEM_ID \
   --seed FRESH_SOCIAL_SOURCE --lease LANE_LEASE --coord COORD_COMMAND \
-  --controller-image CONTROLLER --responder-image RESPONDER --validator-image VALIDATOR
+  --controller-image CONTROLLER --responder-image RESPONDER
 ```
 
 It checks the current lane lease before writes, refuses unfinished native closure
