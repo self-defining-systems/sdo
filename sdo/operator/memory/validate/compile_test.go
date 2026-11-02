@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/internal/testutil"
 )
 
 // compileTree is a repository whose only memory is the committed example
@@ -138,7 +140,9 @@ func TestCompileStageDiagnostics(t *testing.T) {
 	}
 }
 
+// The note is produced while the workspace is staged, before any Go stage runs.
 func TestMissingHealthyReplayInputIsInformational(t *testing.T) {
+	testutil.FakeGo(t)
 	for _, mode := range []string{"missing", "empty", "file"} {
 		t.Run(mode, func(t *testing.T) {
 			root := compileTree(t)
