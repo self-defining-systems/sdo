@@ -51,22 +51,6 @@ Its negative controls run alongside it in `scripts/check_errors.sh`, so an unsaf
 new fixture fails the static gate. Run the whole helper suite with
 `go -C sdo/operator test -race ./internal/testutil`.
 
-## Shared links for memory and compile tests
-
-Every memory check and detector validation links the generated controller and
-its test binaries. Go caches compilation but never links, so tests that validate
-the same workspaces repeat the same multi-second link. CI and local runs share
-them through `scripts/linkcache` (a `go -toolexec` wrapper keyed by the linker
-arguments and every input archive's build ID):
-
-```bash
-eval "$(bash scripts/link_cache.sh --shell)"   # exports GOFLAGS and SDO_LINK_CACHE
-```
-
-Validation-only builds also link without debug data (`builder.lean`); the
-controller that ships keeps it. Both are exercised by `tests/unit/scripts/test_link_cache.py`
-and `sdo/operator/builder/lean_link_test.go`.
-
 ## Waiting in Go tests
 
 `Execute` polls until its context ends, so running it under a fixed short
@@ -1313,13 +1297,12 @@ remain in hosted logs. No additional Python tests move to nightly.
 ### Go-backed Python contracts
 
 Tests marked `go_integration` execute real Go builds, generated controllers, or
-restart processes. Required CI runs them through
-`bash scripts/test_go_integration.sh`, which warms the normal operator/runtime
-build graph before entering short external-process deadlines. The ordinary
-Python lane uses `bash scripts/test_python.sh -m "not go_integration"`;
-unfiltered `pytest tests` still executes both groups. Add the marker to future
-contracts that compile Go. Compiler parallelism is bounded for parent and nested
-builds with `GOFLAGS=-p=2` and `GOMAXPROCS=2` on hosted runners.
+restart processes. Unmarked Python tests may run the prepared operator, receipt checker and
+submission guard but never compile them: `tests/conftest.py` builds those three
+content-addressed executables once per session (CI and `scripts/test_python.sh` export them
+first), and a PATH shim rejects any other compiler command outside marked tests. Add the
+marker to future contracts that compile Go. Compiler parallelism is bounded for parent and
+nested builds with `GOFLAGS=-p=2` and `GOMAXPROCS=2` on hosted runners.
 
 Prebuilding a fixture executable does not warm Go commands it launches itself.
 The broker health-bootstrap fixture therefore runs its complete validation on a
@@ -1418,24 +1401,3 @@ uv run python scripts/check_session_context.py /absolute/path/to/rollout.jsonl -
 
 The reader measures canonical Codex response items or Claude messages, including list-valued custom tool outputs and resumed messages, without double counting event mirrors. Missing or unsupported evidence fails closed. A gate failure points to the measured dimension and configured cap. This is a context-shape check; model repair quality still requires the separately authorized replay/live tiers. Keep recorded inputs read-only and measurement outputs outside the repository.
 
-Python CI downloads `prepared-python-go-tools` from its own workflow run.
-`scripts/python_go_tools.sh prepare` builds the real operator, native receipt
-checker and submission guard; its tar archive preserves executable modes.
-The `env` command requires all three and verifies the operator's source stamp
-before selecting the adapter binaries. Missing or stale artifacts fail before
-pytest instead of starting an unbudgeted adapter build. Normal preparation also
-vets benchmark mains so static analysis reuses the exact source graph.
-
-Full module-cache downloads use `scripts/download_go_modules.sh` with alternate
-module metadata beside the original module. `go mod download all` may add
-checksums; those writes belong to the temporary metadata, so the committed
-Go source identity stays equal in preparation and consumers.
-
-
-The nightly workflow also replays the **full runtime module** with `-race`,
-including tests selected by PR CI. `pr_test_plan.py --nightly` unions the compiled
-runtime inventory with deferred non-runtime contracts, deduplicates it and uses
-the existing measured-cost bins and job caps. This checks the whole package
-without adding PR jobs or another fixed regression list. `workflow_dispatch`
-can run this workflow on a development branch before it reaches the default
-branch; scheduled runs use the default branch.

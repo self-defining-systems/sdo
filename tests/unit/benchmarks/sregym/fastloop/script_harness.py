@@ -123,7 +123,9 @@ class Reflector:
                 else:
                     # Decision commands use the same writable exchange as the generator.
                     execute(ScriptTurn(role="reflector", steps=[step], result={}), worktree, EventStream(io.StringIO()))
-        return ReflectionTurn(**script.turns[0].result)
+        result = dict(script.turns[0].result)
+        result["playbook_ids"] = result.pop("proposed_artifact_ids", [])
+        return ReflectionTurn(**result)
 
 
 def main(argv):

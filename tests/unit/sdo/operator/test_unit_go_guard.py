@@ -31,10 +31,8 @@ def test_unit_go_guard_rejects_compilation(tmp_path: Path, arguments: str) -> No
 
 
 def test_memory_fixture_consumers_are_discovered_as_compiler_contracts(tmp_path: Path) -> None:
-    import json
     import sys
 
-    inventory = tmp_path / "inventory.json"
     result = subprocess.run(
         [
             sys.executable,
@@ -44,19 +42,16 @@ def test_memory_fixture_consumers_are_discovered_as_compiler_contracts(tmp_path:
             "-q",
             "-p",
             "no:tach",
-            "-p",
-            "scripts.pytest_ci",
             "-m",
             "go_integration",
-            "tests/unit/benchmarks/sregym/assurance/test_scripted_codex.py",
+            "tests/unit/benchmarks/sregym/assurance/test_script_execution.py",
         ],
         cwd=ROOT,
-        env={**os.environ, "SDO_PYTEST_INVENTORY": str(inventory)},
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    names = json.loads(inventory.read_text())
+    names = result.stdout.splitlines()
     assert any(name.endswith("::test_resumed_reflection_accounts_its_tokens_and_edits_final_files") for name in names)
     assert any(
         name.endswith("::test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout") for name in names

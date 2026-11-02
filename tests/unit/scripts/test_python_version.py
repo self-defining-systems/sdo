@@ -20,5 +20,5 @@ def test_local_python_version_matches_every_ci_job() -> None:
     assert {version for _, version in versions} == {pinned}, f".python-version={pinned}, CI={versions}"
 
     # All fixed regression jobs run on every PR, including pin-only changes.
-    assert "if" not in workflow["jobs"]["python"]
-    assert "if" not in workflow["jobs"]["contracts"]
+    assert "if" not in workflow["jobs"]["checks"]
+    assert "if" not in workflow["jobs"]["tests"]

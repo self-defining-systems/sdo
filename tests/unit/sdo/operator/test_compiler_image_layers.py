@@ -6,12 +6,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 
 
-def test_controller_and_validator_inherit_one_compiler_base():
+def test_controller_inherits_the_compiler_base():
     source = (ROOT / "sdo/operator/Dockerfile.runtime").read_text()
     stages = re.findall(r"^FROM (\S+) AS (\S+)$", source, re.MULTILINE)
     # Traverse by stage name; an extra source/binary stage must not break sharing.
     parents = {stage: parent for parent, stage in stages}
-    for role in ("controller", "validator"):
+    for role in ("controller",):
         cursor = role
         while cursor in parents and cursor != "compiler-base":
             cursor = parents[cursor]

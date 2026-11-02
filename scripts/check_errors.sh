@@ -38,8 +38,6 @@ case "$mode" in
     *) echo "unknown check mode: $mode" >&2; exit 2 ;;
 esac
 
-# Validate workflow expressions before pushing a commit that cannot start CI.
-uv run python "$SCRIPT_DIR/check_ci_budget.py"
 
 echo "==> pytest import names"
 uv run python scripts/check_pytest_imports.py

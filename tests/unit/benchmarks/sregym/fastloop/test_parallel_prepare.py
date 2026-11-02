@@ -90,7 +90,6 @@ def test_failed_lane_joins_its_peers_and_only_prepared_lanes_attach(monkeypatch,
     def prepare(_plan, name):
         if name == "b":
             raise RuntimeError("synthetic baseline failure")
-        time.sleep(0.1)
         finished.append(name)
 
     monkeypatch.setattr(shared_memory, "_clone_accepted", lambda *_: None)

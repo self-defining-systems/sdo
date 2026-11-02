@@ -262,9 +262,9 @@ def test_capture_keeps_finished_result_and_names_oversized_evidence(tmp_path: Pa
 
     from benchmarks.sregym.fastloop.replay import MAX_CAPTURE_BYTES
     from benchmarks.sregym.fastloop.replay_worker import (
-        replay_live_worker,
-        replay_scripted_reflection,
-        replay_scripted_responder,
+        replay_generated_reflection,
+        replay_generated_responder,
+        replay_script_worker,
     )
 
     request, result = _task_and_result("incident-response" if stage == "responder" else "outcome-reflection-direct-v1")
@@ -289,14 +289,14 @@ def test_capture_keeps_finished_result_and_names_oversized_evidence(tmp_path: Pa
     assert oversized in checkpoint.unrecorded_captures
     assert str(MAX_CAPTURE_BYTES) in checkpoint.unrecorded_captures[oversized]
     assert not (store.root / "blobs" / hashlib.sha256(path.read_bytes()).hexdigest()).exists()
-    replays = [lambda: replay_live_worker(store, 0, stage, source=tmp_path, live_on_cache_miss=False)]
+    replays = [lambda: replay_script_worker(store, 0, stage, source=tmp_path)]
     if stage == "responder":
-        replays.append(lambda: replay_scripted_responder(store, 0, source=tmp_path))
+        replays.append(lambda: replay_generated_responder(store, 0, source=tmp_path))
     else:
         assert store.load(0, "broker").result == result
         replays.extend(
             (
-                lambda: replay_scripted_reflection(store, 0, source=tmp_path, operator_root=tmp_path),
+                lambda: replay_generated_reflection(store, 0, source=tmp_path, operator_root=tmp_path),
                 lambda: replay_broker(store, 0, source=tmp_path, operator_root=tmp_path),
             )
         )
@@ -497,7 +497,9 @@ def test_respond_replay_uses_captured_kubernetes_objects(
 
 
 @pytest.mark.go_integration
-def test_scripted_reflection_replay_runs_worker_again(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_scripted_reflection_replay_runs_worker_again(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], prepare_reflection_memory
+) -> None:
     from google.protobuf.any_pb2 import Any as ProtoAny
 
     from sdo.agents.responder.reflection_worker import run_reflection_task
@@ -508,26 +510,9 @@ def test_scripted_reflection_replay_runs_worker_again(tmp_path: Path, capsys: py
     program = source / ".sdo/playbooks/service-targetport-mismatch"
     program.mkdir(parents=True)
     (program / "diagnose.go").write_text("package targetport\n", encoding="utf-8")
-    for args in (
-        ["git", "init", "-q", str(source)],
-        ["git", "-C", str(source), "add", "."],
-        [
-            "git",
-            "-C",
-            str(source),
-            "-c",
-            "user.name=Replay",
-            "-c",
-            "user.email=replay@example.invalid",
-            "commit",
-            "-qm",
-            "seed",
-        ],
-    ):
-        subprocess.run(args, check=True)
-    commit = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
     closure = _closure()
     incident_id = closure.request.incident_id
+    commit = prepare_reflection_memory(source, incident_id)
     request = ReflectionRequest(
         closure=closure, outcome=_outcome(incident_id), outcome_commit=commit, session_mode="fresh"
     )
@@ -657,6 +642,7 @@ def test_capture_exports_script_actions_from_live_recording(tmp_path: Path) -> N
     assert load(exported / "script.json").select("responder", "incident-1", 0).result == {"summary": "synthetic"}
 
 
+@pytest.mark.go_integration
 def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.fastloop.replay import StageCheckpoint, replay_broker_result
 

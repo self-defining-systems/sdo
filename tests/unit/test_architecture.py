@@ -221,10 +221,51 @@ def test_wall_clock_sleep_checker_detects_aliases() -> None:
     assert not _wall_clock_sleeps("def test_fake(clock):\n clock.sleep(1)")
 
 
+#: Dev-branch tests that drive real threads, processes or sockets and still sleep. The list may only shrink:
+#: a new sleep outside it fails, and a test moves off it by waiting on readiness or an injected clock.
+_LEGACY_REAL_TIME_TESTS = frozenset(
+    {
+        ("tests/unit/benchmarks/sregym/fastloop/test_parallel_prepare.py", "prepare"),
+        (
+            "tests/unit/benchmarks/sregym/fastloop/test_parallel_prepare.py",
+            "test_lanes_prepare_concurrently_and_attach_waits_for_every_lane",
+        ),
+        ("tests/unit/benchmarks/sregym/fastloop/test_shared_app_images.py", "build"),
+        ("tests/unit/benchmarks/sregym/fastloop/test_shared_app_images.py", "ensure"),
+        ("tests/unit/benchmarks/sregym/fastloop/test_surge_guard_worker_ops.py", "handle"),
+        (
+            "tests/unit/benchmarks/sregym/fastloop/test_surge_guard_worker_ops.py",
+            "test_a_rollout_that_can_surge_is_never_touched",
+        ),
+        ("tests/unit/benchmarks/sregym/fastloop/test_surge_guard_worker_ops.py", "worker_op"),
+        ("tests/unit/sdo/agents/responder/test_recorded_actions.py", "_wait_for"),
+        ("tests/unit/sdo/agents/responder/test_reflection_final_check.py", "expire_once_started"),
+        (
+            "tests/unit/sdo/agents/responder/test_reflection_final_check.py",
+            "test_final_check_timeout_kills_the_validator_process_group",
+        ),
+        ("tests/unit/sdo/agents/responder/test_reflection_validation.py", "expire_once_started"),
+        (
+            "tests/unit/sdo/agents/responder/test_reflection_validation.py",
+            "test_validation_tool_timeout_returns_failure_and_stops_children",
+        ),
+        ("tests/unit/sdo/agents/responder/test_verified_close.py", "_exploring_until_stopped"),
+        ("tests/unit/sdo/agents/responder/test_verified_close.py", "respond"),
+        (
+            "tests/unit/sdo/agents/responder/test_verified_close.py",
+            "test_a_turn_that_answers_inside_the_settle_window_is_not_interrupted",
+        ),
+    }
+)
+
+
 def test_unit_tests_synchronize_without_wall_clock_sleeps() -> None:
     # Polling the OS process registry is an integration boundary. This helper
     # checks readiness each iteration; sleep is backoff, never evidence of success.
-    allowed = {("tests/unit/benchmarks/sregym/adapter/test_processes.py", "wait_for")}
+    allowed = {
+        ("tests/unit/benchmarks/sregym/adapter/test_processes.py", "wait_for"),
+        *_LEGACY_REAL_TIME_TESTS,
+    }
     violations = []
     for path in sorted((_REPO_ROOT / "tests/unit").rglob("test_*.py")):
         relative = path.relative_to(_REPO_ROOT).as_posix()

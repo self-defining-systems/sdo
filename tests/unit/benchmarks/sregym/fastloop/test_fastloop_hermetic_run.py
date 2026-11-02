@@ -404,7 +404,8 @@ class Controller(FakeOps):
         incident = f"incident-{self.incidents}"
         self.capture.mkdir(exist_ok=True)
         (self.capture / "open.json").write_text(json.dumps(self.app.snapshot()))
-        (self.capture / "open@detect.json").write_text(json.dumps(self.app.snapshot()))
+        for phase in ("detect", "pre-apply"):
+            (self.capture / f"open@{phase}.json").write_text(json.dumps(self.app.snapshot()))
         self.commands.clear()
         self.program_runs_by_incident[incident] = []
         raw = json.loads((ROOT / "tests/fixtures/sdo/contracts/incident_request.json").read_text())
@@ -449,7 +450,8 @@ class Controller(FakeOps):
             assert source_image.endswith("a" * 64)
             assert image == source_image
         (self.capture / "fixed.json").write_text(json.dumps(self.app.snapshot()))
-        (self.capture / "open@detect-recordings.json").write_text("[]\n")
+        for phase in ("detect", "pre-apply"):
+            (self.capture / f"open@{phase}-recordings.json").write_text("[]\n")
         data = json_format.MessageToDict(result, preserving_proto_field_name=True)
         self.results[incident] = data
         self.commands_by_incident[incident] = list(self.commands)

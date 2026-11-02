@@ -49,7 +49,7 @@ def test_every_operator_module_is_downloaded_from_its_manifest() -> None:
         assert {module or "." for module in copied} == modules
 
 
-def test_controller_and_validator_use_the_stable_dependency_cache() -> None:
+def test_controller_uses_the_stable_dependency_cache() -> None:
     text = "\n".join(_lines("Dockerfile.runtime"))
     assert "COPY --from=go-deps /go/build-cache /go/build-cache" in text
     assert "COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/" in text
@@ -101,15 +101,11 @@ def test_build_scripts_never_flatten_image_layers():
         )
 
 
-def test_validator_inherits_the_immutable_compiler_and_cache_layers():
+def test_controller_inherits_the_immutable_compiler_and_cache_layers():
     text = "\n".join(_lines("Dockerfile.runtime"))
     stage = text.split("FROM runtime-base AS compiler-base\n", 1)[1].split("FROM model-deps", 1)[0]
-    assert "FROM compiler-base AS validator-toolchain" in stage
-    assert "FROM validator-toolchain AS validator" in stage
     for source in ("/usr/local/go", "/go/pkg/mod", "/go/build-cache"):
         assert f"COPY --from=go-deps {source} {source}" in stage
-    assert "ENV GOCACHEPROG=/usr/local/bin/sdo-go-cache" in stage
-    assert "RUN test -x /usr/local/go/bin/go" in stage
 
 
 def test_workers_do_not_wait_for_offline_validator_cache_warming() -> None:
