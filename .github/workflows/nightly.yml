@@ -32,6 +32,17 @@ jobs:
           restore-keys: |
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: Install bubblewrap for agent-script tests
+        run: |
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --ro-bind / / --dev /dev --proc /proc true
       - name: Race suite for every package outside the heavy shards, with replay and chaos
         run: bash scripts/test_go_ci.sh nightly rest
       - name: Bounded fuzz campaigns (seed cases also run on every PR)
@@ -68,13 +79,24 @@ jobs:
           restore-keys: |
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - name: Install bubblewrap for agent-script tests
+        run: |
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --ro-bind / / --dev /dev --proc /proc true
       - name: Race suite for the ${{ matrix.shard }} packages
         run: bash scripts/test_go_ci.sh nightly ${{ matrix.shard }}
 
   python:
     name: slow Python suites
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -109,7 +131,7 @@ jobs:
           python3 scripts/init_test_prereqs.py
       - name: Slow Python suites moved out of pull-request CI
         run: |
-          uv run pytest -n 4 --durations=30 \
+          uv run pytest -n 2 --durations=30 \
             tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
             tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py \
             tests/unit/sdo/agents/responder/test_reflection_final_check.py \
