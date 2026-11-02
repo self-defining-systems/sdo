@@ -256,5 +256,10 @@ with a fixture that still described the old behavior.
 | 2026-11-02 | merge-toy | Lifecycle | A preloaded standby responder read its task before awaiting the claim and crashed; the controller recreated a standby Job every 9 s | Fixed | `test_generated_launch_waits_for_standby_claim_before_reading_the_task` |
 | 2026-11-02 | merge-toy | Lifecycle | A health refresh ends the first controller attempt by design (exit 76), leaving a failed pod beside the running one; continuity required exactly one pod | Fixed | `test_live_controller_pod_ignores_pods_of_finished_job_attempts` |
 
+| 2026-11-02 | merge-toy | Missing behavior | After a verified program write, a co-reported finding whose detector had not re-observed it (service-reachability on the same Service) made the attempt `applied_still_matching`; the stage gave up within a second and the responder finished a mitigated incident (3 of 4 repeats) | Fixed: findings that depend on the written object keep the recovery wait going and the attempt is recorded cleared | `TestWriteVerifiedForSettling`, `TestPromoteSettledAttemptsRecordsTheClearedFindings`; existing stage tests unchanged |
+| 2026-11-02 | merge-toy | Timing | Closure replays open-phase reads inside the observation lock; the program's open probe of the old targetPort waited out the 5 s probe budget (`program_reads_ms=5283`), stopping detection for 9.8 s | Bounded to 1 s (gap 9.8 s to 5.1-5.4 s); remaining closure work under the lock still exceeds the 5 s allowance by 0.15-0.4 s on the repeat | `TestClosureReplayProbeIsBounded` |
+
 Not modeled and still open: the Go simulation has no scripted-agent sandbox, standby handshake or Job
-restart on exit 76, so the last five rows are covered by Python contract tests only.
+restart on exit 76, so the standby, sandbox, restart and verify-protocol rows are covered by Python contract tests only. The
+closure stall is not simulated either: `maybeCloseIncident` holds the observation lock, and the simulation's
+closure work takes zero virtual time.
