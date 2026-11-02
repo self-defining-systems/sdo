@@ -18,13 +18,10 @@ import (
 	"sdo.dev/operator/memory/validate"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-<<<<<<< HEAD
-=======
 
 	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 )
 
 func git(t *testing.T, dir string, args ...string) string {

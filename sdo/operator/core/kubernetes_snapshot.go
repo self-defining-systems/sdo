@@ -27,12 +27,8 @@ import (
 )
 
 type KubernetesSnapshotProvider struct {
-<<<<<<< HEAD
 	// Clock supplies the snapshot observation time; nil uses time.Now.
-	Clock     func() time.Time
-	Namespace string
-	Client    kubernetes.Interface
-=======
+	Clock        func() time.Time
 	Capture      *GenericCapture
 	PodAdmission bool
 	Scope        sdk.ObservationScope
@@ -40,7 +36,6 @@ type KubernetesSnapshotProvider struct {
 	Generation   string
 	Namespace    string
 	Client       kubernetes.Interface
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvider, error) {
@@ -160,7 +155,6 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		return DetectionSnapshot{}, fmt.Errorf("list events: %w", err)
 	}
 
-<<<<<<< HEAD
 	daemonSets, err := p.Client.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return DetectionSnapshot{}, fmt.Errorf("list daemonSets: %w", err)
@@ -197,7 +191,19 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 	for _, s := range secrets.Items {
 		secretMetadata = append(secretMetadata, sdk.SecretMetadataFrom(s))
 	}
+	scoped, err := ObserveScoped(ctx, p.Client, p.Scope, p.Ceiling, p.Generation)
+	if err != nil {
+		return nil, err
+	}
+	var admission *sdk.PodAdmissionResult
+	if p.PodAdmission {
+		result := ObservePodAdmission(ctx, p.Client, namespace, pods.Items)
+		admission = &result
+	}
 	return DetectionSnapshot{
+		Admission:          admission,
+		GenericCapture:     p.Capture,
+		ScopedSnapshot:     scoped,
 		NamespaceName:      namespace,
 		SecretList:         secretMetadata,
 		NodeList:           nodes.Items,
@@ -219,41 +225,15 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		EndpointSliceList:  endpointSlices.Items,
 		NetworkPolicyList:  networkPolicies.Items,
 		EventList:          events.Items,
-=======
-	scoped, err := ObserveScoped(ctx, p.Client, p.Scope, p.Ceiling, p.Generation)
-	if err != nil {
-		return nil, err
-	}
-	var admission *sdk.PodAdmissionResult
-	if p.PodAdmission {
-		result := ObservePodAdmission(ctx, p.Client, namespace, pods.Items)
-		admission = &result
-	}
-	return DetectionSnapshot{
-		Admission:         admission,
-		GenericCapture:    p.Capture,
-		ScopedSnapshot:    scoped,
-		NamespaceName:     namespace,
-		ConfigMapList:     configMaps.Items,
-		ServiceList:       services.Items,
-		PodList:           pods.Items,
-		DeploymentList:    deployments.Items,
-		ReplicaSetList:    replicaSets.Items,
-		StatefulSetList:   statefulSets.Items,
-		HPAList:           hpas.Items,
-		PDBList:           pdbs.Items,
-		EndpointList:      endpoints.Items,
-		EndpointSliceList: endpointSlices.Items,
-		NetworkPolicyList: networkPolicies.Items,
-		EventList:         events.Items,
->>>>>>> origin/vic-lsh/dev/sdo-improve
 		// Stamped after every list so no listed object postdates it.
 		ObservedAtTime: now().UTC(),
 	}, nil
 }
 
 type DetectionSnapshot struct {
-<<<<<<< HEAD
+	Admission          *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
+	GenericCapture     *GenericCapture         `json:"-"`
+	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
 	SecretList         []sdk.SecretMetadata
 	NodeList           []corev1.Node
 	IngressList        []networkingv1.Ingress
@@ -262,11 +242,6 @@ type DetectionSnapshot struct {
 	CronJobList        []batchv1.CronJob
 	JobList            []batchv1.Job
 	DaemonSetList      []appsv1.DaemonSet
-=======
-	Admission          *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
-	GenericCapture     *GenericCapture         `json:"-"`
-	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	NamespaceName      string
 	ConfigMapList      []corev1.ConfigMap
 	ServiceList        []corev1.Service

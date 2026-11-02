@@ -9,7 +9,10 @@ import (
 )
 
 func RunGitEnv(ctx context.Context, cwd string, env []string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	// Waiting for Git alone does not wait for its detached auto-maintenance.
+	// Keep housekeeping inside this command's context and process lifetime.
+	commandArgs := append([]string{"-c", "gc.autoDetach=false", "-c", "maintenance.autoDetach=false"}, args...)
+	cmd := exec.CommandContext(ctx, "git", commandArgs...)
 	if cwd != "" {
 		cmd.Dir = cwd
 	}

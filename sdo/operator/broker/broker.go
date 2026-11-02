@@ -12,11 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-<<<<<<< HEAD
 	"sdo.dev/operator/broker/internal/processio"
-=======
 	"sdo.dev/operator/contracts/settings"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	"strings"
 	"syscall"
 	"unicode"
@@ -783,23 +780,7 @@ func runGit(ctx context.Context, cwd string, args ...string) ([]byte, error) {
 }
 
 func runGitEnv(ctx context.Context, cwd string, env []string, args ...string) ([]byte, error) {
-<<<<<<< HEAD
 	return processio.RunGitEnv(ctx, cwd, env, args...)
-=======
-	// Waiting for Git alone does not wait for its detached auto-maintenance.
-	// Keep housekeeping inside this command's context and process lifetime.
-	commandArgs := append([]string{"-c", "gc.autoDetach=false", "-c", "maintenance.autoDetach=false"}, args...)
-	cmd := exec.CommandContext(ctx, "git", commandArgs...)
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
-	cmd.Env = append(os.Environ(), env...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return out, nil
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // cloneGit also persists the lifetime policy for commands run later by workers;

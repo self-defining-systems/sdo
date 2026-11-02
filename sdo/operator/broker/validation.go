@@ -9,13 +9,8 @@ import (
 )
 
 // checkCandidate applies the same complete pipeline as memory check. Only the
-<<<<<<< HEAD
 // compile transport differs: the broker requires its bounded validation subprocess.
-func checkCandidate(ctx context.Context, root, base string, actor Actor, phase Phase, paths []string, runner Validator, publication *validate.PublicationContext, decision *contracts.ReflectionDecision, metricsDetectors bool) ([]validate.Diagnostic, error) {
-=======
-// compile transport differs: the broker requires its independent validator Job.
 func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Actor, phase Phase, paths []string, runner Validator, publication *validate.PublicationContext, decision *contracts.ReflectionDecision, gaps *[]validate.Diagnostic) ([]validate.Diagnostic, error) {
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	var compile validate.CompileRunner
 	if runner != nil {
 		compile = func(ctx context.Context, request validate.Request) ([]validate.Diagnostic, error) {

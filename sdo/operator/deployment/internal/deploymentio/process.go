@@ -4,6 +4,7 @@ package deploymentio
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
 	"time"
 
@@ -28,9 +29,13 @@ func Wait(ctx context.Context, d time.Duration) error {
 	}
 }
 func JobSuffix() string { return rand.String(8) }
-func Evaluate(ctx context.Context, directory, binary string, args []string) ([]byte, []byte, error) {
+// Evaluate runs binary in directory with the process environment plus extraEnv.
+func Evaluate(ctx context.Context, directory, binary string, args, extraEnv []string) ([]byte, []byte, error) {
 	c := exec.CommandContext(ctx, binary, args...)
 	c.Dir = directory
+	if len(extraEnv) > 0 {
+		c.Env = append(os.Environ(), extraEnv...)
+	}
 	var out, stderr bytes.Buffer
 	c.Stdout, c.Stderr = &out, &stderr
 	err := c.Run()

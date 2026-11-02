@@ -22,11 +22,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
-<<<<<<< HEAD
-=======
 
 	"google.golang.org/protobuf/types/known/timestamppb"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
@@ -100,17 +97,6 @@ const (
 	incidentManifest = "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: dns\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: 1\n  clearing: 1\nbatching:\n  severity: warn\n  debounce: \"0\"\npossiblePlaybooks:\n  - %s\noriginatingIncident: inc-2\noriginatingCommit: abc\n"
 )
 
-<<<<<<< HEAD
-// TestCLIAndBrokerAgreeOnAcceptance exercises every layer through the real CLI
-// and the broker pipeline, including the bounded subprocess runner.
-// Any caller-only diagnostic or omitted layer changes these verdicts/rules.
-func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
-	binary := filepath.Join(t.TempDir(), "sdo-operator")
-	build := exec.Command("go", "build", "-p", "8", "-o", binary, "../cmd/sdo-operator")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v: %s", err, out)
-	}
-=======
 // These independently discoverable groups exercise every real CLI and broker
 // layer. Case ownership is automatic; CI schedules groups by their measured cost.
 const acceptanceShardCount = 5
@@ -136,22 +122,13 @@ func automaticAcceptanceShard(index int) int { return index % acceptanceShardCou
 
 func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
 	binary := operatorCLIFixture(t)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	baseline := t.TempDir()
-<<<<<<< HEAD
-	put(t, baseline, "healthy.json", `{"namespace":"demo","services":[],"pods":[]}`, 0644)
-=======
 	put(t, baseline, "healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[],"pods":[]}`)), 0644)
-	schema, err := builder.SchemaIdentity(operatorRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	type parityCase struct {
 		name            string
@@ -619,15 +596,8 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			accepted := filepath.Join(t.TempDir(), "accepted")
-<<<<<<< HEAD
-			if out, err := exec.Command("git", "clone", "--quiet", "--no-local", root, accepted).CombinedOutput(); err != nil {
-				t.Fatalf("clone accepted: %v %s", err, out)
-			}
-			repository, err := broker.New(accepted, t.TempDir(), (broker.SubprocessValidator{Binary: binary, OperatorRoot: operatorRoot, HealthyBaseline: baseline}).Validator())
-=======
 			testutil.CloneGit(t, root, accepted, "--no-local")
-			repository, err := broker.New(accepted, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema, baseline: baseline}))
->>>>>>> origin/vic-lsh/dev/sdo-improve
+			repository, err := broker.New(accepted, t.TempDir(), (broker.SubprocessValidator{Binary: binary, OperatorRoot: operatorRoot, HealthyBaseline: baseline}).Validator())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -765,15 +735,6 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatalf("CLI output is not a MemoryCheckReport: %v\n%s", err, stdout.String())
 			}
 
-<<<<<<< HEAD
-			if test.name == "program mitigation skips unreplayable effect" {
-				if len(report.GetMitigationReplayNotes()) != 1 || report.MitigationReplayNotes[0].GetStatus() != contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT {
-					t.Fatalf("CLI accepted effect without typed skip note: %+v", report)
-				}
-			}
-			validationStart := time.Now()
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 			var publishErr error
 			var receipt broker.Receipt
 			if test.phase == validate.ReflectionPhase && test.actor == validate.Responder {
@@ -781,7 +742,6 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			} else {
 				receipt, publishErr = repository.Publish(context.Background(), "incident", test.actor, test.phase)
 			}
-			t.Logf("broker validation wall time: %s", time.Since(validationStart))
 			err = publishErr
 			head, headErr := exec.Command("git", "-C", accepted, "rev-parse", "HEAD").Output()
 			if headErr != nil {
@@ -978,45 +938,6 @@ func replaceParityText(t *testing.T, root, rel, before, after string) {
 	put(t, root, rel, strings.Replace(string(data), before, after, 1), info.Mode().Perm())
 }
 
-// subprocessParityJob replaces only cluster scheduling/isolation, which are
-// outside acceptance rules. Publication stages the real tree and invokes the
-// shipped validator binary, including healthy replay and its report transport.
-<<<<<<< HEAD
-=======
-type subprocessParityJob struct{ binary, operatorRoot, schema, baseline string }
-
-func (j subprocessParityJob) Validate(ctx context.Context, r broker.ValidationJobRequest) (broker.ValidationJobReceipt, error) {
-	args := []string{"validate", "--app", r.CandidateRoot, "--operator-root", j.operatorRoot, "--expect-schema", j.schema}
-	needed, err := validate.BaselineGateRequired(r.CandidateRoot, r.ChangedPaths)
-	if err != nil {
-		return broker.ValidationJobReceipt{}, err
-	}
-	if needed {
-		baseline := j.baseline
-		if r.HealthyBaseline != "" {
-			baseline = r.HealthyBaseline
-		}
-		args = append(args, "--healthy-baseline", baseline)
-	}
-	cmd := exec.CommandContext(ctx, j.binary, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-	diagnostics, err := validate.ParseReport(stdout.String())
-	if err != nil {
-		return broker.ValidationJobReceipt{}, fmt.Errorf("validator subprocess: %v: %v: %s", runErr, err, stderr.String())
-	}
-	if err := validate.Err(diagnostics); err != nil {
-		return broker.ValidationJobReceipt{}, err
-	}
-	if runErr != nil {
-		return broker.ValidationJobReceipt{}, runErr
-	}
-	return broker.ValidationJobReceipt{CandidateTree: r.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true, ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true, CoverageGaps: validate.ParseReportGaps(stdout.String())}, nil
-}
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 func copyParityChange(t *testing.T, source, target, name string) {
 	t.Helper()
 	from, to := filepath.Join(source, name), filepath.Join(target, name)
