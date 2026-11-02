@@ -23,25 +23,34 @@ func (v LiveReadView) MemoryDiffInputs(refs []sdk.ObjectRef) []sdktest.Primitive
 	return recorder.SnapshotCalls()
 }
 func memoryDiffInputs(view any, refs []sdk.ObjectRef) []sdktest.PrimitiveCall {
-	for {
+	for view != nil {
 		if provider, ok := view.(interface {
 			MemoryDiffInputs([]sdk.ObjectRef) []sdktest.PrimitiveCall
 		}); ok {
 			return provider.MemoryDiffInputs(refs)
 		}
-		if cached, ok := view.(*cachedReadView); ok {
-			view = cached.ReadView
-			continue
+		// Each wrapper the controller layers over the live view (read cache, onboarding reachability, frozen
+		// metrics, traffic and other input carriers) only adds frozen inputs; the diffs come from what it wraps.
+		switch wrapper := view.(type) {
+		case *cachedReadView:
+			view = wrapper.ReadView
+		case onboardingReadView:
+			view = wrapper.ReadView
+		case metricsContext:
+			view = wrapper.Carrier.DetectionContext
+		case trafficContext:
+			view = wrapper.Carrier.DetectionContext
+		case inputs.Carrier:
+			view = wrapper.DetectionContext
+		case *inputs.Carrier:
+			view = wrapper.DetectionContext
+		default:
+			underlying, ok := view.(interface{ UnderlyingReadView() program.ReadView })
+			if !ok {
+				return nil
+			}
+			view = underlying.UnderlyingReadView()
 		}
-		// The onboarding wrapper only overrides the reachability window; diffs come from what it wraps.
-		if onboarding, ok := view.(onboardingReadView); ok {
-			view = onboarding.ReadView
-			continue
-		}
-		wrapper, ok := view.(interface{ UnderlyingReadView() program.ReadView })
-		if !ok {
-			return nil
-		}
-		view = wrapper.UnderlyingReadView()
 	}
+	return nil
 }

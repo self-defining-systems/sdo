@@ -60,23 +60,30 @@ func (sourceDriftDetector) Detect(_ context.Context, view sdk.DetectionContext) 
 type opaqueReadView struct{ program.ReadView }
 
 func TestRemoteDetectorReadsSourceDiffsTheControllerFroze(t *testing.T) {
+	cycle := func(live program.ReadView) *CycleReadView { return NewCycleReadView(live) }
 	for name, tc := range map[string]struct {
-		wrap    func(program.ReadView) program.ReadView
+		wrap    func(program.ReadView) sdk.DetectionContext
 		wantErr string
 	}{
-		"cycle view": {wrap: func(live program.ReadView) program.ReadView { return NewCycleReadView(live) }},
-		"cycle view after onboarding": {wrap: func(live program.ReadView) program.ReadView {
-			return NewCycleReadView(onboardingReadView{ReadView: NewCycleReadView(live)})
+		"cycle view": {wrap: func(live program.ReadView) sdk.DetectionContext { return cycle(live) }},
+		"cycle view after onboarding": {wrap: func(live program.ReadView) sdk.DetectionContext {
+			return NewCycleReadView(onboardingReadView{ReadView: cycle(live)})
 		}},
-		"view that hides its source": {wrap: func(live program.ReadView) program.ReadView {
-			return opaqueReadView{NewCycleReadView(live)}
-		}, wantErr: "cannot freeze source diffs"},
+		"frozen metrics over the cycle view": {wrap: func(live program.ReadView) sdk.DetectionContext {
+			return metricsContext{Carrier: inputs.New(cycle(live))}
+		}},
+		"traffic over frozen logs over the cycle view": {wrap: func(live program.ReadView) sdk.DetectionContext {
+			return trafficContext{Carrier: inputs.New(inputs.New(cycle(live)).WithLogs(nil))}
+		}},
+		"view that hides its source": {wrap: func(live program.ReadView) sdk.DetectionContext {
+			return NewCycleReadView(opaqueReadView{cycle(live)})
+		}, wantErr: "unrecorded DiffAgainstSource"},
 	} {
 		t.Run(name, func(t *testing.T) { remoteDetectorReadsSourceDiffs(t, tc.wrap, tc.wantErr) })
 	}
 }
 
-func remoteDetectorReadsSourceDiffs(t *testing.T, wrap func(program.ReadView) program.ReadView, wantErr string) {
+func remoteDetectorReadsSourceDiffs(t *testing.T, wrap func(program.ReadView) sdk.DetectionContext, wantErr string) {
 	ctx := context.Background()
 	spec := sdk.DetectorSpec{ID: "source-drift", Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}}}
 	s, err := memoryhost.NewServer("c", "d", []sdk.Detector{sourceDriftDetector{timingDetector{DetectorSpec: spec}}})
@@ -93,7 +100,7 @@ func remoteDetectorReadsSourceDiffs(t *testing.T, wrap func(program.ReadView) pr
 	source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "toy"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}
 	live := LiveReadView{Context: ctx, Carrier: inputs.New(snapshot), Client: fake.NewSimpleClientset(), SourceCommit: "accepted", Source: planFakeSource{source: source}}
 	// The controller hands detectors the cycle view the snapshot provider builds around its live view.
-	findings, err := remote.Detectors[0].Detect(ctx, wrap(live).(sdk.DetectionContext))
+	findings, err := remote.Detectors[0].Detect(ctx, wrap(live))
 	if wantErr != "" {
 		if err == nil || !strings.Contains(err.Error(), wantErr) {
 			t.Fatal(findings, err)

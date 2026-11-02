@@ -157,10 +157,6 @@ func watchedDiffReads(view sdk.DetectionContext, watches []sdk.WatchKind) ([]*pb
 		}
 	}
 	calls := memoryDiffInputs(view, watched)
-	if len(calls) == 0 && len(watched) > 0 {
-		// Sending none would surface as "unrecorded DiffAgainstSource" inside the host; name the real cause.
-		return nil, fmt.Errorf("detection view %T cannot freeze source diffs for the memory host", view)
-	}
 	return memoryhost.EncodeReceipts(calls)
 }
 
