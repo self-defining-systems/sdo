@@ -18,7 +18,8 @@ func (inputDetector) LogQueries() []logs.Query { return []logs.Query{{ID: "error
 func (inputDetector) UsageRequirements() usage.Requirements {
 	return usage.Requirements{Throttling: true}
 }
-func (inputDetector) ConsumesAlerts() bool { return true }
+func (inputDetector) ConsumesAlerts() bool       { return true }
+func (inputDetector) ConsumesPodAdmission() bool { return true }
 func TestRegistrationRetainsOptionalInputs(t *testing.T) {
 	s, err := NewServer("c", "d", []sdk.Detector{inputDetector{}})
 	if err != nil {
@@ -29,7 +30,7 @@ func TestRegistrationRetainsOptionalInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Metrics) != 1 || r.Metrics[0].Expr != "up" || len(r.Logs) != 1 || !r.Usage.Throttling || !r.Alerts {
+	if len(r.Metrics) != 1 || r.Metrics[0].Expr != "up" || len(r.Logs) != 1 || !r.Usage.Throttling || !r.Alerts || !r.PodAdmission {
 		t.Fatalf("lost optional declarations: %+v", r)
 	}
 }

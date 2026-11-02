@@ -24,6 +24,7 @@ type Registration struct {
 	UsesUsage    bool
 	Reachability bool
 	Alerts       bool
+	PodAdmission bool
 	Traffic      []string
 }
 
@@ -44,6 +45,9 @@ func registration(d sdk.Detector) Registration {
 	}
 	if c, ok := d.(metrics.AlertConsumer); ok {
 		r.Alerts = c.ConsumesAlerts()
+	}
+	if c, ok := d.(interface{ ConsumesPodAdmission() bool }); ok {
+		r.PodAdmission = c.ConsumesPodAdmission()
 	}
 	if c, ok := d.(traffic.Consumer); ok {
 		r.Traffic = c.TrafficWorkloads()
