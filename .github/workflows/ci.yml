@@ -121,7 +121,8 @@ jobs:
           exit "$status"
 
       - name: Save shared Go cache on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # TEMPORARY: prime this long-lived merge branch's cache so its later runs are warm.
+        if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'vic-lsh/port/merge-dev')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
@@ -163,7 +164,8 @@ jobs:
         run: bash ./scripts/test_go_ci.sh
 
       - name: Save shared Go cache on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # TEMPORARY: prime this long-lived merge branch's cache so its later runs are warm.
+        if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'vic-lsh/port/merge-dev')
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
