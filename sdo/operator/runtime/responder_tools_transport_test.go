@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"testing"
 )
 
@@ -151,9 +152,7 @@ func TestSessionToolServerRetainsPreparedDirectories(t *testing.T) {
 			}
 			request := []byte(`{"command":"status"}`)
 			for _, name := range []string{"call.json", "duplicate.json"} {
-				if err := os.WriteFile(filepath.Join(directory, "requests", name), request, 0600); err != nil {
-					t.Fatal(err)
-				}
+				testutil.PublishRequest(t, filepath.Join(directory, "requests"), name, request)
 			}
 			outside := t.TempDir()
 			// A replacement tools directory needs both children to look valid.

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"strings"
@@ -141,15 +142,7 @@ func TestMultiMitigationTransportServesReadsWhilePending(t *testing.T) {
 	transport := func(payload string) map[string]any {
 		t.Helper()
 		name := fmt.Sprintf("scripted-%d.json", time.Now().UnixNano())
-		// Publish atomically, as the production client does: the server skips dot-prefixed
-		// names, so it never reads a half-written request.
-		hidden := filepath.Join(directory, "requests", "."+name)
-		if err := os.WriteFile(hidden, []byte(payload), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(hidden, filepath.Join(directory, "requests", name)); err != nil {
-			t.Fatal(err)
-		}
+		testutil.PublishRequest(t, filepath.Join(directory, "requests"), name, []byte(payload))
 		timeout := time.After(time.Second)
 		for {
 			data, err := os.ReadFile(filepath.Join(directory, "responses", name))

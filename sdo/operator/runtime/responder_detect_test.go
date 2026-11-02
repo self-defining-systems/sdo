@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 
@@ -33,9 +34,7 @@ func (d selfCheckDetector) Detect(_ context.Context, _ sdk.DetectionContext) ([]
 func exchangeSelfCheck(t *testing.T, server *SessionToolServer, payload string) ToolResponse {
 	t.Helper()
 	name := fmt.Sprintf("call-%d.json", len(mustToolEntries(t, filepath.Join(server.Directory, "responses"))))
-	if err := os.WriteFile(filepath.Join(server.Directory, "requests", name), []byte(payload), 0600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.PublishRequest(t, filepath.Join(server.Directory, "requests"), name, []byte(payload))
 	if err := server.process(context.Background()); err != nil {
 		t.Fatal(err)
 	}
