@@ -22,7 +22,7 @@ func (v LiveReadView) MemoryDiffInputs(refs []sdk.ObjectRef) []sdktest.Primitive
 	}
 	return recorder.SnapshotCalls()
 }
-func memoryDiffInputs(view program.ReadView, refs []sdk.ObjectRef) []sdktest.PrimitiveCall {
+func memoryDiffInputs(view any, refs []sdk.ObjectRef) []sdktest.PrimitiveCall {
 	for {
 		if provider, ok := view.(interface {
 			MemoryDiffInputs([]sdk.ObjectRef) []sdktest.PrimitiveCall

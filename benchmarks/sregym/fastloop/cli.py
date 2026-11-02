@@ -1625,6 +1625,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="kind worker nodes beside the control plane (default 1, as every experiment lane)",
     )
     up.add_argument("--builder", default="fastloop", help="private buildx builder for the application image")
+    up.add_argument(
+        "--agent-registrations", type=Path, help="toy: SDO worker registration directory (default scripted)"
+    )
+    up.add_argument(
+        "--credentials-hook",
+        type=Path,
+        help="toy: executable the lane keeper provides; called with the SDO namespace to provision its credentials",
+    )
     up.add_argument("--controller-image", default=Images().controller)
     up.add_argument("--responder-image", default=Images().responder)
     up.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)

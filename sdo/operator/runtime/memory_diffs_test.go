@@ -9,6 +9,7 @@ import (
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"testing"
 )
@@ -38,5 +39,49 @@ func TestHostDiffInputsNeverPatch(t *testing.T) {
 	}
 	if len(client.Actions()) != 0 {
 		t.Fatal("read-only diff input called Kubernetes", client.Actions())
+	}
+}
+
+type sourceDriftDetector struct{ timingDetector }
+
+func (sourceDriftDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "toy", Name: "api"}
+	diff, err := view.DiffAgainstSource(ref)
+	if err != nil {
+		return nil, err
+	}
+	if !diff.Changed {
+		return nil, nil
+	}
+	return []sdk.Finding{{RuleID: "drift", Summary: "service differs from accepted source", PrimaryResource: ref}}, nil
+}
+
+// diffDetectionView is a detection context whose controller-side reads can freeze diffs.
+type diffDetectionView struct {
+	sdktest.Snapshot
+	live program.ReadView
+}
+
+func (v diffDetectionView) UnderlyingReadView() program.ReadView { return v.live }
+
+func TestRemoteDetectorReadsSourceDiffsTheControllerFroze(t *testing.T) {
+	ctx := context.Background()
+	spec := sdk.DetectorSpec{ID: "source-drift", Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}}}
+	s, err := memoryhost.NewServer("c", "d", []sdk.Detector{sourceDriftDetector{timingDetector{DetectorSpec: spec}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, _ := s.Ready(ctx, nil)
+	rpc, _ := memoryTestRPC(t, s)
+	remote, err := NewRemoteMemory(ready, mirroredTestHost(t, ctx, rpc, "c", "d", "toy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := sdktest.Snapshot{NamespaceName: "toy", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "toy"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 81}}}}}}
+	source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "toy"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}
+	live := LiveReadView{Context: ctx, Carrier: inputs.New(snapshot), Client: fake.NewSimpleClientset(), SourceCommit: "accepted", Source: planFakeSource{source: source}}
+	findings, err := remote.Detectors[0].Detect(ctx, diffDetectionView{Snapshot: snapshot, live: live})
+	if err != nil || len(findings) != 1 || findings[0].RuleID != "drift" {
+		t.Fatal(findings, err)
 	}
 }
