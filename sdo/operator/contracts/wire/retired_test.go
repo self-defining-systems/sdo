@@ -2,6 +2,7 @@ package wire
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -22,6 +23,9 @@ const (
 
 // Messages that are stored across builds: accepted-memory outcomes, durable
 // controller state and the frozen or journaled messages read back on restart.
+// updateStoredValues regenerates the stored-value snapshot: go test -run Retired -update-stored-values.
+var updateStoredValues = flag.Bool("update-stored-values", false, "append current stored values to the snapshot")
+
 func storedRoots() []protoreflect.MessageDescriptor {
 	return []protoreflect.MessageDescriptor{
 		(&contracts.OutcomeRecord{}).ProtoReflect().Descriptor(),
@@ -147,7 +151,7 @@ func TestRetiredTablesCoverEverySchemaRemoval(t *testing.T) {
 		return
 	}
 
-	if os.Getenv("SDO_UPDATE_STORED_VALUES") == "1" {
+	if *updateStoredValues {
 		for key, values := range current {
 			for _, value := range values {
 				if !contains(snapshot[key], value) {
@@ -169,13 +173,13 @@ func TestRetiredTablesCoverEverySchemaRemoval(t *testing.T) {
 	for key, values := range current {
 		for _, value := range values {
 			if !contains(snapshot[key], value) {
-				t.Errorf("%s accepts %q, which %s does not record: run SDO_UPDATE_STORED_VALUES=1 go test ./contracts/wire -run RetiredTables", key, value, storedValuesSnapshot)
+				t.Errorf("%s accepts %q, which %s does not record: run go test ./contracts/wire -run RetiredTables -update-stored-values", key, value, storedValuesSnapshot)
 			}
 		}
 	}
 	for _, field := range currentFields {
 		if !contains(snapshotFields, field) {
-			t.Errorf("field %s is not in %s: run SDO_UPDATE_STORED_VALUES=1 go test ./contracts/wire -run RetiredTables", field, storedFieldsSnapshot)
+			t.Errorf("field %s is not in %s: run go test ./contracts/wire -run RetiredTables -update-stored-values", field, storedFieldsSnapshot)
 		}
 	}
 }
