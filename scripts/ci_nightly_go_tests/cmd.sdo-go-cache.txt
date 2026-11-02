@@ -1,0 +1,2 @@
+# cmd/sdo-go-cache: tests of 1.0 s or more. PRs keep the rest, e.g. TestConcurrentProcessesShareOnlyAtomicallyPublishedEntries, TestProtocolEmptyBodyAndMiss, TestOverlayReadsSeedAndWritesOnlyScratch.
+TestRealGoReusesReadOnlySeedWithoutCopying

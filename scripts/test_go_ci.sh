@@ -14,11 +14,12 @@ if [[ "${1:-pr}" == nightly ]]; then
 else
     # Extended interleaving campaigns run nightly; ordinary controller tests
     # and every fuzz seed still run here.
+    # One list per package under scripts/ci_nightly_go_tests/ keeps concurrent edits apart.
     extended='^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer'
     while IFS= read -r name; do
         [[ -z "$name" || "$name" == \#* ]] && continue
         extended+="|^${name}$"
-    done < "$root/scripts/ci_nightly_go_tests.txt"
+    done < <(cat "$root"/scripts/ci_nightly_go_tests/*.txt)
     args+=(-skip "$extended")
 fi
 # A temporary workspace lets one go test invocation schedule packages across

@@ -215,7 +215,8 @@ def test_go_runner_keeps_integration_coverage_in_one_package_scheduler(tmp_path:
     assert "./sdo/operator/..." in invocations[0]
     nightly_names = [
         line
-        for line in (ROOT / "scripts/ci_nightly_go_tests.txt").read_text().splitlines()
+        for path in sorted((ROOT / "scripts/ci_nightly_go_tests").glob("*.txt"))
+        for line in path.read_text().splitlines()
         if line and not line.startswith("#")
     ]
     if mode == "pr":
@@ -299,3 +300,20 @@ def test_architecture_delegation_requires_the_full_python_suite() -> None:
     assert "scripts/test_python.sh --durations=30" in commands
     assert "--tach" not in commands
     assert "--ignore=tests/unit/test_architecture.py" not in commands
+
+
+def test_nightly_lists_name_only_existing_go_tests() -> None:
+    """A stale entry silently skips nothing; each one must match a defined Go test."""
+    listed = {
+        line
+        for path in (ROOT / "scripts/ci_nightly_go_tests").glob("*.txt")
+        for line in path.read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    defined = {
+        match
+        for path in ROOT.glob("**/*_test.go")
+        if "third_party" not in path.parts and "node_modules" not in path.parts
+        for match in re.findall(r"^func ((?:Test|Fuzz)\w*)\(", path.read_text(), re.MULTILINE)
+    }
+    assert sorted(listed - defined) == []
