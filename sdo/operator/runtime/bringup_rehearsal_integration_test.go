@@ -108,7 +108,7 @@ func TestHermeticBringupMaintenanceGenerationDuringOnboarding(t *testing.T) {
 
 func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), rehearsalBudget)
 	defer cancel()
 	root, proposals, _, scripted, coordinator := tracingFixture(t)
 	operator, err := filepath.Abs("..")
