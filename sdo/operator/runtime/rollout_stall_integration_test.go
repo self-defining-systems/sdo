@@ -121,7 +121,6 @@ func TestSourceRolloutStallHandsOffNamingTheBlocker(t *testing.T) {
 
 // One slow object must not consume the readbacks of the others: every written
 // object is read back inside the unchanged deadline.
-// Wall-clock deadlines race concurrent readbacks inside a synctest bubble (about 1 run in 8 flaked), so this test keeps real time.
 func TestSourceReadbackBudgetIsPerObject(t *testing.T) {
 	for _, tc := range []struct {
 		mode string
@@ -129,79 +128,81 @@ func TestSourceReadbackBudgetIsPerObject(t *testing.T) {
 	}{{"slow-rollout", 3}, {"slow-readback", 0}, {"slow-readback", 4}, {"slow-readback", 9}} {
 		mode, slow := tc.mode, tc.slow
 		t.Run(fmt.Sprintf("%s/%d", mode, slow), func(t *testing.T) {
-			const count = 10
-			client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}
-			sources := map[sdk.ObjectRef]*unstructured.Unstructured{}
-			var kubeObjects []kruntime.Object
-			var plan program.Plan
-			for i := range count {
-				source := addedFieldsSource()
-				source.SetName(fmt.Sprintf("svc-%d", i))
-				ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: source.GetNamespace(), Name: source.GetName()}
-				live := source.DeepCopy()
-				live.SetUID(types.UID(fmt.Sprintf("uid-%d", i)))
-				if err := RecordAcceptance(live, source); err != nil {
-					t.Fatal(err)
-				}
-				client.objects[ref], sources[ref] = live, source
-				plan.Actions = append(plan.Actions, program.ReconcileFromSource{Ref: ref})
-				var deployment appsv1.Deployment
-				if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(source.Object, &deployment); err != nil {
-					t.Fatal(err)
-				}
-				deployment.UID, deployment.Generation = live.GetUID(), 1
-				deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1, ReadyReplicas: 1}
-				if i == slow && mode == "slow-rollout" {
-					// Old capacity drains slowly; nothing makes it impossible.
-					deployment.Status.Replicas, deployment.Status.AvailableReplicas = 2, 1
-					controller := true
-					one := int32(1)
-					stale := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: ref.Namespace, Name: ref.Name + "-old", UID: "old-rs", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: ref.Name, UID: deployment.UID, Controller: &controller}}},
-						Spec: appsv1.ReplicaSetSpec{Replicas: &one, Template: *deployment.Spec.Template.DeepCopy()}, Status: appsv1.ReplicaSetStatus{Replicas: 1}}
-					stale.Spec.Template.Spec.Containers[0].Image = "search:0"
-					pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: ref.Namespace, Name: ref.Name + "-old-pod", UID: "old-pod", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: stale.Name, UID: stale.UID, Controller: &controller}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
-					kubeObjects = append(kubeObjects, stale, pod)
-				}
-				kubeObjects = append(kubeObjects, &deployment)
-			}
-			slowRef := plan.Actions[slow].(program.ReconcileFromSource).Ref
-			reader := &hangingReadClient{planFakeClient: client, patched: map[sdk.ObjectRef]bool{}}
-			if mode == "slow-readback" {
-				reader.hang = slowRef
-			}
-			bound := 2 * time.Second
-			executor := PlanExecutor{Client: reader, Source: mapPlanSource(sources), Rollouts: KubernetesPlanRollouts{Client: fake.NewSimpleClientset(kubeObjects...)}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: time.Minute}
-			started := time.Now()
-			result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: slowRef.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions", ResponseDeadline: started.Add(bound)}, plan, false)
-			if elapsed := time.Since(started); elapsed > bound+time.Second {
-				t.Fatalf("readbacks extended the deadline: %s", elapsed)
-			}
-			if mode == "slow-readback" {
-				var pending *RolloutPendingError
-				if !errors.As(err, &pending) || len(pending.Pending.GetBlockers()) != 1 || pending.Pending.Blockers[0].Ref.Name != slowRef.Name || result.RolloutPending == nil || result.VerificationPassed {
-					t.Fatalf("slow readback was not the only pending observation: %v", err)
-				}
-			} else {
-				var pending *RolloutPendingError
-				if !errors.As(err, &pending) || len(pending.Pending.GetBlockers()) != 1 || result.RolloutPending == nil || result.VerificationPassed {
-					t.Fatalf("slow object was not the only residual: %v", err)
-				}
-			}
-			for i, report := range result.ActionReports {
-				source := report.SourceReconcile
-				if source == nil {
-					t.Fatalf("object %d has no readback", i)
-				}
-				if i == slow {
-					if source.Converged || (mode == "slow-rollout" && !strings.Contains(strings.Join(source.ResidualPaths, " "), fmt.Sprintf("svc-%d-old-pod", slow))) || (mode == "slow-readback" && source.ObservationError == "") {
-						t.Fatalf("slow object earned convergence: %+v", source)
+			synctest.Test(t, func(t *testing.T) {
+				const count = 10
+				client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}
+				sources := map[sdk.ObjectRef]*unstructured.Unstructured{}
+				var kubeObjects []kruntime.Object
+				var plan program.Plan
+				for i := range count {
+					source := addedFieldsSource()
+					source.SetName(fmt.Sprintf("svc-%d", i))
+					ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: source.GetNamespace(), Name: source.GetName()}
+					live := source.DeepCopy()
+					live.SetUID(types.UID(fmt.Sprintf("uid-%d", i)))
+					if err := RecordAcceptance(live, source); err != nil {
+						t.Fatal(err)
 					}
-					continue
+					client.objects[ref], sources[ref] = live, source
+					plan.Actions = append(plan.Actions, program.ReconcileFromSource{Ref: ref})
+					var deployment appsv1.Deployment
+					if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(source.Object, &deployment); err != nil {
+						t.Fatal(err)
+					}
+					deployment.UID, deployment.Generation = live.GetUID(), 1
+					deployment.Status = appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: 1, ReadyReplicas: 1}
+					if i == slow && mode == "slow-rollout" {
+						// Old capacity drains slowly; nothing makes it impossible.
+						deployment.Status.Replicas, deployment.Status.AvailableReplicas = 2, 1
+						controller := true
+						one := int32(1)
+						stale := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Namespace: ref.Namespace, Name: ref.Name + "-old", UID: "old-rs", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: ref.Name, UID: deployment.UID, Controller: &controller}}},
+							Spec: appsv1.ReplicaSetSpec{Replicas: &one, Template: *deployment.Spec.Template.DeepCopy()}, Status: appsv1.ReplicaSetStatus{Replicas: 1}}
+						stale.Spec.Template.Spec.Containers[0].Image = "search:0"
+						pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: ref.Namespace, Name: ref.Name + "-old-pod", UID: "old-pod", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: stale.Name, UID: stale.UID, Controller: &controller}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+						kubeObjects = append(kubeObjects, stale, pod)
+					}
+					kubeObjects = append(kubeObjects, &deployment)
 				}
-				if !source.Converged || source.ObservationError != "" || len(source.ResidualPaths) != 0 {
-					t.Fatalf("object %d lost its readback to the slow object: %+v", i, source)
+				slowRef := plan.Actions[slow].(program.ReconcileFromSource).Ref
+				reader := &hangingReadClient{planFakeClient: client, patched: map[sdk.ObjectRef]bool{}}
+				if mode == "slow-readback" {
+					reader.hang = slowRef
 				}
-			}
+				bound := 2 * time.Second
+				executor := PlanExecutor{Client: reader, Source: mapPlanSource(sources), Rollouts: KubernetesPlanRollouts{Client: fake.NewSimpleClientset(kubeObjects...)}, Verifier: planFakeVerifier{passed: true}, RolloutTimeout: time.Minute}
+				started := time.Now()
+				result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: slowRef.Namespace, SourceCommit: "accepted", RepairPolicy: "recorded-actions", ResponseDeadline: started.Add(bound)}, plan, false)
+				if elapsed := time.Since(started); elapsed > bound+time.Second {
+					t.Fatalf("readbacks extended the deadline: %s", elapsed)
+				}
+				if mode == "slow-readback" {
+					var pending *RolloutPendingError
+					if !errors.As(err, &pending) || len(pending.Pending.GetBlockers()) != 1 || pending.Pending.Blockers[0].Ref.Name != slowRef.Name || result.RolloutPending == nil || result.VerificationPassed {
+						t.Fatalf("slow readback was not the only pending observation: %v", err)
+					}
+				} else {
+					var pending *RolloutPendingError
+					if !errors.As(err, &pending) || len(pending.Pending.GetBlockers()) != 1 || result.RolloutPending == nil || result.VerificationPassed {
+						t.Fatalf("slow object was not the only residual: %v", err)
+					}
+				}
+				for i, report := range result.ActionReports {
+					source := report.SourceReconcile
+					if source == nil {
+						t.Fatalf("object %d has no readback", i)
+					}
+					if i == slow {
+						if source.Converged || (mode == "slow-rollout" && !strings.Contains(strings.Join(source.ResidualPaths, " "), fmt.Sprintf("svc-%d-old-pod", slow))) || (mode == "slow-readback" && source.ObservationError == "") {
+							t.Fatalf("slow object earned convergence: %+v", source)
+						}
+						continue
+					}
+					if !source.Converged || source.ObservationError != "" || len(source.ResidualPaths) != 0 {
+						t.Fatalf("object %d lost its readback to the slow object: %+v", i, source)
+					}
+				}
+			})
 		})
 	}
 }

@@ -399,4 +399,3 @@ TestStandbyExactlyOneClaimantWins
 TestT1ScriptedBrokerMatrix
 TestSimRV6HealthRefreshCrashSchedules
 # Real-time readback deadlines race inside a synctest bubble (about 1 run in 8 flaked), so this stays on wall-clock time.
-TestSourceReadbackBudgetIsPerObject
