@@ -160,7 +160,9 @@ def test_native_artifact_guard_rejects_every_artifact_name(command: str, artifac
 def test_nightly_compile_integrations_keep_fast_pr_contracts() -> None:
     pr_commands = "\n".join(step.get("run", "") for step in workflow()["jobs"]["checks"]["steps"])
     nightly = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
-    nightly_commands = "\n".join(step.get("run", "") for step in nightly["jobs"]["extended"]["steps"])
+    nightly_commands = "\n".join(
+        step.get("run", "") for job in nightly["jobs"].values() for step in job.get("steps", [])
+    )
     moved = "tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py"
     assert f"--ignore={moved}" in pr_commands
     for path in re.findall(r"--ignore=([^\s]+)", pr_commands):
