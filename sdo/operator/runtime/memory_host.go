@@ -157,7 +157,20 @@ func (r *RemoteMemory) observation(view sdk.DetectionContext) (*pb.MemoryObserva
 		}
 	}
 	var err error
-
+	if len(source.ObservationStatuses()) > 0 {
+		scoped, _, e := sdktest.CaptureScoped(source)
+		if e != nil {
+			return nil, e
+		}
+		if out.Scoped, err = wireStruct(scoped); err != nil {
+			return nil, err
+		}
+	}
+	if v, ok := source.PodAdmission(); ok {
+		if out.PodAdmission, err = wireStruct(v); err != nil {
+			return nil, err
+		}
+	}
 	if v, ok := source.ServiceReachability(); ok {
 		out.Reachability, err = wireStruct(v)
 		if err != nil {

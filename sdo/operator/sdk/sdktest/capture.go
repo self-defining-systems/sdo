@@ -40,55 +40,12 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		s.ObservedAtTime = &observed
 	}
 	if scoped, ok := view.(sdk.ScopedObservationSource); ok {
-		s.ScopedSnapshot.Version = 1
-		s.ScopedSnapshot.Generation = scoped.ObservationGeneration()
-		for _, status := range scoped.ObservationStatuses() {
-			s.ScopedSnapshot.Scope.Version = 1
-			s.ScopedSnapshot.Scope.Targets = append(s.ScopedSnapshot.Scope.Targets, status.Target)
-			s.ScopedSnapshot.Statuses = append(s.ScopedSnapshot.Statuses, status)
-			if status.State != sdk.ObservationObserved {
-				continue
-			}
-			t := status.Target
-			refs = append(refs, sdk.ObjectRef{APIVersion: t.APIVersion, Kind: t.Kind, Namespace: t.Namespace, Name: t.Name})
-			switch t.Kind {
-			case "MutatingWebhookConfiguration":
-				object, err := scoped.MutatingWebhookConfiguration(t.Name)
-				if err != nil {
-					return Snapshot{}, err
-				}
-				if object != nil {
-					s.ScopedSnapshot.Mutating = append(s.ScopedSnapshot.Mutating, *object)
-				}
-			case "ValidatingWebhookConfiguration":
-				object, err := scoped.ValidatingWebhookConfiguration(t.Name)
-				if err != nil {
-					return Snapshot{}, err
-				}
-				if object != nil {
-					s.ScopedSnapshot.Validating = append(s.ScopedSnapshot.Validating, *object)
-				}
-			case "Deployment":
-				objects, err := scoped.ScopedDeployments(t.Namespace)
-				if err != nil {
-					return Snapshot{}, err
-				}
-				s.ScopedSnapshot.Deployments = append(s.ScopedSnapshot.Deployments, objects...)
-			case "Service":
-				objects, err := scoped.ScopedServices(t.Namespace)
-				if err != nil {
-					return Snapshot{}, err
-				}
-				s.ScopedSnapshot.Services = append(s.ScopedSnapshot.Services, objects...)
-			case "Endpoints":
-				objects, err := scoped.ScopedEndpoints(t.Namespace)
-				if err != nil {
-					return Snapshot{}, err
-				}
-				s.ScopedSnapshot.Endpoints = append(s.ScopedSnapshot.Endpoints, objects...)
-			}
+		snapshot, scopedRefs, err := CaptureScoped(scoped)
+		if err != nil {
+			return Snapshot{}, err
 		}
-
+		s.ScopedSnapshot = snapshot
+		refs = append(refs, scopedRefs...)
 	}
 	objects := sdk.TypedObjects(view)
 	if source, ok := view.(sdk.ObjectCaptureSource); ok {
@@ -152,4 +109,60 @@ func compactMeta(meta *metav1.ObjectMeta) {
 	meta.UID = ""
 	meta.Generation = 0
 	delete(meta.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
+}
+
+// CaptureScoped freezes a scoped observation source into its credential-free
+// replay form and lists the observed targets as object references.
+func CaptureScoped(scoped sdk.ScopedObservationSource) (sdk.ScopedSnapshot, []sdk.ObjectRef, error) {
+	var s sdk.ScopedSnapshot
+	var refs []sdk.ObjectRef
+	s.Version = 1
+	s.Generation = scoped.ObservationGeneration()
+	for _, status := range scoped.ObservationStatuses() {
+		s.Scope.Version = 1
+		s.Scope.Targets = append(s.Scope.Targets, status.Target)
+		s.Statuses = append(s.Statuses, status)
+		if status.State != sdk.ObservationObserved {
+			continue
+		}
+		t := status.Target
+		refs = append(refs, sdk.ObjectRef{APIVersion: t.APIVersion, Kind: t.Kind, Namespace: t.Namespace, Name: t.Name})
+		switch t.Kind {
+		case "MutatingWebhookConfiguration":
+			object, err := scoped.MutatingWebhookConfiguration(t.Name)
+			if err != nil {
+				return sdk.ScopedSnapshot{}, nil, err
+			}
+			if object != nil {
+				s.Mutating = append(s.Mutating, *object)
+			}
+		case "ValidatingWebhookConfiguration":
+			object, err := scoped.ValidatingWebhookConfiguration(t.Name)
+			if err != nil {
+				return sdk.ScopedSnapshot{}, nil, err
+			}
+			if object != nil {
+				s.Validating = append(s.Validating, *object)
+			}
+		case "Deployment":
+			objects, err := scoped.ScopedDeployments(t.Namespace)
+			if err != nil {
+				return sdk.ScopedSnapshot{}, nil, err
+			}
+			s.Deployments = append(s.Deployments, objects...)
+		case "Service":
+			objects, err := scoped.ScopedServices(t.Namespace)
+			if err != nil {
+				return sdk.ScopedSnapshot{}, nil, err
+			}
+			s.Services = append(s.Services, objects...)
+		case "Endpoints":
+			objects, err := scoped.ScopedEndpoints(t.Namespace)
+			if err != nil {
+				return sdk.ScopedSnapshot{}, nil, err
+			}
+			s.Endpoints = append(s.Endpoints, objects...)
+		}
+	}
+	return s, refs, nil
 }

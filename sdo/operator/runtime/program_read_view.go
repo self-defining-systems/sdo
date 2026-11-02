@@ -53,7 +53,7 @@ type LiveReadView struct {
 	BaselineSource StateBaseline
 }
 
-var errSnapshotObjectAbsent = errors.New("object is absent from snapshot")
+var errSnapshotObjectAbsent = sdk.ErrScopedObjectAbsent
 
 func (v LiveReadView) context() context.Context {
 	if v.Context != nil {
@@ -453,88 +453,7 @@ func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructure
 	if !ok {
 		return nil, errors.New("scoped observations unavailable")
 	}
-	t := sdk.ObservationTarget{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}
-	if t.Cluster() {
-		t.Name = ref.Name
-	}
-	matched := false
-	for _, status := range source.ObservationStatuses() {
-		if status.Target == t {
-			matched = true
-			if status.State != sdk.ObservationObserved {
-				return nil, errors.New("scoped observation unavailable")
-			}
-		}
-	}
-	if !matched {
-		return nil, errors.New("scoped observation undeclared")
-	}
-	var object any
-	switch ref.Kind {
-	case "Deployment":
-		items, err := source.ScopedDeployments(ref.Namespace)
-		if err != nil {
-			return nil, err
-		}
-		for _, o := range items {
-			if o.Name == ref.Name {
-				object = o
-			}
-		}
-	case "Service":
-		items, err := source.ScopedServices(ref.Namespace)
-		if err != nil {
-			return nil, err
-		}
-		for _, o := range items {
-			if o.Name == ref.Name {
-				object = o
-			}
-		}
-	case "Endpoints":
-		items, err := source.ScopedEndpoints(ref.Namespace)
-		if err != nil {
-			return nil, err
-		}
-		for _, o := range items {
-			if o.Name == ref.Name {
-				object = o
-			}
-		}
-	case "MutatingWebhookConfiguration":
-		item, err := source.MutatingWebhookConfiguration(ref.Name)
-		if err != nil {
-			return nil, err
-		}
-		if item != nil {
-			object = item
-		}
-	case "ValidatingWebhookConfiguration":
-		item, err := source.ValidatingWebhookConfiguration(ref.Name)
-		if err != nil {
-			return nil, err
-		}
-		if item != nil {
-			object = item
-		}
-	}
-	if object == nil {
-		return nil, errSnapshotObjectAbsent
-	}
-	b, err := json.Marshal(object)
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]any
-	err = json.Unmarshal(b, &m)
-	if err != nil {
-		return nil, err
-	}
-	out := &unstructured.Unstructured{Object: m}
-	out.SetAPIVersion(ref.APIVersion)
-	out.SetKind(ref.Kind)
-	delete(out.Object, "status")
-	return out, nil
+	return sdk.ScopedObject(source, ref)
 }
 
 // ScopedRefAllowed binds drift admission to the snapshot's exact observed targets.

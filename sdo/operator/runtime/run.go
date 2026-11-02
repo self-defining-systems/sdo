@@ -285,7 +285,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err := hostManager.Publish(ctx, sdktest.Snapshot{NamespaceName: *namespace}); err != nil {
 			return err
 		}
-		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		if err != nil {
 			return err
 		}
@@ -309,7 +309,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err != nil {
 			return err
 		}
-		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs = remote.Detectors, remote.Programs
 	}
 	if options.NativeBroker != nil && *forceReflection {
@@ -807,7 +807,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return memoryCandidate{commit: commit, err: err}
 			}
-			child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
+			child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
 			if err != nil {
 				_ = workspace.Close()
 				return memoryCandidate{commit: commit, err: err}
@@ -865,7 +865,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			detectors, options.Programs, snapshotProvider, metricsObserver = remote.Detectors, remote.Programs, next, nextMetrics
 			memoryCatalogMu.Unlock()
 			_ = json.NewEncoder(stdout).Encode(map[string]any{"memory_host_activation": candidate.commit, "binary_digest": candidate.digest, "activation_latency_ms": clock.Now().Sub(candidate.started).Milliseconds(), "controller_revision": launchConfig.GetControllerRevision()})
-			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
+			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
 			return nil
 		}
 		defer activation.close()
@@ -1969,4 +1969,13 @@ func configuredMetricsSource(queryURL, publishURL string) *contractsv1alpha1.Met
 // Existing responder-env configuration also provides a cold-only rollout switch.
 func standbyEnabled(environment map[string]string) bool {
 	return environment["SDO_RESPONDER_STANDBY"] != "0"
+}
+
+// hostProtectedNamespace is the control namespace when it differs from the
+// application's; an empty control namespace defaults to the application's.
+func hostProtectedNamespace(control, application string) string {
+	if control == "" || control == application {
+		return ""
+	}
+	return control
 }

@@ -46,6 +46,7 @@ func main(){
  socket:=flag.String("socket","","Unix socket")
  commit:=flag.String("commit","","accepted memory commit")
  namespace:=flag.String("namespace","","application namespace")
+ protected:=flag.String("protected-namespace","","SDO control namespace refused by generic reads")
  synthetic:=flag.Bool("synthetic-traffic",true,"run accepted traffic")
  capBytes:=flag.Uint64("memory-bytes",512<<20,"memory cap")
  flag.Parse()
@@ -62,6 +63,8 @@ func main(){
  trafficHost:=prober.NewHost(engine);defer trafficHost.Close()
  server.WithTraffic(trafficHost)
  reader,err:=core.NewKubernetesClient();if err!=nil{log.Fatal(err)}
+ objects,err:=core.NewGenericCapture(*namespace);if err!=nil{log.Fatal(err)}
+ server.WithObjects(objects,*protected)
  server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,reader),nil})
  ctx,cancel:=signal.NotifyContext(context.Background(),syscall.SIGTERM,syscall.SIGINT);defer cancel()
  if err=hostio.Serve(ctx,*socket,*capBytes,server);err!=nil{log.Fatal(err)}
