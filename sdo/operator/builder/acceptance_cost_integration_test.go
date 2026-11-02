@@ -5,7 +5,6 @@ package builder
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,13 +15,10 @@ import (
 // the launch path needs a retained controller artifact after those gates.
 func assertAcceptanceDoesNotRelinkLaunchArtifacts(t *testing.T, workspace *Workspace) {
 	t.Helper()
-	for _, name := range []string{"sdo-controller"} {
+	for _, name := range []string{"sdo-controller", "sdo-memory-host"} {
 		if _, err := os.Stat(filepath.Join(workspace.Directory, name)); !os.IsNotExist(err) {
 			t.Fatalf("acceptance unnecessarily emitted launch artifact %s: %v", name, err)
 		}
-	}
-	if output, err := exec.Command(filepath.Join(workspace.Directory, "sdo-prober"), "--check").CombinedOutput(); err != nil {
-		t.Fatalf("acceptance lost its portable prober build: %v: %s", err, output)
 	}
 }
 

@@ -91,9 +91,8 @@ func (workspace *Workspace) BuildForLaunch(ctx context.Context) (string, error) 
 }
 
 // Check compiles and vets every package and enforces detector acceptance.
-// Playbook tests and replay are informational. The initial package build already links
-// the controller, so Check does not link a second controller artifact. The
-// explicit CGO-disabled prober build still checks its portable launch target.
+// Playbook tests and replay are informational. Check links no controller or
+// memory-host artifact; BuildMemoryHost produces the accepted host.
 // A rejected stage is reported as a *StageError.
 func (workspace *Workspace) Check(ctx context.Context) error {
 	if err := workspace.CheckAcceptance(ctx); err != nil {

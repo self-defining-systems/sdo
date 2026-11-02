@@ -32,6 +32,13 @@ import (
 	"sdo.dev/operator/sdk/usage"
 )
 
+type timingDetector struct{ sdk.DetectorSpec }
+
+func (d timingDetector) Spec() sdk.DetectorSpec { return d.DetectorSpec }
+func (d timingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	return nil, nil
+}
+
 func TestRemoteMemoryUnavailableFailsClosed(t *testing.T) {
 	s, _ := memoryhost.NewServer("c", "d", []sdk.Detector{timingDetector{DetectorSpec: sdk.DetectorSpec{ID: "test"}}})
 	ready, _ := s.Ready(context.Background(), nil)
