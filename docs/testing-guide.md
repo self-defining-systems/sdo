@@ -1081,7 +1081,7 @@ reports failures. It retains the following extended checks:
 instead of accumulating 19 seconds of host time. No simulation seeds were cut.
 
 The exact repeated end-to-end compile tests moved to nightly are listed in
-`scripts/ci_nightly_go_tests.txt`. They cover assurance seed compilation,
+`scripts/ci_nightly_go_tests/*.txt` (one list per package). They cover assurance seed compilation,
 CLI/broker parity across every fixture, duplicate CLI clean-tree/JSON and
 scaffold compilations, toy-seed and isolated program validation, and repeated
 builder program/host/baseline builds, plus compile-through-controller fastloop,

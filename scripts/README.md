@@ -8,7 +8,7 @@
 - `check_go_determinism.sh`, `go_determinism_allowlist.txt`: codebase Go API
   ratchet; AST scanner and negative controls in
   `sdo/operator/internal/purity/determinism`. See `docs/go-purity.md` for workflow.
-- `test_go_ci.sh`: multi-module Go suite, shared compiler cache and PR/nightly selection.
+- `test_go_ci.sh`: multi-module Go suite, shared compiler cache and PR/nightly selection; nightly-only test names live in `ci_nightly_go_tests/<package>.txt`.
 - `test_python.sh`: Python unit suite; builds current-checkout protocol tools once
   for all workers. `check_errors.sh --python-suite` delegates architecture tests
   to this complete suite; static checks log individual wall times.

@@ -1,50 +1,12 @@
-# Repeated end-to-end builds; PRs retain builder compilation smoke, validator
-# rule tests, broker ownership tests and CLI error/JSON diagnostic contracts.
-TestAssuranceSeedsPassHealthJudgeCheck
-TestCLIAndBrokerAgreeOnAcceptance
-TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests
-TestToySeedPassesBrokerMemoryValidation
-TestIsolatedValidatorChecksProgramCorpus
-TestUnreplayableMitigatorPassesDiagnosisGateWithTypedNote
-TestBuildWorkspaceRunsOptInHealthyBaseline
 # Compile-through-controller integration, covered by ordinary admission,
 # broker, program reuse and near-miss contracts on PRs.
 TestHermeticFastloopRealGoGate
-TestHermeticForeignNetworkPolicyInvariantRepeat
 TestReflectionDirectFilesCLIAndBroker
 TestReflectionLearnedProgramCLIAndBroker
 # Captured routing program compilation: 64.38 s on #664. PRs retain
 # TestRoutingCaptureWaitsForSlowHealthyProber (record/replay), capture budget
 # tests, TestTargetPortFixtureCandidateClearsAfterRepair, and TestSimTrusted*.
 TestHermeticRoutingCaptureCompilesReplayableMitigator
-# Valid metrics is a second successful controller/prober compilation. PRs keep
-# the application compile smoke and TestBuildWorkspaceRejectsInvalidMetricsDetectors.
-# #666 first hosted run: 69.52 s building the host repeatedly. PRs retain
-# TestMemoryHostWorkspaceStagesAcceptedMemory, TestRemoteMemoryPreservesInputsAndCorpusReceipts,
-# and TestSimMemoryHostParityAndCrash (virtual-time real RPC/program parity).
-TestBuildMemoryHostUsesStagedMemory
-# #666 first hosted run: 19.93 s repeating real program compilation. PRs retain
-# TestSimTrustedFastPathNeverRollsBackACorrectFix, TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields,
-# source render/reconcile contracts, and validator/broker acceptance tests.
-TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder
-# #666 second hosted run: vet/test fixtures each spent ~51 s compiling the
-# controller before their intended failure. PRs keep TestCompileStageDiagnostics
-# through the real Go-process seam, plus real builder syntax/registration/metrics rejection.
-# Real Go builds merged from dev (10-80 s each on the builder tests); nightly runs them.
-TestShippedControllerKeepsItsDebugData
-TestProgramRepeatUnreachableIsRecordedAsGap
-TestRetiredProgramIsNotStagedCompiledOrRegistered
-# Dev operator end-to-end checks that compile detectors through the builder
-# (10-60 s each). PRs keep validator rule tests, broker ownership tests, the CLI
-# diagnostic contracts and the non-compiling halves of each pair.
-TestReflectionRecordsReplayButStillRejectsInvalidCode
-TestAgentScriptJudgeMemoryCheckAndBroker
-TestPartialPlaybookPublication
-TestLateInitCauseDetectorPassesReflectionCheckWithReplayOff
-TestWorkedExamplesPassTheReflectionMemoryCheck
-TestInstallExistingAdoptedVerifiedSeedOnboarding
-TestAdoptionCompilesAsIsAndLaterValidationStillRejects
-TestIncidentJobCompilerMountsRunLearnedProgramTestsAndReplay
 # Merge of dev into main: slowest runtime integration tests (2 s and up on a 16-way run). Each family keeps fast contracts in PR CI.
 # Simulation campaigns (seeded schedules, crash cuts, fault injection). PRs run a three-seed prefix of every sweep (SDO_SIM_FULL=1 runs all seeds nightly) and keep TestSimScheduleDeterministicPipelineEvidence, TestSimNextIncidentAfterFailedRepair, TestSimScheduleUndetectedLearningRequiresCompleteTransition and every fuzz seed.
 TestSimHealthRefreshInterruptedAndAdopted
@@ -64,8 +26,6 @@ TestHermeticRepeatCorpusUsesBrokerWithoutReflectionModel
 TestHermeticResponderProgramReuseThroughRealToolTransport
 TestHermeticResponderThreeFaultContinuation
 TestHermeticResponderWorkingPlaybookCLI
-TestHermeticSourceAbsentDriftSelectsLearnedPlaybook
-TestHermeticSourceReconcileLearningExposesVerifiedCounters
 TestHermeticUnexplainedCleanupRemediation
 # Reflection upgrades and adoption through the CLI and broker (each runs memory check builds). PRs keep TestRegisteredReflectionWorkerDirectEdits, TestReflectionTrustedCheckTransportToPublication and TestReflectionInfrastructureFailureDoesNotSpendLearningRetries.
 TestCoveredRepeatBrokerSkipsReflectionWorker
@@ -73,10 +33,6 @@ TestFailedClosureReflectionReceivesExactlyVerifiedCauses
 TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited
 TestHopelessOverLimitReflectionIsSkippedTypedAndTheIncidentCloses
 TestLearnedSourceRepairsBindOnRepeat
-TestReflectionAdoptionAfterHealthRefreshAndRestart
-TestReflectionAdoptionConflictIsRecordedInOutcome
-TestReflectionAdoptionPublishesAcrossObjectiveOrPolicyChange
-TestReflectionAdoptionValidatesAndPublishesAtCurrentHeadOnce
 TestReflectionBrokerDiagnosticRetryIsDurableAndBounded
 TestReflectionEveryClosedResponderIncident
 TestReflectionHotelMongoAuthUpgradesReadmeThroughCLIAndBroker
@@ -100,12 +56,9 @@ TestNativeBrokerRejectionRecordedBeforeProposalReset
 TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck
 TestNativeBrokerRestartKeepsRejectionAttempts
 TestNativeBrokerRetriesValidationWithoutRedispatchingReflection
-TestNativeSharedMemoryConflictsTerminateWithLastDiagnostic
 TestSyntheticWorkerResultReachesNativeBroker
 # Working-program compilation through the builder. PRs keep builder TestProgramMustCompile and TestWorkingProgramRevisionReceiptsStayBounded.
 TestBrokenWorkingProgramDoesNotBlockRawMitigation
-TestCompiledMitigatorBindsWebhookReferencesBeforePlanValidation
-TestCompiledProgramObservationFailureRemainsRetryable
 TestResponderDeletedNewProgramCannotRunCachedBinary
 TestResponderNewWorkingProgramAndCompileError
 TestResponderPlanUsesEditedWorkingProgram
@@ -126,7 +79,6 @@ TestSettlementObservesRecordedAPIWritesBeforeDerivation
 TestSettlementProducerConsumerSweep
 TestSettlementSingleCauseRecoversUnknownAndMatchingObservations
 # Response-stage budgets, rollout waits and live diagnosis. PRs keep TestDeterministicResponseStageWaitFollowsDetectorWindow, TestDeterministicResponseStageWaitsForPostRolloutHealthObservation and TestAutomaticStageEmptyPlanDoesNotPoisonAnotherBinding.
-TestAutomaticStageNonExecutablePlanIsTerminalPerBindingAndRestart
 TestProductionAutomaticStageUsesLiveDiagnosisWithoutCoverage
 TestProductionResponderMenuScriptedFactoryStrictReceipt
 # Adoption, health refresh and closure across repository advance. PRs keep TestClosureAdmittedDriftContracts, TestClosureTrafficRestartRetainsProofAndBudget and TestPendingDriftJoinsIncidentBeforeVerifiedClosure.
@@ -145,30 +97,19 @@ TestRunStartsObservationWhenResumedFromLaunchInsidePreservingPause
 TestUnconfirmedResponseContinuesOnceThenReturnsToClosureOwner
 # Other slow integration tests with fast neighbours in their packages: kept contracts are the same-package tests that do not build or sleep.
 TestAcceptedScriptProvenanceAtPublicApplyPaths
-TestAdoptedServerDefaultedFieldDriftIsNamedAndRestored
 TestFailedResponseProgressProducerFitsDispatchAtLimits
 TestFirstEncounterNamingReplacedPodPublishesWorkloadPlaybook
 TestForeignNetworkPolicyInvariantNearMisses
 TestKubernetesCacheSyncErrorNamesTheUnsyncedKind
 TestOperatorCLIFixtureReusesExecutable
-TestPeerMemoryPublicationNeverBlocksBoundStage
 TestRV6NoopJudgeAfterSourceAdvance
-TestSourceDefaultStageProducerReachesNoveltyConsumer
 TestT1TrustProperty
 TestTracingSwapRefreshPublishesAndBuildsCurrentRequirements
-# Builder: repeated real workspace builds. PRs keep TestProgramMustCompile, TestBuildWorkspaceRejectsDetectorRegistrationDrift,
-# TestBuildReplayUsesControllerRegistrations, TestBuildWorkspaceCompilesApplicationDetectors and TestProgramValidationRejectsUnsafeMemory for compile, registration and validator rules.
-TestCheckReusesExactPackagesAcrossWorkspaces
-
 # Hosted-runner budget (4 vCPUs run these 1.3-2.7x slower than the 64-core reference):
 # every group below holds the tests of one package at or above a reference time; PRs keep the faster rest.
 # runtime: tests of 0.3 s or more. PRs keep the rest, e.g. FuzzSimIncidentSchedule, TestSourceInventoryPendingOnboardingConfirmedSweep, TestAdmissionBlockedStageHandsOffEvenWhenHealthDetectorsClear.
-TestAcceptedClusterSourceCanBeInspectedAndReconciled
 TestAdmissionBlockedStageHandsOffWithoutUndoOrRepeat
 TestAdmissionReplicaSetConditionRequiresBothObservedGenerations
-TestAdoptedProgramsStartWithoutInheritedTrust
-TestAstronomyBaselineSourceComparisonTwoMinutes
-TestAutomaticStageEmptyPlanDoesNotPoisonAnotherBinding
 TestCauseWorkCreditsCanonicalRepairBindings
 TestClosureActiveTrafficWaitsThenRecoversOrHandsOff
 TestClosureTrafficRestartRetainsProofAndBudget
@@ -192,18 +133,11 @@ TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory
 TestExtendedInformerChangesTriggerEvaluation
 TestFailedAttemptFollowUpDoesNotWaitForReflection
 TestFailureReasonProducersClosedEnums
-TestForeignDriftNormalChurn
-TestForeignNetworkPolicyAdmission
 TestGeneratedConfigMapCreateRecyclesOnlyBlockedMountedPods
-TestGitPlanSourceSelectsDeployedHotelSeed
-TestHermeticAcceptedSourceAfterMemoryCommit
-TestHermeticAdoptedHostPortRepairLearnsAndReplays
-TestHermeticForeignNetworkPolicyOpensLatentIncident
 TestHermeticNewDetectorInputs
 TestHermeticResponsePipelineClearsTwoFaultsThroughControllerClosure
 TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels
 TestHermeticStaleSavedStepRepromptsWithOnlyTheStillBrokenFinding
-TestIncidentDispatchSnapshotPinsBaseAfterPeerPublication
 TestIneffectiveProgramRunsOnceThenHandsOff
 TestIneffectiveReversibleProgramIsRevertedBeforeHandoff
 TestInformerOwnersUseLeakGuardedConstructors
@@ -271,11 +205,6 @@ TestSharedLibraryChangeUpdatesProgramRevision
 TestShellControllerClosureReflectionAndActivation
 TestSimNextIncidentAfterFailedRepair
 TestSimScheduleDeterministicPipelineEvidence
-TestSourceConvergenceBeforeTerminalReceipt
-TestSourceConvergenceWaitsForKubernetesOldObjects
-TestSourceInventoryPendingOnboardingAfterVerifiedHealthRefresh
-TestSourceInventoryPendingOnboardingWaitsForHealthAuthority
-TestSourceReadbackUnavailableRemainsPendingUntilObserved
 TestStageAndAgentApplicationsShareOneIDSequence
 TestStageApplicationFailureDoesNotStarveOtherMatches
 TestStageClaimGateKeepsPublishedWorkerOwnership
@@ -297,22 +226,6 @@ TestStillMatchingProgramIsNotAppliedTwiceWithinIncident
 TestSuccessfulClosureStillReflectsBeforeItsReceipt
 TestTrafficRestartMidIncidentCanVerifyRecovery
 TestUnconfirmedClosureCommitsOutcomeWithoutFailureLearning
-# broker: tests of 1.5 s or more. PRs keep the rest, e.g. TestReflectionAttestationBindsDecisionAndPublication, TestVerifiedSourceRejectsMutationAfterDeployment, TestReflectionIdentityBindsCaptureNamesModesAndIncident.
-TestCLIAndBrokerAgreeOnReflectionResultContracts
-TestFakeJudgeDirectEditsBootstrapAndRefinementOwnership
-TestOperatorImportContract
-TestUpstreamConcurrentLanesConvergeOnOneHistory
-# operatorcli: tests of 1.5 s or more. PRs keep the rest, e.g. TestSimEvidenceSchedule, TestRestartClassSnapshotTransport, TestCredentialLeavesAcrossSharedShapes.
-TestIdentifierGrammarAtPersistenceBoundary
-# memory/validate: tests of 1.5 s or more. PRs keep the rest, e.g. TestShellCheckHygieneAndOwnershipWithoutGo, TestCheckRejectsPublicationContentGaps, TestOwnershipChecksEveryRegistrationWithDuplicateID.
-TestCheckRejectsNewClusterLocalValues
-# builder: tests of 1.0 s or more. PRs keep the rest, e.g. TestChangedProgramsAreTheCandidateEditedPlaybooks, TestProgramValidationRejectsUnsafeMemory, TestReadThroughGoCacheDoesNotCopySeedAtStartup.
-TestBuildWorkingProgramWithoutCorpusOrDetectors
-TestBuildWorkspaceRejectsInvalidMetricsDetectors
-# cmd/sdo-go-cache: tests of 1.0 s or more. PRs keep the rest, e.g. TestConcurrentProcessesShareOnlyAtomicallyPublishedEntries, TestProtocolEmptyBodyAndMiss, TestOverlayReadsSeedAndWritesOnlyScratch.
-TestRealGoReusesReadOnlySeedWithoutCopying
-# apihistory: tests of 1.5 s or more. PRs keep the rest, e.g. FuzzRV3bOpaqueLeaves, TestSimHistoryFaultSchedule, TestSimHistoryCredentialLeaves.
-TestVerificationFenceEndsTheResponderTurn
 # memory: tests of 1.5 s or more. PRs keep the rest, e.g. TestHealthRevisionColdWarmAndMemoryOnly, TestPlaybookActivationChangesOnlyOnLifecycleTransition, TestCatalogSnapshotAtRetainsProposalCommitAfterPeerPublication.
 # worker_registry: tests of 1.0 s or more. PRs keep the rest, e.g. TestKubernetesExecutorRecoversRequestBoundStagedResult, TestStandbySlotIsReleasedOnEveryExitPath, TestRWS2PVCContinuationRemainsDiscoverable.
 # The scripted broker matrix is 32 parallel subtests of git and validator process forks (about 31 CPU-s).
@@ -320,5 +233,4 @@ TestVerificationFenceEndsTheResponderTurn
 # and TestHermeticSharedMemoryControllers (simulated compile gate, about 10 CPU-s).
 TestT1ScriptedBrokerMatrix
 # Real compiler/replay verdict set kept from the CLI/broker parity table; the rest runs over FakeGo in PR CI.
-TestCLIAndBrokerAgreeOnRealCompilerVerdicts
 TestSimRV6HealthRefreshCrashSchedules
