@@ -28,17 +28,13 @@ from libs.agent_cli.provider_capacity import OpusPoolAllocation  # noqa: TC001 -
 if TYPE_CHECKING:
     from pathlib import Path
 
-<<<<<<< HEAD
 from benchmarks.sregym.fastloop.continuity import ActivationContinuity  # noqa: TC001 - Pydantic runtime annotation.
 
-SCHEMA_VERSION = "sdo.fastloop-incident/v1"
-=======
 SCHEMA_VERSION = "sdo.fastloop-incident/v2"
 #: Eval rows verify one full cleanup pass with the official recovery oracle.
 #: A second pass only re-proves that cleanup is repeatable, which credential-slot
 #: rehearsals check; on astronomy it costs another ~170 s alert-silence oracle.
 EVAL_CLEANUP_PASSES = 1
->>>>>>> origin/vic-lsh/dev/sdo-improve
 AgentName = Literal["sdo", "codex"]
 #: What let harness fault recovery run once the row was over: SDO's natural closure, a closure SDO
 #: permanently failed or retired, the reflection deadline with SDO still working, or no SDO incident.
@@ -204,9 +200,6 @@ class PostClosureWait(BaseModel):
 class IncidentRecord(_PersistedModel):
     model_config = ConfigDict(extra="forbid")
 
-<<<<<<< HEAD
-    memory_host_activations: list[ActivationContinuity] = Field(default_factory=list)
-=======
     @model_validator(mode="before")
     @classmethod
     def _read_recorded_rows_with_the_old_count_name(cls, data: Any) -> Any:
@@ -218,7 +211,7 @@ class IncidentRecord(_PersistedModel):
             data.setdefault("reflection_no_repair_count", old)
         return data
 
->>>>>>> origin/vic-lsh/dev/sdo-improve
+    memory_host_activations: list[ActivationContinuity] = Field(default_factory=list)
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
     schema_version: Literal["sdo.fastloop-incident/v2"] = SCHEMA_VERSION

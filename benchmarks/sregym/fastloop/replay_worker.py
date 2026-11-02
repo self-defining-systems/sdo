@@ -15,20 +15,12 @@ from unittest.mock import patch
 
 from google.protobuf import json_format
 
-<<<<<<< HEAD
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.agent_script.cli import script_environment
 from benchmarks.sregym.agent_script.converter import convert_recording
 from benchmarks.sregym.fastloop.fake_kube import FakeKubernetesAPIServer
 from benchmarks.sregym.fastloop.file_edits import encode_file_edits, record_file_edits
 from benchmarks.sregym.fastloop.reflection_script import reflection_script
-from benchmarks.sregym.fastloop.replay import CheckpointError, CheckpointStore, StageCheckpoint, replay_broker_result
-from benchmarks.sregym.fastloop.replay_transport import captured_commands
-from benchmarks.sregym.fastloop.responder_script import responder_script
-=======
-from benchmarks.sregym.adapter import WaitKind, scripted_worker, wait_for
-from benchmarks.sregym.fastloop.fake_kube import FakeKubernetesAPIServer
-from benchmarks.sregym.fastloop.file_edits import apply_file_edits, record_file_edits
-from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
 from benchmarks.sregym.fastloop.replay import (
     CheckpointError,
     CheckpointStore,
@@ -36,8 +28,9 @@ from benchmarks.sregym.fastloop.replay import (
     materialize_captures,
     replay_broker_result,
 )
+from benchmarks.sregym.fastloop.replay_transport import captured_commands
+from benchmarks.sregym.fastloop.responder_script import responder_script
 from benchmarks.sregym.repository_git import host_clone_command, host_git_command
->>>>>>> origin/vic-lsh/dev/sdo-improve
 from sdo.agents.responder import (
     CodexSessionBackend,
     SessionReflector,
@@ -230,9 +223,6 @@ def replay_generated_responder(store: CheckpointStore, incident: int, *, source:
     }
 
 
-<<<<<<< HEAD
-def replay_generated_reflection(
-=======
 def _read_only_git(args: list[str]) -> bool:
     """Whether ``git`` arguments only inspect a checkout (configuration overrides, then diff or ls-files)."""
 
@@ -241,8 +231,7 @@ def _read_only_git(args: list[str]) -> bool:
     return args[:1] in (["diff"], ["ls-files"])
 
 
-def replay_scripted_reflection(
->>>>>>> origin/vic-lsh/dev/sdo-improve
+def replay_generated_reflection(
     store: CheckpointStore, incident: int, *, source: Path, operator_root: Path
 ) -> dict[str, Any]:
     checkpoint = store.load(incident, "reflection")
@@ -457,9 +446,7 @@ def replay_script_worker(
         publisher = _Publisher()
         captures = root / "corpus"
         captures.mkdir()
-<<<<<<< HEAD
-        for name, data in checkpoint.captures.items():
-            (captures / name).write_bytes(data)
+        materialize_captures(captures, checkpoint.captures)
         api = CapturedKubernetesAPI(checkpoint.captures) if stage == "responder" else None
         if api is not None:
             api.runs = json_format.MessageToDict(typed, preserving_proto_field_name=True).get(
@@ -527,24 +514,6 @@ def replay_script_worker(
             return completed.stdout
 
         (root / "tools").mkdir()
-=======
-        materialize_captures(captures, checkpoint.captures)
-        if stage == "reflection":
-            # Recorded provider streams do not execute their original file writes.
-            # Restore final authored bytes before the worker's mandatory check.
-            if checkpoint.unrecorded_file_edits is not None:
-                raise CheckpointError(f"not replayable: file edits not recorded: {checkpoint.unrecorded_file_edits}")
-            if checkpoint.file_edits is None:
-                raise CheckpointError("reflection recording has no direct file edits; record a new dispatch")
-            apply_file_edits(checkout, checkpoint.file_edits)
-            subprocess.run(
-                ["go", "build", "-p", "8", "-o", str(root / "sdo-operator"), "./cmd/sdo-operator"],
-                cwd=operator_root,
-                check=True,
-                capture_output=True,
-                timeout=wait_for(WaitKind.ROLLOUT),
-            )
->>>>>>> origin/vic-lsh/dev/sdo-improve
         with (
             captured_commands(root, command) as tool_env,
             patch.dict(os.environ, tool_env),

@@ -19,11 +19,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
-<<<<<<< HEAD
-=======
-	"sdo.dev/operator/operatorcli"
 	"sdo.dev/operator/worker_registry"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 )
 
 func main() {

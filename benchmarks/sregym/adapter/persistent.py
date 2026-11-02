@@ -1992,12 +1992,7 @@ def _wait_for_verified_incident(
     summary = ""
     while budget.left() > 0:
         state = ops.runtime_state(control)
-<<<<<<< HEAD
-        if clock.monotonic() >= deadline:
-            break
-=======
         # A slow state read may have spent the stage budget; observing it still decides the stage.
->>>>>>> origin/vic-lsh/dev/sdo-improve
         observed = _observe_state(
             state,
             known=known,
@@ -2084,26 +2079,6 @@ def wait_for_maintenance_ack(
     raise PersistentControllerError(f"controller in {control!r} did not acknowledge maintenance {generation!r}")
 
 
-<<<<<<< HEAD
-def _wait_for_reflection_drain(
-    ops: ClusterOps, control: str, incident_id: str, timeout: float, clock: Clock
-) -> dict[str, Any]:
-    """Wait for broker acknowledgment, which follows accepted memory-host activation."""
-
-    deadline = clock.monotonic() + timeout
-    while clock.monotonic() < deadline:
-        state = ops.runtime_state(control)
-        if clock.monotonic() >= deadline:
-            break
-        observed = _observe_state(
-            state, incident_id=incident_id, timeout=min(30.0, max(0.001, deadline - clock.monotonic()))
-        )
-        _raise_observation_failure(observed, state)
-        if observed.acknowledged:
-            return state
-        clock.sleep(POLL_SECONDS)
-    raise PersistentControllerError(f"incident {incident_id!r} was not reflected and activated within {timeout:.0f}s")
-=======
 def controller_job_failure(job: dict[str, Any]) -> str | None:
     """A Job's terminal condition as ``reason: message``; a Failed or Complete Job never runs another pod."""
 
@@ -2179,21 +2154,6 @@ def _raise_terminal_controller_job(ops: ClusterOps, control: str, incident_id: s
             f"controller Job {CONTROLLER_JOB_NAME!r} in {control!r} is terminal ({failure}) before incident "
             f"{incident_id!r} was acknowledged; no controller can acknowledge its closure"
         )
-
-
-def _relaunched_after(records: list[dict[str, Any]], incident_id: str) -> bool:
-    restarted = False
-    relaunched = False
-    for record in records:
-        if record.get("controller_closure_restart") == incident_id:
-            restarted = True
-        elif restarted and record.get("controller_supervisor") == "relaunch":
-            relaunched = True
-        elif relaunched and "controller_maintenance" in record:
-            # The relaunched controller is up and has read its maintenance mode.
-            return True
-    return False
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 def _main(argv: list[str] | None = None) -> int:

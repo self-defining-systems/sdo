@@ -93,11 +93,7 @@ SDO_IMAGE_DEFAULTS = {
 SDO_IMAGE_ENTRY_POINTS = {
     "controller_image": (),
     "responder_image": ("sdo.agents.responder.worker", "libs.agent_cli", "agentshim"),
-<<<<<<< HEAD
-=======
-    "validator_image": (),
     "benchmark_image": ("sdo.agents.responder.worker", *BENCHMARK_IMAGE_ENTRY_POINTS),
->>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 #: Only the worker image runs agent turns and needs these Python/CLI pins.
 AGENT_IMAGES = ("responder_image", "benchmark_image")

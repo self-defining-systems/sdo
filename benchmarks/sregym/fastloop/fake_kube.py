@@ -48,16 +48,10 @@ class FakeKubernetesAPIServer:
         if not isinstance(self.namespace, str) or not self.namespace:
             raise ValueError("captured snapshot requires a namespace")
         self.objects: dict[tuple[str, str], dict[str, Any]] = {}
-<<<<<<< HEAD
         self._condition = threading.Condition(threading.RLock())
         self._revision = 0
         self._events: list[tuple[int, str, dict[str, Any]]] = []
         self._kubelet: dict[str, tuple[dict[str, Any], str]] = {}
-        for api_version, group in _RESOURCES.items():
-            for plural, (kind, collection) in group.items():
-                for item in snapshot.get(collection) or []:
-                    self.set_object(plural, dict(item, apiVersion=api_version, kind=kind))
-=======
         # Objects-only captures (object_snapshot_version 2) store each object once.
         objects_only = snapshot.get("object_snapshot_version", 0) >= 2
         for api_version, group in _RESOURCES.items():
@@ -73,11 +67,7 @@ class FakeKubernetesAPIServer:
                     else snapshot.get(collection) or []
                 )
                 for item in items:
-                    value = json.loads(json.dumps(item))
-                    value["apiVersion"] = api_version
-                    value["kind"] = kind
-                    self.objects[(plural, value["metadata"]["name"])] = value
->>>>>>> origin/vic-lsh/dev/sdo-improve
+                    self.set_object(plural, dict(item, apiVersion=api_version, kind=kind))
         server = self
 
         class Handler(BaseHTTPRequestHandler):

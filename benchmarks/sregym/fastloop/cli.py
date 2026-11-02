@@ -263,9 +263,6 @@ def up_preflight(args: argparse.Namespace) -> None:
         warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
     elif not (args.dev_mount.resolve() / "sdo/operator/go.mod").is_file():
         raise ValueError(f"fastloop preflight: not an SDO worktree: {args.dev_mount}")
-<<<<<<< HEAD
-    for image in (args.controller_image, args.responder_image):
-=======
     from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
 
     assert_harness_sources(getattr(args, "sregym_dir", DEFAULT_SREGYM_DIR))
@@ -274,9 +271,7 @@ def up_preflight(args: argparse.Namespace) -> None:
     for image, modules in (
         (args.controller_image, ()),
         (args.responder_image, BENCHMARK_IMAGE_ENTRY_POINTS),
-        (args.validator_image, ()),
     ):
->>>>>>> origin/vic-lsh/dev/sdo-improve
         if image is None:
             continue
         subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True, text=True)
@@ -577,12 +572,7 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         application=environment.application,
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
-<<<<<<< HEAD
-        deployed_manifest_paths=("kubernetes",),
-=======
-        validator_image=environment.images.validator,
         deployed_manifest_paths=manifest_paths_for_environment(environment),
->>>>>>> origin/vic-lsh/dev/sdo-improve
         repository_pvc="sdo-application-repository",
         credentials_secret=getattr(args, "credentials_secret", "sdo-agent-credentials"),
         model=args.model,
@@ -634,11 +624,7 @@ def _sdo_agent(
         results_dir=results_dir,
         kubeconfig=str(environment.kubeconfig),
         verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300),
-<<<<<<< HEAD
-        reflection_wait_seconds=3600.0,
-=======
         reflection_wait_seconds=wait_for(WaitKind.REFLECTION_DRAIN),
->>>>>>> origin/vic-lsh/dev/sdo-improve
         detection_timeout_seconds=args.detection_timeout,
         checkpoint_enabled=not args.no_checkpoints,
         require_attestation_eligible=environment.pinned_tools,
@@ -711,12 +697,13 @@ def _sdo_agent(
             composite=_composite_settings(args),
             stream_faults=stream_faults,
         )
-<<<<<<< HEAD
     return SdoPersistentAgent(
-        settings, **agent_arguments, keep_running=environment.app == "toy", check_continuity=environment.app == "toy"
+        settings,
+        **agent_arguments,
+        keep_running=environment.app == "toy",
+        check_continuity=environment.app == "toy",
+        evidence_queue=evidence_queue,
     )
-=======
-    return SdoPersistentAgent(settings, **agent_arguments, evidence_queue=evidence_queue)
 
 
 def _wipes_at_row_start(args: argparse.Namespace, environment: FastloopEnvironment) -> bool:
@@ -867,7 +854,6 @@ def deploy_with_setup_proof(
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
     return decision
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -884,26 +870,6 @@ def _run(args: argparse.Namespace) -> int:
             return _run_owned(args)
         from benchmarks.sregym.fastloop.evidence_queue import lane_queue
 
-<<<<<<< HEAD
-        warn_fallback(
-            environment.image_delivery_reason, environment.image_delivery_images, environment.image_delivery_seconds
-        )
-    if args.time_scale <= 0:
-        raise SystemExit("--time-scale must be positive")
-    if args.time_scale < 1:
-        scripted = args.agent == "sdo" and (
-            args.agent_registrations.resolve()
-            == (REPO_ROOT / "benchmarks/sregym/fastloop/agent_registrations").resolve()
-            if args.agent_registrations is not None
-            else environment.app == "toy"
-        )
-        if not scripted:
-            raise SystemExit(
-                "--time-scale below 1 is for scripted-agent runs only; live LLM runs must use --time-scale 1"
-            )
-    if args.agent == "sdo":
-        from benchmarks.sregym.adapter import control_namespace_for
-=======
         # The warm lane keeps its PVC across rows, so evidence delivery may outlive
         # the row: the earlier row's archive resumes here, beside this row's setup.
         queue = lane_queue(environment)
@@ -911,7 +877,6 @@ def _run(args: argparse.Namespace) -> int:
             return _run_owned(args, evidence_queue=queue)
         finally:
             queue.close(drain=False, timeout=wait_for(WaitKind.OPERATION))
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue | None = None) -> int:
@@ -1506,7 +1471,7 @@ def _retire_app(args: argparse.Namespace) -> int:
         "--no-dev-mount",
         "--reuse-cluster-only",
     ]
-    for role in ("controller", "responder", "validator"):
+    for role in ("controller", "responder"):
         command.extend([f"--{role}-image", getattr(args, f"{role}_image")])
     up_args = build_parser().parse_args(command)
     # Check source/image/host prerequisites before retiring the old application.
@@ -1691,7 +1656,7 @@ def build_parser() -> argparse.ArgumentParser:
     retire.add_argument("--lease", required=True)
     retire.add_argument("--coord", default="/mnt/data/shli/coord/coord")
     retire.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
-    for role in ("controller", "responder", "validator"):
+    for role in ("controller", "responder"):
         retire.add_argument(f"--{role}-image", required=True)
     retire.set_defaults(handler=_retire_app)
 

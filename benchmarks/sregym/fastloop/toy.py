@@ -353,11 +353,7 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
         capture_output=True,
     )
     publish_agent_registrations(
-<<<<<<< HEAD
         config.agent_registrations or ROOT / "benchmarks/sregym/fastloop/agent_registrations",
-=======
-        config.agent_registrations or ROOT / "benchmarks/sregym/adapter/scripted_registrations",
->>>>>>> origin/vic-lsh/dev/sdo-improve
         install.control_namespace,
         environment.kubeconfig,
         environment.images.responder,

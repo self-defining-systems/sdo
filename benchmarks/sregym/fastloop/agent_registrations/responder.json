@@ -10,7 +10,6 @@
   ],
   "kubernetes_job": {
     "image": "${RESPONDER_IMAGE}",
-<<<<<<< HEAD:benchmarks/sregym/fastloop/agent_registrations/responder.json
     "command": [
       "python3",
       "-m",
@@ -21,8 +20,5 @@
       "-m",
       "sdo.agents.responder.worker"
     ]
-=======
-    "command": ["env", "SDO_SCRIPTED_SOURCE_REPAIR=1", "python3", "-m", "benchmarks.sregym.adapter.scripted_worker", "responder"]
->>>>>>> origin/vic-lsh/dev/sdo-improve:benchmarks/sregym/adapter/scripted_registrations/responder.json
   }
 }

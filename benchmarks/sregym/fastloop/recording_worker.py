@@ -9,10 +9,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-<<<<<<< HEAD
-from benchmarks.sregym.fastloop.file_edits import MAX_FILE_EDITS_BYTES, encode_file_edits, record_file_edits
-from benchmarks.sregym.fastloop.model_recording import ModelRecorder
-=======
 from benchmarks.sregym.fastloop.checkpoint_limits import MAX_RESULT_BYTES, MAX_TASK_BYTES
 from benchmarks.sregym.fastloop.file_edits import (
     MAX_FILE_EDITS_BYTES,
@@ -20,8 +16,7 @@ from benchmarks.sregym.fastloop.file_edits import (
     encode_file_edits,
     record_file_edits,
 )
-from benchmarks.sregym.fastloop.model_recording import RecordingExecutor
->>>>>>> origin/vic-lsh/dev/sdo-improve
+from benchmarks.sregym.fastloop.model_recording import ModelRecorder
 from sdo.agents.responder import (
     AGENT_SKILLS,
     CodexSessionBackend,
@@ -81,15 +76,6 @@ def _record_result(directory: Path, wire: str, payload: str, *, reflection: bool
     _record_payload(directory / "result.json", payload)
 
 
-def recording_executor(directory: Path, wire: str) -> RecordingExecutor:
-    """Keep a warm worker's private path out of the canonical replay identity."""
-    replacements: dict[str, str] = {}
-    if alias := os.environ.get("SDO_WORKSPACE_ALIAS"):
-        task = parse_json(wire, AgentTask())
-        replacements[alias] = task.workspace.checkout_path
-    return RecordingExecutor(directory, request_json=wire, record=True, prompt_replacements=replacements)
-
-
 def main(argv: list[str] | None = None) -> int:
     await_standby_claim()
     args = argv if argv is not None else sys.argv[1:]
@@ -104,11 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     task_path = Path(os.environ.get("SDO_TASK_PATH", "/sdo/request/agent-task.json"))
     wire = task_path.read_text(encoding="utf-8")
     scratch = Path(os.environ.get("SDO_SESSION_SCRATCH", "/sdo/session/scratch"))
-<<<<<<< HEAD
     recording = ModelRecorder(scratch.parent / "model_io", request_json=wire)
-=======
-    recording = recording_executor(scratch.parent / "model_io", wire)
->>>>>>> origin/vic-lsh/dev/sdo-improve
     role = "reflector" if args[0] == "reflection" else "responder"
     prepare_codex_home(skills=AGENT_SKILLS[role])
     prepare_claude_home(skills=AGENT_SKILLS[role])

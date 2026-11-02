@@ -107,20 +107,7 @@ uv run python -m benchmarks.sregym.fastloop run \
   --diagnosis-grading off --continue-on-error
 ```
 
-<<<<<<< HEAD
-`--time-scale` defaults to 1. Live LLM runs, including smokes, use 1.
-Values below 1 are refused before runtime setup unless SDO uses the repository's
-`benchmarks/sregym/fastloop/agent_registrations` (explicitly selected, or the
-toy lane default). Custom registrations are conservatively treated as live.
-End-to-end harness verification and reflection budgets always use wall time: cold worker
-startup, compilation and API reads do not scale with detector timers.
-For scripted-agent runs it scales controller detector intervals, finding
-debounce, drift baseline settle, diagnosis settle, verification waits, the
-controller and fault-gate polling, recovery health
-polling, and composite stability and deadline waits. `--continue-on-error` records a failed incident and
-=======
 There is no time scaling; every run uses real time. `--continue-on-error` records a failed incident and
->>>>>>> origin/vic-lsh/dev/sdo-improve
 moves on only when recovery has passed its oracle. A new dev lane uses the
 `fastloop-dev-w` cluster prefix; choose another prefix if that name is taken.
 
@@ -411,7 +398,6 @@ include main's generated-contract dependencies, including `protovalidate`;
 source mounts do not add missing Python packages. Raw evidence is outside Git
 at `results/toy-cluster-evidence/`.
 
-<<<<<<< HEAD
 ## Editable agent turns
 
 For arbitrary deterministic behavior beneath the real worker, use the versioned
@@ -434,19 +420,16 @@ check it before baseline recovery maintenance. Each incident's
 commit, activation timestamp/latency, evaluation count before and after,
 maximum evaluation gap, allowed gap, controller identities before/after, and
 `controller_unchanged` / `passed`. The window covers build and catch-up latency
-plus two allowed gaps on either side. The allowance is max(1 second, 5 times
-`--time-scale`), compared with a nominal detector cadence of 2 times the scale.
+plus two allowed gaps on either side. The allowance is 5 seconds.
 Consecutive evaluation numbers and evaluations on both sides are required.
 Missing expected activation logs, maintenance in the window, excessive gaps,
 or a changed pod UID, pod/container start time or restart count fail the row
 and run. An empty activation list means no activation occurred; it is not a
 continuity proof. Scripted reflection proves plumbing, not model learning.
 
-Harness `--timeout` (plus the single-fault verification margin) and reflection
-waits use real wall time even with accelerated scripted detector timers. A state
-read that exhausts the wait budget produces the stage timeout without launching
-a subprocess with a 1 ms remaining budget.
-=======
+A state read that exhausts the wait budget produces the stage timeout without
+launching a subprocess with a 1 ms remaining budget.
+
 Astronomy seeds require the stock SREGym oracle observability stack before
 application deployment. Fastloop `up` installs the chart and collector from the
 pinned harness checkout; Helm dependencies are already vendored and are not
@@ -702,4 +685,3 @@ shared lock directory, then start every caller with the new count. Keep the
 lock files themselves: unlinking an in-use lock creates a second lock inode.
 These caps apply when the updated harness is used; they do not modify lanes
 that are already running an older harness.
->>>>>>> origin/vic-lsh/dev/sdo-improve

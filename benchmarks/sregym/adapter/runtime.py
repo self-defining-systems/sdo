@@ -44,12 +44,7 @@ class RuntimeConfig:
     credentials_secret: str
     model: str
     timeout_seconds: int
-<<<<<<< HEAD
-    verification_timeout_seconds: int = 120
-=======
-    validator_image: str = "sdo-detector-validator:v0.1.0"
     verification_timeout_seconds: int = int(wait_for(WaitKind.VERIFICATION_SAMPLE))
->>>>>>> origin/vic-lsh/dev/sdo-improve
     wait_for_completion: bool = False
     repair_policy: str = "recorded-actions"
     agent_provider: str = "codex"

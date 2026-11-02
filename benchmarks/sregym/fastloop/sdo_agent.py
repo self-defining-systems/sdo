@@ -15,12 +15,9 @@ verifies, and the loop grades the cluster with the problem's own oracle.
 from __future__ import annotations
 
 import json
-<<<<<<< HEAD
 import os
-=======
 import logging
 import subprocess
->>>>>>> origin/vic-lsh/dev/sdo-improve
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -277,22 +274,17 @@ class SdoPersistentAgent:
         run_lifecycle: Callable[[DeployedLifecycleContext], bool],
         clock: Clock | None = None,
         keep_running: bool = False,
-<<<<<<< HEAD
         check_continuity: bool = False,
         stop_on_detector_review: bool = True,
+        evidence_queue: EvidenceExportQueue | None = None,
     ) -> None:
         self._keep_running = keep_running
         self.learn_before_recovery = check_continuity
         self._continuity_before: dict[str, Any] = {}
         self._stop_on_detector_review = stop_on_detector_review
-=======
-        evidence_queue: EvidenceExportQueue | None = None,
-    ) -> None:
-        self._keep_running = keep_running
         # With a lane queue, the drain seals evidence and delivery leaves the critical path.
         self._evidence_queue = evidence_queue
         self._on_verified: Callable[[ResolutionGradePoint], None] | None = None
->>>>>>> origin/vic-lsh/dev/sdo-improve
         self._settings = settings
         self._ops = ops
         self._lifecycle_inputs = lifecycle_inputs
@@ -355,13 +347,10 @@ class SdoPersistentAgent:
         windows: list[InjectionWindow] = []
 
         def gated_inject() -> None:
-<<<<<<< HEAD
-            if self.learn_before_recovery:
-                self._continuity_before = self._controller_identity()
-=======
             if settings.require_attestation_eligible:
                 assert_attestation_eligible(settings.kubeconfig, control_namespace_for(settings.namespace))
->>>>>>> origin/vic-lsh/dev/sdo-improve
+            if self.learn_before_recovery:
+                self._continuity_before = self._controller_identity()
             windows.append(inject())
 
         def measure_verified(incident_id: str, detected_at: datetime | None, verified_at: datetime | None) -> None:
@@ -544,9 +533,8 @@ class SdoPersistentAgent:
             from benchmarks.sregym.fastloop.continuity import check_activations
 
             # Leave room for post-activation evaluations before any recovery maintenance.
-            scale = float(os.getenv("SDO_TIME_SCALE", "1"))
-            allowed_gap = max(1.0, 5.0 * scale)
-            self._clock.sleep((2 * allowed_gap + 0.5) / scale)
+            allowed_gap = 5.0
+            self._clock.sleep(2 * allowed_gap + 0.5)
             commits = {
                 str(item["accepted_commit"])
                 for item in rollout_receipts
@@ -564,11 +552,8 @@ class SdoPersistentAgent:
             )
             error = "; ".join(item for item in (error, continuity_error) if item) or None
         return outcome.with_learning(
-<<<<<<< HEAD
             memory_host_activations=activations,
-=======
             account_events=evidence.account_events,
->>>>>>> origin/vic-lsh/dev/sdo-improve
             diagnosis=outcome.diagnosis or _summaries(receipt.get("confirmed_root_causes")),
             mitigation=outcome.mitigation or _summaries(receipt.get("repair_actions"), successful_only=True),
             reflection_seconds=self._clock.monotonic() - started,
@@ -588,7 +573,6 @@ class SdoPersistentAgent:
             error=error,
         )
 
-<<<<<<< HEAD
     def _controller_identity(self) -> dict[str, Any]:
         from benchmarks.sregym.adapter import kubectl
 
@@ -632,7 +616,7 @@ class SdoPersistentAgent:
             namespace=self._settings.runtime_config.controller_namespace,
             kubeconfig=Path(str(self._settings.kubeconfig)),
         ).stdout
-=======
+
     def _queued_evidence(self, receipt_dir: Path) -> QueuedEvidenceExport | None:
         queue = self._evidence_queue
         if queue is None:
@@ -674,7 +658,6 @@ class SdoPersistentAgent:
             )
         except (OSError, ValueError, TypeError):
             return False
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
     @staticmethod
     def _receipt(receipt_dir: Path) -> dict[str, Any]:

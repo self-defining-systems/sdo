@@ -83,12 +83,9 @@ class AgentOutcome:
     """What an agent reports for one incident; learning fields arrive after recovery."""
 
     injection: InjectionWindow
-<<<<<<< HEAD
     memory_host_activations: list[ActivationContinuity] = field(default_factory=list)
-=======
     provider_waits: tuple[ProviderWaitInterval, ...] = ()
     account_events: tuple[AccountEvent, ...] = ()
->>>>>>> origin/vic-lsh/dev/sdo-improve
     detected_at: datetime | None = None
     mitigation_applied_at: datetime | None = None
     resolved_at: datetime | None = None
@@ -645,63 +642,16 @@ def _run_one(
         except Exception as exc:
             diagnosis_grade = DiagnosisGrade(error=_describe(exc))
     elif windows and grader is not None:
-<<<<<<< HEAD
-        diagnosis_grade = DiagnosisGrade(skipped=True, skip_reason="no diagnosis text")
-    learned_early = False
-    learning_complete = True
-    if outcome is not None and getattr(agent, "learn_before_recovery", False):
-        try:
-            outcome = agent.learn(outcome)
-        except Exception as exc:
-            errors.append(f"learning failed: {_describe(exc)}")
-            learning_complete = False
-        learned_early = True
-    if windows:
-=======
         diagnosis_grade = DiagnosisGrade(
             skipped=True,
             skip_reason=infra_error if infra_error in ("rate_limited", "account_exhausted") else "no diagnosis text",
         )
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
     if windows and oracle_finished_at is None and infra_error not in ("rate_limited", "account_exhausted"):
         measure_resolution(ResolutionGradePoint(outcome.incident_id, outcome.resolved_at) if outcome else None)
 
-<<<<<<< HEAD
-        try:
-            oracle = grade()
-            if not oracle.success:
-                errors.append("oracle reported failure")
-        except Exception as exc:
-            logger.exception("oracle failed for incident %d", index)
-            errors.append(f"oracle failed: {_describe(exc)}")
-        finally:
-            oracle_finished_at = now()
-        try:
-            recovery_seconds = driver.recover()
-            recovery_finished_at = now()
-            # A seed reset can intentionally remove fault-created workloads.
-            # Its independent oracle must describe the recovered baseline,
-            # not require a repaired injected workload to remain present.
-            recovery_oracle = getattr(driver, "recovery_oracle", lambda: None)()
-            if recovery_oracle is None:
-                recovery_oracle = grade()
-            if not recovery_oracle.success:
-                raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
-        except Exception as exc:
-            logger.exception("fault recovery failed for incident %d", index)
-            errors.append(f"fault recovery failed: {_describe(exc)}")
-            recovered = False
-
-    if outcome is not None and outcome.terminal_error:
-        learning_complete = False
-    elif outcome is not None and not learned_early:
-        # Benchmark cleanup cannot invalidate SDO's own outcome or suppress its
-        # reflection. The separate recovery gate still blocks the next injection.
-=======
     learning_complete = outcome is None or not outcome.terminal_error
     if outcome is not None:
->>>>>>> origin/vic-lsh/dev/sdo-improve
         try:
             outcome = agent.learn(outcome)
         except Exception as exc:
@@ -824,12 +774,9 @@ def _injection_state(windows: list[InjectionWindow], *, attempted: bool) -> Inje
 
 def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
     return {
-<<<<<<< HEAD
         "memory_host_activations": outcome.memory_host_activations,
-=======
         "provider_waits": list(outcome.provider_waits),
         "account_events": list(outcome.account_events),
->>>>>>> origin/vic-lsh/dev/sdo-improve
         "detected_at": outcome.detected_at,
         "mitigation_applied_at": outcome.mitigation_applied_at,
         "resolved_at": outcome.resolved_at,

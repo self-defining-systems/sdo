@@ -109,19 +109,6 @@ def main(argv: list[str] | None = None) -> int:
     if not api_base:
         print("SDO_SREGYM_API_BASE is required", file=sys.stderr)
         return 2
-<<<<<<< HEAD
-    if args.phase == "mitigation":
-        # Verify before submit: mitigation ends the problem, so it waits for
-        # the same synthetic traffic the controller's closure gate requires.
-        status = (status_check or live_incident_status)()
-        if status.state == IncidentStatusState.UNHEALTHY:
-            print(
-                "mitigation not submitted: `sdo verify` reports the application unhealthy.\n" + status.render(),
-                file=sys.stderr,
-            )
-            return EXIT_VERIFICATION_FAILED
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
     try:
         result = submit_solution(args.solution, phase=args.phase, api_base=api_base)
     except (OSError, ValueError, SubmissionBridgeError, urllib.error.URLError) as exc:

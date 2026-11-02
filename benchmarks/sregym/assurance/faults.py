@@ -473,13 +473,6 @@ func (Program) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "deny-all-networkpolicy-isolation", Params: []program.ParamSpec{{Name: "policy", Kind: "NetworkPolicy", Required: true}}}
 }
 
-<<<<<<< HEAD:benchmarks/sregym/assurance/faults.py
-Then run the verification and `sdo verify` together:
-
-```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && sdo verify
-```
-=======
 func (Program) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
 	ref := bindings.Objects["policy"]
 	for _, policy := range view.NetworkPolicies() {
@@ -506,7 +499,6 @@ func (p Program) Mitigate(ctx context.Context, view program.ReadView, bindings p
 	}
 	return program.Plan{Actions: []program.Action{program.DeleteObject{Ref: bindings.Objects["policy"], Reason: "remove the deny-all policy isolating the workload"}}}, nil
 }
->>>>>>> origin/vic-lsh/dev/sdo-improve:benchmarks/sregym/assurance/scripted_codex/faults.py
 """
 
 

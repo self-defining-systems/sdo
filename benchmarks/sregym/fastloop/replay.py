@@ -287,7 +287,6 @@ def capture_checkpoints(
         edits_path = path.with_name("file_edits.json")
         if edits_path.is_file():
             edits_by_request[hashlib.sha256(wire.encode()).hexdigest()] = decode_file_edits(edits_path.read_bytes())
-<<<<<<< HEAD
         from benchmarks.sregym.agent_script.converter import convert_recording
 
         model_dir = path.parents[2] / "model_io" / path.parent.name
@@ -301,14 +300,12 @@ def capture_checkpoints(
                     file_edits=edits_path if edits_path.is_file() else None,
                 )
                 _write(path.with_name("script.json"), plan.model_dump_json().encode())
-=======
         unrecorded_path = path.with_name(UNRECORDED_FILE_EDITS)
         if unrecorded_path.is_file():
             reason = _json_envelope(unrecorded_path.read_text(encoding="utf-8")).get("reason")
             if not isinstance(reason, str):
                 raise CheckpointError(f"invalid {UNRECORDED_FILE_EDITS}")
             unrecorded_by_request[hashlib.sha256(wire.encode()).hexdigest()] = reason
->>>>>>> origin/vic-lsh/dev/sdo-improve
         data = {"agent-task.json": wire}
         result_path = path.with_name("result.json")
         if result_path.is_file():
@@ -321,10 +318,7 @@ def capture_checkpoints(
             continue
         wire = data.get("agent-task.json")
         if isinstance(wire, str) and _could_belong_to_incident(wire, incident_id):
-<<<<<<< HEAD
-=======
             _bounded(wire.encode(), MAX_TASK_BYTES, "dispatch request")
->>>>>>> origin/vic-lsh/dev/sdo-improve
             try:
                 task = parse_json(wire, AgentTask())
             except ParseError as exc:
@@ -345,10 +339,7 @@ def capture_checkpoints(
             task_id = envelope.get("task_id", envelope.get("taskId"))
             if task_id is not None and task_id not in requests:
                 continue
-<<<<<<< HEAD
-=======
             _bounded(wire.encode(), MAX_RESULT_BYTES, "worker result checkpoint limit")
->>>>>>> origin/vic-lsh/dev/sdo-improve
             try:
                 result = parse_json(wire, AgentResult())
             except ParseError as exc:
@@ -534,16 +525,12 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
     checkpoint.require_captures()
     if checkpoint.result is None:
         raise CheckpointError("broker replay requires a recorded worker result")
-<<<<<<< HEAD
-    program = Path(__file__).with_name("replay_go").resolve()
-=======
     if checkpoint.unrecorded_file_edits is not None:
         raise CheckpointError(f"not replayable: file edits not recorded: {checkpoint.unrecorded_file_edits}")
     _bounded(checkpoint.request.encode(), MAX_TASK_BYTES, "dispatch request")
     _bounded(checkpoint.result.encode(), MAX_RESULT_BYTES, "worker result checkpoint limit")
     _validate_envelopes(checkpoint.request, checkpoint.result)
-    program = Path(__file__).with_name("replay_go") / "main.go"
->>>>>>> origin/vic-lsh/dev/sdo-improve
+    program = Path(__file__).with_name("replay_go").resolve()
     with tempfile.TemporaryDirectory(prefix="sdo-fastloop-replay-") as temporary:
         directory = Path(temporary)
         _write(directory / "request.json", checkpoint.request.encode())
@@ -552,9 +539,7 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
             _write(directory / "file_edits.json", encode_file_edits(checkpoint.file_edits))
         capture_dir = directory / "captures"
         capture_dir.mkdir(mode=0o700)
-<<<<<<< HEAD
-        for name, data in checkpoint.captures.items():
-            _write(capture_dir / name, data)
+        materialize_captures(capture_dir, checkpoint.captures)
         # A private workspace pins replay to the requested frozen operator,
         # regardless of the caller's GOWORK or the driver's checkout location.
         modules = {"sdo.dev/operator": operator_root.resolve()}
@@ -569,9 +554,6 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
             + ")\n",
             encoding="utf-8",
         )
-=======
-        materialize_captures(capture_dir, checkpoint.captures)
->>>>>>> origin/vic-lsh/dev/sdo-improve
         command = [
             "go",
             "run",
@@ -585,18 +567,11 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
         ]
         completed = subprocess.run(
             command,
-<<<<<<< HEAD
             cwd=program,
             env={**os.environ, "GOWORK": str(workspace)},
             capture_output=True,
             text=True,
-            timeout=300,
-=======
-            cwd=operator_root / "runtime",
-            capture_output=True,
-            text=True,
             timeout=wait_for(WaitKind.ROLLOUT),
->>>>>>> origin/vic-lsh/dev/sdo-improve
             check=False,
         )
         if completed.returncode:

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 BENCHMARK_IMAGE_ENTRY_POINTS = (
+    "benchmarks.sregym.fastloop.generated_worker",
     "benchmarks.sregym.fastloop.recording_worker",
     "benchmarks.sregym.adapter.submission",
     "benchmarks.sregym.adapter.submission_relay",

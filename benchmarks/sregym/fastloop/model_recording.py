@@ -45,47 +45,6 @@ class ModelRecorder:
         self.occurrences[prompt_digest] = occurrence + 1
         suffix = f"-{occurrence:03d}" if occurrence else ""
         path = self.directory / self.request_digest / f"{prompt_digest}{suffix}.json"
-<<<<<<< HEAD
-=======
-        if self.ordered and not self.record:
-            turns = {}
-            for candidate in path.parent.glob("*.json"):
-                payload = json.loads(candidate.read_text(encoding="utf-8"))
-                if "turn_index" in payload:
-                    turns[payload["turn_index"]] = candidate
-            if turns:
-                if turn_index in turns:
-                    path = turns[turn_index]
-                elif self.live_on_miss:
-                    path = path.with_name(f"{prompt_digest}-turn-{turn_index:03d}.json")
-                else:
-                    raise ModelCacheMiss(
-                        f"model cache exhausted at turn {turn_index} for request {self.request_digest} "
-                        f"prompt {prompt_digest}"
-                    )
-        if not self.record and path.is_file():
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if "unrecorded" in payload:
-                raise ModelCacheMiss(f"model turn {payload.get('turn_index')} not recorded: {payload['unrecorded']}")
-            changed = payload.get("prompt_digest") != prompt_digest
-            if payload.get("request_digest") != self.request_digest or changed and not self.ordered:
-                raise ModelCacheMiss(
-                    f"model cache digest mismatch for request {self.request_digest} prompt {prompt_digest}"
-                )
-            if changed:
-                self.prompt_changes.append({"recorded": payload["prompt_digest"], "current": prompt_digest})
-            sink.started(_ReplayHandle())
-            streams: dict[str, list[str]] = {"stdout": [], "stderr": []}
-            for stream, line in payload["events"]:
-                streams[stream].append(line)
-                if stream == "stdout":
-                    sink.stdout(line)
-                else:
-                    sink.stderr(line)
-            return CommandResult(payload["returncode"], "".join(streams["stdout"]), "".join(streams["stderr"]))
-        if self.live is None or not (self.record or self.live_on_miss):
-            raise ModelCacheMiss(f"model cache miss for request {self.request_digest} prompt {prompt_digest}")
->>>>>>> origin/vic-lsh/dev/sdo-improve
         events: list[tuple[str, str]] = []
 
         class Tee:
