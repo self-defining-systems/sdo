@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -122,7 +123,9 @@ func TestFrozenClosureIsDurableBeforeBrokerAttempt(t *testing.T) {
 	if broker.processCalls() != 0 {
 		t.Fatal("broker received a closure that was never saved")
 	}
-	for attempt := 0; broker.processCalls() == 0 && attempt < 3; attempt++ {
+	// The handoff steps the closure to PROCESSING synchronously; the broker call
+	// itself runs on a background goroutine, so its count is not yet observable.
+	for attempt := 0; controller.closureState != contracts.ClosureState_CLOSURE_STATE_PROCESSING && attempt < 3; attempt++ {
 		effect, ok := controller.PendingClosureEffect()
 		if !ok {
 			t.Fatal("frozen closure has no pending effect")
@@ -133,6 +136,9 @@ func TestFrozenClosureIsDurableBeforeBrokerAttempt(t *testing.T) {
 		if err := controller.PersistState(ctx); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
+		t.Fatalf("closure never reached the broker: state %v", controller.closureState)
 	}
 	awaitBrokerResult(t, controller.closureResults)
 	controller.processBrokerCompletions()
