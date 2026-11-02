@@ -78,6 +78,7 @@ The exact declared edge-package list is:
 - `sdo/operator/worker_registry/internal/workerio`: worker clocks, warm-standby processes, sockets and environment.
 - `sdo/operator/cmd/sdo-go-cache/internal/cacheio`: Go cache helper environment and clock.
 - `sdo/operator/cmd/sdo-replay/internal/replayio`: replay command child-process launcher.
+- `sdo/operator/internal/testutil/pathio`: test-only search-path read for synthetic tools such as `FakeGo`.
 - `sdo/operator/sdk/kubeclient/internal/clientio`: in-memory observation HTTP client; opens no connections.
 - `sdo/operator/toolchain`: Go compiler and offline module-cache download process adapter.
 - `sdo/operator/devmount`: development mount process adapter.

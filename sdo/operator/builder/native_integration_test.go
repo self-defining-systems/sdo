@@ -61,7 +61,7 @@ func TestBuildWorkspaceAcceptsOpaqueDiagnosticsProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer workspace.Close()
-	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
+	if err := workspace.Check(context.Background()); err != nil {
 		t.Fatalf("projected diagnostics did not compile: %v", err)
 	}
 }
@@ -116,7 +116,7 @@ func TestBuildWorkspaceRejectsDetectorRegistrationDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer workspace.Close()
-	if _, err := workspace.ValidateAndBuild(context.Background()); err == nil || !strings.Contains(err.Error(), "registration mismatch") {
+	if err := workspace.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "registration mismatch") {
 		t.Fatalf("detector drift was accepted or rejected for wrong reason: %v", err)
 	}
 }
@@ -147,7 +147,7 @@ func TestBuildWorkspaceRunsOptInHealthyBaseline(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workspace.Directory, "generated", "healthy_baseline_test.go")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
+	if err := workspace.Check(context.Background()); err != nil {
 		t.Fatalf("healthy baseline gate failed: %v", err)
 	}
 }
@@ -223,7 +223,7 @@ func buildMetricsWorkspace(t *testing.T, rules string) error {
 		t.Fatal(err)
 	}
 	defer workspace.Close()
-	_, err = workspace.ValidateAndBuild(context.Background())
+	err = workspace.Check(context.Background())
 	return err
 }
 

@@ -70,7 +70,7 @@ func TestTypedObservationProgramCompilesAndReportsStaleEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer workspace.Close()
-	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
+	if err := workspace.Check(context.Background()); err != nil {
 		t.Fatalf("typed reads failed compilation/replay: %v", err)
 	}
 	// Reuse the built workspace so only the corpus changes: opening evidence
@@ -90,7 +90,7 @@ func TestTypedObservationProgramCompilesAndReportsStaleEvidence(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(workspace.Directory, "corpus", "targetport-mismatch", "recordings.json"), raw, 0644); err != nil {
 				t.Fatal(err)
 			}
-			_, err = workspace.ValidateAndBuild(context.Background())
+			err = workspace.Check(context.Background())
 			if err != nil {
 				t.Fatalf("stale %s blocked saving: %v", method, err)
 			}

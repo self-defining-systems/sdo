@@ -51,6 +51,22 @@ Its negative controls run alongside it in `scripts/check_errors.sh`, so an unsaf
 new fixture fails the static gate. Run the whole helper suite with
 `go -C sdo/operator test -race ./internal/testutil`.
 
+## Synthetic Go edge
+
+A generated-workspace check costs 14–24 s of real compiling and linking (controller link 9 s,
+two test-binary links about 5 s each). Contracts about *which stage runs, which stage
+failure rejects, and how a failure is reported* do not need that: install
+`internal/testutil.FakeGo(t, rules...)`, a `go` on PATH whose stages pass unless a
+`GoRule` fails them (by verb, by package pattern covering a directory, by a marker file).
+It logs each stage, leaves an empty executable for `build -o X`, and works through child
+processes such as the operator CLI. Build any real binary (for example
+`operatorCLIFixture`) before installing it. Examples: `builder.TestStageClassificationDecidesAcceptance`,
+`operatorcli.TestMemoryCheckReportsACompilerStageFailureAtItsFile`.
+A test that asserts compiler or replay *output* (replay notes, healthy-baseline refusals,
+cache identity, link flags) keeps the real compiler and belongs on the nightly list.
+Use `Workspace.Check` rather than `ValidateAndBuild` unless the controller binary is the
+subject: `Check` runs the same acceptance and advisory stages without the controller link.
+
 ## Waiting in Go tests
 
 `Execute` polls until its context ends, so running it under a fixed short

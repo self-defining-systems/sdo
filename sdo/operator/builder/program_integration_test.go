@@ -24,7 +24,7 @@ func TestBuildWorkspaceRegistersProgramAndSharedLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	if _, err := w.ValidateAndBuild(context.Background()); err != nil {
+	if err := w.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"playbooks/service-targetport-mismatch/diagnose.go", "lib/ports/ports.go", "generated/programs.go"} {
@@ -59,7 +59,7 @@ func TestProgramAliasRolesRefusedAtSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	_, err = w.ValidateAndBuild(context.Background())
+	err = w.Check(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "program.finding-bindings") || !strings.Contains(err.Error(), "[resource service]") {
 		t.Fatalf("alias roles reached accepted memory: %v", err)
 	}
