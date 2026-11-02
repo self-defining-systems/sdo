@@ -109,16 +109,17 @@ func (d *remoteDetector) ConsumesAlerts() bool                  { return d.Alert
 func (d *remoteDetector) ConsumesPodAdmission() bool            { return d.PodAdmission }
 func (d *remoteDetector) TrafficWorkloads() []string            { return d.Traffic }
 func (d *remoteDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	// Diffs may call the API server, so they are frozen before the host lease and mirror barrier are taken.
+	reads, err := watchedDiffReads(view, d.DetectorSpec.Watches)
+	if err != nil {
+		return nil, err
+	}
 	rpc, sequence, release, err := d.remote.capture(ctx, view)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
 	observation, err := d.remote.observation(view)
-	if err != nil {
-		return nil, err
-	}
-	reads, err := watchedDiffReads(view, d.DetectorSpec.Watches)
 	if err != nil {
 		return nil, err
 	}
@@ -254,21 +255,13 @@ type remoteProgram struct {
 }
 
 func (p *remoteProgram) Spec() program.ProgramSpec { return p.spec }
-func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequence uint64) (*pb.MemoryProgramInput, error) {
+
+// reads freezes the source and baseline diffs of every object the program may inspect. It runs before the
+// host lease and mirror barrier are taken, because a diff may call the API server.
+func (p *remoteProgram) reads(view program.ReadView, b program.Bindings) ([]*pb.MemoryReadReceipt, error) {
 	if err := program.ValidateBindings(p.spec, b); err != nil {
 		return nil, err
 	}
-	observation, err := p.remote.observation(view)
-	if err != nil {
-		return nil, err
-	}
-	input := &pb.MemoryProgramInput{ProgramId: p.spec.ID, MirrorSequence: sequence, Observation: observation}
-	names := make([]string, 0, len(b.Objects))
-	for name := range b.Objects {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	input.Bindings = programBindingsContract(b)
 	refs, err := memoryhost.SnapshotRefs(view)
 	if err != nil {
 		return nil, err
@@ -277,17 +270,25 @@ func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequenc
 	for _, ref := range refs {
 		seen[ref] = true
 	}
+	names := make([]string, 0, len(b.Objects))
+	for name := range b.Objects {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	for _, name := range names {
 		if ref := b.Objects[name]; !seen[ref] {
 			refs = append(refs, ref)
 			seen[ref] = true
 		}
 	}
-	input.Reads, err = memoryhost.EncodeReceipts(memoryDiffInputs(view, refs))
+	return memoryhost.EncodeReceipts(memoryDiffInputs(view, refs))
+}
+func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequence uint64, reads []*pb.MemoryReadReceipt) (*pb.MemoryProgramInput, error) {
+	observation, err := p.remote.observation(view)
 	if err != nil {
 		return nil, err
 	}
-	return input, nil
+	return &pb.MemoryProgramInput{ProgramId: p.spec.ID, MirrorSequence: sequence, Observation: observation, Reads: reads, Bindings: programBindingsContract(b)}, nil
 }
 func recordHostReads(view program.ReadView, reads []*pb.MemoryReadReceipt) error {
 	calls, err := memoryhost.DecodeReceipts(reads)
@@ -308,12 +309,16 @@ func recordHostReads(view program.ReadView, reads []*pb.MemoryReadReceipt) error
 	return nil
 }
 func (p *remoteProgram) Diagnose(ctx context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
+	reads, err := p.reads(view, b)
+	if err != nil {
+		return program.Verdict{}, err
+	}
 	rpc, sequence, release, err := p.remote.capture(ctx, view)
 	if err != nil {
 		return program.Verdict{}, err
 	}
 	defer release()
-	input, err := p.input(view, b, sequence)
+	input, err := p.input(view, b, sequence, reads)
 	if err != nil {
 		return program.Verdict{}, err
 	}
@@ -337,12 +342,16 @@ func (p *remoteProgram) Diagnose(ctx context.Context, view program.ReadView, b p
 	return verdict, verdict.Validate()
 }
 func (p *remoteProgram) Mitigate(ctx context.Context, view program.ReadView, b program.Bindings) (program.Plan, error) {
+	reads, err := p.reads(view, b)
+	if err != nil {
+		return program.Plan{}, err
+	}
 	rpc, sequence, release, err := p.remote.capture(ctx, view)
 	if err != nil {
 		return program.Plan{}, err
 	}
 	defer release()
-	input, err := p.input(view, b, sequence)
+	input, err := p.input(view, b, sequence, reads)
 	if err != nil {
 		return program.Plan{}, err
 	}

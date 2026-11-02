@@ -132,6 +132,9 @@ type onboardingReadView struct {
 	window servicehealth.ReachabilityWindow
 }
 
+// UnderlyingReadView exposes the wrapped view to the memory host edge.
+func (v onboardingReadView) UnderlyingReadView() program.ReadView { return v.ReadView }
+
 func (v onboardingReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
 	return v.window, true
 }

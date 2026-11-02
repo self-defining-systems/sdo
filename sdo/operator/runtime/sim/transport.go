@@ -72,6 +72,9 @@ func (tr Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		return reply(200, data.Summary), nil
 	}
+	if response, handled := tr.serveAcceptedSource(req, path, reply); handled {
+		return response, nil
+	}
 	if req.Method != "GET" {
 		return nil, fmt.Errorf("simulation transport: unsupported %s %s", req.Method, req.URL.Path)
 	}

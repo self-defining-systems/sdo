@@ -16,6 +16,9 @@ const closureReplayProbeTimeout = time.Second
 // boundedProbeView limits the live probes of a closure replay; every other read is unchanged.
 type boundedProbeView struct{ program.ReadView }
 
+// UnderlyingReadView exposes the wrapped view to the memory host edge.
+func (v boundedProbeView) UnderlyingReadView() program.ReadView { return v.ReadView }
+
 func (v boundedProbeView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error) {
 	live, ok := routingLiveView(v.ReadView)
 	if !ok {
