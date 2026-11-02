@@ -255,11 +255,11 @@ with a fixture that still described the old behavior.
 | 2026-11-02 | merge-toy | Lifecycle | A from-scratch toy install kept the previous controller checkpoint and health-refresh records; the checkpoint named a detector the reset memory did not have | Fixed | `test_retire_control_state_clears_checkpoints_and_stale_health_refresh_records` |
 | 2026-11-02 | merge-toy | Lifecycle | A preloaded standby responder read its task before awaiting the claim and crashed; the controller recreated a standby Job every 9 s | Fixed | `test_generated_launch_waits_for_standby_claim_before_reading_the_task` |
 | 2026-11-02 | merge-toy | Lifecycle | A health refresh ends the first controller attempt by design (exit 76), leaving a failed pod beside the running one; continuity required exactly one pod | Fixed | `test_live_controller_pod_ignores_pods_of_finished_job_attempts` |
-
 | 2026-11-02 | merge-toy | Missing behavior | After a verified program write, a co-reported finding whose detector had not re-observed it (service-reachability on the same Service) made the attempt `applied_still_matching`; the stage gave up within a second and the responder finished a mitigated incident (3 of 4 repeats) | Fixed: findings that depend on the written object keep the recovery wait going and the attempt is recorded cleared | `TestWriteVerifiedForSettling`, `TestPromoteSettledAttemptsRecordsTheClearedFindings`; existing stage tests unchanged |
 | 2026-11-02 | merge-toy | Timing | Closure replays open-phase reads inside the observation lock; the program's open probe of the old targetPort waited out the 5 s probe budget (`program_reads_ms=5283`), stopping detection for 9.8 s | Bounded to 1 s (gap 9.8 s to 5.1-5.4 s); remaining closure work under the lock still exceeds the 5 s allowance by 0.15-0.4 s on the repeat | `TestClosureReplayProbeIsBounded` |
+| 2026-11-02 | merge-closure | Timing | Closure captured the corpus, replayed reads and settled recovery applications inside the step pass, so no detector evaluated for 5.15–5.38 s around every closure; the simulation's closure work took zero virtual time and could not show it | Fixed (evidence gathers on a goroutine; the next pass freezes the closure) | `TestSimSlowClosureEvidenceDoesNotStopDetection` |
 
 Not modeled and still open: the Go simulation has no scripted-agent sandbox, standby handshake or Job
-restart on exit 76, so the standby, sandbox, restart and verify-protocol rows are covered by Python contract tests only. The
-closure stall is not simulated either: `maybeCloseIncident` holds the observation lock, and the simulation's
-closure work takes zero virtual time.
+restart on exit 76, so the standby, sandbox, restart and verify-protocol rows are covered by Python contract tests only.
+Closure work is modeled through the `closureEvidence` seam, which a test can make block; the closure recheck and the
+incident-open capture still run on the step pass (about 0.6 s and 0.2 s on the toy lane) and are not simulated.
