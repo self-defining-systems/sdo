@@ -165,7 +165,7 @@ func objectAPIVersion(kind string) string {
 		return "autoscaling/v2"
 	case "Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding":
 		return "rbac.authorization.k8s.io/v1"
-	case "ConfigMap", "Secret", "Pod", "Service", "ServiceAccount", "PersistentVolumeClaim":
+	case "Node", "ConfigMap", "Secret", "Pod", "Service", "ServiceAccount", "PersistentVolumeClaim":
 		return "v1"
 	}
 	return ""
