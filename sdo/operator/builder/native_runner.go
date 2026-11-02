@@ -7,16 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-<<<<<<< HEAD
 	"sdo.dev/operator/builder/internal/buildio"
-=======
-	"time"
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 )
@@ -40,48 +35,10 @@ type DiagnosticsProjection struct {
 }
 
 // RunOnce builds the currently accepted diagnostics and runs one controller
-// process. The workspace remains intact until that process exits.
+// process. The workspace remains intact until that process exits. Accepted
+// memory changes reach the running controller through its memory host, so the
+// controller is never rebuilt or relaunched for them.
 func RunOnce(ctx context.Context, config RunConfig) error {
-	return runWithHealthRefresh(ctx, config, runOnce)
-}
-
-// maxHealthRefreshRestarts bounds consecutive exit-76 relaunches when no
-// installation budget (Controller.Duration) bounds them.
-const maxHealthRefreshRestarts = 16
-
-func runWithHealthRefresh(ctx context.Context, config RunConfig, run func(context.Context, RunConfig) error) error {
-	var deadline time.Time
-	if config.Controller != nil && config.Controller.GetDuration().AsDuration() > 0 {
-		deadline = time.Now().Add(config.Controller.GetDuration().AsDuration())
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, deadline)
-		defer cancel()
-		config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
-	}
-	for restarts := 0; ; restarts++ {
-		if deadline.IsZero() && restarts > maxHealthRefreshRestarts {
-			return fmt.Errorf("health unverified: controller requested %d consecutive health refresh restarts without an installation budget", restarts)
-		}
-		if !deadline.IsZero() {
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				return fmt.Errorf("health unverified: installation budget exhausted before controller launch: %w", context.DeadlineExceeded)
-			}
-			config.Controller.Duration = durationpb.New(remaining)
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		err := run(ctx, config)
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == memory.HealthRefreshExitCode {
-			continue
-		}
-		return err
-	}
-}
-
-func runOnce(ctx context.Context, config RunConfig) error {
 	if config.Controller == nil {
 		return errors.New("controller config is required")
 	}
@@ -193,9 +150,5 @@ func runShellController(ctx context.Context, config RunConfig) error {
 	if binary == "" {
 		binary = "/usr/local/bin/sdo-shell-controller"
 	}
-	command := exec.CommandContext(ctx, binary, "--config", path)
-	command.Stdin = os.Stdin
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	return command.Run()
+	return buildio.RunController(ctx, binary, path, "")
 }

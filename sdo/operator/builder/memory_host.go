@@ -79,7 +79,12 @@ func (workspace *Workspace) BuildMemoryHost(ctx context.Context) (MemoryHostArti
 		return MemoryHostArtifact{}, err
 	}
 	path := filepath.Join(workspace.Directory, "sdo-memory-host")
-	for _, args := range [][]string{{"mod", "tidy"}, {"test", "./..."}, {"build", "-trimpath", "-buildvcs=false", "-o", path, "./cmd/memory-host"}} {
+	stages := [][]string{{"mod", "tidy"}, {"test", "./..."}, {"build", "-trimpath", "-buildvcs=false", "-o", path, "./cmd/memory-host"}}
+	if workspace.compileOnly {
+		// An adopted build is unvalidated by design: compile, never execute tests.
+		stages = [][]string{{"mod", "tidy"}, lean("build", "-trimpath", "-buildvcs=false", "-o", path, "./cmd/memory-host")}
+	}
+	for _, args := range stages {
 		if err := workspace.runGo(ctx, args...); err != nil {
 			return MemoryHostArtifact{}, err
 		}

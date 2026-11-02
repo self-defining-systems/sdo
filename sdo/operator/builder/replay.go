@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 // BuildReplay stages the very same detector/program registration as the
@@ -44,10 +43,7 @@ func main(){registry,err:=generated.Programs();if err!=nil{fmt.Fprintln(os.Stder
 	// Corpus-label acceptance remains separate: hand-written offline fixtures are
 	// inputs to this executable, not fabricated controller provenance.
 	for _, args := range [][]string{{"mod", "tidy"}, lean("build", "-buildvcs=false", "-o", binary, "./cmd/replay")} {
-		start := time.Now()
-		err = workspace.runGo(ctx, args...)
-		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: args[0], Duration: time.Since(start)})
-		if err != nil {
+		if err = workspace.runGo(ctx, args...); err != nil {
 			return nil, "", err
 		}
 	}
