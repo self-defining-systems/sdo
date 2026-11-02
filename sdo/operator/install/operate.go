@@ -15,7 +15,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sdo.dev/operator/devmount"
-	"sdo.dev/operator/install/internal/installio"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/shellpath"
 	"sdo.dev/operator/worker_registry"
@@ -193,9 +192,6 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if devmount.Enabled() {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)
-	}
-	if scale := installio.TimeScale(); scale != "" {
-		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
 	}
 	if err := worker_registry.ApplyProviderCapacity(pod, worker_registry.ProviderCapacityEnvironment()); err != nil {
 		return nil, err

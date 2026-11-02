@@ -24,7 +24,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/devmount"
-	"sdo.dev/operator/install/internal/installio"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
@@ -474,9 +473,6 @@ func controllerJob(c Config) *batchv1.Job {
 	if devmount.Enabled() {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)
-	}
-	if scale := installio.TimeScale(); scale != "" {
-		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
 	}
 	return job
 }
