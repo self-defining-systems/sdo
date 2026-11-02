@@ -14,6 +14,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
@@ -81,12 +82,28 @@ func prepareCleanReflection(t *testing.T, root string) {
 }
 
 func TestMemoryCheckCleanTreeExitsZero(t *testing.T) {
+	testutil.FakeGo(t)
 	root := copyFixture(t, goodFixture)
 	prepareCleanReflection(t, root)
 	env := memoryCheckEnv(t)
 	t.Chdir(root)
 	code, stdout, stderr := runMemory(t, env, "check")
 	if code != 0 || stdout != "" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+}
+
+// The synthetic compiler must be what the check consults: a failing stage turns
+// into a located diagnostic and exit status 1, so the clean-tree contracts above
+// cannot pass without running the stages.
+func TestMemoryCheckReportsACompilerStageFailureAtItsFile(t *testing.T) {
+	testutil.FakeGo(t, testutil.GoRule{Verb: "vet", Output: "detectors/incidents/missing-configmap/detector.go:7:2: synthetic vet failure"})
+	root := copyFixture(t, goodFixture)
+	prepareCleanReflection(t, root)
+	env := memoryCheckEnv(t)
+	t.Chdir(root)
+	code, stdout, stderr := runMemory(t, env, "check")
+	if code != 1 || !strings.Contains(stdout, validate.RuleDetectorVet) || !strings.Contains(stdout, "detector.go") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 }
@@ -127,6 +144,7 @@ func TestMemoryCheckJSONIsMemoryCheckReport(t *testing.T) {
 }
 
 func TestMemoryCheckCleanJSONHasEmptyDiagnosticList(t *testing.T) {
+	testutil.FakeGo(t)
 	root := copyFixture(t, goodFixture)
 	prepareCleanReflection(t, root)
 	code, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root, "--json")
