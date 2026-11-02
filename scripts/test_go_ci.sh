@@ -9,6 +9,8 @@ if [[ "${1:-pr}" == nightly ]]; then
     # The slowest packages run alone under -race and need far more than the
     # default per-package budget; each has its own nightly job (shard).
     args=(-tags=integration -json -timeout=40m -race -skip '^TestChaos|^TestExhaustive|^TestExplorer')
+    # Seeded simulation campaigns run their full seed counts here; PRs run a fixed prefix.
+    export SDO_SIM_FULL=1
 else
     # Extended interleaving campaigns run nightly; ordinary controller tests
     # and every fuzz seed still run here.

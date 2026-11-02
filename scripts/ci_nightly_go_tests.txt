@@ -75,18 +75,10 @@ TestInstallExistingAdoptedVerifiedSeedOnboarding
 TestAdoptionCompilesAsIsAndLaterValidationStillRejects
 TestIncidentJobCompilerMountsRunLearnedProgramTestsAndReplay
 # Merge of dev into main: slowest runtime integration tests (2 s and up on a 16-way run). Each family keeps fast contracts in PR CI.
-# Simulation campaigns (seeded schedules, crash cuts, fault injection). PRs keep TestSimScheduleDeterministicPipelineEvidence, TestSimNextIncidentAfterFailedRepair, TestSimScheduleUndetectedLearningRequiresCompleteTransition and every fuzz seed.
+# Simulation campaigns (seeded schedules, crash cuts, fault injection). PRs run a three-seed prefix of every sweep (SDO_SIM_FULL=1 runs all seeds nightly) and keep TestSimScheduleDeterministicPipelineEvidence, TestSimNextIncidentAfterFailedRepair, TestSimScheduleUndetectedLearningRequiresCompleteTransition and every fuzz seed.
 TestSimHealthRefreshInterruptedAndAdopted
-TestSimIncidentStream
-TestSimPlanApplyUnderServerFaults
-TestSimProgramTrustFollowsOnlyVerifiedRepairs
-TestSimRV6HealthRefreshCrashSchedules
 TestSimResponderMenuSeededSchedules
-TestSimSchedule
-TestSimSchedulePartialRepairClosesOnHealthWithDriftRecorded
-TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure
 TestSimVerifiedClosureDrainFailureAdmitsNextIncident
-TestSimXV2ActionsAndValuesUnderServerFaults
 # Hermetic controller end to end through real tool transport and processes. PRs keep TestHermeticResponsePipelineClearsTwoFaultsThroughControllerClosure, TestHermeticNewDetectorInputs and TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels.
 TestHermeticAgentRepairsTwoCoveredFaultsAndOneUnexplained
 TestHermeticBringupMaintenanceGenerationDuringOnboarding
@@ -410,3 +402,4 @@ TestStandbyExactlyOneClaimantWins
 # PRs keep TestHermeticNewDetectorInputs, TestHermeticSavedRepeatWaitsForSharedMinuteWithoutModels, the per-case broker tests
 # and TestHermeticSharedMemoryControllers (simulated compile gate, about 10 CPU-s).
 TestT1ScriptedBrokerMatrix
+TestSimRV6HealthRefreshCrashSchedules
