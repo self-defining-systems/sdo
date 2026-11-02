@@ -1,3 +1,5 @@
+//go:build integration
+
 package install
 
 import (
@@ -38,7 +40,7 @@ func TestClaimRecoveryLifecycleCuts(t *testing.T) {
 				owner = "sync-old"
 				name = RepositorySyncPodName
 			}
-			claim := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: cfg.ControlNamespace, UID: "claim-old", CreationTimestamp: metav1.NewTime(fixedNow.Add(-tc.age))}, Data: map[string]string{"operation_id": owner, "owner_kind": tc.kind, "owner_name": name, "owner_uid": tc.uid}}
+			claim := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: cfg.ControlNamespace, UID: "claim-old", CreationTimestamp: metav1.NewTime(time.Now().Add(-tc.age))}, Data: map[string]string{"operation_id": owner, "owner_kind": tc.kind, "owner_name": name, "owner_uid": tc.uid}}
 			client := fake.NewSimpleClientset(claim)
 			if tc.present {
 				if tc.kind == "Pod" {
@@ -56,7 +58,7 @@ func TestClaimRecoveryLifecycleCuts(t *testing.T) {
 }
 
 func TestStopReleasesOrphanSyncClaim(t *testing.T) {
-	client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: "demo", UID: "claim", CreationTimestamp: metav1.NewTime(fixedNow.Add(-time.Minute))}, Data: map[string]string{"operation_id": "sync-abandoned"}})
+	client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: "demo", UID: "claim", CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Minute))}, Data: map[string]string{"operation_id": "sync-abandoned"}})
 	if _, err := Stop(context.Background(), client, "demo"); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +182,7 @@ func TestExpiredLauncherCannotBindReplacementReservation(t *testing.T) {
 				t.Fatal(err)
 			}
 			expired := old.DeepCopy()
-			expired.CreationTimestamp = metav1.NewTime(fixedNow.Add(-time.Minute))
+			expired.CreationTimestamp = metav1.NewTime(time.Now().Add(-time.Minute))
 			if err := client.Tracker().Update(corev1.SchemeGroupVersion.WithResource("configmaps"), expired, cfg.ControlNamespace); err != nil {
 				t.Fatal(err)
 			}
@@ -242,7 +244,7 @@ func TestSyncClaimBindsPodAndCancellationCleansBoth(t *testing.T) {
 func TestRecoveryCannotDeleteConcurrentOwnerBinding(t *testing.T) {
 	cfg := testConfig()
 	ctx := context.Background()
-	expired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: cfg.ControlNamespace, UID: "old", ResourceVersion: "1", CreationTimestamp: metav1.NewTime(fixedNow.Add(-time.Minute))}, Data: map[string]string{"operation_id": "old"}}
+	expired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: OperateLockConfigMap, Namespace: cfg.ControlNamespace, UID: "old", ResourceVersion: "1", CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Minute))}, Data: map[string]string{"operation_id": "old"}}
 	client := claimAPI(expired)
 	bound := false
 	client.PrependReactor("delete", "configmaps", func(action ktesting.Action) (bool, kruntime.Object, error) {
