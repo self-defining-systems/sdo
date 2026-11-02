@@ -5,10 +5,8 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"

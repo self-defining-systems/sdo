@@ -2,12 +2,8 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kclock "k8s.io/utils/clock"
-	"net/http"
 	"sort"
 	"sync"
 	"time"

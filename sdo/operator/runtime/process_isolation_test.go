@@ -1,13 +1,9 @@
-//go:build integration
-
 package runtime
 
 import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -19,22 +15,6 @@ import (
 // process of the test binary: nothing else can be running there.
 
 const isolatedChildEnv = "SDO_TEST_ISOLATED_CHILD"
-
-// inIsolatedProcess returns true in the child, where the test body must run.
-// In the parent it runs this one test in a child process, fails t with the
-// child's output if it fails, and returns false.
-func inIsolatedProcess(t *testing.T) bool {
-	t.Helper()
-	if os.Getenv(isolatedChildEnv) == t.Name() {
-		return true
-	}
-	command := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.timeout=5m")
-	command.Env = append(os.Environ(), isolatedChildEnv+"="+t.Name())
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("isolated child process failed: %v\n%s", err, output)
-	}
-	return false
-}
 
 // globalMutators are the klog calls that change process-wide logging state.
 var globalMutators = map[string]bool{
@@ -100,3 +80,4 @@ func TestOnlyIsolatedTestsMutateProcessGlobalLogging(t *testing.T) {
 		t.Errorf("%s no longer mutates klog state; remove its allowlist entry", file)
 	}
 }
+

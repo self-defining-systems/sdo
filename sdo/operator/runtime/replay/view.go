@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/sdk/inputs"
 	"time"
 
 	operator "sdo.dev/operator/runtime"

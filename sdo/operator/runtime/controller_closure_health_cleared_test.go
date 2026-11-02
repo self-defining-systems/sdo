@@ -79,12 +79,12 @@ func TestIncidentClosureRecordsWhenHealthBeganItsFinalClearStreak(t *testing.T) 
 		if closure.HealthClearedAt.After(closure.VerifiedAt) {
 			t.Fatalf("health cannot clear after verification: %v > %v", closure.HealthClearedAt, closure.VerifiedAt)
 		}
-	})
-	for _, want := range []string{"incident_verified", "incident_id=" + closure.Request.IncidentID, "health_cleared_at=", "responder_completed_to_verified_ms="} {
-		if !strings.Contains(logs.String(), want) {
-			t.Fatalf("verification log lacks %q:\n%s", want, logs.String())
+		for _, want := range []string{"incident_verified", "incident_id=" + closure.Request.IncidentID, "health_cleared_at=", "responder_completed_to_verified_ms="} {
+			if !strings.Contains(logs.String(), want) {
+				t.Fatalf("verification log lacks %q:\n%s", want, logs.String())
+			}
 		}
-	}
+	})
 }
 
 // TestHealthClearStreakSurvivesARestart keeps the fact deterministic across a

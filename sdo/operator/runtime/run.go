@@ -110,7 +110,7 @@ func Run() {
 	}
 }
 
-func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) error {
+func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) (runErr error) {
 	clock := options.Clock
 	if clock == nil {
 		clock = lifecycleio.Clock()
@@ -312,9 +312,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs = remote.Detectors, remote.Programs
 	}
-	detectors = scaleDetectors(detectors, timeScale)
-	*diagnosisSettleDelay = scaledDuration(*diagnosisSettleDelay, timeScale)
-	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true
 	}
@@ -615,7 +612,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 		apiProxyImage := *responderImage
 		if launchConfig != nil {
-			apiProxyImage = launchConfig.GetValidatorImage()
+			apiProxyImage = launchConfig.GetToolchainImage()
 		}
 		dispatcher = KubernetesJobDispatcher{
 			AcceptedRepository: resolvedRoot,
@@ -840,7 +837,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return err
 			}
-			remote.Detectors = scaleDetectors(remote.Detectors, timeScale)
 			if err := core.ValidateDetectors(remote.Detectors); err != nil {
 				return err
 			}
@@ -1643,7 +1639,6 @@ func evaluateOnce(
 	var deployedManifestPaths repeatedFlag
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "accepted deployed manifest path; repeat for each selection")
 	appRoot := flags.String("app-root", "", "accepted application repository root")
-	proberURL := flags.String("prober-url", "", "live traffic prober URL for bounded health evaluation")
 	sourceDriftAcknowledgement := flags.String("source-drift-acknowledgement", "", "installer onboarding acknowledgement ProtoJSON file for the read-only source inventory check")
 	sourceDriftReport := flags.String("source-drift-report", "", "read-only accepted-source inventory check; write full JSON to this path and print a summary")
 	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
@@ -1821,12 +1816,9 @@ func evaluateOnce(
 		return err
 	}
 	provider = ReadSnapshotProvider{Base: provider, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		if readClient == nil && readSource == nil && *proberURL == "" {
+		probe, _ := trafficAPI.(PrimitiveProber)
+		if readClient == nil && readSource == nil && probe == nil {
 			return program.ReadFrom(snapshot)
-		}
-		var probe PrimitiveProber
-		if *proberURL != "" {
-			probe = HTTPProberClient{BaseURL: StaticProberURL(*proberURL)}
 		}
 		return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: readClient, Prober: probe, Source: readSource, SourceCommit: readCommit}
 	}}

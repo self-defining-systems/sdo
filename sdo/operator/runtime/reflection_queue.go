@@ -41,8 +41,8 @@ type reflectionQueueState struct {
 // first. It rescans the ledger only at start, after an acknowledgment and after
 // a reflection finishes. Exhausted retries record the reflection as abandoned
 // so a deterministic failure cannot hold open work forever. A reflection that
-// accepted a detector change returns ErrControllerRolloutRestartRequired, the
-// same supervisor path a closure acknowledgment takes.
+// accepted a detector change activates the accepted memory in the memory host,
+// the same path a closure acknowledgment takes; the controller never restarts.
 func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) error {
 	queue, ok := c.broker.(ReflectionQueue)
 	if !ok {
@@ -51,8 +51,9 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 	c.mu.Lock()
 	state := &c.reflections
 	if state.rollout != "" {
+		incident := state.rollout
 		c.mu.Unlock()
-		return ErrControllerRolloutRestartRequired
+		return c.activateQueuedRollout(ctx, queue, incident)
 	}
 	if state.running != "" || (!state.rescan && len(state.queued) == 0) || now.Before(state.retryAt) {
 		c.mu.Unlock()
@@ -169,4 +170,34 @@ func (c *Controller) reflectionWorkOpen() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.reflections.running != "" || len(c.reflections.queued) > 0 || c.reflections.unknown
+}
+
+// activateQueuedRollout makes the host serve the accepted memory and records the
+// rollout handoff, after which the queued incident is no longer open work.
+func (c *Controller) activateQueuedRollout(ctx context.Context, queue ReflectionQueue, incident string) error {
+	if c.memoryRefresh == nil {
+		return nil
+	}
+	ready, err := c.memoryRefresh(ctx)
+	if err != nil {
+		c.reportBrokerError("memory activation", err)
+		return nil
+	}
+	if !ready {
+		return nil
+	}
+	pending, err := queue.QueuedReflectionRolloutPending(incident)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	state := &c.reflections
+	if err != nil {
+		state.unknown = true
+		return nil
+	}
+	if !pending {
+		state.queued = slices.DeleteFunc(state.queued, func(id string) bool { return id == incident })
+		state.rollout = ""
+		state.rescan = true
+	}
+	return nil
 }

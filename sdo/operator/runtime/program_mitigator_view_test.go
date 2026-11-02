@@ -37,7 +37,7 @@ func TestMitigationPlanBuilderKeepsListEditPlansApplicable(t *testing.T) {
 	if err := plan.Validate(); err != nil {
 		t.Fatalf("builder returned a plan the executor rejects: %v", err)
 	}
-	if _, err := generalActionProto(plan.Actions[0]); err != nil {
+	if _, err := planActionProto(plan.Actions[0]); err != nil {
 		t.Fatalf("builder returned a plan the executor cannot encode: %v", err)
 	}
 }

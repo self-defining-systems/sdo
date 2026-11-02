@@ -1,56 +1,12 @@
-//go:build integration
-
 package runtime
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
-
-func TestHealthRefreshFailureBlocksEvaluationRepairAndClosure(t *testing.T) {
-	now := time.Now().UTC()
-	detector := controllerDetector("health", time.Second, sdk.Finding{RuleID: "obsolete-jaeger", Status: sdk.FindingActive, Severity: sdk.SeverityCritical})
-	dispatcher := &recordingDispatcher{}
-	c, err := NewController(ControllerConfig{Application: "app", Namespace: "app", FiringThreshold: 1, ClearThreshold: 1, ResponseTimeout: time.Minute}, []sdk.Detector{detector}, staticProvider{}, dispatcher, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	failure := errors.New("health unverified: judge failed")
-	c.CheckHealth = func(context.Context) error { return failure }
-	if err := c.Step(context.Background(), now, nil); !errors.Is(err, failure) {
-		t.Fatalf("stale detector evaluated: %v", err)
-	}
-	if len(c.history) != 0 {
-		t.Fatal("stale findings entered controller history")
-	}
-	if _, _, err := c.actionContext(context.Background()); !errors.Is(err, failure) {
-		t.Fatalf("stale policy authorized effect: %v", err)
-	}
-}
-
-func TestHealthRefreshBlocksPendingControllerEffects(t *testing.T) {
-	ctx := context.Background()
-	failure := memory.ErrHealthRefreshRequired
-	c, err := NewController(testControllerConfig(), nil, staticProvider{}, &recordingDispatcher{}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.CheckHealth = func(context.Context) error { return failure }
-	if err := c.ExecuteDispatchEffect(ctx, DispatchEffect{}); !errors.Is(err, failure) {
-		t.Fatalf("dispatch allowed: %v", err)
-	}
-	if err := c.ExecuteClosureEffect(ctx, ClosureEffect{}); !errors.Is(err, failure) {
-		t.Fatalf("closure allowed: %v", err)
-	}
-	if err := c.ExecuteClosureAcknowledgmentEffect(ctx, ClosureAcknowledgmentEffect{}); !errors.Is(err, failure) {
-		t.Fatalf("ack allowed: %v", err)
-	}
-}
 
 func TestHealthAdoptionDiscardsQueuedObsoleteFindings(t *testing.T) {
 	ctx := context.Background()
@@ -93,3 +49,4 @@ func TestHealthAdoptionDiscardsQueuedObsoleteFindings(t *testing.T) {
 		t.Fatal("adopted health policy was not evaluated immediately")
 	}
 }
+

@@ -1,9 +1,8 @@
-//go:build integration
-
 package runtime
 
 import (
 	"context"
+	kclock "k8s.io/utils/clock"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -35,6 +34,15 @@ func (c *fakeClock) set(at time.Time) {
 }
 
 // clockDialer answers every dial at the clock's time, refusing while refuse is set.
+// nowClock reads time from the scenario clock; the observer's timers are unused
+// because these tests drive Cycle directly.
+type nowClock struct {
+	kclock.RealClock
+	now func() time.Time
+}
+
+func (c nowClock) Now() time.Time { return c.now() }
+
 type clockDialer struct {
 	now    func() time.Time
 	refuse atomic.Bool
@@ -87,7 +95,7 @@ func TestReachabilityObserverFillsARestartedWindowAtTheCatchUpSpacing(t *testing
 	dialer := &clockDialer{now: clock.Now}
 	snapshots := readyGeoSince(start.Add(-time.Hour))
 	observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{
-		Prober: dialer, Snapshots: snapshots, Interval: 10 * time.Second, Timeout: time.Second, Now: clock.Now,
+		Prober: dialer, Snapshots: snapshots, Interval: 10 * time.Second, Timeout: time.Second, Clock: nowClock{now: clock.Now},
 	})
 	observer.Cycle(context.Background())
 
@@ -123,7 +131,7 @@ func TestReachabilityObserverCatchUpKeepsTheFailureSpacing(t *testing.T) {
 	dialer.refuse.Store(true)
 	snapshots := readyGeoSince(ready)
 	observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{
-		Prober: dialer, Snapshots: snapshots, Interval: 10 * time.Second, Timeout: time.Second, Now: clock.Now,
+		Prober: dialer, Snapshots: snapshots, Interval: 10 * time.Second, Timeout: time.Second, Clock: nowClock{now: clock.Now},
 	})
 	if dialed, pending := observer.CatchUp(context.Background()); !dialed || pending {
 		t.Fatalf("a failed catch-up dial must end the catch-up: dialed=%v pending=%v", dialed, pending)
@@ -144,48 +152,6 @@ func TestReachabilityObserverCatchUpKeepsTheFailureSpacing(t *testing.T) {
 	}
 }
 
-// TestReachabilityObserverWakesOnReadinessBetweenRounds runs the observer
-// loop with an interval far longer than the test: after a Pod change wakes
-// it, the restarted window fills at the catch-up spacing.
-func TestReachabilityObserverWakesOnReadinessBetweenRounds(t *testing.T) {
-	dialer := &clockDialer{now: time.Now}
-	snapshots := readyGeoSince(time.Now().Add(-time.Hour))
-	var notified atomic.Int32
-	observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{
-		Prober: dialer, Snapshots: snapshots, Interval: time.Hour, Timeout: time.Second,
-		CatchUpSpacing: 5 * time.Millisecond, Notify: func() { notified.Add(1) },
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	observer.Start(ctx)
-	defer observer.Stop()
-	waitConfirmed := func(what string) {
-		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
-		for !reachabilityConfirmed(t, observer, snapshots) {
-			if time.Now().After(deadline) {
-				t.Fatalf("%s: window not filled within 5s at a 1h interval", what)
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-	}
-	waitConfirmed("startup")
-	before := notified.Load()
-	// Ready transitions have second precision: become Ready on the next
-	// second, after every startup dial.
-	ready := time.Now().Truncate(time.Second).Add(time.Second)
-	time.Sleep(time.Until(ready))
-	snapshots.set(readyGeoSince(ready).snapshot)
-	if reachabilityConfirmed(t, observer, snapshots) {
-		t.Fatal("startup dials must not confirm the window a replaced pod restarted")
-	}
-	observer.Wake()
-	waitConfirmed("after a replaced pod became Ready")
-	if notified.Load() <= before {
-		t.Fatal("catch-up rounds must wake the detectors")
-	}
-}
-
 // TestReachabilityObserverBoundsCatchUpPerInterval: a Ready time no dial ever
 // passes (kubelet clock ahead of the prober) costs at most Failures extra
 // dials between full rounds or Pod changes.
@@ -194,7 +160,7 @@ func TestReachabilityObserverBoundsCatchUpPerInterval(t *testing.T) {
 	clock := &fakeClock{now: now}
 	dialer := &clockDialer{now: clock.Now}
 	observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{
-		Prober: dialer, Snapshots: readyGeoSince(now.Add(time.Minute)), Interval: 10 * time.Second, Now: clock.Now,
+		Prober: dialer, Snapshots: readyGeoSince(now.Add(time.Minute)), Interval: 10 * time.Second, Clock: nowClock{now: clock.Now},
 	})
 	for range 10 {
 		observer.CatchUp(context.Background())

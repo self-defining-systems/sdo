@@ -95,7 +95,7 @@ func changedPrograms(ctx context.Context, applicationRoot string, programs []pro
 	for _, item := range programs {
 		all = append(all, item.ID)
 	}
-	output, err := buildio.Output(ctx, "git", "-C", applicationRoot, "status", "--porcelain", "--untracked-files=all", "--", layout.PlaybooksDir).Output()
+	output, err := buildio.Output(ctx, "git", "-C", applicationRoot, "status", "--porcelain", "--untracked-files=all", "--", layout.PlaybooksDir)
 	if err != nil {
 		return all
 	}

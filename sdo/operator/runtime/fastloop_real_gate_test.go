@@ -4,13 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/format"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 const fastloopProgramRunner = `package main

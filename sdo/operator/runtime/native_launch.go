@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
-	"sdo.dev/operator/devmount"
 	"strings"
 	"time"
 

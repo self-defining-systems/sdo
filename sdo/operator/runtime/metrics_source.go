@@ -38,6 +38,13 @@ func withMetrics(
 	if err != nil {
 		return nil, nil, err
 	}
+	return withMetricsAPI(provider, detectors, api, requireSource, clock)
+}
+
+// withMetricsAPI is withMetrics for an already constructed metrics source.
+func withMetricsAPI(
+	provider SnapshotProvider, detectors []sdk.Detector, api MetricsAPI, requireSource bool, clock func() time.Time,
+) (SnapshotProvider, *MetricsObserver, error) {
 	observer, err := NewMetricsObserver(api, detectors, MetricsObserverOptions{Clock: clock})
 	if err != nil {
 		return nil, nil, err

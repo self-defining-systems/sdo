@@ -389,3 +389,15 @@ func restartableConsumerPod(pod *corev1.Pod) bool {
 	}
 	return pod.Status.Phase == corev1.PodRunning || restartableBlockedPod(pod)
 }
+
+func podReady(pod *corev1.Pod) bool {
+	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}

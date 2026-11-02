@@ -87,17 +87,13 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 	}
 	for _, item := range candidates {
 		go func(candidate candidate) {
-			clock := options.Clock
-			if clock == nil {
-				clock = lifecycleio.Now
-			}
-			started := clock()
+			started := lifecycleio.Now()
 			diagnoser, ok := registry.Diagnoser(candidate.id)
 			if !ok {
 				return
 			}
 			verdict := program.RunDiagnose(ctx, diagnoser, view, candidate.bindings, deadline)
-			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: clock().Sub(started)}
+			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: lifecycleio.Since(started)}
 		}(item)
 	}
 	runs := make([]ProgramRun, 0, len(candidates))

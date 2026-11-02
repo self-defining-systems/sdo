@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"google.golang.org/protobuf/proto"
 	"log/slog"
-	"maps"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory"

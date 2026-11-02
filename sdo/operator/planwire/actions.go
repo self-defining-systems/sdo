@@ -134,7 +134,7 @@ func refProto(ref sdk.ObjectRef) *contracts.ObjectRef {
 
 func ActionState(action *contracts.Action) program.Action {
 	var decoded program.Action
-	if general, err := generalActionState(action); err == nil {
+	if general, err := GeneralActionState(action); err == nil {
 		if (program.Plan{Actions: []program.Action{general}}).Validate() == nil {
 			return general
 		}
@@ -378,7 +378,9 @@ func generalActionProto(action program.Action) (*contracts.Action, error) {
 	}
 	return nil, fmt.Errorf("unsupported general action %T", action)
 }
-func generalActionState(action *contracts.Action) (program.Action, error) {
+
+// GeneralActionState decodes the general, external and database action kinds.
+func GeneralActionState(action *contracts.Action) (program.Action, error) {
 	switch kind := action.GetKind().(type) {
 	case *contracts.Action_SyncWebhookCa:
 		a := kind.SyncWebhookCa

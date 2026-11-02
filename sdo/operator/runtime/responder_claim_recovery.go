@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	kclock "k8s.io/utils/clock"
-	"net/http"
 	"slices"
 	"sort"
 	"sync"

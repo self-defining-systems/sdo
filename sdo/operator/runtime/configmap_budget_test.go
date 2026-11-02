@@ -84,11 +84,6 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 		now := time.Unix(1000, 0).UTC()
 		root := t.TempDir()
 		client := fake.NewSimpleClientset()
-		created := make(chan *batchv1.Job, 1)
-		client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, k8sruntime.Object, error) {
-			created <- action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
-			return false, nil, nil
-		})
 		sizes := recordConfigMapWrites(client)
 		controller := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 1}, mountedBroker{&rejectingIncidentBroker{rejections: 10}, root}, &now)
 		// Onboarding retains object identities, including in the incident view. It

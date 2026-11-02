@@ -1,11 +1,9 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"testing"

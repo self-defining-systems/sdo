@@ -183,3 +183,6 @@ func concreteExternalAction(a program.Action) program.Action {
 	return planwire.ConcreteExternalAction(a)
 }
 func isExternalAction(a program.Action) bool { return planwire.IsExternalAction(a) }
+func generalActionState(action *contracts.Action) (program.Action, error) {
+	return planwire.GeneralActionState(action)
+}

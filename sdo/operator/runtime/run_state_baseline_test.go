@@ -3,21 +3,12 @@ package runtime
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"io"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/kubernetes/scheme"
 	"strings"
 	"sync"
 
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/servicehealth"
 )
 
 // capturingDispatcher records the incident request the controller dispatches.

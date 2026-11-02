@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"sdo.dev/operator/sdk/inputs"
 	"strings"
 	"sync"
 	"time"

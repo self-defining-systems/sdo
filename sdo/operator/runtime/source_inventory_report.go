@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
-	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

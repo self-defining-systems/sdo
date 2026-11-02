@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
-	"sdo.dev/operator/sdk/sdktest"
 	"testing"
 )
 

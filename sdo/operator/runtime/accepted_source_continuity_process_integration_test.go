@@ -13,7 +13,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/sdktest"

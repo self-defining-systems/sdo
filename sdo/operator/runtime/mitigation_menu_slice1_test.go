@@ -1,5 +1,3 @@
-//go:build integration
-
 package runtime
 
 // Executable MI1 acceptance assertions. Synthetic durable/provenance adapters
@@ -9,9 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -23,6 +19,7 @@ import (
 )
 
 var menuService = sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "backend"}
+
 var menuDeployment = sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "frontend"}
 
 type menuB3Program struct{ id string }
@@ -30,6 +27,7 @@ type menuB3Program struct{ id string }
 func (p menuB3Program) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}, {Name: "deployment", Kind: "Deployment", Required: true}, {Name: "port", ValueKind: program.IntValue, Default: 8080}}}
 }
+
 func (p menuB3Program) Diagnose(_ context.Context, view program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	if len(view.Services()) != 1 || len(view.Deployments()) != 1 {
 		return program.Verdict{Result: program.Unknown}, nil
@@ -39,6 +37,7 @@ func (p menuB3Program) Diagnose(_ context.Context, view program.ReadView, _ prog
 	}
 	return program.Verdict{Result: program.NoMatch}, nil
 }
+
 func (p menuB3Program) Mitigate(_ context.Context, view program.ReadView, b program.Bindings) (program.Plan, error) {
 	if p.id == "routing-then-restart" && view.Services()[0].Spec.Ports[0].TargetPort.IntVal != 8080 {
 		return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromParam("port"), Reason: "synthetic routing repair"}}}, nil
@@ -62,6 +61,7 @@ func (c *menuB3Cluster) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructur
 	c.reads++
 	return c.planFakeClient.Get(ctx, ref)
 }
+
 func (c *menuB3Cluster) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, data []byte) error {
 	if err := c.planFakeClient.Patch(ctx, ref, kind, data); err != nil {
 		return err
@@ -80,6 +80,7 @@ func (c *menuB3Cluster) Patch(ctx context.Context, ref sdk.ObjectRef, kind types
 	}
 	return nil
 }
+
 func (c *menuB3Cluster) Snapshot(context.Context) (sdk.DetectionContext, error) {
 	var service corev1.Service
 	var deployment appsv1.Deployment
@@ -97,28 +98,7 @@ func (c *menuB3Cluster) Snapshot(context.Context) (sdk.DetectionContext, error) 
 	}
 	return sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{service}, DeploymentList: []appsv1.Deployment{deployment}}, nil
 }
-func menuB3Loop(t *testing.T) (*ResponderLoop, *menuB3Cluster) {
-	t.Helper()
-	service := planObject(menuService, map[string]any{"selector": map[string]any{"app": "backend"}, "ports": []any{map[string]any{"port": int64(80), "targetPort": int64(9999)}}})
-	deployment := planObject(menuDeployment, map[string]any{"template": map[string]any{"spec": map[string]any{"automountServiceAccountToken": false, "serviceAccountName": "powerless", "containers": []any{map[string]any{"name": "frontend", "image": "synthetic.invalid/frontend@sha256:" + strings.Repeat("a", 64)}}}}})
-	service.SetUID("service-uid")
-	service.SetResourceVersion("service-rv")
-	deployment.SetUID("deployment-uid")
-	deployment.SetResourceVersion("deployment-rv")
-	cluster := &menuB3Cluster{planFakeClient: planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{menuService: service, menuDeployment: deployment}}}
-	programs := []menuB3Program{{"restart-only"}, {"routing-then-restart"}}
-	registry, err := program.NewRegistry([]program.Diagnoser{programs[0], programs[1]}, []program.Mitigator{programs[0], programs[1]})
-	if err != nil {
-		t.Fatal(err)
-	}
-	finding := sdk.Finding{Status: sdk.FindingActive, PrimaryResource: menuService, ParameterBindings: map[string]sdk.ObjectRef{"service": menuService, "deployment": menuDeployment}}
-	loop := NewResponderLoop(IncidentRequest{IncidentID: "synthetic-b3", Namespace: "app", SourceCommit: "synthetic-source", ResponseDeadline: time.Now().Add(10 * time.Minute), Findings: []sdk.Finding{finding}}, registry, cluster, nil, PlanExecutor{Client: cluster, Rollouts: &planFakeRollout{}}, 5)
-	loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
-		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
-	}
-	loop.MenuConfig = &ResponderMenuConfig{}
-	return loop, cluster
-}
+
 func menuCall(t *testing.T, loop *ResponderLoop, payload map[string]any) map[string]any {
 	t.Helper()
 	data, err := json.Marshal(payload)
@@ -140,6 +120,7 @@ func menuCall(t *testing.T, loop *ResponderLoop, payload map[string]any) map[str
 	}
 	return result
 }
+
 func menuSelection(t *testing.T, menu map[string]any, programID string, rounds int, requestID string) map[string]any {
 	t.Helper()
 	options, ok := menu["options"].([]any)
@@ -164,3 +145,4 @@ func menuSelection(t *testing.T, menu map[string]any, programID string, rounds i
 	t.Fatalf("missing option %q: %+v", programID, menu)
 	return nil
 }
+

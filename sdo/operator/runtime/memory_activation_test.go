@@ -159,11 +159,11 @@ func TestSimMemoryTwoAcceptedCommits(t *testing.T) {
 				t.Fatal("activation lost controller state")
 			}
 			oldProgram, _ := previous.Programs.Mitigator("revision")
-			if _, err := oldProgram.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: snapshot}, nil); err == nil {
+			if _, err := oldProgram.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{}); err == nil {
 				t.Fatal("retired revision reused trust against new code")
 			}
 			mitigator, _ := remote.Programs.Mitigator("revision")
-			plan, err := mitigator.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: snapshot}, nil)
+			plan, err := mitigator.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{})
 			if err != nil || plan.Rationale != commit {
 				t.Fatal("stale program", plan, err)
 			}

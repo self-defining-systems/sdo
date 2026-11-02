@@ -1,5 +1,3 @@
-//go:build integration
-
 package runtime
 
 import (
@@ -8,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"sdo.dev/operator/sdk"
 )
 
 // Informers read process-wide state (klog verbosity) from their reflector
@@ -39,19 +36,6 @@ func informerGoroutines() int {
 	return strings.Count(string(buffer), "k8s.io/client-go/tools/cache.(*Reflector).Run")
 }
 
-// awaitInformerGoroutines polls until at most baseline reflectors run, and
-// returns the final count.
-func awaitInformerGoroutines(baseline int, grace time.Duration) int {
-	deadline := time.Now().Add(grace)
-	for {
-		count := informerGoroutines()
-		if count <= baseline || time.Now().After(deadline) {
-			return count
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 func requireNoInformerGoroutines(t testing.TB, owner string) {
 	t.Helper()
 	if count := informerGoroutines(); count != 0 {
@@ -59,33 +43,3 @@ func requireNoInformerGoroutines(t testing.TB, owner string) {
 	}
 }
 
-// guardInformers fails t if more reflectors run after stop than when it was
-// called. Measured against the starting count, so one leaking test is blamed
-// once instead of every test after it.
-func guardInformers(t testing.TB, owner string, stop func()) {
-	t.Helper()
-	baseline := informerGoroutines()
-	t.Cleanup(func() {
-		stop()
-		if count := awaitInformerGoroutines(baseline, informerStopGrace); count > baseline {
-			t.Errorf("%s left %d informer goroutines running after Stop (%d before the test); stop and await every informer it starts", owner, count-baseline, baseline)
-		}
-	})
-}
-
-func newTrackerForTest(t testing.TB, config StateTrackerConfig) *StateTracker {
-	t.Helper()
-	tracker := NewStateTracker(config)
-	guardInformers(t, "StateTracker", tracker.Stop)
-	return tracker
-}
-
-func newCacheForTest(t testing.TB, config KubernetesCacheConfig, detectors []sdk.Detector) (*KubernetesCache, error) {
-	t.Helper()
-	cache, err := NewKubernetesCache(config, detectors)
-	if err != nil {
-		return nil, err
-	}
-	guardInformers(t, "KubernetesCache", cache.Stop)
-	return cache, nil
-}

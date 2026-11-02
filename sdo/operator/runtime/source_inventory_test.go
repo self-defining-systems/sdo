@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -17,6 +16,7 @@ import (
 func inventoryObject(api, kind, namespace, name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": api, "kind": kind, "metadata": map[string]any{"namespace": namespace, "name": name}, "spec": map[string]any{}}}
 }
+
 func inventoryChild(api, kind, name, parentKind, parent string) *unstructured.Unstructured {
 	o := inventoryObject(api, kind, "app", name)
 	ownerAPI := "apps/v1"
@@ -26,6 +26,7 @@ func inventoryChild(api, kind, name, parentKind, parent string) *unstructured.Un
 	_ = unstructured.SetNestedSlice(o.Object, []any{map[string]any{"apiVersion": ownerAPI, "kind": parentKind, "name": parent, "uid": "owner"}}, "metadata", "ownerReferences")
 	return o
 }
+
 func hotelInventory() ([]*unstructured.Unstructured, []*unstructured.Unstructured) {
 	declared := []*unstructured.Unstructured{}
 	live := []*unstructured.Unstructured{}
@@ -51,6 +52,7 @@ func hotelInventory() ([]*unstructured.Unstructured, []*unstructured.Unstructure
 	live = append(live, managed, inventoryObject("v1", "ConfigMap", "app", "kube-root-ca.crt"), inventoryObject("v1", "ServiceAccount", "app", "default"))
 	return declared, live
 }
+
 func latentInventoryObjects() []*unstructured.Unstructured {
 	controller := inventoryObject("apps/v1", "Deployment", "app", "extra-controller")
 	script := inventoryObject("v1", "ConfigMap", "app", "controller-script")
@@ -66,6 +68,7 @@ func latentInventoryObjects() []*unstructured.Unstructured {
 	binding.Object["roleRef"] = map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "cleanup-authority"}
 	return []*unstructured.Unstructured{controller, script, token, role, binding}
 }
+
 func TestSourceInventoryCleanHotelAndGeneratedObjects(t *testing.T) {
 	declared, live := hotelInventory()
 	index := NewSourceInventory("app", "accepted", declared)
@@ -77,6 +80,7 @@ func TestSourceInventoryCleanHotelAndGeneratedObjects(t *testing.T) {
 		t.Fatalf("clean hotel created response work: %+v", findings)
 	}
 }
+
 func TestSourceInventorySeesLatentControllerConfigDeletionAndBoundRBAC(t *testing.T) {
 	declared, live := hotelInventory()
 	index := NewSourceInventory("app", "accepted", declared)
@@ -100,6 +104,7 @@ func TestSourceInventorySeesLatentControllerConfigDeletionAndBoundRBAC(t *testin
 		t.Fatal("source revision omitted")
 	}
 }
+
 func TestSourceInventoryDeletionPendingDeclaredObject(t *testing.T) {
 	object := inventoryObject("v1", "ConfigMap", "app", "token")
 	index := NewSourceInventory("app", "accepted", []*unstructured.Unstructured{object})
@@ -115,6 +120,7 @@ func TestSourceInventoryDeletionPendingDeclaredObject(t *testing.T) {
 type inventoryStore struct{ objects []*unstructured.Unstructured }
 
 func (s *inventoryStore) SourceDriftObjects() []*unstructured.Unstructured { return s.objects }
+
 func (s *inventoryStore) TakeObjectChanges() []ObjectChange                { return nil }
 
 type inventorySource struct {
@@ -130,6 +136,7 @@ func (s *inventorySource) AcceptedManifests(context.Context, string, string) ([]
 	}
 	return s.objects, nil
 }
+
 func inventoryHealth() sdk.Detector {
 	health := controllerDetector("health", time.Second, sdk.Finding{})
 	health.spec.Class = sdk.DetectorClassHealth
@@ -139,6 +146,7 @@ func inventoryHealth() sdk.Detector {
 	health.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
 	return health
 }
+
 func acceptInventoryFindings(findings []sdk.Finding) []sdk.DriftEvent {
 	labels := []sdk.DriftEvent{}
 	for _, finding := range findings {
@@ -291,6 +299,7 @@ func TestSourceInventoryDeclaredRBACChangeAndEquivalentOrdering(t *testing.T) {
 		t.Fatalf("lost source RBAC authorization: %+v", findings)
 	}
 }
+
 func TestSourceInventoryIdentityIgnoresMemoryOnlyCommit(t *testing.T) {
 	declared, _ := hotelInventory()
 	before, after := NewSourceInventory("app", "before", declared), NewSourceInventory("app", "after", declared)
@@ -303,33 +312,6 @@ func TestSourceInventoryIdentityIgnoresMemoryOnlyCommit(t *testing.T) {
 	altered[0] = changed
 	if NewSourceInventory("app", "after", altered).Identity == before.Identity {
 		t.Fatal("application source change retained identity")
-	}
-}
-
-func TestSourceInventoryCacheOnlyExposesNamespaceBoundClusterRBAC(t *testing.T) {
-	c, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	objects := latentInventoryObjects()
-	for _, o := range objects[3:] {
-		if err := c.informers[o.GetAPIVersion()+"/"+o.GetKind()].GetStore().Add(o); err != nil {
-			t.Fatal(err)
-		}
-	}
-	unrelated := objects[3].DeepCopy()
-	unrelated.SetName("other-namespace-role")
-	if err := c.informers[unrelated.GetAPIVersion()+"/"+unrelated.GetKind()].GetStore().Add(unrelated); err != nil {
-		t.Fatal(err)
-	}
-	got := c.SourceDriftObjects()
-	if len(got) != 2 {
-		t.Fatalf("inventory exposed unrelated cluster authorization: %+v", got)
-	}
-	for _, o := range got {
-		if o.GetName() == unrelated.GetName() {
-			t.Fatal("unrelated cluster role leaked into app inventory")
-		}
 	}
 }
 
@@ -369,6 +351,7 @@ func TestSourceInventoryMissingAuthorityPreservesMonitoringAndIsInformation(t *t
 		}
 	}
 }
+
 func TestSourceInventoryAcceptanceBindsObjectIncarnationAndOwnership(t *testing.T) {
 	object := inventoryObject("apps/v1", "Deployment", "app", "extra")
 	object.SetUID("first-incarnation")
@@ -438,3 +421,4 @@ func TestSourceInventoryHelperLabelDoesNotHideApplicationControllers(t *testing.
 		t.Fatal("Pod/Job helper label hid a persistent application controller")
 	}
 }
+

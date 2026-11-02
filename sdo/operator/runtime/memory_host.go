@@ -220,15 +220,12 @@ func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequenc
 		return nil, err
 	}
 	input := &pb.MemoryProgramInput{ProgramId: p.spec.ID, MirrorSequence: sequence, Observation: observation}
-	names := make([]string, 0, len(b))
-	for name := range b {
+	names := make([]string, 0, len(b.Objects))
+	for name := range b.Objects {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	for _, name := range names {
-		ref := b[name]
-		input.Bindings = append(input.Bindings, &pb.Binding{Name: name, Object: objectRefContract(ref)})
-	}
+	input.Bindings = programBindingsContract(b)
 	refs, err := memoryhost.SnapshotRefs(view)
 	if err != nil {
 		return nil, err
@@ -238,7 +235,7 @@ func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequenc
 		seen[ref] = true
 	}
 	for _, name := range names {
-		if ref := b[name]; !seen[ref] {
+		if ref := b.Objects[name]; !seen[ref] {
 			refs = append(refs, ref)
 			seen[ref] = true
 		}

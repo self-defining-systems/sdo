@@ -4,14 +4,11 @@ package runtime
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
-	"sdo.dev/operator/sdk/program"
 	"strings"
 	"testing"
 	"time"

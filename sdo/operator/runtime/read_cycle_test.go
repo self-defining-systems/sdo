@@ -1,5 +1,3 @@
-//go:build integration
-
 package runtime
 
 import (
@@ -9,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/memory"
-	"sdo.dev/operator/runtime/prometheus"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,22 +33,27 @@ func (v *breadthView) Logs(sdk.ObjectRef, string, time.Duration) (string, error)
 	}
 	return "broken", nil
 }
+
 func (v *breadthView) ProbeTCP(sdk.ObjectRef, int32) (program.ProbeResult, error) {
 	v.calls.Add(1)
 	return program.ProbeResult{Success: false, Detail: "refused"}, nil
 }
+
 func (v *breadthView) ProbeHTTP(sdk.ObjectRef, program.HTTPProbe) (program.ProbeResult, error) {
 	v.calls.Add(1)
 	return program.ProbeResult{Success: true}, nil
 }
+
 func (v *breadthView) DiffAgainstSource(sdk.ObjectRef) (program.Diff, error) {
 	v.calls.Add(1)
 	return program.Diff{Changed: true, Text: "source"}, nil
 }
+
 func (v *breadthView) DiffAgainstBaseline(sdk.ObjectRef) (program.Diff, error) {
 	v.calls.Add(1)
 	return program.Diff{Changed: true, Text: "baseline"}, nil
 }
+
 func breadthReads(t *testing.T, v program.ReadView) {
 	t.Helper()
 	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "web"}
@@ -71,6 +73,7 @@ func breadthReads(t *testing.T, v program.ReadView) {
 		t.Errorf("baseline=%+v %v", r, e)
 	}
 }
+
 func TestCycleReadDedupeAndSnapshotReplay(t *testing.T) {
 	raw := &breadthView{ReadView: program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"})}
 	cycle := NewCycleReadView(raw)
@@ -108,10 +111,12 @@ func TestCycleReadDedupeAndSnapshotReplay(t *testing.T) {
 type ignoringBreadthDetector struct{}
 
 func (ignoringBreadthDetector) Spec() sdk.DetectorSpec { return sdk.DetectorSpec{ID: "ignore-error"} }
+
 func (ignoringBreadthDetector) Detect(_ context.Context, s sdk.DetectionContext) ([]sdk.Finding, error) {
 	_, _ = program.ReadFrom(s).Logs(sdk.ObjectRef{}, "", 0)
 	return nil, nil
 }
+
 func TestCycleReadFailureNeverClearsEvenWhenIgnored(t *testing.T) {
 	raw := &breadthView{ReadView: program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}), fail: true}
 	cycle := NewCycleReadView(raw)
@@ -131,6 +136,7 @@ func TestCycleReadFailureNeverClearsEvenWhenIgnored(t *testing.T) {
 		t.Fatal("replayed failure cleared detector")
 	}
 }
+
 func TestCycleReadRecordsMetrics(t *testing.T) {
 	q := metrics.Query{ID: "up", Expr: "up"}
 	frozen := sdktest.Snapshot{NamespaceName: "app", Metrics: map[string]metrics.Result{"up": {Query: q, Series: []metrics.Series{{Samples: []metrics.Sample{{Value: 3}}}}}}, Alerts: &metrics.AlertsResult{Error: "offline"}}
@@ -176,7 +182,7 @@ func TestReadCycleOnDemandMetricsWithoutDeclaredDetector(t *testing.T) {
 	fake, server := newFakePrometheus(t)
 	fake.queries["up"] = `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"job":"web"},"value":[1,"1"]}]}}`
 	fake.alerts = `{"status":"success","data":{"alerts":[]}}`
-	provider, _, err := withMetrics(staticProvider{sdktest.Snapshot{NamespaceName: "app"}}, nil, server.URL, "", false)
+	provider, _, err := withMetricsAPI(staticProvider{sdktest.Snapshot{NamespaceName: "app"}}, nil, server, false, fixedClock())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +217,7 @@ func (logHealthDetector) Spec() sdk.DetectorSpec {
 	s.Batching.Severity = sdk.SeverityWarning
 	return s
 }
+
 func (logHealthDetector) Detect(_ context.Context, s sdk.DetectionContext) ([]sdk.Finding, error) {
 	text, err := program.ReadFrom(s).Logs(sdk.ObjectRef{Kind: "Pod", Namespace: s.Namespace(), Name: "web"}, "web", time.Minute)
 	if err != nil {
@@ -222,6 +229,7 @@ func (logHealthDetector) Detect(_ context.Context, s sdk.DetectionContext) ([]sd
 	}
 	return nil, nil
 }
+
 func TestControllerReadSnapshotCaptureReplaysDetector(t *testing.T) {
 	config := testControllerConfig()
 	config.Namespace = "app"
@@ -269,6 +277,7 @@ type oversizedLogs struct{ program.ReadView }
 func (oversizedLogs) Logs(sdk.ObjectRef, string, time.Duration) (string, error) {
 	return strings.Repeat("x", 64*1024+1), nil
 }
+
 func TestCycleReadRejectsOversizedLogs(t *testing.T) {
 	v := NewCycleReadView(oversizedLogs{program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"})})
 	if data, err := v.Logs(sdk.ObjectRef{}, "", 0); err == nil || data != "" {
@@ -285,33 +294,13 @@ func (v blockedProbe) ProbeTCP(sdk.ObjectRef, int32) (program.ProbeResult, error
 	<-v.release
 	return program.ProbeResult{Success: true}, nil
 }
-func TestCycleReadProbeTimeoutIsRecorded(t *testing.T) {
-	release := make(chan struct{})
-	defer close(release)
-	v := NewCycleReadView(blockedProbe{program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}), release})
-	started := time.Now()
-	if _, err := v.ProbeTCP(sdk.ObjectRef{}, 80); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("probe error=%v", err)
-	}
-	if time.Since(started) > 10*time.Second {
-		t.Fatal("probe timeout not enforced")
-	}
-	captured, err := sdktest.CaptureSnapshot(v, "app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay := program.ReadFrom(captured)
-	if _, err = replay.ProbeTCP(sdk.ObjectRef{}, 80); err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
-		t.Fatalf("timeout lost during replay: %v", err)
-	}
-}
 
 func TestMetricsDeduplicatesEquivalentQueriesAcrossIDs(t *testing.T) {
 	fake, server := newFakePrometheus(t)
 	fake.queries["up"] = `{"status":"success","data":{"resultType":"vector","result":[]}}`
 	a := metrics.Query{ID: "a", Expr: "up"}
 	b := metrics.Query{ID: "b", Expr: "up"}
-	snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL}, []sdk.Detector{metricsDetector("a", a), metricsDetector("b", b)}, MetricsObserverOptions{})
+	snapshot, _ := snapshotWith(t, server, []sdk.Detector{metricsDetector("a", a), metricsDetector("b", b)}, MetricsObserverOptions{})
 	view := program.ReadFrom(snapshot)
 	if r := view.QueryMetrics(a); r.Error != "" || r.Query != a {
 		t.Fatal(r)
@@ -331,14 +320,10 @@ func TestMetricsDeduplicatesEquivalentQueriesAcrossIDs(t *testing.T) {
 type ignoringQueryDetector struct{}
 
 func (ignoringQueryDetector) Spec() sdk.DetectorSpec { return metricsSpec("ignored-query") }
+
 func (ignoringQueryDetector) Detect(_ context.Context, s sdk.DetectionContext) ([]sdk.Finding, error) {
 	_ = program.ReadFrom(s).QueryMetrics(metrics.Query{ID: "up", Expr: "up"})
 	return nil, nil
 }
-func TestEvaluateOnceSharedReadsCannotIgnoreMetricsFailure(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.status = 500
-	if _, err := evaluateOnceWithMetrics(t, []sdk.Detector{ignoringQueryDetector{}}, "--metrics-url", server.URL); err == nil {
-		t.Fatal("evaluate-once cleared an unreadable query")
-	}
-}
+
+

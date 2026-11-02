@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	clocktesting "k8s.io/utils/clock/testing"
 	"path/filepath"
-	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"

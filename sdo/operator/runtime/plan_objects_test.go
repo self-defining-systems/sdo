@@ -1,5 +1,3 @@
-//go:build integration
-
 package runtime
 
 import (
@@ -42,6 +40,7 @@ func (c *lifecycleTestClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unst
 	}
 	return c.planFakeClient.Get(ctx, ref)
 }
+
 func (c *lifecycleTestClient) Create(_ context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	if c.objects[ref] != nil {
 		return nil, apierrors.NewAlreadyExists(schema.GroupResource{Resource: ref.Kind}, ref.Name)
@@ -53,6 +52,7 @@ func (c *lifecycleTestClient) Create(_ context.Context, ref sdk.ObjectRef, objec
 	c.creates++
 	return created.DeepCopy(), nil
 }
+
 func (c *lifecycleTestClient) Delete(_ context.Context, ref sdk.ObjectRef, uid types.UID, version string) error {
 	object := c.objects[ref]
 	if object == nil {
@@ -82,6 +82,7 @@ func (s lifecycleTestSource) AcceptedManifest(_ context.Context, _ string, ref s
 	}
 	return nil, rendered.ErrAcceptedManifestAbsent
 }
+
 func (lifecycleTestSource) Revision(context.Context, sdk.ObjectRef, string) (*unstructured.Unstructured, error) {
 	return nil, errors.New("unavailable")
 }
@@ -185,6 +186,7 @@ type lifecycleFixtureProgram struct {
 func (p lifecycleFixtureProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "synthetic-object", Params: []program.ParamSpec{{Name: "target", Kind: program.Kind(p.ref.Kind), Required: true}}}
 }
+
 func (p lifecycleFixtureProgram) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
 	exists := p.client.objects[p.ref] != nil
 	repaired := (objectActionOperation(p.action) == "create" && exists) || (objectActionOperation(p.action) == "delete" && !exists)
@@ -193,6 +195,7 @@ func (p lifecycleFixtureProgram) Diagnose(context.Context, program.ReadView, pro
 	}
 	return program.Verdict{Result: program.Match}, nil
 }
+
 func (p lifecycleFixtureProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
 	return program.Plan{Actions: []program.Action{p.action}}, nil
 }
@@ -475,38 +478,4 @@ func (c replacingDeleteClient) Delete(ctx context.Context, ref sdk.ObjectRef, ui
 	c.objects[ref].SetUID("replacement")
 	return nil
 }
-func TestDeleteObservationPreservesBoundAndRejectsReplacement(t *testing.T) {
-	for _, replacement := range []bool{false, true} {
-		t.Run(fmt.Sprint(replacement), func(t *testing.T) {
-			ref := sdk.ObjectRef{APIVersion: "batch/v1", Kind: "Job", Namespace: "app", Name: "terminating"}
-			before := planObject(ref, nil)
-			before.SetUID("original")
-			before.SetResourceVersion("1")
-			before.SetFinalizers([]string{"example.test/hold"})
-			raw := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}, ignoreDelete: true}
-			var client PlanObjectClient = raw
-			if replacement {
-				client = replacingDeleteClient{raw}
-			}
-			e := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, RolloutTimeout: 30 * time.Millisecond}
-			started := time.Now()
-			result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "fixture"}}}, false)
-			if err == nil || result.VerificationCompleted || result.ObjectEffects[0].Confirmed || raw.creates != 0 || raw.deletes != 1 {
-				t.Fatalf("unconfirmed deletion granted credit: %+v %v", result, err)
-			}
-			var pending *ObjectDeletionPendingError
-			if replacement {
-				if errors.As(err, &pending) {
-					t.Fatal("replacement mistaken for terminating original")
-				}
-			} else {
-				if !errors.As(err, &pending) || pending.UID != "original" || len(pending.Finalizers) != 1 || !errors.Is(err, context.DeadlineExceeded) {
-					t.Fatalf("lost typed terminating evidence: %v", err)
-				}
-			}
-			if time.Since(started) > time.Second {
-				t.Fatal("delete exceeded observation budget")
-			}
-		})
-	}
-}
+

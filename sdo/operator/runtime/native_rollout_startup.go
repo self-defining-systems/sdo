@@ -43,8 +43,7 @@ func completeNativeRolloutHandoffs(ctx context.Context, native NativeIncidentBro
 			return fmt.Errorf("controller revision does not satisfy rollout for incident %s", handoff.Expectation.IncidentID)
 		}
 		if !exact {
-			contains := exec.CommandContext(ctx, "git", "-C", appRoot, "merge-base", "--is-ancestor", handoff.Expectation.ReflectionCommit, launch.ControllerRevision)
-			if output, err := contains.CombinedOutput(); err != nil {
+			if output, err := lifecycleio.GitCombined(ctx, appRoot, "merge-base", "--is-ancestor", handoff.Expectation.ReflectionCommit, launch.ControllerRevision); err != nil {
 				return fmt.Errorf("controller revision does not contain reflection for incident %s: %w: %s", handoff.Expectation.IncidentID, err, strings.TrimSpace(string(output)))
 			}
 		}

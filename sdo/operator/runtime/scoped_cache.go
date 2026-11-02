@@ -227,8 +227,8 @@ type scopedRetry struct {
 // never restores availability without a fresh successful read.
 func (c *KubernetesCache) readScoped(ctx context.Context) (sdk.ScopedSnapshot, error) {
 	now := lifecycleio.Now()
-	if c.config.Now != nil {
-		now = c.config.Now()
+	if c.config.Clock != nil {
+		now = c.config.Clock()
 	}
 	if c.scopedRetries == nil {
 		c.scopedRetries = map[string]scopedRetry{}

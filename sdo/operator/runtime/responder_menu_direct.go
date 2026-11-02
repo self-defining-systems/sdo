@@ -8,7 +8,6 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strings"
-	"time"
 
 	"sdo.dev/operator/sdk"
 

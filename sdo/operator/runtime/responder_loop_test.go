@@ -8,17 +8,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
 	"testing"
 	"testing/synctest"
-	"time"
 )
 
 func TestResponderLoopApplyReturnsLogicalPlaybooksAndBoundedEvidence(t *testing.T) {

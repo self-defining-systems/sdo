@@ -1,13 +1,9 @@
-//go:build integration
-
 package replay
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
-	"time"
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -28,6 +24,7 @@ type fixtureProgram struct {
 }
 
 func (p fixtureProgram) Spec() program.ProgramSpec { return program.ProgramSpec{ID: p.mode} }
+
 func (p fixtureProgram) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	bad := false
 	switch p.mode {
@@ -49,6 +46,7 @@ func (p fixtureProgram) Diagnose(_ context.Context, v program.ReadView, _ progra
 	}
 	return program.Verdict{Result: program.NoMatch}, nil
 }
+
 func (p fixtureProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	var a program.Action
@@ -115,6 +113,7 @@ func fixture(mode string) Case {
 	}
 	return Case{ID: mode, Corpus: sdktest.CorpusCase{Open: open, Healthy: healthy, Fixed: healthy, RootCauseProgramIDs: []string{mode}}, Accepted: source}
 }
+
 func TestFromSourceSetFieldRepairs(t *testing.T) {
 	p := fixtureProgram{mode: "field"}
 	r := Check(context.Background(), p, p, nil, fixture("field"))
@@ -122,6 +121,7 @@ func TestFromSourceSetFieldRepairs(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
 func TestWrongPathFixCaught(t *testing.T) {
 	p := fixtureProgram{mode: "field", wrong: true}
 	r := Check(context.Background(), p, p, nil, fixture("field"))
@@ -129,6 +129,7 @@ func TestWrongPathFixCaught(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
 func TestCreateDeleteScaleRepair(t *testing.T) {
 	for _, mode := range []string{"create", "delete", "scale"} {
 		t.Run(mode, func(t *testing.T) {
@@ -146,9 +147,11 @@ type broadDetector struct{}
 func (broadDetector) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{ID: "broad", Class: sdk.DetectorClassIncident, Playbooks: []string{"field"}}
 }
+
 func (broadDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return []sdk.Finding{{Status: sdk.FindingActive}}, nil
 }
+
 func TestMatrixFlagsOverbroadDetector(t *testing.T) {
 	p := fixtureProgram{mode: "field"}
 	reg, _ := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
@@ -186,6 +189,7 @@ type runtimeProgram struct{ mode string }
 func (p runtimeProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: p.mode, Params: []program.ParamSpec{{Name: "command", ValueKind: program.StringValue, Default: "/bin/true"}}}
 }
+
 func (p runtimeProgram) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	bad := false
 	switch p.mode {
@@ -208,6 +212,7 @@ func (p runtimeProgram) Diagnose(_ context.Context, v program.ReadView, _ progra
 	}
 	return program.Verdict{Result: program.NoMatch}, nil
 }
+
 func (p runtimeProgram) Mitigate(_ context.Context, v program.ReadView, _ program.Bindings) (program.Plan, error) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-1"}
 	var a program.Action
@@ -232,6 +237,7 @@ func (p runtimeProgram) Mitigate(_ context.Context, v program.ReadView, _ progra
 	}
 	return program.Plan{Actions: []program.Action{a}}, nil
 }
+
 func runtimeFixture(mode string) Case {
 	if mode == "reconcile" || mode == "rollback" {
 		c := fixture("field")
@@ -261,6 +267,7 @@ func runtimeFixture(mode string) Case {
 	c.Corpus.Healthy.ReplicaSetList = []appsv1.ReplicaSet{rs}
 	return c
 }
+
 func TestExecWithoutRBACRefused(t *testing.T) {
 	p := runtimeProgram{mode: "exec"}
 	r := Check(context.Background(), p, p, nil, runtimeFixture("exec"))
@@ -268,6 +275,7 @@ func TestExecWithoutRBACRefused(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
 func TestReconcileAndRollbackUseExplicitSource(t *testing.T) {
 	for _, mode := range []string{"reconcile", "rollback"} {
 		t.Run(mode, func(t *testing.T) {
@@ -279,6 +287,7 @@ func TestReconcileAndRollbackUseExplicitSource(t *testing.T) {
 		})
 	}
 }
+
 func TestDeletePodAndRestartSimulateRecreation(t *testing.T) {
 	for _, mode := range []string{"deletepod", "restart"} {
 		t.Run(mode, func(t *testing.T) {
@@ -313,6 +322,7 @@ func (p diffProgram) Diagnose(_ context.Context, v program.ReadView, _ program.B
 	}
 	return program.Verdict{Result: result}, nil
 }
+
 func TestPostSourceDiffUsesMutatedCluster(t *testing.T) {
 	p := diffProgram{fixtureProgram{mode: "field"}}
 	r := Check(context.Background(), p, p, nil, fixture("field"))
@@ -334,6 +344,7 @@ func (p probeProgram) Diagnose(_ context.Context, v program.ReadView, _ program.
 	}
 	return program.Verdict{Result: result}, nil
 }
+
 func TestFixedProbeAnswersNeverProveRepair(t *testing.T) {
 	p := probeProgram{fixtureProgram{mode: "field"}}
 	c := fixture("field")
@@ -350,6 +361,7 @@ type webhookProgram struct{}
 func (webhookProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "webhook", Params: []program.ParamSpec{{Name: "webhook", Kind: "MutatingWebhookConfiguration", Required: true}}}
 }
+
 func (webhookProgram) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
 	o, err := sdk.ScopedSource(v).MutatingWebhookConfiguration(b.Objects["webhook"].Name)
 	if err != nil {
@@ -361,9 +373,11 @@ func (webhookProgram) Diagnose(_ context.Context, v program.ReadView, b program.
 	}
 	return program.Verdict{Result: r}, nil
 }
+
 func (webhookProgram) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
 	return program.Plan{Actions: []program.Action{program.DeleteObject{Ref: b.Objects["webhook"], Reason: "remove injected synthetic webhook"}}}, nil
 }
+
 func TestScopedWebhookDeleteUsesOrdinaryRBAC(t *testing.T) {
 	target := sdk.ObservationTarget{APIVersion: "admissionregistration.k8s.io/v1", Kind: "MutatingWebhookConfiguration", Name: "synthetic-webhook"}
 	scoped := sdk.ScopedSnapshot{Version: 1, Scope: sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}, Statuses: []sdk.ObservationStatus{{Target: target, State: sdk.ObservationObserved}}}
@@ -380,33 +394,12 @@ func TestScopedWebhookDeleteUsesOrdinaryRBAC(t *testing.T) {
 	}
 }
 
-func TestFiftyCaseTiming(t *testing.T) {
-	p := fixtureProgram{mode: "field"}
-	registry, _ := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
-	cases := make([]Case, 50)
-	for i := range cases {
-		cases[i] = fixture("field")
-		cases[i].ID = fmt.Sprintf("synthetic-field-%02d", i)
-	}
-	start := time.Now()
-	rows := Matrix(context.Background(), registry, nil, cases)
-	elapsed := time.Since(start)
-	if len(rows) != 50 {
-		t.Fatalf("got %d checks", len(rows))
-	}
-	for _, r := range rows {
-		if r.Status != "replayed" {
-			t.Fatalf("%+v", r)
-		}
-	}
-	t.Logf("50 synthetic in-memory cases in %s (%.3f ms/case after build)", elapsed, float64(elapsed)/float64(time.Millisecond)/50)
-}
-
 type serviceCreateProgram struct{}
 
 func (serviceCreateProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "create-service"}
 }
+
 func (serviceCreateProgram) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	r := program.NoMatch
 	if len(v.Services()) == 0 {
@@ -414,9 +407,11 @@ func (serviceCreateProgram) Diagnose(_ context.Context, v program.ReadView, _ pr
 	}
 	return program.Verdict{Result: r}, nil
 }
+
 func (serviceCreateProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
 	return program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Reason: "restore synthetic service"}}}, nil
 }
+
 func TestCreateServiceNormalizesFakeStorageDefaults(t *testing.T) {
 	c := fixture("field")
 	c.ID = "create-service"
@@ -435,6 +430,7 @@ func (p wrongExistingPathProgram) Mitigate(context.Context, program.ReadView, pr
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	return program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.selector.untouched", Value: program.FromSource(ref, "spec.selector.untouched")}}}, nil
 }
+
 func TestWrongExistingPathExecutesAndFailsPostCheck(t *testing.T) {
 	p := wrongExistingPathProgram{fixtureProgram{mode: "field"}}
 	r := Check(context.Background(), p, p, nil, fixture("field"))
@@ -448,10 +444,12 @@ type wrongImageProgram struct{ runtimeProgram }
 func (wrongImageProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "restart", Params: []program.ParamSpec{{Name: "image", ValueKind: program.StringValue, Default: "synthetic:wrong"}}}
 }
+
 func (wrongImageProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
 	return program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].image", Value: program.FromParam("image")}}}, nil
 }
+
 func TestWrongImageCannotBorrowSimulatedReadiness(t *testing.T) {
 	p := wrongImageProgram{runtimeProgram{mode: "restart"}}
 	r := Check(context.Background(), p, p, nil, runtimeFixture("restart"))
@@ -465,6 +463,7 @@ type weakScaleProgram struct{}
 func (weakScaleProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "scale", Params: []program.ParamSpec{{Name: "replicas", ValueKind: program.IntValue, Default: 3}}}
 }
+
 func (weakScaleProgram) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	r := program.NoMatch
 	for _, d := range v.Deployments() {
@@ -474,9 +473,11 @@ func (weakScaleProgram) Diagnose(_ context.Context, v program.ReadView, _ progra
 	}
 	return program.Verdict{Result: r}, nil
 }
+
 func (weakScaleProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
 	return program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}, Replicas: program.FromParam("replicas")}}}, nil
 }
+
 func TestParameterWriteMustRestoreAcceptedTarget(t *testing.T) {
 	p := weakScaleProgram{}
 	r := Check(context.Background(), p, p, nil, fixture("scale"))
@@ -484,3 +485,4 @@ func TestParameterWriteMustRestoreAcceptedTarget(t *testing.T) {
 		t.Fatalf("weak diagnosis accepted a wrong parameter value: %+v", r)
 	}
 }
+

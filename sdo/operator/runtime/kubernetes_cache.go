@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"context"
 	"fmt"
 	kclock "k8s.io/utils/clock"
@@ -668,18 +669,6 @@ func informerFor(factory informers.SharedInformerFactory, key string) (cache.Sha
 		return factory.Discovery().V1().EndpointSlices().Informer(), nil
 	case "networking.k8s.io/v1/NetworkPolicy":
 		return factory.Networking().V1().NetworkPolicies().Informer(), nil
-	case "apps/v1/StatefulSet":
-		return factory.Apps().V1().StatefulSets().Informer(), nil
-	case "apps/v1/DaemonSet":
-		return factory.Apps().V1().DaemonSets().Informer(), nil
-	case "v1/ServiceAccount":
-		return factory.Core().V1().ServiceAccounts().Informer(), nil
-	case "v1/PersistentVolumeClaim":
-		return factory.Core().V1().PersistentVolumeClaims().Informer(), nil
-	case "batch/v1/Job":
-		return factory.Batch().V1().Jobs().Informer(), nil
-	case "batch/v1/CronJob":
-		return factory.Batch().V1().CronJobs().Informer(), nil
 	case "rbac.authorization.k8s.io/v1/Role":
 		return factory.Rbac().V1().Roles().Informer(), nil
 	case "rbac.authorization.k8s.io/v1/RoleBinding":

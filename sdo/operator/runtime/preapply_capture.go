@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
-	"time"
 
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
