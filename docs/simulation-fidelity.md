@@ -53,7 +53,8 @@ are bounded by the synthetic conformance tests.
 ## Synthetic Go toolchain
 
 `internal/testutil.FakeGo` (operator module) stands in for the compiler edge. It models stage
-selection (verb, package patterns covering a directory) and exit status with canned output.
+selection (verb, package patterns covering a directory, and a test stage that selects no test
+through `-run '^$'`) and exit status with canned output.
 It does not model type checking, vet analyzers, test execution, the Go build cache, link
 output, or replay results written by generated tests; assertions on those stay with the
 real-compiler integration tests (`TestShippedControllerKeepsItsDebugData`,
