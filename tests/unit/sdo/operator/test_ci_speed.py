@@ -26,8 +26,7 @@ def test_pr_ci_has_at_most_three_jobs_without_matrix_or_path_skips() -> None:
         assert "matrix" not in job.get("strategy", {})
         if name != "required-pr-ci":
             assert "if" not in job
-            # Temporary exception: cold first queue run of the dev merge; restore to 5.
-            assert job["timeout-minutes"] <= (8 if name == "checks" else 5)
+            assert job["timeout-minutes"] <= 5
 
 
 def test_extended_checks_have_scheduled_and_manual_coverage() -> None:

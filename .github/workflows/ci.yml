@@ -25,10 +25,7 @@ jobs:
   checks:
     name: checks and Python
     runs-on: ubuntu-latest
-    # Temporary: the first merge-queue run of the dev merge compiles cold, because
-    # queue refs read only main's caches and main has not saved this tree yet.
-    # Restored to 5 once main's first push saves its cache.
-    timeout-minutes: 8
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
