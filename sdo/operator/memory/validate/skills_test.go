@@ -19,6 +19,7 @@ var skillsRoot = filepath.Join("..", "..", "..", "skills")
 
 // internalRules are validator rules no agent skill teaches, each with the reason.
 var internalRules = map[string]string{
+	RuleUpkeepMigration:         "controller-owned registered schema migrations; workers cannot request them",
 	RuleDetectorHealthyBaseline: "missing controller healthy capture is informational",
 	RuleReplayObservation:       "informational replay observations, never an acceptance gate",
 	RuleLegacyManifest:          "only the current schema is supported; authoring agents never see a legacy manifest",
