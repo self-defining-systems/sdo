@@ -129,6 +129,7 @@ def test_explicit_mount_opt_out_warns(monkeypatch):
 
     monkeypatch.setattr(cli.subprocess, "run", command)
     monkeypatch.setattr(cli, "check_host_capacity", lambda _: None)
+    monkeypatch.setattr("benchmarks.sregym.fastloop.source_preflight.assert_harness_sources", lambda _: None)
     args = cli.build_parser().parse_args(["up", "--run-dir", "unused", "--no-dev-mount"])
     with pytest.warns(UserWarning, match="--no-dev-mount"):
         cli.up_preflight(args)
