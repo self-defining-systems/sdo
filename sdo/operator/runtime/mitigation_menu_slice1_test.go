@@ -1,3 +1,5 @@
+//go:build integration
+
 package runtime
 
 // Executable MI1 acceptance assertions. Synthetic durable/provenance adapters

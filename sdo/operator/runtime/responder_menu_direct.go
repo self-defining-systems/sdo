@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"k8s.io/apimachinery/pkg/types"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strings"
 	"time"
@@ -272,9 +273,9 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 				return l.MenuConfig.RemoveUnexplained(ctx, *entry.removal, executor.Client.(PlanLifecycleClient), ref, uid, rv)
 			}
 		}
-		started := time.Now().UTC()
+		started := lifecycleio.Now().UTC()
 		result, applyErr := executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: entry.programID, bindings: bindings, targetFingerprints: targetFingerprints}}), plan, false)
-		completed := time.Now().UTC()
+		completed := lifecycleio.Now().UTC()
 
 		if result.Applied || result.PendingAction != nil {
 			l.applications[applicationID] = result

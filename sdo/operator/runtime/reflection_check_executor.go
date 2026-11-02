@@ -9,6 +9,7 @@ import (
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -75,10 +76,10 @@ func reflectionCheckHandler(repository *broker.Broker, sessionRoot, incidentID s
 			}
 			ctx = validate.WithCaptureSource(ctx, capture, incidentID)
 		}
-		started := time.Now()
+		started := lifecycleio.Now()
 		slog.Info("reflection_memory_check_started", "incident_id", incidentID)
 		defer func() {
-			slog.Info("reflection_memory_check_finished", "incident_id", incidentID, "duration", time.Since(started), "error", response.Error)
+			slog.Info("reflection_memory_check_finished", "incident_id", incidentID, "duration", lifecycleio.Since(started), "error", response.Error)
 		}()
 		bounded, cancel := context.WithTimeout(ctx, 300*time.Second)
 		defer cancel()

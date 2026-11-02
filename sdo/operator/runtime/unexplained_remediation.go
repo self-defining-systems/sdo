@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -148,5 +149,5 @@ func (c *Controller) removeUnexplained(ctx context.Context, incidentID, controlN
 			return client.Delete(ctx, ref, uid, rv)
 		}
 	}
-	return fmt.Errorf("object is no longer the selected unexplained finding at %s", time.Now().UTC().Format(time.RFC3339Nano))
+	return fmt.Errorf("object is no longer the selected unexplained finding at %s", lifecycleio.Now().UTC().Format(time.RFC3339Nano))
 }

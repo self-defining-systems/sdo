@@ -329,7 +329,7 @@ func (c *KubernetesCache) WaitForSync(ctx context.Context) error {
 		sort.Strings(kinds)
 		return kinds
 	}
-	ticker := time.NewTicker(10 * time.Millisecond)
+	ticker := lifecycleio.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for len(unsynced()) > 0 {
 		select {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
 	"time"
 
@@ -46,8 +47,8 @@ func (l *ResponderLoop) capturePreApplySnapshot(ctx context.Context, refs ...sdk
 			}
 		}
 	}()
-	started := time.Now()
-	defer func() { l.timing.capture += time.Since(started) }()
+	started := lifecycleio.Now()
+	defer func() { l.timing.capture += lifecycleio.Since(started) }()
 	dir, err := memory.IncidentCorpusDir(l.CorpusSessionRoot, l.Request.IncidentID)
 	if err != nil {
 		return err

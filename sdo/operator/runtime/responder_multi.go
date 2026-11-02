@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strings"
 	"time"
@@ -237,7 +238,7 @@ func (l *ResponderLoop) reservePending(application string, result PlanApplicatio
 		}
 		l.applicationBindings[application] = []recoveryBinding{{ProgramID: programID, ProgramRevision: revision, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...)}}
 	}
-	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, WriteRefs: exclusive, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: time.Now().UTC()}
+	l.pendingWrites[application] = pendingMitigation{diagnoser: diagnoser, ProgramRevision: revision, Refs: refs, WriteRefs: exclusive, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...), ReservedAt: lifecycleio.Now().UTC()}
 }
 
 // applicationWriteRefs is the shared desired-state scope for reservation and
@@ -384,7 +385,7 @@ func (l *ResponderLoop) releaseStalledPending(ctx context.Context, application s
 	}
 	if pending.ReservedAt.IsZero() {
 		// Restored reservations start their bound at restore time.
-		pending.ReservedAt = time.Now().UTC()
+		pending.ReservedAt = lifecycleio.Now().UTC()
 		l.pendingWrites[application] = pending
 		return
 	}
@@ -395,7 +396,7 @@ func (l *ResponderLoop) releaseStalledPending(ctx context.Context, application s
 	if stall != "" {
 		bound = min(bound, rolloutStallGrace)
 	}
-	if time.Since(pending.ReservedAt) < bound {
+	if lifecycleio.Since(pending.ReservedAt) < bound {
 		return
 	}
 	pending.Released = true

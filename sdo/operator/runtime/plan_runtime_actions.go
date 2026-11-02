@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -55,7 +56,7 @@ func concreteRuntimeAction(a program.Action) program.Action {
 // applyRuntimePlan preflights the entire batch before the first effect. Exec
 // and pod deletion are irreversible and never replayed or compensated.
 func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
-	started := time.Now()
+	started := lifecycleio.Now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun, ActionReports: newPlanReports(plan)}
 	complete := false
 	defer func() {
@@ -69,7 +70,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				result.RolledBack = true
 			}
 		}
-		result.Duration = time.Since(started)
+		result.Duration = lifecycleio.Since(started)
 		settlePlanReports(&result, err)
 	}()
 	if err = plan.Validate(); err != nil {

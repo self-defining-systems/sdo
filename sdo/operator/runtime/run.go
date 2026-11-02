@@ -273,7 +273,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if selectedCodePath.Selection.Coverage == "none" {
 		options.Programs = nil
 	}
-	menuEnabled := os.Getenv("SDO_RESPONDER_MENU")
+	menuEnabled := lifecycleio.Getenv("SDO_RESPONDER_MENU")
 	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
 		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
 	}
@@ -1183,7 +1183,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
-	if err := controller.retireExpiredIncident(runCtx, time.Now().UTC()); err != nil {
+	if err := controller.retireExpiredIncident(runCtx, lifecycleio.Now().UTC()); err != nil {
 		return err
 	}
 	persistControllerState()

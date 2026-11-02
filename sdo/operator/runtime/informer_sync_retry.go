@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 )
 
@@ -83,7 +84,7 @@ func (p InformerSyncPolicy) Do(ctx context.Context, timeout time.Duration, op fu
 		select {
 		case <-budget.Done():
 			return err
-		case <-time.After(backoff):
+		case <-lifecycleio.After(backoff):
 		}
 		backoff *= 2
 	}

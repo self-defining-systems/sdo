@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"sdo.dev/operator/internal/capturefixture"
 )
 
 func TestBuildWorkspaceRejectsManifestThatDisagreesWithItsLocation(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/builder/internal/buildio"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
@@ -95,7 +95,7 @@ func changedPrograms(ctx context.Context, applicationRoot string, programs []pro
 	for _, item := range programs {
 		all = append(all, item.ID)
 	}
-	output, err := exec.CommandContext(ctx, "git", "-C", applicationRoot, "status", "--porcelain", "--untracked-files=all", "--", layout.PlaybooksDir).Output()
+	output, err := buildio.Output(ctx, "git", "-C", applicationRoot, "status", "--porcelain", "--untracked-files=all", "--", layout.PlaybooksDir).Output()
 	if err != nil {
 		return all
 	}

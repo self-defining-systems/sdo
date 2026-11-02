@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"
 	"slices"
@@ -82,7 +83,7 @@ func (c *Controller) ExecuteWorkspaceEffect(ctx context.Context, effect Workspac
 	c.mu.Unlock()
 	c.goBackground(func() {
 		defer cancel()
-		started := time.Now()
+		started := lifecycleio.Now()
 		slog.Info("incident_workspace_preparing", "incident_id", effect.IncidentID, "bound_commit", base)
 		var workspace IncidentWorkspace
 		var prepareErr error
@@ -91,7 +92,7 @@ func (c *Controller) ExecuteWorkspaceEffect(ctx context.Context, effect Workspac
 		} else {
 			workspace, prepareErr = broker.PrepareIncident(actionCtx, effect.IncidentID)
 		}
-		slog.Info("incident_workspace_prepared", "incident_id", effect.IncidentID, "bound_commit", base, "base_commit", workspace.BaseCommit, "duration_ms", time.Since(started).Milliseconds(), "error", prepareErr)
+		slog.Info("incident_workspace_prepared", "incident_id", effect.IncidentID, "bound_commit", base, "base_commit", workspace.BaseCommit, "duration_ms", lifecycleio.Since(started).Milliseconds(), "error", prepareErr)
 		c.workspaceResults <- workspaceCompletion{workspace: workspace, err: prepareErr}
 	})
 	return nil

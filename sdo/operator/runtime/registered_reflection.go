@@ -258,21 +258,21 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		result, recovered, err = recovery.RecoverCompleted(ctx, task)
 		if err != nil {
 			var terminalTimeout *worker_registry.TaskTimeoutError
-			if errors.As(err, &terminalTimeout) || !time.Now().Before(deadline) {
+			if errors.As(err, &terminalTimeout) || !lifecycleio.Now().Before(deadline) {
 				return timeout()
 			}
 			return ReflectionDecision{}, err
 		}
 	}
 	if !recovered {
-		if !time.Now().Before(deadline) {
+		if !lifecycleio.Now().Before(deadline) {
 			return timeout()
 		}
 		executionCtx, cancel := context.WithDeadline(ctx, deadline)
 		defer cancel()
 		result, err = executor.Execute(executionCtx, task)
 		var terminalTimeout *worker_registry.TaskTimeoutError
-		if errors.As(err, &terminalTimeout) || !time.Now().Before(deadline) {
+		if errors.As(err, &terminalTimeout) || !lifecycleio.Now().Before(deadline) {
 			return timeout()
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"time"
 
@@ -69,11 +70,11 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 	if timeout == 0 {
 		timeout = program.DefaultScriptTimeout
 	}
-	if !incident.ResponseDeadline.IsZero() && time.Until(incident.ResponseDeadline) < timeout {
-		timeout = time.Until(incident.ResponseDeadline)
+	if !incident.ResponseDeadline.IsZero() && lifecycleio.Until(incident.ResponseDeadline) < timeout {
+		timeout = lifecycleio.Until(incident.ResponseDeadline)
 	}
-	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < timeout {
-		timeout = time.Until(deadline)
+	if deadline, ok := ctx.Deadline(); ok && lifecycleio.Until(deadline) < timeout {
+		timeout = lifecycleio.Until(deadline)
 	}
 	if timeout <= 0 {
 		return r, context.DeadlineExceeded
@@ -87,7 +88,7 @@ func (e PlanExecutor) scriptStep(ctx context.Context, incident IncidentRequest, 
 	for i, key := range keys {
 		inputs[key] = r.ActionReports[0].Values[i]
 	}
-	run, runErr := client.RunScript(ctx, ScriptExecutionRequest{Deadline: time.Now().Add(timeout), Inputs: inputs, ApplicationID: id, IncidentID: incident.IncidentID, Namespace: incident.Namespace, Script: a.Script, Env: env, Timeout: timeout})
+	run, runErr := client.RunScript(ctx, ScriptExecutionRequest{Deadline: lifecycleio.Now().Add(timeout), Inputs: inputs, ApplicationID: id, IncidentID: incident.IncidentID, Namespace: incident.Namespace, Script: a.Script, Env: env, Timeout: timeout})
 	if len(run.Inputs) > 0 {
 		r.ActionReports[0].Values = nil
 		for _, key := range keys {

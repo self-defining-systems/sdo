@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
 	"runtime/debug"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
 	"sort"
 	"time"
@@ -780,12 +781,12 @@ func attemptApplication(application RecordedPlanApplication, attempt *contracts.
 func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, loop *ResponderLoop, state *IncidentState, report *contracts.StageReport, progress *responseStageProgress, save func(bool) error) (errOut error) {
 	now := stage.recoveryNow
 	if now == nil {
-		now = time.Now
+		now = lifecycleio.Now
 	}
 	wait := stage.recoveryWait
 	if wait == nil {
 		wait = func(ctx context.Context, d time.Duration) error {
-			timer := time.NewTimer(d)
+			timer := lifecycleio.NewTimer(d)
 			defer timer.Stop()
 			select {
 			case <-ctx.Done():
@@ -1008,7 +1009,7 @@ func recoveryTimeLeft(stage *DeterministicResponseStage, deadline time.Time, leg
 	}
 	now := stage.recoveryNow
 	if now == nil {
-		now = time.Now
+		now = lifecycleio.Now
 	}
 	return max(0, deadline.Sub(now()))
 }

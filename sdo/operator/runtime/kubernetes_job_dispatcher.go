@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"sync"
 	"time"
@@ -328,10 +329,10 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		// responses under the repository mount, so none may outlive it.
 		defer func() { stopTools(); tools.Wait() }()
 		server := SessionToolServer{Directory: directory, Handle: func(toolCtx context.Context, toolRequest ToolRequest) ToolResponse {
-			received := time.Now().UTC()
+			received := lifecycleio.Now().UTC()
 			response := loop.Handle(toolCtx, toolRequest)
 			if toolRequest.Command == "session-open" && response.Error == "" {
-				if err := worker_registry.RecordSessionStartup(d.RepositoryMountPath, d.RepositoryPVCSubPath, sessionSubPath, received, time.Now().UTC()); err != nil {
+				if err := worker_registry.RecordSessionStartup(d.RepositoryMountPath, d.RepositoryPVCSubPath, sessionSubPath, received, lifecycleio.Now().UTC()); err != nil {
 					slog.Warn("responder_startup_session_record", "incident_id", request.IncidentID, "error", err)
 				}
 			}

@@ -2,22 +2,25 @@
 package jitview
 
 import (
-	p7 "encoding/json"
-	p9 "k8s.io/api/admissionregistration/v1"
-	p4 "k8s.io/api/apps/v1"
-	p6 "k8s.io/api/autoscaling/v2"
+	p9 "encoding/json"
+	p12 "k8s.io/api/admissionregistration/v1"
+	p5 "k8s.io/api/apps/v1"
+	p7 "k8s.io/api/autoscaling/v2"
+	p4 "k8s.io/api/batch/v1"
 	p3 "k8s.io/api/core/v1"
-	p5 "k8s.io/api/discovery/v1"
-	p10 "k8s.io/api/networking/v1"
-	p13 "k8s.io/api/policy/v1"
-	p12 "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	p11 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
+	p6 "k8s.io/api/discovery/v1"
+	p8 "k8s.io/api/networking/v1"
+	p15 "k8s.io/api/policy/v1"
+	p14 "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	p13 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	p0 "sdo.dev/operator/sdk"
+	p10 "sdo.dev/operator/sdk/logs"
 	p2 "sdo.dev/operator/sdk/metrics"
 	p1 "sdo.dev/operator/sdk/program"
-	p14 "sdo.dev/operator/sdk/servicehealth"
-	p15 "sdo.dev/operator/sdk/traffic"
-	p8 "time"
+	p16 "sdo.dev/operator/sdk/servicehealth"
+	p17 "sdo.dev/operator/sdk/traffic"
+	p18 "sdo.dev/operator/sdk/usage"
+	p11 "time"
 )
 
 func (v *View) AdmissionWebhooksFor(a0 p0.ObjectRef) (r0 []p1.AdmissionWebhook, r1 error) {
@@ -39,12 +42,26 @@ func (v *View) ConfigMaps() (r0 []p3.ConfigMap) {
 	}
 	return
 }
+func (v *View) CronJobs() (r0 []p4.CronJob) {
+	err := v.call("CronJobs", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) DaemonSets() (r0 []p5.DaemonSet) {
+	err := v.call("DaemonSets", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
 func (v *View) DatabaseUsers(a0 p1.DatabaseTarget) (r0 []p1.DatabaseUser, r1 error) {
 	err := v.call("DatabaseUsers", []any{a0}, []any{&r0})
 	r1 = err
 	return
 }
-func (v *View) Deployments() (r0 []p4.Deployment) {
+func (v *View) Deployments() (r0 []p5.Deployment) {
 	err := v.call("Deployments", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
@@ -61,7 +78,7 @@ func (v *View) DiffAgainstSource(a0 p0.ObjectRef) (r0 p0.SourceDiff, r1 error) {
 	r1 = err
 	return
 }
-func (v *View) EndpointSlices() (r0 []p5.EndpointSlice) {
+func (v *View) EndpointSlices() (r0 []p6.EndpointSlice) {
 	err := v.call("EndpointSlices", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
@@ -82,19 +99,40 @@ func (v *View) Events() (r0 []p3.Event) {
 	}
 	return
 }
-func (v *View) HorizontalPodAutoscalers() (r0 []p6.HorizontalPodAutoscaler) {
+func (v *View) HorizontalPodAutoscalers() (r0 []p7.HorizontalPodAutoscaler) {
 	err := v.call("HorizontalPodAutoscalers", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) KubernetesRead(a0 p1.KubernetesRequest) (r0 p7.RawMessage, r1 error) {
+func (v *View) Ingresses() (r0 []p8.Ingress) {
+	err := v.call("Ingresses", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) Jobs() (r0 []p4.Job) {
+	err := v.call("Jobs", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) KubernetesRead(a0 p1.KubernetesRequest) (r0 p9.RawMessage, r1 error) {
 	err := v.call("KubernetesRead", []any{a0}, []any{&r0})
 	r1 = err
 	return
 }
-func (v *View) Logs(a0 p0.ObjectRef, a1 string, a2 p8.Duration) (r0 string, r1 error) {
+func (v *View) LogResult(a0 string) (r0 p10.Result, r1 bool) {
+	err := v.call("LogResult", []any{a0}, []any{&r0, &r1})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) Logs(a0 p0.ObjectRef, a1 string, a2 p11.Duration) (r0 string, r1 error) {
 	err := v.call("Logs", []any{a0, a1, a2}, []any{&r0})
 	r1 = err
 	return
@@ -111,12 +149,12 @@ func (v *View) MetricResult(a0 string) (r0 p2.Result, r1 bool) {
 	}
 	return
 }
-func (v *View) MutatingWebhookConfiguration(a0 string) (r0 *p9.MutatingWebhookConfiguration, r1 error) {
+func (v *View) MutatingWebhookConfiguration(a0 string) (r0 *p12.MutatingWebhookConfiguration, r1 error) {
 	err := v.call("MutatingWebhookConfiguration", []any{a0}, []any{&r0})
 	r1 = err
 	return
 }
-func (v *View) MutatingWebhookConfigurations() (r0 []p9.MutatingWebhookConfiguration, r1 error) {
+func (v *View) MutatingWebhookConfigurations() (r0 []p12.MutatingWebhookConfiguration, r1 error) {
 	err := v.call("MutatingWebhookConfigurations", []any{}, []any{&r0})
 	r1 = err
 	return
@@ -128,19 +166,26 @@ func (v *View) Namespace() (r0 string) {
 	}
 	return
 }
-func (v *View) NetworkPolicies() (r0 []p10.NetworkPolicy) {
+func (v *View) NetworkPolicies() (r0 []p8.NetworkPolicy) {
 	err := v.call("NetworkPolicies", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) NodeUsage(a0 p0.ObjectRef) (r0 *p11.NodeMetrics, r1 error) {
+func (v *View) NodeUsage(a0 p0.ObjectRef) (r0 *p13.NodeMetrics, r1 error) {
 	err := v.call("NodeUsage", []any{a0}, []any{&r0})
 	r1 = err
 	return
 }
-func (v *View) Object(a0 p0.ObjectRef) (r0 *p12.Unstructured, r1 error) {
+func (v *View) Nodes() (r0 []p3.Node) {
+	err := v.call("Nodes", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) Object(a0 p0.ObjectRef) (r0 *p14.Unstructured, r1 error) {
 	err := v.call("Object", []any{a0}, []any{&r0})
 	r1 = err
 	return
@@ -164,8 +209,15 @@ func (v *View) Observe(a0 p1.ExternalOperation) (r0 int32, r1 error) {
 	r1 = err
 	return
 }
-func (v *View) ObservedAt() (r0 p8.Time) {
+func (v *View) ObservedAt() (r0 p11.Time) {
 	err := v.call("ObservedAt", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) PersistentVolumeClaims() (r0 []p3.PersistentVolumeClaim) {
+	err := v.call("PersistentVolumeClaims", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
 	}
@@ -178,14 +230,14 @@ func (v *View) PodAdmission() (r0 p0.PodAdmissionResult, r1 bool) {
 	}
 	return
 }
-func (v *View) PodDisruptionBudgets() (r0 []p13.PodDisruptionBudget) {
+func (v *View) PodDisruptionBudgets() (r0 []p15.PodDisruptionBudget) {
 	err := v.call("PodDisruptionBudgets", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) PodUsage(a0 p0.ObjectRef) (r0 *p11.PodMetrics, r1 error) {
+func (v *View) PodUsage(a0 p0.ObjectRef) (r0 *p13.PodMetrics, r1 error) {
 	err := v.call("PodUsage", []any{a0}, []any{&r0})
 	r1 = err
 	return
@@ -235,14 +287,14 @@ func (v *View) RecentEventsFor(a0 string, a1 string, a2 string) (r0 []p3.Event) 
 	}
 	return
 }
-func (v *View) ReplicaSets() (r0 []p4.ReplicaSet) {
+func (v *View) ReplicaSets() (r0 []p5.ReplicaSet) {
 	err := v.call("ReplicaSets", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) ScopedDeployments(a0 string) (r0 []p4.Deployment, r1 error) {
+func (v *View) ScopedDeployments(a0 string) (r0 []p5.Deployment, r1 error) {
 	err := v.call("ScopedDeployments", []any{a0}, []any{&r0})
 	r1 = err
 	return
@@ -257,7 +309,21 @@ func (v *View) ScopedServices(a0 string) (r0 []p3.Service, r1 error) {
 	r1 = err
 	return
 }
-func (v *View) ServiceReachability() (r0 p14.ReachabilityWindow, r1 bool) {
+func (v *View) Secrets() (r0 []p0.SecretMetadata) {
+	err := v.call("Secrets", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) ServiceAccounts() (r0 []p3.ServiceAccount) {
+	err := v.call("ServiceAccounts", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) ServiceReachability() (r0 p16.ReachabilityWindow, r1 bool) {
 	err := v.call("ServiceReachability", []any{}, []any{&r0, &r1})
 	if err != nil {
 		panic(err)
@@ -271,26 +337,33 @@ func (v *View) Services() (r0 []p3.Service) {
 	}
 	return
 }
-func (v *View) StatefulSets() (r0 []p4.StatefulSet) {
+func (v *View) StatefulSets() (r0 []p5.StatefulSet) {
 	err := v.call("StatefulSets", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) TrafficWindow(a0 string) (r0 p15.Window, r1 bool) {
+func (v *View) TrafficWindow(a0 string) (r0 p17.Window, r1 bool) {
 	err := v.call("TrafficWindow", []any{a0}, []any{&r0, &r1})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) ValidatingWebhookConfiguration(a0 string) (r0 *p9.ValidatingWebhookConfiguration, r1 error) {
+func (v *View) UsageResult() (r0 p18.Result, r1 bool) {
+	err := v.call("UsageResult", []any{}, []any{&r0, &r1})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) ValidatingWebhookConfiguration(a0 string) (r0 *p12.ValidatingWebhookConfiguration, r1 error) {
 	err := v.call("ValidatingWebhookConfiguration", []any{a0}, []any{&r0})
 	r1 = err
 	return
 }
-func (v *View) ValidatingWebhookConfigurations() (r0 []p9.ValidatingWebhookConfiguration, r1 error) {
+func (v *View) ValidatingWebhookConfigurations() (r0 []p12.ValidatingWebhookConfiguration, r1 error) {
 	err := v.call("ValidatingWebhookConfigurations", []any{}, []any{&r0})
 	r1 = err
 	return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
 	"time"
 
@@ -61,7 +62,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 		return object
 	}
 	applications := l.applicationEvidenceLocked()
-	through := time.Now()
+	through := lifecycleio.Now()
 	if len(closedAt) > 0 {
 		through = closedAt[0]
 	}

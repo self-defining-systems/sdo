@@ -431,7 +431,7 @@ func (c *Controller) cachedResponderVerification(ctx context.Context, id string,
 	var timer *time.Timer
 	var deadline <-chan time.Time
 	if wait > 0 {
-		timer = time.NewTimer(wait)
+		timer = lifecycleio.NewTimer(wait)
 		deadline = timer.C
 		defer timer.Stop()
 	}

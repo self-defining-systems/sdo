@@ -1125,7 +1125,7 @@ func (v PlanHealthVerifier) Verify(ctx context.Context) (bool, error) {
 		if confirmed && !sink.firing {
 			return true, nil
 		}
-		timer := time.NewTimer(interval)
+		timer := lifecycleio.NewTimer(interval)
 		select {
 		case <-verification.Done():
 			timer.Stop()

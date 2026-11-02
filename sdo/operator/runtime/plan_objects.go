@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -69,12 +70,12 @@ func hasObjectActions(plan program.Plan) bool {
 }
 
 func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
-	started := time.Now()
+	started := lifecycleio.Now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun, ActionReports: newPlanReports(plan)}
 	defer func() { settlePlanReports(&result, err) }()
 	complete := false
 	defer func() {
-		result.Duration = time.Since(started)
+		result.Duration = lifecycleio.Since(started)
 		if err == nil {
 			return
 		}
@@ -446,7 +447,7 @@ func (e PlanExecutor) observeDeletedObject(ctx context.Context, patch PlanPatch)
 	}
 	observation, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	ticker := time.NewTicker(20 * time.Millisecond)
+	ticker := lifecycleio.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	var last *unstructured.Unstructured
 	for {

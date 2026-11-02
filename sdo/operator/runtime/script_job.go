@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strconv"
 	"time"
@@ -47,7 +48,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	provenance, _ := json.Marshal(r.Inputs)
 	fresh := false
 	if apierrors.IsNotFound(getErr) {
-		deadline := time.Now().Add(r.Timeout)
+		deadline := lifecycleio.Now().Add(r.Timeout)
 		if !r.Deadline.IsZero() && r.Deadline.Before(deadline) {
 			deadline = r.Deadline
 		}
@@ -80,7 +81,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		if parseErr != nil {
 			return out, parseErr
 		}
-		seconds := int64(math.Ceil(time.Until(deadline).Seconds()))
+		seconds := int64(math.Ceil(lifecycleio.Until(deadline).Seconds()))
 		if seconds < 1 {
 			return out, fmt.Errorf("script deadline expired before Job creation")
 		}
@@ -134,7 +135,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 	if interval <= 0 {
 		interval = 200 * time.Millisecond
 	}
-	ticker := time.NewTicker(interval)
+	ticker := lifecycleio.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		index, err = maps.Get(ctx, out.JobName, metav1.GetOptions{})
@@ -167,7 +168,7 @@ func (c TypedPlanClient) RunScript(ctx context.Context, r ScriptExecutionRequest
 		if parseErr != nil {
 			return out, parseErr
 		}
-		if !time.Now().Before(deadline) {
+		if !lifecycleio.Now().Before(deadline) {
 			out.TimedOut = true
 			return out, fmt.Errorf("script Job deadline exceeded after %s", strconv.FormatFloat(r.Timeout.Seconds(), 'f', 3, 64))
 		}

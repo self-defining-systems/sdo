@@ -3,7 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"os/exec"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 
 	"sdo.dev/operator/memory/validate"
@@ -19,7 +19,7 @@ func (s ShellDetectorSource) Detectors(ctx context.Context, request DetectorSour
 	if s.Reader == nil {
 		return nil, fmt.Errorf("shell detector report reader is required")
 	}
-	output, err := exec.CommandContext(ctx, "git", "-C", request.RepositoryRoot, "rev-parse", "HEAD").Output()
+	output, err := lifecycleio.Command(ctx, "git", "-C", request.RepositoryRoot, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return nil, err
 	}

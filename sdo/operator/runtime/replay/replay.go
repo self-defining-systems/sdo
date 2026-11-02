@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
 	"time"
 
@@ -67,9 +68,9 @@ type Result struct {
 // Check executes one closed loop. Detectors are the detectors linked to this
 // program; Matrix separately evaluates the whole detector catalog for each case.
 func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detectors []sdk.Detector, c Case) (r Result) {
-	start := time.Now()
+	start := lifecycleio.Now()
 	defer func() {
-		r.DurationMS = float64(time.Since(start)) / float64(time.Millisecond)
+		r.DurationMS = float64(lifecycleio.Since(start)) / float64(time.Millisecond)
 		if v := recover(); v != nil {
 			r.Status = "failed"
 			r.Errors = append(r.Errors, fmt.Sprintf("panic: %v", v))

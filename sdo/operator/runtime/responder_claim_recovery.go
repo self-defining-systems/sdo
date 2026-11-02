@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -101,7 +102,7 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 			progress.RecoveryDeadline = progress.RecoveryDeadline.Add(DefaultMitigationRolloutTimeout)
 		} else {
 			// Missing historical timing is not permission for a new wait.
-			progress.RecoveryDeadline = time.Now()
+			progress.RecoveryDeadline = lifecycleio.Now()
 		}
 	}
 	complete := progress.Complete
@@ -122,7 +123,7 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 }
 
 func automaticClaimResult(state *IncidentState) (IncidentResult, error) {
-	result, err := responsePipelineResult(state, time.Now().UTC(), time.Now().UTC())
+	result, err := responsePipelineResult(state, lifecycleio.Now().UTC(), lifecycleio.Now().UTC())
 	result.automaticStages = cloneStageReports(state.PriorStages)
 	return result, err
 }

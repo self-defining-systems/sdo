@@ -10,8 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"reflect"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sync"
 
 	"sdo.dev/operator/sdk/metrics"
@@ -78,7 +78,7 @@ func (v *View) call(method string, args, outputs []any) error {
 
 // Run exchanges reads on private process pipes. Its view exposes no writers.
 func Run(ctx context.Context, binary string, request any, view program.ReadView) (json.RawMessage, error) {
-	command := exec.CommandContext(ctx, binary)
+	command := lifecycleio.Command(ctx, binary)
 	input, err := command.StdinPipe()
 	if err != nil {
 		return nil, err

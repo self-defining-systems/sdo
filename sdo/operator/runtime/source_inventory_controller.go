@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -26,7 +27,7 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 	if c.drift.Source == nil {
 		return fmt.Errorf("accepted source inventory is unavailable")
 	}
-	if time.Now().Before(retryAt) {
+	if lifecycleio.Now().Before(retryAt) {
 		return nil
 	}
 	inventory, err := acceptedSourceInventory(ctx, c.drift.Source, revision, c.config.Namespace)
@@ -35,7 +36,7 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 		repeated := c.sourceInventoryError == err.Error()
 		c.sourceInventory = nil
 		c.sourceInventoryError = err.Error()
-		c.sourceInventoryRetryAt = time.Now().Add(2 * time.Second)
+		c.sourceInventoryRetryAt = lifecycleio.Now().Add(2 * time.Second)
 		c.mu.Unlock()
 		if c.OnError != nil && !repeated {
 			c.OnError(fmt.Errorf("load accepted source inventory: %w", err))
@@ -193,7 +194,7 @@ func (c *Controller) verifySourceInventoryLocked(result *IncidentResult) (bool, 
 	if source, ok := c.drift.Events.(interface {
 		SourceDriftObjects() []*unstructured.Unstructured
 	}); ok {
-		findings = sourceInventoryFindingsFor(c.sourceInventory, source, time.Now().UTC())
+		findings = sourceInventoryFindingsFor(c.sourceInventory, source, lifecycleio.Now().UTC())
 	}
 	remaining := []sdk.Finding{}
 	for _, finding := range findings {

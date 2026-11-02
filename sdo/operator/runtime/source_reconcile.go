@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strings"
 	"time"
@@ -108,7 +109,7 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 		readCtx, cancel := context.WithCancel(ctx)
 		if deadline, ok := ctx.Deadline(); ok {
 			cancel()
-			readCtx, cancel = context.WithTimeout(ctx, time.Until(deadline)/time.Duration(unread))
+			readCtx, cancel = context.WithTimeout(ctx, lifecycleio.Until(deadline)/time.Duration(unread))
 		}
 		unread--
 		ref, _ := planActionRef(action)
@@ -307,7 +308,7 @@ func (e PlanExecutor) waitSourceConvergence(waitCtx, readCtx context.Context, in
 		}
 		select {
 		case <-waitCtx.Done():
-		case <-time.After(100 * time.Millisecond):
+		case <-lifecycleio.After(100 * time.Millisecond):
 		}
 	}
 }

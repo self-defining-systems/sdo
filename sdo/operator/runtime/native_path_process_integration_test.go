@@ -188,12 +188,6 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 			return nil, packErr
 		}
 		response, err = anypb.New(&contracts.SourceDeploymentResult{Proposed: true, Summary: "source prepared", AgentSessionId: "source-session", Plan: &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: config}})
-	case nativeArchitectureTask():
-		request := &contracts.ArchitectureRequest{}
-		if err = task.GetRequest().UnmarshalTo(request); err != nil {
-			return nil, err
-		}
-		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded demo.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
 	case nativeHealthJudgeTask():
 		request := &contracts.HealthJudgeRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"time"
 
@@ -200,7 +201,7 @@ func (w KubernetesPlanRollouts) RecoverDependencies(ctx context.Context, restore
 				select {
 				case <-ctx.Done():
 					return effects, ctx.Err()
-				case <-time.After(time.Second):
+				case <-lifecycleio.After(time.Second):
 				}
 			}
 			for _, pod := range consumers {
@@ -333,7 +334,7 @@ func (e PlanExecutor) waitAfterSourceWrites(ctx context.Context, incident Incide
 	waitCtx, stopWait := context.WithCancel(ctx)
 	if deadline, ok := ctx.Deadline(); ok {
 		stopWait()
-		waitCtx, stopWait = context.WithDeadline(ctx, deadline.Add(-sourceReadbackReserve(time.Until(deadline), len(result.Plan.Actions))))
+		waitCtx, stopWait = context.WithDeadline(ctx, deadline.Add(-sourceReadbackReserve(lifecycleio.Until(deadline), len(result.Plan.Actions))))
 	}
 	defer stopWait()
 	if err := e.settleSourceDependencies(waitCtx, incident, result); err != nil {

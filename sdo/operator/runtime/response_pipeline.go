@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"time"
 
@@ -146,7 +147,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		result, err := dispatcher.Dispatch(ctx, request)
 		return result, nil, err
 	}
-	started := time.Now().UTC()
+	started := lifecycleio.Now().UTC()
 	err := RunResponseStages(ctx, state, stages)
 	c.mu.Lock()
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == request.IncidentID {
@@ -173,7 +174,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
 	}
 	c.mu.Unlock()
-	result, encodeErr := responsePipelineResult(state, started, time.Now().UTC())
+	result, encodeErr := responsePipelineResult(state, started, lifecycleio.Now().UTC())
 	if err == nil {
 		err = encodeErr
 	}

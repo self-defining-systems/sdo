@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"reflect"
 	controllercore "sdo.dev/operator/core"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sort"
 	"time"
@@ -225,7 +226,7 @@ type scopedRetry struct {
 // readScoped retries unavailable targets with capped per-target backoff. It
 // never restores availability without a fresh successful read.
 func (c *KubernetesCache) readScoped(ctx context.Context) (sdk.ScopedSnapshot, error) {
-	now := time.Now()
+	now := lifecycleio.Now()
 	if c.config.Now != nil {
 		now = c.config.Now()
 	}

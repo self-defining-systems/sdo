@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/rest"
 	"net/http"
 	"net/url"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk/program"
 	"strings"
 )
@@ -37,7 +38,7 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 			return nil, err
 		}
 	}
-	var client *http.Client
+	var client *lifecycleio.HTTPClient
 	var base *url.URL
 	var err error
 	// Prefer the process-wide client transport; ExecConfig also exists for

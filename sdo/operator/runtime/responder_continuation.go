@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ func (d KubernetesJobDispatcher) executeResponder(ctx context.Context, executor 
 	if loop == nil {
 		return d.executeResponderTask(ctx, executor, task)
 	}
-	return d.continueResponder(ctx, executor, task, loop, request, time.Now)
+	return d.continueResponder(ctx, executor, task, loop, request, lifecycleio.Now)
 }
 
 func (d KubernetesJobDispatcher) executeResponderTask(ctx context.Context, executor agentTaskExecutor, task *contracts.AgentTask) (IncidentResult, error) {
@@ -565,7 +566,7 @@ func (c *Controller) responderResultVerification(ctx context.Context, incidentID
 	if !current {
 		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
 	}
-	source := c.verifyClosureSource(ctx, time.Now().UTC(), snapshot, result)
+	source := c.verifyClosureSource(ctx, lifecycleio.Now().UTC(), snapshot, result)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {

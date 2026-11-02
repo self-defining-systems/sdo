@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -218,7 +219,7 @@ func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.Nam
 			c.OnError(fmt.Errorf("complete onboarding: %w", err))
 		}
 	} else {
-		slog.InfoContext(ctx, "namespace onboarding established", "accepted_commit", record.AcceptedCommit, "install_to_record", time.Since(record.EstablishedAt.AsTime()))
+		slog.InfoContext(ctx, "namespace onboarding established", "accepted_commit", record.AcceptedCommit, "install_to_record", lifecycleio.Since(record.EstablishedAt.AsTime()))
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	operator "sdo.dev/operator/runtime"
@@ -46,10 +47,10 @@ func (v *readView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
 	return (operator.LiveReadView{Carrier: inputs.New(v), Context: v.ctx, Source: v.source, SourceCommit: "offline-accepted"}).DiffAgainstSource(ref)
 }
 func checkDetector(ctx context.Context, d sdk.Detector, c Case) (r Result) {
-	start := time.Now()
+	start := lifecycleio.Now()
 	r = Result{ProgramID: "detector:" + d.Spec().ID, CaseID: c.ID, Status: "negative", Detectors: map[string][]DetectorResult{}}
 	defer func() {
-		r.DurationMS = float64(time.Since(start)) / float64(time.Millisecond)
+		r.DurationMS = float64(lifecycleio.Since(start)) / float64(time.Millisecond)
 		if v := recover(); v != nil {
 			r.Status = "failed"
 			r.Errors = append(r.Errors, fmt.Sprintf("detector panic: %v", v))

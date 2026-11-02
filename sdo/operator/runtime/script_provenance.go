@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"gopkg.in/yaml.v3"
-	"os/exec"
 	"path"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -66,7 +66,7 @@ func (l *ResponderLoop) scriptProvenance(id string) ScriptProvenance {
 		// Read only immutable Git blobs from the incident's accepted commit. A dirty
 		// checkout, another program's case, or newer memory cannot grant authority.
 		git := func(args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, "git", append([]string{"-C", request.RepositoryWorktree}, args...)...).Output()
+			return lifecycleio.Command(ctx, "git", append([]string{"-C", request.RepositoryWorktree}, args...)...).Output()
 		}
 		// Corpus-free programs bind to the accepted outcome named by their
 		// immutable README. The same receipt predicate runs during publication.

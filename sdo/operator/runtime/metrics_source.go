@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	"sdo.dev/operator/runtime/prometheus"
@@ -46,7 +47,7 @@ func withMetrics(
 			return provider, nil, nil
 		}
 		// Configured sources also serve on-demand Diagnose queries.
-		observer = &MetricsObserver{api: api, timeout: DefaultMetricsQueryTimeout, clock: time.Now}
+		observer = &MetricsObserver{api: api, timeout: DefaultMetricsQueryTimeout, clock: lifecycleio.Now}
 	}
 	if api == nil && requireSource {
 		return nil, nil, errors.New("metrics health evaluation requires --metrics-url")

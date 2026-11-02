@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	kclock "k8s.io/utils/clock"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	meta "k8s.io/apimachinery/pkg/api/meta"
@@ -70,7 +71,7 @@ func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRe
 	if w.Client == nil {
 		return errors.New("Kubernetes rollout client is required")
 	}
-	started := time.Now()
+	started := lifecycleio.Now()
 	var blockers []*contracts.RolloutBlocker
 	stalled := 0
 	for _, ref := range refs {
@@ -117,7 +118,7 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 	}
 	ticker := timerClock(w.Clock).NewTicker(time.Second)
 	defer ticker.Stop()
-	started := time.Now()
+	started := lifecycleio.Now()
 	stalledSince := map[sdk.ObjectRef]time.Time{}
 	for {
 		var blockers, stalled []*contracts.RolloutBlocker
@@ -143,9 +144,9 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 				continue
 			}
 			if stalledSince[ref].IsZero() {
-				stalledSince[ref] = time.Now()
+				stalledSince[ref] = lifecycleio.Now()
 			}
-			if time.Since(stalledSince[ref]) >= rolloutStallGrace {
+			if lifecycleio.Since(stalledSince[ref]) >= rolloutStallGrace {
 				stalled = append(stalled, blocker)
 			}
 		}

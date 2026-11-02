@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
+	"sdo.dev/operator/planwire"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -148,187 +149,6 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 		StartedAt: controllerTime(application.GetStartedAt()), CompletedAt: controllerTime(application.GetCompletedAt()), Error: application.GetError(), RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError()}
 }
 
-func planActionProto(action program.Action) (*contracts.Action, error) {
-	if isGeneralAction(action) {
-		if _, legacyDelete := generalAction(action).(program.DeleteObject); !legacyDelete {
-			return generalActionProto(action)
-		}
-	}
-	switch a := action.(type) {
-	case program.RemoveServicePort:
-		return &contracts.Action{Kind: &contracts.Action_RemoveServicePort{RemoveServicePort: &contracts.RemoveServicePort{Ref: planRefProto(a.Ref), Name: a.Name, Port: a.Port, Protocol: a.Protocol, AllowEmpty: a.AllowEmpty, Reason: a.Reason}}}, nil
-	case *program.RemoveServicePort:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case program.EnsureDatabaseUser:
-		return databaseActionProto(a), nil
-	case *program.EnsureDatabaseUser:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case program.CreateFromSource:
-		return &contracts.Action{Kind: &contracts.Action_CreateFromSource{CreateFromSource: &contracts.CreateFromSource{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
-	case program.DeleteObject:
-		return &contracts.Action{Kind: &contracts.Action_DeleteObject{DeleteObject: &contracts.DeleteObject{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
-	case *program.CreateFromSource:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case *program.DeleteObject:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case program.ReconcileFromSource:
-		return &contracts.Action{Kind: &contracts.Action_ReconcileFromSource{ReconcileFromSource: &contracts.ReconcileFromSource{Ref: planRefProto(a.Ref)}}}, nil
-	case program.Rollback:
-		return &contracts.Action{Kind: &contracts.Action_Rollback{Rollback: &contracts.Rollback{Ref: planRefProto(a.Ref), ToRevision: a.ToRevision}}}, nil
-	case program.SetField:
-		value, err := planValueProto(a.Value)
-		if err != nil {
-			return nil, err
-		}
-		return &contracts.Action{Kind: &contracts.Action_SetField{SetField: &contracts.SetField{Ref: planRefProto(a.Ref), Path: a.Path, Value: value, Reason: a.Reason, DocumentFormat: a.DocumentFormat, DocumentPath: a.DocumentPath}}}, nil
-	case program.DeletePod:
-		return &contracts.Action{Kind: &contracts.Action_DeletePod{DeletePod: &contracts.DeletePod{Ref: planRefProto(a.Ref)}}}, nil
-	case program.ScaleWorkload:
-		value, err := planValueProto(a.Replicas)
-		if err != nil {
-			return nil, err
-		}
-		return &contracts.Action{Kind: &contracts.Action_ScaleWorkload{ScaleWorkload: &contracts.ScaleWorkload{Ref: planRefProto(a.Ref), Replicas: value}}}, nil
-	case program.RetryAdmission:
-		return &contracts.Action{Kind: &contracts.Action_RetryAdmission{RetryAdmission: &contracts.RetryAdmission{Ref: planRefProto(a.Ref)}}}, nil
-	case *program.RetryAdmission:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case program.RetireOldRevision:
-		return &contracts.Action{Kind: &contracts.Action_RetireOldRevision{RetireOldRevision: &contracts.RetireOldRevision{Ref: planRefProto(a.Ref)}}}, nil
-	case program.Exec:
-		command := make([]*contracts.PlanValue, 0, len(a.Command))
-		for _, v := range a.Command {
-			value, err := planValueProto(v)
-			if err != nil {
-				return nil, err
-			}
-			command = append(command, value)
-		}
-		return &contracts.Action{Kind: &contracts.Action_Exec{Exec: &contracts.Exec{Pod: planRefProto(a.Pod), Container: a.Container, Command: command}}}, nil
-	case *program.DeletePod:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case *program.ScaleWorkload:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case *program.RetireOldRevision:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case *program.Exec:
-		if a != nil {
-			return planActionProto(*a)
-		}
-
-	case program.RestartRollout:
-		return &contracts.Action{Kind: &contracts.Action_RestartRollout{RestartRollout: &contracts.RestartRollout{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
-	case *program.ReconcileFromSource:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case *program.Rollback:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case *program.SetField:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	case *program.RestartRollout:
-		if a != nil {
-			return planActionProto(*a)
-		}
-	}
-	return nil, fmt.Errorf("unsupported plan action %T", action)
-}
-
-func planRefProto(ref sdk.ObjectRef) *contracts.ObjectRef {
-	return &contracts.ObjectRef{ApiVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}
-}
-
-func planActionState(action *contracts.Action) program.Action {
-	var decoded program.Action
-	if general, err := generalActionState(action); err == nil {
-		if (program.Plan{Actions: []program.Action{general}}).Validate() == nil {
-			return general
-		}
-		return nil
-	}
-	switch kind := action.GetKind().(type) {
-	case *contracts.Action_RemoveServicePort:
-		a := kind.RemoveServicePort
-		decoded = program.RemoveServicePort{Ref: objectRefState(a.GetRef()), Name: a.GetName(), Port: a.GetPort(), Protocol: a.GetProtocol(), AllowEmpty: a.GetAllowEmpty(), Reason: a.GetReason()}
-	case *contracts.Action_EnsureDatabaseUser:
-		decoded = databaseActionState(kind.EnsureDatabaseUser)
-	case *contracts.Action_CreateFromSource:
-		decoded = program.CreateFromSource{Ref: objectRefState(kind.CreateFromSource.GetRef()), Reason: kind.CreateFromSource.GetReason()}
-	case *contracts.Action_DeleteObject:
-		decoded = program.DeleteObject{Ref: objectRefState(kind.DeleteObject.GetRef()), Reason: kind.DeleteObject.GetReason()}
-	case *contracts.Action_ReconcileFromSource:
-		decoded = program.ReconcileFromSource{Ref: objectRefState(kind.ReconcileFromSource.GetRef())}
-	case *contracts.Action_Rollback:
-		decoded = program.Rollback{Ref: objectRefState(kind.Rollback.GetRef()), ToRevision: kind.Rollback.GetToRevision()}
-	case *contracts.Action_SetField:
-		decoded = program.SetField{Ref: objectRefState(kind.SetField.GetRef()), Path: kind.SetField.GetPath(), Value: planValueState(kind.SetField.GetValue()), Reason: kind.SetField.GetReason(), DocumentFormat: kind.SetField.GetDocumentFormat(), DocumentPath: kind.SetField.GetDocumentPath()}
-	case *contracts.Action_DeletePod:
-		decoded = program.DeletePod{Ref: objectRefState(kind.DeletePod.GetRef())}
-	case *contracts.Action_ScaleWorkload:
-		decoded = program.ScaleWorkload{Ref: objectRefState(kind.ScaleWorkload.GetRef()), Replicas: planValueState(kind.ScaleWorkload.GetReplicas())}
-	case *contracts.Action_RetryAdmission:
-		decoded = program.RetryAdmission{Ref: objectRefState(kind.RetryAdmission.GetRef())}
-	case *contracts.Action_RetireOldRevision:
-		decoded = program.RetireOldRevision{Ref: objectRefState(kind.RetireOldRevision.GetRef())}
-	case *contracts.Action_Exec:
-		a := program.Exec{Pod: objectRefState(kind.Exec.GetPod()), Container: kind.Exec.GetContainer()}
-		for _, v := range kind.Exec.GetCommand() {
-			a.Command = append(a.Command, planValueState(v))
-		}
-		decoded = a
-	case *contracts.Action_RestartRollout:
-		decoded = program.RestartRollout{Ref: objectRefState(kind.RestartRollout.GetRef()), Reason: kind.RestartRollout.GetReason()}
-	}
-	return decoded
-}
-
-func planValueProto(v program.Value) (*contracts.PlanValue, error) {
-	if err := v.Validate(); err != nil {
-		return nil, err
-	}
-	field := &contracts.ValueField{Ref: planRefProto(v.Ref()), Path: v.Path()}
-	switch v.Origin() {
-	case program.SourceValue:
-		return &contracts.PlanValue{Origin: &contracts.PlanValue_Source{Source: field}}, nil
-	case program.ObservedValue:
-		return &contracts.PlanValue{Origin: &contracts.PlanValue_Observed{Observed: field}}, nil
-	case program.ParameterValue:
-		return &contracts.PlanValue{Origin: &contracts.PlanValue_Parameter{Parameter: v.Param()}}, nil
-	}
-	return nil, fmt.Errorf("invalid value origin")
-}
-func planValueState(v *contracts.PlanValue) program.Value {
-	switch origin := v.GetOrigin().(type) {
-	case *contracts.PlanValue_Source:
-		return program.FromSource(objectRefState(origin.Source.GetRef()), origin.Source.GetPath())
-	case *contracts.PlanValue_Observed:
-		return program.FromObserved(objectRefState(origin.Observed.GetRef()), origin.Observed.GetPath())
-	case *contracts.PlanValue_Parameter:
-		return program.FromParam(origin.Parameter)
-	}
-	return program.Value{}
-}
-
 // observedObjectEffects carries UID-bound direct write evidence across the
 // receipt boundary without serializing mutable patch preimages. Successful
 // verification already required the executor's identity/value readback.
@@ -350,3 +170,16 @@ func (r PlanApplicationResult) observedObjectEffects() []PlanObjectEffect {
 	}
 	return effects
 }
+
+// Action conversion lives in planwire so the memory host shares it.
+func planActionProto(action program.Action) (*contracts.Action, error) {
+	return planwire.ActionProto(action)
+}
+func planActionState(action *contracts.Action) program.Action { return planwire.ActionState(action) }
+func planRefProto(ref sdk.ObjectRef) *contracts.ObjectRef     { return planwire.RefProto(ref) }
+func generalAction(a program.Action) program.Action           { return planwire.GeneralAction(a) }
+func isGeneralAction(a program.Action) bool                   { return planwire.IsGeneralAction(a) }
+func concreteExternalAction(a program.Action) program.Action {
+	return planwire.ConcreteExternalAction(a)
+}
+func isExternalAction(a program.Action) bool { return planwire.IsExternalAction(a) }

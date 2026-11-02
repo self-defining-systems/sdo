@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strings"
 	"time"
@@ -180,7 +180,7 @@ func (l *ResponderLoop) loadWorkingProgram(ctx context.Context, registry *workin
 		if !gitRevision.MatchString(l.Request.SourceCommit) {
 			return nil
 		}
-		listing, err := exec.CommandContext(ctx, "git", "-C", l.Request.RepositoryWorktree, "ls-tree", "--name-only", l.Request.SourceCommit, "--", ".sdo/playbooks/"+id+"/diagnose.go").Output()
+		listing, err := lifecycleio.Command(ctx, "git", "-C", l.Request.RepositoryWorktree, "ls-tree", "--name-only", l.Request.SourceCommit, "--", ".sdo/playbooks/"+id+"/diagnose.go").Output()
 		if err != nil {
 			return l.shortProgramError(id, err)
 		}
@@ -212,7 +212,7 @@ func (l *ResponderLoop) loadWorkingProgram(ctx context.Context, registry *workin
 	}
 	delete(registry.disabled, id)
 	module := "app-diagnostics"
-	if data, err := exec.CommandContext(ctx, "git", "-C", l.Request.RepositoryWorktree, "show", l.Request.SourceCommit+":.sdo/diagnostics/go.mod").Output(); err == nil {
+	if data, err := lifecycleio.Command(ctx, "git", "-C", l.Request.RepositoryWorktree, "show", l.Request.SourceCommit+":.sdo/diagnostics/go.mod").Output(); err == nil {
 		if match := programModule.FindSubmatch(data); len(match) == 2 {
 			module = string(match[1])
 		}
@@ -234,13 +234,13 @@ func (l *ResponderLoop) loadWorkingProgram(ctx context.Context, registry *workin
 	if prior := registry.overrides[id]; prior != nil && prior.revision == revision {
 		return nil
 	}
-	operator := os.Getenv("SDO_OPERATOR_ROOT")
+	operator := lifecycleio.Getenv("SDO_OPERATOR_ROOT")
 	if operator == "" {
 		operator = "/opt/sdo/sdo/operator"
 	}
 	// Compilation has its own short budget, independent of diagnosis timeouts.
 	buildCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	started := time.Now()
+	started := lifecycleio.Now()
 	var workspace *builder.Workspace
 	var binary string
 	var buildErr error
@@ -250,7 +250,7 @@ func (l *ResponderLoop) loadWorkingProgram(ctx context.Context, registry *workin
 		buildErr = err
 	}
 	cancel()
-	slog.Info("responder_program_compile", "program_id", id, "compile_ms", time.Since(started).Milliseconds(), "success", buildErr == nil)
+	slog.Info("responder_program_compile", "program_id", id, "compile_ms", lifecycleio.Since(started).Milliseconds(), "success", buildErr == nil)
 	if buildErr != nil {
 		return l.shortProgramError(id, buildErr)
 	}

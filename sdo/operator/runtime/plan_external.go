@@ -31,34 +31,6 @@ type PlanJobClient interface {
 	WaitJob(context.Context, program.RunJob) error
 }
 
-func concreteExternalAction(a program.Action) program.Action {
-	switch p := a.(type) {
-	case *program.RunScript:
-		if p != nil {
-			return *p
-		}
-	case *program.EnsureExec:
-		if p != nil {
-			return *p
-		}
-	case *program.EnsureHTTP:
-		if p != nil {
-			return *p
-		}
-	case *program.RunJob:
-		if p != nil {
-			return *p
-		}
-	}
-	return a
-}
-func isExternalAction(a program.Action) bool {
-	switch concreteExternalAction(a).(type) {
-	case program.EnsureExec, program.EnsureHTTP, program.RunJob, program.RunScript:
-		return true
-	}
-	return false
-}
 func externalPair(action program.Action) (observe, ensure program.ExternalOperation, expect int32) {
 	switch a := concreteExternalAction(action).(type) {
 	case program.EnsureExec:

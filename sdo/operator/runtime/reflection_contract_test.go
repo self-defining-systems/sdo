@@ -1,3 +1,5 @@
+//go:build integration
+
 package runtime
 
 // Independent T1 oracle: expectations below come from decisions 162–176/186,

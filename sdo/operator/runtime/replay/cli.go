@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strings"
 	"time"
@@ -185,7 +186,7 @@ func Run(ctx context.Context, registry program.ProgramRegistry, detectors []sdk.
 		fmt.Fprintln(summary, err)
 		return 2
 	}
-	start := time.Now()
+	start := lifecycleio.Now()
 	encoder := json.NewEncoder(out)
 	count, failed, positives := 0, 0, 0
 	tables := []struct {
@@ -247,7 +248,7 @@ func Run(ctx context.Context, registry program.ProgramRegistry, detectors []sdk.
 			}
 		}
 	}
-	elapsed := time.Since(start)
+	elapsed := lifecycleio.Since(start)
 	for _, table := range tables {
 		fmt.Fprintf(summary, "%s (program/case/trigger)\n", table.name)
 		for _, row := range table.rows {

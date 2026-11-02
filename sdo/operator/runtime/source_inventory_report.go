@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -21,7 +22,7 @@ func WriteSourceInventoryReport(stdout io.Writer, path string, index *SourceInve
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("source-drift-report requires an absolute output path")
 	}
-	findings := index.Findings(objects, time.Now().UTC())
+	findings := index.Findings(objects, lifecycleio.Now().UTC())
 	var acknowledgement json.RawMessage
 	if index.NamespaceOnboarding != nil {
 		data, err := protojson.Marshal(index.NamespaceOnboarding)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -23,42 +24,6 @@ type PlanAPIClient interface {
 	KubernetesRequest(context.Context, program.KubernetesRequest) (json.RawMessage, error)
 }
 
-func generalAction(a program.Action) program.Action {
-	switch p := a.(type) {
-	case *program.SyncWebhookCA:
-		if p != nil {
-			return *p
-		}
-	case *program.PatchObject:
-		if p != nil {
-			return *p
-		}
-	case *program.ApplyObject:
-		if p != nil {
-			return *p
-		}
-	case *program.KubernetesRequest:
-		if p != nil {
-			return *p
-		}
-	case *program.WaitFor:
-		if p != nil {
-			return *p
-		}
-	case *program.DeleteObject:
-		if p != nil {
-			return *p
-		}
-	}
-	return concreteExternalAction(a)
-}
-func isGeneralAction(a program.Action) bool {
-	switch generalAction(a).(type) {
-	case program.SyncWebhookCA, program.PatchObject, program.ApplyObject, program.KubernetesRequest, program.WaitFor, program.DeleteObject:
-		return true
-	}
-	return isExternalAction(a)
-}
 func hasGeneralActions(p program.Plan) bool {
 	// A controller requeue is an opaque runtime signal. Mixed plans execute
 	// each action in order, never coalescing this signal into document edits.
@@ -80,7 +45,7 @@ func hasGeneralActions(p program.Plan) bool {
 // applyGeneralPlan shares the normal result/compensation contract. There is no
 // source-value or menu-specific safety policy: Kubernetes enforces RBAC.
 func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentRequest, plan program.Plan, dry bool) (result PlanApplicationResult, err error) {
-	start := time.Now()
+	start := lifecycleio.Now()
 	plan.Actions = append([]program.Action(nil), plan.Actions...)
 	for i, action := range plan.Actions {
 		if request, ok := generalAction(action).(program.KubernetesRequest); ok && request.Method == "DELETE" {
@@ -95,7 +60,7 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 	result = PlanApplicationResult{Plan: plan, DryRun: dry, ActionReports: newPlanReports(plan)}
 	complete := false
 	defer func() {
-		result.Duration = time.Since(start)
+		result.Duration = lifecycleio.Since(start)
 		if err != nil && result.Applied && !complete && !hasAppliedScript(result.ActionsApplied) {
 			recovery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
@@ -408,7 +373,7 @@ func (e PlanExecutor) waitForField(ctx context.Context, w program.WaitFor) error
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ticker := time.NewTicker(interval)
+	ticker := lifecycleio.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		o, err := e.Client.Get(ctx, w.Ref)
