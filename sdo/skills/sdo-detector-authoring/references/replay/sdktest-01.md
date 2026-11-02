@@ -24,6 +24,10 @@ func CanonicalSnapshot(raw []byte) ([]byte, error)
     1 and objects-only forms of one captured snapshot have the same canonical
     bytes.
 
+func CaptureScoped(scoped sdk.ScopedObservationSource) (sdk.ScopedSnapshot, []sdk.ObjectRef, error)
+    CaptureScoped freezes a scoped observation source into its credential-free
+    replay form and lists the observed targets as object references.
+
 func CheckGeneralization(t testing.TB, p program.Diagnoser, c CorpusCase, peer program.Bindings)
 func CheckMitigationRepairs(p program.Diagnoser, m program.Mitigator, c CorpusCase) error
     CheckMitigationRepairs preserves the error-only policy entry point.
@@ -229,9 +233,4 @@ func (v *RecordingReadView) QueryMetrics(q metrics.Query) metrics.Result
 func (v *RecordingReadView) RecordExternalCalls(calls []PrimitiveCall)
     RecordExternalCalls feeds subprocess receipts through the same evidence sink
     used for local primitive reads. It performs no live reads.
-
-func (v *RecordingReadView) RecordedReads() []PrimitiveCall
-    RecordedReads returns a detached, concurrency-safe copy of runtime evidence.
-
-func (v *RecordingReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error)
 ```

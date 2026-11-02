@@ -20,6 +20,10 @@ var ErrNoFieldComparison = errors.New("diff holds no accepted/observed field com
     source.
 
 var ErrObjectNotCaptured = errors.New("object not captured")
+var ErrScopedObjectAbsent = errors.New("object is absent from snapshot")
+    ErrScopedObjectAbsent reports a declared, observed scoped target that does
+    not contain the named object.
+
 
 FUNCTIONS
 
@@ -89,6 +93,10 @@ func ProjectWebhookCAJSON(raw []byte) ([]byte, error)
     ProjectWebhookCAJSON retains the Kubernetes response shape and numeric
     values while hiding CA bytes before a raw read can reach programs or
     recordings.
+
+func ScopedObject(source ScopedObservationSource, ref ObjectRef) (*unstructured.Unstructured, error)
+    ScopedObject reads one object of a declared scoped observation target.
+    It is the single projection shared by live and host-side read views.
 
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
@@ -251,9 +259,4 @@ type DetectorSpec struct {
 }
 
 type DriftClassification string
-
-const (
-	DriftFault       DriftClassification = "fault"
-	DriftUnexplained DriftClassification = "unexplained"
-)
 ```
