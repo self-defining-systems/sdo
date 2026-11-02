@@ -12,7 +12,7 @@ cd "$PROJECT_ROOT"
 
 # xdist workers swallow a missing-prerequisite error as an INTERNALERROR with no
 # reason; fail here, once, with the remedy printed.
-uv run python scripts/init_test_prereqs.py --check
+python3 scripts/init_test_prereqs.py --check
 
 # Build the benchmark protocol tools once for this invocation, from this checkout.
 # xdist workers otherwise independently compile/link the same executables on their
