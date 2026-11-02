@@ -57,7 +57,8 @@ def test_advertised_capture_phases_match_controller(tmp_path: Path) -> None:
     assert set(get_args(OpenPhase)) <= accepted
     controller = (repository / "sdo/operator/runtime/controller.go").read_text()
     assert '"open@detect"' in controller
-    assert '"fixed"' in controller
+    # Closure evidence (the fixed-phase capture) lives in its own file.
+    assert '"fixed"' in (repository / "sdo/operator/runtime/closure_evidence.go").read_text()
 
 
 @pytest.mark.parametrize("role", ["responder", "reflector"])
