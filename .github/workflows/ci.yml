@@ -25,7 +25,10 @@ jobs:
   checks:
     name: checks and Python
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Temporary: the first merge-queue run of the dev merge compiles cold, because
+    # queue refs read only main's caches and main has not saved this tree yet.
+    # Restored to 5 once main's first push saves its cache.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -182,7 +185,10 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      # Per-commit policy: the merge queue squashes the PR into one commit, so only
+      # pull_request events (which see each commit) can be checked.
       - name: Enforce prompt budget changes in every commit
+        if: github.event_name == 'pull_request'
         env:
           BUDGET_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           BUDGET_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}

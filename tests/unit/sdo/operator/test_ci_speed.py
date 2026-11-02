@@ -26,7 +26,8 @@ def test_pr_ci_has_at_most_three_jobs_without_matrix_or_path_skips() -> None:
         assert "matrix" not in job.get("strategy", {})
         if name != "required-pr-ci":
             assert "if" not in job
-            assert job["timeout-minutes"] <= 5
+            # Temporary exception: cold first queue run of the dev merge; restore to 5.
+            assert job["timeout-minutes"] <= (8 if name == "checks" else 5)
 
 
 def test_extended_checks_have_scheduled_and_manual_coverage() -> None:
@@ -46,6 +47,15 @@ def test_required_ci_still_accounts_for_every_job() -> None:
     assert aggregate["name"] == "Required PR CI"
     assert aggregate["if"] == "always()"
     assert set(aggregate["needs"]) == jobs.keys() - {"required-pr-ci"}
+
+
+def test_prompt_budget_commit_policy_runs_only_where_commits_are_visible() -> None:
+    # The merge queue squashes the PR, so one mixed commit could never satisfy the per-commit policy.
+    steps = workflow()["jobs"]["required-pr-ci"]["steps"]
+    budget = next(step for step in steps if "check_prompt_budgets" in step.get("run", ""))
+    assert budget["if"] == "github.event_name == 'pull_request'"
+    final = next(step for step in steps if "CHECKS" in step.get("env", {}))
+    assert "if" not in final
 
 
 @pytest.mark.parametrize(
