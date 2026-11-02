@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -18,6 +19,7 @@ from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
 from benchmarks.sregym.repository_git import host_git_command
 
+logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/toy"
 NAMESPACE = "sdo-toy"
@@ -448,6 +450,20 @@ def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) ->
         time.sleep(0.2)
     else:
         raise RuntimeError(f"toy controller did not establish an adopted, clear baseline in {wait:.0f}s")
+
+
+def retire_control_state(environment: FastloopEnvironment, control: str) -> None:
+    """Stop the controller and discard every control-state record of the previous install."""
+    from benchmarks.sregym.adapter import reset_control_state, stop_runtime
+
+    kubeconfig = str(environment.kubeconfig)
+    stop_runtime(control, kubeconfig=kubeconfig)
+    receipt = reset_control_state(control, kubeconfig=kubeconfig)
+    names = command(kubeconfig, control, "get", "configmap", "-o", "name").split()
+    stale = [name for name in names if name.startswith("configmap/sdo-health-refresh-")]
+    if stale:
+        command(kubeconfig, control, "delete", *stale, "--ignore-not-found=true")
+    logger.info("Toy control state reset: %s", json.dumps({**receipt, "health_refresh": stale}, sort_keys=True))
 
 
 def accepted_head(environment: FastloopEnvironment, pod_name: str, install_commit: str) -> str | None:

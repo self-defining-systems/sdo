@@ -320,3 +320,34 @@ def test_toy_recovery_writes_only_committed_source(tmp_path, monkeypatch):
     )
     ToyWorker(SimpleNamespace(kubeconfig=tmp_path / "config", namespace="toy", workspace=tmp_path)).request("recover")
     assert written == list(source.manifests)
+
+
+def test_retire_control_state_clears_checkpoints_and_stale_health_refresh_records(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import toy
+
+    calls = []
+    monkeypatch.setattr(adapter, "stop_runtime", lambda control, **_: calls.append(("stop", control)))
+    monkeypatch.setattr(adapter, "reset_control_state", lambda control, **_: calls.append(("reset", control)) or {})
+
+    def kubectl(_config, namespace, *args):
+        calls.append((namespace, *args))
+        if args[0] == "get":
+            return "\n".join(
+                ["configmap/sdo-health-refresh-a-request", "configmap/sdo-controller-state"]
+                + ["configmap/sdo-health-refresh-a-result"]
+            )
+        return ""
+
+    monkeypatch.setattr(toy, "command", kubectl)
+    toy.retire_control_state(SimpleNamespace(kubeconfig=tmp_path / "config"), "toy-sdo")
+    assert calls[:2] == [("stop", "toy-sdo"), ("reset", "toy-sdo")]
+    assert calls[-1] == (
+        "toy-sdo",
+        "delete",
+        "configmap/sdo-health-refresh-a-request",
+        "configmap/sdo-health-refresh-a-result",
+        "--ignore-not-found=true",
+    )

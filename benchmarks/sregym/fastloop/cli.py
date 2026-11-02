@@ -636,7 +636,7 @@ def _sdo_agent(
     else:
         ops = _cluster_ops(args, environment.namespace)
 
-    from benchmarks.sregym.adapter import PersistentState, reset_control_state, stop_runtime
+    from benchmarks.sregym.adapter import PersistentState
 
     # A new state path (including the v2 launcher's fresh-seed clone) starts a
     # memory stream. Retained records identify warm repeats and warm resets.
@@ -667,11 +667,12 @@ def _sdo_agent(
 
             inspect_existing(native_install_config(runtime_config))
             return True
-        if fresh_memory_start and environment.app == "toy":
-            control = control_namespace_for(environment.namespace)
-            stop_runtime(control, kubeconfig=str(environment.kubeconfig))
-            receipt = reset_control_state(control, kubeconfig=str(environment.kubeconfig))
-            logger.info("Fresh-memory control state reset: %s", json.dumps(receipt, sort_keys=True))
+        if environment.app == "toy":
+            # Setup runs only for a from-scratch install on the planned commit, so a retained checkpoint or
+            # health-refresh record from an earlier install would describe memory this install no longer has.
+            from benchmarks.sregym.fastloop.toy import retire_control_state
+
+            retire_control_state(environment, control_namespace_for(environment.namespace))
         fresh_memory_start = False
         if environment.app == "toy":
             from benchmarks.sregym.fastloop.toy import install_controller
