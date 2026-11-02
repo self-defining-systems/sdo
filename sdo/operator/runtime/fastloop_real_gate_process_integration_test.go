@@ -206,30 +206,10 @@ func fastloopGateAcknowledge(t *testing.T, ctx context.Context, controller *Cont
 }
 
 func TestHermeticFastloopRealGoGate(t *testing.T) {
-	runHermeticFastloopRealGoGate(t, fastloopInitial)
+	runHermeticFastloopRealGoGate(t)
 }
 
-func TestHermeticReflectionLearnsThenAgentSelectsIdenticalRecurrence(t *testing.T) {
-	runHermeticFastloopRealGoGate(t, fastloopCompiledRecurrence)
-}
-
-// This cycle publishes learned Go while the first controller is active, then
-// runs the accepted compiled bundle across its required controller rollout.
-func TestHermeticLearnAcceptRepeatKeepsControllerIterating(t *testing.T) {
-	runHermeticFastloopRealGoGate(t, fastloopControllerRepeat)
-}
-
-type fastloopGateMode uint8
-
-const (
-	fastloopInitial fastloopGateMode = iota
-	fastloopCompiledRecurrence
-	fastloopControllerRepeat
-)
-
-func runHermeticFastloopRealGoGate(t *testing.T, mode fastloopGateMode) {
-	recurrence := mode != fastloopInitial
-	repeatController := mode == fastloopControllerRepeat
+func runHermeticFastloopRealGoGate(t *testing.T) {
 	testutil.OfflineGo(t, "..")
 	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -mod=mod -p=2")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
@@ -328,21 +308,6 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 			return nil, err
 		}
 		fastloopWriteProgram(t, task.Workspace.CheckoutPath, captureDir, incidentID)
-		if recurrence {
-			// Positive corpus may come from session observations, but the
-			// independent controller healthy reference remains mandatory.
-			entries, err := os.ReadDir(captureDir)
-			if err != nil {
-				return nil, err
-			}
-			for _, entry := range entries {
-				if entry.Name() != "healthy" {
-					if err := os.RemoveAll(filepath.Join(captureDir, entry.Name())); err != nil {
-						return nil, err
-					}
-				}
-			}
-		}
 		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}})
 		if err != nil {
 			return nil, err
@@ -470,11 +435,6 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if built == nil {
 		t.Fatal("program builder did not validate accepted reflection")
 	}
-	if repeatController {
-		// Do not certify the rollout before running the accepted detector in the
-		// long-running controller and observing its later fault and iterations.
-		runCompiledLearnAcceptRepeatController(t, ctx, built, accepted, firstRequest)
-	}
 	if expectation, pending, err := native.PendingControllerRollout(receipt.ReflectionCommit); err != nil {
 		t.Fatal(err)
 	} else if pending {
@@ -508,14 +468,6 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if image := deployment.Spec.Template.Spec.Containers[0].Image; image != "good:v1" {
 		t.Fatalf("rendered source restore lost deployed image: %s", image)
 	}
-	if recurrence {
-		if repeatController {
-			return
-		}
-		runCompiledLearningRecurrence(t, ctx, built, accepted, firstRequest)
-		return
-	}
-
 	peerService, err = client.CoreV1().Services("app").Get(ctx, "peer", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)

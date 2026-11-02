@@ -30,7 +30,18 @@ runner exports `SDO_SIM_FULL=1`, which restores each sweep's declared seed count
 `SDO_SIM_SEED` still override both. A PR failure replays under the full profile because seeds are a prefix.
 
 Tests whose subject is not compilation use `sim.Compiler` as the broker's compile hook instead of
-`validate.CompileCandidate`; keep real compilation in the builder, validator and CLI tests.
+`validate.CompileCandidate`; keep real compilation in the builder, validator and CLI tests. A test whose
+subject is a validation rule or a lifecycle decision runs the memory check in process with
+`checkReflectionInProcess` (`validate.Check` plus `sim.Compiler`); only a test that proves the CLI or that
+learned Go compiles and replays builds the binary.
+
+A test that takes over about 2 s, or does a real build, process or socket, must catch a deliberate fault in
+production code that no cheaper test catches (apply the fault, run the fast suite, run the heavy test).
+Faults in the generated registries, the compile gate, replay database effects, verify credit and drift
+classification all fail PR-set tests, so the learn-accept-repeat variants of the real-gate fastloop test
+and the mongo README upgrades are gone. Kept heavy: the hotel run-script upgrade test (alone catches a lost
+observed-transition replay note, derived in source compiled at check time), the single real-gate fastloop
+test, and the CLI-and-broker agreement tests.
 
 ## Capture boundary fixtures
 
@@ -103,6 +114,10 @@ negative controls. Wait for the asserted condition with a generous failure ceili
 (or a notification). Intentional timing loops can carry a comment on the loop or
 the preceding line: `test-polling: allow -- <reason>`. Nested loops own their
 waiting budgets; paced event generation is not a polling deadline.
+
+A test that writes a request file into a directory a server polls (a tool `requests/` directory) uses
+`testutil.PublishRequest` (dot-prefixed temporary, then rename), as the production client does; an in-place
+write lets the server read half a file. `TestTestsPublishRequestsAtomically` fails any other write there.
 
 ## SREGym pin ancestry
 
