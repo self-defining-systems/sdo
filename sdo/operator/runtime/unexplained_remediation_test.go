@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -20,17 +21,19 @@ func (c deniedDeleteClient) Delete(_ context.Context, ref sdk.ObjectRef, _ types
 }
 
 func TestDeletionReceiptRequiresConfirmedAbsence(t *testing.T) {
-	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}
-	client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: urObject(ref)}}, ignoreDelete: true}
-	e := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "remove injected object"}}}, false)
-	if err == nil {
-		t.Fatal("unconfirmed deletion succeeded")
-	}
-	receipts := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "unknown-delete", Result: result, Error: err.Error()}}, nil)
-	if len(receipts) != 1 || receipts[0].Success {
-		t.Fatalf("unconfirmed delete claimed success: %+v", receipts)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}
+		client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: urObject(ref)}}, ignoreDelete: true}
+		e := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+		result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "remove injected object"}}}, false)
+		if err == nil {
+			t.Fatal("unconfirmed deletion succeeded")
+		}
+		receipts := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "unknown-delete", Result: result, Error: err.Error()}}, nil)
+		if len(receipts) != 1 || receipts[0].Success {
+			t.Fatalf("unconfirmed delete claimed success: %+v", receipts)
+		}
+	})
 }
 
 func TestDeniedDeleteMenuReturnsTypedFailure(t *testing.T) {
