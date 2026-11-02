@@ -1,5 +1,3 @@
-//go:build integration
-
 package broker
 
 import (
@@ -72,6 +70,7 @@ func TestReflectionAttestationBindsEveryInput(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			_, b, _ := sharedReflectionFixture(t)
 			calls := 0
 			b.validator = func(context.Context, string, []string) error { calls++; return nil }

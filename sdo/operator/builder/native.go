@@ -43,6 +43,10 @@ type Workspace struct {
 	StageTimings        []StageTiming
 	advisoryTestErrors  []string
 	advisorySetupErrors []string
+	// generatedClassified records that the generated package's tests already
+	// ran once, classified per test, so the informational pass skips it.
+	generatedClassified bool
+	corpusAdvisory      string
 }
 
 // StageTiming is the wall-clock cost of one Go toolchain stage.
@@ -72,7 +76,7 @@ func (workspace *Workspace) runGo(ctx context.Context, args ...string) error {
 // ValidateAndBuild compiles detector tests and the controller binary inside
 // the isolated workspace. The returned path is valid until Close is called.
 func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error) {
-	binary, err := workspace.BuildForLaunch(ctx)
+	binary, err := workspace.validate(ctx, false, !workspace.compileOnly)
 	if err != nil {
 		return "", err
 	}
@@ -87,7 +91,7 @@ func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error
 // BuildForLaunch retains every launch gate and emits the controller/prober
 // artifacts. It omits informational tests already available from self-checks.
 func (workspace *Workspace) BuildForLaunch(ctx context.Context) (string, error) {
-	return workspace.validate(ctx, false)
+	return workspace.validate(ctx, false, false)
 }
 
 // Check compiles and vets every package and enforces detector acceptance.
@@ -95,7 +99,7 @@ func (workspace *Workspace) BuildForLaunch(ctx context.Context) (string, error) 
 // memory-host artifact; BuildMemoryHost produces the accepted host.
 // A rejected stage is reported as a *StageError.
 func (workspace *Workspace) Check(ctx context.Context) error {
-	if err := workspace.CheckAcceptance(ctx); err != nil {
+	if err := workspace.acceptance(ctx, true); err != nil {
 		return err
 	}
 	return workspace.collectAdvisories(ctx)
@@ -106,17 +110,24 @@ func (workspace *Workspace) Check(ctx context.Context) error {
 // cannot affect acceptance. Check additionally collects those notes for callers
 // explicitly requesting the informational self-check.
 func (workspace *Workspace) CheckAcceptance(ctx context.Context) error {
+	return workspace.acceptance(ctx, false)
+}
+
+func (workspace *Workspace) acceptance(ctx context.Context, classifyGenerated bool) error {
 	if workspace != nil && workspace.compileOnly {
 		return errors.New("unvalidated adoption workspace cannot run the acceptance checker")
 	}
 	if err := workspace.prepareMemoryHost(); err != nil {
 		return err
 	}
-	_, err := workspace.validate(ctx, true)
+	_, err := workspace.validate(ctx, true, classifyGenerated)
 	return err
 }
 
-func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, error) {
+// validate runs the acceptance stages. With classifyGenerated the generated
+// package's tests run once, including the advisory program corpus, and the
+// informational pass later skips that package; otherwise the corpus is skipped.
+func (workspace *Workspace) validate(ctx context.Context, vet, classifyGenerated bool) (string, error) {
 	if workspace == nil || workspace.Directory == "" {
 		return "", errors.New("workspace is required")
 	}
@@ -142,13 +153,23 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 		if _, err := os.Stat(filepath.Join(workspace.Directory, "traffic", "generators")); err == nil {
 			args = append(args, "./traffic/...")
 		}
-		stages = append(stages, args, []string{"test", "-skip", "^TestProgramCorpus$", "./generated"})
-	}
-	if !vet {
-		stages = append(stages, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
+		stages = append(stages, args)
+		if !classifyGenerated {
+			stages = append(stages, []string{"test", "-skip", "^" + corpusTest + "$", "./generated"})
+		}
 	}
 	for _, args := range stages {
 		if err := workspace.runGo(ctx, args...); err != nil {
+			return "", err
+		}
+	}
+	if classifyGenerated && !workspace.compileOnly {
+		if err := workspace.runGeneratedTests(ctx); err != nil {
+			return "", err
+		}
+	}
+	if !vet {
+		if err := workspace.runGo(ctx, "build", "-buildvcs=false", "-o", binary, "./cmd/controller"); err != nil {
 			return "", err
 		}
 	}
@@ -156,25 +177,35 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 }
 
 func (workspace *Workspace) collectAdvisories(ctx context.Context) error {
-	err := workspace.runGo(ctx, "test", "-timeout=30s", "./...")
+	var err error
+	if patterns := workspace.informationalPackages(); len(patterns) > 0 {
+		err = workspace.runGo(ctx, append([]string{"test", "-timeout=30s"}, patterns...)...)
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	workspace.advisoryTestErrors = nil
+	if workspace.corpusAdvisory != "" {
+		workspace.advisoryTestErrors = append(workspace.advisoryTestErrors, workspace.advisoryText(workspace.corpusAdvisory))
+	}
 	if err != nil {
 		message := err.Error()
 		var failed *StageError
 		if errors.As(err, &failed) {
 			message = failed.Output
 		}
-		message = strings.ReplaceAll(message, workspace.Directory, "<workspace>")
-		message = advisoryDuration.ReplaceAllString(message, "")
-		if len(message) > 4096 {
-			message = message[:4096] + " (truncated)"
-		}
-		workspace.advisoryTestErrors = append(workspace.advisoryTestErrors, message)
+		workspace.advisoryTestErrors = append(workspace.advisoryTestErrors, workspace.advisoryText(message))
 	}
 	return nil
+}
+
+func (workspace *Workspace) advisoryText(message string) string {
+	message = strings.ReplaceAll(message, workspace.Directory, "<workspace>")
+	message = advisoryDuration.ReplaceAllString(message, "")
+	if len(message) > 4096 {
+		message = message[:4096] + " (truncated)"
+	}
+	return message
 }
 
 func seedGoBuildCache(ctx context.Context) error { return buildio.SeedGoBuildCache(ctx) }

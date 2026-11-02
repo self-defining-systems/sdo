@@ -17,7 +17,7 @@ scheduler-start rejection and disconnect recovery) and
 - `sdo/operator/sdk/*_test.go` — detector SDK and test snapshots; `sdk/metrics` covers metric and alert detectors against `sdktest.Snapshot.Metrics`/`Alerts` fixtures.
 - `sdo/operator/core/*_test.go` — detector execution and validation.
 - `sdo/operator/runtime/*_test.go` — scheduling, persistence, batching, dispatch, broker effects, and state; `metrics_observer_test.go` and `runtime/prometheus/` run the metrics observer and adapter against an `httptest` fake Prometheus.
-- `sdo/operator/sdk/skill_reference_test.go`, `sdo/operator/memory/validate/skills_test.go` — skill drift: generated `sdk.md`, rule citations, and examples (`bash scripts/gen_skill_references.sh` regenerates the reference).
+- `sdo/operator/memory/validate/skills_test.go` — skill drift: rule citations and examples. `scripts/check_go_errors.sh` runs `gen_skill_references.sh --check` and `gen_kube_read_clients.sh --check` for generated-file drift (`bash scripts/gen_skill_references.sh` regenerates the reference); no Go test repeats those checks.
 - `sdo/operator/{broker,memory,install,lifecycle}/*_test.go` — accepted state and lifecycle ownership.
 
 For a fresh checkout or worktree, run `uv run python scripts/init_test_prereqs.py` once to initialize SREGym and every nested application/chart at the recorded SHA.

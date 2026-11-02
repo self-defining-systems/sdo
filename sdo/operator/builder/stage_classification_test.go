@@ -10,7 +10,7 @@ import (
 	"sdo.dev/operator/internal/testutil"
 )
 
-const advisoryStage = "-timeout=30s ./..."
+const advisoryStage = "-trimpath -timeout=30s ./"
 
 // Which toolchain failures reject a workspace is decided by the stage plan:
 // acceptance stages cover detectors, traffic generators and generated safety

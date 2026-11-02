@@ -1,5 +1,3 @@
-//go:build integration
-
 package memory
 
 import (
@@ -8,11 +6,10 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 	"strings"
 	"testing"
-	"time"
 )
 
 func stateBaseline() *servicehealth.ReachabilityBaseline {
-	return &servicehealth.ReachabilityBaseline{Version: 1, Authorization: servicehealth.BaselineAuthorization{SourceInputs: strings.Repeat("a", 64), ObjectiveDigest: strings.Repeat("b", 64), Reason: "healthy-baseline", GoalHealthy: true}, CapturedAt: time.Now().UTC(), Exclusions: []servicehealth.ReachabilityExclusion{}}
+	return &servicehealth.ReachabilityBaseline{Version: 1, Authorization: servicehealth.BaselineAuthorization{SourceInputs: strings.Repeat("a", 64), ObjectiveDigest: strings.Repeat("b", 64), Reason: "healthy-baseline", GoalHealthy: true}, CapturedAt: fixedNow.UTC(), Exclusions: []servicehealth.ReachabilityExclusion{}}
 }
 
 // The reachability capture is per-cluster controller state: it round-trips

@@ -1,5 +1,3 @@
-//go:build integration
-
 package apihistory
 
 import (
@@ -25,10 +23,10 @@ func TestLiveSnapshotDrainsProjectionAndRetainsAnImmutablePrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	started := time.Now()
+	started := fixedNow
 	store.Record(Event{RequestID: "synthetic", Phase: "start", Verb: "patch", Started: started}, nil)
-	store.Record(Event{RequestID: "synthetic", Phase: "end", Verb: "patch", Started: started, Finished: time.Now(), Status: 200}, []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"synthetic","namespace":"app"},"data":{"key":"safe"}}`))
-	until := time.Now()
+	store.Record(Event{RequestID: "synthetic", Phase: "end", Verb: "patch", Started: started, Finished: fixedNow, Status: 200}, []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"synthetic","namespace":"app"},"data":{"key":"safe"}}`))
+	until := fixedNow
 	history, err := ReadThrough(context.Background(), dir, until)
 	if err != nil {
 		t.Fatal(err)
@@ -46,12 +44,12 @@ func TestLiveSnapshotDrainsProjectionAndRetainsAnImmutablePrefix(t *testing.T) {
 		t.Fatal("checkpoint omitted asynchronous projection")
 	}
 	// Later append/drop cannot mutate the already returned value.
-	store.Record(Event{Phase: "start", Verb: "get", Started: time.Now()}, nil)
+	store.Record(Event{Phase: "start", Verb: "get", Started: fixedNow}, nil)
 	store.Gap()
 	if !history.Manifest.Complete || history.Manifest.Dropped != 0 || len(history.Events) != 2 {
 		t.Fatal("returned snapshot changed")
 	}
-	if _, err := ReadThrough(context.Background(), dir, time.Now()); err == nil {
+	if _, err := ReadThrough(context.Background(), dir, fixedNow); err == nil {
 		t.Fatal("real drop certified")
 	}
 }
@@ -70,8 +68,8 @@ func TestClosureSnapshotRejectsEveryUnknownProducerBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			store.Record(Event{Phase: "end", Verb: "get", Started: time.Now()}, nil)
-			if _, err := ReadThrough(context.Background(), dir, time.Now()); err != nil {
+			store.Record(Event{Phase: "end", Verb: "get", Started: fixedNow}, nil)
+			if _, err := ReadThrough(context.Background(), dir, fixedNow); err != nil {
 				t.Fatal(err)
 			}
 			switch fault {
@@ -118,7 +116,7 @@ func TestClosureSnapshotRejectsEveryUnknownProducerBoundary(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 			defer cancel()
-			if _, err := ReadThrough(ctx, dir, time.Now()); err == nil {
+			if _, err := ReadThrough(ctx, dir, fixedNow); err == nil {
 				t.Fatal("unknown history granted closure authority")
 			}
 		})

@@ -37,6 +37,7 @@ var Edges = map[string]bool{
 	"sdo/operator/cmd/sdo-go-cache/internal/cacheio":         true, // Go cache helper environment and clock
 	"sdo/operator/internal/testutil/gitio":                   true, // Integration-test fixture Git runner; waits for every command
 	"sdo/operator/internal/testutil/pathio":                  true, // Test helper search-path read for synthetic tools
+	"sdo/operator/internal/testutil/toolio":                  true, // Test helper that builds the shared operator CLI with the real compiler
 	"sdo/operator/cmd/sdo-replay/internal/replayio":          true, // Replay command child-process launcher
 	"sdo/operator/sdk/kubeclient/internal/clientio":          true, // In-memory observation HTTP client
 

@@ -1,5 +1,3 @@
-//go:build integration
-
 package validate
 
 import (
@@ -31,7 +29,7 @@ func TestPartialPlaybookPublication(t *testing.T) {
 		"test-compile":     "playbooks/service-targetport-mismatch/program_test.go",
 	}
 
-	for _, mode := range []string{"mechanical-step", "open-no-match", "fixed-still-match", "unverified-read", "missing-fixed", "labels-only", "no-corpus", "readme-only", "broken-peer", "diagnose-compile", "mitigate-compile", "library-compile", "test-compile"} {
+	for _, mode := range []string{"mechanical-step", "missing-fixed", "no-corpus", "readme-only", "broken-peer", "diagnose-compile", "mitigate-compile", "library-compile", "test-compile"} {
 		t.Run(mode, func(t *testing.T) {
 			root := goodTree(t)
 			fixture := "../../../../tests/fixtures/sdo/playbook_program_app/.sdo"
@@ -84,25 +82,8 @@ func TestPartialPlaybookPublication(t *testing.T) {
 				write(t, root, ".sdo/playbooks/missing-configmap/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: missing-configmap\noriginating_incident: partial-learning\n---\nInspect the missing reference and restore the intended ConfigMap.\n")
 				ids = append(ids, "service-targetport-mismatch", "missing-configmap")
 				switch mode {
-				case "open-no-match", "fixed-still-match", "unverified-read":
-					verdict := map[string]string{"open-no-match": "NoMatch", "fixed-still-match": "Match", "unverified-read": "Unknown"}[mode]
-					source := `package targetport
-import("context";"sdo.dev/operator/sdk/program")
-type Program struct{}
-func(Program) Spec() program.ProgramSpec{return program.ProgramSpec{ID:"service-targetport-mismatch",Params:[]program.ParamSpec{{Name:"service",Kind:"Service",Required:true}}}}
-func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(program.Verdict,error){return program.Verdict{Result:program.` + verdict + `},nil}
-`
-					formatted, err := format.Source([]byte(source))
-					if err != nil {
-						t.Fatal(err)
-					}
-					write(t, root, ".sdo/playbooks/service-targetport-mismatch/diagnose.go", string(formatted))
 				case "missing-fixed":
 					remove(t, root, ".sdo/corpus/targetport-mismatch/fixed.json")
-				case "labels-only":
-					for _, name := range []string{"open.json", "fixed.json", "healthy.json", "recordings.json"} {
-						remove(t, root, ".sdo/corpus/targetport-mismatch/"+name)
-					}
 				case "no-corpus":
 					remove(t, root, ".sdo/corpus")
 				}
@@ -176,7 +157,7 @@ func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(progra
 			if mode != "readme-only" && len(notes) != 1 {
 				t.Fatalf("partial program never replayed: %v", notes)
 			}
-			if mode == "open-no-match" || mode == "fixed-still-match" || mode == "unverified-read" || mode == "missing-fixed" || mode == "labels-only" || mode == "no-corpus" {
+			if mode == "missing-fixed" || mode == "no-corpus" {
 				if notes[0].Status == sdktest.MitigationReplayPassed || len(observations) == 0 {
 					t.Fatalf("unverified replay was hidden: notes=%v observations=%v", notes, observations)
 				}

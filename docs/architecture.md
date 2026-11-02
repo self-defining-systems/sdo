@@ -140,6 +140,7 @@ equivalence for a script.
 | `sdo/operator/sdk/kubeclient/internal/clientio/` | In-memory observation HTTP client; opens no connections; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/internal/testutil/gitio/` | Test-only Git helper process adapter; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/internal/testutil/pathio/` | Test-only search-path adapter for synthetic test tools; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/internal/testutil/toolio/` | Test-only builder of the shared operator CLI with the real compiler; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/worker_registry/` | Strict registration, capability lookup, and implementation-neutral Kubernetes execution |
 | `sdo/operator/onboarding/` | Immutable, accepted-commit-bound namespace identity acknowledgement staged at native install/adoption and verified by the first confirmed complete in-cluster evaluation, with immutable never-served reachability evidence and durable sampling/rejection markers; no Secret reads or incident-time recapture |
 | `sdo/operator/lifecycle/`, `deployment/`, `artifacts/` | Go lifecycle decisions, trusted deployment/readiness strategies, and physical bootstrap-artifact writes |
@@ -769,6 +770,7 @@ Source inventory drift compares top-level non-secret informer objects against a 
 | `sdo/operator/sdk/kubeclient/internal/clientio/` | Production-only private adapter: in-memory observation HTTP client; benchmark code cannot import it |
 | `sdo/operator/internal/testutil/gitio/` | Production-only private adapter: test-only Git helper process adapter; benchmark code cannot import it |
 | `sdo/operator/internal/testutil/pathio/` | Production-only private adapter: test-only search-path adapter for synthetic test tools; benchmark code cannot import it |
+| `sdo/operator/internal/testutil/toolio/` | Production-only private adapter: test-only real-compiler build of the shared operator CLI; benchmark code cannot import it |
 | `sdo/operator/runtime/{plan_script.go,script_job.go,script_provenance.go}`, `operatorcli/script_{runner,capture}.go` | Production app-local script Job execution and private capture, reusing the existing Kubernetes proxy; no benchmark dependencies. |
 | `sdo/operator/shellpath/`, `runtime/code_path*.go`, `runtime/cmd/sdo-shell-controller/` | Production shell execution and programming-model composition; no benchmark imports. The fixed image-bound controller starts without compiling accepted scripts. |
 | `sdo/operator/runtime/replay/`, `builder/replay.go`, `cmd/sdo-replay/` | Transport-neutral offline tooling; real production plan semantics against isolated client-go fakes, without cluster credentials or benchmark imports. |

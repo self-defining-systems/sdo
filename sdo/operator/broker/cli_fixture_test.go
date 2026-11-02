@@ -1,14 +1,13 @@
-//go:build integration
-
 package broker
 
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"sdo.dev/operator/internal/testutil/toolio"
 )
 
 var cliFixture struct {
@@ -21,7 +20,7 @@ var cliFixture struct {
 func OperatorCLIFixture(t *testing.T) string {
 	t.Helper()
 	cliFixture.once.Do(func() {
-		if prepared := os.Getenv("SDO_TEST_OPERATOR_BINARY"); prepared != "" {
+		if prepared := toolio.PreparedOperatorBinary(); prepared != "" {
 			cliFixture.binary = prepared
 			_, cliFixture.err = os.Stat(prepared)
 			return
@@ -31,8 +30,7 @@ func OperatorCLIFixture(t *testing.T) string {
 			return
 		}
 		cliFixture.binary = filepath.Join(cliFixture.directory, "sdo-operator")
-		command := exec.Command("go", "build", "-o", cliFixture.binary, "../cmd/sdo-operator")
-		if output, err := command.CombinedOutput(); err != nil {
+		if output, err := toolio.BuildPackage(cliFixture.binary, "../cmd/sdo-operator"); err != nil {
 			cliFixture.err = fmt.Errorf("build CLI: %w: %s", err, output)
 		}
 	})
