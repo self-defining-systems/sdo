@@ -165,6 +165,17 @@ func LoadManifests(path string) ([]*unstructured.Unstructured, error) {
 	return out, nil
 }
 
+// RunGenerated is the generated main's entry point: a registry that cannot be
+// built is a failed replay (exit 2), never an empty successful one.
+func RunGenerated(ctx context.Context, load func() (program.ProgramRegistry, error), detectors []sdk.Detector, args []string, out, summary io.Writer) int {
+	registry, err := load()
+	if err != nil {
+		fmt.Fprintln(summary, err)
+		return 2
+	}
+	return Run(ctx, registry, detectors, args, out, summary)
+}
+
 // Run is the compiled bundle entry point. JSONL goes to stdout, the short
 // role-specific outcome tables and timing to stderr. It has no live client configuration.
 func Run(ctx context.Context, registry program.ProgramRegistry, detectors []sdk.Detector, args []string, out, summary io.Writer) int {

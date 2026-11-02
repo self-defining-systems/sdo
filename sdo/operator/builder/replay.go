@@ -28,12 +28,11 @@ func BuildReplay(ctx context.Context, config Config) (*Workspace, string, error)
 	source := fmt.Sprintf(`package main
 import (
  "context"
- "fmt"
  "os"
  "sdo.dev/operator/runtime/replay"
  %q
 )
-func main(){registry,err:=generated.Programs();if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(2)};os.Exit(replay.Run(context.Background(),registry,generated.All(),os.Args[1:],os.Stdout,os.Stderr))}
+func main(){os.Exit(replay.RunGenerated(context.Background(),generated.Programs,generated.All(),os.Args[1:],os.Stdout,os.Stderr))}
 `, workspace.ModulePath+"/generated")
 	if err = os.WriteFile(filepath.Join(dir, "main.go"), []byte(source), 0o644); err != nil {
 		return nil, "", err
