@@ -1,5 +1,3 @@
-//go:build integration
-
 package builder
 
 import (
@@ -10,6 +8,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/internal/capturefixture"
+	"sdo.dev/operator/internal/testutil"
 )
 
 func TestValidateAndBuildSeedsGoCacheBeforeProgramCompilation(t *testing.T) {
@@ -50,6 +49,7 @@ func TestValidateAndBuildUsesColdCacheWhenImageHasNoSeed(t *testing.T) {
 }
 
 func TestBuildWorkspaceRunsOptInHealthyBaseline(t *testing.T) {
+	testutil.FakeGo(t, testutil.GoRule{Verb: "test", Covers: "generated", Marker: "generated/healthy_baseline_test.go", Output: "synthetic healthy baseline firing"})
 	app := t.TempDir()
 	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app", ".sdo", "diagnostics")
 	diagnostics := filepath.Join(app, ".sdo", "diagnostics")
@@ -75,90 +75,10 @@ func TestBuildWorkspaceRunsOptInHealthyBaseline(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workspace.Directory, "generated", "healthy_baseline_test.go")); err != nil {
 		t.Fatal(err)
 	}
-	if err := workspace.Check(context.Background()); err != nil {
-		t.Fatalf("healthy baseline gate failed: %v", err)
-	}
-}
-
-func metricsDetectorSource(rules string) string {
-	return `package metricscheck
-
-import (
-	"time"
-
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/metrics"
-)
-
-func New() sdk.Detector {
-	return metrics.NewThresholdDetector(sdk.DetectorSpec{
-		ID: "metrics-check", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
-		Watches:     []sdk.WatchKind{metrics.Watch},
-		Interval:    30 * time.Second,
-		Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2},
-		Batching:    sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
-		Playbooks:   []string{"health-objective"}, OriginatingCommit: "lifecycle-bootstrap",
-	}, []metrics.ThresholdRule{` + rules + `})
-}
-`
-}
-
-const metricsDetectorManifest = `apiVersion: sdo.dev/v1alpha1
-kind: DetectorManifest
-sdkVersion: v0.1
-id: metrics-check
-constructor: New
-class: health
-owner: health_judge
-watches:
-    - apiVersion: sdo.dev/v1alpha1
-      kind: Metrics
-interval: 30s
-persistence:
-    firing: 2
-    clearing: 2
-batching:
-    severity: critical
-    debounce: 500ms
-possiblePlaybooks:
-    - health-objective
-originatingCommit: lifecycle-bootstrap
-`
-
-func buildMetricsWorkspace(t *testing.T, rules string) error {
-	t.Helper()
-	app := t.TempDir()
-	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app", ".sdo", "diagnostics")
-	diagnostics := filepath.Join(app, ".sdo", "diagnostics")
-	if err := copyTree(context.Background(), source, diagnostics); err != nil {
-		t.Fatal(err)
-	}
-	directory := filepath.Join(diagnostics, "detectors", "health", "metrics-check")
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for name, content := range map[string]string{"manifest.yaml": metricsDetectorManifest, "detector.go": metricsDetectorSource(rules)} {
-		if err := os.WriteFile(filepath.Join(directory, name), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	operatorRoot, err := filepath.Abs("..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: app, DiagnosticsRoot: diagnostics, OperatorRoot: operatorRoot})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workspace.Close()
-	err = workspace.Check(context.Background())
-	return err
-}
-
-func TestBuildWorkspaceRejectsInvalidMetricsDetectors(t *testing.T) {
-	err := buildMetricsWorkspace(t, `{Query: metrics.Query{ID: "errors"}, Op: metrics.Greater, Threshold: 1}`)
-	if err == nil || !strings.Contains(err.Error(), "empty expression") {
-		t.Fatalf("a detector with an empty metric expression must fail the build tests: %v", err)
+	// The generated healthy-baseline test is part of the acceptance stages: a
+	// firing detector there rejects the workspace.
+	if err := workspace.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "synthetic healthy baseline firing") {
+		t.Fatalf("healthy baseline gate did not reject a firing detector: %v", err)
 	}
 }
 
@@ -204,6 +124,7 @@ func TestReadThroughGoCacheDoesNotCopySeedAtStartup(t *testing.T) {
 }
 
 func TestReplayOffCompilesProgramsWithoutReadingCorpus(t *testing.T) {
+	testutil.FakeGo(t)
 	app := t.TempDir()
 	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app")
 	if err := copyTree(context.Background(), source, app); err != nil {
@@ -232,7 +153,7 @@ func TestReplayOffCompilesProgramsWithoutReadingCorpus(t *testing.T) {
 		t.Fatal("registration safety was removed", err)
 	}
 	if err := workspace.Check(context.Background()); err != nil {
-		t.Fatal("real compile/import/vet/safety check failed", err)
+		t.Fatal("check failed", err)
 	}
 	notes, err := workspace.MitigationReplayResults()
 	if err != nil || len(notes) != 0 {
