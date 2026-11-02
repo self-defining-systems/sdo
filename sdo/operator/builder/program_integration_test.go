@@ -10,7 +10,6 @@ import (
 	"slices"
 	"testing"
 
-	"sdo.dev/operator/internal/testutil"
 	programvalidation "sdo.dev/operator/memory/validate/program"
 )
 

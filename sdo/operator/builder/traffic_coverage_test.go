@@ -1,12 +1,6 @@
 package builder
 
-import (
-	"context"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import ()
 
 const readOnlyShop = `package generators
 

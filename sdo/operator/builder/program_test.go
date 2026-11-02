@@ -6,9 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"sdo.dev/operator/internal/testutil"
-	programvalidation "sdo.dev/operator/memory/validate/program"
 )
 
 func programFixture(t *testing.T) string {
