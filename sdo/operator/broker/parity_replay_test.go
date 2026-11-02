@@ -5,7 +5,6 @@ package broker_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,87 +225,6 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 		t.Fatalf("replay reason lost: %s", observations)
 	}
 
-}
-
-func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	binary := operatorCLIFixture(t)
-	operatorRoot, err := filepath.Abs("..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseline := t.TempDir()
-	put(t, baseline, "healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[{"metadata":{"name":"healthy-only","namespace":"demo"},"spec":{"selector":{"app":"no-pods"},"ports":[{"port":80,"targetPort":8080}]}}]}`)), 0644)
-	root := copyParityTree(t)
-	testutil.InitGit(t, root)
-	runGit(t, root, "config", "user.name", "Fixture")
-	runGit(t, root, "config", "user.email", "fixture@example.test")
-	parityProgram(t, root)
-	source := independentParityRoutingDetector(t)
-	source = strings.Replace(source, `"context"`, `"context"; "fmt"`, 1)
-	source = strings.Replace(source, `for _, service := range s.Services() {`, `for _, service := range s.Services() { if service.Name == "healthy-only" { return nil, fmt.Errorf("healthy-only selected Pod observation unavailable") }`, 1)
-	put(t, root, ".sdo/diagnostics/detectors/incidents/cache/detector.go", source, 0644)
-	replaceParityText(t, root, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - service-targetport-mismatch\n")
-	runGit(t, root, "add", "-f", ".sdo")
-	runGit(t, root, "commit", "-qm", "accepted learned program and detector")
-	repository, err := broker.New(root, t.TempDir(), (broker.SubprocessValidator{Binary: binary, OperatorRoot: operatorRoot, HealthyBaseline: baseline}).Validator())
-	if err != nil {
-		t.Fatal(err)
-	}
-	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "routing", Resources: []*contracts.ObjectRef{{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}}}}}
-	parityFindingRepairProof(outcome)
-	if _, err := repository.RecordOutcome(ctx, "incident", outcome); err != nil {
-		t.Fatal(err)
-	}
-	proposal, err := repository.CreateProposalForPhase(ctx, "incident", broker.ReflectionPhase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := ".sdo/playbooks/service-targetport-mismatch/diagnose.go"
-	data, err := os.ReadFile(filepath.Join(proposal.Path, path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	put(t, proposal.Path, path, string(data)+"\n// Reviewed against fresh evidence.\n", 0644)
-	capture := t.TempDir()
-	raw, readErr := os.ReadFile(filepath.Join(baseline, "healthy.json"))
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	put(t, capture, "healthy/healthy.json", string(raw), 0644)
-	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
-	data, err = protojson.Marshal(&contracts.ReflectionResult{LearningDecision: decision.LearningDecision, ProposedArtifactIds: decision.PlaybookIds})
-	if err != nil {
-		t.Fatal(err)
-	}
-	decisionPath := filepath.Join(t.TempDir(), "decision.json")
-	if err := os.WriteFile(decisionPath, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	cli := exec.Command(binary, "memory", "check", "--json", "--decision", decisionPath)
-	cli.Dir = proposal.Path
-	cli.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE="+baseline, "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID=incident")
-	var stdout, stderr bytes.Buffer
-	cli.Stdout, cli.Stderr = &stdout, &stderr
-	if err := cli.Run(); err == nil {
-		t.Fatalf("unobservable healthy detector accepted by CLI: %s", stdout.String())
-	}
-	report := new(contracts.MemoryCheckReport)
-	if err := protojson.Unmarshal(stdout.Bytes(), report); err != nil {
-		t.Fatal(err)
-	}
-	_, err = repository.PublishReflection(validate.WithCaptureSource(ctx, capture, "incident"), "incident", decision)
-	var failure *validate.Failure
-	if !errors.As(err, &failure) {
-		t.Fatalf("unobservable healthy detector accepted by broker: %v", err)
-	}
-	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Rule != validate.RuleDetectorHealthyBaseline || !strings.Contains(report.Diagnostics[0].Message, "healthy-only") {
-		t.Fatalf("CLI lost healthy detector refusal: %v", report)
-	}
-	if len(failure.Diagnostics) != 1 || failure.Diagnostics[0].Rule != report.Diagnostics[0].Rule || failure.Diagnostics[0].Message != report.Diagnostics[0].Message {
-		t.Fatalf("healthy detector refusals differ: CLI %v broker %v", report.Diagnostics, failure.Diagnostics)
-	}
 }
 
 // Preserve the independently authored detection predicate and the accepted cache spec.

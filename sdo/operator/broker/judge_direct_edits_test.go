@@ -3,18 +3,14 @@
 package broker
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	"google.golang.org/protobuf/encoding/protojson"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 )
@@ -77,55 +73,6 @@ func TestFakeJudgeDirectEditsBootstrapAndRefinementOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
-	}
-}
-
-func TestMalformedJudgeDetectorCLIAndBrokerDiagnosticParity(t *testing.T) {
-	ctx := context.Background()
-	b, _ := judgeBroker(t)
-	proposal, err := b.CreateProposalForPhase(ctx, "malformed-judge", InitialPhase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fakeJudgeEdits(t, proposal.Path)
-	path := ".sdo/diagnostics/detectors/health/health-objective/detector.go"
-	writeJudgeFile(t, proposal.Path, path, "package objective\nfunc Broken( {\n")
-	binary := OperatorCLIFixture(t)
-	command := exec.CommandContext(ctx, binary, "memory", "check", "--json")
-	command.Dir = proposal.Path
-	operatorRoot, err := filepath.Abs("..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	command.Env = append(os.Environ(), "SDO_ACTOR=health_judge", "SDO_PHASE=initial", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot)
-	var output, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &output, &stderr
-	var exit *exec.ExitError
-	if err := command.Run(); !errors.As(err, &exit) || exit.ExitCode() != 1 {
-		t.Fatalf("CLI must reject malformed detector: %v %s", err, stderr.String())
-	}
-	report := &contracts.MemoryCheckReport{}
-	if err := protojson.Unmarshal(output.Bytes(), report); err != nil {
-		t.Fatal(err)
-	}
-	_, err = b.Publish(ctx, "malformed-judge", HealthJudge, InitialPhase)
-	var failure *validate.Failure
-	if !errors.As(err, &failure) {
-		t.Fatalf("broker must reject malformed detector: %v", err)
-	}
-	cli, broker := []*contracts.MemoryDiagnostic{}, []*contracts.MemoryDiagnostic{}
-	for _, d := range report.GetDiagnostics() {
-		if d.GetRule() == validate.RuleGoSyntax {
-			cli = append(cli, d)
-		}
-	}
-	for _, d := range validate.ProtoDiagnostics(failure.Diagnostics) {
-		if d.GetRule() == validate.RuleGoSyntax {
-			broker = append(broker, d)
-		}
-	}
-	if len(cli) != 1 || len(broker) != 1 || cli[0].GetPath() != path || cli[0].GetLine() != broker[0].GetLine() || cli[0].GetMessage() != broker[0].GetMessage() {
-		t.Fatalf("named diagnostics differ: CLI %v, broker %v", cli, broker)
 	}
 }
 

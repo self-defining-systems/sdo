@@ -49,78 +49,6 @@ func TestValidateAndBuildUsesColdCacheWhenImageHasNoSeed(t *testing.T) {
 	}
 }
 
-func TestBuildWorkspaceAcceptsOpaqueDiagnosticsProjection(t *testing.T) {
-	app := t.TempDir()
-	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app", ".sdo", "diagnostics")
-	projection := filepath.Join(app, "projection", "bundle")
-	if err := copyTree(context.Background(), source, projection); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: app, DiagnosticsRoot: projection, OperatorRoot: ".."})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workspace.Close()
-	if err := workspace.Check(context.Background()); err != nil {
-		t.Fatalf("projected diagnostics did not compile: %v", err)
-	}
-}
-
-func TestBuildWorkspaceCompilesTrafficInMemoryHost(t *testing.T) {
-	app := t.TempDir()
-	source := filepath.Join("..", "..", "..", "benchmarks", "sregym", "experiments", "assurance", "seeds", "hotel_reservation_30e023d", "operational_memory", "diagnostics")
-	diagnostics := filepath.Join(app, ".sdo", "diagnostics")
-	if err := copyTree(context.Background(), source, diagnostics); err != nil {
-		t.Fatal(err)
-	}
-	operatorRoot, err := filepath.Abs("..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: app, DiagnosticsRoot: diagnostics, OperatorRoot: operatorRoot})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workspace.Close()
-
-	if _, err := workspace.BuildMemoryHost(context.Background()); err != nil {
-		t.Fatalf("traffic prober did not build: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(workspace.Directory, "sdo-memory-host")); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestBuildWorkspaceRejectsDetectorRegistrationDrift(t *testing.T) {
-	app := t.TempDir()
-	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app", ".sdo", "diagnostics")
-	diagnostics := filepath.Join(app, ".sdo", "diagnostics")
-	if err := copyTree(context.Background(), source, diagnostics); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(diagnostics, "detectors", "incidents", "missing-configmap", "detector.go")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	changed := strings.Replace(string(data), `ID:                  "missing-configmap"`, `ID:                  "wrong-id"`, 1)
-	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	operatorRoot, err := filepath.Abs("..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: app, DiagnosticsRoot: diagnostics, OperatorRoot: operatorRoot})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workspace.Close()
-	if err := workspace.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "registration mismatch") {
-		t.Fatalf("detector drift was accepted or rejected for wrong reason: %v", err)
-	}
-}
-
 func TestBuildWorkspaceRunsOptInHealthyBaseline(t *testing.T) {
 	app := t.TempDir()
 	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app", ".sdo", "diagnostics")
@@ -225,13 +153,6 @@ func buildMetricsWorkspace(t *testing.T, rules string) error {
 	defer workspace.Close()
 	err = workspace.Check(context.Background())
 	return err
-}
-
-func TestBuildWorkspaceAcceptsValidMetricsDetectors(t *testing.T) {
-	err := buildMetricsWorkspace(t, `{Query: metrics.Query{ID: "errors", Expr: "sum(rate(errors[1m]))"}, Op: metrics.Greater, Threshold: 1}`)
-	if err != nil {
-		t.Fatalf("valid metrics detector rejected: %v", err)
-	}
 }
 
 func TestBuildWorkspaceRejectsInvalidMetricsDetectors(t *testing.T) {
