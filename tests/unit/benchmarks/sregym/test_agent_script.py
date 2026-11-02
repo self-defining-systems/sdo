@@ -637,12 +637,14 @@ def test_scripted_session_persists_a_rollout_before_the_worker_checkpoints_it(sc
     assert started[0][0].stat().st_size > 0
 
 
-def test_sandboxed_commands_can_persist_tool_replies_for_later_commands(scripted_cli):
+def test_sandboxed_commands_can_persist_tool_replies_for_later_commands(scripted_cli, tmp_path, monkeypatch):
     """`sdo` writes each reply under /tmp/sdo and the next command reads it back."""
     from libs.agent_cli.structured import run_structured_turn
 
     path, root = scripted_cli
     marker = f"probe-{root.name}"
+    scratch = tmp_path / "scratch"
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(scratch))
     path.write_text(
         json.dumps(
             script(
@@ -652,6 +654,7 @@ def test_sandboxed_commands_can_persist_tool_replies_for_later_commands(scripted
                         "command": f"mkdir -p /tmp/sdo/{marker} && echo kept > /tmp/sdo/{marker}/reply",
                     },
                     {"kind": "command", "command": f"cat /tmp/sdo/{marker}/reply", "contains": "kept"},
+                    {"kind": "command", "command": f"mkdir -p {scratch}/context && echo ok > {scratch}/context/x"},
                 ],
                 result={"confirmed_root_causes": []},
             )

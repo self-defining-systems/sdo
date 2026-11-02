@@ -22,6 +22,21 @@ from .template import TemplateContext, expand
 OUTPUT_ROOT = Path("/tmp/sdo")
 
 
+def _shared_directories() -> list[Path]:
+    """Writable directories that outlive one command: tool output and the worker's session scratch."""
+    directories = []
+    scratch = os.environ.get("SDO_SESSION_SCRATCH")
+    for directory in (OUTPUT_ROOT, Path(scratch) if scratch else None):
+        if directory is None:
+            continue
+        try:
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError:
+            continue
+        directories.append(directory.resolve())
+    return directories
+
+
 class ScriptExit(Exception):
     """A planned CLI failure; the selected turn has already been consumed."""
 
@@ -114,13 +129,10 @@ def execute(
                 if go_binary:
                     position = argv.index("--")
                     argv[position:position] = ["--ro-bind", "/bin/false", str(Path(go_binary).resolve())]
-            # Like a real workspace-write turn, `sdo` persists each complete tool reply under /tmp/sdo
-            # and later commands read it back, so that one directory outlives the command.
-            try:
-                OUTPUT_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
-                argv[argv.index("--") : argv.index("--")] = ["--bind", str(OUTPUT_ROOT), str(OUTPUT_ROOT)]
-            except OSError:
-                pass
+            # Like a real workspace-write turn, `sdo` persists each complete tool reply and its context under
+            # /tmp/sdo and the session scratch directory, and later commands read them back.
+            for shared in _shared_directories():
+                argv[argv.index("--") : argv.index("--")] = ["--bind", str(shared), str(shared)]
             tools = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
             if tools.is_dir():
                 argv[argv.index("--") : argv.index("--")] = ["--bind", str(tools.resolve()), str(tools.resolve())]
