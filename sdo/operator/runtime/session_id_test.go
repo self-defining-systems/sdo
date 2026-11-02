@@ -6,6 +6,7 @@ import (
 	clocktesting "k8s.io/utils/clock/testing"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/sdk/program"
 	"strings"
 	"testing"
@@ -61,9 +62,7 @@ func TestSessionReplyIDCollisionCannotOverwrite(t *testing.T) {
 	if err := os.WriteFile(collision, []byte("original"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "requests", "call.json"), []byte(`{"command":"status"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	testutil.PublishRequest(t, filepath.Join(root, "requests"), "call.json", []byte(`{"command":"status"}`))
 	if err := server.process(context.Background()); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("collision error %v", err)
 	}
@@ -83,9 +82,7 @@ func TestSessionToolServerUsesInjectedClock(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- server.Serve(ctx) }()
 		synctest.Wait()
-		if err := os.WriteFile(filepath.Join(root, "requests", "call.json"), []byte(`{"command":"status"}`), 0600); err != nil {
-			t.Fatal(err)
-		}
+		testutil.PublishRequest(t, filepath.Join(root, "requests"), "call.json", []byte(`{"command":"status"}`))
 		clock.Step(time.Second)
 		if err := <-done; err != nil {
 			t.Fatal(err)
