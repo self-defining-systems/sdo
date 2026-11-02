@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/sdk/program"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -119,33 +120,35 @@ func TestAdmissionBlockedIgnoresForeignAndOldReplicaSetEvents(t *testing.T) {
 }
 
 func TestAdmissionDenialAppearingDuringRolloutStopsNextObservation(t *testing.T) {
-	rollout := admissionRollouts()
-	client := rollout.Client.(*fake.Clientset)
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-	event, err := client.CoreV1().Events("app").Get(ctx, "denied", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.CoreV1().Events("app").Delete(ctx, event.Name, metav1.DeleteOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	reads := 0
-	client.PrependReactor("get", "deployments", func(action ktesting.Action) (bool, kruntime.Object, error) {
-		reads++
-		if reads == 2 {
-			if err := client.Tracker().Create(corev1.SchemeGroupVersion.WithResource("events"), event, "app"); err != nil {
-				return true, nil, err
-			}
+	synctest.Test(t, func(t *testing.T) {
+		rollout := admissionRollouts()
+		client := rollout.Client.(*fake.Clientset)
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		event, err := client.CoreV1().Events("app").Get(ctx, "denied", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
 		}
-		return false, nil, nil
+		if err := client.CoreV1().Events("app").Delete(ctx, event.Name, metav1.DeleteOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		reads := 0
+		client.PrependReactor("get", "deployments", func(action ktesting.Action) (bool, kruntime.Object, error) {
+			reads++
+			if reads == 2 {
+				if err := client.Tracker().Create(corev1.SchemeGroupVersion.WithResource("events"), event, "app"); err != nil {
+					return true, nil, err
+				}
+			}
+			return false, nil, nil
+		})
+		started := time.Now()
+		err = rollout.Wait(ctx, []sdk.ObjectRef{menuDeployment})
+		var blocked *AdmissionBlockedError
+		if !errors.As(err, &blocked) || reads != 2 || time.Since(started) > 3*time.Second {
+			t.Fatalf("new admission evidence did not stop polling promptly: reads=%d elapsed=%s error=%v", reads, time.Since(started), err)
+		}
 	})
-	started := time.Now()
-	err = rollout.Wait(ctx, []sdk.ObjectRef{menuDeployment})
-	var blocked *AdmissionBlockedError
-	if !errors.As(err, &blocked) || reads != 2 || time.Since(started) > 3*time.Second {
-		t.Fatalf("new admission evidence did not stop polling promptly: reads=%d elapsed=%s error=%v", reads, time.Since(started), err)
-	}
 }
 
 // Old Ready replicas may clear health while admission rejects new Pods. The

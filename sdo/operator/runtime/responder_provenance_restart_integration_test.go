@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -180,39 +181,41 @@ func TestSavedProgramOwnershipSurvivesResponderRestart(t *testing.T) {
 }
 
 func TestPendingApplicationOwnershipSurvivesCheckpoint(t *testing.T) {
-	ctx := context.Background()
-	loop, _ := menuB3Loop(t)
-	loop.Request.RepairPolicy = "recorded-actions"
-	loop.MenuConfig = productionResponderMenu()
-	loop.Executor.Verifier = planFakeVerifier{true}
-	loop.Executor.RolloutTimeout = time.Millisecond
-	loop.Executor.Rollouts = rolloutFunc(func(ctx context.Context, _ []sdk.ObjectRef) error { <-ctx.Done(); return ctx.Err() })
-	var saved []byte
-	loop.saveToolState = func(_ context.Context, data []byte) error { saved = append([]byte(nil), data...); return nil }
-	menu := loop.Handle(ctx, ToolRequest{Command: "menu"})
-	option := ""
-	for _, item := range menu.Menu.GetOptions() {
-		if item.ProgramId == "restart-only" {
-			option = item.OptionId
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		loop, _ := menuB3Loop(t)
+		loop.Request.RepairPolicy = "recorded-actions"
+		loop.MenuConfig = productionResponderMenu()
+		loop.Executor.Verifier = planFakeVerifier{true}
+		loop.Executor.RolloutTimeout = time.Millisecond
+		loop.Executor.Rollouts = rolloutFunc(func(ctx context.Context, _ []sdk.ObjectRef) error { <-ctx.Done(); return ctx.Err() })
+		var saved []byte
+		loop.saveToolState = func(_ context.Context, data []byte) error { saved = append([]byte(nil), data...); return nil }
+		menu := loop.Handle(ctx, ToolRequest{Command: "menu"})
+		option := ""
+		for _, item := range menu.Menu.GetOptions() {
+			if item.ProgramId == "restart-only" {
+				option = item.OptionId
+			}
 		}
-	}
-	response := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
-	if response.RolloutPending == nil || len(loop.ApplicationEvidence()) != 1 || !loop.ApplicationEvidence()[0].Pending {
-		t.Fatalf("expected real pending execution: %+v", response)
-	}
-	fresh, _ := menuB3Loop(t)
-	if err := fresh.restoreToolSnapshot(saved); err != nil {
-		t.Fatal(err)
-	}
-	applications := fresh.ApplicationEvidence()
-	if len(applications) != 1 || !applications[0].Pending || applications[0].Result.VerificationPassed {
-		t.Fatalf("recovery changed pending status: %+v", applications)
-	}
-	for _, receipt := range ProgramRepairReceipts(applications, nil) {
-		if receipt.Success {
-			t.Fatal("pending recovered application claimed completed repair")
+		response := loop.Handle(ctx, ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: option, RoundLimit: 1}})
+		if response.RolloutPending == nil || len(loop.ApplicationEvidence()) != 1 || !loop.ApplicationEvidence()[0].Pending {
+			t.Fatalf("expected real pending execution: %+v", response)
 		}
-	}
+		fresh, _ := menuB3Loop(t)
+		if err := fresh.restoreToolSnapshot(saved); err != nil {
+			t.Fatal(err)
+		}
+		applications := fresh.ApplicationEvidence()
+		if len(applications) != 1 || !applications[0].Pending || applications[0].Result.VerificationPassed {
+			t.Fatalf("recovery changed pending status: %+v", applications)
+		}
+		for _, receipt := range ProgramRepairReceipts(applications, nil) {
+			if receipt.Success {
+				t.Fatal("pending recovered application claimed completed repair")
+			}
+		}
+	})
 }
 
 func TestRecoveredProgramOwnersReachEarlyClosure(t *testing.T) {
