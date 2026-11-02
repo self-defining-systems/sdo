@@ -64,14 +64,3 @@ func TestHealthRevalidationRequiresIndependentValidationAndRecordsNoop(t *testin
 		t.Fatal("invalid no-op reached independent execution")
 	}
 }
-
-func TestNoopHealthValidationStillRequiresIsolatedReceipt(t *testing.T) {
-	called := false
-	validator := JobValidator(validationJobFunc(func(context.Context, ValidationJobRequest) (ValidationJobReceipt, error) {
-		called = true
-		return ValidationJobReceipt{}, nil
-	}))
-	if err := validator(context.Background(), repository(t), nil); err == nil || !called {
-		t.Fatalf("no-op skipped independent compilation: called=%v err=%v", called, err)
-	}
-}

@@ -222,7 +222,7 @@ func TestMetricsURLIsForwardedAcrossOperateAndControllerJobs(t *testing.T) {
 }
 
 func TestMemoryUpstreamReachesTheControllerLaunchWithReadOnlyKey(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}}
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}}
 	plan, err := install.Resources(cfg)
 	if err != nil {
 		t.Fatal(err)

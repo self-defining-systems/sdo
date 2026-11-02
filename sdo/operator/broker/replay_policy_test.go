@@ -9,9 +9,9 @@ import (
 	"sdo.dev/operator/memory/validate"
 )
 
-// Run the real broker Check producer into its real job request consumer. The
-// job receipt itself is synthetic: compilation has a separate real-Go test.
-func TestReplayPolicyReachesBrokerAndIsolatedValidator(t *testing.T) {
+// Run the real broker Check producer into its validator. The validator
+// is synthetic: compilation has a separate real-Go test.
+func TestReplayPolicyReachesBrokerAndValidator(t *testing.T) {
 	for _, replay := range []string{"on", "off"} {
 		t.Run(replay, func(t *testing.T) {
 			root := repository(t)
@@ -19,13 +19,13 @@ func TestReplayPolicyReachesBrokerAndIsolatedValidator(t *testing.T) {
 				t.Fatal(err)
 			}
 			seen := false
-			runner := JobValidator(validationJobFunc(func(_ context.Context, r ValidationJobRequest) (ValidationJobReceipt, error) {
+			runner := Validator(func(ctx context.Context, _ string, _ []string) error {
 				seen = true
-				if r.Replay != replay {
-					t.Fatalf("job replay %q, want %q", r.Replay, replay)
+				if got, _ := ctx.Value(replayKey{}).(string); got != replay {
+					t.Fatalf("validator replay %q, want %q", got, replay)
 				}
-				return ValidationJobReceipt{CandidateTree: r.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true, ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true}, nil
-			}))
+				return nil
+			})
 			b, err := New(root, t.TempDir(), runner, ObservationPolicy{Replay: replay})
 			if err != nil {
 				t.Fatal(err)

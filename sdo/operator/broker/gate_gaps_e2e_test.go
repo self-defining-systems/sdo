@@ -14,7 +14,6 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/validate"
@@ -30,10 +29,6 @@ func TestReflectionRecordsReplayButStillRejectsInvalidCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema, err := builder.SchemaIdentity(operatorRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Two verified causes: the port repair has a program, the catalog repair has
 	// none. The playbook uses a literal name and a wrong fault_class, and the
 	// controller has no healthy capture.
@@ -44,7 +39,7 @@ func TestReflectionRecordsReplayButStillRejectsInvalidCode(t *testing.T) {
 		runGit(t, root, "config", "user.email", "fixture@example.test")
 		runGit(t, root, "add", "-A")
 		runGit(t, root, "commit", "-qm", "accepted memory")
-		repository, err := broker.New(root, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema}))
+		repository, err := broker.New(root, t.TempDir(), (broker.SubprocessValidator{Binary: binary, OperatorRoot: operatorRoot}).Validator())
 		if err != nil {
 			t.Fatal(err)
 		}

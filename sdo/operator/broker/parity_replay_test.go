@@ -15,7 +15,6 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk/sdktest"
@@ -31,10 +30,6 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema, err := builder.SchemaIdentity(operatorRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, classification := range []string{"success", "failed"} {
 		t.Run(classification, func(t *testing.T) {
 			root := copyParityTree(t)
@@ -43,7 +38,7 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 			runGit(t, root, "config", "user.email", "fixture@example.test")
 			runGit(t, root, "add", "-A")
 			runGit(t, root, "commit", "-qm", "accepted memory")
-			repository, err := broker.New(root, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema}))
+			repository, err := broker.New(root, t.TempDir(), (broker.SubprocessValidator{Binary: binary, OperatorRoot: operatorRoot}).Validator())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,17 +123,13 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema, err := builder.SchemaIdentity(operatorRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
 	root := copyParityTree(t)
 	testutil.InitGit(t, root)
 	runGit(t, root, "config", "user.name", "Fixture")
 	runGit(t, root, "config", "user.email", "fixture@example.test")
 	runGit(t, root, "add", "-A")
 	runGit(t, root, "commit", "-qm", "accepted memory")
-	repository, err := broker.New(root, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema}))
+	repository, err := broker.New(root, t.TempDir(), (broker.SubprocessValidator{Binary: binary, OperatorRoot: operatorRoot}).Validator())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,10 +231,6 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema, err := builder.SchemaIdentity(operatorRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
 	baseline := t.TempDir()
 	put(t, baseline, "healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[{"metadata":{"name":"healthy-only","namespace":"demo"},"spec":{"selector":{"app":"no-pods"},"ports":[{"port":80,"targetPort":8080}]}}]}`)), 0644)
 	root := copyParityTree(t)
@@ -258,7 +245,7 @@ func TestCLIAndBrokerRetainHealthyInputForProgramOnlyEdits(t *testing.T) {
 	replaceParityText(t, root, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - service-targetport-mismatch\n")
 	runGit(t, root, "add", "-f", ".sdo")
 	runGit(t, root, "commit", "-qm", "accepted learned program and detector")
-	repository, err := broker.New(root, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema, baseline: baseline}))
+	repository, err := broker.New(root, t.TempDir(), (broker.SubprocessValidator{Binary: binary, OperatorRoot: operatorRoot, HealthyBaseline: baseline}).Validator())
 	if err != nil {
 		t.Fatal(err)
 	}

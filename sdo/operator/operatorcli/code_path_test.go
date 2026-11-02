@@ -30,8 +30,8 @@ func TestShellHealthRefreshRequiresShellDetector(t *testing.T) {
 	}
 }
 func TestResponseStageFlagUsesOnlyCodePathOverride(t *testing.T) {
-	args := append(schemaControllerArgs(".."), "--response-stages", "agent")
-	launch, _, err := ParseControllerLaunch(args)
+	args := append(schemaControllerArgs(""), "--response-stages", "agent")
+	launch, err := ParseControllerLaunch(args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestResponseStageFlagUsesOnlyCodePathOverride(t *testing.T) {
 }
 
 func TestShellInstallExistingForwardsTypedSelection(t *testing.T) {
-	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model", "--code-path", "shell"}
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model", "--code-path", "shell"}
 	launch, err := ParseInstallExistingLaunch(args)
 	if err != nil {
 		t.Fatal(err)

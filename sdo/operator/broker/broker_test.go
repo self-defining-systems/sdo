@@ -21,7 +21,6 @@ import (
 
 	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/internal/testutil"
-	"sdo.dev/operator/memory"
 )
 
 func git(t *testing.T, dir string, args ...string) string {

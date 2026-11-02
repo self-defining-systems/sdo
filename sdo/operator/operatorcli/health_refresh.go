@@ -3,16 +3,20 @@ package operatorcli
 import (
 	"context"
 	"fmt"
-	"sdo.dev/operator/contracts/settings"
+	"path/filepath"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/artifacts"
+	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/shellpath"
+	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
 )
 

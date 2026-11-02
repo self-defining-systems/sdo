@@ -13,18 +13,17 @@ import (
 // the broker can reuse attestations. Regenerate with SDO_UPDATE_GOLDEN=1.
 func TestControllerJobAttestationGoldens(t *testing.T) {
 	controller := "registry.test/sdo/images@sha256:" + strings.Repeat("a", 64)
-	validator := "registry.test/sdo/images@sha256:" + strings.Repeat("b", 64)
 	for _, tc := range []struct {
-		name, controller, validator, devMount string
+		name, controller, devMount string
 	}{
-		{"pinned.json", controller, validator, ""},
-		{"tagged.json", "sdo-controller:tag", "sdo-detector-validator:tag", ""},
-		{"dev_mount.json", controller, validator, "1"},
+		{"pinned.json", controller, ""},
+		{"tagged.json", "sdo-controller:tag", ""},
+		{"dev_mount.json", controller, "1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("SDO_DEV_MOUNT", tc.devMount)
 			cfg := testConfig()
-			cfg.ControllerImage, cfg.ValidatorImage = tc.controller, tc.validator
+			cfg.ControllerImage = tc.controller
 			got, err := json.MarshalIndent(controllerJob(cfg), "", "  ")
 			if err != nil {
 				t.Fatal(err)

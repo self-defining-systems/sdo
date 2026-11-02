@@ -12,7 +12,7 @@ func TestInstallExistingMenuEnvironmentReachesControllerPod(t *testing.T) {
 	for _, value := range []string{"", "0", "1", "invalid"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("SDO_RESPONDER_MENU", value)
-			args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model"}
+			args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model"}
 			launch, err := ParseInstallExistingLaunch(args)
 			if value == "invalid" {
 				if err == nil || !strings.Contains(err.Error(), "SDO_RESPONDER_MENU") {
@@ -93,7 +93,7 @@ func TestInstallExistingDefaultsToResumedReflection(t *testing.T) {
 }
 
 func TestParseInstallExistingPermissiveResponder(t *testing.T) {
-	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--control-namespace", "demo-sdo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "agent-credentials", "--model", "model"}
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--control-namespace", "demo-sdo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--repository-pvc", "repository", "--credentials-secret", "agent-credentials", "--model", "model"}
 	strict, err := ParseInstallExistingLaunch(args)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestParseInstallExistingPermissiveResponder(t *testing.T) {
 
 func TestGS1AutomaticRepairDefaultsAndOptOuts(t *testing.T) {
 	t.Setenv("SDO_RESPONDER_MENU", "")
-	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model"}
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model"}
 	launch, err := ParseInstallExistingLaunch(args)
 	if err != nil {
 		t.Fatal(err)
@@ -130,14 +130,14 @@ func TestGS1AutomaticRepairDefaultsAndOptOuts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, _, err := ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
+	controller, err := ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil || controller.Controller.GetRepairPolicy() != "commit" {
 		t.Fatalf("opt-out lost: %+v %v", controller, err)
 	}
 }
 
 func TestInstallExistingColdStandbySwitchReachesTypedController(t *testing.T) {
-	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model", "--responder-standby=false"}
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model", "--responder-standby=false"}
 	launch, err := ParseInstallExistingLaunch(args)
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func TestInstallExistingColdStandbySwitchReachesTypedController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, _, err := ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
+	controller, err := ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil {
 		t.Fatal(err)
 	}

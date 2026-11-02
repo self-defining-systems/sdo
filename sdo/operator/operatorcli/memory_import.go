@@ -8,10 +8,7 @@ import (
 	"io"
 	"path/filepath"
 
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/builder"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory/observation"
 )
@@ -22,16 +19,9 @@ type memoryImportConfig struct {
 	Root                 string
 	Workspaces           string
 	ID                   string
-	Namespace            string
 	ApplicationNamespace string
-	Image                string
-	PVC                  string
-	Mount                string
-	SubPath              string
-	Kubeconfig           string
-	Context              string
 	OperatorRoot         string
-	HealthyBaseline      bool
+	HealthyBaseline      string
 }
 
 func parseMemoryImport(args []string, getenv func(string) string) (memoryImportConfig, error) {
@@ -45,16 +35,9 @@ func parseMemoryImport(args []string, getenv func(string) string) (memoryImportC
 	f.StringVar(&c.Root, "root", ".", "accepted application Git root")
 	f.StringVar(&c.Workspaces, "worktree-root", "", "broker workspaces, outside accepted repository")
 	f.StringVar(&c.ID, "id", "", "unique operator import ID")
-	f.StringVar(&c.Namespace, "namespace", "", "isolated validator namespace")
 	f.StringVar(&c.ApplicationNamespace, "application-namespace", "", "application observation namespace")
-	f.StringVar(&c.Image, "validator-image", "", "isolated validator image")
-	f.StringVar(&c.PVC, "repository-pvc", "", "repository PVC visible to validator")
-	f.StringVar(&c.Mount, "repository-mount-path", "", "host path corresponding to repository PVC")
-	f.StringVar(&c.SubPath, "repository-pvc-subpath", "", "repository PVC subpath")
-	f.StringVar(&c.Kubeconfig, "kubeconfig", "", "Kubernetes configuration path")
-	f.StringVar(&c.Context, "context", "", "Kubernetes context")
-	f.StringVar(&c.OperatorRoot, "operator-root", operatorRootDefault(getenv), "operator sources matching validator image")
-	f.BoolVar(&c.HealthyBaseline, "healthy-baseline", false, "validate incident detectors against provisioned healthy baseline")
+	f.StringVar(&c.OperatorRoot, "operator-root", operatorRootDefault(getenv), "installed Go operator modules")
+	f.StringVar(&c.HealthyBaseline, "healthy-baseline", "", "directory of captured healthy snapshots to validate incident detectors against")
 	positional, err := parseFlags(f, args[1:])
 	if err != nil {
 		return c, err
@@ -73,9 +56,6 @@ func parseMemoryImport(args []string, getenv func(string) string) (memoryImportC
 	if err != nil {
 		return c, err
 	}
-	if c.Action == "publish" && (c.Namespace == "" || c.Image == "" || c.PVC == "" || c.Mount == "") {
-		return c, errors.New("import publish requires --namespace, --validator-image, --repository-pvc, and --repository-mount-path")
-	}
 	return c, nil
 }
 
@@ -90,21 +70,7 @@ func memoryImport(ctx context.Context, args []string, getenv func(string) string
 	}
 	var runner broker.Validator
 	if c.Action == "publish" {
-		schema, err := builder.SchemaIdentity(c.OperatorRoot)
-		if err != nil {
-			return err
-		}
-		loading := clientcmd.NewDefaultClientConfigLoadingRules()
-		loading.ExplicitPath = c.Kubeconfig
-		config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loading, &clientcmd.ConfigOverrides{CurrentContext: c.Context}).ClientConfig()
-		if err != nil {
-			return err
-		}
-		client, err := kubernetes.NewForConfig(config)
-		if err != nil {
-			return err
-		}
-		runner = broker.JobValidator(broker.KubernetesValidationJobClient{Client: client, Namespace: c.Namespace, Image: c.Image, RepositoryPVC: c.PVC, RepositoryMountPath: c.Mount, RepositoryPVCSubPath: c.SubPath, SchemaIdentity: schema, HealthyBaseline: c.HealthyBaseline})
+		runner = (broker.SubprocessValidator{OperatorRoot: c.OperatorRoot, HealthyBaseline: c.HealthyBaseline}).Validator()
 	}
 	repository, err := broker.New(c.Root, c.Workspaces, runner, broker.ObservationPolicy{Replay: c.Replay, Ceiling: ceiling, ApplicationNamespace: c.ApplicationNamespace})
 	if err != nil {

@@ -11,7 +11,6 @@ import (
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/builder"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"

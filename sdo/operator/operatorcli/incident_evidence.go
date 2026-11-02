@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"

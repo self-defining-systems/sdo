@@ -100,7 +100,7 @@ originatingCommit: fixture-judge
 	config.BuildKitImage = "moby/buildkit@sha256:" + strings.Repeat("a", 64)
 	config.RegistryPushSecret = "registry-push"
 	config.RegistryPushDockerConfig = []byte("{}")
-	config.ControllerImage, config.ResponderImage, config.ValidatorImage = "controller:test", "responder:test", "validator:test"
+	config.ControllerImage, config.ResponderImage = "controller:test", "responder:test"
 	config.RepositoryPVC, config.CredentialsSecret = "accepted", "worker-credentials"
 	installer := install.Installer{Client: client, BeforeControllerStart: existingNamespaceOnboardingHook(client, launch, commit)}
 	if _, err := installer.InstallPrepared(ctx, config, root); err != nil {

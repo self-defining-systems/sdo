@@ -2,9 +2,6 @@ package lifecycle
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -63,7 +60,7 @@ func completeJobsWithJudgeResult(t *testing.T, client *fake.Clientset) *int {
 			t.Error(err)
 			return true, nil, err
 		}
-		response, _ := anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "authored", AgentSessionId: "session", ObjectiveDigest: objectiveDigest(judge.GetHealthObjective()), DetectorIds: []string{"health-objective"}})
+		response, _ := anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "authored", AgentSessionId: "session", DetectorIds: []string{"health-objective"}})
 		result := &contracts.AgentResult{SchemaVersion: worker_registry.SchemaVersion, TaskId: task.GetTaskId(), Status: "completed", ProposalId: task.GetWorkspace().GetProposalId(), Response: response}
 		data, err := wire.Canonical(proto.Message(result))
 		if err != nil {
@@ -98,7 +95,7 @@ func TestHealthRefreshResumesFromStaleWorkerConfigMapsWithoutJob(t *testing.T) {
 		c := base
 		c.Registry, c.Workers = workers.Registry, workers
 		c.SourceFacts = func(context.Context, string, string) (memory.SourceFacts, error) {
-			return memory.SourceFacts{Fingerprint: strings.Repeat("f", 64), Resources: []*contracts.SourceResource{{Kind: "Deployment", Name: "demo", Namespace: "demo", Source: "deploy.yaml"}}}, nil
+			return memory.SourceFacts{Resources: []*contracts.SourceResource{{Kind: "Deployment", Name: "demo", Namespace: "demo", Source: "deploy.yaml"}}}, nil
 		}
 		return c
 	}
@@ -164,7 +161,7 @@ func TestHealthRefreshAfterLostWorkerExhaustionStartsFreshGeneration(t *testing.
 	b.lastCommit = "accepted-base"
 	revision := memory.HealthRevision{Commit: "accepted-base", SourceInputs: "source", Objective: "serve", DetectorRevision: "detectors", NeedsRefresh: true}
 	c.SourceFacts = func(context.Context, string, string) (memory.SourceFacts, error) {
-		return memory.SourceFacts{Fingerprint: strings.Repeat("f", 64), Resources: []*contracts.SourceResource{{Kind: "Deployment", Name: "demo", Namespace: "demo", Source: "deploy.yaml"}}}, nil
+		return memory.SourceFacts{Resources: []*contracts.SourceResource{{Kind: "Deployment", Name: "demo", Namespace: "demo", Source: "deploy.yaml"}}}, nil
 	}
 	cfg := Config{Application: "demo", Namespace: "demo", JudgeAgentID: "judge-agent"}
 	e.judgeJobsVanished = 1000
@@ -198,8 +195,4 @@ func TestHealthRefreshKeepsJudgeRejectionsTerminal(t *testing.T) {
 	if err != nil || got != id {
 		t.Fatalf("judge-rejected log was bypassed: %q %v", got, err)
 	}
-}
-
-func objectiveDigest(objective string) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimSpace(objective))))
 }

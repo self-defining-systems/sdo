@@ -105,9 +105,9 @@ func (e KubernetesExecutor) DiscardVanished(ctx context.Context, task *contracts
 }
 
 // lifecycleTask reports whether the task only authors a proposal in an
-// isolated checkout (deploy, architecture, health judge). Running one twice
+// isolated checkout (deploy, health judge). Running one twice
 // repeats no effect; incident, warm and reflection tasks may.
 func lifecycleTask(task *contracts.AgentTask) bool {
 	request := task.GetRequest()
-	return request.MessageIs(&contracts.SourceDeploymentRequest{}) || request.MessageIs(&contracts.ArchitectureRequest{}) || request.MessageIs(&contracts.HealthJudgeRequest{})
+	return request.MessageIs(&contracts.SourceDeploymentRequest{}) || request.MessageIs(&contracts.HealthJudgeRequest{})
 }

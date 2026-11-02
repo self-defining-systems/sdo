@@ -74,7 +74,7 @@ func (i Installer) claimOwnerLive(ctx context.Context, namespace string, claim *
 	if err == nil && live && !inactive {
 		return true, nil
 	}
-	return claim.CreationTimestamp.IsZero() || time.Since(claim.CreationTimestamp.Time) < operateClaimCreationWindow, nil
+	return claim.CreationTimestamp.IsZero() || i.now().Sub(claim.CreationTimestamp.Time) < operateClaimCreationWindow, nil
 }
 
 // The ConfigMap create arbitrates host launchers. Deletion uses both UID and

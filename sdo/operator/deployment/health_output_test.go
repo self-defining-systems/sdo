@@ -1,13 +1,8 @@
 package deployment
 
 import (
-	"context"
-	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestHealthVerdictParsesStdoutSeparatelyFromKubernetesWarnings(t *testing.T) {

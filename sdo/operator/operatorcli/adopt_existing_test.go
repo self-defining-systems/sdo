@@ -11,7 +11,7 @@ import (
 )
 
 func TestInstallExistingAdoptionRequiresExplicitOptIn(t *testing.T) {
-	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "agent:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model", "--adopt-existing-memory"}
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "agent:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model", "--adopt-existing-memory"}
 	if _, err := ParseInstallExistingLaunch(args); err != nil {
 		t.Fatal(err)
 	}

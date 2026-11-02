@@ -70,7 +70,6 @@ func TestInstallExistingOnboardingStagesOnlyInstallIdentitiesWithoutHostProbe(t 
 	config.RegistryPushDockerConfig = []byte("{}")
 	config.ControllerImage = "controller:test"
 	config.ResponderImage = "responder:test"
-	config.ValidatorImage = "validator:test"
 	config.RepositoryPVC = "accepted"
 	config.CredentialsSecret = "worker-credentials"
 	installer := install.Installer{Client: client, BeforeControllerStart: existingNamespaceOnboardingHook(client, launch, commit)}
