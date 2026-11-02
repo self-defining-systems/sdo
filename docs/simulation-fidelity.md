@@ -27,6 +27,9 @@ The simulated API server (`sdo/operator/runtime/sim`) models:
 - memory-host two-commit activation through Manager, detection during injected
   compilation delay, changed program plans, retained finding state, candidate
   failure, leased-call retirement, complete mirror deltas and same-revision crash recovery;
+- API discovery, server-side apply dry runs over a live object and dry-run creates of accepted source (the
+  default render a source comparison asks for), with Service defaults (port protocol, type, session affinity,
+  IP families), so a program's source diff runs end to end against the simulated API;
 - registered invariant hooks and a 45-second host-time seed-sweep budget.
 
 The pure lifecycle core (`runtime/lifecyclecore`) is covered by exhaustive explorers of closure and
@@ -263,3 +266,22 @@ Not modeled and still open: the Go simulation has no scripted-agent sandbox, sta
 restart on exit 76, so the standby, sandbox, restart and verify-protocol rows are covered by Python contract tests only.
 Closure work is modeled through the `closureEvidence` seam, which a test can make block; the closure recheck and the
 incident-open capture still run on the step pass (about 0.6 s and 0.2 s on the toy lane) and are not simulated.
+
+### Live toy run on Luna (2026-11-02)
+
+The live run (`/mnt/data/shli/sdo-exp/port/merge-luna/`) never cleared a repeat in the deterministic stage. The
+handoff blamed a frozen pre-apply snapshot; the stage record shows otherwise. The post-apply `Diagnose` observed
+`targetPort 8080` (the repair had landed) and still matched, because the frozen source diff skipped the API
+server's default normalization and read the defaulted `protocol: TCP` as drift added since acceptance. All verifications
+take a fresh snapshot (`snapshotView`, the executor's health verifier); the stale-read sweep below found no reuse.
+
+| Date | Source run | Class | Gap | Status | Test that now covers it |
+| --- | --- | --- | --- | --- | --- |
+| 2026-11-02 | merge-luna | Mock encodes removed behavior | Frozen diffs were computed on the live view with its API client removed, so the dry-run default normalization an in-process program gets was skipped: a repaired Service still matched, and the stage rolled back a correct repair | Fixed: diffs are the view's own answers, from the cycle cache, frozen before the host lease is taken | `TestSimRemoteProgramDiagnoseSeesTheRepairAfterTheWrite` (sim API with dry-run apply and Service defaults) |
+| 2026-11-02 | merge-luna | Contract drift | The diff walk descended only wrappers it knew; a program mitigated through the isolation view (`mitigationReadView`) got no frozen diffs and its host reads found no evidence sink | Fixed: no type walk for diffs; every wrapper that embeds a `ReadView` exposes it | `TestSimRemoteProgramMitigateReadsSourceDiffsThroughTheMitigationView`, `TestReadViewWrappersExposeTheViewTheyWrap` (fails for any new wrapper that hides its view), `TestRemoteDetectorReadsSourceDiffsTheControllerFroze` |
+| 2026-11-02 | merge-luna | Missing fault coverage | The scripted toy diagnosed from pod ports and planned from a pod, so no scripted program or detector ever called `DiffAgainstSource`; bugs above reached the first live run | Fixed: the scripted program, mitigation and incident detector are source-grounded like learned ones | `benchmarks/sregym/fastloop/scripted_program`, hermetic fastloop tests |
+
+Reuse audit (any frozen observation used after the controller wrote): `matchedViews` is re-snapshotted once anything was applied
+(`responder_loop.go`, `l.appliedAny()`); the stage's post-apply diagnosis and `verify` call `snapshotView`, and the plan verifier calls
+`Provider.Snapshot`. `lastDiagnosisView` is read only for topology relations (selectors, labels), never for field values. Cost note: frozen diffs
+now make one dry-run apply per object that has an accepted manifest per snapshot (cached across detectors and programs of that snapshot).
