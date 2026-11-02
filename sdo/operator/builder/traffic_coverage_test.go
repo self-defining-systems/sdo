@@ -75,7 +75,7 @@ func TestValidateNotesDependencyEdgesNoHealthScenarioDrives(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer workspace.Close()
-		if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
+		if err := workspace.Check(context.Background()); err != nil {
 			t.Fatalf("an undriven edge must not reject memory: %v", err)
 		}
 		gaps, err := workspace.TrafficCoverageGaps()
