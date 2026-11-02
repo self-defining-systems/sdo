@@ -676,3 +676,32 @@ def test_sandboxed_commands_can_persist_tool_replies_for_later_commands(scripted
         )
     finally:
         shutil.rmtree(f"/tmp/sdo/{marker}", ignore_errors=True)
+
+
+def test_write_steps_larger_than_one_command_argument_succeed(scripted_cli):
+    """A captured corpus file exceeds the ~128 KiB single-argument limit of a shell command line."""
+    from libs.agent_cli.structured import run_structured_turn
+
+    path, root = scripted_cli
+    text = "x" * (300 * 1024)
+    path.write_text(
+        json.dumps(
+            script(
+                steps=[{"kind": "write", "path": "big/corpus.json", "text": text}], result={"confirmed_root_causes": []}
+            )
+        )
+    )
+    run_structured_turn(
+        provider="codex",
+        model="unused",
+        cwd=root,
+        prompt="test",
+        output_schema={
+            "type": "object",
+            "properties": {"confirmed_root_causes": {"type": "array", "items": {"type": "string"}}},
+            "required": ["confirmed_root_causes"],
+            "additionalProperties": False,
+        },
+        access="danger-full-access",
+    )
+    assert (root / "big/corpus.json").read_text() == text

@@ -77,6 +77,7 @@ def execute(
             time.sleep(step.seconds)
             context.values[f"steps.{index}.completed_at"] = context.clock()
             continue
+        stdin: str | None = None
         if isinstance(step, (Write, Delete)):
             target = root / step.path
             if any(path.is_symlink() for path in (target, *target.parents) if path != root and root in path.parents):
@@ -85,10 +86,11 @@ def execute(
             if isinstance(step, Delete):
                 command = f"rm -f -- {quoted}"
             else:
-                encoded = base64.b64encode(step.text.encode()).decode()
+                # The contents travel on stdin: one argument is capped near 128 KiB, and a captured corpus is larger.
+                stdin = base64.b64encode(step.text.encode()).decode()
                 command = (
                     f"mkdir -p -- {shlex.quote(str(Path(step.path).parent))} && "
-                    f"printf %s {shlex.quote(encoded)} | base64 -d > {quoted} && "
+                    f"base64 -d > {quoted} && "
                     f"chmod {'755' if step.executable else '644'} -- {quoted}"
                 )
             action = Command(kind="command", command=command)
@@ -148,7 +150,11 @@ def execute(
                     text=True,
                     timeout=action.timeout,
                     check=False,
-                    input=json.dumps(action.input_json) if action.input_json is not None else None,
+                    input=stdin
+                    if stdin is not None
+                    else json.dumps(action.input_json)
+                    if action.input_json is not None
+                    else None,
                 )
                 code, output = result.returncode, result.stdout + result.stderr
                 stdout = result.stdout
