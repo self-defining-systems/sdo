@@ -65,11 +65,11 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 		Workers: workers, Readiness: strategies,
 		Verifier: deployment.IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: "..", Readiness: strategies, Probe: nativePathProbe{}}, Installer: installer,
 	}
-	result, err := coordinator.Run(ctx, lifecycle.Config{OperationID: "native-bootstrap", Application: "demo", Namespace: "demo", HealthObjective: "The application stays healthy.", DeployerAgentID: "sdo-deployer", JudgeAgentID: "sdo-health-judge", MaxAttempts: 1})
+	result, err := coordinator.Run(ctx, lifecycle.Config{OperationID: "native-bootstrap", Application: "demo", Namespace: "demo", HealthObjective: "The application stays healthy.", DeployerAgentID: "sdo-source-deployment", JudgeAgentID: "sdo-health-judge", MaxAttempts: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(workers.tasks, ",") != "source-deployment,source-architecture,health-judgment-direct-v1" {
+	if strings.Join(workers.tasks, ",") != "source-deployment,health-judgment-direct-v1" {
 		t.Fatalf("registered workers did not run in role order: %v", workers.tasks)
 	}
 	if backend.applies != 1 || backend.observes < 2 {
@@ -143,7 +143,7 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 	if len(prior) != 1 || prior[0].IncidentID != "native-incident" {
 		t.Fatalf("runtime could not read broker outcome: %+v", prior)
 	}
-	if len(workers.tasks) != 4 || workers.tasks[3] != reflectionTaskType(t) {
+	if len(workers.tasks) != 3 || workers.tasks[2] != reflectionTaskType(t) {
 		t.Fatalf("verified success did not dispatch registered typed reflection: %v", workers.tasks)
 	}
 	if err := native.AcknowledgeClosure(ctx, receipt); err != nil {
